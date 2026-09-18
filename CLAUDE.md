@@ -54,6 +54,14 @@ settings.
 - **Never write to the terminal** except through the three tmux verbs. wostuast
   reads; the user types.
 - **Never approve a permission prompt.** The user approves in the terminal.
+  The hook prints nothing, and that silence is the mechanism: Claude Code reads
+  a hook's stdout as its answer. One `print()` in `cmd_hook` speaks for the
+  user. Logging goes to the log file.
+- **Handlers assign, they never accumulate.** Folding the same event twice must
+  give the same answer; milestone 2 folds only the new tail of the log.
+- **The state directory is private.** `0700` for directories, `0600` for files,
+  via `private_dir` and `private_file`. The log holds every prompt and every
+  command an agent ran.
 - **Keep the raw payload.** Do not strip fields from a hook event. A new field
   from a newer Claude Code must not break an older wostuast.
 

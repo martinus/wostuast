@@ -130,3 +130,21 @@ def test_hook_and_status_skip_the_argument_parser(ws, monkeypatch):
 def test_every_other_command_still_goes_through_the_parser(ws, capsys):
     assert ws.main([]) == 0
     assert "usage: wostuast" in capsys.readouterr().out
+
+
+def test_a_notebook_edit_shows_its_path(ws):
+    assert ws.tool_summary(
+        "NotebookEdit", {"notebook_path": "/w/dir/study.ipynb"}, "/w/dir"
+    ) == "NotebookEdit study.ipynb"
+
+
+def test_the_store_keeps_the_whole_prompt(ws):
+    """The sidebar clips for its column. The page wants the full text."""
+    store = ws.Store()
+    long_prompt = "please " + "x" * 300
+    store.apply({"session_id": "s", "hook_event_name": "UserPromptSubmit",
+                 "prompt": long_prompt, "ts": 1.0})
+    session = store.sessions["s"]
+    assert session.last_prompt == long_prompt
+    assert long_prompt in session.last_event
+    assert len(ws.clip(session.last_event, 60)) == 60

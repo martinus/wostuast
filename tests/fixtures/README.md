@@ -29,3 +29,36 @@ Each event adds its own fields:
 
 `status.json` is one status line payload, in the shape the `statusLine`
 command receives on stdin.
+
+## transcript.jsonl
+
+One session transcript, in the shape Claude Code writes to
+`~/.claude/projects/<escaped-cwd>/<session-id>.jsonl`. The `transcript_path` of
+every hook event points at such a file.
+
+The keys below were read off a real transcript written by Claude Code 2.1.276,
+not guessed. The text in the fixture is invented, because this repository is
+public and a real transcript holds the user's own conversation.
+
+One JSON object per line. The lines the Transcript tab cares about have
+`type` of `user` or `assistant`, and carry:
+
+    parentUuid, uuid, timestamp, sessionId, cwd, gitBranch, version, message
+
+`message.content` is either a plain string (a typed prompt) or a list of
+content blocks. The block types and their keys:
+
+| `type` | Keys | Shown as |
+| --- | --- | --- |
+| `text` | `text` | a prompt block, or rendered Markdown |
+| `thinking` | `thinking`, `signature` | hidden, behind the "show thinking" toggle |
+| `tool_use` | `id`, `name`, `input`, `caller` | one collapsed line, summarised per tool |
+| `tool_result` | `tool_use_id`, `content`, `is_error` | attached to its `tool_use` |
+
+`tool_result.content` is a string in the common case and may also be a list of
+blocks. `tool_use.name` and `tool_use.input` hold what the hook payload calls
+`tool_name` and `tool_input`, so `tool_summary` reads both without changing.
+
+Other line types appear and are ignored by the transcript tab: `summary`
+(written when a session is compacted or resumed), `queue-operation`,
+`attachment`, `system`, `mode`, `last-prompt` and `atis-latch`.

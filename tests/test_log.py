@@ -126,3 +126,121 @@ def test_the_hook_cancels_the_deadline_even_when_it_fails(ws, monkeypatch):
     monkeypatch.setattr(ws, "read_stdin_json", explode)
     assert ws.cmd_hook(None) == 0
     assert calls == ["arm", "cancel"]
+
+
+def fill_until_one_rotation(ws, make_event):
+    """Append events until the log rotates exactly once. Returns how many."""
+    written = 0
+    while not ws.rotated_events_path().exists():
+        ws.append_event(make_event(written))
+        written += 1
+        assert written < 500, "the log never rotated"
+    return written
+
+
+def test_the_rotated_log_is_still_history(ws, monkeypatch):
+    """After a rotation a running session must keep its cwd, pane and pid.
+
+    Its SessionStart is in the rotated file, and that is the only place the
+    cwd, the pane and the pid are ever recorded.
+    """
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 3000)
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": "/w/repo/dir", "pane": "%7", "pid": 1, "ts": 1000.0})
+    fill_until_one_rotation(ws, lambda i: {
+        "session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
+        "tool_input": {"command": "x" * 60}, "pid": 1, "ts": 1001.0 + i})
+
+    sessions = ws.build_sessions(now=1200.0, alive=lambda pid: True)
+    assert len(sessions) == 1
+    assert sessions[0].cwd == "/w/repo/dir"
+    assert sessions[0].pane == "%7"
+    assert sessions[0].label == "dir"
+
+
+def test_both_files_are_read_and_counted(ws, monkeypatch):
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 500)
+    written = fill_until_one_rotation(ws, lambda i: {"session_id": "s1", "n": i,
+                                                     "pad": "z" * 40})
+    assert ws.count_events() == written
+    assert [e["n"] for e in ws.read_events()] == list(range(written))
+
+
+def test_a_second_rotation_drops_the_oldest_generation(ws, monkeypatch):
+    """The log keeps two files, no more. This is by design; it is pinned so a
+    reader of `ls` is never surprised by history that quietly reappears."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 400)
+    for i in range(60):
+        ws.append_event({"session_id": "s1", "n": i, "pad": "z" * 40})
+    seen = [e["n"] for e in ws.read_events()]
+    assert seen == sorted(seen)          # still oldest first
+    assert seen[-1] == 59                # the newest is always there
+    assert len(seen) < 60                # but the oldest generation is gone
+
+
+def test_the_hook_says_nothing_at_all(run_cli):
+    """Claude Code reads a hook's stdout as its answer, and for PreToolUse that
+    answer can allow or deny a tool. wostuast must never answer."""
+    done = run_cli(["hook"], json.dumps(
+        {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
+         "tool_input": {"command": "rm -rf /"}}))
+    assert done.returncode == 0
+    assert done.stdout == ""
+    assert done.stderr == ""
+
+
+def test_the_hook_stays_silent_even_when_it_fails(run_cli, tmp_path):
+    (tmp_path / "state").write_text("in the way")
+    done = run_cli(["hook"], json.dumps({"session_id": "s"}))
+    assert done.returncode == 0
+    assert done.stdout == ""
+    assert done.stderr == ""
+
+
+PROBE_SETUP = (
+    "import sys, io, json, importlib.machinery, importlib.util\n"
+)
+
+PROBE_RUN = (
+    "sys.stdin = io.StringIO(json.dumps({'session_id': 's'}))\n"
+    "loader = importlib.machinery.SourceFileLoader('wostuast', 'wostuast')\n"
+    "spec = importlib.util.spec_from_loader(loader.name, loader)\n"
+    "ws = importlib.util.module_from_spec(spec)\n"
+    "sys.modules['wostuast'] = ws\n"
+    "loader.exec_module(ws)\n"
+    "assert ws.main(['hook']) == 0\n"
+)
+
+
+def modules_after(code):
+    """Which modules a fresh interpreter has loaded after running this code."""
+    import subprocess
+    import sys
+
+    done = subprocess.run(
+        [sys.executable, "-c", code + "print('LOADED:' + ','.join(sorted(sys.modules)))"],
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "WOSTUAST_STATE": "/tmp/wostuast-probe"},
+    )
+    assert done.returncode == 0, done.stderr
+    marker = [line for line in done.stdout.splitlines() if line.startswith("LOADED:")]
+    assert marker, done.stdout
+    return set(marker[0][len("LOADED:"):].split(","))
+
+
+def test_the_hook_does_not_import_what_it_does_not_need():
+    """The hook runs on every tool call, so what it loads is what Claude Code
+    waits for. This pins the cost: nobody can add a git call, an HTTP client or
+    the argument parser to the hot path without a test going red.
+
+    It measures the difference the hook makes, not the total, because the probe
+    itself loads `importlib`, and `pathlib` fairly pulls in `urllib.parse`.
+    """
+    baseline = modules_after(PROBE_SETUP)
+    after_hook = modules_after(PROBE_SETUP + PROBE_RUN)
+    added = after_hook - baseline
+
+    assert "wostuast" in added, "the probe did not actually run the hook"
+    avoidable = {"subprocess", "shutil", "argparse", "socket", "http", "ssl",
+                 "email", "concurrent.futures", "urllib.request", "sqlite3"}
+    assert not (added & avoidable), f"the hook now loads: {sorted(added & avoidable)}"

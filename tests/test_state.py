@@ -124,15 +124,27 @@ def test_subagent_stop_keeps_the_state(ws):
     assert session.last_event == "Explore finished"
 
 
-def test_pre_compact_keeps_the_state_and_counts(ws):
+def test_pre_compact_keeps_the_state_and_is_remembered(ws):
     session = fold(
         ws,
         event("UserPromptSubmit", prompt="x"),
-        event("PreCompact", trigger="auto"),
+        event("PreCompact", trigger="auto", ts=1500.0),
     )
     assert session.state == "working"
-    assert session.compactions == 1
+    assert session.last_compaction == 1500.0
     assert "compacted" in session.last_event
+
+
+def test_folding_the_same_events_twice_gives_the_same_answer(ws, recorded_events):
+    """Handlers assign, they never accumulate. Milestone 2 folds only the new
+    tail of the log, and a re-read of the same bytes must change nothing."""
+    once = ws.Store()
+    for one in recorded_events:
+        once.apply(one)
+    twice = ws.Store()
+    for one in recorded_events + recorded_events:
+        twice.apply(one)
+    assert once.sessions == twice.sessions
 
 
 def test_session_end_is_ended(ws):
@@ -177,7 +189,7 @@ def test_recorded_log_gives_the_expected_sessions(ws, recorded_events):
     assert len(by_id) == 2
     first = by_id["7f2a1c4e-0000-4000-8000-000000000001"]
     assert first.state == "done"
-    assert first.compactions == 1
+    assert first.last_compaction > 0
     assert first.pane == "%7"
     second = by_id["9b3d2f10-0000-4000-8000-000000000002"]
     assert second.state == "ended"

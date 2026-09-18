@@ -45,6 +45,11 @@ HOOK_EVENTS: tuple[str, ...] = (
 #: These two hook events take a tool matcher. The others do not.
 MATCHER_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
 
+#: A tmux pane id, as `$TMUX_PANE` gives it. The pane is the only value that
+#: travels from an event payload onto a command line, so the derived field is
+#: checked even though the log keeps whatever it was sent.
+PANE_PATTERN = re.compile(r"^%\d+$")
+
 #: A notification with one of these types means the agent waits for you.
 ATTENTION_NOTIFICATIONS = frozenset(
     {"permission_prompt", "idle_prompt", "elicitation_dialog"}
@@ -57,7 +62,7 @@ HOOK_TIMEOUT = 5
 EVENTS_MAX_BYTES = 20 * 1024 * 1024
 LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
-GIT_TIMEOUT = 2.0
+RUN_TIMEOUT = 2.0
 
 #: Every state, in the order the sidebar shows them: the word and the colour.
 STATE_WORDS = {
@@ -91,8 +96,36 @@ def state_dir() -> Path:
     return Path(base) / "wostuast"
 
 
+def private_dir(path: Path) -> None:
+    """Make the directory, and keep it to this user alone.
+
+    The event log holds every prompt, every command an agent ran and every
+    result it saw. On a shared machine the default 0o755 would let anyone read
+    it. `mode=` applies only when the directory is created, so an existing one
+    is corrected too.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def private_file(path: Path) -> None:
+    """Keep a file we just wrote to this user alone."""
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
 def events_path() -> Path:
     return state_dir() / "events.jsonl"
+
+
+def rotated_events_path() -> Path:
+    """Where the log moves when it grows too big. It is still history."""
+    return state_dir() / "events.1.jsonl"
 
 
 def status_dir() -> Path:
@@ -136,21 +169,38 @@ def log(message: str) -> None:
     """Append one line to the log file. Never raise."""
     try:
         path = log_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        private_dir(path.parent)
         rotate(path, LOG_MAX_BYTES, path.with_name(path.name + ".1"))
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(f"{stamp} {message}\n")
+        private_file(path)
     except Exception:
         pass
 
 
-def write_atomic(path: Path, text: str) -> None:
-    """Write the whole file or none of it, so a reader never sees half a file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(text, encoding="utf-8")
-    temporary.replace(path)
+def write_atomic(path: Path, text: str, private: bool = False) -> None:
+    """Write the whole file or none of it, so a reader never sees half a file.
+
+    The temporary name carries this process's pid. A fixed name would be shared
+    by two writers, and one could rename the other's half-written file into
+    place. The status line runs on every redraw, so two writers is normal.
+    """
+    if private:
+        private_dir(path.parent)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        if private:
+            temporary.chmod(0o600)
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
 
 
 def rotate(path: Path, limit: int, backup: Path) -> None:
@@ -166,29 +216,57 @@ def rotate(path: Path, limit: int, backup: Path) -> None:
 
 
 def append_event(record: dict[str, Any]) -> None:
-    """Append one event. The caller has already added ts, pane and pid."""
+    """Append one event. The caller has already added ts, pane and pid.
+
+    The lock is taken before the size is measured, so two hooks crossing the
+    limit at the same moment cannot both rename the log and throw one of the
+    two archives away. The second one sees a small file and simply appends.
+    """
     target = events_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    rotate(target, EVENTS_MAX_BYTES, target.with_name("events.1.jsonl"))
+    private_dir(target.parent)
     line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
     with open(target, "a", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if os.fstat(handle.fileno()).st_size > EVENTS_MAX_BYTES:
+            os.replace(target, rotated_events_path())
+            # The handle still points at the file we just renamed. Reopen, so
+            # this event lands in the fresh log rather than in the archive.
+            with open(target, "a", encoding="utf-8") as fresh:
+                fcntl.flock(fresh.fileno(), fcntl.LOCK_EX)
+                fresh.write(line)
+            private_file(target)
+            private_file(rotated_events_path())
+            return
         handle.write(line)
         handle.flush()
+    private_file(target)
 
 
 def count_events() -> int:
     """How many lines the log holds. It counts newlines, it does not parse."""
-    try:
-        with open(events_path(), "rb") as handle:
-            return sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
-    except OSError:
-        return 0
+    total = 0
+    for path in (rotated_events_path(), events_path()):
+        try:
+            with open(path, "rb") as handle:
+                total += sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
+        except OSError:
+            continue
+    return total
 
 
 def read_events() -> Iterator[dict[str, Any]]:
-    """Read the event log from the start. Broken lines are skipped."""
-    target = events_path()
+    """Read the whole log from the start, oldest file first.
+
+    The rotated file comes first because it holds the older half. Reading only
+    the current file would lose the SessionStart of every session that began
+    before the last rotation, and with it their cwd, pane and pid.
+    """
+    for path in (rotated_events_path(), events_path()):
+        yield from read_event_file(path)
+
+
+def read_event_file(target: Path) -> Iterator[dict[str, Any]]:
+    """Read one log file. A missing file is empty; broken lines are skipped."""
     if not target.exists():
         return
     with open(target, "rb") as handle:
@@ -249,7 +327,7 @@ class Session:
     reason: str = ""
     attention_since: float = 0.0
     end_reason: str = ""
-    compactions: int = 0
+    last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -288,7 +366,8 @@ def tool_summary(tool_name: str, tool_input: Any, cwd: str = "") -> str:
         return text
 
     if name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
-        return f"{name} {short_path(data.get('file_path') or data.get('path'))}".strip()
+        path = data.get("file_path") or data.get("notebook_path") or data.get("path")
+        return f"{name} {short_path(path)}".strip()
     if name == "Bash":
         return f"Bash {clip(str(data.get('command') or ''), 60)}".strip()
     if name in ("Grep", "Glob"):
@@ -332,10 +411,13 @@ class Store:
 
         if ts > session.last_ts:
             session.last_ts = ts
-        for key in ("cwd", "transcript_path", "pane"):
+        for key in ("cwd", "transcript_path"):
             value = event.get(key)
             if value:
                 setattr(session, key, str(value))
+        pane = str(event.get("pane") or "")
+        if pane and PANE_PATTERN.match(pane):
+            session.pane = pane
         pid = to_int(event.get("pid"))
         if pid:
             session.pid = pid
@@ -365,7 +447,7 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
     session.state = "working"
     session.last_prompt = str(event.get("prompt") or "")
-    session.last_event = f"prompt: {clip(session.last_prompt, 60)}"
+    session.last_event = f"prompt: {session.last_prompt}"
 
 
 def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -413,7 +495,7 @@ def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> Non
 
 
 def _on_pre_compact(session: Session, event: dict[str, Any], ts: float) -> None:
-    session.compactions += 1
+    session.last_compaction = ts
     trigger = str(event.get("trigger") or "")
     session.last_event = f"context compacted ({trigger})" if trigger else "context compacted"
 
@@ -525,7 +607,7 @@ def sort_sessions(sessions: list[Session]) -> list[Session]:
 # --- git facts: what git says about the agent's directory --------------------
 
 
-def run(args: Sequence[str], cwd: str | None = None, timeout: float = GIT_TIMEOUT) -> str | None:
+def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT) -> str | None:
     """Run a command and return its stdout, unchanged. None on any failure.
 
     It does not strip: `tmux capture-pane` needs its blank lines kept.
@@ -538,10 +620,11 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = GIT_TIMEOU
             cwd=cwd or None,
             capture_output=True,
             text=True,
+            errors="replace",  # a pane or a diff may hold bytes that are not UTF-8
             timeout=timeout,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
     if done.returncode != 0:
         return None
@@ -644,7 +727,7 @@ def write_status(session_id: str, status: Status) -> None:
     """Overwrite the status file of a session. It holds the latest value only."""
     if not session_id:
         return
-    write_atomic(status_path(session_id), json.dumps(asdict(status)))
+    write_atomic(status_path(session_id), json.dumps(asdict(status)), private=True)
 
 
 def read_status(session_id: str) -> Status:
@@ -754,7 +837,15 @@ def add_hooks(settings: dict[str, Any], command: str) -> list[str]:
 
 
 def remove_hooks(settings: dict[str, Any]) -> list[str]:
-    """Remove only the entries that run our program."""
+    """Remove only the entries that run our program.
+
+    A key we took nothing out of is left exactly as it was, empty list and all.
+    A key we emptied is removed, so a machine that had no hooks before install
+    has none after uninstall. The one case those two rules cannot tell apart is
+    a key the user left empty that we then added to: it ends up removed rather
+    than empty. Claude Code reads both as "no hooks for this event", so nothing
+    is lost, and no entry of the user's is ever touched.
+    """
     changes: list[str] = []
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
@@ -764,6 +855,7 @@ def remove_hooks(settings: dict[str, Any]) -> list[str]:
         if not isinstance(groups, list):
             continue
         kept_groups = []
+        removed_here = False
         for group in groups:
             entries = group.get("hooks") if isinstance(group, dict) else None
             if not isinstance(entries, list):
@@ -776,14 +868,19 @@ def remove_hooks(settings: dict[str, Any]) -> list[str]:
             ]
             if len(kept) != len(entries):
                 changes.append(f"removed hook {event}")
+                removed_here = True
             if kept:
                 group["hooks"] = kept
                 kept_groups.append(group)
+        # Only rewrite a key we actually took something out of. An empty list
+        # the user put there is theirs, and deleting it would be a silent edit.
+        if not removed_here:
+            continue
         if kept_groups:
             hooks[event] = kept_groups
         else:
             del hooks[event]
-    if not hooks:
+    if changes and not hooks:
         settings.pop("hooks", None)
     return changes
 
@@ -930,7 +1027,15 @@ def read_stdin_json() -> dict[str, Any]:
 
 
 def cmd_hook(args: argparse.Namespace) -> int:
-    """Read the hook JSON from stdin and append one line. Always exit 0."""
+    """Read the hook JSON from stdin and append one line. Always exit 0.
+
+    It prints nothing, and that silence is load-bearing. Claude Code reads a
+    hook's stdout as the hook's answer, and for PreToolUse that answer can allow
+    or deny a tool; exit code 2 blocks it outright. wostuast has no opinion and
+    must never have one, because approving without seeing the pane is how
+    directories get deleted. So: no print, and exit 0 whatever happens.
+    Anything worth saying goes to the log file, never to stdout or stderr.
+    """
     try:
         give_up_after(HOOK_TIMEOUT)
         record = read_stdin_json()
@@ -1093,9 +1198,25 @@ def cmd_install(args: argparse.Namespace) -> int:
     target = install_path()
     source = self_source()
     target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.exists() or target.read_text(encoding="utf-8") != source:
-        target.write_text(source, encoding="utf-8")
-        target.chmod(0o755)
+    try:
+        current = target.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        current = ""
+    if current != source:
+        # This file is registered as a hook on nine events in every running
+        # session. Writing it in place would let a hook read half a file and
+        # die. Write beside it and rename, which is atomic; a hook that is
+        # already running keeps the old file open and finishes normally.
+        spare = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        try:
+            spare.write_text(source, encoding="utf-8")
+            spare.chmod(0o755)
+            spare.replace(target)
+        finally:
+            try:
+                spare.unlink()
+            except OSError:
+                pass
         changes.append(f"wrote {target}")
 
     path = settings_path()
@@ -1131,7 +1252,8 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         return 1
     changes = remove_hooks(settings)
     changes += remove_status_line(settings)
-    save_settings(path, settings, indent, newline)
+    if changes:
+        save_settings(path, settings, indent, newline)
     for line in changes or ["nothing to change"]:
         print(line)
     print(f"the event log stays at {events_path()}")

@@ -138,3 +138,28 @@ def test_facts_are_filled_for_every_session(ws, repo, tmp_path):
     assert sessions[1].git is sessions[0].git or sessions[1].git.branch == "main"
     assert sessions[2].git == ws.GitFacts()
     assert sessions[3].git == ws.GitFacts()
+
+
+def test_a_command_that_writes_invalid_utf8_does_not_raise(ws):
+    """tmux capture-pane and git diff can both hand us bytes that are not UTF-8.
+    `run` promises None on failure; it must not raise instead."""
+    import sys
+
+    code = r"import sys; sys.stdout.buffer.write(b'ok \xff\xfe bad\n')"
+    out = ws.run([sys.executable, "-c", code])
+    assert out is not None
+    assert "ok" in out and "bad" in out
+
+
+def test_a_command_that_fails_returns_none(ws):
+    import sys
+
+    assert ws.run([sys.executable, "-c", "raise SystemExit(3)"]) is None
+    assert ws.run(["definitely-not-a-command-here"]) is None
+
+
+def test_run_keeps_blank_lines(ws):
+    """peek renders a terminal screen, where blank lines carry meaning."""
+    import sys
+
+    assert ws.run([sys.executable, "-c", r"print('\n\na\n\n')"]) == "\n\na\n\n\n"

@@ -172,3 +172,62 @@ def test_a_compact_file_comes_back_re_indented_but_unchanged(ws):
     assert text != original                       # re-indented
     assert json.loads(text) == json.loads(original)  # but nothing was lost
     assert "\n    " in text and "\n  " not in text.replace("\n    ", "")  # 4 spaces kept
+
+
+def test_uninstall_never_deletes_an_empty_key_that_is_not_ours(ws):
+    """An empty list the user put there is theirs. Removing nothing must
+    change nothing, and must not report a change either."""
+    settings = {"model": "opus", "hooks": {"Stop": [], "Other": {}}}
+    before = json.dumps(settings, sort_keys=True)
+    assert ws.remove_hooks(settings) == []
+    assert json.dumps(settings, sort_keys=True) == before
+
+
+def test_uninstall_leaves_an_empty_hooks_object_alone(ws):
+    settings = {"hooks": {}, "model": "x"}
+    assert ws.remove_hooks(settings) == []
+    assert settings == {"hooks": {}, "model": "x"}
+
+
+def test_removing_ours_still_tidies_the_key_away(ws):
+    settings = {}
+    ws.add_hooks(settings, OURS)
+    assert ws.remove_hooks(settings)
+    assert "hooks" not in settings
+
+
+def test_uninstall_does_not_create_a_settings_file(ws, capsys):
+    """On a machine that never had one, uninstall must not leave `{}` behind."""
+    assert not ws.settings_path().exists()
+    assert ws.cmd_uninstall(None) == 0
+    assert "nothing to change" in capsys.readouterr().out
+    assert not ws.settings_path().exists()
+
+
+def test_uninstall_does_not_rewrite_a_file_it_did_not_change(ws):
+    path = ws.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = '{"model": "opus", "hooks": {"Stop": [{"hooks": [{"command": "yours.sh"}]}]}}'
+    path.write_text(original)
+    assert ws.cmd_uninstall(None) == 0
+    assert path.read_text() == original      # byte for byte, not even re-indented
+
+
+def test_an_empty_key_we_added_to_ends_up_removed_not_empty(ws):
+    """The one case remove_hooks cannot tell apart, pinned so it stays known.
+
+    Claude Code reads a missing key and an empty list the same way, so this
+    costs the user nothing. Any real entry of theirs survives; see the tests
+    above.
+    """
+    settings = {"hooks": {"Stop": []}}
+    ws.add_hooks(settings, OURS)
+    ws.remove_hooks(settings)
+    assert settings.get("hooks", {}).get("Stop") is None
+
+
+def test_a_real_entry_in_that_same_key_always_survives(ws):
+    settings = {"hooks": {"Stop": [{"hooks": [{"command": "mine.sh"}]}]}}
+    ws.add_hooks(settings, OURS)
+    ws.remove_hooks(settings)
+    assert settings["hooks"]["Stop"] == [{"hooks": [{"command": "mine.sh"}]}]

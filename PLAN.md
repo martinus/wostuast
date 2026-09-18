@@ -77,9 +77,19 @@ one line to the events file:
 - `pid` is `$PPID`, the Claude process. The daemon uses it to detect a
   session that was killed and sent no `SessionEnd`.
 - The hook must exit 0 fast and must never block Claude. Wrap everything in
-  try/except. If the file cannot be written, exit 0 anyway.
+  try/except, and set a deadline, because a `try` cannot catch a wait: reading
+  stdin blocks until the writer closes it, and a file lock can stall. If the
+  file cannot be written, exit 0 anyway.
+- The hook prints nothing. Claude Code reads a hook's stdout as its answer, and
+  for `PreToolUse` that answer can allow or deny the tool. wostuast has no
+  answer. This silence is the whole mechanism behind "never approve"; anything
+  worth saying goes to the log file.
 - Keep the raw payload. Do not strip fields; new hook fields must not break
   old versions.
+- Handlers assign, they never accumulate. Folding the same event twice must
+  give the same answer, because the daemon folds only the new tail of the log.
+- The state directory is `0700` and its files are `0600`. The log holds every
+  prompt, every command and every result.
 
 The events file is append-only. `wostuast serve` reads it from the start on
 launch, then follows it. Rotate when it passes 20 MB: rename to
@@ -161,6 +171,34 @@ crash the daemon.
     (body: `{"text": "…"}`).
 - Watch files with polling (mtime every 1 s). Do not add inotify
   dependencies. Polling is fine at this scale.
+
+#### 4.4.1 Rules for the HTTP surface
+
+Decide these before writing the daemon, not after. `send` types into a
+terminal, so the page is not an ordinary local page.
+
+1. **Any website can reach a localhost port.** A cross-origin `fetch` with
+   `text/plain` is a "simple request": the browser sends it with no preflight.
+   The attacker cannot read the reply, and does not need to — the effect is
+   `tmux send-keys` followed by Enter. So every `POST` needs a token that the
+   daemon generates at start and prints into the page, plus a check that the
+   `Origin` header is ours or absent. Without this, a page in another tab can
+   type a command into your terminal. This is also how wostuast could end up
+   approving a permission prompt: not through a button, but through someone
+   else's page typing `y` into your pane.
+2. **`marked` does not sanitize.** It dropped its `sanitize` option in
+   version 5 and passes raw HTML through. An agent that reads a hostile README
+   puts that HTML into the transcript. Escape HTML in the Markdown source
+   before `marked` sees it, and use `textContent`, never `innerHTML`, for every
+   value that came from an event: `label`, `branch`, `last_prompt`,
+   `last_tool`, `reason`, `last_event`.
+3. **`cwd` and `transcript_path` come from the log and are not trusted.** The
+   transcript path is outside the worktree by design, so path confinement does
+   not cover it: require it to resolve under the Claude config directory and to
+   end in `.jsonl`. Require `cwd` to be an existing directory.
+4. **`<id>` in a route is a dictionary key, never a path component.** Only
+   `path=` is ever joined to a directory, and only through the one confinement
+   function section 8 tests.
 
 ### 4.5 The tmux verbs
 
@@ -329,7 +367,13 @@ python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/mai
   in one line.
 - Type hints everywhere. `dataclass` for `Session`, `Event`, `Block`,
   `DiffFile`, `Hunk`.
-- No global mutable state except one `Store` object.
+- No module-level mutable state. The daemon owns exactly two objects: a
+  `Store` for what the sessions are doing, and a registry of connected
+  browsers. They have different lifetimes, so they are not one object.
+- One thread writes to the `Store`; request threads only read. Readers read a
+  finished snapshot, which is also what tells the daemon which rows changed.
+- `Session` holds what the page shows. Byte offsets and file mtimes belong to
+  whatever is following the file, not to the session.
 - Log to `~/.local/state/wostuast/wostuast.log`, plain text, rotated at 5 MB.
 
 ## 8. Tests
