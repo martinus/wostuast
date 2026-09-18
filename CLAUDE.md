@@ -78,9 +78,19 @@ settings.
   through `safe_transcript`, which opens nothing outside the Claude config
   directory. `cwd` is used for git and for shortening paths, never to open a
   file the page asked for.
+- **A path out of the page is input too.** `read_worktree_file` opens a file
+  only when `worktree_files` already listed it, and only when the resolved
+  path is still inside the worktree. The first check rules out `..` and an
+  absolute path; the second rules out a tracked symbolic link that points
+  elsewhere. Do not replace either with a pattern that tries to spot a bad
+  path.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 and sending no
   CORS header is not enough: a site can point its own name at 127.0.0.1 and the
   browser will then let it read us. `Handler.ours()` checks the Host header.
+- **The Files and Diff tabs poll from the browser, and only while on screen.**
+  `POLL` in the page says how often. The daemon pushes the transcript and
+  nothing else: it does not know which tab a browser is on, and keeping it
+  that way is why `Hub` stays small. A hidden tab asks for nothing.
 - **One lock around the transcript readers.** The tick thread and request
   threads both read them; two `read_new` calls at once move the byte offset
   twice, which looks like a shrinking file and re-reads everything.
@@ -115,7 +125,7 @@ tool behind.
 
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
 2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
-3. **Read** — next. Files tab and Diff tab.
-4. **Act** — jump, send, Peek. Attention (title, icon, notifications) arrived
-   early, in milestone 2, because it was asked for.
+3. **Read** — done. Files tab and Diff tab.
+4. **Act** — next. jump, send, Peek. Attention (title, icon, notifications)
+   arrived early, in milestone 2, because it was asked for.
 5. **Shine** — light theme, motion, empty states, README.

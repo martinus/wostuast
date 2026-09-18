@@ -1289,6 +1289,331 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
         session.git = facts.get(session.cwd, GitFacts())
 
 
+# --- files and diffs: what the worktree holds --------------------------------
+
+#: The Files tab renders prose, so it lists Markdown and nothing else.
+MARKDOWN_SUFFIXES = frozenset({".md", ".markdown"})
+
+#: These come first in the Files tab, in this order. They say what the work is.
+PINNED_FILES = ("PLAN.md", "CLAUDE.md", "README.md")
+
+#: A file longer than this is cut. The tab renders prose, not data.
+FILE_MAX_BYTES = 512 * 1024
+
+#: A diff longer than this is cut. No page can show more, and parsing the rest
+#: would cost more than it is worth.
+DIFF_MAX_BYTES = 2 * 1024 * 1024
+
+#: git diff takes longer than git status on a large repository. It runs in a
+#: request thread, never in the tick, so waiting here holds up nothing else.
+DIFF_TIMEOUT = 8.0
+
+#: How many untracked files the Diff tab names. git diff shows none of them,
+#: so the tab says they are there rather than leaving a hole.
+UNTRACKED_SHOWN = 50
+
+#: A file with more changed lines than this starts collapsed on the page. The
+#: page reads it from here so the two cannot drift.
+BIG_FILE_LINES = 500
+
+
+@dataclass
+class FileEntry:
+    """One file the Files tab offers."""
+
+    path: str = ""          # relative to the worktree root
+    mtime: float = 0.0
+    size: int = 0
+
+
+@dataclass
+class Worktree:
+    """A worktree's root, and the files in it worth reading."""
+
+    root: str = ""
+    files: list[FileEntry] = field(default_factory=list)
+
+
+@dataclass
+class FileText:
+    """One file, as the page gets it."""
+
+    path: str = ""
+    text: str = ""
+    mtime: float = 0.0
+    cut: bool = False
+
+
+def file_order(entry: FileEntry) -> tuple[int, float, str]:
+    """PLAN.md, CLAUDE.md and README.md first, then the newest change first."""
+    known = entry.path in PINNED_FILES
+    rank = PINNED_FILES.index(entry.path) if known else len(PINNED_FILES)
+    return (rank, -entry.mtime, entry.path)
+
+
+def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktree:
+    """The Markdown files in a worktree, in the order the tab shows them.
+
+    `git ls-files` gives what git tracks; asked a second way it gives the
+    untracked files that .gitignore does not cover. A file git ignores is
+    build output, so it is left out. `-z` separates the names with a NUL,
+    which is the only separator a file name cannot hold.
+    """
+    tree = Worktree()
+    if not cwd or not os.path.isdir(cwd):
+        return tree
+    top = runner(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
+    if not top or not top.strip():
+        return tree
+    tree.root = top.strip()
+    names: set[str] = set()
+    for extra in ((), ("--others", "--exclude-standard")):
+        listed = runner(["git", "-C", tree.root, "ls-files", "-z", *extra])
+        if listed:
+            names.update(name for name in listed.split("\0") if name)
+    for name in names:
+        if os.path.splitext(name)[1].lower() not in MARKDOWN_SUFFIXES:
+            continue
+        try:
+            info = os.stat(os.path.join(tree.root, name))
+        except OSError:
+            continue        # listed but since deleted, or a link with no target
+        tree.files.append(
+            FileEntry(path=name, mtime=info.st_mtime, size=info.st_size))
+    tree.files.sort(key=file_order)
+    return tree
+
+
+def read_worktree_file(
+    cwd: str, wanted: str, runner: Callable[..., str | None] = run
+) -> FileText | None:
+    """The text of one file the Files tab offered, or None.
+
+    The name comes from the page, so it is input, not fact. It has to be one of
+    the names the listing holds, and the file it points at has to stay inside
+    the worktree once every link is followed. Those two checks together cover
+    `..`, an absolute path and a symbolic link out of the tree, without having
+    to guess at each of them. See PLAN.md section 4.4.1.
+    """
+    tree = worktree_files(cwd, runner)
+    entry = next((one for one in tree.files if one.path == wanted), None)
+    if entry is None:
+        return None
+    try:
+        root = Path(tree.root).resolve()
+        target = (root / wanted).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            return None
+        raw = target.read_bytes()
+    except OSError:
+        return None
+    cut = len(raw) > FILE_MAX_BYTES
+    text = raw[:FILE_MAX_BYTES].decode("utf-8", "replace")
+    if cut:
+        text += "\n\n*The rest of this file is not shown.*\n"
+    return FileText(path=wanted, text=text, mtime=entry.mtime, cut=cut)
+
+
+@dataclass
+class DiffLine:
+    """One line of a hunk."""
+
+    kind: str = "context"       # context, added or removed
+    text: str = ""
+
+
+@dataclass
+class Hunk:
+    """One `@@` block of a file's diff."""
+
+    header: str = ""
+    lines: list[DiffLine] = field(default_factory=list)
+
+
+@dataclass
+class DiffFile:
+    """What happened to one file."""
+
+    path: str = ""
+    old_path: str = ""
+    status: str = "modified"    # added, deleted, renamed or modified
+    added: int = 0
+    removed: int = 0
+    binary: bool = False
+    hunks: list[Hunk] = field(default_factory=list)
+
+
+@dataclass
+class DiffSection:
+    """One half of the Diff tab: the branch's work, or what is not committed."""
+
+    name: str = ""
+    title: str = ""
+    files: list[DiffFile] = field(default_factory=list)
+
+
+@dataclass
+class DiffReport:
+    """Everything the Diff tab shows for one worktree."""
+
+    base: str = ""
+    sections: list[DiffSection] = field(default_factory=list)
+    untracked: list[str] = field(default_factory=list)
+    cut: bool = False
+    big: int = BIG_FILE_LINES
+
+
+def diff_header_paths(line: str) -> tuple[str, str]:
+    """The old and new path out of a `diff --git a/old b/new` line.
+
+    A file name holding ` b/` makes this line ambiguous, which is why git also
+    writes `---` and `+++` lines. Those are read when they come; this is what
+    a file with no content change, such as a plain rename, is left with.
+    """
+    rest = line[len("diff --git "):]
+    old, _, new = rest.rpartition(" b/")
+    old = old[2:] if old.startswith("a/") else old
+    return old, new
+
+
+def diff_side(text: str) -> str:
+    """The path out of a `--- a/path` or `+++ b/path` line. /dev/null is none."""
+    if text == "/dev/null":
+        return ""
+    return text[2:] if text[:2] in ("a/", "b/") else text
+
+
+def parse_diff(text: str) -> list[DiffFile]:
+    """Turn `git diff` output into files, hunks and lines.
+
+    Only what the page shows is read. `diff --git` starts a file, `@@` starts a
+    hunk, and inside a hunk the first character says what happened to the line.
+    The index line, the mode lines and `\\ No newline at end of file` are
+    passed over.
+    """
+    files: list[DiffFile] = []
+    current: DiffFile | None = None
+    hunk: Hunk | None = None
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            old, new = diff_header_paths(line)
+            current = DiffFile(path=new, old_path=old)
+            hunk = None
+            files.append(current)
+        elif current is None:
+            continue        # a preamble git only writes for a combined diff
+        elif line.startswith("--- "):
+            current.old_path = diff_side(line[4:])
+            hunk = None
+        elif line.startswith("+++ "):
+            current.path = diff_side(line[4:])   # empty means the file is gone
+            hunk = None
+        elif line.startswith("rename from "):
+            current.old_path = line[len("rename from "):]
+        elif line.startswith("rename to "):
+            current.path = line[len("rename to "):]
+        elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            current.binary = True
+        elif line.startswith("@@"):
+            hunk = Hunk(header=line)
+            current.hunks.append(hunk)
+        elif hunk is None:
+            continue        # index, mode and similarity lines
+        elif line.startswith("+"):
+            current.added += 1
+            hunk.lines.append(DiffLine("added", line[1:]))
+        elif line.startswith("-"):
+            current.removed += 1
+            hunk.lines.append(DiffLine("removed", line[1:]))
+        elif line.startswith(" ") or not line:
+            hunk.lines.append(DiffLine("context", line[1:]))
+    for one in files:
+        name_change(one)
+    return files
+
+
+def name_change(one: DiffFile) -> None:
+    """Say what happened to a file, from the paths the diff gave it."""
+    if not one.old_path:
+        one.status = "added"
+    elif not one.path:
+        one.status = "deleted"
+        one.path = one.old_path
+    elif one.old_path != one.path:
+        one.status = "renamed"
+    else:
+        one.status = "modified"
+
+
+def diff_base(cwd: str, runner: Callable[..., str | None] = run) -> str:
+    """The commit a branch's own work is measured against.
+
+    `origin/HEAD` is the answer when the remote has said which branch is its
+    default. A worktree built on a bare clone often has never been told, so the
+    usual names are tried in turn. Without any of them there is no base, and
+    the tab then shows only what is not committed.
+    """
+
+    def git(*args: str) -> str:
+        out = runner(["git", "-C", cwd, *args])
+        return out.strip() if out else ""
+
+    head = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head:
+        return head
+    for name in ("origin/main", "origin/master", "main", "master"):
+        if git("rev-parse", "--verify", "--quiet", name + "^{commit}"):
+            return name
+    return ""
+
+
+def git_diff(
+    cwd: str, args: Sequence[str], runner: Callable[..., str | None] = run
+) -> tuple[str, bool]:
+    """Run one diff. Returns the text, and whether it had to be cut short."""
+    out = runner(
+        ["git", "-C", cwd, "-c", "core.quotePath=false",
+         "diff", "--no-color", "--no-ext-diff", *args],
+        timeout=DIFF_TIMEOUT,
+    )
+    if not out:
+        return "", False
+    if len(out) > DIFF_MAX_BYTES:
+        return out[:DIFF_MAX_BYTES], True
+    return out, False
+
+
+def worktree_diff(cwd: str, runner: Callable[..., str | None] = run) -> DiffReport:
+    """What this worktree has changed, in two parts.
+
+    Committed: `git diff <base>...HEAD`, the branch's own work. The three dots
+    leave out whatever landed on the base after the branch started, so what is
+    shown is what this agent did. Uncommitted: `git diff HEAD`, what it changed
+    and has not committed. git shows no untracked file in either, so their
+    names are listed on their own.
+    """
+    report = DiffReport()
+    if not cwd or not os.path.isdir(cwd):
+        return report
+    report.base = diff_base(cwd, runner)
+    if report.base:
+        text, cut = git_diff(cwd, [report.base + "...HEAD"], runner)
+        report.cut = report.cut or cut
+        report.sections.append(DiffSection(
+            name="committed", title=report.base + "...HEAD",
+            files=parse_diff(text)))
+    text, cut = git_diff(cwd, ["HEAD"], runner)
+    report.cut = report.cut or cut
+    report.sections.append(DiffSection(
+        name="uncommitted", title="not committed yet", files=parse_diff(text)))
+    listed = runner(
+        ["git", "-C", cwd, "ls-files", "-z", "--others", "--exclude-standard"])
+    if listed:
+        report.untracked = sorted(
+            name for name in listed.split("\0") if name)[:UNTRACKED_SHOWN]
+    return report
+
+
 # --- status: the status line payload, which carries name and context ---------
 
 
@@ -1845,6 +2170,13 @@ def make_server(daemon: Daemon, port: int) -> Any:
                 except OSError:
                     pass
 
+        def known(self, session_id: str) -> Session | None:
+            """The session, or None with a 404 already sent."""
+            session = daemon.session(session_id)
+            if session is None:
+                self.reply_json({"error": "no such session"}, 404)
+            return session
+
         def transcript(self, session_id: str, query: dict[str, list[str]]) -> None:
             blocks = daemon.read_transcript(session_id)
             if blocks is None:
@@ -1852,6 +2184,32 @@ def make_server(daemon: Daemon, port: int) -> Any:
                                  "missing": "no transcript for this session"})
                 return
             self.reply_json({"id": session_id, "blocks": blocks_json(blocks)})
+
+        def files(self, session_id: str, query: dict[str, list[str]]) -> None:
+            session = self.known(session_id)
+            if session is None:
+                return
+            tree = worktree_files(session.cwd)
+            self.reply_json({"id": session_id, "root": tree.root,
+                             "files": [asdict(one) for one in tree.files]})
+
+        def file(self, session_id: str, query: dict[str, list[str]]) -> None:
+            session = self.known(session_id)
+            if session is None:
+                return
+            wanted = query.get("path", [""])[0]
+            found = read_worktree_file(session.cwd, wanted)
+            if found is None:
+                self.reply_json({"id": session_id, "path": wanted,
+                                 "missing": "that file is not in this worktree"}, 404)
+                return
+            self.reply_json(dict(asdict(found), id=session_id))
+
+        def diff(self, session_id: str, query: dict[str, list[str]]) -> None:
+            session = self.known(session_id)
+            if session is None:
+                return
+            self.reply_json(dict(asdict(worktree_diff(session.cwd)), id=session_id))
 
         def stream(self, watching: str) -> None:
             self.send_response(200)
@@ -1876,9 +2234,14 @@ def make_server(daemon: Daemon, port: int) -> Any:
             finally:
                 daemon.hub.drop(client)
 
-    # The verbs a session route can end in. Milestones 3 and 4 add files,
-    # file, diff and peek here, and nothing else about the dispatch changes.
-    GET_VERBS: dict[str, Any] = {"transcript": Handler.transcript}
+    # The verbs a session route can end in. Milestone 4 adds peek here, and
+    # nothing else about the dispatch changes.
+    GET_VERBS: dict[str, Any] = {
+        "transcript": Handler.transcript,
+        "files": Handler.files,
+        "file": Handler.file,
+        "diff": Handler.diff,
+    }
 
     server = ThreadingHTTPServer((BIND_HOST, port), Handler)
     server.daemon_threads = True
@@ -2601,6 +2964,79 @@ mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 
 .thinking .bubble { background: none; border-style: dashed; color: var(--ink-mute); font-style: italic; }
 body:not(.show-thinking) .thinking { display: none; }
 
+/* files and diff: a list on the left, what it names on the right */
+.content.split { padding: 0; overflow: hidden; display: flex; }
+.filelist {
+  width: 268px; flex-shrink: 0; overflow-y: auto; padding: 8px 0;
+  border-right: 1px solid var(--edge); font-family: var(--mono); font-size: 12px;
+}
+.filelist button {
+  display: block; width: 100%; padding: 7px 14px; text-align: left;
+  background: none; border: 0; border-left: 2px solid transparent;
+  font: inherit; color: var(--ink-soft); cursor: pointer;
+}
+.filelist button:hover { background: var(--raised); color: var(--ink-bright); }
+.filelist button.chosen {
+  background: var(--raised); border-left-color: var(--needs); color: var(--ink-bright);
+}
+.filelist .name {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.filelist .counts { display: flex; gap: 8px; margin-top: 2px; font-size: 11px; }
+.filelist .head {
+  padding: 12px 14px 4px; font-size: 11px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.filelist .plain { padding: 5px 16px; color: var(--ink-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plus { color: var(--working); }
+.minus { color: var(--cut-ink); }
+.filebody { flex-grow: 1; overflow-y: auto; padding: 20px 26px; min-width: 0; }
+.filebody .where {
+  margin-bottom: 14px; font-family: var(--mono); font-size: 11px;
+  letter-spacing: .04em; color: var(--ink-faint);
+}
+.diffbody {
+  flex-grow: 1; overflow-y: auto; min-width: 0;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+}
+.diffhead {
+  position: sticky; top: 0; z-index: 1; padding: 9px 20px;
+  background: var(--panel); border-bottom: 1px solid var(--edge);
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.dfile { border-bottom: 1px solid var(--edge); }
+.dfile > .name {
+  display: flex; gap: 10px; align-items: baseline; width: 100%;
+  padding: 9px 20px; background: var(--raised); border: 0; font: inherit;
+  color: var(--ink-bright); text-align: left; cursor: pointer;
+}
+.dfile .what {
+  color: var(--ink-faint); font-size: 11px; letter-spacing: .06em;
+  text-transform: uppercase; flex-shrink: 0;
+}
+.dfile .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfile .why { margin-left: auto; flex-shrink: 0; color: var(--ink-faint); font-size: 11px; }
+.hunk {
+  padding: 6px 20px; background: var(--panel); color: var(--ink-mute);
+  border-top: 1px solid var(--edge); white-space: pre; overflow-x: auto;
+}
+.dlines { padding: 5px 0; overflow-x: auto; color: var(--code-ink); }
+.dline { padding: 0 20px; white-space: pre; min-width: max-content; }
+.dline.context { color: var(--ink-mute); }
+.dline.added { background: var(--add-bg); color: var(--add-ink); }
+.dline.removed { background: var(--cut-bg); color: var(--cut-ink); }
+.note {
+  padding: 14px 20px; font-family: var(--mono); font-size: 12px;
+  line-height: 1.7; color: var(--ink-mute);
+}
+.note b { color: var(--ink-soft); font-weight: 500; }
+.tab .badge {
+  padding: 1px 6px; border-radius: 10px; background: var(--chosen);
+  color: var(--ink-soft); font-size: 11px;
+}
+
 .empty { color: var(--ink-mute); max-width: 52ch; line-height: 1.6; }
 .empty code { font-family: var(--mono); background: var(--chosen); padding: 2px 6px;
   border-radius: 4px; color: var(--needs-warm); }
@@ -2650,8 +3086,9 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       </div>
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" aria-selected="true" data-tab="transcript">1 Transcript</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="files" disabled>2 Files</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="diff" disabled>3 Diff</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="files">2 Files</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="diff">3 Diff<span
+          class="badge" id="diffcount" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="peek" disabled>4 Peek</button>
         <input class="find" id="find" type="search" placeholder="find in transcript  /"
                autocomplete="off" spellcheck="false">
@@ -2668,7 +3105,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 4</dt><dd>tabs (only Transcript so far)</dd>
+    <dt>1 – 4</dt><dd>transcript, files, diff (peek is still to come)</dd>
     <dt>t</dt><dd>show or hide thinking</dd>
     <dt>c</dt><dd>colours: auto, light, dark</dd>
     <dt>?</dt><dd>this list</dd>
@@ -2695,6 +3132,17 @@ const state = {
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
+  files: [],            // the Files tab listing
+  file: null,           // the file it shows
+  fileText: "",
+  fileMtime: 0,
+  fileScroll: 0,
+  filesKey: "",         // what was drawn, so an unchanged tab is left alone
+  diff: null,
+  diffKey: "",
+  drawnDiff: "",
+  drawnTab: "",
+  poll: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -3164,9 +3612,176 @@ function drawTool(parent, block, index) {
   if (open && block.result) put(parent, "div", "tool-result", block.result);
 }
 
+// --- the Files tab ----------------------------------------------------------
+
+function drawFiles(box) {
+  const listed = state.files.filter(
+    (one) => !state.find || one.path.toLowerCase().includes(state.find));
+  // Nothing changed means nothing is rebuilt: a redraw would throw away the
+  // reader's place in the file, which is the one thing they were keeping.
+  const key = JSON.stringify([listed.map((one) => one.path + "@" + one.mtime),
+                              state.file, state.fileMtime]);
+  if (key === state.filesKey && state.drawnTab === "files") return;
+  state.filesKey = key;
+
+  const was = box.querySelector(".filebody");
+  if (was) state.fileScroll = was.scrollTop;
+  box.replaceChildren();
+  state.nodes = [];
+
+  const list = put(box, "div", "filelist");
+  for (const one of listed) {
+    const button = put(list, "button", state.file === one.path ? "chosen" : "");
+    button.type = "button";
+    button.title = one.path;
+    put(button, "span", "name", one.path);
+    button.addEventListener("click", () => chooseFile(one.path));
+  }
+  const pane = put(box, "div", "filebody");
+  if (!state.file) {
+    const empty = put(pane, "div", "empty");
+    put(empty, "p", null, state.files.length
+      ? "Pick a file on the left."
+      : "This worktree holds no Markdown that git knows about.");
+    return;
+  }
+  put(pane, "div", "where", state.file);
+  markdown(pane, state.fileText);
+  const place = state.fileScroll;
+  if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
+}
+
+function chooseFile(path) {
+  if (state.file === path) return;
+  state.file = path;
+  state.fileText = "";
+  state.fileMtime = 0;
+  state.fileScroll = 0;
+  load();
+}
+
+// --- the Diff tab -----------------------------------------------------------
+
+function drawDiff(box) {
+  const key = JSON.stringify([state.diffKey, state.find]);
+  if (key === state.drawnDiff && state.drawnTab === "diff") return;
+  state.drawnDiff = key;
+
+  const was = box.querySelector(".diffbody");
+  const place = was ? was.scrollTop : 0;
+  box.replaceChildren();
+  state.nodes = [];
+
+  const report = state.diff || { sections: [], untracked: [] };
+  const list = put(box, "div", "filelist");
+  const pane = put(box, "div", "diffbody");
+  let shown = 0;
+  for (const section of report.sections) {
+    const files = (section.files || []).filter(
+      (one) => !state.find || one.path.toLowerCase().includes(state.find));
+    if (!files.length) continue;
+    shown += files.length;
+    put(list, "div", "head", section.title);
+    put(pane, "div", "diffhead", section.title);
+    for (const one of files) {
+      const node = drawDiffFile(pane, one, report.big || 500);
+      const button = put(list, "button");
+      button.type = "button";
+      button.title = one.path;
+      put(button, "span", "name", one.path);
+      const counts = put(button, "span", "counts");
+      if (one.added) put(counts, "span", "plus", "+" + one.added);
+      if (one.removed) put(counts, "span", "minus", "−" + one.removed);
+      button.addEventListener("click",
+                              () => node.scrollIntoView({ block: "start" }));
+    }
+  }
+  const loose = report.untracked || [];
+  if (loose.length) {
+    put(list, "div", "head", "untracked");
+    for (const name of loose) put(list, "div", "plain", name);
+    const note = put(pane, "div", "note");
+    put(note, "b", null, loose.length + " untracked file" +
+                         (loose.length > 1 ? "s" : ""));
+    note.appendChild(document.createTextNode(
+      ". git has no diff for a file it does not track yet, so only the names" +
+      " are here."));
+    for (const name of loose) put(note, "div", null, name);
+  }
+  if (!shown && !loose.length) {
+    const empty = put(pane, "div", "empty");
+    put(empty, "p", null, state.find ? "No changed file matches."
+      : report.base ? "Nothing has changed against " + report.base + "."
+      : "Nothing has changed, and there is no branch to compare against.");
+  }
+  if (report.cut) {
+    put(pane, "div", "note", "This diff is long, so the rest is left out.");
+  }
+  if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
+  drawDiffCount();
+}
+
+function drawDiffFile(pane, one, big) {
+  const node = put(pane, "div", "dfile");
+  const head = put(node, "button", "name");
+  head.type = "button";
+  put(head, "span", "what", one.status);
+  put(head, "span", "path", one.status === "renamed"
+    ? one.old_path + " \u2192 " + one.path : one.path);
+  if (one.added) put(head, "span", "plus", "+" + one.added);
+  if (one.removed) put(head, "span", "minus", "\u2212" + one.removed);
+  const body = put(node, "div", "dbody");
+  if (one.binary) {
+    put(body, "div", "note", "Binary file. There is nothing to show.");
+    return node;
+  }
+  if (!one.hunks.length) {
+    put(body, "div", "note", "The content did not change.");
+    return node;
+  }
+  const size = one.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
+  const why = put(head, "span", "why");
+  // A long file starts closed. Building ten thousand lines nobody asked to
+  // see makes the whole tab slow to open.
+  let open = size <= big;
+  const mark = () => { why.textContent = size + " lines" + (open ? "" : ", hidden"); };
+  if (open) fillDiffFile(body, one);
+  mark();
+  head.addEventListener("click", () => {
+    open = !open;
+    if (open) fillDiffFile(body, one); else body.replaceChildren();
+    mark();
+  });
+  return node;
+}
+
+function fillDiffFile(body, one) {
+  const sign = { added: "+", removed: "\u2212", context: " " };
+  for (const hunk of one.hunks) {
+    put(body, "div", "hunk", hunk.header);
+    const lines = put(body, "div", "dlines");
+    for (const line of hunk.lines) {
+      put(lines, "div", "dline " + line.kind, sign[line.kind] + line.text);
+    }
+  }
+}
+
+function drawDiffCount() {
+  const badge = $("diffcount");
+  let added = 0;
+  let removed = 0;
+  for (const section of (state.diff ? state.diff.sections : [])) {
+    for (const one of section.files) { added += one.added; removed += one.removed; }
+  }
+  badge.hidden = !(added || removed);
+  badge.textContent = "+" + added + " \u2212" + removed;
+}
+
 const TABS = {
   transcript: drawTranscript,
-  // files, diff and peek arrive in milestones 3 and 4 and are wired here.
+  files: drawFiles,
+  diff: drawDiff,
+  // peek arrives in milestone 4 and is wired here.
 };
 
 // Which tab each number key picks. A key for a tab that is not built yet does
@@ -3175,13 +3790,17 @@ const TAB_KEYS = ["transcript", "files", "diff", "peek"];
 
 function draw() {
   const box = $("content");
+  box.className = "content" + (state.tab === "transcript" ? "" : " split");
   if (!current()) {
     box.replaceChildren();
     state.nodes = [];
     drawEmpty(box);
+    state.drawnTab = "";
     return;
   }
+  if (state.tab !== "transcript") $("live").textContent = "";
   TABS[state.tab](box);       // showTab only ever sets a tab that is in here
+  state.drawnTab = state.tab;
 }
 
 function showTab(name) {
@@ -3190,6 +3809,8 @@ function showTab(name) {
   for (const button of document.querySelectorAll(".tab")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
+  $("find").placeholder = (name === "transcript" ? "find in transcript  /"
+                                                 : "find a file  /");
   load();
   resubscribe();
 }
@@ -3212,24 +3833,99 @@ function choose(id) {
   state.blocks = [];
   state.nodes = [];
   state.open.clear();
+  state.files = [];
+  state.file = null;
+  state.fileText = "";
+  state.fileMtime = 0;
+  state.fileScroll = 0;
+  state.filesKey = "";
+  state.diff = null;
+  state.diffKey = "";
+  state.drawnDiff = "";
+  drawDiffCount();          // the last session's counts are not this one's
   drawSessions();
   drawHeader();
   load();
   resubscribe();
 }
 
+// How often a tab asks again while it is on screen. The transcript is pushed
+// over SSE and needs none of this. These two read the worktree, which is cheap
+// to ask for and far too noisy to push.
+const POLL = { files: 2000, diff: 5000 };
+
+function repoll() {
+  clearTimeout(state.poll);
+  state.poll = 0;
+  const wait = POLL[state.tab];
+  if (!wait || !state.chosen) return;
+  state.poll = setTimeout(() => {
+    // A hidden tab asks nothing. It picks up again when it is looked at.
+    if (document.visibilityState === "visible") load(); else repoll();
+  }, wait);
+}
+
+async function ask(id, what, query) {
+  try {
+    const answer = await fetch("/api/session/" + encodeURIComponent(id) + "/" +
+                               what + (query || ""));
+    return await answer.json();
+  } catch (error) {
+    return null;                            // the daemon went away; try later
+  }
+}
+
 async function load() {
   if (!state.chosen) { draw(); return; }
-  if (state.tab !== "transcript") { draw(); return; }
-  const want = state.chosen;
   try {
-    const answer = await fetch("/api/session/" + encodeURIComponent(want) + "/transcript");
-    const body = await answer.json();
-    if (state.chosen !== want) return;      // the reader moved on while we waited
-    state.blocks = body.blocks || [];
-  } catch (error) {
-    state.blocks = [];
+    if (state.tab === "transcript") await loadTranscript();
+    else if (state.tab === "files") await loadFiles();
+    else if (state.tab === "diff") await loadDiff();
+  } finally {
+    repoll();
   }
+}
+
+async function loadTranscript() {
+  const want = state.chosen;
+  const body = await ask(want, "transcript");
+  if (state.chosen !== want) return;        // the reader moved on while we waited
+  state.blocks = (body && body.blocks) || [];
+  draw();
+}
+
+async function loadFiles() {
+  const want = state.chosen;
+  const body = await ask(want, "files");
+  if (!body || state.chosen !== want) return;
+  state.files = body.files || [];
+  if (!state.files.some((one) => one.path === state.file)) {
+    state.file = state.files.length ? state.files[0].path : null;
+    state.fileText = "";
+    state.fileMtime = 0;
+    state.fileScroll = 0;
+  }
+  // Only a file whose mtime moved is read again, so the tab keeps its place
+  // in a file the agent has not touched.
+  const shown = state.files.find((one) => one.path === state.file);
+  if (shown && shown.mtime !== state.fileMtime) {
+    const text = await ask(want, "file",
+                           "?path=" + encodeURIComponent(shown.path));
+    if (!text || state.chosen !== want || state.file !== shown.path) return;
+    state.fileText = text.text || text.missing || "";
+    state.fileMtime = shown.mtime;
+  }
+  draw();
+}
+
+async function loadDiff() {
+  const want = state.chosen;
+  const body = await ask(want, "diff");
+  // A session that has gone answers with an error, not a report. Drawing that
+  // as if it were one is how the tab used to go blank and stay blank.
+  if (!body || !body.sections || state.chosen !== want) return;
+  state.diffKey = JSON.stringify(body);
+  state.diff = body;
   draw();
 }
 

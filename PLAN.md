@@ -192,19 +192,22 @@ crash the daemon.
 - Routes:
   - `GET /` → the page.
   - `GET /api/sessions` → JSON list.
-  - `GET /api/events` → Server-Sent Events. Push `session` updates,
-    `transcript` deltas for the session the client watches, and
-    `file` change notices.
+  - `GET /api/events` → Server-Sent Events. Push `session` updates and
+    `transcript` deltas for the session the client watches.
   - `GET /api/session/<id>/transcript` → parsed transcript as JSON blocks.
-  - `GET /api/session/<id>/files` → Markdown files in the worktree.
-  - `GET /api/session/<id>/file?path=…` → raw file content (path confined
-    to the worktree; reject `..` and absolute paths).
+  - `GET /api/session/<id>/files` → Markdown files in the worktree, with the
+    mtime of each.
+  - `GET /api/session/<id>/file?path=…` → one file's text (the path must be
+    one the listing offered, and must stay inside the worktree).
   - `GET /api/session/<id>/diff` → parsed diff as JSON.
   - `GET /api/session/<id>/peek` → captured pane text.
   - `POST /api/session/<id>/jump`, `POST /api/session/<id>/send`
     (body: `{"text": "…"}`).
-- Watch files with polling (mtime every 1 s). Do not add inotify
-  dependencies. Polling is fine at this scale.
+- Watch files with polling. Do not add inotify dependencies. Polling is fine
+  at this scale. The Files and Diff tabs poll from the browser while they are
+  on screen — every 2 s and every 5 s — and ask for nothing while the tab is
+  hidden. Only the transcript is pushed, because only the transcript grows a
+  line at a time.
 
 #### 4.4.1 Rules for the HTTP surface
 
@@ -232,7 +235,11 @@ terminal, so the page is not an ordinary local page.
    end in `.jsonl`. Require `cwd` to be an existing directory.
 4. **`<id>` in a route is a dictionary key, never a path component.** Only
    `path=` is ever joined to a directory, and only through the one confinement
-   function section 8 tests.
+   function section 8 tests. That function does not try to spot a bad path: it
+   requires the name to be one the listing itself offered, and then requires
+   the resolved file to sit inside the worktree. The first check rules out
+   `..` and an absolute path; the second rules out a symbolic link that git
+   tracks and that points somewhere else.
 
 ### 4.5 The tmux verbs
 
@@ -476,6 +483,9 @@ words. The first screenshot is the Transcript tab with one session in
 | Polling instead of inotify | No dependency; scale is ten files. |
 | Markdown in the browser | The browser is the best Markdown renderer available; Python stdlib has none. |
 | Own diff renderer | Small, matches the design, no vendored library besides `marked`. |
+| The Files and Diff tabs poll from the browser | Pushing them would need the daemon to know which tab each browser is on, and to remember what it last sent. Both tabs ask git for the whole answer anyway, so a request is the same work as a push. |
+| The Files tab lists Markdown only | It renders prose. A source file belongs in the Diff tab, where the change is what matters. |
+| Untracked files are named, not diffed | `git diff` shows nothing for them. Naming them is honest and costs one command; diffing each against nothing costs one command per file. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |
 | No gra dependency | Works for any worktree layout; a `repo/dir` label is all gra would add. |
 | Session name and context come from the status line | Hooks do not carry them. The status line payload has `session_name` and `used_percentage`, and costs one small file. |

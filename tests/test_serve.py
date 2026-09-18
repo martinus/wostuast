@@ -310,3 +310,75 @@ def test_the_reader_is_only_advanced_in_one_place(ws, served, transcript_file):
         one.join()
     assert set(seen) == {50}, f"got {sorted(set(seen))}"
     assert len(daemon.transcript("s1").blocks) == 50
+
+
+# --- the Files tab and the Diff tab ------------------------------------------
+
+
+@pytest.fixture
+def repo_session(ws, served, tmp_path):
+    """A session whose cwd is a real repository with one commit."""
+    import subprocess
+
+    daemon, base = served
+    root = tmp_path / "myrepo"
+    root.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True,
+                       capture_output=True, text=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "T")
+    (root / "README.md").write_text("# readme\n\nhello\n")
+    git("add", ".")
+    git("commit", "-qm", "first")
+    ws.append_event(event("SessionStart", cwd=str(root)))
+    daemon.store.refresh()
+    return root, base
+
+
+def test_the_file_listing_is_served(repo_session):
+    root, base = repo_session
+    status, body = get(f"{base}/api/session/s1/files")
+    assert status == 200
+    assert body["root"] == str(root)
+    assert [one["path"] for one in body["files"]] == ["README.md"]
+    assert body["files"][0]["mtime"] > 0
+
+
+def test_one_file_is_served(repo_session):
+    _, base = repo_session
+    status, body = get(f"{base}/api/session/s1/file?path=README.md")
+    assert status == 200
+    assert body["text"] == "# readme\n\nhello\n"
+
+
+def test_a_file_the_listing_does_not_offer_is_a_404(repo_session):
+    _, base = repo_session
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        urllib.request.urlopen(f"{base}/api/session/s1/file?path=../../etc/passwd",
+                               timeout=5)
+    assert caught.value.code == 404
+
+
+def test_the_diff_is_served(repo_session):
+    root, base = repo_session
+    (root / "README.md").write_text("# readme\n\nchanged\n")
+    status, body = get(f"{base}/api/session/s1/diff")
+    assert status == 200
+    assert body["base"] == "main"
+    names = [section["name"] for section in body["sections"]]
+    assert names == ["committed", "uncommitted"]
+    changed = body["sections"][1]["files"]
+    assert [one["path"] for one in changed] == ["README.md"]
+    assert changed[0]["hunks"][0]["lines"][-1]["kind"] == "added"
+
+
+def test_a_session_that_is_gone_is_a_404_on_every_new_route(served):
+    _, base = served
+    for verb in ("files", "file", "diff"):
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(f"{base}/api/session/nobody/{verb}", timeout=5)
+        assert caught.value.code == 404

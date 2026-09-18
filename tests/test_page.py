@@ -208,15 +208,32 @@ def test_expanding_a_tool_result_leaves_the_rest_alone(page_at):
 
 
 def test_a_tab_that_is_not_built_yet_does_nothing(page_at):
+    """Peek is milestone 4. Its key must leave the page exactly as it was."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             turns = page.locator(".turn").count()
-            page.keyboard.press("2")
+            page.keyboard.press("4")
             page.wait_for_timeout(200)
             assert page.locator(".tab[data-tab='transcript']").get_attribute(
                 "aria-selected") == "true"
             assert page.locator(".turn").count() == turns
+        finally:
+            browser.close()
+
+
+def test_a_number_key_picks_a_tab_that_is_built(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.keyboard.press("2")
+            page.wait_for_timeout(500)
+            assert page.locator(".tab[data-tab='files']").get_attribute(
+                "aria-selected") == "true"
+            assert page.locator(".filelist").count() == 1
+            page.keyboard.press("1")
+            page.wait_for_timeout(500)
+            assert page.locator(".turn").count() >= 2
         finally:
             browser.close()
 
@@ -440,5 +457,243 @@ def test_alerts_are_off_until_you_ask(page_at):
         try:
             assert page.locator("#bell").inner_text() == "alerts off"
             assert page.evaluate("Notification.permission") != "granted"
+        finally:
+            browser.close()
+
+
+# --- the Files tab and the Diff tab ------------------------------------------
+
+
+@pytest.fixture
+def repo_page(ws, tmp_path, monkeypatch):
+    """A daemon whose one session sits in a real repository with a change."""
+    import subprocess
+
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    root = tmp_path / "myrepo"
+    root.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True,
+                       capture_output=True, text=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "T")
+    (root / "README.md").write_text("# The readme\n\nfirst line\n")
+    (root / "code.py").write_text("print(1)\n")
+    git("add", ".")
+    git("commit", "-qm", "first")
+    # One committed change on a branch, and one that is not committed.
+    git("checkout", "-qb", "side")
+    (root / "code.py").write_text("print(1)\nprint(2)\n")
+    git("commit", "-qam", "second")
+    (root / "README.md").write_text("# The readme\n\nfirst line\nsecond line\n")
+    (root / "NOTES.md").write_text("# Notes\n\n" + HOSTILE)
+
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": str(root), "pane": "%7", "pid": 1,
+                     "ts": time.time()})
+
+    daemon = ws.Daemon()
+    server = ws.make_server(daemon, 0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    daemon.store.refresh()
+    try:
+        yield root, f"http://127.0.0.1:{port}/"
+    finally:
+        daemon.stopping.set()
+        server.shutdown()
+        server.server_close()
+
+
+def show_tab(page, name):
+    page.click(f".tab[data-tab='{name}']")
+    page.wait_for_timeout(700)
+
+
+def test_the_files_tab_lists_markdown_and_renders_it(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names == ["README.md", "NOTES.md"]   # pinned first, then newest
+            assert "code.py" not in names
+            assert "The readme" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_another_file_is_shown_when_it_is_picked(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            assert "Notes" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_hostile_file_cannot_run_either(repo_page):
+    """The Files tab renders a file the agent may never have looked at, so the
+    scrub matters here at least as much as in the transcript."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            assert page.evaluate("window.PWNED ?? null") is None
+            assert page.locator(".filebody img").count() == 0
+            assert page.locator(".filebody script").count() == 0
+            assert "onerror" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
+    root, _ = repo_page
+    long_file = "# The readme\n\n" + "\n\n".join(f"line {n}" for n in range(400))
+    (root / "README.md").write_text(long_file)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.eval_on_selector(".filebody", "el => el.scrollTop = 900")
+            page.wait_for_timeout(400)
+            (root / "README.md").write_text(long_file + "\n\nand one more\n")
+            page.wait_for_timeout(3000)       # one poll, and then some
+            assert "and one more" in page.locator(".filebody .prose").inner_text()
+            where = page.eval_on_selector(".filebody", "el => el.scrollTop")
+            assert where > 500, "the reader was thrown back to the top"
+        finally:
+            browser.close()
+
+
+def test_a_worktree_without_markdown_says_so(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            show_tab(page, "files")
+            assert "no Markdown" in page.locator(".filebody").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_diff_tab_keeps_the_two_halves_apart(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            heads = page.eval_on_selector_all(
+                ".diffhead", "els => els.map(e => e.textContent)")
+            assert heads == ["main...HEAD", "not committed yet"]
+            paths = page.eval_on_selector_all(
+                ".dfile .path", "els => els.map(e => e.textContent)")
+            assert paths == ["code.py", "README.md"]
+        finally:
+            browser.close()
+
+
+def test_the_diff_colours_what_changed(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            assert page.locator(".dline.added").count() >= 2
+            added = page.eval_on_selector_all(
+                ".dline.added", "els => els.map(e => e.textContent)")
+            assert any("second line" in line for line in added)
+            assert all(line.startswith("+") for line in added)
+        finally:
+            browser.close()
+
+
+def test_the_diff_tab_carries_its_counts(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            badge = page.locator("#diffcount").inner_text()
+            assert badge.startswith("+2")     # one line in each half
+        finally:
+            browser.close()
+
+
+def test_an_untracked_file_is_named(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            note = page.locator(".diffbody .note").inner_text()
+            assert "untracked" in note and "NOTES.md" in note
+        finally:
+            browser.close()
+
+
+def test_the_find_box_narrows_the_file_list(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.fill("#find", "readme")
+            page.wait_for_timeout(400)
+            paths = page.eval_on_selector_all(
+                ".dfile .path", "els => els.map(e => e.textContent)")
+            assert paths == ["README.md"]
+        finally:
+            browser.close()
+
+
+def test_a_long_file_starts_closed_and_opens_on_click(repo_page):
+    root, _ = repo_page
+    import subprocess
+    (root / "big.txt").write_text("\n".join(f"line {n}" for n in range(60)))
+    subprocess.run(["git", "-C", str(root), "add", "big.txt"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "big"], check=True,
+                   capture_output=True)
+    (root / "big.txt").write_text("\n".join(f"changed {n}" for n in range(60)))
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            page.evaluate("state.diff = null")   # the cut-off is sent, not guessed
+            show_tab(page, "diff")
+            page.wait_for_timeout(400)
+            page.evaluate("state.diff.big = 20; state.diffKey = 'again'; draw()")
+            page.wait_for_timeout(200)
+            big = page.locator(".dfile:has-text('big.txt')").last
+            assert "hidden" in big.locator(".why").inner_text()
+            assert big.locator(".dline").count() == 0
+            big.locator(".name").click()
+            page.wait_for_timeout(200)
+            assert big.locator(".dline").count() > 20
+        finally:
+            browser.close()
+
+
+def test_the_tabs_are_no_longer_disabled(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            for name in ("files", "diff"):
+                assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
+            assert page.locator(".tab[data-tab='peek']").is_disabled()
+        finally:
+            browser.close()
+
+
+def test_a_directory_that_is_not_a_repository_says_so(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            show_tab(page, "diff")
+            assert "no branch to compare" in page.locator(".diffbody").inner_text()
+            assert page.locator("#diffcount").is_hidden()
         finally:
             browser.close()

@@ -50,10 +50,11 @@ Claude Code calls a hook on every event. The hook appends one JSON line to a
 file and exits. That is the whole recording side: the daemon need not run, and
 the file is a history you can read with any tool.
 
-`wostuast serve` reads that file, follows it, and serves one page. Three
-actions go back to the terminal, all through tmux: jump to the window, send
-text to the agent, and capture the screen. Nothing else writes to the terminal,
-and nothing approves a permission prompt for you.
+`wostuast serve` reads that file, follows it, and serves one page. It also
+reads each agent's worktree with git, for the Files and Diff tabs; it only ever
+reads. Three actions go back to the terminal, all through tmux: jump to the
+window, send text to the agent, and capture the screen. Nothing else writes to
+the terminal, and nothing approves a permission prompt for you.
 
 ## Install
 
@@ -172,6 +173,26 @@ to reload.
 It sends no request back that changes anything, so nothing on that page can act
 on your behalf. Jump, send and peek arrive in milestone 4.
 
+### The tabs
+
+**Transcript** is what the agent said and did, as it happens.
+
+**Files** lists the Markdown in the worktree — what git tracks, plus anything
+untracked that `.gitignore` does not cover — and renders the one you pick.
+`PLAN.md`, `CLAUDE.md` and `README.md` come first; the rest follow, newest
+change first. A file the agent edits is read again within a couple of seconds,
+and you keep your place in it.
+
+**Diff** shows the change in two halves: what the branch has committed against
+`origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file
+list on the left says how much each one moved; clicking a name jumps to it. A
+file with more than 500 changed lines starts closed, so a large diff still
+opens at once. Untracked files are named rather than shown, because git has no
+diff for a file it does not track yet.
+
+The find box narrows the file list in both tabs, the same way it narrows the
+transcript.
+
 The page renders what an agent wrote, and an agent may have read a hostile
 file. So Markdown is parsed into an inert document, cut down to an allowlist of
 elements, and only then shown; raw HTML is displayed as text rather than obeyed.
@@ -195,10 +216,10 @@ counts what it kept. `Esc` clears it.
 
 ## Status
 
-Milestones 1 and 2 of [`PLAN.md`](PLAN.md) are done: wostuast records your
+Milestones 1 to 3 of [`PLAN.md`](PLAN.md) are done: wostuast records your
 sessions, lists them in the terminal, and serves a live page with the
-transcript. The Files and Diff tabs come in milestone 3, and jump, send and
-peek in milestone 4.
+transcript, the worktree's Markdown and its diff. Jump, send and peek come in
+milestone 4.
 
 `PLAN.md` is the complete brief. [`CLAUDE.md`](CLAUDE.md) says how to work in
 this repository.
