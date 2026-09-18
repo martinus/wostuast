@@ -1291,16 +1291,23 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
 
 # --- files and diffs: what the worktree holds --------------------------------
 
-#: The Files tab renders prose, so it lists Markdown and nothing else.
 #: These come first in the Files tab, in this order. They say what the work is.
 PINNED_FILES = ("PLAN.md", "CLAUDE.md", "README.md")
 
 #: A file longer than this is cut.
 FILE_MAX_BYTES = 512 * 1024
 
-#: How many names the Files tab is sent. A repository with more files than
-#: this is one you find by typing, not by scrolling.
-FILES_SHOWN = 5000
+#: A ceiling on the whole listing, not on what the page searches. Sending the
+#: first five thousand of 52,799 names made `libcorrelation` find 16 files and
+#: miss more than a thousand, because the thousand were never sent. Past this
+#: many the tab says it cannot answer rather than answering a fraction.
+FILES_MAX = 200_000
+
+#: Listing a repository is the one git call that does not fit in RUN_TIMEOUT.
+#: `ls-files` and `status` over fifty thousand files take longer than two
+#: seconds, and the timeout came back as an empty worktree. A shared timeout
+#: is a shared limit, and these calls are not the same size as the others.
+LIST_TIMEOUT = 20.0
 
 #: A NUL byte in the first of a file says it is not text. Every editor guesses
 #: this way, and every editor is sometimes wrong; being wrong here shows a
@@ -1334,7 +1341,9 @@ class Worktree:
 
     root: str = ""
     files: list[FileEntry] = field(default_factory=list)
-    total: int = 0          # before the list was cut to FILES_SHOWN
+    total: int = 0          # before the list was cut to FILES_MAX
+    cut: bool = False       # the worktree holds more names than FILES_MAX
+    failed: bool = False    # git did not answer; "no files" would lie
 
 
 @dataclass
@@ -1376,8 +1385,11 @@ def worktree_root(cwd: str, runner: Callable[..., str | None] = run) -> str:
     return top.strip() if top else ""
 
 
-def changed_files(cwd: str, runner: Callable[..., str | None] = run) -> set[str]:
+def changed_files(
+    cwd: str, runner: Callable[..., str | None] = run
+) -> set[str] | None:
     """The files git says differ from the last commit, untracked ones included.
+    None when git did not answer.
 
     `-z` gives one NUL-terminated record per file: two status letters, a
     space, then the name. A rename or a copy is followed by one more record
@@ -1386,10 +1398,12 @@ def changed_files(cwd: str, runner: Callable[..., str | None] = run) -> set[str]
     names are kept: the agent touched both ends of a rename.
     """
     out = runner(["git", "-C", cwd, "status", "--porcelain", "-z",
-                  "--untracked-files=all"])
+                  "--untracked-files=all"], timeout=LIST_TIMEOUT)
+    if out is None:
+        return None
     names = set()
     bare = False
-    for record in (out or "").split("\0"):
+    for record in out.split("\0"):
         if not record:
             continue
         if bare:
@@ -1402,13 +1416,38 @@ def changed_files(cwd: str, runner: Callable[..., str | None] = run) -> set[str]
     return names
 
 
+def git_names(
+    cwd: str, args: Sequence[str], runner: Callable[..., str | None] = run
+) -> list[str] | None:
+    """The names one `git ls-files` prints, or None when git did not answer.
+
+    `-z` separates the names with a NUL, which is the only separator a file
+    name cannot hold. The listing gets LIST_TIMEOUT: it is the one git call
+    whose cost grows with the size of the repository.
+    """
+    out = runner(["git", "-C", cwd, "ls-files", "-z", *args],
+                 timeout=LIST_TIMEOUT)
+    if out is None:
+        return None
+    return [name for name in out.split("\0") if name]
+
+
 def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktree:
     """Every file in a worktree, in the order the tab shows them.
 
-    `git ls-files` gives what git tracks; asked a second way it gives the
-    untracked files that .gitignore does not cover. A file git ignores is
-    build output, so it is left out; nothing else is. `-z` separates the names
-    with a NUL, which is the only separator a file name cannot hold.
+    Three listings. What git tracks, the untracked files .gitignore does not
+    cover, and the ignored files. `--directory` collapses a directory whose
+    whole contents are ignored into one entry ending in a slash, so
+    `node_modules` costs one name instead of a quarter of a million. Those
+    entries are dropped here; naming a directory you cannot open helps nobody,
+    and opening one is the tree's job. An ignored file that sits among tracked
+    files — a generated header, `compile_commands.json` — is listed like any
+    other, and that is the ignored file people look for.
+
+    A listing git did not answer sets `failed`. The names it did answer are
+    still returned: a short list with a warning beats no list at all. What
+    must never happen is a failure that reads as an empty worktree, which is
+    what a two second timeout over fifty thousand files used to look like.
 
     Only a changed file is stat'ed. A repository holds tens of thousands of
     files and tens of changed ones, and the modification time is only read to
@@ -1419,11 +1458,19 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktre
     tree.root = worktree_root(cwd, runner)
     if not tree.root:
         return tree
-    names = set(untracked_files(tree.root, runner))
-    listed = runner(["git", "-C", tree.root, "ls-files", "-z"])
-    if listed:
-        names.update(name for name in listed.split("\0") if name)
+    parts = [
+        git_names(tree.root, [], runner),
+        git_names(tree.root, ["--others", "--exclude-standard"], runner),
+        git_names(tree.root, ["--others", "--ignored", "--exclude-standard",
+                              "--directory"], runner),
+    ]
     touched = changed_files(tree.root, runner)
+    tree.failed = touched is None or any(part is None for part in parts)
+    names: set[str] = set()
+    for part in parts:
+        if part is not None:
+            names.update(name for name in part if not name.endswith("/"))
+    touched = touched or set()
     for name in sorted(names):
         entry = FileEntry(path=name, changed=name in touched)
         if entry.changed or name in PINNED_FILES:
@@ -1434,7 +1481,9 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktre
         tree.files.append(entry)
     tree.files.sort(key=file_order)
     tree.total = len(tree.files)
-    del tree.files[FILES_SHOWN:]
+    if tree.total > FILES_MAX:
+        del tree.files[FILES_MAX:]
+        tree.cut = True
     return tree
 
 
@@ -1444,15 +1493,16 @@ def untracked_files(cwd: str, runner: Callable[..., str | None] = run) -> list[s
     `-z` separates the names with a NUL, which is the only separator a file
     name cannot hold.
     """
-    listed = runner(
-        ["git", "-C", cwd, "ls-files", "-z", "--others", "--exclude-standard"])
-    return sorted(name for name in (listed or "").split("\0") if name)
+    return sorted(git_names(cwd, ["--others", "--exclude-standard"], runner) or [])
 
 
 def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) -> bool:
-    """True when git offers this exact name: tracked, or untracked and not
-    ignored. It is the same question the listing answers, asked about one name
-    so that reading a file does not cost a walk of the whole repository.
+    """True when git offers this exact name: tracked, untracked, or ignored.
+    It is the same question the listing answers, asked about one name so that
+    reading a file does not cost a walk of the whole repository. An ignored
+    file inside an ignored directory answers yes here although the listing
+    collapses that directory to one entry; the guard decides what is safe to
+    open, not what is worth showing.
 
     git reads what follows `--` as a pathspec, never as an option, and
     `:(literal)` in front of it turns off every other meaning a pathspec can
@@ -1464,8 +1514,16 @@ def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) ->
     """
     if not wanted:
         return False
+    asked = ["--", ":(literal)" + wanted]
     out = runner(["git", "-C", cwd, "ls-files", "-z", "--cached", "--others",
-                  "--exclude-standard", "--", ":(literal)" + wanted])
+                  "--exclude-standard", *asked])
+    if wanted in (out or "").split("\0"):
+        return True
+    # The Files tab lists ignored files, so reading one has to be allowed.
+    # It is the same question with the same three parts, asked second because
+    # most files are not ignored and this walk is the more expensive one.
+    out = runner(["git", "-C", cwd, "ls-files", "-z", "--others", "--ignored",
+                  "--exclude-standard", *asked])
     return wanted in (out or "").split("\0")
 
 
@@ -2302,9 +2360,16 @@ def make_server(daemon: Daemon, port: int) -> Any:
             if session is None:
                 return
             tree = worktree_files(session.cwd)
-            self.reply_json({"id": session_id, "root": tree.root,
-                             "total": tree.total,
-                             "files": [asdict(one) for one in tree.files]})
+            # The names go as one NUL-separated string, not as a list of
+            # objects. Fifty thousand of those cost megabytes per poll and
+            # gave the page nothing it could not split out for itself. NUL is
+            # the separator git uses, and the only one a name cannot hold.
+            self.reply_json({
+                "id": session_id, "root": tree.root, "total": tree.total,
+                "cut": tree.cut, "failed": tree.failed,
+                "names": "\0".join(one.path for one in tree.files),
+                "changed": [one.path for one in tree.files if one.changed],
+            })
 
         def file(self, session_id: str, query: dict[str, list[str]]) -> None:
             session = self.known(session_id)
@@ -3143,6 +3208,9 @@ body:not(.show-thinking) .thinking { display: none; }
   padding: 9px 20px; background: var(--raised); border: 0; font: inherit;
   color: var(--ink-bright); text-align: left; cursor: pointer;
 }
+/* An untracked file's header is a label, not a toggle: there is nothing to
+   fold, because every line in the file is shown. */
+.dfile > div.name { cursor: default; }
 .dfile .what {
   color: var(--ink-faint); font-size: 11px; letter-spacing: .06em;
   text-transform: uppercase; flex-shrink: 0;
@@ -3265,9 +3333,15 @@ const state = {
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
-  files: [],            // the Files tab listing
-  filesTotal: 0,        // how many the worktree holds, before the list was cut
+  names: [],            // every path in the worktree, in the order sent
+  changed: new Set(),   // which of them git says the agent touched
+  filesTotal: 0,        // how many the worktree holds
+  filesCut: false,      // more than the daemon will send
+  filesFailed: false,   // git did not answer; "no files" would lie
   listTick: 0,          // turns left before the listing is asked for again
+  loose: null,          // an untracked file picked on the Diff tab
+  looseText: null,      // null while it is being read
+  looseBinary: false,
   file: null,           // the file it shows
   fileText: "",
   fileBinary: false,
@@ -3837,12 +3911,17 @@ function fuzzy(text, query) {
 
 // The files to show, best match first. With nothing typed the order is the
 // one the daemon sent: the named files, then what the agent changed.
-function pick(entries) {
-  if (!state.find) return entries.map((one) => ({ one, at: [] }));
+//
+// It runs over every name the worktree holds, not over a slice of them. The
+// first version searched the first five thousand of 52,799, so typing
+// `libcorrelation` found 16 files and missed more than a thousand — a wrong
+// answer that looked exactly like a right one.
+function pick(names) {
+  if (!state.find) return names.map((path) => ({ path, at: [] }));
   const found = [];
-  for (const one of entries) {
-    const got = fuzzy(one.path, state.find);
-    if (got) found.push({ one, at: got.at, score: got.score });
+  for (const path of names) {
+    const got = fuzzy(path, state.find);
+    if (got) found.push({ path, at: got.at, score: got.score });
   }
   found.sort((a, b) => b.score - a.score);
   return found;
@@ -3868,30 +3947,36 @@ function putName(parent, text, at) {
 
 function drawFiles(box) {
   const [list, pane] = split(box, "files", "filebody");
-  const found = pick(state.files);
+  const found = pick(state.names);
   const listed = found.slice(0, NAMES_SHOWN);
 
   // The sidebar shows names, so only the names decide whether it is redrawn.
   // Folding the mtimes in here is what used to re-render the open document.
   if (fresh(box, "listKey", JSON.stringify(
-      [listed.map((found_) => found_.one.path + (found_.one.changed ? "*" : "")),
-       state.file, found.length]))) {
+      [listed.map((hit) => hit.path + (state.changed.has(hit.path) ? "*" : "")),
+       state.file, found.length, state.filesFailed]))) {
     list.replaceChildren();
-    for (const { one, at } of listed) {
+    for (const { path, at } of listed) {
       const button = put(list, "button",
-                         (state.file === one.path ? "chosen" : "") +
-                         (one.changed ? " touched" : ""));
+                         (state.file === path ? "chosen" : "") +
+                         (state.changed.has(path) ? " touched" : ""));
       button.type = "button";
-      button.title = one.path;
-      putName(button, one.path, at);
-      button.addEventListener("click", () => chooseFile(one.path));
+      button.title = path;
+      putName(button, path, at);
+      button.addEventListener("click", () => chooseFile(path));
     }
-    const total = state.filesTotal || state.files.length;
-    if (found.length > listed.length || total > state.files.length) {
+    if (found.length > listed.length) {
       put(list, "div", "plain",
-          listed.length + " of " + Math.max(found.length, total) + " — type to narrow");
+          listed.length + " of " + found.length + " shown — type to narrow");
     }
     if (state.find && !found.length) put(list, "div", "plain", "no name matches");
+    if (state.filesCut) {
+      put(list, "div", "plain", "this repository holds " + state.filesTotal +
+          " files, which is more than one list can answer for");
+    }
+    // git failing and a worktree holding nothing look the same and mean
+    // opposite things, so the tab says which one this is.
+    if (state.filesFailed) put(list, "div", "plain", "git did not answer");
   }
 
   const same = (box.dataset.bodyKey || "").split("\n")[0] === String(state.file);
@@ -3900,7 +3985,10 @@ function drawFiles(box) {
   pane.replaceChildren();
   if (!state.file) {
     const empty = put(pane, "div", "empty");
-    put(empty, "p", null, state.files.length
+    put(empty, "p", null, state.filesFailed
+      ? "git did not answer, so there is no list yet. It is tried again in a"
+        + " few seconds."
+      : state.names.length
       ? "Pick a file on the left, or type to find one."
       : "This worktree holds no file that git knows about.");
     return;
@@ -3912,11 +4000,12 @@ function drawFiles(box) {
     markdown(pane, state.fileText);
   } else {
     // Not prose, so it is shown as it is. textContent, and no highlighting:
-    // PLAN.md rules a syntax highlighter out of the first version.
+    // that is milestone 4's fourth stage.
     put(pane, "pre", "plain", state.fileText);
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
+
 
 function forgetFile(path) {
   state.file = path;
@@ -3946,6 +4035,11 @@ function drawDiff(box) {
   pane.replaceChildren();
 
   const report = state.diff || { sections: [], untracked: [] };
+  // A file the agent has since committed is no longer untracked, so the pick
+  // goes with it rather than pointing at a section that no longer names it.
+  if (state.loose && !(report.untracked || []).includes(state.loose)) {
+    state.loose = null;
+  }
   let shown = 0;
   for (const section of report.sections) {
     const files = (section.files || []).filter((one) => fuzzy(one.path, state.find));
@@ -3964,13 +4058,23 @@ function drawDiff(box) {
                               () => node.scrollIntoView({ block: "start" }));
     }
   }
-  const loose = report.untracked || [];
+  const loose = (report.untracked || []).filter((name) => fuzzy(name, state.find));
   if (loose.length) {
     put(list, "div", "head", "untracked");
-    for (const name of loose) put(list, "div", "plain", name);
+    for (const name of loose) {
+      const button = put(list, "button", state.loose === name ? "chosen" : "");
+      button.type = "button";
+      button.title = name;
+      putName(button, name, (fuzzy(name, state.find) || {}).at || []);
+      button.addEventListener("click", () => chooseUntracked(name));
+    }
+  }
+  if (state.loose) {
+    drawLooseFile(pane, state.loose);
+  } else if (loose.length) {
     put(pane, "div", "note", loose.length + " untracked file" +
         (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
-        " diff for a file it does not track yet.");
+        " diff for a file it does not track, so pick one to read it.");
   }
   if (report.failed) {
     put(pane, "div", "note", "git did not answer here, so this may not be the"
@@ -3986,6 +4090,51 @@ function drawDiff(box) {
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
   drawDiffCount();
+}
+
+// git has no diff for an untracked file, so it was named and left
+// unclickable — the one thing on the tab you could not open. Every line in it
+// is new, which is what the file is, so it is shown as one added block.
+function drawLooseFile(pane, path) {
+  const node = put(pane, "div", "dfile");
+  const head = put(node, "div", "name");
+  put(head, "span", "what", "untracked");
+  put(head, "span", "path", path);
+  const body = put(node, "div", "dbody");
+  if (state.looseText === null) {
+    put(body, "div", "note", "reading…");
+    return node;
+  }
+  if (state.looseBinary) {
+    put(body, "div", "note", "Binary file. There is nothing to show.");
+    return node;
+  }
+  const lines = state.looseText === "" ? []
+    : state.looseText.replace(/\n$/, "").split("\n");
+  putCounts(head, { added: lines.length, removed: 0 });
+  if (!lines.length) {
+    put(body, "div", "note", "This file is empty.");
+    return node;
+  }
+  const rows = put(body, "div", "dlines");
+  for (const line of lines) put(rows, "div", "dline added", "+" + line);
+  return node;
+}
+
+async function chooseUntracked(path) {
+  if (state.loose === path) return;
+  state.loose = path;
+  state.looseText = null;
+  state.looseBinary = false;
+  state.diffAt += 1;            // the body key has to move for the redraw
+  draw();
+  const want = state.chosen;
+  const body = await ask(want, "file", "?path=" + encodeURIComponent(path));
+  if (state.chosen !== want || state.loose !== path) return;
+  state.looseText = body ? (body.text || body.missing || "") : "";
+  state.looseBinary = !!(body && body.binary);
+  state.diffAt += 1;
+  draw();
 }
 
 function drawDiffFile(pane, one) {
@@ -4103,8 +4252,14 @@ function choose(id) {
   state.nodes = [];
   state.open.clear();
   forgetFile(null);
-  state.files = [];
+  state.names = [];
+  state.changed = new Set();
   state.filesTotal = 0;
+  state.filesCut = false;
+  state.filesFailed = false;
+  state.loose = null;
+  state.looseText = null;
+  state.looseBinary = false;
   state.listTick = 0;
   state.diff = null;
   state.diffRaw = "";
@@ -4165,10 +4320,15 @@ async function loadFiles() {
     const body = await ask(want, "files");
     if (!body || state.chosen !== want) return;
     state.listTick = 2;
-    state.files = body.files || [];
-    state.filesTotal = body.total || state.files.length;
-    if (!state.files.some((one) => one.path === state.file)) {
-      forgetFile(state.files.length ? state.files[0].path : null);
+    // NUL separates the names, because it is the only character a file name
+    // cannot hold. An empty listing splits to one empty string, not to none.
+    state.names = body.names ? body.names.split("\0") : [];
+    state.changed = new Set(body.changed || []);
+    state.filesTotal = body.total || state.names.length;
+    state.filesCut = !!body.cut;
+    state.filesFailed = !!body.failed;
+    if (!state.names.includes(state.file)) {
+      forgetFile(state.names.length ? state.names[0] : null);
     }
   }
   state.listTick -= 1;

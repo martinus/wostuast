@@ -329,8 +329,24 @@ def test_the_file_listing_is_served(repo_session):
     status, body = get(f"{base}/api/session/s1/files")
     assert status == 200
     assert body["root"] == str(root)
-    assert [one["path"] for one in body["files"]] == ["README.md"]
-    assert body["files"][0]["mtime"] > 0
+    assert body["names"].split("\0") == ["README.md"]
+    assert body["total"] == 1
+    assert body["cut"] is False
+    assert body["failed"] is False
+
+
+def test_every_name_is_served_and_the_changed_ones_are_named(repo_session):
+    """The names go as one string because fifty thousand objects cost
+    megabytes a poll. The changed ones are a short list of their own."""
+    root, base = repo_session
+    (root / "notes.md").write_text("# notes\n")
+    (root / "deep").mkdir()
+    (root / "deep" / "code.py").write_text("print(1)\n")
+    status, body = get(f"{base}/api/session/s1/files")
+    assert status == 200
+    assert sorted(body["names"].split("\0")) == ["README.md", "deep/code.py",
+                                                 "notes.md"]
+    assert sorted(body["changed"]) == ["deep/code.py", "notes.md"]
 
 
 def test_one_file_is_served(repo_session):

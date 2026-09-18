@@ -488,6 +488,30 @@ def repo_page(ws, served, repo):
     return repo, base
 
 
+@pytest.fixture
+def big_page(ws, served, tmp_path):
+    """A session in a repository with more files than the old list would send."""
+    from conftest import git_in as git
+
+    root = tmp_path / "big"
+    (root / "native" / "shared" / "libcorrelation" / "src").mkdir(parents=True)
+    git(root, "init", "-q", "-b", "main")
+    git(root, "config", "user.email", "t@example.com")
+    git(root, "config", "user.name", "T")
+    for index in range(5200):
+        (root / f"f{index:05d}.txt").write_text("x")
+    (root / "native" / "shared" / "libcorrelation" / "src" / "Action.h").write_text(
+        "// deep\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "first")
+
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(root), ts=time.time(),
+                                   pane="%7", pid=1))
+    daemon.store.refresh()
+    return root, base
+
+
 def show_tab(page, name):
     page.click(f".tab[data-tab='{name}']")
     page.wait_for_timeout(700)
@@ -809,9 +833,45 @@ def test_an_untracked_file_is_named(repo_page):
             # The names are listed once, on the left; the note says what they
             # are. Printing them in both places was the same list twice.
             names = page.eval_on_selector_all(
-                ".filelist .plain", "els => els.map(e => e.textContent)")
-            assert names == ["NOTES.md"]
+                ".filelist button", "els => els.map(e => e.textContent)")
+            assert "NOTES.md" in names
             assert "1 untracked file" in page.locator(".diffbody .note").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_untracked_file_opens_as_one_added_block(repo_page):
+    """git has no diff for it, so it was named and left unclickable — the one
+    thing on the tab you could not open."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            block = page.locator(".dfile:has(.what:text-is('untracked'))")
+            assert block.count() == 1
+            assert block.locator(".path").inner_text() == "NOTES.md"
+            first = block.locator(".dline.added").first.inner_text()
+            assert first == "+# Notes"
+            assert block.locator(".dline.removed").count() == 0
+        finally:
+            browser.close()
+
+
+def test_git_failing_does_not_read_as_an_empty_worktree(repo_page):
+    """"No files" and "git did not answer" look the same and mean opposite
+    things. A two second timeout over fifty thousand files drew the first."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate("state.names = []; state.file = null;"
+                          " state.filesFailed = true; draw()")
+            page.wait_for_timeout(200)
+            said = page.locator(".filebody .empty").inner_text()
+            assert "git did not answer" in said
+            assert "holds no file" not in said
         finally:
             browser.close()
 
@@ -876,5 +936,22 @@ def test_a_directory_that_is_not_a_repository_says_so(page_at):
             show_tab(page, "diff")
             assert "no branch to compare" in page.locator(".diffbody").inner_text()
             assert page.locator("#diffcount").is_hidden()
+        finally:
+            browser.close()
+
+
+def test_typing_finds_a_file_past_the_first_five_thousand(big_page):
+    """The listing stopped at 5000 names sorted by name, so everything under
+    `native/` was cut before the matcher saw it. In a 52,799 file repository
+    `libcorrelation` found 16 files and missed more than a thousand."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "libcorrelation")
+            page.wait_for_timeout(600)
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names == ["native/shared/libcorrelation/src/Action.h"]
         finally:
             browser.close()
