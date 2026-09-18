@@ -46,13 +46,23 @@ def test_the_payload_is_kept_whole(ws):
 
 
 def test_hook_writes_ts_pane_and_pid(run_cli, tmp_path):
+    """The three fields the hook adds to whatever Claude Code sent.
+
+    `pid` is the agent, found by walking up the ancestry, so it is 0 wherever
+    there is no Claude Code above us: a CI runner, or a hand-run hook. That is
+    the designed answer, not a failure, and a session with pid 0 is simply
+    never reported as killed. `shell_pid` is the process that ran us and is
+    always there. test_state.py walks a real chain and checks the agent is
+    found when there is one.
+    """
     payload = {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/w"}
     done = run_cli(["hook"], json.dumps(payload))
     assert done.returncode == 0
     line = json.loads((tmp_path / "state" / "events.jsonl").read_text().strip())
     assert line["session_id"] == "s1"
     assert line["pane"] == "%3"
-    assert line["pid"] > 0
+    assert line["shell_pid"] > 0
+    assert line["pid"] >= 0
     assert line["ts"] > 0
 
 
@@ -257,3 +267,13 @@ def test_the_hook_says_nothing_to_a_permission_request(run_cli):
     assert done.returncode == 0
     assert done.stdout == ""
     assert done.stderr == ""
+
+
+def test_the_hook_records_zero_when_there_is_no_agent_above_it(ws, monkeypatch):
+    """A hand-run hook, or a CI runner, has no Claude Code ancestor. The pid is
+    then 0, and a session with pid 0 is never reported as killed."""
+    monkeypatch.setattr(ws, "looks_like_claude", lambda pid: False)
+    assert ws.agent_pid() == 0
+    session = ws.Session(session_id="s", pid=0, state="working")
+    ws.mark_dead(session, alive=lambda pid: False)
+    assert session.state == "working"
