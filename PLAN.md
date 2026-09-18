@@ -239,10 +239,11 @@ terminal, so the page is not an ordinary local page.
    function section 8 tests. That function does not try to spot a bad path: it
    asks git whether it offers that exact name, and then requires the resolved
    file to sit inside the worktree. The first check rules out `..`, an
-   absolute path, an ignored file and a pathspec glob — git reads the name
-   after `--`, so it can never be an option, and a glob comes back spelled
-   differently from what was asked for. The second rules out a symbolic link
-   that git tracks and that points somewhere else.
+   absolute path and an ignored file — git reads the name after `--` as a
+   pathspec, never as an option, `:(literal)` in front of it stops the name
+   meaning anything but itself, and the answer still has to come back spelled
+   exactly as it was asked for. The second rules out a symbolic link that git
+   tracks and that points somewhere else.
 
 ### 4.5 The tmux verbs
 
@@ -303,7 +304,13 @@ changes and keep the scroll position.
 
 Only a changed file is stat'ed. A repository holds tens of thousands of files
 and tens of changed ones, so asking the disk about every file on every poll
-would cost far more than the answer is worth.
+would cost far more than the answer is worth. For the same reason the open
+file is asked for on every poll and the listing on every other one.
+
+Everything works from the top of the worktree, never from the agent's own
+directory. git reports a diff with root-relative paths whatever directory it
+ran in, so a session standing in a subdirectory would otherwise get a file
+list and a diff that do not agree.
 
 ### 4.8 Diff tab
 

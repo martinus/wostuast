@@ -1361,21 +1361,44 @@ def file_order(entry: FileEntry) -> tuple[int, int, float, str]:
     return (2, 0, 0.0, entry.path)
 
 
+def worktree_root(cwd: str, runner: Callable[..., str | None] = run) -> str:
+    """The top of the worktree this directory sits in, or "" if it is not in
+    one.
+
+    Everything else works from here, never from the agent's own directory.
+    git reports a diff with paths relative to the root whatever directory it
+    was run in, so a session standing in a subdirectory would otherwise get a
+    file list and a diff that do not agree with each other.
+    """
+    if not cwd or not os.path.isdir(cwd):
+        return ""
+    top = runner(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
+    return top.strip() if top else ""
+
+
 def changed_files(cwd: str, runner: Callable[..., str | None] = run) -> set[str]:
     """The files git says differ from the last commit, untracked ones included.
 
     `-z` gives one NUL-terminated record per file: two status letters, a
-    space, then the name. A rename carries the old name as a second record,
-    which is the name we want no more than the new one, so both are kept.
+    space, then the name. A rename or a copy is followed by one more record
+    holding the old name on its own, with no status in front of it — so which
+    record is which has to be counted, not guessed at from its length. Both
+    names are kept: the agent touched both ends of a rename.
     """
     out = runner(["git", "-C", cwd, "status", "--porcelain", "-z",
                   "--untracked-files=all"])
     names = set()
+    bare = False
     for record in (out or "").split("\0"):
+        if not record:
+            continue
+        if bare:
+            names.add(record)           # the old name of the rename before it
+            bare = False
+            continue
         if len(record) > 3:
             names.add(record[3:])
-        elif record:
-            names.add(record)   # the second half of a rename: a bare name
+        bare = "R" in record[:2] or "C" in record[:2]
     return names
 
 
@@ -1393,12 +1416,9 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktre
     far more than the answer is worth.
     """
     tree = Worktree()
-    if not cwd or not os.path.isdir(cwd):
+    tree.root = worktree_root(cwd, runner)
+    if not tree.root:
         return tree
-    top = runner(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
-    if not top or not top.strip():
-        return tree
-    tree.root = top.strip()
     names = set(untracked_files(tree.root, runner))
     listed = runner(["git", "-C", tree.root, "ls-files", "-z"])
     if listed:
@@ -1434,16 +1454,18 @@ def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) ->
     ignored. It is the same question the listing answers, asked about one name
     so that reading a file does not cost a walk of the whole repository.
 
-    git reads what follows `--` as a pathspec, never as an option, and the
-    answer has to come back spelled exactly as it was asked for. A pathspec
-    that climbs out of the worktree makes git fail, and one holding a glob or
-    a `:(magic)` prefix matches other names than the one it was given — so
-    neither can pass this.
+    git reads what follows `--` as a pathspec, never as an option, and
+    `:(literal)` in front of it turns off every other meaning a pathspec can
+    carry. Without it a real file called `report[1].csv` is read as a
+    character class and never found, while `*.py` matches files it was not
+    asked about. With it the name means itself and nothing else, and the
+    answer still has to come back spelled exactly as it was asked for.
+    A pathspec that climbs out of the worktree makes git fail.
     """
     if not wanted:
         return False
     out = runner(["git", "-C", cwd, "ls-files", "-z", "--cached", "--others",
-                  "--exclude-standard", "--", wanted])
+                  "--exclude-standard", "--", ":(literal)" + wanted])
     return wanted in (out or "").split("\0")
 
 
@@ -1458,11 +1480,8 @@ def read_worktree_file(
     `..`, an absolute path and a symbolic link out of the tree, without having
     to guess at each of them. See PLAN.md section 4.4.1.
     """
-    root = runner(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
-    if not root or not root.strip():
-        return None
-    root = root.strip()
-    if not is_listed(root, wanted, runner):
+    root = worktree_root(cwd, runner)
+    if not root or not is_listed(root, wanted, runner):
         return None
     target = inside(root, Path(root) / wanted)
     if target is None:
@@ -1471,7 +1490,10 @@ def read_worktree_file(
         if not target.is_file():
             return None
         found = FileText(mtime=target.stat().st_mtime)
-        raw = target.read_bytes()
+        # One byte past the cap is enough to know the file runs past it.
+        # Reading it whole first put a tracked video in memory every poll.
+        with target.open("rb") as handle:
+            raw = handle.read(FILE_MAX_BYTES + 1)
     except OSError:
         return None
     if b"\0" in raw[:BINARY_SNIFF]:
@@ -1529,6 +1551,7 @@ class DiffReport:
     sections: list[DiffSection] = field(default_factory=list)
     untracked: list[str] = field(default_factory=list)
     cut: bool = False
+    failed: bool = False    # git did not answer; "nothing changed" would lie
 
 
 def diff_header_paths(line: str) -> tuple[str, str]:
@@ -1554,10 +1577,16 @@ def diff_side(text: str) -> str:
 def parse_diff(text: str) -> list[DiffFile]:
     """Turn `git diff` output into files, hunks and lines.
 
-    Only what the page shows is read. `diff --git` starts a file, `@@` starts a
-    hunk, and inside a hunk the first character says what happened to the line.
-    The index line, the mode lines and `\\ No newline at end of file` are
-    passed over.
+    Which lines are headers depends on where they are. Inside a hunk the first
+    character is the only thing that matters, because the line after it is a
+    line of the file: removing `-- a comment` writes `--- a comment`, which
+    read as a header renamed the file to "a comment" and swallowed the rest of
+    the hunk. Only `diff --git` and `@@` can start something new, and neither
+    can be mistaken for content — content always carries its own first
+    character in front.
+
+    Only what the page shows is read. The index line, the mode lines and
+    `\\ No newline at end of file` are passed over.
     """
     files: list[DiffFile] = []
     current: DiffFile | None = None
@@ -1570,31 +1599,29 @@ def parse_diff(text: str) -> list[DiffFile]:
             files.append(current)
         elif current is None:
             continue        # a preamble git only writes for a combined diff
+        elif line.startswith("@@"):
+            hunk = Hunk(header=line)
+            current.hunks.append(hunk)
+        elif hunk is not None:
+            if line.startswith("+"):
+                current.added += 1
+                hunk.lines.append(DiffLine("added", line[1:]))
+            elif line.startswith("-"):
+                current.removed += 1
+                hunk.lines.append(DiffLine("removed", line[1:]))
+            elif line.startswith(" ") or not line:
+                hunk.lines.append(DiffLine("context", line[1:]))
+            # anything else is `\\ No newline at end of file`
         elif line.startswith("--- "):
             current.old_path = diff_side(line[4:])
-            hunk = None
         elif line.startswith("+++ "):
             current.path = diff_side(line[4:])   # empty means the file is gone
-            hunk = None
         elif line.startswith("rename from "):
             current.old_path = line[len("rename from "):]
         elif line.startswith("rename to "):
             current.path = line[len("rename to "):]
         elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
             current.binary = True
-        elif line.startswith("@@"):
-            hunk = Hunk(header=line)
-            current.hunks.append(hunk)
-        elif hunk is None:
-            continue        # index, mode and similarity lines
-        elif line.startswith("+"):
-            current.added += 1
-            hunk.lines.append(DiffLine("added", line[1:]))
-        elif line.startswith("-"):
-            current.removed += 1
-            hunk.lines.append(DiffLine("removed", line[1:]))
-        elif line.startswith(" ") or not line:
-            hunk.lines.append(DiffLine("context", line[1:]))
     for one in files:
         name_change(one)
     return files
@@ -1641,15 +1668,20 @@ def diff_base(cwd: str, runner: Callable[..., str | None] = run) -> str:
 
 def git_diff(
     cwd: str, args: Sequence[str], runner: Callable[..., str | None] = run
-) -> tuple[str, bool]:
-    """Run one diff. Returns the text, and whether it had to be cut short."""
+) -> tuple[str | None, bool]:
+    """Run one diff. Returns its text, and whether it had to be cut short.
+
+    None is not the same as "": git failed, timed out, or was killed. An empty
+    diff says nothing changed, and saying that when we do not know is worse
+    than saying nothing — it is the answer a reader would act on.
+    """
     out = runner(
         ["git", "-C", cwd, "-c", "core.quotePath=false",
          "diff", "--no-color", "--no-ext-diff", *args],
         timeout=DIFF_TIMEOUT,
     )
-    if not out:
-        return "", False
+    if out is None:
+        return None, False
     if len(out) > DIFF_MAX_BYTES:
         return out[:DIFF_MAX_BYTES], True
     return out, False
@@ -1665,20 +1697,22 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run) -> DiffRepo
     names are listed on their own.
     """
     report = DiffReport()
-    if not cwd or not os.path.isdir(cwd):
+    root = worktree_root(cwd, runner)
+    if not root:
         return report
-    report.base = diff_base(cwd, runner)
-    if report.base:
-        text, cut = git_diff(cwd, [report.base + "...HEAD"], runner)
+
+    def section(name: str, title: str, *args: str) -> None:
+        text, cut = git_diff(root, args, runner)
         report.cut = report.cut or cut
-        report.sections.append(DiffSection(
-            name="committed", title=report.base + "...HEAD",
-            files=parse_diff(text)))
-    text, cut = git_diff(cwd, ["HEAD"], runner)
-    report.cut = report.cut or cut
-    report.sections.append(DiffSection(
-        name="uncommitted", title="not committed yet", files=parse_diff(text)))
-    report.untracked = untracked_files(cwd, runner)[:UNTRACKED_SHOWN]
+        report.failed = report.failed or text is None
+        report.sections.append(
+            DiffSection(name=name, title=title, files=parse_diff(text or "")))
+
+    report.base = diff_base(root, runner)
+    if report.base:
+        section("committed", report.base + "...HEAD", report.base + "...HEAD")
+    section("uncommitted", "not committed yet", "HEAD")
+    report.untracked = untracked_files(root, runner)[:UNTRACKED_SHOWN]
     return report
 
 
@@ -3635,6 +3669,10 @@ function escapeRegex(text) {
 
 function drawTranscript(box) {
   box.replaceChildren();
+  // `split` rebuilds only when this says another tab owns the box. Leaving
+  // the old name here emptied the box and then let the next Files draw think
+  // its columns were still there, so the tab came back blank.
+  box.dataset.tab = "transcript";
   state.nodes = [];
   if (!state.blocks.length) {
     const empty = put(box, "div", "empty");
@@ -3836,7 +3874,8 @@ function drawFiles(box) {
   // The sidebar shows names, so only the names decide whether it is redrawn.
   // Folding the mtimes in here is what used to re-render the open document.
   if (fresh(box, "listKey", JSON.stringify(
-      [listed.map((hit_) => hit_.one.path), state.file, found.length]))) {
+      [listed.map((found_) => found_.one.path + (found_.one.changed ? "*" : "")),
+       state.file, found.length]))) {
     list.replaceChildren();
     for (const { one, at } of listed) {
       const button = put(list, "button",
@@ -3933,7 +3972,10 @@ function drawDiff(box) {
         (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
         " diff for a file it does not track yet.");
   }
-  if (!shown && !loose.length) {
+  if (report.failed) {
+    put(pane, "div", "note", "git did not answer here, so this may not be the"
+        + " whole diff. It is tried again in a few seconds.");
+  } else if (!shown && !loose.length) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, state.find ? "No changed file matches."
       : report.base ? "Nothing has changed against " + report.base + "."
@@ -4020,7 +4062,7 @@ function draw() {
   if (state.tab === "transcript" || !current()) homeFind($("findhome"));
   if (!current()) {
     box.replaceChildren();
-    box.dataset.tab = "";
+    box.dataset.tab = "";       // nothing is built, so the next tab rebuilds
     state.nodes = [];
     drawEmpty(box);
     return;
@@ -4114,13 +4156,15 @@ async function loadTranscript() {
 
 async function loadFiles() {
   const want = state.chosen;
-  // A name appears or goes when a file is created or deleted, which is rare.
-  // The file you are reading changes while you read it. So the listing is
-  // asked for every fifth turn and the open file every turn.
+  // The open file changes while you read it, so it is asked for every turn.
+  // The listing costs git every name in the repository, so it is asked for
+  // every other turn — often enough for a new file and the changed-file dot
+  // to turn up quickly, rarely enough that a huge worktree is not walked
+  // twice a second.
   if (state.listTick <= 0) {
     const body = await ask(want, "files");
     if (!body || state.chosen !== want) return;
-    state.listTick = 5;
+    state.listTick = 2;
     state.files = body.files || [];
     state.filesTotal = body.total || state.files.length;
     if (!state.files.some((one) => one.path === state.file)) {

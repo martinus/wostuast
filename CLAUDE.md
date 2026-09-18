@@ -81,9 +81,20 @@ settings.
 - **A path out of the page is input too.** `read_worktree_file` opens a file
   only when `is_listed` says git offers that exact name, and only when
   `inside` says the resolved path is still in the worktree. The first rules
-  out `..`, an absolute path, an ignored file and a pathspec glob; the second
-  rules out a tracked symbolic link that points elsewhere. Do not replace
-  either with a pattern that tries to spot a bad path.
+  out `..`, an absolute path and an ignored file; the second rules out a
+  tracked symbolic link that points elsewhere. Keep all three parts of the
+  first one — the `:(literal)` prefix, the `--`, and comparing the answer to
+  what was asked for. Do not replace either check with a pattern that tries
+  to spot a bad path.
+- **Work from the worktree root, not from the agent's directory.** git
+  reports a diff with root-relative paths whatever directory it ran in, so a
+  session standing in a subdirectory gets a file list that does not agree
+  with its own diff. `worktree_root` is the one place that answers this.
+- **Inside a hunk, the first character of a line is the only thing that
+  matters.** Removing `-- a comment` writes `--- a comment`. Read as a header
+  it renamed the file and swallowed the rest of the hunk. Only `diff --git`
+  and `@@` may start something new, because content always carries its own
+  marker in front.
 - **The Files tab lists every file, and only stats the changed ones.** A
   repository holds tens of thousands of files and tens of changed ones. The
   modification time is read to sort those few and to know when to read the

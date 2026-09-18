@@ -698,6 +698,58 @@ def test_the_diff_tab_gets_the_box_too(repo_page):
             browser.close()
 
 
+def test_a_tab_comes_back_after_visiting_the_transcript(repo_page):
+    """The content box says which tab built it, and `split` rebuilds when that
+    is another tab. The transcript emptied the box without saying so, and the
+    next Files draw believed its columns were still there."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            for name in ("files", "diff"):
+                show_tab(page, name)
+                assert page.locator(".filelist button").count() > 0
+                show_tab(page, "transcript")
+                assert page.locator(".filelist").count() == 0
+                show_tab(page, name)
+                assert page.locator(".filelist button").count() > 0, name
+                assert page.eval_on_selector(
+                    "#find", "el => el.parentElement.className") == "findslot"
+        finally:
+            browser.close()
+
+
+def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
+    """The marker is part of what the list was drawn from. Left out of the
+    key, it only ever appeared when the sort order happened to move too."""
+    from conftest import git_in as git
+
+    root, _ = repo_page
+    # A pinned file sits in the same place whether it has changed or not, so
+    # the marker is the only thing that can say it did. A file that moves up
+    # the list when it changes hides the bug.
+    (root / "CLAUDE.md").write_text("# claude\n")
+    git(root, "add", "CLAUDE.md")
+    git(root, "commit", "-qm", "claude")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button")
+            where = ".filelist button.touched:has-text('CLAUDE.md')"
+            assert page.locator(where).count() == 0
+            assert page.eval_on_selector_all(
+                ".filelist button .name",
+                "els => els.map(e => e.textContent)")[0] == "CLAUDE.md"
+            (root / "CLAUDE.md").write_text("# claude\n\nedited\n")
+            page.wait_for_timeout(6000)      # the listing is asked for again
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "CLAUDE.md", "it should not have moved"
+            assert page.locator(where).count() == 1
+        finally:
+            browser.close()
+
+
 def test_a_worktree_without_markdown_says_so(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)

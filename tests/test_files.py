@@ -153,6 +153,22 @@ def test_a_pathspec_that_matches_another_name_is_refused(ws, seeded):
     answer has to come back spelled exactly as it was asked for."""
     assert ws.read_worktree_file(str(seeded), "*.py") is None
     assert ws.read_worktree_file(str(seeded), ":(glob)**/*.md") is None
+    assert ws.read_worktree_file(str(seeded), ":(exclude)code.py") is None
+
+
+def test_a_real_name_holding_glob_characters_is_read(ws, seeded):
+    """`report[1].csv` is a character class to git unless the pathspec says
+    the name means itself. The tab listed the file and then refused it."""
+    for name in ("report[1].csv", "a*star.txt", "back\\slash.txt"):
+        (seeded / name).write_text("real: " + name)
+        assert name in [one.path for one in ws.worktree_files(str(seeded)).files]
+        found = ws.read_worktree_file(str(seeded), name)
+        assert found is not None, name
+        assert found.text == "real: " + name
+
+
+def test_the_git_directory_is_not_readable(ws, seeded):
+    assert ws.read_worktree_file(str(seeded), ".git/config") is None
 
 
 def test_a_file_git_does_not_know_is_refused(ws, seeded):
@@ -276,6 +292,32 @@ def test_a_rename_is_read_from_the_rename_lines_when_the_header_lies(ws):
     assert one.status == "renamed"
 
 
+def test_a_removed_comment_is_not_read_as_a_file_header(ws):
+    """Removing `-- a comment` writes `--- a comment`. Read as a header that
+    renamed the file to "a comment" and swallowed the rest of the hunk."""
+    text = ("diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n"
+            "@@ -1,3 +1,3 @@\n"
+            "-- drop the old table\n"
+            "+++ keep the new one\n"
+            " select 1\n")
+    one = ws.parse_diff(text)[0]
+    assert one.path == "q.sql" and one.old_path == "q.sql"
+    assert one.status == "modified"
+    assert one.removed == 1 and one.added == 1
+    lines = one.hunks[0].lines
+    assert [line.kind for line in lines] == ["removed", "added", "context"]
+    assert lines[0].text == "- drop the old table"
+    assert lines[1].text == "++ keep the new one"
+
+
+def test_a_header_after_a_hunk_still_starts_the_next_file(ws):
+    text = ("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n"
+            "@@ -1 +1 @@\n-one\n+two\n"
+            "diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n"
+            "@@ -1 +1 @@\n-three\n+four\n")
+    assert [one.path for one in ws.parse_diff(text)] == ["a.txt", "b.txt"]
+
+
 def test_a_binary_file_is_marked(ws):
     text = ("diff --git a/logo.png b/logo.png\n"
             "index 1111111..2222222 100644\n"
@@ -318,6 +360,54 @@ def test_a_name_with_a_space_is_read_from_the_marker_lines(ws):
 
 
 # --- the whole report --------------------------------------------------------
+
+
+def test_a_rename_keeps_the_old_name_whole(ws, seeded):
+    """git writes the old name as a record of its own, with no status in front
+    of it. Treating every record the same cut three characters off it."""
+    git(seeded, "mv", "notes.md", "renamed_notes_file.md")
+    changed = ws.changed_files(str(seeded))
+    assert "renamed_notes_file.md" in changed
+    assert "notes.md" in changed
+
+
+def test_an_untracked_file_is_changed_too(ws, seeded):
+    (seeded / "brand-new.txt").write_text("x")
+    assert "brand-new.txt" in ws.changed_files(str(seeded))
+
+
+def test_the_root_is_found_from_a_subdirectory(ws, seeded):
+    (seeded / "deep" / "down").mkdir(parents=True)
+    assert ws.worktree_root(str(seeded / "deep" / "down")) == str(seeded)
+
+
+def test_a_session_in_a_subdirectory_sees_the_whole_worktree(ws, seeded):
+    """git reports a diff with paths relative to the root whatever directory
+    it ran in, so the file list beside it has to be root-relative too."""
+    (seeded / "deep").mkdir()
+    (seeded / "deep" / "here.txt").write_text("x")
+    (seeded / "top.txt").write_text("y")
+    report = ws.worktree_diff(str(seeded / "deep"))
+    assert report.untracked == ["deep/here.txt", "top.txt"]
+    tree = ws.worktree_files(str(seeded / "deep"))
+    assert tree.root == str(seeded)
+    assert "deep/here.txt" in [one.path for one in tree.files]
+
+
+def test_a_diff_git_could_not_read_is_not_an_empty_diff(ws, seeded):
+    """Saying "nothing changed" when git failed is the one answer a reader
+    would act on, and it would be wrong."""
+    def broken(args, **rest):
+        return None if "diff" in args else ws.run(args, **rest)
+
+    report = ws.worktree_diff(str(seeded), runner=broken)
+    assert report.failed is True
+    assert all(not section.files for section in report.sections)
+
+
+def test_a_diff_that_worked_is_not_marked_failed(ws, seeded):
+    (seeded / "notes.md").write_text("# notes\n\nchanged\n")
+    assert ws.worktree_diff(str(seeded)).failed is False
 
 
 def test_untracked_files_are_listed_in_name_order(ws, seeded):
