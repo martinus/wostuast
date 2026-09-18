@@ -161,7 +161,7 @@ ssh -N -L 7331:127.0.0.1:7331 you@your-server
 Leave that running and open `http://127.0.0.1:7331` on your own computer. The
 traffic is carried by SSH, and the server exposes nothing new.
 
-This is on purpose, not an oversight. From milestone 4 the page can type into
+This is on purpose, not an oversight. From milestone 5 the page can type into
 your tmux pane, and a port on the network that can type into a shell is not
 something to leave one firewall rule away. wostuast also checks the `Host`
 header, so a request for `http://your-server:7331/` is refused even if it
@@ -171,7 +171,7 @@ itself as the agents work: there is no reload button because there is nothing
 to reload.
 
 It sends no request back that changes anything, so nothing on that page can act
-on your behalf. Jump, send and peek arrive in milestone 4.
+on your behalf. Jump, send and peek arrive in milestone 5.
 
 ### The tabs
 
@@ -231,8 +231,8 @@ counts what it kept. `Esc` clears it.
 
 Milestones 1 to 3 of [`PLAN.md`](PLAN.md) are done: wostuast records your
 sessions, lists them in the terminal, and serves a live page with the
-transcript, the worktree's Markdown and its diff. Jump, send and peek come in
-milestone 4.
+transcript, the worktree's files and its diff. Milestone 4 makes those two
+tabs fit a large repository. Jump, send and peek come in milestone 5.
 
 `PLAN.md` is the complete brief. [`CLAUDE.md`](CLAUDE.md) says how to work in
 this repository.

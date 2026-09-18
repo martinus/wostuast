@@ -81,11 +81,12 @@ settings.
 - **A path out of the page is input too.** `read_worktree_file` opens a file
   only when `is_listed` says git offers that exact name, and only when
   `inside` says the resolved path is still in the worktree. The first rules
-  out `..`, an absolute path and an ignored file; the second rules out a
-  tracked symbolic link that points elsewhere. Keep all three parts of the
-  first one — the `:(literal)` prefix, the `--`, and comparing the answer to
-  what was asked for. Do not replace either check with a pattern that tries
-  to spot a bad path.
+  out `..` and an absolute path; the second rules out a tracked symbolic link
+  that points elsewhere. Keep all three parts of the first one — the
+  `:(literal)` prefix, the `--`, and comparing the answer to what was asked
+  for. An ignored file is asked about the same way, `--others --ignored`,
+  with all three parts again. Do not replace either check with a pattern that
+  tries to spot a bad path.
 - **Work from the worktree root, not from the agent's directory.** git
   reports a diff with root-relative paths whatever directory it ran in, so a
   session standing in a subdirectory gets a file list that does not agree
@@ -100,6 +101,16 @@ settings.
   modification time is read to sort those few and to know when to read the
   open file again; asking the disk about all of them, every poll, is the
   mistake to avoid.
+- **The page searches every name, or it says it cannot.** Sending the first
+  five thousand of 52,799 names made `libcorrelation` find 16 files and miss
+  a thousand. A search that sees part of the list gives a wrong answer that
+  looks like a right one.
+- **A git call that fails must not render as an empty answer.** The listing
+  ran under the 2 s timeout every other git call uses, and a large repository
+  timed out, and nothing came back, and nothing drew as "this worktree holds
+  no file that git knows about". "No files" and "git did not answer" look the
+  same and mean opposite things. The diff already had this fixed; the listing
+  did not.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 and sending no
   CORS header is not enough: a site can point its own name at 127.0.0.1 and the
   browser will then let it read us. `Handler.ours()` checks the Host header.
@@ -148,6 +159,9 @@ tool behind.
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
 2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
 3. **Read** — done. Files tab and Diff tab.
-4. **Act** — next. jump, send, Peek. Attention (title, icon, notifications)
+4. **Fit** — next. The two worktree tabs, on a real repository. Four stages
+   in order: correct, fast, room, read. `PLAN.md` section 9 lists what is in
+   each one.
+5. **Act** — jump, send, Peek. Attention (title, icon, notifications)
    arrived early, in milestone 2, because it was asked for.
-5. **Shine** — light theme, motion, empty states, README.
+6. **Shine** — light theme, motion, empty states, README.

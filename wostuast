@@ -2347,7 +2347,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
             finally:
                 daemon.hub.drop(client)
 
-    # The verbs a session route can end in. Milestone 4 adds peek here, and
+    # The verbs a session route can end in. Milestone 5 adds peek here, and
     # nothing else about the dispatch changes.
     GET_VERBS: dict[str, Any] = {
         "transcript": Handler.transcript,
@@ -4043,7 +4043,7 @@ function drawDiffCount() {
 
 // One entry per tab: how to draw it, how to fetch what it draws, and how often
 // to ask again while it is on screen (0 means it is pushed, not polled).
-// Milestone 4 adds peek as one more entry, and nothing else changes.
+// Milestone 5 adds peek as one more entry, and nothing else changes.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0 },
   files: { draw: drawFiles, load: loadFiles, poll: 2000 },
@@ -4221,7 +4221,7 @@ function mergeBlocks(blocks) {
 }
 
 function streamUrl() {
-  // Milestone 4 adds the tab here, so peek polls only while it is on screen.
+  // Milestone 5 adds the tab here, so peek polls only while it is on screen.
   return "/api/events" +
     (state.chosen ? "?watch=" + encodeURIComponent(state.chosen) : "");
 }
