@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -33,9 +34,41 @@ def browser_path() -> str | None:
     return None
 
 
-sync_playwright = pytest.importorskip(
+start_playwright = pytest.importorskip(
     "playwright.sync_api", reason="playwright is not installed"
 ).sync_playwright
+
+# One Playwright and one browser for the whole file. Starting Playwright costs
+# 0.43 s and launching Chromium 0.15 s, and there are fifty-odd tests here, so
+# half a minute of every run went on starting the same two things again and
+# again. A context costs 0.03 s and shares nothing — its own storage, its own
+# cookies — so each test is still on its own.
+_shared: list = []
+
+
+def shared_browser():
+    if not _shared:
+        play = start_playwright().start()
+        _shared.append(play)
+        _shared.append(play.chromium.launch(executable_path=browser_path(),
+                                            args=["--no-sandbox"]))
+    return _shared[1]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _close_the_browser():
+    yield
+    if _shared:
+        play, browser = _shared
+        browser.close()
+        play.stop()
+        _shared.clear()
+
+
+@contextmanager
+def sync_playwright():
+    """The shared browser, in the shape the tests already ask for it."""
+    yield shared_browser()
 
 pytestmark = pytest.mark.skipif(browser_path() is None, reason="no browser here")
 
@@ -93,25 +126,50 @@ def page_at(ws, tmp_path, monkeypatch, transcript_file):
 MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
 
 
-def open_page(play, where, scheme="dark", with_marked=True):
-    url = where[1] if isinstance(where, tuple) else where
-    browser = play.chromium.launch(executable_path=browser_path(),
-                                   args=["--no-sandbox"])
-    page = browser.new_page(viewport={"width": 1440, "height": 900},
-                            color_scheme=scheme)
-    # The two scripts the page fetches are answered from here, so no test
-    # needs a network. marked gets the real bytes, which means the page's
-    # `integrity` hash is checked for real on every one of these tests; the
-    # highlighter is refused, which is what being offline looks like, and the
-    # tests that want one hand the page a stand-in instead.
-    page.route("**/marked.min.js", lambda route: route.fulfill(
+# What each tab has drawn once its first answer has arrived. Waiting for the
+# thing itself beats sleeping for long enough: it is both quicker and surer.
+# The transcript shares the box with the two split tabs, so "the box has a
+# child" is already true while the file columns are still standing in it. It
+# has to have stopped being split as well.
+DRAWN = {"transcript": "#content:not(.split) > *", "files": ".filebody > *",
+         "diff": ".diffbody > *"}
+
+
+def fresh_context(play, scheme="dark", with_marked=True):
+    """A context of its own, with everything the page fetches answered from
+    here, so that no test needs a network.
+
+    marked gets the real bytes, which means the page's `integrity` hash is
+    checked for real on every one of these tests. The highlighter is refused,
+    which is what being offline looks like; the tests that want one hand the
+    page a stand-in instead. The fonts are answered empty: a stylesheet in the
+    head holds up the script after it, and no test looks at a typeface.
+    """
+    context = play.new_context(viewport={"width": 1440, "height": 900},
+                               color_scheme=scheme)
+    context.route("**/marked.min.js", lambda route: route.fulfill(
         path=str(MARKED), content_type="application/javascript",
         headers={"access-control-allow-origin": "*"})
         if with_marked else route.abort())
-    page.route("**/highlight.min.js", lambda route: route.abort())
+    context.route("**/highlight.min.js", lambda route: route.abort())
+    context.route("**/fonts.googleapis.com/**", lambda route: route.fulfill(
+        status=200, content_type="text/css", body=""))
+    return context
+
+
+def open_page(play, where, scheme="dark", with_marked=True):
+    """A fresh context on the shared browser. What comes back is the context,
+    so a test that closes `browser` closes its own and nobody else's."""
+    url = where[1] if isinstance(where, tuple) else where
+    browser = fresh_context(play, scheme, with_marked)
+    page = browser.new_page()
     page.goto(url, wait_until="domcontentloaded")
     page.wait_for_selector(".row", timeout=15000)
-    page.wait_for_timeout(600)
+    # Wait for the first draw rather than for a length of time.
+    ready = "document.querySelector('#content > *') !== null"
+    if with_marked:
+        ready = "!!window.marked && " + ready
+    page.wait_for_function(ready, timeout=15000)
     return browser, page
 
 
@@ -306,11 +364,9 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
     a dark machine could not work at all."""
     daemon, path = page_at
     with sync_playwright() as play:
-        browser = play.chromium.launch(executable_path=browser_path(),
-                                       args=["--no-sandbox"])
+        browser = fresh_context(play)
         try:
-            page = browser.new_page(viewport={"width": 1440, "height": 900},
-                                    color_scheme="dark")
+            page = browser.new_page()
             page.goto(path, wait_until="domcontentloaded")
             page.wait_for_selector(".row", timeout=15000)
             dark = page.evaluate("getComputedStyle(document.body).backgroundColor")
@@ -526,8 +582,9 @@ def big_page(ws, served, tmp_path):
 
 
 def show_tab(page, name):
+    """Open a tab and wait for its first answer, not for a fixed time."""
     page.click(f".tab[data-tab='{name}']")
-    page.wait_for_timeout(700)
+    page.wait_for_selector(DRAWN[name], timeout=15000)
 
 
 def test_the_files_tab_lists_every_file(repo_page):
@@ -658,10 +715,11 @@ def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
         try:
             show_tab(page, "files")
             page.eval_on_selector(".filebody", "el => el.scrollTop = 900")
-            page.wait_for_timeout(400)
             (root / "README.md").write_text(long_file + "\n\nand one more\n")
-            page.wait_for_timeout(3000)       # one poll, and then some
-            assert "and one more" in page.locator(".filebody .prose").inner_text()
+            # Wait for the new line to arrive, not for a poll to have passed.
+            page.wait_for_function(
+                "document.querySelector('.filebody .prose').innerText"
+                ".includes('and one more')", timeout=15000)
             where = page.eval_on_selector(".filebody", "el => el.scrollTop")
             assert where > 500, "the reader was thrown back to the top"
         finally:
@@ -778,11 +836,11 @@ def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
                 ".filelist button .name",
                 "els => els.map(e => e.textContent)")[0] == "CLAUDE.md"
             (root / "CLAUDE.md").write_text("# claude\n\nedited\n")
-            page.wait_for_timeout(6000)      # the listing is asked for again
+            # Wait for the dot, not for long enough that it must have come.
+            page.wait_for_selector(where, timeout=15000)
             names = page.eval_on_selector_all(
                 ".filelist button .name", "els => els.map(e => e.textContent)")
             assert names[0] == "CLAUDE.md", "it should not have moved"
-            assert page.locator(where).count() == 1
         finally:
             browser.close()
 

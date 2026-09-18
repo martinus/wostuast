@@ -20,7 +20,7 @@ things are and how to work here. When the two disagree, `PLAN.md` wins.
 ## Run it
 
 ```
-pytest -q                      # run before every commit
+pytest -q                      # run before every commit (about 2 minutes)
 pytest tests/test_page.py -q   # the page, in a real browser (skipped without one)
 ./wostuast doctor              # check the setup
 ./wostuast ls                  # list the sessions
@@ -139,6 +139,12 @@ settings.
   command an agent ran.
 - **Keep the raw payload.** Do not strip fields from a hook event. A new field
   from a newer Claude Code must not break an older wostuast.
+- **The page tests share one browser and wait for things, not for seconds.**
+  Starting Playwright costs 0.43 s and launching Chromium 0.15 s, so doing
+  both per test spent half a minute on nothing; each test gets its own
+  context instead, which costs 0.03 s and shares no storage. `open_page` and
+  `show_tab` wait for what the page has drawn. A `wait_for_timeout` is only
+  right when the test has to prove something did **not** happen.
 
 ## Style
 
