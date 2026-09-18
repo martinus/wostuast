@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+import conftest
+
 CHROMIUM = [
     "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
     "/usr/bin/chromium",
@@ -208,15 +210,32 @@ def test_expanding_a_tool_result_leaves_the_rest_alone(page_at):
 
 
 def test_a_tab_that_is_not_built_yet_does_nothing(page_at):
+    """Peek is milestone 4. Its key must leave the page exactly as it was."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             turns = page.locator(".turn").count()
-            page.keyboard.press("2")
+            page.keyboard.press("4")
             page.wait_for_timeout(200)
             assert page.locator(".tab[data-tab='transcript']").get_attribute(
                 "aria-selected") == "true"
             assert page.locator(".turn").count() == turns
+        finally:
+            browser.close()
+
+
+def test_a_number_key_picks_a_tab_that_is_built(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.keyboard.press("2")
+            page.wait_for_timeout(500)
+            assert page.locator(".tab[data-tab='files']").get_attribute(
+                "aria-selected") == "true"
+            assert page.locator(".filelist").count() == 1
+            page.keyboard.press("1")
+            page.wait_for_timeout(500)
+            assert page.locator(".turn").count() >= 2
         finally:
             browser.close()
 
@@ -440,5 +459,422 @@ def test_alerts_are_off_until_you_ask(page_at):
         try:
             assert page.locator("#bell").inner_text() == "alerts off"
             assert page.evaluate("Notification.permission") != "granted"
+        finally:
+            browser.close()
+
+
+# --- the Files tab and the Diff tab ------------------------------------------
+
+
+@pytest.fixture
+def repo_page(ws, served, repo):
+    """A session in a real repository: one committed change, one not."""
+    from conftest import git_in as git
+
+    (repo / "README.md").write_text("# The readme\n\nfirst line\n")
+    (repo / "code.py").write_text("print(1)\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "seed")
+    git(repo, "checkout", "-qb", "side")
+    (repo / "code.py").write_text("print(1)\nprint(2)\n")
+    git(repo, "commit", "-qam", "second")
+    (repo / "README.md").write_text("# The readme\n\nfirst line\nsecond line\n")
+    (repo / "NOTES.md").write_text("# Notes\n\n" + HOSTILE)
+
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(repo), ts=time.time(),
+                                   pane="%7", pid=1))
+    daemon.store.refresh()
+    return repo, base
+
+
+def show_tab(page, name):
+    page.click(f".tab[data-tab='{name}']")
+    page.wait_for_timeout(700)
+
+
+def test_the_files_tab_lists_every_file(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "README.md"          # pinned
+            assert set(names) == {"README.md", "NOTES.md", "code.py"}
+            assert "The readme" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(700)
+            assert page.locator(".filebody .prose").count() == 0
+            assert "print(1)" in page.locator(".filebody pre.plain").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_changed_file_is_marked(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            touched = page.eval_on_selector_all(
+                ".filelist button.touched .name", "els => els.map(e => e.textContent)")
+            assert sorted(touched) == ["NOTES.md", "README.md"]
+        finally:
+            browser.close()
+
+
+def test_typing_finds_a_file_by_scattered_letters(repo_page):
+    """A file picker, not a filter: `nsmd` has to find NOTES.md the way it does
+    in an editor. The letters must turn up in that order, but not together,
+    and the ones that matched are picked out."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "nsmd")
+            page.wait_for_timeout(400)
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names == ["NOTES.md"]
+            lit = page.eval_on_selector_all(
+                ".filelist .lit", "els => els.map(e => e.textContent).join('')")
+            assert lit.lower() == "nsmd"
+            # The letters have to be in order; these are the same four, not.
+            page.fill("#find", "dmsn")
+            page.wait_for_timeout(400)
+            assert page.locator(".filelist button").count() == 0
+        finally:
+            browser.close()
+
+
+def test_the_best_match_comes_first(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "py")
+            page.wait_for_timeout(400)
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "code.py"
+        finally:
+            browser.close()
+
+
+def test_a_name_that_matches_nothing_says_so(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "zzqq")
+            page.wait_for_timeout(400)
+            assert page.locator(".filelist button").count() == 0
+            assert "no name matches" in page.locator(".filelist").inner_text()
+        finally:
+            browser.close()
+
+
+def test_another_file_is_shown_when_it_is_picked(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            assert "Notes" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_hostile_file_cannot_run_either(repo_page):
+    """The Files tab renders a file the agent may never have looked at, so the
+    scrub matters here at least as much as in the transcript."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            assert page.evaluate("window.PWNED ?? null") is None
+            assert page.locator(".filebody img").count() == 0
+            assert page.locator(".filebody script").count() == 0
+            assert "onerror" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
+    root, _ = repo_page
+    long_file = "# The readme\n\n" + "\n\n".join(f"line {n}" for n in range(400))
+    (root / "README.md").write_text(long_file)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.eval_on_selector(".filebody", "el => el.scrollTop = 900")
+            page.wait_for_timeout(400)
+            (root / "README.md").write_text(long_file + "\n\nand one more\n")
+            page.wait_for_timeout(3000)       # one poll, and then some
+            assert "and one more" in page.locator(".filebody .prose").inner_text()
+            where = page.eval_on_selector(".filebody", "el => el.scrollTop")
+            assert where > 500, "the reader was thrown back to the top"
+        finally:
+            browser.close()
+
+
+def test_touching_another_file_leaves_the_open_one_alone(repo_page):
+    """The sidebar and the document are redrawn apart. One key over both meant
+    that an agent saving any Markdown re-rendered the file you were reading,
+    every two seconds, and threw away where you were in it."""
+    root, _ = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate(
+                "window.__doc = document.querySelector('.filebody .prose')")
+            (root / "NOTES.md").write_text("# Notes\n\ntouched again\n")
+            page.wait_for_timeout(3000)       # two polls
+            assert page.evaluate("window.__doc.isConnected"), \
+                "the open document was rebuilt for another file's change"
+        finally:
+            browser.close()
+
+
+def test_the_find_box_sits_above_the_file_list(repo_page):
+    """One box, moved to where it is used. Two would be two values to keep in
+    step, and `/` would have to guess which one it meant."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.id") == "findhome"
+            show_tab(page, "files")
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.className") == "findslot"
+            assert page.eval_on_selector(
+                "#find", "el => el.closest('.side') !== null")
+            # and it goes back when a tab without a list is chosen
+            show_tab(page, "transcript")
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.id") == "findhome"
+        finally:
+            browser.close()
+
+
+def test_the_find_box_keeps_focus_while_you_type(repo_page):
+    """It is moved only when its parent is wrong. Re-homing it on every draw
+    would detach it mid-keystroke and drop the caret."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click("#find")
+            page.keyboard.type("note", delay=60)
+            page.wait_for_timeout(400)
+            assert page.evaluate("document.activeElement.id") == "find"
+            assert page.input_value("#find") == "note"
+        finally:
+            browser.close()
+
+
+def test_the_diff_tab_gets_the_box_too(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.className") == "findslot"
+        finally:
+            browser.close()
+
+
+def test_a_tab_comes_back_after_visiting_the_transcript(repo_page):
+    """The content box says which tab built it, and `split` rebuilds when that
+    is another tab. The transcript emptied the box without saying so, and the
+    next Files draw believed its columns were still there."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            for name in ("files", "diff"):
+                show_tab(page, name)
+                assert page.locator(".filelist button").count() > 0
+                show_tab(page, "transcript")
+                assert page.locator(".filelist").count() == 0
+                show_tab(page, name)
+                assert page.locator(".filelist button").count() > 0, name
+                assert page.eval_on_selector(
+                    "#find", "el => el.parentElement.className") == "findslot"
+        finally:
+            browser.close()
+
+
+def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
+    """The marker is part of what the list was drawn from. Left out of the
+    key, it only ever appeared when the sort order happened to move too."""
+    from conftest import git_in as git
+
+    root, _ = repo_page
+    # A pinned file sits in the same place whether it has changed or not, so
+    # the marker is the only thing that can say it did. A file that moves up
+    # the list when it changes hides the bug.
+    (root / "CLAUDE.md").write_text("# claude\n")
+    git(root, "add", "CLAUDE.md")
+    git(root, "commit", "-qm", "claude")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button")
+            where = ".filelist button.touched:has-text('CLAUDE.md')"
+            assert page.locator(where).count() == 0
+            assert page.eval_on_selector_all(
+                ".filelist button .name",
+                "els => els.map(e => e.textContent)")[0] == "CLAUDE.md"
+            (root / "CLAUDE.md").write_text("# claude\n\nedited\n")
+            page.wait_for_timeout(6000)      # the listing is asked for again
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "CLAUDE.md", "it should not have moved"
+            assert page.locator(where).count() == 1
+        finally:
+            browser.close()
+
+
+def test_a_worktree_without_markdown_says_so(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            show_tab(page, "files")
+            assert "no file that git knows about" in \
+                page.locator(".filebody").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_diff_tab_keeps_the_two_halves_apart(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            heads = page.eval_on_selector_all(
+                ".diffhead", "els => els.map(e => e.textContent)")
+            assert heads == ["main...HEAD", "not committed yet"]
+            paths = page.eval_on_selector_all(
+                ".dfile .path", "els => els.map(e => e.textContent)")
+            assert paths == ["code.py", "README.md"]
+        finally:
+            browser.close()
+
+
+def test_the_diff_colours_what_changed(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            assert page.locator(".dline.added").count() >= 2
+            added = page.eval_on_selector_all(
+                ".dline.added", "els => els.map(e => e.textContent)")
+            assert any("second line" in line for line in added)
+            assert all(line.startswith("+") for line in added)
+        finally:
+            browser.close()
+
+
+def test_the_diff_tab_carries_its_counts(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            badge = page.locator("#diffcount").inner_text()
+            assert badge.startswith("+2")     # one line in each half
+        finally:
+            browser.close()
+
+
+def test_an_untracked_file_is_named(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            # The names are listed once, on the left; the note says what they
+            # are. Printing them in both places was the same list twice.
+            names = page.eval_on_selector_all(
+                ".filelist .plain", "els => els.map(e => e.textContent)")
+            assert names == ["NOTES.md"]
+            assert "1 untracked file" in page.locator(".diffbody .note").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_find_box_narrows_the_file_list(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.fill("#find", "readme")
+            page.wait_for_timeout(400)
+            paths = page.eval_on_selector_all(
+                ".dfile .path", "els => els.map(e => e.textContent)")
+            assert paths == ["README.md"]
+        finally:
+            browser.close()
+
+
+def test_a_long_file_starts_closed_and_opens_on_click(repo_page):
+    root, _ = repo_page
+    import subprocess
+    (root / "big.txt").write_text("\n".join(f"line {n}" for n in range(60)))
+    subprocess.run(["git", "-C", str(root), "add", "big.txt"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "big"], check=True,
+                   capture_output=True)
+    (root / "big.txt").write_text("\n".join(f"changed {n}" for n in range(60)))
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_timeout(400)
+            # The page owns the cut-off, so the test moves the page's own
+            # number rather than pretending the daemon sent a different one.
+            page.evaluate("BIG_LINES = 20; state.diffAt += 1; draw()")
+            page.wait_for_timeout(200)
+            big = page.locator(".dfile:has-text('big.txt')").last
+            assert "hidden" in big.locator(".why").inner_text()
+            assert big.locator(".dline").count() == 0
+            big.locator(".name").click()
+            page.wait_for_timeout(200)
+            assert big.locator(".dline").count() > 20
+        finally:
+            browser.close()
+
+
+def test_the_tabs_are_no_longer_disabled(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            for name in ("files", "diff"):
+                assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
+            assert page.locator(".tab[data-tab='peek']").is_disabled()
+        finally:
+            browser.close()
+
+
+def test_a_directory_that_is_not_a_repository_says_so(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            show_tab(page, "diff")
+            assert "no branch to compare" in page.locator(".diffbody").inner_text()
+            assert page.locator("#diffcount").is_hidden()
         finally:
             browser.close()

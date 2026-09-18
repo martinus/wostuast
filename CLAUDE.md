@@ -78,9 +78,41 @@ settings.
   through `safe_transcript`, which opens nothing outside the Claude config
   directory. `cwd` is used for git and for shortening paths, never to open a
   file the page asked for.
+- **A path out of the page is input too.** `read_worktree_file` opens a file
+  only when `is_listed` says git offers that exact name, and only when
+  `inside` says the resolved path is still in the worktree. The first rules
+  out `..`, an absolute path and an ignored file; the second rules out a
+  tracked symbolic link that points elsewhere. Keep all three parts of the
+  first one — the `:(literal)` prefix, the `--`, and comparing the answer to
+  what was asked for. Do not replace either check with a pattern that tries
+  to spot a bad path.
+- **Work from the worktree root, not from the agent's directory.** git
+  reports a diff with root-relative paths whatever directory it ran in, so a
+  session standing in a subdirectory gets a file list that does not agree
+  with its own diff. `worktree_root` is the one place that answers this.
+- **Inside a hunk, the first character of a line is the only thing that
+  matters.** Removing `-- a comment` writes `--- a comment`. Read as a header
+  it renamed the file and swallowed the rest of the hunk. Only `diff --git`
+  and `@@` may start something new, because content always carries its own
+  marker in front.
+- **The Files tab lists every file, and only stats the changed ones.** A
+  repository holds tens of thousands of files and tens of changed ones. The
+  modification time is read to sort those few and to know when to read the
+  open file again; asking the disk about all of them, every poll, is the
+  mistake to avoid.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 and sending no
   CORS header is not enough: a site can point its own name at 127.0.0.1 and the
   browser will then let it read us. `Handler.ours()` checks the Host header.
+- **The Files and Diff tabs poll from the browser, and only while on screen.**
+  `TABS` in the page holds one entry per tab — how to draw it, how to load it,
+  and how often to ask again — so a new tab is one entry, not six edits. The
+  daemon pushes the transcript and nothing else: it does not know which tab a
+  browser is on, and keeping it that way is why `Hub` stays small.
+- **A split tab keeps its two columns and redraws one at a time.** `split()`
+  builds them once and `fresh()` decides what changed, both reading the DOM
+  rather than a field in `state`. One key over the whole tab meant an agent
+  saving any Markdown re-rendered the file you were reading, every two
+  seconds, and lost your place in it.
 - **One lock around the transcript readers.** The tick thread and request
   threads both read them; two `read_new` calls at once move the byte offset
   twice, which looks like a shrinking file and re-reads everything.
@@ -115,7 +147,7 @@ tool behind.
 
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
 2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
-3. **Read** — next. Files tab and Diff tab.
-4. **Act** — jump, send, Peek. Attention (title, icon, notifications) arrived
-   early, in milestone 2, because it was asked for.
+3. **Read** — done. Files tab and Diff tab.
+4. **Act** — next. jump, send, Peek. Attention (title, icon, notifications)
+   arrived early, in milestone 2, because it was asked for.
 5. **Shine** — light theme, motion, empty states, README.

@@ -6,23 +6,7 @@ import subprocess
 
 import pytest
 
-
-def git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                   capture_output=True, text=True)
-
-
-@pytest.fixture
-def repo(tmp_path):
-    root = tmp_path / "myrepo"
-    root.mkdir()
-    git(root, "init", "-q", "-b", "main")
-    git(root, "config", "user.email", "t@example.com")
-    git(root, "config", "user.name", "T")
-    (root / "a.txt").write_text("one\n")
-    git(root, "add", "a.txt")
-    git(root, "commit", "-qm", "first")
-    return root
+from conftest import git_in as git
 
 
 def test_a_clean_repository(ws, repo):
@@ -35,7 +19,7 @@ def test_a_clean_repository(ws, repo):
 
 
 def test_a_dirty_repository_counts_its_files(ws, repo):
-    (repo / "a.txt").write_text("two\n")
+    (repo / "README.md").write_text("two\n")
     (repo / "b.txt").write_text("new\n")
     facts = ws.git_facts(str(repo))
     assert facts.dirty is True
@@ -178,7 +162,7 @@ def test_a_bare_layout_keeps_the_project_name(ws, tmp_path):
                    capture_output=True)
     git(seed, "config", "user.email", "t@e.com")
     git(seed, "config", "user.name", "T")
-    (seed / "a.txt").write_text("1\n")
+    (seed / "README.md").write_text("1\n")
     git(seed, "add", "."), git(seed, "commit", "-qm", "first")
     git(seed, "push", "-q", "origin", "main")
 
