@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 
 
 def test_tool_summaries(ws):
@@ -104,9 +106,21 @@ def test_no_color_when_asked(ws):
     assert ws.paint("x", "needs_you", color=True).startswith("\033[")
 
 
-def test_serve_says_it_is_not_here_yet(ws, capsys):
-    assert ws.cmd_serve(None) == 1
-    assert "milestone 2" in capsys.readouterr().err
+def test_serve_says_so_when_the_port_is_taken(ws, capsys):
+    """It must not crash with a traceback when another wostuast is running."""
+    import socket
+
+    held = socket.socket()
+    held.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    held.bind((ws.BIND_HOST, 0))
+    held.listen(1)
+    port = held.getsockname()[1]
+    try:
+        args = argparse.Namespace(port=port, open=False)
+        assert ws.cmd_serve(args) == 1
+        assert "cannot listen" in capsys.readouterr().err
+    finally:
+        held.close()
 
 
 def test_hook_and_status_skip_the_argument_parser(ws, monkeypatch):

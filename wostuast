@@ -76,6 +76,18 @@ WRITING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"}
 #: How much of a prompt the page is sent. It has the transcript for the rest.
 PROMPT_WIDTH = 500
 
+#: Loopback only, always. The page can reach the tmux verbs, so this port must
+#: never be offered to the network. See PLAN.md section 4.4.1.
+BIND_HOST = "127.0.0.1"
+DEFAULT_PORT = 7331
+
+#: How often the daemon looks for new events.
+TICK = 1.0
+
+#: A browser that stops reading is dropped rather than allowed to grow without
+#: limit. Twenty updates is far more than a live page is ever behind by.
+CLIENT_BACKLOG = 20
+
 EVENTS_MAX_BYTES = 20 * 1024 * 1024
 LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
@@ -1529,6 +1541,236 @@ def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
     return "\n".join(lines)
 
 
+# --- the daemon: one page, a little JSON, and a stream of changes ------------
+
+
+class Client:
+    """One browser tab listening to the event stream."""
+
+    def __init__(self, watching: str = "") -> None:
+        import queue
+
+        self.queue: Any = queue.Queue(maxsize=CLIENT_BACKLOG)
+        self.watching = watching
+
+    def put(self, message: str) -> None:
+        """Queue a message, and drop the oldest rather than block or grow."""
+        import queue
+
+        try:
+            self.queue.put_nowait(message)
+        except queue.Full:
+            try:
+                self.queue.get_nowait()
+                self.queue.put_nowait(message)
+            except (queue.Empty, queue.Full):
+                pass
+
+
+class Hub:
+    """The browsers that are listening. Separate from the Store, because a tab
+    closing has nothing to do with what the agents are doing."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.clients: set[Client] = set()
+        self.lock = threading.Lock()
+
+    def add(self, watching: str = "") -> Client:
+        client = Client(watching)
+        with self.lock:
+            self.clients.add(client)
+        return client
+
+    def drop(self, client: Client) -> None:
+        with self.lock:
+            self.clients.discard(client)
+
+    def watchers(self) -> set[str]:
+        with self.lock:
+            return {c.watching for c in self.clients if c.watching}
+
+    def send(self, kind: str, data: Any, session_id: str = "") -> None:
+        """Send to every client, or only to those watching one session."""
+        body = json.dumps(data, ensure_ascii=False, default=str)
+        message = f"event: {kind}\ndata: {body}\n\n"
+        with self.lock:
+            targets = [
+                client
+                for client in self.clients
+                if not session_id or client.watching == session_id
+            ]
+        for client in targets:
+            client.put(message)
+
+
+class Daemon:
+    """The Store, the browsers, and the one thread that writes to the Store."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.store = Store()
+        self.hub = Hub()
+        self.transcripts: dict[str, Transcript] = {}
+        self.stopping = threading.Event()
+        self.started = time.time()
+
+    def session(self, session_id: str) -> Session | None:
+        return self.store.sessions.get(session_id)
+
+    def transcript(self, session_id: str) -> Transcript | None:
+        """The transcript reader for a session, made on first use."""
+        session = self.session(session_id)
+        if session is None or not session.transcript_path:
+            return None
+        held = self.transcripts.get(session_id)
+        if held is None or held.tail.path != Path(session.transcript_path):
+            held = Transcript(session.transcript_path, session.cwd)
+            self.transcripts[session_id] = held
+        return held
+
+    def sessions_payload(self) -> dict[str, Any]:
+        return {"now": time.time(), "sessions": self.store.rows}
+
+    def tick(self) -> None:
+        """One pass: fold new events, then tell the browsers what changed."""
+        if self.store.refresh():
+            self.hub.send("sessions", self.sessions_payload())
+        for session_id in self.hub.watchers():
+            reader = self.transcript(session_id)
+            if reader is None:
+                continue
+            changed = reader.read_new()
+            if changed:
+                self.hub.send("transcript",
+                              {"id": session_id, "blocks": blocks_json(changed)},
+                              session_id=session_id)
+
+    def run(self) -> None:
+        while not self.stopping.is_set():
+            try:
+                self.tick()
+            except Exception as error:  # a bad tick must not stop the daemon
+                log(f"tick failed: {error!r}")
+            self.stopping.wait(TICK)
+
+
+def blocks_json(blocks: Sequence[Block]) -> list[dict[str, Any]]:
+    """Blocks as the page wants them. Results are cut: the page shows a line."""
+    out = []
+    for index, block in enumerate(blocks):
+        data = asdict(block)
+        data["result"] = clip_lines(block.result, 40)
+        out.append(data)
+    return out
+
+
+def clip_lines(text: str, limit: int) -> str:
+    """Keep the first lines of a tool result, and say how many were dropped."""
+    if not text:
+        return ""
+    lines = text.splitlines()
+    if len(lines) <= limit:
+        return text
+    rest = len(lines) - limit
+    return "\n".join(lines[:limit]) + f"\n… {rest} more line{'s' if rest > 1 else ''}"
+
+
+def make_server(daemon: Daemon, port: int) -> Any:
+    """Build the HTTP server. The imports are here, not at the top of the file,
+    because the hook runs on every tool call and must not pay for them."""
+    import queue
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        server_version = f"wostuast/{VERSION}"
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            pass  # the access log goes nowhere; our own log has what matters
+
+        def reply(self, code: int, body: bytes, kind: str) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            # No Access-Control-Allow-Origin, ever. Another site may send a
+            # request here, but without this header it cannot read the answer.
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def reply_json(self, data: Any, code: int = 200) -> None:
+            body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+            self.reply(code, body, "application/json; charset=utf-8")
+
+        def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
+            from urllib.parse import parse_qs, urlparse
+
+            url = urlparse(self.path)
+            path = url.path
+            query = parse_qs(url.query)
+            try:
+                if path == "/":
+                    self.reply(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
+                elif path == "/api/sessions":
+                    self.reply_json(daemon.sessions_payload())
+                elif path == "/api/events":
+                    self.stream(query.get("watch", [""])[0])
+                elif path.startswith("/api/session/") and path.endswith("/transcript"):
+                    self.transcript(path.split("/")[3])
+                else:
+                    self.reply_json({"error": "no such thing"}, 404)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception as error:
+                log(f"request {self.path} failed: {error!r}")
+                try:
+                    self.reply_json({"error": "something went wrong"}, 500)
+                except OSError:
+                    pass
+
+        def transcript(self, session_id: str) -> None:
+            reader = daemon.transcript(session_id)
+            if reader is None:
+                session = daemon.session(session_id)
+                where = session.transcript_path if session else ""
+                self.reply_json({"id": session_id, "blocks": [],
+                                 "missing": where or "no transcript for this session"})
+                return
+            reader.read_new()
+            self.reply_json({"id": session_id,
+                             "blocks": blocks_json(reader.blocks)})
+
+        def stream(self, watching: str) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            client = daemon.hub.add(watching)
+            try:
+                first = json.dumps(daemon.sessions_payload(), default=str)
+                self.wfile.write(f"event: sessions\ndata: {first}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                while not daemon.stopping.is_set():
+                    try:
+                        message = client.queue.get(timeout=15.0)
+                    except queue.Empty:
+                        message = ": still here\n\n"  # a comment keeps it open
+                    self.wfile.write(message.encode("utf-8"))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                daemon.hub.drop(client)
+
+    server = ThreadingHTTPServer((BIND_HOST, port), Handler)
+    server.daemon_threads = True
+    return server
+
+
 # --- commands ----------------------------------------------------------------
 
 
@@ -1813,8 +2055,45 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    print("serve arrives in milestone 2. For now use `wostuast ls`.", file=sys.stderr)
-    return 1
+    """Start the daemon and serve the page on 127.0.0.1."""
+    import threading
+
+    port = getattr(args, "port", None) or DEFAULT_PORT
+    daemon = Daemon()
+    try:
+        server = make_server(daemon, port)
+    except OSError as error:
+        print(f"cannot listen on {BIND_HOST}:{port}: {error}", file=sys.stderr)
+        print("another wostuast may already be running.", file=sys.stderr)
+        return 1
+
+    where = f"http://{BIND_HOST}:{port}/"
+    daemon.store.refresh()
+    worker = threading.Thread(target=daemon.run, name="wostuast-refresh", daemon=True)
+    worker.start()
+    print(f"wostuast is watching {len(daemon.store.rows)} session(s) at {where}")
+    print("press ctrl-c to stop.")
+    if getattr(args, "open", False):
+        open_browser(where)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print()
+    finally:
+        daemon.stopping.set()
+        server.shutdown()
+        server.server_close()
+    return 0
+
+
+def open_browser(where: str) -> None:
+    """Open the page. A machine with no browser is not an error."""
+    try:
+        import webbrowser
+
+        webbrowser.open(where)
+    except Exception as error:
+        log(f"could not open a browser: {error!r}")
 
 
 # --- command line ------------------------------------------------------------
@@ -1837,11 +2116,16 @@ def build_parser() -> argparse.ArgumentParser:
         ("status", cmd_status, "the status line entry point; reads JSON from stdin"),
         ("ls", cmd_ls, "list the sessions"),
         ("doctor", cmd_doctor, "check the setup"),
-        ("serve", cmd_serve, "start the daemon (milestone 2)"),
+        ("serve", cmd_serve, "start the daemon and serve the page"),
     ]
     for name, handler, help_text in commands:
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
         sub.set_defaults(handler=handler)
+        if name == "serve":
+            sub.add_argument("--port", type=int, default=DEFAULT_PORT,
+                             help=f"the port to listen on (default {DEFAULT_PORT})")
+            sub.add_argument("--open", action="store_true",
+                             help="open the page in a browser")
     return parser
 
 
@@ -1866,3 +2150,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# --- the page ----------------------------------------------------------------
+
+PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>wostuast</title></head>
+<body>The page arrives next. The daemon is running.</body></html>
+"""
