@@ -206,3 +206,18 @@ def test_a_result_that_is_a_list_of_blocks(ws):
     assert ws.result_text([{"type": "text", "text": "one"}, "two"]) == "one\ntwo"
     assert ws.result_text("plain") == "plain"
     assert ws.result_text(None) == ""
+
+
+def test_a_write_gets_no_line_counts(ws, tmp_path):
+    """Section 4.6 asks for counts on an edit. A whole new file has none worth
+    showing, and `Write PLAN.md +1` reads like a diff when it is not."""
+    path = tmp_path / "t.jsonl"
+    path.write_text(json.dumps({
+        "type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "w1", "name": "Write",
+             "input": {"file_path": "/w/dir/PLAN.md", "content": "# plan\n"}}]},
+    }) + "\n")
+    block = ws.Transcript(str(path), "/w/dir").read_new()[0]
+    assert block.tool == "Write"
+    assert block.target == "PLAN.md"
+    assert (block.added, block.removed) == (0, 0)

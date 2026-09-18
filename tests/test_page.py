@@ -1,0 +1,165 @@
+"""The page, driven in a real browser.
+
+These run only where a browser is available. They exist because the one bug
+that mattered here could not be seen any other way: raw HTML was scrubbed
+after being written into the document, by which time an `onerror` had already
+fired. Nothing short of a browser catches that.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+CHROMIUM = [
+    "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+]
+
+
+def browser_path() -> str | None:
+    for candidate in [os.environ.get("WOSTUAST_CHROME", "")] + CHROMIUM:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+sync_playwright = pytest.importorskip(
+    "playwright.sync_api", reason="playwright is not installed"
+).sync_playwright
+
+pytestmark = pytest.mark.skipif(browser_path() is None, reason="no browser here")
+
+
+HOSTILE = (
+    "Read from a README:\n\n"
+    '<img src=x onerror="window.PWNED=1">\n'
+    "<script>window.PWNED=2</script>\n"
+    "[click me](javascript:window.PWNED=3)\n\n"
+    "A fence needing a real `>`:\n\n```python\nif len(hits) > 1:\n    raise Ambiguous\n```\n"
+)
+
+
+@pytest.fixture
+def page_at(ws, tmp_path, monkeypatch):
+    """A daemon with one session whose transcript holds hostile Markdown."""
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("\n".join(json.dumps(r) for r in [
+        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
+         "message": {"role": "user", "content": "Do the thing."}},
+        {"type": "assistant", "timestamp": "2026-09-18T14:03:00.000Z",
+         "message": {"role": "assistant",
+                     "content": [{"type": "text", "text": HOSTILE}]}},
+    ]) + "\n")
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": str(tmp_path), "pane": "%7", "pid": 1,
+                     "ts": time.time(), "transcript_path": str(transcript)})
+    ws.write_status("s1", ws.Status(ts=1.0, name="A session", model="Opus 5",
+                                    context_pct=41.0))
+
+    daemon = ws.Daemon()
+    server = ws.make_server(daemon, 0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    daemon.store.refresh()
+    try:
+        yield f"http://127.0.0.1:{port}/"
+    finally:
+        daemon.stopping.set()
+        server.shutdown()
+        server.server_close()
+
+
+def open_page(play, url, scheme="dark"):
+    browser = play.chromium.launch(executable_path=browser_path(),
+                                   args=["--no-sandbox"])
+    page = browser.new_page(viewport={"width": 1440, "height": 900},
+                            color_scheme=scheme)
+    page.goto(url, wait_until="domcontentloaded")
+    page.wait_for_selector(".row", timeout=15000)
+    page.wait_for_timeout(600)
+    return browser, page
+
+
+def test_the_page_draws_the_session(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.locator(".row").count() == 1
+            assert "A session" in page.locator(".row .name").inner_text()
+            assert page.title() == "wostuast"
+            assert "Opus 5" in page.locator("#facts").inner_text()
+            assert page.locator(".turn").count() >= 2
+        finally:
+            browser.close()
+
+
+def test_hostile_markdown_cannot_run(page_at):
+    """An agent that reads a nasty file must not be able to act on this page.
+    The page shares an origin with the tmux verbs, so this is the whole game."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.evaluate("window.PWNED ?? null") is None
+            assert page.locator(".prose img").count() == 0
+            assert page.locator(".prose script").count() == 0
+            hrefs = page.eval_on_selector_all(
+                ".prose a", "els => els.map(e => e.getAttribute('href'))")
+            assert all(h is None or h.startswith(("http", "#")) for h in hrefs)
+        finally:
+            browser.close()
+
+
+def test_raw_html_is_shown_rather_than_swallowed(page_at):
+    """The reader should see what the agent saw, as text."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            shown = page.locator(".prose").last.inner_text()
+            assert "onerror" in shown
+            assert "window.PWNED=2" in shown
+        finally:
+            browser.close()
+
+
+def test_a_code_fence_keeps_its_angle_bracket(page_at):
+    """Escaping the Markdown source instead of the output turned `>` into
+    `&gt;` inside fences. This is that regression."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            fence = page.locator(".prose pre").last.inner_text()
+            assert "len(hits) > 1" in fence
+            assert "&gt;" not in fence
+        finally:
+            browser.close()
+
+
+def test_both_themes_are_readable(page_at):
+    """PLAN.md section 5.2 asks for a light theme from the start."""
+    with sync_playwright() as play:
+        seen = {}
+        for scheme in ("dark", "light"):
+            browser, page = open_page(play, page_at, scheme)
+            try:
+                seen[scheme] = (
+                    page.evaluate("getComputedStyle(document.body).backgroundColor"),
+                    page.evaluate(
+                        "getComputedStyle(document.querySelector('.prose pre code'))"
+                        ".color"),
+                )
+            finally:
+                browser.close()
+        assert seen["dark"][0] != seen["light"][0], "the light theme did not apply"
+        assert seen["dark"][1] != seen["light"][1], "code would be unreadable"

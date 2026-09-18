@@ -16,7 +16,7 @@ It runs on your machine. It never owns the agent process; tmux does.
 wostuast install     # register the hooks in ~/.claude/settings.json
 wostuast doctor      # check the setup and say what is missing
 wostuast ls          # one row per session
-wostuast serve       # start the daemon and serve the page (milestone 2)
+wostuast serve       # start the daemon and serve the page
 wostuast status      # the status line entry point; Claude Code calls this
 wostuast uninstall   # remove the hooks; keep the event log
 ```
@@ -96,7 +96,7 @@ still see every session, but jump, send and peek stay hidden.
 | `wostuast status` | The status line entry point. Reads a status payload from stdin. |
 | `wostuast ls` | List the sessions, in the order of the page's sidebar. |
 | `wostuast doctor` | Check python, the state directory, the log, the hooks, tmux. |
-| `wostuast serve` | Start the daemon and serve the page. Arrives in milestone 2. |
+| `wostuast serve` | Start the daemon and serve the page on 127.0.0.1. |
 
 You call `install`, `uninstall`, `ls` and `doctor`. Claude Code calls `hook`
 and `status`.
@@ -140,11 +140,33 @@ context percent.
 Claude Code names a session after its first prompt, and `/rename` changes that
 name. wostuast reads the name and never writes it.
 
+## The page
+
+```
+wostuast serve --open
+```
+
+It listens on `127.0.0.1:7331` and nowhere else. The page shows a session list
+on the left and the selected session's transcript on the right, and it updates
+itself as the agents work: there is no reload button because there is nothing
+to reload.
+
+It sends no request back that changes anything, so nothing on that page can act
+on your behalf. Jump, send and peek arrive in milestone 4.
+
+The page renders what an agent wrote, and an agent may have read a hostile
+file. So Markdown is parsed into an inert document, cut down to an allowlist of
+elements, and only then shown; raw HTML is displayed as text rather than obeyed.
+There are tests in a real browser for exactly this.
+
+Light and dark both work, following your system setting.
+
 ## Status
 
-Milestone 1 of [`PLAN.md`](PLAN.md) is done: wostuast records your sessions and
-shows them in the terminal. `serve` and the page come in milestone 2, and the
-screenshots come with them.
+Milestones 1 and 2 of [`PLAN.md`](PLAN.md) are done: wostuast records your
+sessions, lists them in the terminal, and serves a live page with the
+transcript. The Files and Diff tabs come in milestone 3, and jump, send and
+peek in milestone 4.
 
 `PLAN.md` is the complete brief. [`CLAUDE.md`](CLAUDE.md) says how to work in
 this repository.

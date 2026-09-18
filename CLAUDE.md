@@ -21,6 +21,7 @@ things are and how to work here. When the two disagree, `PLAN.md` wins.
 
 ```
 pytest -q                      # run before every commit
+pytest tests/test_page.py -q   # the page, in a real browser (skipped without one)
 ./wostuast doctor              # check the setup
 ./wostuast ls                  # list the sessions
 ```
@@ -43,7 +44,16 @@ settings.
   move it into `src/` or split it: the install one-liner curls that exact path,
   and a split would need a build step, which `PLAN.md` rules out.
 - **Standard library only.** Python 3.10 or newer. No pip install. JavaScript
-  libraries are allowed only when vendored into the single file.
+  libraries are allowed only when vendored into the single file. Exactly one is
+  vendored: `marked`, inside `PAGE`, with its licence header.
+- **The page never trusts what an agent wrote.** Markdown is parsed into an
+  inert `<template>`, scrubbed to an allowlist, and only then inserted. Values
+  from events are set with `textContent`. Assigning to `innerHTML` first would
+  fire an `onerror` before any scrub could run; that was a real bug, and
+  `tests/test_page.py` is what keeps it fixed.
+- **The `__main__` guard stays at the very end**, after `PAGE`. It used to sit
+  before it, so running as a script started the daemon and `PAGE` was never
+  assigned. Importing the module hid it.
 - **Ask first** before adding a dependency, a file besides `wostuast` and
   `tests/`, or a tmux command beyond jump, send and peek.
 - **Prefer deleting a feature over adding a config option.**
@@ -74,7 +84,9 @@ settings.
   one idea per sentence, active voice. Same as `PLAN.md`.
 - Type hints everywhere. `dataclass` for the models.
 - Every section of `wostuast` starts with a `# --- name: one line ---` comment.
-- No global mutable state except one `Store`.
+- No module-level mutable state. The daemon owns a `Store` for what the agents
+  are doing and a `Hub` for the browsers listening. One thread writes the
+  Store; readers take `rows`, which is replaced whole, so there is no lock.
 - Git and tmux run through `subprocess` with a short timeout, and an error
   there never crashes anything.
 
@@ -90,7 +102,7 @@ From `PLAN.md` section 9. Commit at the end of each one, and leave a working
 tool behind.
 
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
-2. **Watch** — next. `serve`, the sidebar and the Transcript tab, live over SSE.
-3. **Read** — Files tab and Diff tab.
+2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
+3. **Read** — next. Files tab and Diff tab.
 4. **Act** — jump, send, Peek, attention.
 5. **Shine** — light theme, motion, empty states, README.

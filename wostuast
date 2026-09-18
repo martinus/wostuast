@@ -70,6 +70,9 @@ GIT_MIN_INTERVAL = 10.0
 #: How often to ask whether the agents are still running.
 LIVENESS_INTERVAL = 5.0
 
+#: Tools whose line counts the transcript shows, as `+added −removed`.
+COUNTED_TOOLS = frozenset({"Edit", "MultiEdit", "NotebookEdit"})
+
 #: A finished tool of one of these kinds probably changed the working tree.
 WRITING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"})
 
@@ -1118,7 +1121,9 @@ class Transcript:
         elif kind == "tool_use":
             name = str(piece.get("name") or "")
             tool_input = piece.get("input")
-            added, removed = edit_counts(tool_input)
+            # Section 4.6 asks for counts on an edit. A Write is one whole file
+            # and its line count says nothing useful, so it does not get them.
+            added, removed = edit_counts(tool_input) if name in COUNTED_TOOLS else (0, 0)
             block = Block(kind="tool", ts=ts, tool=name,
                           target=tool_target(name, tool_input, self.cwd),
                           added=added, removed=removed,
@@ -2148,13 +2153,684 @@ def main(argv: Sequence[str] | None = None) -> int:
     return handler(args)
 
 
+
+# --- the page: one HTML file, with marked vendored into it ------------------
+
+#: Everything the browser gets. Markdown is rendered by marked, which is
+#: vendored here with its licence header kept, because the plan allows one
+#: JavaScript library and no build step. It does not sanitize, so the page
+#: escapes every Markdown source before parsing it and sets every value that
+#: came from an agent with textContent. See PLAN.md section 4.4.1.
+PAGE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wostuast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --bg: #14151a; --panel: #191a20; --raised: #1f2129; --chosen: #262834;
+  --edge: #2a2c36; --edge-bright: #3a3d4a;
+  --ink: #d6d8e0; --ink-bright: #f3f4f8; --ink-soft: #a3a7b6;
+  --ink-mute: #8b8f9e; --ink-faint: #6f7385;
+  --needs: #e0a642; --needs-warm: #f0c068; --working: #6bbf8a; --done: #5b9bd5;
+  --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
+  --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
+  --code: #0f1014; --code-ink: #c9ccd8;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f5f1; --panel: #efeee9; --raised: #e7e6e0; --chosen: #dedcd4;
+    --edge: #d8d6cd; --edge-bright: #c3c0b5;
+    --ink: #2f3138; --ink-bright: #14151a; --ink-soft: #4c4f58;
+    --ink-mute: #6a6d76; --ink-faint: #8b8e96;
+    --needs: #a86c10; --needs-warm: #8a5709; --working: #2f7f52;
+    --done: #2a6ea8;
+    --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
+    --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
+    --code: #eceae3; --code-ink: #33363d;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14151a; --panel: #191a20; --raised: #1f2129; --chosen: #262834;
+  --edge: #2a2c36; --edge-bright: #3a3d4a;
+  --ink: #d6d8e0; --ink-bright: #f3f4f8; --ink-soft: #a3a7b6;
+  --ink-mute: #8b8f9e; --ink-faint: #6f7385;
+  --needs: #e0a642; --working: #6bbf8a; --done: #5b9bd5; --code: #0f1014; --code-ink: #c9ccd8;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 14px; overflow: hidden;
+}
+.app { height: 100vh; display: flex; flex-direction: column; }
+
+/* top bar */
+.topbar {
+  height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 16px;
+  padding: 0 16px; border-bottom: 1px solid var(--edge); background: var(--panel);
+  font-family: var(--mono); font-size: 13px;
+}
+.brand { font-weight: 600; color: var(--needs); letter-spacing: .04em; }
+.topbar .where { color: var(--ink-faint); }
+.counts { margin-left: auto; display: flex; gap: 6px; align-items: center;
+  color: var(--ink-mute); }
+.counts .sep { color: var(--edge-bright); margin: 0 6px; }
+.dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%; }
+.dot.needs_you { background: var(--needs); }
+.dot.working { background: var(--working); }
+.dot.done { background: var(--done); }
+.dot.starting { border: 1px solid var(--ink-faint); }
+.dot.ended, .dot.dead { border: 1px solid var(--edge-bright); }
+
+/* body */
+.body { flex-grow: 1; display: flex; min-height: 0; }
+.sidebar {
+  width: 340px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--edge); background: var(--panel);
+}
+.sidebar-head {
+  padding: 12px 16px 8px; font-family: var(--mono); font-size: 11px;
+  color: var(--ink-faint); letter-spacing: .08em; text-transform: uppercase;
+}
+.rows { flex-grow: 1; overflow-y: auto; padding: 0 8px 8px; }
+.row {
+  margin-bottom: 6px; padding: 10px 12px; border-radius: 6px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid transparent;
+}
+.row:hover { background: var(--raised); }
+.row.chosen { background: var(--chosen); border-color: var(--edge-bright); }
+.row .line1 {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 13px; min-width: 0;
+}
+.row .name {
+  color: var(--ink); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; flex-grow: 1;
+}
+.row.chosen .name { color: var(--ink-bright); font-weight: 600; }
+.row .word { flex-shrink: 0; }
+.row.needs_you .word { color: var(--needs); }
+.row.working .word { color: var(--working); }
+.row.done .word { color: var(--done); }
+.row.starting .word, .row.ended .word, .row.dead .word { color: var(--ink-faint); }
+.row.ended, .row.dead { opacity: .62; }
+.row .line2 {
+  display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
+  padding-left: 17px; min-width: 0;
+}
+.row .line2 .branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .line3 {
+  font-size: 12px; color: var(--ink-mute); padding-left: 17px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dirty { color: var(--needs); }
+.clean { color: var(--working); }
+.ahead { color: var(--ink-faint); }
+.row .dot { transition: background .2s ease, border-color .2s ease; }
+.row.needs_you .dot { box-shadow: 0 0 0 3px rgba(224,166,66,.25); animation: ring 2s ease-in-out infinite; }
+@keyframes ring {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(224,166,66,.25); }
+  50% { box-shadow: 0 0 0 5px rgba(224,166,66,.10); }
+}
+@media (prefers-reduced-motion: reduce) { .row.needs_you .dot { animation: none; } }
+.hints {
+  flex-shrink: 0; padding: 12px 16px; border-top: 1px solid var(--edge);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint); line-height: 1.8;
+}
+.hints b { color: var(--ink-soft); font-weight: 500; }
+
+/* main */
+.main { flex-grow: 1; display: flex; flex-direction: column; min-width: 0; }
+.session-head {
+  height: 56px; flex-shrink: 0; display: flex; align-items: center; gap: 16px;
+  padding: 0 24px; border-bottom: 1px solid var(--edge); min-width: 0;
+}
+.session-head .title {
+  font-family: var(--mono); font-size: 16px; font-weight: 600;
+  color: var(--ink-bright); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-head .facts {
+  font-family: var(--mono); font-size: 13px; color: var(--ink-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tabs {
+  height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
+  padding: 0 24px; border-bottom: 1px solid var(--edge);
+  font-family: var(--mono); font-size: 13px;
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 12px;
+  color: var(--ink-mute); border-bottom: 2px solid transparent;
+  background: none; border-top: 0; border-left: 0; border-right: 0;
+  font: inherit; cursor: pointer;
+}
+.tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
+.tab:disabled { color: var(--edge-bright); cursor: default; }
+.live { margin-left: auto; display: inline-flex; align-items: center;
+  color: var(--ink-faint); font-size: 12px; }
+.content { flex-grow: 1; overflow-y: auto; padding: 20px 24px; min-height: 0; }
+
+/* transcript */
+.turn { display: flex; gap: 12px; margin-bottom: 14px; animation: slide .15s ease-out; }
+@keyframes slide { from { transform: translateY(4px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .turn { animation: none; } }
+.who {
+  width: 64px; flex-shrink: 0; padding-top: 2px; font-family: var(--mono);
+  font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.5;
+}
+.who.claude { color: var(--needs); }
+.bubble {
+  flex-grow: 1; padding: 10px 14px; border-radius: 6px; background: var(--raised);
+  border: 1px solid var(--edge); line-height: 1.5; min-width: 0;
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.prose { flex-grow: 1; line-height: 1.55; min-width: 0; }
+.prose > *:first-child { margin-top: 0; }
+.prose > *:last-child { margin-bottom: 0; }
+.prose h1, .prose h2, .prose h3 {
+  font-size: 16px; font-weight: 600; color: var(--ink-bright); margin: 14px 0 8px;
+}
+.prose p { margin: 0 0 8px; }
+.prose ul, .prose ol { margin: 0 0 8px; padding-left: 22px; }
+.prose li { margin: 3px 0; }
+.prose code {
+  font-family: var(--mono); font-size: 12.5px; padding: 1px 5px;
+  border-radius: 4px; background: var(--chosen); color: var(--needs-warm);
+}
+.prose pre {
+  padding: 10px 14px; border-radius: 6px; background: var(--code);
+  border: 1px solid var(--edge); overflow-x: auto; margin: 0 0 8px;
+}
+.prose pre code { background: none; padding: 0; color: var(--code-ink); font-size: 12.5px; }
+.prose a { color: var(--needs); }
+.prose blockquote {
+  margin: 0 0 8px; padding-left: 12px; border-left: 2px solid var(--edge-bright);
+  color: var(--ink-mute);
+}
+.prose table { border-collapse: collapse; margin: 0 0 8px; }
+.prose th, .prose td { border: 1px solid var(--edge); padding: 4px 10px; text-align: left; }
+
+.tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-mute); min-width: 0; }
+.tool { display: flex; gap: 8px; align-items: baseline; cursor: pointer;
+  background: none; border: 0; font: inherit; color: inherit; padding: 0;
+  text-align: left; width: 100%; }
+.tool .caret { color: var(--edge-bright); width: 10px; flex-shrink: 0; }
+.tool .target { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.tool .plus { color: var(--working); }
+.tool .minus { color: var(--cut-ink); }
+.tool.failed .name { color: var(--cut-ink); }
+.tool-result {
+  margin: 2px 0 6px 18px; padding: 8px 12px; border-radius: 6px;
+  background: var(--code); border: 1px solid var(--edge); color: var(--code-ink);
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-wrap: break-word; max-height: 320px; overflow: auto;
+}
+.divider {
+  display: flex; align-items: center; gap: 10px; margin: 14px 0;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.divider::before, .divider::after {
+  content: ""; flex-grow: 1; height: 1px; background: var(--edge);
+}
+.thinking .bubble { background: none; border-style: dashed; color: var(--ink-mute); font-style: italic; }
+body:not(.show-thinking) .thinking { display: none; }
+
+.empty { color: var(--ink-mute); max-width: 52ch; line-height: 1.6; }
+.empty code { font-family: var(--mono); background: var(--chosen); padding: 2px 6px;
+  border-radius: 4px; color: var(--needs-warm); }
+.empty h2 { font-size: 16px; color: var(--ink-bright); margin: 0 0 10px; }
+
+.lost {
+  display: none; padding: 6px 16px; background: rgba(217,119,87,.16);
+  color: var(--cut-ink); font-family: var(--mono); font-size: 12px;
+  border-bottom: 1px solid var(--edge);
+}
+body.lost .lost { display: block; }
+
+dialog.help {
+  border: 1px solid var(--edge-bright); border-radius: 8px; background: var(--panel);
+  color: var(--ink); padding: 18px 22px; font-family: var(--mono); font-size: 13px;
+}
+dialog.help::backdrop { background: rgba(0,0,0,.5); }
+dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
+dialog.help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
+dialog.help dt { color: var(--needs); }
+dialog.help dd { margin: 0; color: var(--ink-mute); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="lost">connection lost — reconnecting…</div>
+  <div class="topbar">
+    <div class="brand">wostuast</div>
+    <div class="where" id="where">—</div>
+    <div class="counts" id="counts"></div>
+  </div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="sidebar-head">Sessions</div>
+      <div class="rows" id="rows"></div>
+      <div class="hints">
+        <div><b>j k</b> move &nbsp; <b>n</b> next needs-you</div>
+        <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>?</b> keys</div>
+      </div>
+    </div>
+    <div class="main">
+      <div class="session-head">
+        <div class="title" id="title">no session</div>
+        <div class="facts" id="facts"></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="transcript">1 Transcript</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="files" disabled>2 Files</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="diff" disabled>3 Diff</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="peek" disabled>4 Peek</button>
+        <div class="live" id="live"></div>
+      </div>
+      <div class="content" id="content"></div>
+    </div>
+  </div>
+</div>
+
+<dialog class="help" id="help">
+  <h2>Keys</h2>
+  <dl>
+    <dt>j / k</dt><dd>move down and up the list</dd>
+    <dt>n</dt><dd>jump to the next session that needs you</dd>
+    <dt>1 – 4</dt><dd>tabs (only Transcript so far)</dd>
+    <dt>t</dt><dd>show or hide thinking</dd>
+    <dt>?</dt><dd>this list</dd>
+    <dt>Esc</dt><dd>close</dd>
+  </dl>
+</dialog>
+
+<script>/**
+ * marked v12.0.2 - a markdown parser
+ * Copyright (c) 2011-2024, Christopher Jeffrey. (MIT Licensed)
+ * https://github.com/markedjs/marked
+ */
+!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):"function"==typeof define&&define.amd?define(["exports"],t):t((e="undefined"!=typeof globalThis?globalThis:e||self).marked={})}(this,(function(e){"use strict";function t(){return{async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null}}function n(t){e.defaults=t}e.defaults={async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null};const s=/[&<>"']/,r=new RegExp(s.source,"g"),i=/[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/,l=new RegExp(i.source,"g"),o={"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"},a=e=>o[e];function c(e,t){if(t){if(s.test(e))return e.replace(r,a)}else if(i.test(e))return e.replace(l,a);return e}const h=/&(#(?:\d+)|(?:#x[0-9A-Fa-f]+)|(?:\w+));?/gi;function p(e){return e.replace(h,((e,t)=>"colon"===(t=t.toLowerCase())?":":"#"===t.charAt(0)?"x"===t.charAt(1)?String.fromCharCode(parseInt(t.substring(2),16)):String.fromCharCode(+t.substring(1)):""))}const u=/(^|[^\[])\^/g;function k(e,t){let n="string"==typeof e?e:e.source;t=t||"";const s={replace:(e,t)=>{let r="string"==typeof t?t:t.source;return r=r.replace(u,"$1"),n=n.replace(e,r),s},getRegex:()=>new RegExp(n,t)};return s}function g(e){try{e=encodeURI(e).replace(/%25/g,"%")}catch(e){return null}return e}const f={exec:()=>null};function d(e,t){const n=e.replace(/\|/g,((e,t,n)=>{let s=!1,r=t;for(;--r>=0&&"\\"===n[r];)s=!s;return s?"|":" |"})).split(/ \|/);let s=0;if(n[0].trim()||n.shift(),n.length>0&&!n[n.length-1].trim()&&n.pop(),t)if(n.length>t)n.splice(t);else for(;n.length<t;)n.push("");for(;s<n.length;s++)n[s]=n[s].trim().replace(/\\\|/g,"|");return n}function x(e,t,n){const s=e.length;if(0===s)return"";let r=0;for(;r<s;){const i=e.charAt(s-r-1);if(i!==t||n){if(i===t||!n)break;r++}else r++}return e.slice(0,s-r)}function b(e,t,n,s){const r=t.href,i=t.title?c(t.title):null,l=e[1].replace(/\\([\[\]])/g,"$1");if("!"!==e[0].charAt(0)){s.state.inLink=!0;const e={type:"link",raw:n,href:r,title:i,text:l,tokens:s.inlineTokens(l)};return s.state.inLink=!1,e}return{type:"image",raw:n,href:r,title:i,text:c(l)}}class w{options;rules;lexer;constructor(t){this.options=t||e.defaults}space(e){const t=this.rules.block.newline.exec(e);if(t&&t[0].length>0)return{type:"space",raw:t[0]}}code(e){const t=this.rules.block.code.exec(e);if(t){const e=t[0].replace(/^ {1,4}/gm,"");return{type:"code",raw:t[0],codeBlockStyle:"indented",text:this.options.pedantic?e:x(e,"\n")}}}fences(e){const t=this.rules.block.fences.exec(e);if(t){const e=t[0],n=function(e,t){const n=e.match(/^(\s+)(?:```)/);if(null===n)return t;const s=n[1];return t.split("\n").map((e=>{const t=e.match(/^\s+/);if(null===t)return e;const[n]=t;return n.length>=s.length?e.slice(s.length):e})).join("\n")}(e,t[3]||"");return{type:"code",raw:e,lang:t[2]?t[2].trim().replace(this.rules.inline.anyPunctuation,"$1"):t[2],text:n}}}heading(e){const t=this.rules.block.heading.exec(e);if(t){let e=t[2].trim();if(/#$/.test(e)){const t=x(e,"#");this.options.pedantic?e=t.trim():t&&!/ $/.test(t)||(e=t.trim())}return{type:"heading",raw:t[0],depth:t[1].length,text:e,tokens:this.lexer.inline(e)}}}hr(e){const t=this.rules.block.hr.exec(e);if(t)return{type:"hr",raw:t[0]}}blockquote(e){const t=this.rules.block.blockquote.exec(e);if(t){let e=t[0].replace(/\n {0,3}((?:=+|-+) *)(?=\n|$)/g,"\n    $1");e=x(e.replace(/^ *>[ \t]?/gm,""),"\n");const n=this.lexer.state.top;this.lexer.state.top=!0;const s=this.lexer.blockTokens(e);return this.lexer.state.top=n,{type:"blockquote",raw:t[0],tokens:s,text:e}}}list(e){let t=this.rules.block.list.exec(e);if(t){let n=t[1].trim();const s=n.length>1,r={type:"list",raw:"",ordered:s,start:s?+n.slice(0,-1):"",loose:!1,items:[]};n=s?`\\d{1,9}\\${n.slice(-1)}`:`\\${n}`,this.options.pedantic&&(n=s?n:"[*+-]");const i=new RegExp(`^( {0,3}${n})((?:[\t ][^\\n]*)?(?:\\n|$))`);let l="",o="",a=!1;for(;e;){let n=!1;if(!(t=i.exec(e)))break;if(this.rules.block.hr.test(e))break;l=t[0],e=e.substring(l.length);let s=t[2].split("\n",1)[0].replace(/^\t+/,(e=>" ".repeat(3*e.length))),c=e.split("\n",1)[0],h=0;this.options.pedantic?(h=2,o=s.trimStart()):(h=t[2].search(/[^ ]/),h=h>4?1:h,o=s.slice(h),h+=t[1].length);let p=!1;if(!s&&/^ *$/.test(c)&&(l+=c+"\n",e=e.substring(c.length+1),n=!0),!n){const t=new RegExp(`^ {0,${Math.min(3,h-1)}}(?:[*+-]|\\d{1,9}[.)])((?:[ \t][^\\n]*)?(?:\\n|$))`),n=new RegExp(`^ {0,${Math.min(3,h-1)}}((?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})(?:\\n+|$)`),r=new RegExp(`^ {0,${Math.min(3,h-1)}}(?:\`\`\`|~~~)`),i=new RegExp(`^ {0,${Math.min(3,h-1)}}#`);for(;e;){const a=e.split("\n",1)[0];if(c=a,this.options.pedantic&&(c=c.replace(/^ {1,4}(?=( {4})*[^ ])/g,"  ")),r.test(c))break;if(i.test(c))break;if(t.test(c))break;if(n.test(e))break;if(c.search(/[^ ]/)>=h||!c.trim())o+="\n"+c.slice(h);else{if(p)break;if(s.search(/[^ ]/)>=4)break;if(r.test(s))break;if(i.test(s))break;if(n.test(s))break;o+="\n"+c}p||c.trim()||(p=!0),l+=a+"\n",e=e.substring(a.length+1),s=c.slice(h)}}r.loose||(a?r.loose=!0:/\n *\n *$/.test(l)&&(a=!0));let u,k=null;this.options.gfm&&(k=/^\[[ xX]\] /.exec(o),k&&(u="[ ] "!==k[0],o=o.replace(/^\[[ xX]\] +/,""))),r.items.push({type:"list_item",raw:l,task:!!k,checked:u,loose:!1,text:o,tokens:[]}),r.raw+=l}r.items[r.items.length-1].raw=l.trimEnd(),r.items[r.items.length-1].text=o.trimEnd(),r.raw=r.raw.trimEnd();for(let e=0;e<r.items.length;e++)if(this.lexer.state.top=!1,r.items[e].tokens=this.lexer.blockTokens(r.items[e].text,[]),!r.loose){const t=r.items[e].tokens.filter((e=>"space"===e.type)),n=t.length>0&&t.some((e=>/\n.*\n/.test(e.raw)));r.loose=n}if(r.loose)for(let e=0;e<r.items.length;e++)r.items[e].loose=!0;return r}}html(e){const t=this.rules.block.html.exec(e);if(t){return{type:"html",block:!0,raw:t[0],pre:"pre"===t[1]||"script"===t[1]||"style"===t[1],text:t[0]}}}def(e){const t=this.rules.block.def.exec(e);if(t){const e=t[1].toLowerCase().replace(/\s+/g," "),n=t[2]?t[2].replace(/^<(.*)>$/,"$1").replace(this.rules.inline.anyPunctuation,"$1"):"",s=t[3]?t[3].substring(1,t[3].length-1).replace(this.rules.inline.anyPunctuation,"$1"):t[3];return{type:"def",tag:e,raw:t[0],href:n,title:s}}}table(e){const t=this.rules.block.table.exec(e);if(!t)return;if(!/[:|]/.test(t[2]))return;const n=d(t[1]),s=t[2].replace(/^\||\| *$/g,"").split("|"),r=t[3]&&t[3].trim()?t[3].replace(/\n[ \t]*$/,"").split("\n"):[],i={type:"table",raw:t[0],header:[],align:[],rows:[]};if(n.length===s.length){for(const e of s)/^ *-+: *$/.test(e)?i.align.push("right"):/^ *:-+: *$/.test(e)?i.align.push("center"):/^ *:-+ *$/.test(e)?i.align.push("left"):i.align.push(null);for(const e of n)i.header.push({text:e,tokens:this.lexer.inline(e)});for(const e of r)i.rows.push(d(e,i.header.length).map((e=>({text:e,tokens:this.lexer.inline(e)}))));return i}}lheading(e){const t=this.rules.block.lheading.exec(e);if(t)return{type:"heading",raw:t[0],depth:"="===t[2].charAt(0)?1:2,text:t[1],tokens:this.lexer.inline(t[1])}}paragraph(e){const t=this.rules.block.paragraph.exec(e);if(t){const e="\n"===t[1].charAt(t[1].length-1)?t[1].slice(0,-1):t[1];return{type:"paragraph",raw:t[0],text:e,tokens:this.lexer.inline(e)}}}text(e){const t=this.rules.block.text.exec(e);if(t)return{type:"text",raw:t[0],text:t[0],tokens:this.lexer.inline(t[0])}}escape(e){const t=this.rules.inline.escape.exec(e);if(t)return{type:"escape",raw:t[0],text:c(t[1])}}tag(e){const t=this.rules.inline.tag.exec(e);if(t)return!this.lexer.state.inLink&&/^<a /i.test(t[0])?this.lexer.state.inLink=!0:this.lexer.state.inLink&&/^<\/a>/i.test(t[0])&&(this.lexer.state.inLink=!1),!this.lexer.state.inRawBlock&&/^<(pre|code|kbd|script)(\s|>)/i.test(t[0])?this.lexer.state.inRawBlock=!0:this.lexer.state.inRawBlock&&/^<\/(pre|code|kbd|script)(\s|>)/i.test(t[0])&&(this.lexer.state.inRawBlock=!1),{type:"html",raw:t[0],inLink:this.lexer.state.inLink,inRawBlock:this.lexer.state.inRawBlock,block:!1,text:t[0]}}link(e){const t=this.rules.inline.link.exec(e);if(t){const e=t[2].trim();if(!this.options.pedantic&&/^</.test(e)){if(!/>$/.test(e))return;const t=x(e.slice(0,-1),"\\");if((e.length-t.length)%2==0)return}else{const e=function(e,t){if(-1===e.indexOf(t[1]))return-1;let n=0;for(let s=0;s<e.length;s++)if("\\"===e[s])s++;else if(e[s]===t[0])n++;else if(e[s]===t[1]&&(n--,n<0))return s;return-1}(t[2],"()");if(e>-1){const n=(0===t[0].indexOf("!")?5:4)+t[1].length+e;t[2]=t[2].substring(0,e),t[0]=t[0].substring(0,n).trim(),t[3]=""}}let n=t[2],s="";if(this.options.pedantic){const e=/^([^'"]*[^\s])\s+(['"])(.*)\2/.exec(n);e&&(n=e[1],s=e[3])}else s=t[3]?t[3].slice(1,-1):"";return n=n.trim(),/^</.test(n)&&(n=this.options.pedantic&&!/>$/.test(e)?n.slice(1):n.slice(1,-1)),b(t,{href:n?n.replace(this.rules.inline.anyPunctuation,"$1"):n,title:s?s.replace(this.rules.inline.anyPunctuation,"$1"):s},t[0],this.lexer)}}reflink(e,t){let n;if((n=this.rules.inline.reflink.exec(e))||(n=this.rules.inline.nolink.exec(e))){const e=t[(n[2]||n[1]).replace(/\s+/g," ").toLowerCase()];if(!e){const e=n[0].charAt(0);return{type:"text",raw:e,text:e}}return b(n,e,n[0],this.lexer)}}emStrong(e,t,n=""){let s=this.rules.inline.emStrongLDelim.exec(e);if(!s)return;if(s[3]&&n.match(/[\p{L}\p{N}]/u))return;if(!(s[1]||s[2]||"")||!n||this.rules.inline.punctuation.exec(n)){const n=[...s[0]].length-1;let r,i,l=n,o=0;const a="*"===s[0][0]?this.rules.inline.emStrongRDelimAst:this.rules.inline.emStrongRDelimUnd;for(a.lastIndex=0,t=t.slice(-1*e.length+n);null!=(s=a.exec(t));){if(r=s[1]||s[2]||s[3]||s[4]||s[5]||s[6],!r)continue;if(i=[...r].length,s[3]||s[4]){l+=i;continue}if((s[5]||s[6])&&n%3&&!((n+i)%3)){o+=i;continue}if(l-=i,l>0)continue;i=Math.min(i,i+l+o);const t=[...s[0]][0].length,a=e.slice(0,n+s.index+t+i);if(Math.min(n,i)%2){const e=a.slice(1,-1);return{type:"em",raw:a,text:e,tokens:this.lexer.inlineTokens(e)}}const c=a.slice(2,-2);return{type:"strong",raw:a,text:c,tokens:this.lexer.inlineTokens(c)}}}}codespan(e){const t=this.rules.inline.code.exec(e);if(t){let e=t[2].replace(/\n/g," ");const n=/[^ ]/.test(e),s=/^ /.test(e)&&/ $/.test(e);return n&&s&&(e=e.substring(1,e.length-1)),e=c(e,!0),{type:"codespan",raw:t[0],text:e}}}br(e){const t=this.rules.inline.br.exec(e);if(t)return{type:"br",raw:t[0]}}del(e){const t=this.rules.inline.del.exec(e);if(t)return{type:"del",raw:t[0],text:t[2],tokens:this.lexer.inlineTokens(t[2])}}autolink(e){const t=this.rules.inline.autolink.exec(e);if(t){let e,n;return"@"===t[2]?(e=c(t[1]),n="mailto:"+e):(e=c(t[1]),n=e),{type:"link",raw:t[0],text:e,href:n,tokens:[{type:"text",raw:e,text:e}]}}}url(e){let t;if(t=this.rules.inline.url.exec(e)){let e,n;if("@"===t[2])e=c(t[0]),n="mailto:"+e;else{let s;do{s=t[0],t[0]=this.rules.inline._backpedal.exec(t[0])?.[0]??""}while(s!==t[0]);e=c(t[0]),n="www."===t[1]?"http://"+t[0]:t[0]}return{type:"link",raw:t[0],text:e,href:n,tokens:[{type:"text",raw:e,text:e}]}}}inlineText(e){const t=this.rules.inline.text.exec(e);if(t){let e;return e=this.lexer.state.inRawBlock?t[0]:c(t[0]),{type:"text",raw:t[0],text:e}}}}const m=/^ {0,3}((?:-[\t ]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})(?:\n+|$)/,y=/(?:[*+-]|\d{1,9}[.)])/,$=k(/^(?!bull |blockCode|fences|blockquote|heading|html)((?:.|\n(?!\s*?\n|bull |blockCode|fences|blockquote|heading|html))+?)\n {0,3}(=+|-+) *(?:\n+|$)/).replace(/bull/g,y).replace(/blockCode/g,/ {4}/).replace(/fences/g,/ {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g,/ {0,3}>/).replace(/heading/g,/ {0,3}#{1,6}/).replace(/html/g,/ {0,3}<[^\n>]+>\n/).getRegex(),z=/^([^\n]+(?:\n(?!hr|heading|lheading|blockquote|fences|list|html|table| +\n)[^\n]+)*)/,T=/(?!\s*\])(?:\\.|[^\[\]\\])+/,R=k(/^ {0,3}\[(label)\]: *(?:\n *)?([^<\s][^\s]*|<.*?>)(?:(?: +(?:\n *)?| *\n *)(title))? *(?:\n+|$)/).replace("label",T).replace("title",/(?:"(?:\\"?|[^"\\])*"|'[^'\n]*(?:\n[^'\n]+)*\n?'|\([^()]*\))/).getRegex(),_=k(/^( {0,3}bull)([ \t][^\n]+?)?(?:\n|$)/).replace(/bull/g,y).getRegex(),A="address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul",S=/<!--(?:-?>|[\s\S]*?(?:-->|$))/,I=k("^ {0,3}(?:<(script|pre|style|textarea)[\\s>][\\s\\S]*?(?:</\\1>[^\\n]*\\n+|$)|comment[^\\n]*(\\n+|$)|<\\?[\\s\\S]*?(?:\\?>\\n*|$)|<![A-Z][\\s\\S]*?(?:>\\n*|$)|<!\\[CDATA\\[[\\s\\S]*?(?:\\]\\]>\\n*|$)|</?(tag)(?: +|\\n|/?>)[\\s\\S]*?(?:(?:\\n *)+\\n|$)|<(?!script|pre|style|textarea)([a-z][\\w-]*)(?:attribute)*? */?>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n *)+\\n|$)|</(?!script|pre|style|textarea)[a-z][\\w-]*\\s*>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n *)+\\n|$))","i").replace("comment",S).replace("tag",A).replace("attribute",/ +[a-zA-Z:_][\w.:-]*(?: *= *"[^"\n]*"| *= *'[^'\n]*'| *= *[^\s"'=<>`]+)?/).getRegex(),E=k(z).replace("hr",m).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("|table","").replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",A).getRegex(),q={blockquote:k(/^( {0,3}> ?(paragraph|[^\n]*)(?:\n|$))+/).replace("paragraph",E).getRegex(),code:/^( {4}[^\n]+(?:\n(?: *(?:\n|$))*)?)+/,def:R,fences:/^ {0,3}(`{3,}(?=[^`\n]*(?:\n|$))|~{3,})([^\n]*)(?:\n|$)(?:|([\s\S]*?)(?:\n|$))(?: {0,3}\1[~`]* *(?=\n|$)|$)/,heading:/^ {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/,hr:m,html:I,lheading:$,list:_,newline:/^(?: *(?:\n|$))+/,paragraph:E,table:f,text:/^[^\n]+/},Z=k("^ *([^\\n ].*)\\n {0,3}((?:\\| *)?:?-+:? *(?:\\| *:?-+:? *)*(?:\\| *)?)(?:\\n((?:(?! *\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)").replace("hr",m).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("blockquote"," {0,3}>").replace("code"," {4}[^\\n]").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",A).getRegex(),L={...q,table:Z,paragraph:k(z).replace("hr",m).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("table",Z).replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",A).getRegex()},P={...q,html:k("^ *(?:comment *(?:\\n|\\s*$)|<(tag)[\\s\\S]+?</\\1> *(?:\\n{2,}|\\s*$)|<tag(?:\"[^\"]*\"|'[^']*'|\\s[^'\"/>\\s]*)*?/?> *(?:\\n{2,}|\\s*$))").replace("comment",S).replace(/tag/g,"(?!(?:a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)\\b)\\w+(?!:|[^\\w\\s@]*@)\\b").getRegex(),def:/^ *\[([^\]]+)\]: *<?([^\s>]+)>?(?: +(["(][^\n]+[")]))? *(?:\n+|$)/,heading:/^(#{1,6})(.*)(?:\n+|$)/,fences:f,lheading:/^(.+?)\n {0,3}(=+|-+) *(?:\n+|$)/,paragraph:k(z).replace("hr",m).replace("heading"," *#{1,6} *[^\n]").replace("lheading",$).replace("|table","").replace("blockquote"," {0,3}>").replace("|fences","").replace("|list","").replace("|html","").replace("|tag","").getRegex()},Q=/^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/,v=/^( {2,}|\\)\n(?!\s*$)/,B="\\p{P}\\p{S}",C=k(/^((?![*_])[\spunctuation])/,"u").replace(/punctuation/g,B).getRegex(),M=k(/^(?:\*+(?:((?!\*)[punct])|[^\s*]))|^_+(?:((?!_)[punct])|([^\s_]))/,"u").replace(/punct/g,B).getRegex(),O=k("^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)[punct](\\*+)(?=[\\s]|$)|[^punct\\s](\\*+)(?!\\*)(?=[punct\\s]|$)|(?!\\*)[punct\\s](\\*+)(?=[^punct\\s])|[\\s](\\*+)(?!\\*)(?=[punct])|(?!\\*)[punct](\\*+)(?!\\*)(?=[punct])|[^punct\\s](\\*+)(?=[^punct\\s])","gu").replace(/punct/g,B).getRegex(),D=k("^[^_*]*?\\*\\*[^_*]*?_[^_*]*?(?=\\*\\*)|[^_]+(?=[^_])|(?!_)[punct](_+)(?=[\\s]|$)|[^punct\\s](_+)(?!_)(?=[punct\\s]|$)|(?!_)[punct\\s](_+)(?=[^punct\\s])|[\\s](_+)(?!_)(?=[punct])|(?!_)[punct](_+)(?!_)(?=[punct])","gu").replace(/punct/g,B).getRegex(),j=k(/\\([punct])/,"gu").replace(/punct/g,B).getRegex(),H=k(/^<(scheme:[^\s\x00-\x1f<>]*|email)>/).replace("scheme",/[a-zA-Z][a-zA-Z0-9+.-]{1,31}/).replace("email",/[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/).getRegex(),U=k(S).replace("(?:--\x3e|$)","--\x3e").getRegex(),X=k("^comment|^</[a-zA-Z][\\w:-]*\\s*>|^<[a-zA-Z][\\w-]*(?:attribute)*?\\s*/?>|^<\\?[\\s\\S]*?\\?>|^<![a-zA-Z]+\\s[\\s\\S]*?>|^<!\\[CDATA\\[[\\s\\S]*?\\]\\]>").replace("comment",U).replace("attribute",/\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/).getRegex(),F=/(?:\[(?:\\.|[^\[\]\\])*\]|\\.|`[^`]*`|[^\[\]\\`])*?/,N=k(/^!?\[(label)\]\(\s*(href)(?:\s+(title))?\s*\)/).replace("label",F).replace("href",/<(?:\\.|[^\n<>\\])+>|[^\s\x00-\x1f]*/).replace("title",/"(?:\\"?|[^"\\])*"|'(?:\\'?|[^'\\])*'|\((?:\\\)?|[^)\\])*\)/).getRegex(),G=k(/^!?\[(label)\]\[(ref)\]/).replace("label",F).replace("ref",T).getRegex(),J=k(/^!?\[(ref)\](?:\[\])?/).replace("ref",T).getRegex(),K={_backpedal:f,anyPunctuation:j,autolink:H,blockSkip:/\[[^[\]]*?\]\([^\(\)]*?\)|`[^`]*?`|<[^<>]*?>/g,br:v,code:/^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/,del:f,emStrongLDelim:M,emStrongRDelimAst:O,emStrongRDelimUnd:D,escape:Q,link:N,nolink:J,punctuation:C,reflink:G,reflinkSearch:k("reflink|nolink(?!\\()","g").replace("reflink",G).replace("nolink",J).getRegex(),tag:X,text:/^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/,url:f},V={...K,link:k(/^!?\[(label)\]\((.*?)\)/).replace("label",F).getRegex(),reflink:k(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label",F).getRegex()},W={...K,escape:k(Q).replace("])","~|])").getRegex(),url:k(/^((?:ftp|https?):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/,"i").replace("email",/[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(),_backpedal:/(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/,del:/^(~~?)(?=[^\s~])([\s\S]*?[^\s~])\1(?=[^~]|$)/,text:/^([`~]+|[^`~])(?:(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|https?:\/\/|ftp:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)))/},Y={...W,br:k(v).replace("{2,}","*").getRegex(),text:k(W.text).replace("\\b_","\\b_| {2,}\\n").replace(/\{2,\}/g,"*").getRegex()},ee={normal:q,gfm:L,pedantic:P},te={normal:K,gfm:W,breaks:Y,pedantic:V};class ne{tokens;options;state;tokenizer;inlineQueue;constructor(t){this.tokens=[],this.tokens.links=Object.create(null),this.options=t||e.defaults,this.options.tokenizer=this.options.tokenizer||new w,this.tokenizer=this.options.tokenizer,this.tokenizer.options=this.options,this.tokenizer.lexer=this,this.inlineQueue=[],this.state={inLink:!1,inRawBlock:!1,top:!0};const n={block:ee.normal,inline:te.normal};this.options.pedantic?(n.block=ee.pedantic,n.inline=te.pedantic):this.options.gfm&&(n.block=ee.gfm,this.options.breaks?n.inline=te.breaks:n.inline=te.gfm),this.tokenizer.rules=n}static get rules(){return{block:ee,inline:te}}static lex(e,t){return new ne(t).lex(e)}static lexInline(e,t){return new ne(t).inlineTokens(e)}lex(e){e=e.replace(/\r\n|\r/g,"\n"),this.blockTokens(e,this.tokens);for(let e=0;e<this.inlineQueue.length;e++){const t=this.inlineQueue[e];this.inlineTokens(t.src,t.tokens)}return this.inlineQueue=[],this.tokens}blockTokens(e,t=[]){let n,s,r,i;for(e=this.options.pedantic?e.replace(/\t/g,"    ").replace(/^ +$/gm,""):e.replace(/^( *)(\t+)/gm,((e,t,n)=>t+"    ".repeat(n.length)));e;)if(!(this.options.extensions&&this.options.extensions.block&&this.options.extensions.block.some((s=>!!(n=s.call({lexer:this},e,t))&&(e=e.substring(n.raw.length),t.push(n),!0)))))if(n=this.tokenizer.space(e))e=e.substring(n.raw.length),1===n.raw.length&&t.length>0?t[t.length-1].raw+="\n":t.push(n);else if(n=this.tokenizer.code(e))e=e.substring(n.raw.length),s=t[t.length-1],!s||"paragraph"!==s.type&&"text"!==s.type?t.push(n):(s.raw+="\n"+n.raw,s.text+="\n"+n.text,this.inlineQueue[this.inlineQueue.length-1].src=s.text);else if(n=this.tokenizer.fences(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.heading(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.hr(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.blockquote(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.list(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.html(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.def(e))e=e.substring(n.raw.length),s=t[t.length-1],!s||"paragraph"!==s.type&&"text"!==s.type?this.tokens.links[n.tag]||(this.tokens.links[n.tag]={href:n.href,title:n.title}):(s.raw+="\n"+n.raw,s.text+="\n"+n.raw,this.inlineQueue[this.inlineQueue.length-1].src=s.text);else if(n=this.tokenizer.table(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.lheading(e))e=e.substring(n.raw.length),t.push(n);else{if(r=e,this.options.extensions&&this.options.extensions.startBlock){let t=1/0;const n=e.slice(1);let s;this.options.extensions.startBlock.forEach((e=>{s=e.call({lexer:this},n),"number"==typeof s&&s>=0&&(t=Math.min(t,s))})),t<1/0&&t>=0&&(r=e.substring(0,t+1))}if(this.state.top&&(n=this.tokenizer.paragraph(r)))s=t[t.length-1],i&&"paragraph"===s.type?(s.raw+="\n"+n.raw,s.text+="\n"+n.text,this.inlineQueue.pop(),this.inlineQueue[this.inlineQueue.length-1].src=s.text):t.push(n),i=r.length!==e.length,e=e.substring(n.raw.length);else if(n=this.tokenizer.text(e))e=e.substring(n.raw.length),s=t[t.length-1],s&&"text"===s.type?(s.raw+="\n"+n.raw,s.text+="\n"+n.text,this.inlineQueue.pop(),this.inlineQueue[this.inlineQueue.length-1].src=s.text):t.push(n);else if(e){const t="Infinite loop on byte: "+e.charCodeAt(0);if(this.options.silent){console.error(t);break}throw new Error(t)}}return this.state.top=!0,t}inline(e,t=[]){return this.inlineQueue.push({src:e,tokens:t}),t}inlineTokens(e,t=[]){let n,s,r,i,l,o,a=e;if(this.tokens.links){const e=Object.keys(this.tokens.links);if(e.length>0)for(;null!=(i=this.tokenizer.rules.inline.reflinkSearch.exec(a));)e.includes(i[0].slice(i[0].lastIndexOf("[")+1,-1))&&(a=a.slice(0,i.index)+"["+"a".repeat(i[0].length-2)+"]"+a.slice(this.tokenizer.rules.inline.reflinkSearch.lastIndex))}for(;null!=(i=this.tokenizer.rules.inline.blockSkip.exec(a));)a=a.slice(0,i.index)+"["+"a".repeat(i[0].length-2)+"]"+a.slice(this.tokenizer.rules.inline.blockSkip.lastIndex);for(;null!=(i=this.tokenizer.rules.inline.anyPunctuation.exec(a));)a=a.slice(0,i.index)+"++"+a.slice(this.tokenizer.rules.inline.anyPunctuation.lastIndex);for(;e;)if(l||(o=""),l=!1,!(this.options.extensions&&this.options.extensions.inline&&this.options.extensions.inline.some((s=>!!(n=s.call({lexer:this},e,t))&&(e=e.substring(n.raw.length),t.push(n),!0)))))if(n=this.tokenizer.escape(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.tag(e))e=e.substring(n.raw.length),s=t[t.length-1],s&&"text"===n.type&&"text"===s.type?(s.raw+=n.raw,s.text+=n.text):t.push(n);else if(n=this.tokenizer.link(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.reflink(e,this.tokens.links))e=e.substring(n.raw.length),s=t[t.length-1],s&&"text"===n.type&&"text"===s.type?(s.raw+=n.raw,s.text+=n.text):t.push(n);else if(n=this.tokenizer.emStrong(e,a,o))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.codespan(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.br(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.del(e))e=e.substring(n.raw.length),t.push(n);else if(n=this.tokenizer.autolink(e))e=e.substring(n.raw.length),t.push(n);else if(this.state.inLink||!(n=this.tokenizer.url(e))){if(r=e,this.options.extensions&&this.options.extensions.startInline){let t=1/0;const n=e.slice(1);let s;this.options.extensions.startInline.forEach((e=>{s=e.call({lexer:this},n),"number"==typeof s&&s>=0&&(t=Math.min(t,s))})),t<1/0&&t>=0&&(r=e.substring(0,t+1))}if(n=this.tokenizer.inlineText(r))e=e.substring(n.raw.length),"_"!==n.raw.slice(-1)&&(o=n.raw.slice(-1)),l=!0,s=t[t.length-1],s&&"text"===s.type?(s.raw+=n.raw,s.text+=n.text):t.push(n);else if(e){const t="Infinite loop on byte: "+e.charCodeAt(0);if(this.options.silent){console.error(t);break}throw new Error(t)}}else e=e.substring(n.raw.length),t.push(n);return t}}class se{options;constructor(t){this.options=t||e.defaults}code(e,t,n){const s=(t||"").match(/^\S*/)?.[0];return e=e.replace(/\n$/,"")+"\n",s?'<pre><code class="language-'+c(s)+'">'+(n?e:c(e,!0))+"</code></pre>\n":"<pre><code>"+(n?e:c(e,!0))+"</code></pre>\n"}blockquote(e){return`<blockquote>\n${e}</blockquote>\n`}html(e,t){return e}heading(e,t,n){return`<h${t}>${e}</h${t}>\n`}hr(){return"<hr>\n"}list(e,t,n){const s=t?"ol":"ul";return"<"+s+(t&&1!==n?' start="'+n+'"':"")+">\n"+e+"</"+s+">\n"}listitem(e,t,n){return`<li>${e}</li>\n`}checkbox(e){return"<input "+(e?'checked="" ':"")+'disabled="" type="checkbox">'}paragraph(e){return`<p>${e}</p>\n`}table(e,t){return t&&(t=`<tbody>${t}</tbody>`),"<table>\n<thead>\n"+e+"</thead>\n"+t+"</table>\n"}tablerow(e){return`<tr>\n${e}</tr>\n`}tablecell(e,t){const n=t.header?"th":"td";return(t.align?`<${n} align="${t.align}">`:`<${n}>`)+e+`</${n}>\n`}strong(e){return`<strong>${e}</strong>`}em(e){return`<em>${e}</em>`}codespan(e){return`<code>${e}</code>`}br(){return"<br>"}del(e){return`<del>${e}</del>`}link(e,t,n){const s=g(e);if(null===s)return n;let r='<a href="'+(e=s)+'"';return t&&(r+=' title="'+t+'"'),r+=">"+n+"</a>",r}image(e,t,n){const s=g(e);if(null===s)return n;let r=`<img src="${e=s}" alt="${n}"`;return t&&(r+=` title="${t}"`),r+=">",r}text(e){return e}}class re{strong(e){return e}em(e){return e}codespan(e){return e}del(e){return e}html(e){return e}text(e){return e}link(e,t,n){return""+n}image(e,t,n){return""+n}br(){return""}}class ie{options;renderer;textRenderer;constructor(t){this.options=t||e.defaults,this.options.renderer=this.options.renderer||new se,this.renderer=this.options.renderer,this.renderer.options=this.options,this.textRenderer=new re}static parse(e,t){return new ie(t).parse(e)}static parseInline(e,t){return new ie(t).parseInline(e)}parse(e,t=!0){let n="";for(let s=0;s<e.length;s++){const r=e[s];if(this.options.extensions&&this.options.extensions.renderers&&this.options.extensions.renderers[r.type]){const e=r,t=this.options.extensions.renderers[e.type].call({parser:this},e);if(!1!==t||!["space","hr","heading","code","table","blockquote","list","html","paragraph","text"].includes(e.type)){n+=t||"";continue}}switch(r.type){case"space":continue;case"hr":n+=this.renderer.hr();continue;case"heading":{const e=r;n+=this.renderer.heading(this.parseInline(e.tokens),e.depth,p(this.parseInline(e.tokens,this.textRenderer)));continue}case"code":{const e=r;n+=this.renderer.code(e.text,e.lang,!!e.escaped);continue}case"table":{const e=r;let t="",s="";for(let t=0;t<e.header.length;t++)s+=this.renderer.tablecell(this.parseInline(e.header[t].tokens),{header:!0,align:e.align[t]});t+=this.renderer.tablerow(s);let i="";for(let t=0;t<e.rows.length;t++){const n=e.rows[t];s="";for(let t=0;t<n.length;t++)s+=this.renderer.tablecell(this.parseInline(n[t].tokens),{header:!1,align:e.align[t]});i+=this.renderer.tablerow(s)}n+=this.renderer.table(t,i);continue}case"blockquote":{const e=r,t=this.parse(e.tokens);n+=this.renderer.blockquote(t);continue}case"list":{const e=r,t=e.ordered,s=e.start,i=e.loose;let l="";for(let t=0;t<e.items.length;t++){const n=e.items[t],s=n.checked,r=n.task;let o="";if(n.task){const e=this.renderer.checkbox(!!s);i?n.tokens.length>0&&"paragraph"===n.tokens[0].type?(n.tokens[0].text=e+" "+n.tokens[0].text,n.tokens[0].tokens&&n.tokens[0].tokens.length>0&&"text"===n.tokens[0].tokens[0].type&&(n.tokens[0].tokens[0].text=e+" "+n.tokens[0].tokens[0].text)):n.tokens.unshift({type:"text",text:e+" "}):o+=e+" "}o+=this.parse(n.tokens,i),l+=this.renderer.listitem(o,r,!!s)}n+=this.renderer.list(l,t,s);continue}case"html":{const e=r;n+=this.renderer.html(e.text,e.block);continue}case"paragraph":{const e=r;n+=this.renderer.paragraph(this.parseInline(e.tokens));continue}case"text":{let i=r,l=i.tokens?this.parseInline(i.tokens):i.text;for(;s+1<e.length&&"text"===e[s+1].type;)i=e[++s],l+="\n"+(i.tokens?this.parseInline(i.tokens):i.text);n+=t?this.renderer.paragraph(l):l;continue}default:{const e='Token with "'+r.type+'" type was not found.';if(this.options.silent)return console.error(e),"";throw new Error(e)}}}return n}parseInline(e,t){t=t||this.renderer;let n="";for(let s=0;s<e.length;s++){const r=e[s];if(this.options.extensions&&this.options.extensions.renderers&&this.options.extensions.renderers[r.type]){const e=this.options.extensions.renderers[r.type].call({parser:this},r);if(!1!==e||!["escape","html","link","image","strong","em","codespan","br","del","text"].includes(r.type)){n+=e||"";continue}}switch(r.type){case"escape":{const e=r;n+=t.text(e.text);break}case"html":{const e=r;n+=t.html(e.text);break}case"link":{const e=r;n+=t.link(e.href,e.title,this.parseInline(e.tokens,t));break}case"image":{const e=r;n+=t.image(e.href,e.title,e.text);break}case"strong":{const e=r;n+=t.strong(this.parseInline(e.tokens,t));break}case"em":{const e=r;n+=t.em(this.parseInline(e.tokens,t));break}case"codespan":{const e=r;n+=t.codespan(e.text);break}case"br":n+=t.br();break;case"del":{const e=r;n+=t.del(this.parseInline(e.tokens,t));break}case"text":{const e=r;n+=t.text(e.text);break}default:{const e='Token with "'+r.type+'" type was not found.';if(this.options.silent)return console.error(e),"";throw new Error(e)}}}return n}}class le{options;constructor(t){this.options=t||e.defaults}static passThroughHooks=new Set(["preprocess","postprocess","processAllTokens"]);preprocess(e){return e}postprocess(e){return e}processAllTokens(e){return e}}class oe{defaults={async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null};options=this.setOptions;parse=this.#e(ne.lex,ie.parse);parseInline=this.#e(ne.lexInline,ie.parseInline);Parser=ie;Renderer=se;TextRenderer=re;Lexer=ne;Tokenizer=w;Hooks=le;constructor(...e){this.use(...e)}walkTokens(e,t){let n=[];for(const s of e)switch(n=n.concat(t.call(this,s)),s.type){case"table":{const e=s;for(const s of e.header)n=n.concat(this.walkTokens(s.tokens,t));for(const s of e.rows)for(const e of s)n=n.concat(this.walkTokens(e.tokens,t));break}case"list":{const e=s;n=n.concat(this.walkTokens(e.items,t));break}default:{const e=s;this.defaults.extensions?.childTokens?.[e.type]?this.defaults.extensions.childTokens[e.type].forEach((s=>{const r=e[s].flat(1/0);n=n.concat(this.walkTokens(r,t))})):e.tokens&&(n=n.concat(this.walkTokens(e.tokens,t)))}}return n}use(...e){const t=this.defaults.extensions||{renderers:{},childTokens:{}};return e.forEach((e=>{const n={...e};if(n.async=this.defaults.async||n.async||!1,e.extensions&&(e.extensions.forEach((e=>{if(!e.name)throw new Error("extension name required");if("renderer"in e){const n=t.renderers[e.name];t.renderers[e.name]=n?function(...t){let s=e.renderer.apply(this,t);return!1===s&&(s=n.apply(this,t)),s}:e.renderer}if("tokenizer"in e){if(!e.level||"block"!==e.level&&"inline"!==e.level)throw new Error("extension level must be 'block' or 'inline'");const n=t[e.level];n?n.unshift(e.tokenizer):t[e.level]=[e.tokenizer],e.start&&("block"===e.level?t.startBlock?t.startBlock.push(e.start):t.startBlock=[e.start]:"inline"===e.level&&(t.startInline?t.startInline.push(e.start):t.startInline=[e.start]))}"childTokens"in e&&e.childTokens&&(t.childTokens[e.name]=e.childTokens)})),n.extensions=t),e.renderer){const t=this.defaults.renderer||new se(this.defaults);for(const n in e.renderer){if(!(n in t))throw new Error(`renderer '${n}' does not exist`);if("options"===n)continue;const s=n,r=e.renderer[s],i=t[s];t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n||""}}n.renderer=t}if(e.tokenizer){const t=this.defaults.tokenizer||new w(this.defaults);for(const n in e.tokenizer){if(!(n in t))throw new Error(`tokenizer '${n}' does not exist`);if(["options","rules","lexer"].includes(n))continue;const s=n,r=e.tokenizer[s],i=t[s];t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n}}n.tokenizer=t}if(e.hooks){const t=this.defaults.hooks||new le;for(const n in e.hooks){if(!(n in t))throw new Error(`hook '${n}' does not exist`);if("options"===n)continue;const s=n,r=e.hooks[s],i=t[s];le.passThroughHooks.has(n)?t[s]=e=>{if(this.defaults.async)return Promise.resolve(r.call(t,e)).then((e=>i.call(t,e)));const n=r.call(t,e);return i.call(t,n)}:t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n}}n.hooks=t}if(e.walkTokens){const t=this.defaults.walkTokens,s=e.walkTokens;n.walkTokens=function(e){let n=[];return n.push(s.call(this,e)),t&&(n=n.concat(t.call(this,e))),n}}this.defaults={...this.defaults,...n}})),this}setOptions(e){return this.defaults={...this.defaults,...e},this}lexer(e,t){return ne.lex(e,t??this.defaults)}parser(e,t){return ie.parse(e,t??this.defaults)}#e(e,t){return(n,s)=>{const r={...s},i={...this.defaults,...r};!0===this.defaults.async&&!1===r.async&&(i.silent||console.warn("marked(): The async option was set to true by an extension. The async: false option sent to parse will be ignored."),i.async=!0);const l=this.#t(!!i.silent,!!i.async);if(null==n)return l(new Error("marked(): input parameter is undefined or null"));if("string"!=typeof n)return l(new Error("marked(): input parameter is of type "+Object.prototype.toString.call(n)+", string expected"));if(i.hooks&&(i.hooks.options=i),i.async)return Promise.resolve(i.hooks?i.hooks.preprocess(n):n).then((t=>e(t,i))).then((e=>i.hooks?i.hooks.processAllTokens(e):e)).then((e=>i.walkTokens?Promise.all(this.walkTokens(e,i.walkTokens)).then((()=>e)):e)).then((e=>t(e,i))).then((e=>i.hooks?i.hooks.postprocess(e):e)).catch(l);try{i.hooks&&(n=i.hooks.preprocess(n));let s=e(n,i);i.hooks&&(s=i.hooks.processAllTokens(s)),i.walkTokens&&this.walkTokens(s,i.walkTokens);let r=t(s,i);return i.hooks&&(r=i.hooks.postprocess(r)),r}catch(e){return l(e)}}}#t(e,t){return n=>{if(n.message+="\nPlease report this to https://github.com/markedjs/marked.",e){const e="<p>An error occurred:</p><pre>"+c(n.message+"",!0)+"</pre>";return t?Promise.resolve(e):e}if(t)return Promise.reject(n);throw n}}}const ae=new oe;function ce(e,t){return ae.parse(e,t)}ce.options=ce.setOptions=function(e){return ae.setOptions(e),ce.defaults=ae.defaults,n(ce.defaults),ce},ce.getDefaults=t,ce.defaults=e.defaults,ce.use=function(...e){return ae.use(...e),ce.defaults=ae.defaults,n(ce.defaults),ce},ce.walkTokens=function(e,t){return ae.walkTokens(e,t)},ce.parseInline=ae.parseInline,ce.Parser=ie,ce.parser=ie.parse,ce.Renderer=se,ce.TextRenderer=re,ce.Lexer=ne,ce.lexer=ne.lex,ce.Tokenizer=w,ce.Hooks=le,ce.parse=ce;const he=ce.options,pe=ce.setOptions,ue=ce.use,ke=ce.walkTokens,ge=ce.parseInline,fe=ce,de=ie.parse,xe=ne.lex;e.Hooks=le,e.Lexer=ne,e.Marked=oe,e.Parser=ie,e.Renderer=se,e.TextRenderer=re,e.Tokenizer=w,e.getDefaults=t,e.lexer=xe,e.marked=ce,e.options=he,e.parse=fe,e.parseInline=ge,e.parser=de,e.setOptions=pe,e.use=ue,e.walkTokens=ke}));</script>
+<script>
+"use strict";
+
+const state = {
+  sessions: [],
+  chosen: null,
+  blocks: [],
+  skew: 0,              // server clock minus ours
+  open: new Set(),      // tool blocks the reader expanded
+  stream: null,
+  thinking: false,
+};
+
+const $ = (id) => document.getElementById(id);
+
+// Everything below comes from an agent. It is never trusted as HTML.
+function put(parent, tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  parent.appendChild(node);
+  return node;
+}
+
+function ago(when) {
+  const seconds = Math.max(0, (Date.now() / 1000 + state.skew) - when);
+  if (seconds < 60) return Math.floor(seconds) + " s";
+  if (seconds < 3600) return Math.floor(seconds / 60) + " min";
+  if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
+  return Math.floor(seconds / 86400) + " d";
+}
+
+function clock(when) {
+  if (!when) return "";
+  const at = new Date(when * 1000);
+  return String(at.getHours()).padStart(2, "0") + ":" +
+         String(at.getMinutes()).padStart(2, "0");
+}
+
+// --- the sidebar ------------------------------------------------------------
+
+function drawSessions() {
+  const box = $("rows");
+  box.replaceChildren();
+  for (const s of state.sessions) {
+    const row = put(box, "div", "row " + s.state);
+    row.dataset.id = s.id;
+    if (s.id === state.chosen) row.classList.add("chosen");
+    row.addEventListener("click", () => choose(s.id));
+
+    const one = put(row, "div", "line1");
+    put(one, "span", "dot " + s.state);
+    put(one, "span", "name", s.label || s.id.slice(0, 8));
+    put(one, "span", "word", s.state_word);
+
+    const two = put(row, "div", "line2");
+    if (s.branch) put(two, "span", "branch", s.branch);
+    if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
+    if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
+    if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
+    else if (s.branch) put(two, "span", "clean", "✓ clean");
+
+    const said = s.reason || s.last_event || "";
+    put(row, "div", "line3", said ? said + " · " + ago(s.since) : ago(s.since));
+  }
+  drawCounts();
+}
+
+function drawCounts() {
+  const box = $("counts");
+  box.replaceChildren();
+  const tally = {};
+  for (const s of state.sessions) tally[s.state] = (tally[s.state] || 0) + 1;
+  const order = ["needs_you", "working", "done", "starting", "ended", "dead"];
+  const words = { needs_you: "needs you", working: "working", done: "done",
+                  starting: "starting", ended: "ended", dead: "killed" };
+  let first = true;
+  for (const key of order) {
+    if (!tally[key]) continue;
+    if (!first) put(box, "span", "sep", "|");
+    first = false;
+    put(box, "span", "dot " + key);
+    put(box, "span", null, tally[key] + " " + words[key]);
+  }
+  if (first) put(box, "span", null, "no sessions");
+  const needs = tally.needs_you || 0;
+  document.title = needs ? "(" + needs + ") wostuast" : "wostuast";
+  $("where").textContent = state.sessions.length + " session" +
+    (state.sessions.length === 1 ? "" : "s");
+}
+
+function current() {
+  return state.sessions.find((s) => s.id === state.chosen) || null;
+}
+
+function drawHeader() {
+  const s = current();
+  $("title").textContent = s ? (s.label || s.id.slice(0, 8)) : "no session";
+  const bits = [];
+  if (s) {
+    if (s.branch) bits.push(s.branch);
+    if (s.pane) bits.push("pane " + s.pane); else bits.push("not in tmux");
+    if (s.model) bits.push(s.model);
+    if (s.context_pct !== null && s.context_pct !== undefined) {
+      bits.push(Math.round(s.context_pct) + "% ctx");
+    }
+    bits.push(s.state_word);
+  }
+  $("facts").textContent = bits.join(" · ");
+}
+
+// --- the transcript ---------------------------------------------------------
+
+function safeLinks(root) {
+  for (const link of root.querySelectorAll("a")) {
+    const href = link.getAttribute("href") || "";
+    if (!/^(https?:|#)/i.test(href)) link.removeAttribute("href");
+    else { link.target = "_blank"; link.rel = "noopener noreferrer"; }
+  }
+}
+
+// What Markdown is allowed to produce. Anything else is replaced by its own
+// text, so an agent that read a hostile file cannot put elements on this page.
+const ALLOWED = new Set([
+  "P", "BR", "HR", "STRONG", "EM", "DEL", "CODE", "PRE", "BLOCKQUOTE",
+  "UL", "OL", "LI", "A", "H1", "H2", "H3", "H4", "H5", "H6",
+  "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "SPAN", "DIV",
+]);
+
+function scrub(node) {
+  for (const child of Array.from(node.children)) {
+    if (!ALLOWED.has(child.tagName)) {
+      child.replaceWith(document.createTextNode(child.textContent || ""));
+      continue;
+    }
+    for (const name of Array.from(child.getAttributeNames())) {
+      if (child.tagName === "A" && name === "href") continue;
+      child.removeAttribute(name);
+    }
+    scrub(child);
+  }
+}
+
+function escapeText(raw) {
+  return String(raw)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Raw HTML in an agent's text is shown, not obeyed. Turning it into visible
+// text here rather than escaping the whole source keeps code fences correct:
+// escaping first would have marked escape it a second time inside a fence.
+marked.use({
+  renderer: {
+    html(token) {
+      const raw = typeof token === "string" ? token : (token && token.text) || "";
+      return escapeText(raw);
+    },
+  },
+});
+
+function markdown(parent, text) {
+  const node = put(parent, "div", "prose");
+  // marked does not sanitize and passes raw HTML straight through, so the
+  // result is scrubbed to an allowlist. Escaping the source instead would be
+  // escaped a second time inside code fences, which is how `>` became `&gt;`.
+  try {
+    // Into a <template> first. Its contents belong to an inert document, so
+    // no image is fetched and no handler runs. Assigning to innerHTML here
+    // would already have fired an onerror before the scrub could remove it.
+    const holder = document.createElement("template");
+    holder.innerHTML = marked.parse(String(text), { breaks: false, gfm: true });
+    scrub(holder.content);
+    node.replaceChildren(holder.content);
+  } catch (error) {
+    node.replaceChildren();
+    node.textContent = text;
+  }
+  safeLinks(node);
+  return node;
+}
+
+function drawTranscript() {
+  const box = $("content");
+  box.replaceChildren();
+  const s = current();
+  if (!s) { drawEmpty(box); return; }
+  if (!state.blocks.length) {
+    const empty = put(box, "div", "empty");
+    put(empty, "p", null, "Nothing in this transcript yet.");
+    return;
+  }
+  let tools = null;
+  for (const block of state.blocks) {
+    if (block.kind === "tool") {
+      if (!tools) {
+        const turn = put(box, "div", "turn");
+        put(turn, "div", "who");
+        tools = put(turn, "div", "tools");
+      }
+      drawTool(tools, block);
+      continue;
+    }
+    tools = null;
+    if (block.kind === "divider") { put(box, "div", "divider", block.text); continue; }
+
+    const turn = put(box, "div", "turn" + (block.kind === "thinking" ? " thinking" : ""));
+    const who = put(turn, "div", "who" + (block.kind === "prompt" ? "" : " claude"));
+    who.textContent = block.kind === "prompt" ? "you" : "claude";
+    if (block.ts) put(who, "div", null, clock(block.ts));
+    if (block.kind === "prompt" || block.kind === "thinking") {
+      put(turn, "div", "bubble", block.text);
+    } else {
+      markdown(turn, block.text);
+    }
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function drawTool(parent, block) {
+  const key = block.tool_use_id || (block.tool + block.target);
+  const open = state.open.has(key);
+  const line = put(parent, "button", "tool" + (block.failed ? " failed" : ""));
+  line.type = "button";
+  put(line, "span", "caret", block.result ? (open ? "▾" : "▸") : " ");
+  put(line, "span", "name", block.tool);
+  if (block.target) put(line, "span", "target", block.target);
+  if (block.added) put(line, "span", "plus", "+" + block.added);
+  if (block.removed) put(line, "span", "minus", "−" + block.removed);
+  if (block.result && !open) {
+    const head = block.result.split("\n")[0];
+    if (head) put(line, "span", "target", head.slice(0, 60));
+  }
+  line.addEventListener("click", () => {
+    if (!block.result) return;
+    if (state.open.has(key)) state.open.delete(key); else state.open.add(key);
+    drawTranscript();
+  });
+  if (open && block.result) put(parent, "div", "tool-result", block.result);
+}
+
+function drawEmpty(box) {
+  const empty = put(box, "div", "empty");
+  put(empty, "h2", null, "No session selected");
+  put(empty, "p", null,
+      "Start a Claude Code session in tmux and it appears on the left.");
+  const p = put(empty, "p", null, "If nothing ever appears, run ");
+  put(p, "code", null, "wostuast doctor");
+  p.appendChild(document.createTextNode(" to see what is missing."));
+}
+
+// --- talking to the daemon --------------------------------------------------
+
+function choose(id) {
+  if (state.chosen === id) return;
+  state.chosen = id;
+  state.blocks = [];
+  state.open.clear();
+  drawSessions();
+  drawHeader();
+  loadTranscript();
+  connect();          // the stream carries this session's transcript now
+}
+
+async function loadTranscript() {
+  if (!state.chosen) { drawTranscript(); return; }
+  const want = state.chosen;
+  try {
+    const answer = await fetch("/api/session/" + encodeURIComponent(want) + "/transcript");
+    const body = await answer.json();
+    if (state.chosen !== want) return;      // the reader moved on while we waited
+    state.blocks = body.blocks || [];
+  } catch (error) {
+    state.blocks = [];
+  }
+  drawTranscript();
+}
+
+function mergeBlocks(blocks) {
+  for (const block of blocks) {
+    const at = block.tool_use_id
+      ? state.blocks.findIndex((b) => b.tool_use_id === block.tool_use_id)
+      : -1;
+    if (at >= 0) state.blocks[at] = block; else state.blocks.push(block);
+  }
+}
+
+function connect() {
+  if (state.stream) state.stream.close();
+  const where = "/api/events" +
+    (state.chosen ? "?watch=" + encodeURIComponent(state.chosen) : "");
+  const stream = new EventSource(where);
+  state.stream = stream;
+
+  stream.addEventListener("sessions", (message) => {
+    document.body.classList.remove("lost");
+    const body = JSON.parse(message.data);
+    state.skew = body.now - Date.now() / 1000;
+    state.sessions = body.sessions || [];
+    if (!current() && state.sessions.length) {
+      state.chosen = state.sessions[0].id;
+      loadTranscript();
+    }
+    drawSessions();
+    drawHeader();
+    $("live").textContent = "live";
+  });
+
+  stream.addEventListener("transcript", (message) => {
+    const body = JSON.parse(message.data);
+    if (body.id !== state.chosen) return;
+    mergeBlocks(body.blocks || []);
+    drawTranscript();
+  });
+
+  stream.onerror = () => {
+    document.body.classList.add("lost");
+    $("live").textContent = "reconnecting";
+  };
+}
+
+// --- keys --------------------------------------------------------------------
+
+function move(step) {
+  if (!state.sessions.length) return;
+  const at = state.sessions.findIndex((s) => s.id === state.chosen);
+  const next = Math.min(state.sessions.length - 1, Math.max(0, at + step));
+  choose(state.sessions[next].id);
+  const row = document.querySelector(".row.chosen");
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+
+function nextNeedsYou() {
+  const waiting = state.sessions.filter((s) => s.state === "needs_you");
+  if (!waiting.length) return;
+  const at = waiting.findIndex((s) => s.id === state.chosen);
+  choose(waiting[(at + 1) % waiting.length].id);
+}
+
+document.addEventListener("keydown", (press) => {
+  const help = $("help");
+  if (press.key === "Escape") { if (help.open) help.close(); return; }
+  if (press.metaKey || press.ctrlKey || press.altKey) return;
+  const tag = (press.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea") return;
+  switch (press.key) {
+    case "j": move(1); break;
+    case "k": move(-1); break;
+    case "n": nextNeedsYou(); break;
+    case "t":
+      state.thinking = !state.thinking;
+      document.body.classList.toggle("show-thinking", state.thinking);
+      break;
+    case "?": help.open ? help.close() : help.showModal(); break;
+    case "1": break;    // the other tabs arrive in milestones 3 and 4
+    default: return;
+  }
+  press.preventDefault();
+});
+
+// keep the ages honest without asking the daemon anything
+setInterval(() => { if (state.sessions.length) drawSessions(); }, 1000);
+
+drawSessions();
+drawHeader();
+drawTranscript();
+connect();
+</script>
+</body>
+</html>"""
+
+
 if __name__ == "__main__":
     sys.exit(main())
-
-
-# --- the page ----------------------------------------------------------------
-
-PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>wostuast</title></head>
-<body>The page arrives next. The daemon is running.</body></html>
-"""
