@@ -61,6 +61,14 @@ def page_at(ws, tmp_path, monkeypatch):
         {"type": "assistant", "timestamp": "2026-09-18T14:03:00.000Z",
          "message": {"role": "assistant",
                      "content": [{"type": "text", "text": HOSTILE}]}},
+        {"type": "assistant", "timestamp": "2026-09-18T14:04:00.000Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "t1", "name": "Bash",
+              "input": {"command": "pytest -q"}}]}},
+        {"type": "user", "timestamp": "2026-09-18T14:04:05.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t1",
+              "content": "14 passed in 0.31s\nall good"}]}},
     ]) + "\n")
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
                      "cwd": str(tmp_path), "pane": "%7", "pid": 1,
@@ -163,3 +171,51 @@ def test_both_themes_are_readable(page_at):
                 browser.close()
         assert seen["dark"][0] != seen["light"][0], "the light theme did not apply"
         assert seen["dark"][1] != seen["light"][1], "code would be unreadable"
+
+
+def test_a_row_is_not_rebuilt_every_second(page_at):
+    """The ages advance once a second. Rebuilding the rows to do it restarted
+    the needs-you pulse before it could finish a cycle, and threw away the
+    dot's colour transition. Only the age text may change."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.evaluate("window.__dot = document.querySelector('.row .dot')")
+            first = page.locator(".row .age").first.inner_text()
+            page.wait_for_timeout(2400)
+            assert page.evaluate("window.__dot.isConnected"), "the row was rebuilt"
+            assert page.locator(".row .age").first.inner_text() != first
+        finally:
+            browser.close()
+
+
+def test_expanding_a_tool_result_leaves_the_rest_alone(page_at):
+    """It used to redraw the whole tab, which re-parsed every Markdown block
+    and threw the reader to the bottom of the transcript."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.evaluate("document.querySelector('.content').scrollTop = 0")
+            page.evaluate("window.__first = document.querySelector('.turn')")
+            before = page.evaluate("document.querySelector('.content').scrollTop")
+            page.locator(".tool").first.click()
+            page.wait_for_timeout(250)
+            assert page.locator(".tool-result").count() == 1
+            assert page.evaluate("document.querySelector('.content').scrollTop") == before
+            assert page.evaluate("window.__first.isConnected"), "everything was redrawn"
+        finally:
+            browser.close()
+
+
+def test_a_tab_that_is_not_built_yet_does_nothing(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            turns = page.locator(".turn").count()
+            page.keyboard.press("2")
+            page.wait_for_timeout(200)
+            assert page.locator(".tab[data-tab='transcript']").get_attribute(
+                "aria-selected") == "true"
+            assert page.locator(".turn").count() == turns
+        finally:
+            browser.close()

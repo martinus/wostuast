@@ -11,24 +11,13 @@ import urllib.request
 import pytest
 
 
-@pytest.fixture
-def served(ws, monkeypatch):
-    """A running daemon on a free port, with git stubbed out."""
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
-        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
-    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
-    daemon = ws.Daemon()
-    server = ws.make_server(daemon, 0)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    daemon.store.refresh()
-    try:
-        yield daemon, f"http://127.0.0.1:{port}"
-    finally:
-        daemon.stopping.set()
-        server.shutdown()
-        server.server_close()
+import conftest
+
+
+def event(name, **extra):
+    """A hook event stamped now, because these tests run against a live clock."""
+    extra.setdefault("ts", time.time())
+    return conftest.event(name, **extra)
 
 
 def get(url, timeout=5):
@@ -36,19 +25,18 @@ def get(url, timeout=5):
         return response.status, json.loads(response.read())
 
 
-def event(name, sid="s1", **extra):
-    base = {"session_id": sid, "hook_event_name": name, "cwd": "/w/repo/dir",
-            "pane": "%1", "pid": 4242, "ts": extra.pop("ts", time.time())}
-    base.update(extra)
-    return base
-
-
 # --- the rules from PLAN.md section 4.4 and 4.4.1 ---------------------------
 
 
-def test_it_listens_on_loopback_only(ws, served):
-    _, base = served
-    assert ws.BIND_HOST == "127.0.0.1"
+def test_it_listens_on_loopback_only(ws):
+    """Not the constant: the socket. The page can reach the tmux verbs, so this
+    port must never be offered to the network."""
+    daemon = ws.Daemon()
+    server = ws.make_server(daemon, 0)
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+    finally:
+        server.server_close()
 
 
 def test_it_never_allows_another_site_to_read_the_answer(served):
@@ -197,7 +185,7 @@ def test_a_client_that_watches_nothing_gets_no_transcript(ws, served, tmp_path):
     assert client.queue.empty()
 
 
-def test_a_client_is_dropped_when_it_goes(ws, served):
+def test_a_client_is_dropped_when_it_goes(served):
     daemon, _ = served
     client = daemon.hub.add("s1")
     assert daemon.hub.watchers() == {"s1"}
@@ -213,12 +201,15 @@ def test_a_slow_client_loses_old_messages_rather_than_growing(ws, served):
     assert client.queue.qsize() <= ws.CLIENT_BACKLOG
 
 
-def test_a_broken_tick_does_not_stop_the_daemon(ws, served, monkeypatch):
+def test_a_broken_tick_does_not_stop_the_daemon(served, monkeypatch):
     daemon, _ = served
     calls = []
-    monkeypatch.setattr(daemon.store, "refresh",
-                        lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(
-                            RuntimeError("boom")))
+
+    def boom(*args, **kw):
+        calls.append(1)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(daemon.store, "refresh", boom)
     daemon.stopping.clear()
     thread = threading.Thread(target=daemon.run, daemon=True)
     thread.start()
@@ -238,3 +229,29 @@ def test_a_long_tool_result_is_cut(ws):
     assert "160 more lines" in cut
     assert ws.clip_lines("short", 40) == "short"
     assert ws.clip_lines("", 40) == ""
+
+
+def test_a_deeper_path_is_not_mistaken_for_a_session(served):
+    """`startswith` plus `endswith` matched /api/session/a/b/transcript and
+    took `a` for the session. The path is parsed by segment now."""
+    _, base = served
+    for bad in ("/api/session/a/b/transcript", "/api/session//transcript",
+                "/api/session/s1", "/api/session/s1/nonsense"):
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(base + bad, timeout=5)
+        assert caught.value.code == 404, bad
+
+
+def test_readers_are_dropped_when_their_session_goes(ws, served, tmp_path):
+    """A reader holds a whole transcript. They must not pile up."""
+    daemon, _ = served
+    path = tmp_path / "t.jsonl"
+    path.write_text("")
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    assert daemon.transcript("s1") is not None
+    assert "s1" in daemon.transcripts
+
+    daemon.store.sessions.clear()
+    daemon.forget_gone()
+    assert daemon.transcripts == {}

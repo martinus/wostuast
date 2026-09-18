@@ -6,64 +6,68 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "transcript.jsonl"
 
 
-def read_all(ws, path, cwd="/home/martin/oans/warmhare"):
-    transcript = ws.Transcript(str(path), cwd)
+@pytest.fixture
+def parsed(ws):
+    """The recorded transcript, read through once."""
+    transcript = ws.Transcript(str(FIXTURE), "/home/martin/oans/warmhare")
     transcript.read_new()
     return transcript
 
 
-def test_the_recorded_transcript_reads_as_expected(ws):
-    got = read_all(ws, FIXTURE)
+def test_the_recorded_transcript_reads_as_expected(parsed):
+    got = parsed
     kinds = [b.kind for b in got.blocks]
     assert kinds == ["prompt", "thinking", "text", "tool", "tool", "text", "divider"]
 
 
-def test_a_prompt_keeps_its_text(ws):
-    got = read_all(ws, FIXTURE)
+def test_a_prompt_keeps_its_text(parsed):
+    got = parsed
     assert got.blocks[0].kind == "prompt"
     assert "substring search" in got.blocks[0].text
 
 
-def test_thinking_is_its_own_kind_so_the_page_can_hide_it(ws):
-    got = read_all(ws, FIXTURE)
+def test_thinking_is_its_own_kind_so_the_page_can_hide_it(parsed):
+    got = parsed
     thinking = [b for b in got.blocks if b.kind == "thinking"]
     assert len(thinking) == 1
     assert "exact name" in thinking[0].text
 
 
-def test_assistant_text_is_kept_as_markdown(ws):
-    got = read_all(ws, FIXTURE)
+def test_assistant_text_is_kept_as_markdown(parsed):
+    got = parsed
     text = [b for b in got.blocks if b.kind == "text"][0]
     assert text.text.startswith("## Plan")
 
 
-def test_a_tool_call_is_one_block_with_its_target(ws):
-    got = read_all(ws, FIXTURE)
+def test_a_tool_call_is_one_block_with_its_target(parsed):
+    got = parsed
     tools = [b for b in got.blocks if b.kind == "tool"]
     assert [b.tool for b in tools] == ["Write", "Bash"]
     assert tools[0].target == "PLAN.md"
     assert tools[1].target == "python3 -m pytest -q"
 
 
-def test_a_result_is_attached_to_its_call(ws):
-    got = read_all(ws, FIXTURE)
+def test_a_result_is_attached_to_its_call(parsed):
+    got = parsed
     tools = [b for b in got.blocks if b.kind == "tool"]
     assert "PLAN.md" in tools[0].result
     assert tools[1].result == "14 passed in 0.31s"
     assert tools[0].failed is False
 
 
-def test_a_compaction_becomes_a_divider(ws):
-    got = read_all(ws, FIXTURE)
+def test_a_compaction_becomes_a_divider(parsed):
+    got = parsed
     assert got.blocks[-1].kind == "divider"
     assert got.blocks[-1].text == "context compacted"
 
 
-def test_timestamps_are_read(ws):
-    got = read_all(ws, FIXTURE)
+def test_timestamps_are_read(parsed):
+    got = parsed
     assert got.blocks[0].ts > 0
     assert got.blocks[-2].ts >= got.blocks[0].ts
 

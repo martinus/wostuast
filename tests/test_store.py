@@ -5,18 +5,12 @@ from __future__ import annotations
 import pytest
 
 
-def event(name, sid="s1", **extra):
-    base = {"session_id": sid, "hook_event_name": name, "cwd": "/w/repo/dir",
-            "pane": "%1", "pid": 4242, "ts": extra.pop("ts", 1000.0)}
-    base.update(extra)
-    return base
+from conftest import event
 
 
 @pytest.fixture
-def store(ws, monkeypatch):
-    """A Store with git and liveness stubbed, so tests stay about the Store."""
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {d: ws.GitFacts(
-        repo="repo", branch="main") for d in dirs})
+def store(ws, stub_git):
+    """A Store with git and liveness answered, so tests stay about the Store."""
     return ws.Store()
 
 

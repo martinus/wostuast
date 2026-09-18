@@ -297,22 +297,36 @@ def read_events() -> Iterator[dict[str, Any]]:
         yield from read_event_file(path)
 
 
+def json_objects(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
+    """Turn lines into the JSON objects among them, and skip the rest.
+
+    `json.loads` takes bytes and decodes them itself, in C, which is quicker
+    than decoding the file first. Broken UTF-8 raises UnicodeDecodeError, and
+    that is a ValueError, so one clause covers a torn line and a bad byte
+    alike. Every reader of a JSON-lines file goes through here.
+    """
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            yield record
+
+
 def read_event_file(target: Path) -> Iterator[dict[str, Any]]:
-    """Read one log file. A missing file is empty; broken lines are skipped."""
+    """Read one log file from the start. A missing file is empty.
+
+    It streams the file line by line rather than going through `Tail`, which
+    reads the whole remainder at once: this one is used on a log that may be
+    20 MB, and only needs a line at a time.
+    """
     if not target.exists():
         return
     with open(target, "rb") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                # json.loads takes bytes and decodes them itself, in C.
-                # Broken UTF-8 raises UnicodeDecodeError, which is a ValueError.
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                yield record
+        yield from json_objects(handle)
 
 
 # --- following files: read what is new, keep a half-written last line --------
@@ -396,13 +410,7 @@ class EventFollower:
         return lines
 
     def new_events(self) -> Iterator[dict[str, Any]]:
-        for line in self.new_lines():
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                yield record
+        yield from json_objects(self.new_lines())
 
 
 # --- session model: the state machine of section 4.3 -------------------------
@@ -484,29 +492,37 @@ def path_label(cwd: str, repo: str = "") -> str:
     return name
 
 
-def tool_summary(tool_name: str, tool_input: Any, cwd: str = "") -> str:
-    """One short line for a tool call, as used in the sidebar and the transcript."""
-    name = tool_name or "tool"
+def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
+    """What a call worked on: the path, the command, or the pattern.
+
+    This is the general question. `tool_summary` is this with the tool's name
+    in front, which is why the two cannot disagree.
+    """
     data = tool_input if isinstance(tool_input, dict) else {}
 
     def short_path(value: Any) -> str:
         text = str(value or "")
-        if cwd and text.startswith(cwd.rstrip("/") + "/"):
-            text = text[len(cwd.rstrip("/")) + 1 :]
-        return text
+        base = cwd.rstrip("/")
+        return text[len(base) + 1 :] if base and text.startswith(base + "/") else text
 
-    if name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
-        path = data.get("file_path") or data.get("notebook_path") or data.get("path")
-        return f"{name} {short_path(path)}".strip()
-    if name == "Bash":
-        return f"Bash {clip(str(data.get('command') or ''), 60)}".strip()
-    if name in ("Grep", "Glob"):
-        return f"{name} {clip(str(data.get('pattern') or ''), 60)}".strip()
-    if name == "Task":
-        return f"Task {clip(str(data.get('description') or ''), 60)}".strip()
+    if tool_name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
+        return short_path(
+            data.get("file_path") or data.get("notebook_path") or data.get("path")
+        )
+    if tool_name == "Bash":
+        return clip(str(data.get("command") or ""), 60)
+    if tool_name in ("Grep", "Glob"):
+        return clip(str(data.get("pattern") or ""), 60)
+    if tool_name == "Task":
+        return clip(str(data.get("description") or ""), 60)
     if not data:
-        return name
-    return f"{name} {clip(json.dumps(data, ensure_ascii=False, default=str), 80)}"
+        return ""
+    return clip(json.dumps(data, ensure_ascii=False, default=str), 80)
+
+
+def tool_summary(tool_name: str, tool_input: Any, cwd: str = "") -> str:
+    """One short line for a tool call: the tool, then what it worked on."""
+    return f"{tool_name or 'tool'} {tool_target(tool_name, tool_input, cwd)}".strip()
 
 
 def clip(text: str, width: int) -> str:
@@ -598,36 +614,49 @@ class Store:
         """
         moment = now if now is not None else time.time()
         self.follow()
-        sessions = self.visible(moment)
-
-        if moment - self.liveness_checked >= LIVENESS_INTERVAL:
-            self.liveness_checked = moment
-            for session in sessions:
-                mark_dead(session, alive)
-
-        for session in sessions:
-            self.reload_status(session)
-
-        wanted = [
-            directory
-            for directory in self.git_wanted | {
-                s.cwd for s in sessions if s.cwd and s.cwd not in self.git_read
-            }
-            if moment - self.git_read.get(directory, 0.0) >= GIT_MIN_INTERVAL
-        ]
-        self.git_wanted.clear()
-        if wanted:
-            facts = git_facts_many(wanted)
-            for directory, found in facts.items():
-                self.git_read[directory] = moment
-            for session in sessions:
-                if session.cwd in facts:
-                    session.git = facts[session.cwd]
-
+        sessions = self.settle(moment, alive)
+        self.reload_git(sessions, moment)
         rows = [row(session) for session in sort_sessions(sessions)]
         changed = rows != self.rows
         self.rows = rows
         return changed
+
+    def settle(
+        self, moment: float, alive: Callable[[int], bool] | None = None
+    ) -> list[Session]:
+        """The sessions worth showing, with their cheap facts brought up to date.
+
+        `build_sessions` calls this too, so "which sessions are shown, and how
+        fresh they are" is written down once. A new Store has never checked
+        liveness, so the first call always does.
+        """
+        sessions = self.visible(moment)
+        if moment - self.liveness_checked >= LIVENESS_INTERVAL:
+            self.liveness_checked = moment
+            for session in sessions:
+                mark_dead(session, alive)
+        for session in sessions:
+            self.reload_status(session)
+        return sessions
+
+    def reload_git(self, sessions: Sequence[Session], moment: float) -> None:
+        """Read git for the directories that asked, and for any we have never
+        read. Both are held to one run per directory per GIT_MIN_INTERVAL,
+        because git status on a large worktree is not cheap."""
+        never_read = {s.cwd for s in sessions if s.cwd and s.cwd not in self.git_read}
+        wanted = [
+            directory
+            for directory in self.git_wanted | never_read
+            if moment - self.git_read.get(directory, 0.0) >= GIT_MIN_INTERVAL
+        ]
+        self.git_wanted.clear()
+        if not wanted:
+            return
+        facts = git_facts_many(wanted)
+        self.git_read.update(dict.fromkeys(facts, moment))
+        for session in sessions:
+            if session.cwd in facts:
+                session.git = facts[session.cwd]
 
     def reload_status(self, session: Session) -> None:
         """Read the status file again, but only when it has been written."""
@@ -674,11 +703,10 @@ def row(session: Session) -> dict[str, Any]:
         "behind": facts.behind,
         "dirty": facts.dirty,
         "touched_files": facts.touched_files,
-        "changes": changes_column(facts),
         "reason": session.reason,
         "last_event": session.last_event,
         "last_tool": session.last_tool,
-        "last_prompt": clip(session.last_prompt, PROMPT_WIDTH),
+        "last_prompt": session.last_prompt,
         "since": round(session.since, 3),
         "name": session.status.name,
         "model": session.status.model,
@@ -704,26 +732,23 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
 def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
     session.state = "working"
-    session.last_prompt = str(event.get("prompt") or "")
+    # Cut it here, once. Keeping the whole of a pasted prompt would put it in
+    # every row, to be compared every tick and sent to the browser every time.
+    session.last_prompt = clip(str(event.get("prompt") or ""), PROMPT_WIDTH)
     session.last_event = f"prompt: {session.last_prompt}"
 
 
 def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
-    # A new tool call means the last permission question is answered, whether
-    # it was allowed or denied. PermissionRequest for this tool arrives next
-    # and sets the waiting state again if there is one.
+    # PostToolUse comes here too: a call starting and a result arriving both
+    # mean the agent is running. Either way the last permission question is
+    # answered, allowed or denied, so the waiting state goes; PermissionRequest
+    # for this call arrives next and sets it again if there is one.
     _clear_attention(session)
     session.state = "working"
     session.last_tool = tool_summary(
         str(event.get("tool_name") or ""), event.get("tool_input"), session.cwd
     )
     session.last_event = session.last_tool
-
-
-def _on_post_tool(session: Session, event: dict[str, Any], ts: float) -> None:
-    # A tool result means the agent is running again, so it no longer waits.
-    _clear_attention(session)
-    _on_pre_tool(session, event, ts)
 
 
 def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -808,7 +833,7 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "SessionStart": _on_session_start,
     "UserPromptSubmit": _on_prompt,
     "PreToolUse": _on_pre_tool,
-    "PostToolUse": _on_post_tool,
+    "PostToolUse": _on_pre_tool,
     "PostToolUseFailure": _on_tool_failed,
     "PermissionRequest": _on_permission_request,
     "Notification": _on_notification,
@@ -946,11 +971,7 @@ def build_sessions(
     store = Store()
     store.fold(events if events is not None else read_events())
     moment = now if now is not None else time.time()
-    sessions = store.visible(moment)
-    for session in sessions:
-        mark_dead(session, alive)
-        store.reload_status(session)
-    return sort_sessions(sessions)
+    return sort_sessions(store.settle(moment, alive))
 
 
 def sort_sessions(sessions: list[Session]) -> list[Session]:
@@ -1021,13 +1042,6 @@ def edit_counts(tool_input: Any) -> tuple[int, int]:
     return 0, 0
 
 
-def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
-    """What a tool call worked on, without its tool name in front."""
-    summary = tool_summary(tool_name, tool_input, cwd)
-    head, space, rest = summary.partition(" ")
-    return rest if space and head == tool_name else ""
-
-
 def result_text(content: Any) -> str:
     """A tool result is usually a string, and sometimes a list of blocks."""
     if isinstance(content, str):
@@ -1063,13 +1077,8 @@ class Transcript:
     def read_new(self) -> list[Block]:
         """Parse whatever has been appended. Returns every block that changed."""
         touched: list[Block] = []
-        for line in self.tail.read_new():
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                touched += self.add(record)
+        for record in json_objects(self.tail.read_new()):
+            touched += self.add(record)
         return touched
 
     def add(self, record: dict[str, Any]) -> list[Block]:
@@ -1556,19 +1565,18 @@ class Client:
         import queue
 
         self.queue: Any = queue.Queue(maxsize=CLIENT_BACKLOG)
+        self.full, self.empty = queue.Full, queue.Empty
         self.watching = watching
 
     def put(self, message: str) -> None:
         """Queue a message, and drop the oldest rather than block or grow."""
-        import queue
-
         try:
             self.queue.put_nowait(message)
-        except queue.Full:
+        except self.full:
             try:
                 self.queue.get_nowait()
                 self.queue.put_nowait(message)
-            except (queue.Empty, queue.Full):
+            except (self.empty, self.full):
                 pass
 
 
@@ -1652,6 +1660,17 @@ class Daemon:
                 self.hub.send("transcript",
                               {"id": session_id, "blocks": blocks_json(changed)},
                               session_id=session_id)
+        self.forget_gone()
+
+    def forget_gone(self) -> None:
+        """Drop the readers of sessions that are no longer shown.
+
+        A reader holds every block of a transcript. Without this they pile up
+        for as long as the daemon runs, one for every session ever selected.
+        """
+        for session_id in list(self.transcripts):
+            if session_id not in self.store.sessions:
+                del self.transcripts[session_id]
 
     def run(self) -> None:
         while not self.stopping.is_set():
@@ -1664,12 +1683,8 @@ class Daemon:
 
 def blocks_json(blocks: Sequence[Block]) -> list[dict[str, Any]]:
     """Blocks as the page wants them. Results are cut: the page shows a line."""
-    out = []
-    for index, block in enumerate(blocks):
-        data = asdict(block)
-        data["result"] = clip_lines(block.result, 40)
-        out.append(data)
-    return out
+    return [dict(block.__dict__, result=clip_lines(block.result, 40))
+            for block in blocks]
 
 
 def clip_lines(text: str, limit: int) -> str:
@@ -1716,6 +1731,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
             url = urlparse(self.path)
             path = url.path
             query = parse_qs(url.query)
+            parts = path.strip("/").split("/")
             try:
                 if path == "/":
                     self.reply(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
@@ -1723,8 +1739,12 @@ def make_server(daemon: Daemon, port: int) -> Any:
                     self.reply_json(daemon.sessions_payload())
                 elif path == "/api/events":
                     self.stream(query.get("watch", [""])[0])
-                elif path.startswith("/api/session/") and path.endswith("/transcript"):
-                    self.transcript(path.split("/")[3])
+                elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
+                    verb = GET_VERBS.get(parts[3])
+                    if verb is None:
+                        self.reply_json({"error": "no such thing"}, 404)
+                    else:
+                        verb(self, parts[2], query)
                 else:
                     self.reply_json({"error": "no such thing"}, 404)
             except (BrokenPipeError, ConnectionResetError):
@@ -1736,7 +1756,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
                 except OSError:
                     pass
 
-        def transcript(self, session_id: str) -> None:
+        def transcript(self, session_id: str, query: dict[str, list[str]]) -> None:
             reader = daemon.transcript(session_id)
             if reader is None:
                 session = daemon.session(session_id)
@@ -1770,6 +1790,10 @@ def make_server(daemon: Daemon, port: int) -> Any:
                 pass
             finally:
                 daemon.hub.drop(client)
+
+    # The verbs a session route can end in. Milestones 3 and 4 add files,
+    # file, diff and peek here, and nothing else about the dispatch changes.
+    GET_VERBS: dict[str, Any] = {"transcript": Handler.transcript}
 
     server = ThreadingHTTPServer((BIND_HOST, port), Handler)
     server.daemon_threads = True
@@ -2063,7 +2087,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     """Start the daemon and serve the page on 127.0.0.1."""
     import threading
 
-    port = getattr(args, "port", None) or DEFAULT_PORT
+    port = args.port
     daemon = Daemon()
     try:
         server = make_server(daemon, port)
@@ -2073,12 +2097,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
     where = f"http://{BIND_HOST}:{port}/"
-    daemon.store.refresh()
+    # The first pass folds the whole log and runs git for every worktree, which
+    # on a busy machine takes a moment. It happens on the worker, so the page
+    # is served straight away rather than after it.
     worker = threading.Thread(target=daemon.run, name="wostuast-refresh", daemon=True)
     worker.start()
-    print(f"wostuast is watching {len(daemon.store.rows)} session(s) at {where}")
+    print(f"wostuast is watching at {where}")
     print("press ctrl-c to stop.")
-    if getattr(args, "open", False):
+    if args.open:
         open_browser(where)
     try:
         server.serve_forever()
@@ -2195,13 +2221,8 @@ PAGE = r"""<!doctype html>
     --code: #eceae3; --code-ink: #33363d;
   }
 }
-:root[data-theme="dark"] {
-  --bg: #14151a; --panel: #191a20; --raised: #1f2129; --chosen: #262834;
-  --edge: #2a2c36; --edge-bright: #3a3d4a;
-  --ink: #d6d8e0; --ink-bright: #f3f4f8; --ink-soft: #a3a7b6;
-  --ink-mute: #8b8f9e; --ink-faint: #6f7385;
-  --needs: #e0a642; --working: #6bbf8a; --done: #5b9bd5; --code: #0f1014; --code-ink: #c9ccd8;
-}
+/* The defaults above are the dark ones, so a page marked dark needs nothing
+   here: the light block is guarded by :not([data-theme="dark"]). */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -2266,10 +2287,14 @@ body {
   padding-left: 17px; min-width: 0;
 }
 .row .line2 .branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The reason gives way; the age never does. "How long has this needed me?" is
+   the question the sidebar exists to answer. */
 .row .line3 {
-  font-size: 12px; color: var(--ink-mute); padding-left: 17px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: flex; gap: 6px; font-size: 12px; color: var(--ink-mute);
+  padding-left: 17px; min-width: 0; white-space: nowrap;
 }
+.row .said { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; }
 .dirty { color: var(--needs); }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
@@ -2358,6 +2383,8 @@ body {
 .prose table { border-collapse: collapse; margin: 0 0 8px; }
 .prose th, .prose td { border: 1px solid var(--edge); padding: 4px 10px; text-align: left; }
 
+.turn.toolrow { margin-bottom: 4px; }
+.turn.toolrow + .turn:not(.toolrow) { margin-top: 10px; }
 .tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono); font-size: 12px; color: var(--ink-mute); min-width: 0; }
 .tool { display: flex; gap: 8px; align-items: baseline; cursor: pointer;
@@ -2467,11 +2494,12 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
 const state = {
   sessions: [],
   chosen: null,
+  tab: "transcript",
+  nodes: [],
   blocks: [],
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
-  thinking: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -2502,9 +2530,12 @@ function clock(when) {
 
 // --- the sidebar ------------------------------------------------------------
 
+const ages = [];
+
 function drawSessions() {
   const box = $("rows");
   box.replaceChildren();
+  ages.length = 0;
   for (const s of state.sessions) {
     const row = put(box, "div", "row " + s.state);
     row.dataset.id = s.id;
@@ -2524,29 +2555,40 @@ function drawSessions() {
     else if (s.branch) put(two, "span", "clean", "✓ clean");
 
     const said = s.reason || s.last_event || "";
-    put(row, "div", "line3", said ? said + " · " + ago(s.since) : ago(s.since));
+    const line = put(row, "div", "line3");
+    if (said) put(line, "span", "said", said);
+    ages.push([put(line, "span", "age", ago(s.since)), s.since]);
   }
   drawCounts();
+}
+
+// Only the ages change by themselves. Rebuilding the rows to advance them
+// would restart the needs-you pulse every second, so it never finished a
+// cycle, and would throw away the dot's colour transition as well.
+function tickAges() {
+  for (const [node, since] of ages) node.textContent = ago(since);
 }
 
 function drawCounts() {
   const box = $("counts");
   box.replaceChildren();
-  const tally = {};
-  for (const s of state.sessions) tally[s.state] = (tally[s.state] || 0) + 1;
-  const order = ["needs_you", "working", "done", "starting", "ended", "dead"];
-  const words = { needs_you: "needs you", working: "working", done: "done",
-                  starting: "starting", ended: "ended", dead: "killed" };
+  // The rows arrive already sorted by state, and each carries its own word, so
+  // the order and the wording are the server's and are not restated here.
+  const tally = new Map();
+  for (const s of state.sessions) {
+    const seen = tally.get(s.state) || { word: s.state_word, n: 0 };
+    seen.n += 1;
+    tally.set(s.state, seen);
+  }
   let first = true;
-  for (const key of order) {
-    if (!tally[key]) continue;
+  for (const [key, seen] of tally) {
     if (!first) put(box, "span", "sep", "|");
     first = false;
     put(box, "span", "dot " + key);
-    put(box, "span", null, tally[key] + " " + words[key]);
+    put(box, "span", null, seen.n + " " + seen.word);
   }
   if (first) put(box, "span", null, "no sessions");
-  const needs = tally.needs_you || 0;
+  const needs = (tally.get("needs_you") || { n: 0 }).n;
   document.title = needs ? "(" + needs + ") wostuast" : "wostuast";
   $("where").textContent = state.sessions.length + " session" +
     (state.sessions.length === 1 ? "" : "s");
@@ -2635,53 +2677,89 @@ function markdown(parent, text) {
     scrub(holder.content);
     node.replaceChildren(holder.content);
   } catch (error) {
-    node.replaceChildren();
-    node.textContent = text;
+    node.textContent = text;   // assigning text already clears the children
   }
   safeLinks(node);
   return node;
 }
 
-function drawTranscript() {
-  const box = $("content");
+// One node per block, kept so that a change redraws that block and no other.
+// Rebuilding the lot re-ran marked over the whole history on every update, and
+// restarted the slide-in of every turn each time one line arrived.
+
+function blockNode(block, index) {
+  if (block.kind === "divider") {
+    const node = document.createElement("div");
+    node.className = "divider";
+    node.textContent = block.text;
+    return node;
+  }
+  if (block.kind === "tool") {
+    const node = document.createElement("div");
+    node.className = "turn toolrow";
+    put(node, "div", "who");
+    const tools = put(node, "div", "tools");
+    drawTool(tools, block, index);
+    return node;
+  }
+  const mine = block.kind === "prompt";
+  const node = document.createElement("div");
+  node.className = "turn" + (block.kind === "thinking" ? " thinking" : "");
+  const who = put(node, "div", "who" + (mine ? "" : " claude"), mine ? "you" : "claude");
+  if (block.ts) put(who, "div", null, clock(block.ts));
+  if (mine || block.kind === "thinking") put(node, "div", "bubble", block.text);
+  else markdown(node, block.text);
+  return node;
+}
+
+function nearBottom(box) {
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+}
+
+function drawTranscript(box) {
   box.replaceChildren();
-  const s = current();
-  if (!s) { drawEmpty(box); return; }
+  state.nodes = [];
   if (!state.blocks.length) {
     const empty = put(box, "div", "empty");
     put(empty, "p", null, "Nothing in this transcript yet.");
     return;
   }
-  let tools = null;
-  for (const block of state.blocks) {
-    if (block.kind === "tool") {
-      if (!tools) {
-        const turn = put(box, "div", "turn");
-        put(turn, "div", "who");
-        tools = put(turn, "div", "tools");
-      }
-      drawTool(tools, block);
-      continue;
-    }
-    tools = null;
-    if (block.kind === "divider") { put(box, "div", "divider", block.text); continue; }
-
-    const turn = put(box, "div", "turn" + (block.kind === "thinking" ? " thinking" : ""));
-    const who = put(turn, "div", "who" + (block.kind === "prompt" ? "" : " claude"));
-    who.textContent = block.kind === "prompt" ? "you" : "claude";
-    if (block.ts) put(who, "div", null, clock(block.ts));
-    if (block.kind === "prompt" || block.kind === "thinking") {
-      put(turn, "div", "bubble", block.text);
-    } else {
-      markdown(turn, block.text);
-    }
+  for (let index = 0; index < state.blocks.length; index += 1) {
+    const node = blockNode(state.blocks[index], index);
+    state.nodes.push(node);
+    box.appendChild(node);
   }
   box.scrollTop = box.scrollHeight;
 }
 
-function drawTool(parent, block) {
-  const key = block.tool_use_id || (block.tool + block.target);
-  const open = state.open.has(key);
+// Redraw one block where it stands, without touching anything else.
+function redrawBlock(index) {
+  const node = blockNode(state.blocks[index], index);
+  const old = state.nodes[index];
+  state.nodes[index] = node;
+  if (old && old.parentNode) old.replaceWith(node);
+  return node;
+}
+
+function patchTranscript(indexes) {
+  const box = $("content");
+  if (state.tab !== "transcript" || !state.nodes) return;
+  if (!state.nodes.length) { drawTranscript(box); return; }
+  const stick = nearBottom(box);
+  for (const index of indexes) {
+    if (index < state.nodes.length) {
+      redrawBlock(index);
+    } else {
+      const node = blockNode(state.blocks[index], index);
+      state.nodes[index] = node;
+      box.appendChild(node);
+    }
+  }
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+
+function drawTool(parent, block, index) {
+  const open = state.open.has(index);
   const line = put(parent, "button", "tool" + (block.failed ? " failed" : ""));
   line.type = "button";
   put(line, "span", "caret", block.result ? (open ? "▾" : "▸") : " ");
@@ -2695,10 +2773,40 @@ function drawTool(parent, block) {
   }
   line.addEventListener("click", () => {
     if (!block.result) return;
-    if (state.open.has(key)) state.open.delete(key); else state.open.add(key);
-    drawTranscript();
+    if (state.open.has(index)) state.open.delete(index); else state.open.add(index);
+    redrawBlock(index);        // this line only; the rest of the tab stays put
   });
   if (open && block.result) put(parent, "div", "tool-result", block.result);
+}
+
+const TABS = {
+  transcript: drawTranscript,
+  // files, diff and peek arrive in milestones 3 and 4 and are wired here.
+};
+
+// Which tab each number key picks. A key for a tab that is not built yet does
+// nothing, because showTab only accepts a name TABS knows.
+const TAB_KEYS = ["transcript", "files", "diff", "peek"];
+
+function draw() {
+  const box = $("content");
+  if (!current()) {
+    box.replaceChildren();
+    state.nodes = [];
+    drawEmpty(box);
+    return;
+  }
+  TABS[state.tab](box);       // showTab only ever sets a tab that is in here
+}
+
+function showTab(name) {
+  if (!TABS[name]) return;
+  state.tab = name;
+  for (const button of document.querySelectorAll(".tab")) {
+    button.setAttribute("aria-selected", String(button.dataset.tab === name));
+  }
+  load();
+  resubscribe();
 }
 
 function drawEmpty(box) {
@@ -2717,15 +2825,17 @@ function choose(id) {
   if (state.chosen === id) return;
   state.chosen = id;
   state.blocks = [];
+  state.nodes = [];
   state.open.clear();
   drawSessions();
   drawHeader();
-  loadTranscript();
-  connect();          // the stream carries this session's transcript now
+  load();
+  resubscribe();
 }
 
-async function loadTranscript() {
-  if (!state.chosen) { drawTranscript(); return; }
+async function load() {
+  if (!state.chosen) { draw(); return; }
+  if (state.tab !== "transcript") { draw(); return; }
   const want = state.chosen;
   try {
     const answer = await fetch("/api/session/" + encodeURIComponent(want) + "/transcript");
@@ -2735,22 +2845,32 @@ async function loadTranscript() {
   } catch (error) {
     state.blocks = [];
   }
-  drawTranscript();
+  draw();
 }
 
 function mergeBlocks(blocks) {
+  const moved = [];
   for (const block of blocks) {
     const at = block.tool_use_id
       ? state.blocks.findIndex((b) => b.tool_use_id === block.tool_use_id)
       : -1;
-    if (at >= 0) state.blocks[at] = block; else state.blocks.push(block);
+    if (at >= 0) { state.blocks[at] = block; moved.push(at); }
+    else { state.blocks.push(block); moved.push(state.blocks.length - 1); }
   }
+  return moved;
 }
 
-function connect() {
-  if (state.stream) state.stream.close();
-  const where = "/api/events" +
+function streamUrl() {
+  // Milestone 4 adds the tab here, so peek polls only while it is on screen.
+  return "/api/events" +
     (state.chosen ? "?watch=" + encodeURIComponent(state.chosen) : "");
+}
+
+function resubscribe() {
+  const where = streamUrl();
+  if (state.stream && state.streamUrl === where) return;
+  if (state.stream) state.stream.close();
+  state.streamUrl = where;
   const stream = new EventSource(where);
   state.stream = stream;
 
@@ -2761,7 +2881,7 @@ function connect() {
     state.sessions = body.sessions || [];
     if (!current() && state.sessions.length) {
       state.chosen = state.sessions[0].id;
-      loadTranscript();
+      load();
     }
     drawSessions();
     drawHeader();
@@ -2771,8 +2891,7 @@ function connect() {
   stream.addEventListener("transcript", (message) => {
     const body = JSON.parse(message.data);
     if (body.id !== state.chosen) return;
-    mergeBlocks(body.blocks || []);
-    drawTranscript();
+    patchTranscript(mergeBlocks(body.blocks || []));
   });
 
   stream.onerror = () => {
@@ -2809,24 +2928,27 @@ document.addEventListener("keydown", (press) => {
     case "j": move(1); break;
     case "k": move(-1); break;
     case "n": nextNeedsYou(); break;
-    case "t":
-      state.thinking = !state.thinking;
-      document.body.classList.toggle("show-thinking", state.thinking);
-      break;
+    case "t": document.body.classList.toggle("show-thinking"); break;
     case "?": help.open ? help.close() : help.showModal(); break;
-    case "1": break;    // the other tabs arrive in milestones 3 and 4
+    case "1": case "2": case "3": case "4":
+      showTab(TAB_KEYS["1234".indexOf(press.key)]);
+      break;
     default: return;
   }
   press.preventDefault();
 });
 
 // keep the ages honest without asking the daemon anything
-setInterval(() => { if (state.sessions.length) drawSessions(); }, 1000);
+setInterval(tickAges, 1000);
+
+for (const button of document.querySelectorAll(".tab")) {
+  button.addEventListener("click", () => showTab(button.dataset.tab));
+}
 
 drawSessions();
 drawHeader();
-drawTranscript();
-connect();
+draw();
+resubscribe();
 </script>
 </body>
 </html>"""

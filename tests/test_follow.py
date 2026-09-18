@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 
 def test_it_reads_each_line_once(ws, tmp_path):
     path = tmp_path / "f.jsonl"
