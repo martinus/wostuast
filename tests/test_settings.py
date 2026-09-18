@@ -71,11 +71,32 @@ def test_status_line_is_added_only_when_free(ws):
     assert ws.add_status_line(settings, "/bin/wostuast status") == []
 
 
-def test_an_existing_status_line_is_kept(ws):
+def test_an_existing_status_line_is_kept_and_a_way_to_have_both_is_given(ws):
+    """Claude Code allows one status line, so "add this too" is not a thing the
+    user can do. The note has to be a line they can paste."""
     settings = {"statusLine": {"type": "command", "command": "my-line.sh"}}
     notes = ws.add_status_line(settings, "/bin/wostuast status")
     assert settings["statusLine"]["command"] == "my-line.sh"
-    assert notes and "/bin/wostuast status" in notes[0]
+    joined = "\n".join(notes)
+    assert "/bin/wostuast status --then my-line.sh" in joined
+    assert "only one" in joined
+
+
+def test_a_status_line_with_awkward_quoting_is_still_pasteable(ws):
+    settings = {"statusLine": {"type": "command",
+                               "command": "echo \"it's $PWD\""}}
+    notes = ws.add_status_line(settings, "/bin/wostuast status")
+    line = [n for n in notes if "--then" in n][0].strip()
+    assert line.startswith("/bin/wostuast status --then ")
+
+    # the suggested line must survive a shell
+    import shlex
+    import subprocess
+
+    parts = shlex.split(line)
+    assert parts[:3] == ["/bin/wostuast", "status", "--then"]
+    assert subprocess.run(parts[3], shell=True, capture_output=True,
+                          text=True).stdout.startswith("it's ")
 
 
 def test_remove_status_line_only_removes_ours(ws):
