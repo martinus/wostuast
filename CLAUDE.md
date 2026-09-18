@@ -48,7 +48,9 @@ settings.
   `tests/`, or a tmux command beyond jump, send and peek.
 - **Prefer deleting a feature over adding a config option.**
 - **The hook must never block Claude Code.** `cmd_hook` wraps everything in
-  try/except and always exits 0. Keep it that way.
+  try/except, runs under a deadline (`give_up_after`), and always exits 0. Keep
+  all three. The deadline covers every wait at once, including a stdin that
+  never closes and a file lock stalled on a network filesystem.
 - **Never write to the terminal** except through the three tmux verbs. wostuast
   reads; the user types.
 - **Never approve a permission prompt.** The user approves in the terminal.

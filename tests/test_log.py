@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
 import json
 
 
@@ -84,3 +88,41 @@ def test_broken_utf8_is_skipped_not_fatal(ws):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b'{"a": 1}\n{"bad": "\xff\xfe"}\n{"b": 2}\n')
     assert [e for e in ws.read_events()] == [{"a": 1}, {"b": 2}]
+
+
+def test_the_deadline_fires(ws):
+    """A hook that waits forever would hold Claude Code. It must not."""
+    ws.give_up_after(1)
+    try:
+        with pytest.raises(TimeoutError):
+            time.sleep(3)
+    finally:
+        ws.stand_down()
+
+
+def test_standing_down_cancels_the_deadline(ws):
+    ws.give_up_after(1)
+    ws.stand_down()
+    time.sleep(1.2)  # would raise if the deadline were still armed
+
+
+def test_the_hook_arms_and_cancels_the_deadline(ws, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ws, "give_up_after", lambda seconds: calls.append(("arm", seconds)))
+    monkeypatch.setattr(ws, "stand_down", lambda: calls.append(("cancel", 0)))
+    monkeypatch.setattr(ws, "read_stdin_json", lambda: {"session_id": "s1"})
+    assert ws.cmd_hook(None) == 0
+    assert calls == [("arm", ws.HOOK_TIMEOUT), ("cancel", 0)]
+
+
+def test_the_hook_cancels_the_deadline_even_when_it_fails(ws, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ws, "give_up_after", lambda seconds: calls.append("arm"))
+    monkeypatch.setattr(ws, "stand_down", lambda: calls.append("cancel"))
+
+    def explode():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ws, "read_stdin_json", explode)
+    assert ws.cmd_hook(None) == 0
+    assert calls == ["arm", "cancel"]

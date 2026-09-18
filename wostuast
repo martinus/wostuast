@@ -50,6 +50,10 @@ ATTENTION_NOTIFICATIONS = frozenset(
     {"permission_prompt", "idle_prompt", "elicitation_dialog"}
 )
 
+#: A hook that is still running after this many seconds gives up and exits 0.
+#: It must never hold Claude Code, whatever goes wrong underneath it.
+HOOK_TIMEOUT = 5
+
 EVENTS_MAX_BYTES = 20 * 1024 * 1024
 LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
@@ -887,6 +891,37 @@ def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
 # --- commands ----------------------------------------------------------------
 
 
+def give_up_after(seconds: int) -> None:
+    """Set a deadline for this process. Passing it raises, nothing more waits.
+
+    The hook and the status line both read stdin, which blocks until the writer
+    closes it, and both take a file lock, which a network filesystem can stall.
+    Neither may hold Claude Code, so the whole call runs under one deadline
+    instead of guarding each wait. Where there is no SIGALRM, there is no
+    deadline, and the call behaves as it did before.
+    """
+    import signal
+
+    def out_of_time(number: int, frame: Any) -> None:
+        raise TimeoutError(f"gave up after {seconds} s")
+
+    try:
+        signal.signal(signal.SIGALRM, out_of_time)
+        signal.alarm(seconds)
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def stand_down() -> None:
+    """Cancel the deadline set by give_up_after."""
+    import signal
+
+    try:
+        signal.alarm(0)
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
 def read_stdin_json() -> dict[str, Any]:
     """Read one JSON object from stdin. Anything else reads as empty."""
     raw = sys.stdin.read()
@@ -897,12 +932,15 @@ def read_stdin_json() -> dict[str, Any]:
 def cmd_hook(args: argparse.Namespace) -> int:
     """Read the hook JSON from stdin and append one line. Always exit 0."""
     try:
+        give_up_after(HOOK_TIMEOUT)
         record = read_stdin_json()
         record["ts"] = time.time()
         record["pane"] = os.environ.get("TMUX_PANE", "")
         record["pid"] = os.getppid()
         append_event(record)
-    except Exception as error:  # a hook must never block Claude Code
+        stand_down()
+    except BaseException as error:  # a hook must never block Claude Code
+        stand_down()
         log(f"hook failed: {error!r}")
     return 0
 
@@ -910,11 +948,14 @@ def cmd_hook(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     """Read the status line JSON from stdin, keep it, and print one line."""
     try:
+        give_up_after(HOOK_TIMEOUT)
         payload = read_stdin_json()
         status = status_from_payload(payload)
         write_status(str(payload.get("session_id") or ""), status)
+        stand_down()
         print(status_line(status, str(payload.get("cwd") or "")))
-    except Exception as error:
+    except BaseException as error:
+        stand_down()
         log(f"status failed: {error!r}")
     return 0
 
