@@ -709,7 +709,6 @@ def row(session: Session) -> dict[str, Any]:
         # the page; the name Claude Code wrote from the first prompt is often
         # long and often vague, and it used to push the worktree off the end.
         "place": path_label(session.cwd, facts.repo),
-        "name": clip(session.status.name, 40),
         "state": session.state,
         "state_word": STATE_WORDS.get(session.state, session.state),
         "cwd": session.cwd,
@@ -3748,6 +3747,14 @@ const ages = [];
 
 function drawSessions() {
   const box = $("rows");
+  // Only when they would come out different. The stream re-subscribes the
+  // moment a session is first chosen, and the new stream opens with a full
+  // push of its own, so every page load built the whole sidebar twice — and
+  // the second build threw away the first one's dot transition and restarted
+  // the needs-you pulse before it could finish a cycle.
+  const drawn = JSON.stringify([state.sessions, state.chosen]);
+  if (box.dataset.drawn === drawn) return;
+  box.dataset.drawn = drawn;
   box.replaceChildren();
   ages.length = 0;
   for (const s of state.sessions) {
