@@ -338,18 +338,20 @@ made it look random. The listing gets the timeout a large repository needs,
 and a timeout says it timed out. This is the same bug as a failed diff
 reading as "nothing changed".
 
-**Three tiers, until you type.** `PLAN.md`, `CLAUDE.md` and `README.md`
-first, because they say what the work is. Then whatever the agent has
-changed, newest first, because that is the question this tool exists to
-answer. Then the rest. A changed file carries a dot. The page builds this
-from the names and the changed times, in one pass and a sort of the few that
-moved — never a sort of fifty thousand.
+**A tree, until you type.** The left column is a directory tree, which is how
+you read a repository you do not know. The indent carries the directory, so a
+row only shows the last part of the name, which is the cure for the long ones.
 
-**A tree, in stage 4.** The left column becomes a directory tree: directories
-collapsed, the path to the open file expanded, a changed file's directories
-marked too. A tree is how you read an unfamiliar repository, and it also
-cures the long names: the indent carries the directory, so a row only has to
-show the last part.
+The three tiers live **inside** the tree, not in a section above it, so no
+file is ever listed twice: in each directory the named files come first,
+then whatever changed with the newest first, then the rest by name. A changed
+file carries a dot and so does every directory above it, so a closed branch
+still says there is something new inside.
+
+A directory holding a change opens itself, because a closed tree cannot
+answer what the agent just did, and that is the question this tool exists to
+answer. What the reader opens or closes wins over that, so the tree never
+fights the hand on it.
 
 Typing replaces the tree with a flat list of matches, best first. The letters
 have to turn up in the path in that order but not next to each other, a run
@@ -414,8 +416,9 @@ styles; use them as the visual target, not as code to copy.
 
 Two column edges can be dragged: between the sidebar and the body, and
 between a tab's file column and what it shows. Path names are long, and no
-width chosen here is the right one for every repository. Each width is
-remembered, and a double-click on the edge puts it back.
+width chosen here is the right one for every repository. The width goes into
+a CSS variable, so a column that is rebuilt keeps it, and into this browser's
+storage, so a reload does too. A double-click on the edge puts it back.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -630,9 +633,9 @@ Commit at the end of each milestone. Each one leaves a working tool.
       repository of any size, and typing never waits for the network.
    3. **Room.** Drag the sidebar edge and the file column edge. File names in
       a condensed face. No border around a file that is not Markdown.
-   4. **Read.** A directory tree instead of a flat list. Syntax
-      highlighting. Your words told apart from Claude's. The worktree name in
-      front on the sidebar row.
+   4. **Read.** A directory tree instead of a flat list, with the tiers
+      inside it. Syntax highlighting. Your words told apart from Claude's.
+      The worktree name in front on the sidebar row.
 
 5. **Act.** jump, send, Peek, attention (title, favicon, notification).
 6. **Shine.** Light theme, motion, empty states, keyboard help, README with
@@ -689,6 +692,10 @@ words. The first screenshot is the Transcript tab with one session in
 | A tree by default, a flat list while typing | A tree is how you read a repository you do not know, and its indent carries the directory, so a row shows only the last part. A match list has no tree to sit in. |
 | Only the rows on screen are built | Ten thousand buttons cost ten thousand buttons. A window over a fixed row height costs the same for ten matches and ten thousand, so no answer has to be cut to stay quick. |
 | Column widths belong to the reader | Paths are long, screens differ, and the alternative to a drag handle is a config option, which this file prefers to delete. |
+| The tiers live inside the tree | A section above the tree would list the changed files twice, which in a small repository is most of the list twice. Ordering each directory's own files says the same thing and says it once. |
+| A directory with a change opens itself | A closed tree cannot answer what the agent just did. What the reader opens or closes wins, so it never fights the hand on it. |
+| Your words carry a rail and a tint | Both turns were grey blocks told apart by one small word in a narrow column, which is not enough to find where you last spoke in a long transcript. |
+| The worktree leads the sidebar row | It is the one fact you cannot read anywhere else on the page. The name Claude Code writes from the first prompt is often long and often vague, and it pushed the worktree off the end. |
 | Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
 | Nothing is vendored | `marked` and `highlight.js` are 157 KB against a 175 KB program. Carrying them would nearly double the file the install one-liner curls, and the page already fetches its fonts. |
 | Both are pinned by hash | Any script on this page can type into your terminal through `/send`. `integrity` means a CDN that has been tampered with gets you the fallback rather than other code. |

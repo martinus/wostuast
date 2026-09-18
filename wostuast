@@ -704,6 +704,12 @@ def row(session: Session) -> dict[str, Any]:
     return {
         "id": session.session_id,
         "label": session.label,
+        # Apart, as well as together. The row puts the worktree first and in
+        # front, because that is the one fact you cannot read anywhere else on
+        # the page; the name Claude Code wrote from the first prompt is often
+        # long and often vague, and it used to push the worktree off the end.
+        "place": path_label(session.cwd, facts.repo),
+        "name": clip(session.status.name, 40),
         "state": session.state,
         "state_word": STATE_WORDS.get(session.state, session.state),
         "cwd": session.cwd,
@@ -3022,7 +3028,7 @@ PAGE = r"""<!doctype html>
 })();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap">
 <style>
 :root {
   --bg: #14151a; --panel: #191a20; --raised: #1f2129; --chosen: #262834;
@@ -3035,6 +3041,9 @@ PAGE = r"""<!doctype html>
   --done-soft: rgba(91,155,213,.10); --starting-soft: rgba(91,176,181,.09);
   --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
+  /* Your words. Not a state colour: nothing on this page means "you" except
+     this, and amber is spoken for. */
+  --mine: #8aa4d0; --mine-soft: rgba(138,164,208,.10);
   --code: #0f1014; --code-ink: #c9ccd8;
   /* Syntax colours. Amber is not among them: it is the one warm colour on
      this page and it means "an agent needs you". */
@@ -3043,6 +3052,10 @@ PAGE = r"""<!doctype html>
   --syn-attr: #c6a2d8;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  /* File names are long and a monospace face spends a third of the column on
+     air. A condensed one shows the end of the path, which is the part you
+     were looking for. */
+  --narrow: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
 }
 :root[data-theme="light"] {
   --bg: #f6f5f1; --panel: #efeee9; --raised: #e7e6e0; --chosen: #dedcd4;
@@ -3055,6 +3068,7 @@ PAGE = r"""<!doctype html>
   --done-soft: rgba(42,110,168,.10); --starting-soft: rgba(29,111,116,.09);
   --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
+  --mine: #3c5a8c; --mine-soft: rgba(60,90,140,.09);
   --code: #eceae3; --code-ink: #33363d;
   --syn-key: #5b3fb0; --syn-str: #26694a; --syn-num: #1d6f74;
   --syn-com: #8b8e96; --syn-fn: #2a6ea8; --syn-meta: #6a6d76;
@@ -3097,9 +3111,18 @@ body {
 /* body */
 .body { flex-grow: 1; display: flex; min-height: 0; }
 .sidebar {
-  width: 340px; flex-shrink: 0; display: flex; flex-direction: column;
-  border-right: 1px solid var(--edge); background: var(--panel);
+  width: var(--sidebar-w, 340px); flex-shrink: 0; display: flex;
+  flex-direction: column; background: var(--panel);
 }
+/* Paths are long and no width chosen here is right for every repository, so
+   both column edges are draggable. The alternative is a config option, which
+   PLAN.md prefers to delete. */
+.grip {
+  flex-shrink: 0; width: 5px; cursor: col-resize; background: var(--edge);
+  border: 0; padding: 0; transition: background .15s ease;
+}
+.grip:hover, .grip.dragging { background: var(--needs); }
+body.dragging { cursor: col-resize; user-select: none; }
 .sidebar-head {
   padding: 12px 16px 8px; font-family: var(--mono); font-size: 11px;
   color: var(--ink-faint); letter-spacing: .08em; text-transform: uppercase;
@@ -3125,14 +3148,20 @@ body {
 :root[data-theme="light"] .row.chosen {
   box-shadow: inset 0 0 0 40px rgba(0,0,0,.05);
 }
-.row.chosen .name { color: var(--ink-bright); font-weight: 600; }
+.row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
   display: flex; align-items: center; gap: 8px;
   font-family: var(--mono); font-size: 13px; min-width: 0;
 }
 .row .name {
-  color: var(--ink); overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; flex-grow: 1;
+  color: var(--ink-bright); font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; flex-grow: 1;
+}
+/* What Claude Code called the session. It goes under the worktree, not in
+   front of it: it is a title for the conversation, not a place. */
+.row .called {
+  padding-left: 17px; font-size: 12px; color: var(--ink-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .row .word { flex-shrink: 0; }
 .row.needs_you .word { color: var(--needs); }
@@ -3227,7 +3256,8 @@ mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 24px; min-height: 0; }
 
 /* transcript */
-.turn { display: flex; gap: 12px; margin-bottom: 22px; animation: slide .15s ease-out; }
+.turn { display: flex; gap: 12px; margin-bottom: 22px; position: relative;
+  animation: slide .15s ease-out; }
 @keyframes slide { from { transform: translateY(4px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .turn { animation: none; } }
 .who {
@@ -3239,6 +3269,22 @@ mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 
   flex-grow: 1; padding: 11px 15px; border-radius: 6px; background: var(--raised);
   border: 1px solid var(--edge); line-height: 1.5; min-width: 0;
   white-space: pre-wrap; word-wrap: break-word;
+}
+/* Your words against Claude's. A rail and a tint say where you spoke, and a
+   rule above each one breaks a long transcript into rounds you can scan.
+   Both used to be grey blocks told apart by one small word. */
+.turn.mine { margin-top: 26px; }
+.turn.mine::before {
+  content: ""; position: absolute; left: 0; right: 0; margin-top: -14px;
+  height: 1px; background: var(--edge);
+}
+.turn.mine:first-child { margin-top: 0; }
+.turn.mine:first-child::before { display: none; }
+.turn.mine .who { color: var(--mine); font-weight: 600; }
+.turn.mine .bubble {
+  background: var(--mine-soft); border-color: transparent;
+  border-left: 3px solid var(--mine); border-radius: 0 6px 6px 0;
+  color: var(--ink-bright);
 }
 .prose { flex-grow: 1; line-height: 1.55; min-width: 0; }
 .prose > *:first-child { margin-top: 0; }
@@ -3300,15 +3346,15 @@ body:not(.show-thinking) .thinking { display: none; }
 /* files and diff: a list on the left, what it names on the right */
 .content.split { padding: 0; overflow: hidden; display: flex; }
 .side {
-  width: 268px; flex-shrink: 0; display: flex; flex-direction: column;
-  min-height: 0; border-right: 1px solid var(--edge);
+  width: var(--side-w, 268px); flex-shrink: 0; display: flex;
+  flex-direction: column; min-height: 0;
 }
 .findslot { flex-shrink: 0; display: flex; padding: 8px 10px;
   border-bottom: 1px solid var(--edge); }
 .findslot .find { width: 100%; }
 .filelist {
   flex-grow: 1; overflow-y: auto; padding: 8px 0;
-  font-family: var(--mono); font-size: 12px;
+  font-family: var(--narrow); font-size: 13px; letter-spacing: .01em;
 }
 .filelist button {
   display: block; width: 100%; padding: 7px 14px; text-align: left;
@@ -3318,7 +3364,18 @@ body:not(.show-thinking) .thinking { display: none; }
 /* The Files list is one height per row, which is what lets it build only the
    rows on screen and stand two spacers in for the rest. The Diff list is not:
    its rows carry a second line of counts. */
-.filelist.fixed button { height: 28px; padding: 6px 14px; line-height: 16px; }
+.filelist.fixed button {
+  height: 28px; padding: 6px 14px; line-height: 16px;
+  display: flex; align-items: center; gap: 5px;
+}
+.filelist.fixed .name { flex-grow: 1; min-width: 0; }
+.filelist .caret {
+  flex-shrink: 0; width: 9px; color: var(--ink-faint); font-size: 9px;
+}
+.filelist button.dir { color: var(--ink); }
+.filelist button.dir.open .caret, .filelist button.dir:hover .caret {
+  color: var(--ink-soft);
+}
 .listnote {
   flex-shrink: 0; padding: 7px 14px; border-bottom: 1px solid var(--edge);
   font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
@@ -3370,7 +3427,7 @@ body:not(.show-thinking) .thinking { display: none; }
 .minus { color: var(--cut-ink); }
 .filebody { flex-grow: 1; overflow-y: auto; padding: 20px 26px; min-width: 0; }
 .filebody .where {
-  margin-bottom: 14px; font-family: var(--mono); font-size: 11px;
+  margin-bottom: 14px; font-family: var(--narrow); font-size: 12px;
   letter-spacing: .04em; color: var(--ink-faint);
 }
 .diffbody {
@@ -3396,7 +3453,10 @@ body:not(.show-thinking) .thinking { display: none; }
   color: var(--ink-faint); font-size: 11px; letter-spacing: .06em;
   text-transform: uppercase; flex-shrink: 0;
 }
-.dfile .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfile .path {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--narrow); font-size: 13px;
+}
 .dfile .why { margin-left: auto; flex-shrink: 0; color: var(--ink-faint); font-size: 11px; }
 .hunk {
   padding: 6px 20px; background: var(--panel); color: var(--ink-mute);
@@ -3459,6 +3519,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
       </div>
     </div>
+    <div class="grip" id="grip" title="drag to resize, double-click to reset"></div>
     <div class="main">
       <div class="session-head">
         <div class="title" id="title">no session</div>
@@ -3510,6 +3571,10 @@ const state = {
   stream: null,
   names: [],            // every path in the worktree, in the order sent
   order: [],            // the same paths, with what changed lifted to the top
+  tree: new Map(),      // every directory, with what it holds
+  marked: new Set(),    // the directories holding something that changed
+  opendirs: new Set(),  // the ones the reader opened
+  shutdirs: new Set(),  // and the ones the reader closed
   changed: new Map(),   // the ones git says the agent touched, and when
   filesTotal: 0,        // how many the worktree holds
   filesCut: false,      // more than the daemon will send
@@ -3529,6 +3594,60 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+// --- dragging a column edge -------------------------------------------------
+
+// Paths are long, screens differ, and the alternative to a handle is a config
+// option, which this program prefers to delete. The width goes into a CSS
+// variable rather than onto the element, so a column that is rebuilt keeps it,
+// and into this browser's storage, so a reload does too.
+
+function rememberWidth(name, px) {
+  const root = document.documentElement;
+  if (px) root.style.setProperty(name, px + "px");
+  else root.style.removeProperty(name);
+  try {
+    if (px) localStorage.setItem("wostuast" + name, String(px));
+    else localStorage.removeItem("wostuast" + name);
+  } catch (error) {
+    // A private window remembers nothing. The drag still works.
+  }
+}
+
+function widthsBack() {
+  for (const name of ["--sidebar-w", "--side-w"]) {
+    let saved = "";
+    try { saved = localStorage.getItem("wostuast" + name) || ""; } catch (e) { }
+    if (saved) document.documentElement.style.setProperty(name, saved + "px");
+  }
+}
+
+function dragWidth(grip, name, least, most) {
+  grip.title = "drag to resize, double-click to reset";
+  let from = 0;
+  let was = 0;
+  const move = (at) => {
+    rememberWidth(name,
+                  Math.min(most, Math.max(least, was + at.clientX - from)));
+  };
+  const stop = () => {
+    document.body.classList.remove("dragging");
+    grip.classList.remove("dragging");
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", stop);
+  };
+  grip.addEventListener("pointerdown", (at) => {
+    from = at.clientX;
+    was = grip.previousElementSibling.getBoundingClientRect().width;
+    document.body.classList.add("dragging");
+    grip.classList.add("dragging");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    at.preventDefault();          // no text selection while dragging
+  });
+  grip.addEventListener("dblclick", () => rememberWidth(name, 0));
+  return grip;
+}
 
 // --- the two scripts that come from the web --------------------------------
 
@@ -3639,8 +3758,10 @@ function drawSessions() {
 
     const one = put(row, "div", "line1");
     put(one, "span", "dot " + s.state);
-    put(one, "span", "name", s.label || s.id.slice(0, 8));
+    put(one, "span", "name", s.place || s.label || s.id.slice(0, 8));
     put(one, "span", "word", s.state_word);
+
+    if (s.name) put(row, "div", "called", s.name);
 
     const two = put(row, "div", "line2");
     if (s.branch) put(two, "span", "branch", s.branch);
@@ -4009,7 +4130,8 @@ function blockNode(block, index) {
   }
   const mine = block.kind === "prompt";
   const node = document.createElement("div");
-  node.className = "turn" + (block.kind === "thinking" ? " thinking" : "");
+  node.className = "turn" + (mine ? " mine" : "")
+    + (block.kind === "thinking" ? " thinking" : "");
   const who = put(node, "div", "who" + (mine ? "" : " claude"), mine ? "you" : "claude");
   if (block.ts) put(who, "div", null, clock(block.ts));
   if (mine || block.kind === "thinking") put(node, "div", "bubble", block.text);
@@ -4181,6 +4303,7 @@ function split(box, tab, bodyClass) {
     // thing that moves it, so it is watched here rather than redrawn from the
     // top every time.
     list.addEventListener("scroll", () => fillList(list));
+    dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
     put(box, "div", bodyClass);
   }
   const side = box.firstChild;
@@ -4249,6 +4372,99 @@ function fuzzy(text, query) {
 // newest first, because that is the question this tool exists to answer; then
 // the rest as they came. It is one pass and a sort of the few that moved, not
 // a sort of fifty thousand.
+// --- the tree ---------------------------------------------------------------
+
+// Every directory, with what it holds. One pass over the names, which arrive
+// in name order, so each directory's children come out in order too. It is
+// built when the names move and not again: a repository of fifty thousand
+// files costs about forty milliseconds here, and nothing per draw.
+function buildTree(names) {
+  const dirs = new Map([["", { dirs: [], files: [] }]]);
+  // Each missing level is made and linked into the one above it, once. A loop
+  // that made the parent itself instead stopped on its own next turn, and
+  // every directory but the deepest was left hanging off nothing.
+  const folder = (path) => {
+    let one = dirs.get(path);
+    if (one) return one;
+    dirs.set(path, one = { dirs: [], files: [] });
+    const cut = path.lastIndexOf("/");
+    folder(cut < 0 ? "" : path.slice(0, cut)).dirs.push(path);
+    return one;
+  };
+  for (const path of names) {
+    const cut = path.lastIndexOf("/");
+    folder(cut < 0 ? "" : path.slice(0, cut)).files.push(path);
+  }
+  return dirs;
+}
+
+// The directories holding something the agent touched, so a closed one can
+// still say there is a change inside it.
+function dirsWithChanges(changed) {
+  const marked = new Set();
+  for (const path of changed.keys()) {
+    let at = path.lastIndexOf("/");
+    while (at > 0) {
+      marked.add(path.slice(0, at));
+      at = path.lastIndexOf("/", at - 1);
+    }
+  }
+  return marked;
+}
+
+// Which directories stand open. The ones holding a change open themselves,
+// because a closed tree cannot answer what the agent just did, and that is
+// the question this tool exists to answer. What the reader opens or closes
+// wins over that, so the tree never fights the hand on it.
+function openDirs() {
+  const open = new Set(state.marked);
+  for (const path of state.opendirs) open.add(path);
+  for (const path of state.shutdirs) open.delete(path);
+  return open;
+}
+
+// One directory's files, in the order they are read: the named files first,
+// then whatever changed with the newest first, then the rest by name. The
+// three tiers live inside the tree rather than in a section above it, so no
+// file is ever listed twice.
+function dirFiles(files) {
+  if (!files.length) return files;
+  const named = files.filter((path) => PINNED.includes(path));
+  const moved = files.filter((path) => !PINNED.includes(path) &&
+                                       state.changed.has(path));
+  if (!named.length && !moved.length) return files;
+  named.sort((a, b) => PINNED.indexOf(a) - PINNED.indexOf(b));
+  moved.sort((a, b) => state.changed.get(b) - state.changed.get(a));
+  const lifted = new Set([...named, ...moved]);
+  return named.concat(moved, files.filter((path) => !lifted.has(path)));
+}
+
+// The rows a tree shows, in the order they are drawn. Only what is open is
+// walked, so a closed repository costs its top level and no more.
+function treeRows(dirs, open, rows = [], path = "", depth = 0) {
+  const one = dirs.get(path);
+  if (!one) return rows;
+  const from = path ? path.length + 1 : 0;
+  for (const child of one.dirs) {
+    rows.push({ path: child, name: child.slice(from), depth, dir: true });
+    if (open.has(child)) treeRows(dirs, open, rows, child, depth + 1);
+  }
+  for (const file of dirFiles(one.files)) {
+    rows.push({ path: file, name: file.slice(from), depth });
+  }
+  return rows;
+}
+
+// What the left column shows: a flat list of matches while you type, and the
+// tree otherwise.
+function listRows() {
+  if (state.find) {
+    return pick(state.order).map(
+      (hit) => ({ path: hit.path, name: hit.path, depth: 0, at: hit.at }));
+  }
+  return treeRows(state.tree, openDirs());
+}
+
 function inOrder(names, changed) {
   if (!changed.size) return names;
   const lifted = [...changed.keys()]
@@ -4319,42 +4535,58 @@ function fillList(list) {
   list.dataset.last = String(last);
   list.replaceChildren();
   put(list, "div", "gap").style.height = first * ROW_H + "px";
-  for (let at = first; at < last; at += 1) {
-    const { path, at: marks } = found[at];
-    const button = put(list, "button",
-                       (state.file === path ? "chosen" : "") +
-                       (state.changed.has(path) ? " touched" : ""));
-    button.type = "button";
-    button.title = path;
-    putName(button, path, marks);
-    button.addEventListener("click", () => list.pick(path));
-  }
+  for (let at = first; at < last; at += 1) drawRow(list, found[at]);
   put(list, "div", "gap").style.height = (found.length - last) * ROW_H + "px";
 }
 
-// What the list is showing, and why it is showing that much of it.
+// One row: a directory that opens, or a file that is read.
+function drawRow(list, row) {
+  const dir = !!row.dir;
+  const open = dir && list.open.has(row.path);
+  const button = put(list, "button",
+                     (dir ? "dir" : "") +
+                     (!dir && state.file === row.path ? " chosen" : "") +
+                     ((dir ? state.marked.has(row.path)
+                           : state.changed.has(row.path)) ? " touched" : "") +
+                     (open ? " open" : ""));
+  button.type = "button";
+  button.title = row.path;
+  button.style.paddingLeft = (14 + row.depth * 13) + "px";
+  if (dir) put(button, "span", "caret", open ? "\u25be" : "\u25b8");
+  putName(button, row.name, row.at || []);
+  button.addEventListener("click", () => {
+    if (!dir) { chooseFile(row.path); return; }
+    if (open) { state.opendirs.delete(row.path); state.shutdirs.add(row.path); }
+    else { state.shutdirs.delete(row.path); state.opendirs.add(row.path); }
+    draw();
+  });
+}
+
+// What the list is showing, and why it is showing that much of it. It counts
+// files, never the rows: a tree row can be a directory or a heading.
 function noteList(note, found) {
   note.replaceChildren();
+  const hits = found.filter((row) => !row.dir).length;
   if (state.filesFailed) {
     // git failing and a worktree holding nothing look the same and mean
     // opposite things, so the strip says which one this is.
     put(note, "span", null, "git did not answer");
-  } else if (state.find && !found.length) {
+  } else if (state.find && !hits) {
     put(note, "span", null, "no name matches");
   } else if (state.find) {
-    put(note, "span", null, found.length + " of " + state.filesTotal);
+    put(note, "span", null, hits + " of " + state.filesTotal);
   } else if (state.filesCut) {
     put(note, "span", null, state.filesTotal + " files, more than one list"
         + " can answer for");
   } else {
-    put(note, "span", null, found.length +
-        (found.length === 1 ? " file" : " files"));
+    put(note, "span", null, state.filesTotal +
+        (state.filesTotal === 1 ? " file" : " files"));
   }
 }
 
 function drawFiles(box) {
   const [list, pane, note] = split(box, "files", "filebody");
-  const found = pick(state.order);
+  const found = listRows();
 
   // What the list draws is what decides whether it is drawn again: the names
   // in the order they are shown, which file is open, and which ones carry a
@@ -4363,10 +4595,11 @@ function drawFiles(box) {
   // The mtimes stay out: folding those in re-rendered the open document.
   if (fresh(box, "listKey", JSON.stringify(
       [state.find, state.file, state.filesFailed, state.order.length,
-       state.order.slice(0, 40), [...state.changed.keys()].sort()]))) {
+       state.order.slice(0, 40), [...state.changed.keys()].sort(),
+       [...state.opendirs].sort(), [...state.shutdirs].sort()]))) {
     list.classList.add("fixed");   // every row one height, so the sums hold
     list.found = found;
-    list.pick = chooseFile;
+    list.open = openDirs();       // the rows read it as they are built
     // A different set of names starts at the top: the best match is the first
     // row, and that is the row you meant. A file being touched, or another
     // one being opened, is not a different set and does not move you.
@@ -4663,6 +4896,10 @@ function choose(id) {
   forgetFile(null);
   state.names = [];
   state.order = [];
+  state.tree = new Map();
+  state.marked = new Set();
+  state.opendirs = new Set();
+  state.shutdirs = new Set();
   state.changed = new Map();
   state.filesTotal = 0;
   state.filesCut = false;
@@ -4738,8 +4975,10 @@ async function loadFiles() {
   // an empty listing splits to one empty string rather than to none.
   if (body.names !== undefined) {
     state.names = body.names ? body.names.split("\0") : [];
+    state.tree = buildTree(state.names);
   }
   state.order = inOrder(state.names, state.changed);
+  state.marked = dirsWithChanges(state.changed);
   if (!state.names.includes(state.file)) {
     forgetFile(state.order.length ? state.order[0] : null);
   }
@@ -4903,6 +5142,8 @@ $("find").addEventListener("keydown", (press) => {
   draw();
 });
 applyTheme(themeChoice());
+widthsBack();
+dragWidth($("grip"), "--sidebar-w", 200, 760);
 
 drawSessions();
 drawHeader();

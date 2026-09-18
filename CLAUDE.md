@@ -118,6 +118,13 @@ settings.
   exactly that reason. `inOrder` in the page builds the three tiers the reader
   sees. Put the changed tier back in `file_order` and the tag moves every time
   an agent saves, and the saving is gone.
+- **The Files tab is a tree, and the tiers live inside it.** `dirFiles` orders
+  each directory's own files — named, then changed newest first, then the rest
+  — rather than listing them again in a section above the tree, which in a
+  small repository is most of the list twice. `openDirs` opens a directory
+  holding a change, because a closed tree cannot say what the agent just did;
+  `shutdirs` is what the reader closed, and it wins, so the tree never fights
+  the hand on it.
 - **The page searches every name, or it says it cannot.** Sending the first
   five thousand of 52,799 names made `libcorrelation` find 16 files and miss
   a thousand. A search that sees part of the list gives a wrong answer that
@@ -182,9 +189,8 @@ tool behind.
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
 2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
 3. **Read** — done. Files tab and Diff tab.
-4. **Fit** — next. The two worktree tabs, on a real repository. Four stages
-   in order: correct, fast, room, read. `PLAN.md` section 9 lists what is in
-   each one.
-5. **Act** — jump, send, Peek. Attention (title, icon, notifications)
+4. **Fit** — done. The two worktree tabs, on a real repository. Four stages:
+   correct, fast, room, read. `PLAN.md` section 9 lists what is in each one.
+5. **Act** — next. jump, send, Peek. Attention (title, icon, notifications)
    arrived early, in milestone 2, because it was asked for.
 6. **Shine** — light theme, motion, empty states, README.

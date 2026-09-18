@@ -178,7 +178,12 @@ def test_the_page_draws_the_session(page_at):
         browser, page = open_page(play, page_at)
         try:
             assert page.locator(".row").count() == 1
-            assert "A session" in page.locator(".row .name").inner_text()
+            # The worktree leads the row; what Claude Code called the session
+            # goes under it, because the name is often long and often vague
+            # and it used to push the worktree off the end.
+            place = page.locator(".row .name").inner_text()
+            assert place and "A session" not in place
+            assert "A session" in page.locator(".row .called").inner_text()
             assert page.title() == "wostuast"
             assert "Opus 5" in page.locator("#facts").inner_text()
             assert page.locator(".turn").count() >= 2
@@ -1269,5 +1274,102 @@ def test_the_newest_change_leads_the_ones_that_changed(repo_page):
                 ".filelist button", "els => els.map(e => e.title)")
             assert names[0] == "README.md"           # pinned, so it still wins
             assert names[1] == "code.py", names[:4]  # the newest change
+        finally:
+            browser.close()
+
+
+# --- the tree ---------------------------------------------------------------
+
+
+def test_the_list_is_a_tree_that_opens_and_closes(big_page):
+    """A closed repository costs its top level and no more."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            shut = page.locator(".filelist button.dir:has-text('native')")
+            assert shut.count() == 1
+            # 5201 files, and only a window of rows exists.
+            assert page.locator(".filelist button").count() <= 100
+            # Nothing inside the closed directory has been built at all.
+            assert page.locator(".filelist button[title^='native/']").count() == 0
+
+            page.click(".filelist button.dir:has-text('native')")
+            page.wait_for_selector(".filelist button.dir.open")
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.textContent)")
+            assert "shared" in " ".join(names), names
+
+            page.click(".filelist button.dir.open")
+            page.wait_for_timeout(200)
+            assert page.locator(".filelist button.dir.open").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_directory_holding_a_change_opens_itself(repo_page):
+    """A closed tree cannot say what the agent just did, and that is the
+    question this tool exists to answer."""
+    root, _ = repo_page
+    (root / "deep").mkdir()
+    (root / "deep" / "quiet.txt").write_text("nothing\n")
+    from conftest import git_in as git
+    git(root, "add", "deep"), git(root, "commit", "-qm", "deep")
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("the agent wrote this\n")
+
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            opened = page.eval_on_selector_all(
+                ".filelist button.dir.open", "els => els.map(e => e.title)")
+            assert opened == ["src"], opened
+            # and the file inside it is on screen, marked
+            assert page.locator(
+                ".filelist button.touched:has-text('touched.txt')").count() == 1
+            # the directory that holds nothing new stays shut, but says so
+            shut = page.locator(".filelist button.dir:has-text('deep')")
+            assert "open" not in (shut.get_attribute("class") or "")
+        finally:
+            browser.close()
+
+
+def test_a_closed_directory_still_says_a_change_is_inside(repo_page):
+    root, _ = repo_page
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("the agent wrote this\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            page.click(".filelist button.dir.open")          # close it by hand
+            page.wait_for_timeout(250)
+            shut = page.locator(".filelist button.dir:has-text('src')")
+            assert "touched" in (shut.get_attribute("class") or "")
+            assert "open" not in (shut.get_attribute("class") or "")
+        finally:
+            browser.close()
+
+
+def test_closing_a_directory_by_hand_beats_opening_it_for_you(repo_page):
+    """The tree never fights the hand on it."""
+    root, _ = repo_page
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("one\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            page.click(".filelist button.dir.open")
+            page.wait_for_timeout(250)
+            # another change lands in the same directory
+            (root / "src" / "second.txt").write_text("two\n")
+            page.wait_for_timeout(3000)       # two polls
+            assert page.locator(".filelist button.dir.open").count() == 0, \
+                "it re-opened a directory the reader had closed"
         finally:
             browser.close()
