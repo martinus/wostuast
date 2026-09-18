@@ -62,7 +62,9 @@ python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/mai
 
 This writes `~/.local/bin/wostuast` and registers the hooks in
 `~/.claude/settings.json`. It adds only its own entries and keeps the file's
-indentation. Restart your Claude Code sessions so they pick up the hooks.
+indent width. An object you wrote on one line comes back spread over several,
+because the file is rewritten from parsed JSON; nothing else changes. Restart
+your Claude Code sessions so they pick up the hooks.
 
 Then check it:
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 
 
 def test_tool_summaries(ws):
@@ -52,12 +51,7 @@ def test_ls_without_sessions_explains_itself(ws, capsys):
     assert "doctor" in out
 
 
-def test_ls_prints_one_row_per_session(ws, recorded_events, capsys, monkeypatch):
-    path = ws.events_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(e) + "\n" for e in recorded_events))
-    monkeypatch.setattr(ws, "SESSION_MAX_AGE", 10**12)
-    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+def test_ls_prints_one_row_per_session(ws, written_events, capsys):
     assert ws.cmd_ls(None) == 0
     out = capsys.readouterr().out
     assert "STATE" in out
@@ -68,15 +62,9 @@ def test_ls_prints_one_row_per_session(ws, recorded_events, capsys, monkeypatch)
     assert "1 done · 1 ended" in out
 
 
-def test_ls_shows_the_name_from_the_status_file(ws, recorded_events, recorded_status,
-                                                capsys, monkeypatch):
-    path = ws.events_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(e) + "\n" for e in recorded_events))
+def test_ls_shows_the_name_from_the_status_file(ws, written_events, recorded_status, capsys):
     ws.write_status(recorded_status["session_id"],
                     ws.status_from_payload(recorded_status, now=1.0))
-    monkeypatch.setattr(ws, "SESSION_MAX_AGE", 10**12)
-    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
     ws.cmd_ls(None)
     assert "warmhare" in capsys.readouterr().out
 
@@ -100,8 +88,15 @@ def test_doctor_is_happy_after_install(ws, tmp_path, monkeypatch, capsys):
 
 
 def test_the_table_pads_every_column_but_the_last(ws):
-    rows = [["a", "bbb", "x"], ["cccc", "d", "y"]]
-    assert ws.table(rows, ["", ""], color=False) == "a     bbb  x\ncccc  d    y"
+    rows = [("", ["a", "bbb", "x"]), ("", ["cccc", "d", "y"])]
+    assert ws.table(rows, color=False) == "a     bbb  x\ncccc  d    y"
+
+
+def test_the_table_colours_a_row_by_its_own_state(ws):
+    rows = [("", ["head"]), ("needs_you", ["row"])]
+    lines = ws.table(rows, color=True).splitlines()
+    assert lines[0] == "head"
+    assert lines[1].startswith("\033[") and "row" in lines[1]
 
 
 def test_no_color_when_asked(ws):
@@ -112,3 +107,26 @@ def test_no_color_when_asked(ws):
 def test_serve_says_it_is_not_here_yet(ws, capsys):
     assert ws.cmd_serve(None) == 1
     assert "milestone 2" in capsys.readouterr().err
+
+
+def test_hook_and_status_skip_the_argument_parser(ws, monkeypatch):
+    """They run on every tool call and every redraw, so they must stay cheap."""
+    built = False
+
+    def fail_if_built():
+        nonlocal built
+        built = True
+        raise AssertionError("build_parser must not run for hook or status")
+
+    monkeypatch.setattr(ws, "build_parser", fail_if_built)
+    monkeypatch.setattr(ws, "cmd_hook", lambda args: 0)
+    monkeypatch.setattr(ws, "cmd_status", lambda args: 0)
+    monkeypatch.setattr(ws, "FAST_PATH", {"hook": ws.cmd_hook, "status": ws.cmd_status})
+    assert ws.main(["hook"]) == 0
+    assert ws.main(["status"]) == 0
+    assert built is False
+
+
+def test_every_other_command_still_goes_through_the_parser(ws, capsys):
+    assert ws.main([]) == 0
+    assert "usage: wostuast" in capsys.readouterr().out

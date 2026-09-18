@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,3 +48,35 @@ def recorded_events():
 @pytest.fixture
 def recorded_status():
     return json.loads((FIXTURES / "status.json").read_text())
+
+
+@pytest.fixture
+def run_cli(tmp_path):
+    """Run the program as Claude Code would: a fresh process, a bare environment."""
+
+    def run(args, stdin="", home=None):
+        root = home or tmp_path
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(root),
+            "WOSTUAST_STATE": str(root / "state"),
+            "CLAUDE_CONFIG_DIR": str(root / "claude"),
+            "TMUX_PANE": "%3",
+            "NO_COLOR": "1",
+        }
+        return subprocess.run(
+            [sys.executable, str(ROOT / "wostuast"), *args],
+            input=stdin, capture_output=True, text=True, env=env,
+        )
+
+    return run
+
+
+@pytest.fixture
+def written_events(ws, recorded_events, monkeypatch):
+    """The recorded log on disk, with time and liveness frozen."""
+    for event in recorded_events:
+        ws.append_event(event)
+    monkeypatch.setattr(ws, "SESSION_MAX_AGE", 10**12)
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    return recorded_events

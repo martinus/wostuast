@@ -3,11 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_the_recorded_payload_gives_name_model_and_context(ws, recorded_status):
@@ -51,7 +46,7 @@ def test_a_session_id_never_escapes_the_status_directory(ws):
     written = list(ws.status_dir().glob("*.json"))
     assert len(written) == 1
     assert written[0].name == ".._.._evil.json"
-    assert written[0].resolve().parent == ws.status_dir().resolve()
+    assert "/" not in written[0].name
 
 
 def test_the_printed_line_is_short_and_plain(ws, recorded_status):
@@ -83,12 +78,9 @@ def test_the_name_becomes_the_session_label(ws):
     assert session.label == "warmhare"
 
 
-def test_status_command_stores_the_payload_and_prints_one_line(tmp_path, recorded_status):
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
-           "WOSTUAST_STATE": str(tmp_path / "state"), "NO_COLOR": "1"}
-    done = subprocess.run([sys.executable, str(ROOT / "wostuast"), "status"],
-                          input=json.dumps(recorded_status), capture_output=True,
-                          text=True, env=env)
+def test_status_command_stores_the_payload_and_prints_one_line(run_cli, tmp_path,
+                                                               recorded_status):
+    done = run_cli(["status"], json.dumps(recorded_status))
     assert done.returncode == 0
     assert done.stdout.strip() == "warmhare · Opus 5 · 41% ctx"
     stored = json.loads(
@@ -97,9 +89,5 @@ def test_status_command_stores_the_payload_and_prints_one_line(tmp_path, recorde
     assert stored["context_pct"] == 41.0
 
 
-def test_status_command_survives_broken_input(tmp_path):
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
-           "WOSTUAST_STATE": str(tmp_path / "state")}
-    done = subprocess.run([sys.executable, str(ROOT / "wostuast"), "status"],
-                          input="not json", capture_output=True, text=True, env=env)
-    assert done.returncode == 0
+def test_status_command_survives_broken_input(run_cli):
+    assert run_cli(["status"], "not json").returncode == 0

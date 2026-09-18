@@ -10,20 +10,21 @@ Run `wostuast --help` for the commands.
 
 from __future__ import annotations
 
-# --- constants: paths, hook names, limits -----------------------------------
-
-import argparse
 import fcntl
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Sequence
+
+if TYPE_CHECKING:  # only the annotations need these; the hot paths must not pay
+    import argparse
+
+# --- constants: paths, hook names, limits -----------------------------------
 
 VERSION = "0.1.0"
 RAW_URL = "https://raw.githubusercontent.com/martinus/wostuast/main/wostuast"
@@ -54,16 +55,7 @@ LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
 GIT_TIMEOUT = 2.0
 
-#: Sort order of the sidebar and of `wostuast ls`.
-STATE_ORDER = {
-    "needs_you": 0,
-    "working": 1,
-    "done": 2,
-    "starting": 3,
-    "ended": 4,
-    "dead": 5,
-}
-
+#: Every state, in the order the sidebar shows them: the word and the colour.
 STATE_WORDS = {
     "needs_you": "needs you",
     "working": "working",
@@ -72,6 +64,18 @@ STATE_WORDS = {
     "ended": "ended",
     "dead": "killed",
 }
+
+STATE_COLORS = {
+    "needs_you": "\033[33m",
+    "working": "\033[32m",
+    "done": "\033[34m",
+    "starting": "\033[36m",
+    "ended": "\033[90m",
+    "dead": "\033[90m",
+}
+
+#: Sort order, taken from the order of STATE_WORDS so the two cannot drift.
+STATE_ORDER = {state: index for index, state in enumerate(STATE_WORDS)}
 
 
 def state_dir() -> Path:
@@ -91,6 +95,11 @@ def status_dir() -> Path:
     return state_dir() / "status"
 
 
+def status_path(session_id: str) -> Path:
+    """The status file of one session. The name is never trusted; see safe_name."""
+    return status_dir() / f"{safe_name(session_id)}.json"
+
+
 def log_path() -> Path:
     return state_dir() / "wostuast.log"
 
@@ -104,6 +113,16 @@ def settings_path() -> Path:
 
 def install_path() -> Path:
     return Path.home() / ".local" / "bin" / "wostuast"
+
+
+def hook_command(target: Path) -> str:
+    """The command install writes, doctor looks for, and uninstall removes."""
+    return f"{target} hook"
+
+
+def status_command(target: Path) -> str:
+    """The same, for the status line."""
+    return f"{target} status"
 
 
 # --- log: a plain text log, so a broken hook leaves a trace ------------------
@@ -122,6 +141,14 @@ def log(message: str) -> None:
         pass
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """Write the whole file or none of it, so a reader never sees half a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
+
+
 def rotate(path: Path, limit: int, backup: Path) -> None:
     """Move the file aside when it grows past the limit. Never raise."""
     try:
@@ -134,9 +161,9 @@ def rotate(path: Path, limit: int, backup: Path) -> None:
 # --- event log: append only, one JSON object per line ------------------------
 
 
-def append_event(record: dict[str, Any], path: Path | None = None) -> None:
+def append_event(record: dict[str, Any]) -> None:
     """Append one event. The caller has already added ts, pane and pid."""
-    target = path or events_path()
+    target = events_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     rotate(target, EVENTS_MAX_BYTES, target.with_name("events.1.jsonl"))
     line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
@@ -146,17 +173,27 @@ def append_event(record: dict[str, Any], path: Path | None = None) -> None:
         handle.flush()
 
 
-def read_events(path: Path | None = None) -> Iterator[dict[str, Any]]:
+def count_events() -> int:
+    """How many lines the log holds. It counts newlines, it does not parse."""
+    try:
+        with open(events_path(), "rb") as handle:
+            return sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
+    except OSError:
+        return 0
+
+
+def read_events() -> Iterator[dict[str, Any]]:
     """Read the event log from the start. Broken lines are skipped."""
-    target = path or events_path()
+    target = events_path()
     if not target.exists():
         return
-    with open(target, "r", encoding="utf-8", errors="replace") as handle:
+    with open(target, "rb") as handle:
         for line in handle:
-            line = line.strip()
-            if not line:
+            if not line.strip():
                 continue
             try:
+                # json.loads takes bytes and decodes them itself, in C.
+                # Broken UTF-8 raises UnicodeDecodeError, which is a ValueError.
                 record = json.loads(line)
             except ValueError:
                 continue
@@ -201,7 +238,6 @@ class Session:
     pid: int = 0
     transcript_path: str = ""
     state: str = "starting"
-    first_ts: float = 0.0
     last_ts: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
@@ -221,8 +257,9 @@ class Session:
         return path_label(self.cwd, self.git.repo)
 
     @property
-    def in_tmux(self) -> bool:
-        return bool(self.pane)
+    def since(self) -> float:
+        """The moment a row's age counts from: the wait, or the last event."""
+        return self.attention_since if self.state == "needs_you" else self.last_ts
 
 
 def path_label(cwd: str, repo: str = "") -> str:
@@ -289,8 +326,6 @@ class Store:
         name = str(event.get("hook_event_name") or "")
         ts = to_float(event.get("ts"))
 
-        if not session.first_ts:
-            session.first_ts = ts
         if ts > session.last_ts:
             session.last_ts = ts
         for key in ("cwd", "transcript_path", "pane"):
@@ -310,8 +345,7 @@ class Store:
 
 
 def _clear_attention(session: Session) -> None:
-    if session.state == "needs_you":
-        session.state = "working"
+    """Forget that the agent was waiting. Every caller sets the state itself."""
     session.attention_since = 0.0
     session.reason = ""
 
@@ -339,12 +373,9 @@ def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
 
 
 def _on_post_tool(session: Session, event: dict[str, Any], ts: float) -> None:
+    # A tool result means the agent is running again, so it no longer waits.
     _clear_attention(session)
-    session.state = "working"
-    session.last_tool = tool_summary(
-        str(event.get("tool_name") or ""), event.get("tool_input"), session.cwd
-    )
-    session.last_event = session.last_tool
+    _on_pre_tool(session, event, ts)
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -364,7 +395,6 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
         session.reason = f"permission: {session.last_tool}"
     else:
         session.reason = message or "permission"
-    session.last_event = session.reason
 
 
 def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -411,6 +441,11 @@ def to_float(value: Any) -> float:
         return 0.0
 
 
+def opt_float(value: Any) -> float | None:
+    """A number that may be absent. Missing stays missing, it does not become 0."""
+    return None if value is None else to_float(value)
+
+
 def to_int(value: Any) -> int:
     try:
         return int(value)
@@ -434,7 +469,11 @@ def pid_alive(pid: int) -> bool:
 
 
 def mark_dead(session: Session, alive: Callable[[int], bool] | None = None) -> None:
-    """A session whose process is gone is dead, even without a SessionEnd."""
+    """A session whose process is gone is dead, even without a SessionEnd.
+
+    `alive` defaults to None, not to pid_alive, so that tests can replace the
+    module's pid_alive. A default bound at import would not see the change.
+    """
     check = alive or pid_alive
     if session.state == "ended":
         return
@@ -449,7 +488,8 @@ def build_sessions(
     now: float | None = None,
     alive: Callable[[int], bool] | None = None,
 ) -> list[Session]:
-    """Replay the log, drop old sessions, add status and git facts, then sort."""
+    """Replay the log into sessions. Git facts cost a subprocess, so they are
+    left to add_git_facts, which only the commands that show them call."""
     store = Store()
     for event in events if events is not None else read_events():
         store.apply(event)
@@ -471,7 +511,8 @@ def sort_sessions(sessions: list[Session]) -> list[Session]:
         sessions,
         key=lambda s: (
             STATE_ORDER.get(s.state, 9),
-            s.attention_since if s.state == "needs_you" else -s.last_ts,
+            # The longest wait first, but the newest of everything else first.
+            s.since if s.state == "needs_you" else -s.since,
             s.label,
         ),
     )
@@ -481,7 +522,12 @@ def sort_sessions(sessions: list[Session]) -> list[Session]:
 
 
 def run(args: Sequence[str], cwd: str | None = None, timeout: float = GIT_TIMEOUT) -> str | None:
-    """Run a command and return its stdout. Return None on any failure."""
+    """Run a command and return its stdout, unchanged. None on any failure.
+
+    It does not strip: `tmux capture-pane` needs its blank lines kept.
+    """
+    import subprocess
+
     try:
         done = subprocess.run(
             list(args),
@@ -495,54 +541,80 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = GIT_TIMEOU
         return None
     if done.returncode != 0:
         return None
-    return done.stdout.strip()
+    return done.stdout
+
+
+def parse_status_branch(header: str) -> tuple[str, int, int]:
+    """Read the `## ` line of `git status --branch`: branch, ahead, behind.
+
+    It looks like `## main...origin/main [ahead 2, behind 1]`. The upstream and
+    the counts are left out when there are none. A fresh repository says
+    `## No commits yet on main`.
+    """
+    text = header[3:] if header.startswith("## ") else header
+    ahead = behind = 0
+    if "[" in text:
+        text, _, counts = text.partition(" [")
+        for word, value in re.findall(r"(ahead|behind) (\d+)", counts):
+            if word == "ahead":
+                ahead = int(value)
+            else:
+                behind = int(value)
+    text = text.partition("...")[0]
+    branch = text.rpartition(" ")[2] if text.startswith("No commits yet on ") else text
+    return branch.strip(), ahead, behind
 
 
 def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
-    """Read branch, ahead, behind and dirty state. A git error gives empty facts."""
+    """Read the repository name, branch, ahead, behind and dirty state.
+
+    Two git runs, not four: one gives both directories, the other gives the
+    branch, the counts and the changed files at once. A git error gives empty
+    facts, because a directory need not be a repository at all.
+    """
     facts = GitFacts()
     if not cwd or not os.path.isdir(cwd):
         return facts
 
     def git(*args: str) -> str | None:
-        return runner(["git", "-C", cwd, *args])
+        out = runner(["git", "-C", cwd, *args])
+        return None if out is None else out.strip()
 
-    common = git("rev-parse", "--path-format=absolute", "--git-common-dir")
-    if common:
-        facts.repo = os.path.basename(os.path.dirname(common.rstrip("/")))
-    if not facts.repo:
-        remote = git("remote", "get-url", "origin")
-        if remote:
-            facts.repo = re.sub(r"\.git$", "", remote.rstrip("/").rsplit("/", 1)[-1])
-    if not facts.repo:
-        top = git("rev-parse", "--show-toplevel")
-        if top:
-            facts.repo = os.path.basename(top)
+    # --git-common-dir points at the main repository, so a worktree keeps its
+    # repository's name. --path-format needs git 2.31; older git falls back to
+    # the top level, which for a worktree is the worktree itself.
+    paths = git("rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
+    if paths is None:
+        paths = git("rev-parse", "--show-toplevel")
+    if paths:
+        first = paths.splitlines()[0].rstrip("/")
+        root = os.path.dirname(first) if first.endswith(".git") else first
+        facts.repo = os.path.basename(root)
 
-    branch = git("rev-parse", "--abbrev-ref", "HEAD")
-    if branch:
-        facts.branch = branch
-    counts = git("rev-list", "--left-right", "--count", "@{upstream}...HEAD")
-    if counts:
-        parts = counts.split()
-        if len(parts) == 2:
-            facts.behind, facts.ahead = to_int(parts[0]), to_int(parts[1])
-
-    porcelain = git("status", "--porcelain")
-    if porcelain is not None:
-        lines = [line for line in porcelain.splitlines() if line.strip()]
-        facts.touched_files = len(lines)
-        facts.dirty = bool(lines)
+    status = git("status", "--porcelain", "--branch")
+    if status is not None:
+        lines = status.splitlines()
+        if lines and lines[0].startswith("## "):
+            facts.branch, facts.ahead, facts.behind = parse_status_branch(lines[0])
+            lines = lines[1:]
+        changed = [line for line in lines if line.strip()]
+        facts.touched_files = len(changed)
+        facts.dirty = bool(changed)
     return facts
 
 
 def add_git_facts(sessions: Sequence[Session]) -> None:
-    """Fill in git facts for every session. One git run per directory."""
-    cache: dict[str, GitFacts] = {}
+    """Fill in git facts for every session, one directory at a time but all at
+    once: git waits on disk, so ten worktrees cost about as long as one."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    directories = sorted({session.cwd for session in sessions if session.cwd})
+    if not directories:
+        return
+    with ThreadPoolExecutor(max_workers=min(8, len(directories))) as pool:
+        facts = dict(zip(directories, pool.map(git_facts, directories)))
     for session in sessions:
-        if session.cwd not in cache:
-            cache[session.cwd] = git_facts(session.cwd)
-        session.git = cache[session.cwd]
+        session.git = facts.get(session.cwd, GitFacts())
 
 
 # --- status: the status line payload, which carries name and context ---------
@@ -550,19 +622,16 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
 
 def status_from_payload(payload: dict[str, Any], now: float | None = None) -> Status:
     """Pick the few fields wostuast shows out of the status line JSON."""
-    window = payload.get("context_window")
-    window = window if isinstance(window, dict) else {}
-    model = payload.get("model")
-    model = model if isinstance(model, dict) else {}
-    agent = payload.get("agent")
-    agent = agent if isinstance(agent, dict) else {}
-    used = window.get("used_percentage")
+    def nested(key: str) -> dict[str, Any]:
+        value = payload.get(key)
+        return value if isinstance(value, dict) else {}
+
     return Status(
         ts=now if now is not None else time.time(),
         name=str(payload.get("session_name") or ""),
-        model=str(model.get("display_name") or ""),
-        context_pct=to_float(used) if used is not None else None,
-        agent=str(agent.get("name") or ""),
+        model=str(nested("model").get("display_name") or ""),
+        context_pct=opt_float(nested("context_window").get("used_percentage")),
+        agent=str(nested("agent").get("name") or ""),
         version=str(payload.get("version") or ""),
     )
 
@@ -571,37 +640,22 @@ def write_status(session_id: str, status: Status) -> None:
     """Overwrite the status file of a session. It holds the latest value only."""
     if not session_id:
         return
-    directory = status_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / f"{safe_name(session_id)}.json"
-    payload = {
-        "ts": status.ts,
-        "name": status.name,
-        "model": status.model,
-        "context_pct": status.context_pct,
-        "agent": status.agent,
-        "version": status.version,
-    }
-    temporary = target.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload), encoding="utf-8")
-    temporary.replace(target)
+    write_atomic(status_path(session_id), json.dumps(asdict(status)))
 
 
 def read_status(session_id: str) -> Status:
     """Read the status file of a session. A missing file gives an empty status."""
-    target = status_dir() / f"{safe_name(session_id)}.json"
     try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
+        payload = json.loads(status_path(session_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return Status()
     if not isinstance(payload, dict):
         return Status()
-    pct = payload.get("context_pct")
     return Status(
         ts=to_float(payload.get("ts")),
         name=str(payload.get("name") or ""),
         model=str(payload.get("model") or ""),
-        context_pct=to_float(pct) if pct is not None else None,
+        context_pct=opt_float(payload.get("context_pct")),
         agent=str(payload.get("agent") or ""),
         version=str(payload.get("version") or ""),
     )
@@ -651,14 +705,28 @@ def hook_entry(command: str) -> dict[str, Any]:
     return {"type": "command", "command": command}
 
 
-def has_command(group: Any, command: str) -> bool:
-    """True when this matcher group already runs our command."""
+def is_ours(command: Any, verb: str) -> bool:
+    """True when this command runs our program with this verb.
+
+    It matches the shape, not the exact string: `wostuast hook`,
+    `~/.local/bin/wostuast hook` and `./wostuast hook` are all ours. Matching
+    the exact string made `doctor` report "hooks missing" for an install from
+    a checkout, and left such an entry behind on `uninstall`.
+    """
+    if not isinstance(command, str):
+        return False
+    words = command.split()
+    return len(words) == 2 and words[1] == verb and os.path.basename(words[0]) == "wostuast"
+
+
+def has_verb(group: Any, verb: str) -> bool:
+    """True when this matcher group already runs our program with this verb."""
     if not isinstance(group, dict):
         return False
-    for entry in group.get("hooks") or []:
-        if isinstance(entry, dict) and entry.get("command") == command:
-            return True
-    return False
+    return any(
+        isinstance(entry, dict) and is_ours(entry.get("command"), verb)
+        for entry in group.get("hooks") or []
+    )
 
 
 def add_hooks(settings: dict[str, Any], command: str) -> list[str]:
@@ -671,18 +739,18 @@ def add_hooks(settings: dict[str, Any], command: str) -> list[str]:
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ValueError(f"settings.json has a '{event}' key that is not a list")
-        if any(has_command(group, command) for group in groups):
+        if any(has_verb(group, "hook") for group in groups):
             continue
         group: dict[str, Any] = {"hooks": [hook_entry(command)]}
         if event in MATCHER_EVENTS:
-            group = {"matcher": "*", "hooks": [hook_entry(command)]}
+            group = {"matcher": "*", **group}
         groups.append(group)
         changes.append(f"added hook {event}")
     return changes
 
 
-def remove_hooks(settings: dict[str, Any], commands: Sequence[str]) -> list[str]:
-    """Remove only entries that run one of our commands."""
+def remove_hooks(settings: dict[str, Any]) -> list[str]:
+    """Remove only the entries that run our program."""
     changes: list[str] = []
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
@@ -693,17 +761,14 @@ def remove_hooks(settings: dict[str, Any], commands: Sequence[str]) -> list[str]
             continue
         kept_groups = []
         for group in groups:
-            if not isinstance(group, dict):
-                kept_groups.append(group)
-                continue
-            entries = group.get("hooks")
+            entries = group.get("hooks") if isinstance(group, dict) else None
             if not isinstance(entries, list):
                 kept_groups.append(group)
                 continue
             kept = [
                 entry
                 for entry in entries
-                if not (isinstance(entry, dict) and entry.get("command") in commands)
+                if not (isinstance(entry, dict) and is_ours(entry.get("command"), "hook"))
             ]
             if len(kept) != len(entries):
                 changes.append(f"removed hook {event}")
@@ -722,7 +787,7 @@ def remove_hooks(settings: dict[str, Any], commands: Sequence[str]) -> list[str]
 def add_status_line(settings: dict[str, Any], command: str) -> list[str]:
     """Register our status line, but never overwrite one the user already has."""
     current = settings.get("statusLine")
-    if isinstance(current, dict) and current.get("command") == command:
+    if isinstance(current, dict) and is_ours(current.get("command"), "status"):
         return []
     if current:
         return [
@@ -733,9 +798,10 @@ def add_status_line(settings: dict[str, Any], command: str) -> list[str]:
     return ["added status line"]
 
 
-def remove_status_line(settings: dict[str, Any], command: str) -> list[str]:
+def remove_status_line(settings: dict[str, Any]) -> list[str]:
+    """Remove the status line only when it is ours."""
     current = settings.get("statusLine")
-    if isinstance(current, dict) and current.get("command") == command:
+    if isinstance(current, dict) and is_ours(current.get("command"), "status"):
         del settings["statusLine"]
         return ["removed status line"]
     return []
@@ -755,40 +821,25 @@ def load_settings(path: Path) -> tuple[dict[str, Any], int | str, bool]:
 
 
 def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: bool) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, indent=indent, ensure_ascii=False)
-    if newline:
-        text += "\n"
-    temporary = path.with_name(path.name + ".wostuast.tmp")
-    temporary.write_text(text, encoding="utf-8")
-    temporary.replace(path)
+    write_atomic(path, text + "\n" if newline else text)
 
 
 # --- output helpers ----------------------------------------------------------
 
 
-def use_color(stream: Any = None) -> bool:
-    if os.environ.get("NO_COLOR"):
-        return False
-    stream = stream or sys.stdout
-    return hasattr(stream, "isatty") and stream.isatty()
+def use_color() -> bool:
+    """Colour only a real terminal, and never when NO_COLOR is set."""
+    return not os.environ.get("NO_COLOR") and sys.stdout.isatty()
 
 
-COLORS = {
-    "needs_you": "\033[33m",
-    "working": "\033[32m",
-    "done": "\033[34m",
-    "starting": "\033[36m",
-    "ended": "\033[90m",
-    "dead": "\033[90m",
-}
 RESET = "\033[0m"
 
 
 def paint(text: str, state: str, color: bool) -> str:
     if not color:
         return text
-    return f"{COLORS.get(state, '')}{text}{RESET}"
+    return f"{STATE_COLORS.get(state, '')}{text}{RESET}"
 
 
 def ago(seconds: float) -> str:
@@ -816,19 +867,19 @@ def changes_column(facts: GitFacts) -> str:
     return " ".join(parts)
 
 
-def table(rows: Sequence[Sequence[str]], color_by: Sequence[str], color: bool) -> str:
-    """Left-align every column. The last column is not padded."""
+def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
+    """Left-align every column. The last one is not padded. Each row says its
+    own state, which gives it its colour; an empty state means no colour."""
     if not rows:
         return ""
-    widths = [0] * len(rows[0])
-    for row in rows:
-        for index, cell in enumerate(row[:-1]):
+    widths = [0] * len(rows[0][1])
+    for _, cells in rows:
+        for index, cell in enumerate(cells[:-1]):
             widths[index] = max(widths[index], len(cell))
     lines = []
-    for row, state in zip(rows, color_by):
-        cells = [cell.ljust(widths[index]) for index, cell in enumerate(row[:-1])]
-        cells.append(row[-1])
-        line = "  ".join(cells).rstrip()
+    for state, cells in rows:
+        padded = [cell.ljust(widths[index]) for index, cell in enumerate(cells[:-1])]
+        line = "  ".join([*padded, cells[-1]]).rstrip()
         lines.append(paint(line, state, color) if state else line)
     return "\n".join(lines)
 
@@ -836,14 +887,17 @@ def table(rows: Sequence[Sequence[str]], color_by: Sequence[str], color: bool) -
 # --- commands ----------------------------------------------------------------
 
 
+def read_stdin_json() -> dict[str, Any]:
+    """Read one JSON object from stdin. Anything else reads as empty."""
+    raw = sys.stdin.read()
+    payload = json.loads(raw) if raw.strip() else {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def cmd_hook(args: argparse.Namespace) -> int:
     """Read the hook JSON from stdin and append one line. Always exit 0."""
     try:
-        raw = sys.stdin.read()
-        payload = json.loads(raw) if raw.strip() else {}
-        if not isinstance(payload, dict):
-            payload = {"payload": payload}
-        record = dict(payload)
+        record = read_stdin_json()
         record["ts"] = time.time()
         record["pane"] = os.environ.get("TMUX_PANE", "")
         record["pid"] = os.getppid()
@@ -855,12 +909,8 @@ def cmd_hook(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     """Read the status line JSON from stdin, keep it, and print one line."""
-    payload: dict[str, Any] = {}
     try:
-        raw = sys.stdin.read()
-        loaded = json.loads(raw) if raw.strip() else {}
-        if isinstance(loaded, dict):
-            payload = loaded
+        payload = read_stdin_json()
         status = status_from_payload(payload)
         write_status(str(payload.get("session_id") or ""), status)
         print(status_line(status, str(payload.get("cwd") or "")))
@@ -877,37 +927,45 @@ def cmd_ls(args: argparse.Namespace) -> int:
         print("no sessions yet.")
         print("start a Claude Code session in tmux; run `wostuast doctor` to check the setup.")
         return 0
+    # Sort again: the label a row sorts by is only complete once git has spoken.
     add_git_facts(sessions)
+    sessions = sort_sessions(sessions)
     now = time.time()
     color = use_color()
 
-    rows: list[list[str]] = [["STATE", "SESSION", "BRANCH", "CHANGES", "PANE", "AGE", "LAST"]]
-    states: list[str] = [""]
+    rows: list[tuple[str, list[str]]] = [
+        ("", ["STATE", "SESSION", "BRANCH", "CHANGES", "PANE", "AGE", "LAST"])
+    ]
     for session in sessions:
-        age = session.attention_since if session.state == "needs_you" else session.last_ts
         rows.append(
-            [
-                STATE_WORDS.get(session.state, session.state),
-                session.label,
-                session.git.branch or "-",
-                changes_column(session.git) or "-",
-                session.pane or "-",
-                ago(now - age),
-                clip(session.reason or session.last_event, 60),
-            ]
+            (
+                session.state,
+                [
+                    STATE_WORDS.get(session.state, session.state),
+                    session.label,
+                    session.git.branch or "-",
+                    changes_column(session.git) or "-",
+                    session.pane or "-",
+                    ago(now - session.since),
+                    clip(session.reason or session.last_event, 60),
+                ],
+            )
         )
-        states.append(session.state)
-    print(table(rows, states, color))
+    print(table(rows, color))
 
-    counts: dict[str, int] = {}
-    for session in sessions:
-        counts[session.state] = counts.get(session.state, 0) + 1
+    counts = Counter(session.state for session in sessions)
     summary = " · ".join(
         f"{counts[state]} {STATE_WORDS[state]}" for state in STATE_ORDER if counts.get(state)
     )
     print()
     print(summary)
     return 0
+
+
+def which_tmux() -> bool:
+    import shutil
+
+    return shutil.which("tmux") is not None
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -928,47 +986,44 @@ def cmd_doctor(args: argparse.Namespace) -> int:
            f"python {sys.version.split()[0]} is older than 3.10")
 
     directory = state_dir()
-    writable = False
+    trouble = ""
     try:
         directory.mkdir(parents=True, exist_ok=True)
         probe = directory / ".probe"
         probe.write_text("", encoding="utf-8")
         probe.unlink()
-        writable = True
     except OSError as error:
-        lines.append(f"  FAIL  cannot write {directory}: {error}")
-    report(writable, f"state directory {directory}", f"state directory {directory} is not writable")
+        trouble = str(error)
+    report(not trouble, f"state directory {directory}",
+           f"cannot write {directory}: {trouble}")
 
     events = events_path()
-    count = sum(1 for _ in read_events()) if events.exists() else 0
+    count = count_events()
     report(events.exists(), f"event log {events} with {count} events",
            f"no events yet at {events}; run a Claude Code session", fatal=False)
 
     path = settings_path()
+    settings: dict[str, Any] = {}
     try:
         settings, _, _ = load_settings(path)
     except (OSError, ValueError) as error:
-        settings = {}
-        lines.append(f"  FAIL  cannot read {path}: {error}")
-        problems += 1
-    command = f"{install_path()} hook"
+        report(False, "", f"cannot read {path}: {error}")
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
     missing = [
         event
         for event in HOOK_EVENTS
-        if not any(has_command(group, command) for group in (hooks.get(event) or []))
+        if not any(has_verb(group, "hook") for group in (hooks.get(event) or []))
     ]
     report(not missing, f"all {len(HOOK_EVENTS)} hooks registered in {path}",
            f"hooks missing in {path}: {', '.join(missing)}; run `wostuast install`")
 
-    status_command = f"{install_path()} status"
     current = settings.get("statusLine")
-    mine = isinstance(current, dict) and current.get("command") == status_command
+    mine = isinstance(current, dict) and is_ours(current.get("command"), "status")
     report(mine, "status line registered (session names and context)",
            "status line not registered; without it sessions have no name and no context percent",
            fatal=False)
 
-    report(shutil.which("tmux") is not None, "tmux found",
+    report(which_tmux(), "tmux found",
            "tmux not found; jump, send and peek stay hidden", fatal=False)
     report(install_path().exists(), f"installed at {install_path()}",
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
@@ -1009,8 +1064,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         print(f"cannot read {path}: {error}", file=sys.stderr)
         return 1
     try:
-        changes += add_hooks(settings, f"{target} hook")
-        changes += add_status_line(settings, f"{target} status")
+        changes += add_hooks(settings, hook_command(target))
+        changes += add_status_line(settings, status_command(target))
     except ValueError as error:
         print(f"{path}: {error}", file=sys.stderr)
         return 1
@@ -1033,9 +1088,8 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as error:
         print(f"cannot read {path}: {error}", file=sys.stderr)
         return 1
-    commands = [f"{target} hook", "wostuast hook"]
-    changes = remove_hooks(settings, commands)
-    changes += remove_status_line(settings, f"{target} status")
+    changes = remove_hooks(settings)
+    changes += remove_status_line(settings)
     save_settings(path, settings, indent, newline)
     for line in changes or ["nothing to change"]:
         print(line)
@@ -1054,6 +1108,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    import argparse
+
     parser = argparse.ArgumentParser(
         prog="wostuast",
         description="See what your coding agents are doing.",
@@ -1076,9 +1132,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: The two verbs Claude Code calls itself. They skip argparse, because the hook
+#: runs on every tool call and the status line runs on every redraw.
+FAST_PATH = {"hook": cmd_hook, "status": cmd_status}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    words = list(argv) if argv is not None else sys.argv[1:]
+    if len(words) == 1 and words[0] in FAST_PATH:
+        return FAST_PATH[words[0]](None)
+
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(words)
     handler = getattr(args, "handler", None)
     if handler is None:
         parser.print_help()

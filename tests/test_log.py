@@ -3,11 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_append_and_read_round_trip(ws):
@@ -34,7 +29,7 @@ def test_the_log_rotates_when_it_grows(ws, monkeypatch):
         ws.append_event({"session_id": "s1", "n": index, "pad": "x" * 40})
     backup = ws.events_path().with_name("events.1.jsonl")
     assert backup.exists()
-    assert ws.events_path().stat().st_size <= 200 + 200
+    assert ws.events_path().stat().st_size <= 2 * ws.EVENTS_MAX_BYTES
 
 
 def test_the_payload_is_kept_whole(ws):
@@ -46,16 +41,9 @@ def test_the_payload_is_kept_whole(ws):
     assert stored["tool_response"]["deep"]["list"] == [1, 2, 3]
 
 
-def run_cli(args, stdin, env_dir):
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(env_dir),
-           "WOSTUAST_STATE": str(env_dir / "state"), "TMUX_PANE": "%3", "NO_COLOR": "1"}
-    return subprocess.run([sys.executable, str(ROOT / "wostuast"), *args],
-                          input=stdin, capture_output=True, text=True, env=env)
-
-
-def test_hook_writes_ts_pane_and_pid(tmp_path):
+def test_hook_writes_ts_pane_and_pid(run_cli, tmp_path):
     payload = {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/w"}
-    done = run_cli(["hook"], json.dumps(payload), tmp_path)
+    done = run_cli(["hook"], json.dumps(payload))
     assert done.returncode == 0
     line = json.loads((tmp_path / "state" / "events.jsonl").read_text().strip())
     assert line["session_id"] == "s1"
@@ -64,16 +52,35 @@ def test_hook_writes_ts_pane_and_pid(tmp_path):
     assert line["ts"] > 0
 
 
-def test_hook_exits_zero_on_broken_input(tmp_path):
-    done = run_cli(["hook"], "this is not json", tmp_path)
+def test_hook_exits_zero_on_broken_input(run_cli, tmp_path):
+    done = run_cli(["hook"], "this is not json")
     assert done.returncode == 0
     assert not (tmp_path / "state" / "events.jsonl").exists()
 
 
-def test_hook_exits_zero_on_empty_input(tmp_path):
-    assert run_cli(["hook"], "", tmp_path).returncode == 0
+def test_hook_exits_zero_on_empty_input(run_cli):
+    assert run_cli(["hook"], "").returncode == 0
 
 
-def test_hook_exits_zero_when_the_state_directory_is_a_file(tmp_path):
+def test_hook_exits_zero_when_the_state_directory_is_a_file(run_cli, tmp_path):
     (tmp_path / "state").write_text("in the way")
-    assert run_cli(["hook"], '{"session_id": "s"}', tmp_path).returncode == 0
+    assert run_cli(["hook"], '{"session_id": "s"}').returncode == 0
+
+
+def test_counting_does_not_parse(ws):
+    path = ws.events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"a": 1}\nnot json at all\n{"b": 2}\n')
+    assert ws.count_events() == 3
+    assert len(list(ws.read_events())) == 2
+
+
+def test_counting_a_missing_log_is_zero(ws):
+    assert ws.count_events() == 0
+
+
+def test_broken_utf8_is_skipped_not_fatal(ws):
+    path = ws.events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'{"a": 1}\n{"bad": "\xff\xfe"}\n{"b": 2}\n')
+    assert [e for e in ws.read_events()] == [{"a": 1}, {"b": 2}]
