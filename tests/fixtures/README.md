@@ -16,6 +16,8 @@ Each event adds its own fields:
 | `UserPromptSubmit` | `prompt` |
 | `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id` |
 | `PostToolUse` | `tool_name`, `tool_input`, `tool_response`, `tool_use_id` |
+| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_use_id`, `error`, `error_type`, `is_interrupt`, `is_timeout` |
+| `PermissionRequest` | `tool_name`, `tool_input`, `permission_suggestions` |
 | `Notification` | `message`, `title`, `notification_type` |
 | `Stop` | `stop_hook_active` |
 | `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_transcript_path`, `agent_type` |

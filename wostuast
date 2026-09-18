@@ -35,6 +35,8 @@ HOOK_EVENTS: tuple[str, ...] = (
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionRequest",
     "Notification",
     "Stop",
     "SubagentStop",
@@ -42,8 +44,10 @@ HOOK_EVENTS: tuple[str, ...] = (
     "SessionEnd",
 )
 
-#: These two hook events take a tool matcher. The others do not.
-MATCHER_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
+#: These hook events take a tool matcher. The others do not.
+MATCHER_EVENTS = frozenset(
+    {"PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"}
+)
 
 #: A tmux pane id, as `$TMUX_PANE` gives it. The pane is the only value that
 #: travels from an event payload onto a command line, so the derived field is
@@ -451,6 +455,10 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
 
 
 def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
+    # A new tool call means the last permission question is answered, whether
+    # it was allowed or denied. PermissionRequest for this tool arrives next
+    # and sets the waiting state again if there is one.
+    _clear_attention(session)
     session.state = "working"
     session.last_tool = tool_summary(
         str(event.get("tool_name") or ""), event.get("tool_input"), session.cwd
@@ -462,6 +470,37 @@ def _on_post_tool(session: Session, event: dict[str, Any], ts: float) -> None:
     # A tool result means the agent is running again, so it no longer waits.
     _clear_attention(session)
     _on_pre_tool(session, event, ts)
+
+
+def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
+    """The tool did not run: denied, interrupted, or it errored.
+
+    Whichever it was, the permission question is answered, so the row must stop
+    saying the agent is waiting on it.
+    """
+    _clear_attention(session)
+    session.state = "working"
+    name = str(event.get("tool_name") or "")
+    summary = tool_summary(name, event.get("tool_input"), session.cwd) if name else "tool"
+    if event.get("is_interrupt"):
+        session.last_event = f"{summary} interrupted"
+    else:
+        session.last_event = f"{summary} failed"
+
+
+def _on_permission_request(session: Session, event: dict[str, Any], ts: float) -> None:
+    """The permission dialog is on screen. This is the moment you are needed.
+
+    `Notification` says the same thing, but only after you have been idle for
+    six seconds, and it is checked on a six second timer, so it arrives up to
+    twelve seconds late. For a tool whose first job is answering "who needs
+    me?", that is too slow. This event fires as the dialog appears.
+    """
+    session.state = "needs_you"
+    session.attention_since = ts
+    name = str(event.get("tool_name") or "")
+    summary = tool_summary(name, event.get("tool_input"), session.cwd) if name else ""
+    session.reason = f"permission: {summary}" if summary else "permission"
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -512,6 +551,8 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "UserPromptSubmit": _on_prompt,
     "PreToolUse": _on_pre_tool,
     "PostToolUse": _on_post_tool,
+    "PostToolUseFailure": _on_tool_failed,
+    "PermissionRequest": _on_permission_request,
     "Notification": _on_notification,
     "Stop": _on_stop,
     "SubagentStop": _on_subagent_stop,
@@ -1107,11 +1148,16 @@ def cmd_hook(args: argparse.Namespace) -> int:
     """Read the hook JSON from stdin and append one line. Always exit 0.
 
     It prints nothing, and that silence is load-bearing. Claude Code reads a
-    hook's stdout as the hook's answer, and for PreToolUse that answer can allow
-    or deny a tool; exit code 2 blocks it outright. wostuast has no opinion and
-    must never have one, because approving without seeing the pane is how
-    directories get deleted. So: no print, and exit 0 whatever happens.
-    Anything worth saying goes to the log file, never to stdout or stderr.
+    hook's stdout as the hook's answer. For PreToolUse that answer can allow or
+    deny a tool, and PermissionRequest, which we register so that a waiting
+    agent turns amber at once, takes a decision to allow or deny outright.
+    Printing nothing means "no opinion", and the dialog behaves as if we were
+    not here.
+
+    So: never print in this function, and never print in anything it calls.
+    wostuast must have no opinion, because approving without seeing the pane is
+    how directories get deleted. Exit 0 whatever happens, and say anything
+    worth saying in the log file.
     """
     try:
         give_up_after(HOOK_TIMEOUT)

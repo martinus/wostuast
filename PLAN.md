@@ -61,7 +61,21 @@ Do not build these. If a feature needs one of them, leave the feature out.
 
 `wostuast install` registers `wostuast hook` for these Claude Code hook events:
 `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-`Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`.
+`PostToolUseFailure`, `PermissionRequest`, `Notification`, `Stop`,
+`SubagentStop`, `PreCompact`, `SessionEnd`.
+
+`PermissionRequest` fires as the permission dialog appears. `Notification` says
+the same thing, but Claude Code only sends it once you have been idle for six
+seconds, and checks on a six second timer, so it arrives up to twelve seconds
+late. Measured against a real session: the row still read `working` three
+seconds after the dialog was up. A tool whose first job is "who needs me?"
+cannot be twelve seconds behind, so wostuast listens for both.
+
+`PermissionRequest` can decide a permission: Claude Code reads a decision out
+of the hook's stdout. wostuast prints nothing, which means no decision, and the
+dialog behaves as if wostuast were not installed. This is the one place where
+the hook's silence is the difference between watching and acting, and the tests
+assert it for this event by name.
 
 `wostuast hook` reads the hook JSON from stdin, adds three fields, and appends
 one line to the events file:
@@ -131,7 +145,9 @@ One session per `session_id`. Derive state from events, in this order:
 | `SessionStart` | `starting` | Record `cwd`, `transcript_path`, `pane`, `pid` |
 | `UserPromptSubmit` | `working` | Store the prompt as `last_prompt` |
 | `PreToolUse` / `PostToolUse` | `working` | Store `last_tool` (name + short summary) |
-| `Notification`, permission | `needs_you` | `attention_since = ts`, `reason = tool + command` |
+| `PermissionRequest` | `needs_you` | At once, as the dialog appears |
+| `PostToolUseFailure` | `working` | The tool did not run: denied, interrupted or errored |
+| `Notification`, permission | `needs_you` | The same thing, up to 12 s later |
 | `Notification`, idle | `needs_you` | `reason = "waiting for input"` |
 | `Stop` | `done` | Agent finished its turn |
 | `SubagentStop` | unchanged | Only update `last_event` |

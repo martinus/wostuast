@@ -294,3 +294,87 @@ def test_a_session_without_an_agent_pid_is_never_called_killed(ws):
     session = ws.Session(session_id="s", pid=0, state="working")
     ws.mark_dead(session, alive=lambda pid: False)
     assert session.state == "working"
+
+
+# --- the permission dialog ---------------------------------------------------
+
+
+def test_a_permission_request_needs_you_at_once(ws):
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1000.0),
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.5),
+    )
+    assert session.state == "needs_you"
+    assert session.attention_since == 1000.5
+    assert session.reason == "permission: Bash ls ~"
+
+
+def test_the_late_notification_does_not_undo_it(ws):
+    """Notification says the same thing up to twelve seconds later. It must not
+    move the waiting time forward, or the row would show the wrong age."""
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1000.0),
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.5),
+        event("Notification", notification_type="permission_prompt",
+              message="Claude needs your permission", ts=1012.0),
+    )
+    assert session.state == "needs_you"
+    assert session.reason == "permission: Bash ls ~"
+
+
+def test_approving_clears_it(ws):
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("PostToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1005.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""
+
+
+def test_denying_and_moving_on_clears_it(ws):
+    """A denial brings no PostToolUse. The next tool call is what says the
+    question was answered, so the row must not keep the old reason."""
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("PreToolUse", tool_name="Read", tool_input={"file_path": "/w/repo/dir/a.py"},
+              ts=1006.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""
+    assert session.last_event == "Read a.py"
+
+
+def test_a_permission_request_without_a_tool_still_needs_you(ws):
+    session = fold(ws, event("PermissionRequest", ts=1000.0))
+    assert session.state == "needs_you"
+    assert session.reason == "permission"
+
+
+def test_a_tool_that_did_not_run_clears_the_waiting(ws):
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("PostToolUseFailure", tool_name="Bash", tool_input={"command": "ls ~"},
+              error="permission denied", ts=1005.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""
+    assert session.last_event == "Bash ls ~ failed"
+
+
+def test_an_interrupted_tool_says_so(ws):
+    session = fold(
+        ws,
+        event("PostToolUseFailure", tool_name="Bash", tool_input={"command": "sleep 99"},
+              error="interrupted", is_interrupt=True, ts=1005.0),
+    )
+    assert session.last_event == "Bash sleep 99 interrupted"

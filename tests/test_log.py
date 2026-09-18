@@ -244,3 +244,16 @@ def test_the_hook_does_not_import_what_it_does_not_need():
     avoidable = {"subprocess", "shutil", "argparse", "socket", "http", "ssl",
                  "email", "concurrent.futures", "urllib.request", "sqlite3"}
     assert not (added & avoidable), f"the hook now loads: {sorted(added & avoidable)}"
+
+
+def test_the_hook_says_nothing_to_a_permission_request(run_cli):
+    """PermissionRequest takes a decision to allow or deny. Our silence is what
+    makes it "no opinion", so this is the most important assertion in the suite.
+    """
+    done = run_cli(["hook"], json.dumps({
+        "session_id": "s1", "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash", "tool_input": {"command": "rm -rf /"},
+    }))
+    assert done.returncode == 0
+    assert done.stdout == ""
+    assert done.stderr == ""
