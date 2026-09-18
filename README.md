@@ -146,7 +146,25 @@ name. wostuast reads the name and never writes it.
 wostuast serve --open
 ```
 
-It listens on `127.0.0.1:7331` and nowhere else. The page shows a session list
+It listens on `127.0.0.1:7331` and nowhere else.
+
+### Reading it from another computer
+
+Opening a firewall port does not work, because nothing is listening on an
+address other machines can reach. Forward the port over SSH instead:
+
+```
+ssh -N -L 7331:127.0.0.1:7331 you@your-server
+```
+
+Leave that running and open `http://127.0.0.1:7331` on your own computer. The
+traffic is carried by SSH, and the server exposes nothing new.
+
+This is on purpose, not an oversight. From milestone 4 the page can type into
+your tmux pane, and a port on the network that can type into a shell is not
+something to leave one firewall rule away. wostuast also checks the `Host`
+header, so a request for `http://your-server:7331/` is refused even if it
+somehow arrives. The page shows a session list
 on the left and the selected session's transcript on the right, and it updates
 itself as the agents work: there is no reload button because there is nothing
 to reload.
@@ -159,7 +177,15 @@ file. So Markdown is parsed into an inert document, cut down to an allowlist of
 elements, and only then shown; raw HTML is displayed as text rather than obeyed.
 There are tests in a real browser for exactly this.
 
-The button in the top right switches the colours: **auto**, which follows your
+Each session is coloured by what it is doing: the row carries the colour, not
+just a dot, so a list of nine reads at a glance. The tab title and the icon say
+the same thing, so a background tab still tells you.
+
+**alerts** in the top right asks your browser to tell you when an agent starts
+waiting. It asks for permission only when you press it, never on its own, and
+it tells you once per session rather than every second.
+
+The button beside it switches the colours: **auto**, which follows your
 system, then **light**, then **dark**. The choice stays in that browser. `c`
 does the same from the keyboard.
 

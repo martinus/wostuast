@@ -376,3 +376,69 @@ def test_keys_do_not_fire_while_typing_in_the_search_box(page_at):
             assert page.evaluate("document.getElementById('help').open") is False
         finally:
             browser.close()
+
+
+def test_a_row_shows_its_state_in_more_than_a_dot(page_at):
+    """Nine sessions in a list are hard to read from one small dot."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            row = page.locator(".row").first
+            edge = page.evaluate(
+                "getComputedStyle(document.querySelector('.row')).borderLeftColor")
+            face = page.evaluate(
+                "getComputedStyle(document.querySelector('.row')).backgroundColor")
+            plain = page.evaluate(
+                "getComputedStyle(document.querySelector('.sidebar')).backgroundColor")
+            assert edge not in ("rgba(0, 0, 0, 0)", "transparent")
+            assert face != plain, "the row is not tinted by its state"
+        finally:
+            browser.close()
+
+
+def test_the_chosen_row_is_still_obvious(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.locator(".row.chosen").count() == 1
+            ring = page.evaluate(
+                "getComputedStyle(document.querySelector('.row.chosen')).outlineStyle")
+            assert ring != "none"
+        finally:
+            browser.close()
+
+
+def test_the_tab_says_what_is_happening(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.title() == "wostuast"      # this fixture has one quiet session
+            icon = page.evaluate(
+                "document.querySelector(\"link[rel='icon']\")?.getAttribute('href') || ''")
+            assert icon.startswith("data:image/png"), "no icon was drawn"
+        finally:
+            browser.close()
+
+
+def test_the_context_percent_is_a_bar(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.locator(".ctx .bar").count() == 1
+            width = page.evaluate("document.querySelector('.ctx .fill').style.width")
+            assert width == "41%"
+            assert "41% ctx" in page.locator("#facts").inner_text()
+        finally:
+            browser.close()
+
+
+def test_alerts_are_off_until_you_ask(page_at):
+    """A page that asked for notification permission on load would be rude, and
+    browsers punish it."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.locator("#bell").inner_text() == "alerts off"
+            assert page.evaluate("Notification.permission") != "granted"
+        finally:
+            browser.close()
