@@ -71,6 +71,12 @@ late. Measured against a real session: the row still read `working` three
 seconds after the dialog was up. A tool whose first job is "who needs me?"
 cannot be twelve seconds behind, so wostuast listens for both.
 
+Nothing fires when you answer the dialog. Saying No sends no hook at all, so
+wostuast cannot see a denial: the session keeps `needs_you`, which is still
+true, because the agent is now waiting for you to say what to do instead. Only
+the reason on the row is older than it looks. Do not invent an event that does
+not exist; the Peek tab in milestone 4 is what settles "waiting for what".
+
 `PermissionRequest` can decide a permission: Claude Code reads a decision out
 of the hook's stdout. wostuast prints nothing, which means no decision, and the
 dialog behaves as if wostuast were not installed. This is the one place where
@@ -146,7 +152,7 @@ One session per `session_id`. Derive state from events, in this order:
 | `UserPromptSubmit` | `working` | Store the prompt as `last_prompt` |
 | `PreToolUse` / `PostToolUse` | `working` | Store `last_tool` (name + short summary) |
 | `PermissionRequest` | `needs_you` | At once, as the dialog appears |
-| `PostToolUseFailure` | `working` | The tool did not run: denied, interrupted or errored |
+| `PostToolUseFailure` | `working` | The tool ran and failed, was interrupted, or timed out |
 | `Notification`, permission | `needs_you` | The same thing, up to 12 s later |
 | `Notification`, idle | `needs_you` | `reason = "waiting for input"` |
 | `Stop` | `done` | Agent finished its turn |

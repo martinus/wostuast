@@ -358,13 +358,13 @@ def test_a_permission_request_without_a_tool_still_needs_you(ws):
     assert session.reason == "permission"
 
 
-def test_a_tool_that_did_not_run_clears_the_waiting(ws):
+def test_a_tool_that_failed_clears_the_waiting(ws):
     session = fold(
         ws,
         event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
               ts=1000.0),
         event("PostToolUseFailure", tool_name="Bash", tool_input={"command": "ls ~"},
-              error="permission denied", ts=1005.0),
+              error="command not found", ts=1005.0),
     )
     assert session.state == "working"
     assert session.reason == ""
@@ -378,3 +378,18 @@ def test_an_interrupted_tool_says_so(ws):
               error="interrupted", is_interrupt=True, ts=1005.0),
     )
     assert session.last_event == "Bash sleep 99 interrupted"
+
+
+def test_a_denied_permission_sends_no_event_at_all(ws):
+    """Measured against a real session: saying No to the dialog fires no hook.
+    The log ends at the Notification. So the session keeps waiting, which is
+    still true, and nothing here may pretend otherwise.
+    """
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1000.0),
+        event("Notification", notification_type="permission_prompt",
+              message="Claude needs your permission", ts=1012.0),
+    )
+    assert session.state == "needs_you"
+    assert session.attention_since == 1012.0

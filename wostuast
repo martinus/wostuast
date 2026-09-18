@@ -473,10 +473,14 @@ def _on_post_tool(session: Session, event: dict[str, Any], ts: float) -> None:
 
 
 def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
-    """The tool did not run: denied, interrupted, or it errored.
+    """The tool ran and failed, or was interrupted or timed out.
 
-    Whichever it was, the permission question is answered, so the row must stop
-    saying the agent is waiting on it.
+    It does not cover a denied permission. Saying No to the dialog fires no
+    hook at all, which was measured against a real session: the log ends at the
+    `Notification` and nothing follows it. So wostuast cannot see a denial, and
+    a session that was denied keeps the waiting state it already had. That is
+    not wrong, because the agent really is waiting for you to say what to do
+    instead; only the reason it shows is older than it looks.
     """
     _clear_attention(session)
     session.state = "working"
