@@ -186,12 +186,16 @@ def install_path() -> Path:
 
 def hook_command(target: Path) -> str:
     """The command install writes, doctor looks for, and uninstall removes."""
-    return f"{target} hook"
+    import shlex
+
+    return f"{shlex.quote(str(target))} hook"
 
 
 def status_command(target: Path) -> str:
     """The same, for the status line."""
-    return f"{target} status"
+    import shlex
+
+    return f"{shlex.quote(str(target))} status"
 
 
 # --- log: a plain text log, so a broken hook leaves a trace ------------------
@@ -1393,18 +1397,29 @@ def hook_entry(command: str) -> dict[str, Any]:
     return {"type": "command", "command": command}
 
 
+def words_of(command: str) -> list[str]:
+    """Split a command the way a shell would, and fall back to plain spaces."""
+    import shlex
+
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
 def is_ours(command: Any, verb: str) -> bool:
     """True when this command runs our program with this verb.
 
-    It matches the shape, not the exact string: `wostuast hook`,
-    `~/.local/bin/wostuast hook` and `./wostuast hook` are all ours. Matching
-    the exact string made `doctor` report "hooks missing" for an install from
-    a checkout, and left such an entry behind on `uninstall`.
+    It matches the shape, not the exact string: `wostuast status`,
+    `~/.local/bin/wostuast status` and `wostuast status --then '...'` are all
+    ours. Anything after the verb is ours too, which is what stops `install`
+    offering to wrap a line it wrote itself: run twice, it used to suggest
+    `wostuast status --then 'wostuast status --then ...'`.
     """
     if not isinstance(command, str):
         return False
-    words = command.split()
-    return len(words) == 2 and words[1] == verb and os.path.basename(words[0]) == "wostuast"
+    words = words_of(command)
+    return len(words) >= 2 and words[1] == verb and os.path.basename(words[0]) == "wostuast"
 
 
 def has_verb(group: Any, verb: str) -> bool:
@@ -2210,6 +2225,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
     worker = threading.Thread(target=daemon.run, name="wostuast-refresh", daemon=True)
     worker.start()
     print(f"wostuast is watching at {where}")
+    print("it listens on this machine only. To read it from another computer,")
+    print(f"  run: ssh -N -L {port}:{BIND_HOST}:{port} {os.environ.get('USER', 'you')}@this-machine")
+    print(f"  then open {where} there. Opening a firewall port will not work.")
     print("press ctrl-c to stop.")
     if args.open:
         open_browser(where)
@@ -2324,6 +2342,9 @@ PAGE = r"""<!doctype html>
   --ink: #d6d8e0; --ink-bright: #f3f4f8; --ink-soft: #a3a7b6;
   --ink-mute: #8b8f9e; --ink-faint: #6f7385;
   --needs: #e0a642; --needs-warm: #f0c068; --working: #6bbf8a; --done: #5b9bd5;
+  --starting: #5bb0b5; --gone: #6f7385;
+  --needs-soft: rgba(224,166,66,.13); --working-soft: rgba(107,191,138,.10);
+  --done-soft: rgba(91,155,213,.10); --starting-soft: rgba(91,176,181,.09);
   --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
   --code: #0f1014; --code-ink: #c9ccd8;
@@ -2336,7 +2357,9 @@ PAGE = r"""<!doctype html>
   --ink: #2f3138; --ink-bright: #14151a; --ink-soft: #4c4f58;
   --ink-mute: #6a6d76; --ink-faint: #8b8e96;
   --needs: #a86c10; --needs-warm: #8a5709; --working: #2f7f52;
-  --done: #2a6ea8;
+  --done: #2a6ea8; --starting: #1d6f74; --gone: #8b8e96;
+  --needs-soft: rgba(168,108,16,.13); --working-soft: rgba(47,127,82,.10);
+  --done-soft: rgba(42,110,168,.10); --starting-soft: rgba(29,111,116,.09);
   --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
   --code: #eceae3; --code-ink: #33363d;
@@ -2361,16 +2384,18 @@ body {
   color: var(--ink-mute); }
 .counts .sep { color: var(--edge-bright); margin: 0 6px; }
 .theme {
-  margin-left: 12px; padding: 2px 10px; border-radius: 5px;
+  margin-left: 8px; padding: 2px 10px; border-radius: 5px;
   border: 1px solid var(--edge-bright); background: none; color: var(--ink-mute);
   font: inherit; font-size: 12px; cursor: pointer;
 }
 .theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
+.theme:disabled { opacity: .5; cursor: default; }
+#bell { margin-left: 14px; }
 .dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%; }
 .dot.needs_you { background: var(--needs); }
 .dot.working { background: var(--working); }
 .dot.done { background: var(--done); }
-.dot.starting { border: 1px solid var(--ink-faint); }
+.dot.starting { background: var(--starting); }
 .dot.ended, .dot.dead { border: 1px solid var(--edge-bright); }
 
 /* body */
@@ -2385,12 +2410,26 @@ body {
 }
 .rows { flex-grow: 1; overflow-y: auto; padding: 0 8px 8px; }
 .row {
-  margin-bottom: 6px; padding: 10px 12px; border-radius: 6px; cursor: pointer;
-  display: flex; flex-direction: column; gap: 4px;
-  border: 1px solid transparent;
+  margin-bottom: 6px; padding: 9px 12px 9px 11px; border-radius: 6px;
+  cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid transparent; border-left: 4px solid var(--gone);
+  transition: background .2s ease, border-color .2s ease;
 }
-.row:hover { background: var(--raised); }
-.row.chosen { background: var(--chosen); border-color: var(--edge-bright); }
+.row.needs_you { border-left-color: var(--needs); background: var(--needs-soft); }
+.row.working { border-left-color: var(--working); background: var(--working-soft); }
+.row.done { border-left-color: var(--done); background: var(--done-soft); }
+.row.starting { border-left-color: var(--starting); background: var(--starting-soft); }
+.row:hover { border-color: var(--edge-bright); border-left-width: 4px; }
+/* The tint says what the session is doing, so the selection has to say
+   something else: a ring and a brighter face. */
+.row.chosen {
+  outline: 1px solid var(--ink-faint); outline-offset: -1px;
+  box-shadow: inset 0 0 0 40px rgba(255,255,255,.045);
+}
+:root[data-theme="light"] .row.chosen {
+  box-shadow: inset 0 0 0 40px rgba(0,0,0,.05);
+}
+.row.chosen .name { color: var(--ink-bright); font-weight: 600; }
 .row .line1 {
   display: flex; align-items: center; gap: 8px;
   font-family: var(--mono); font-size: 13px; min-width: 0;
@@ -2399,12 +2438,12 @@ body {
   color: var(--ink); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; flex-grow: 1;
 }
-.row.chosen .name { color: var(--ink-bright); font-weight: 600; }
 .row .word { flex-shrink: 0; }
 .row.needs_you .word { color: var(--needs); }
 .row.working .word { color: var(--working); }
 .row.done .word { color: var(--done); }
-.row.starting .word, .row.ended .word, .row.dead .word { color: var(--ink-faint); }
+.row.starting .word { color: var(--starting); }
+.row.ended .word, .row.dead .word { color: var(--ink-faint); }
 .row.ended, .row.dead { opacity: .62; }
 .row .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
@@ -2447,9 +2486,23 @@ body {
   text-overflow: ellipsis;
 }
 .session-head .facts {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
   font-family: var(--mono); font-size: 13px; color: var(--ink-mute);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden;
 }
+.session-head .facts > span { overflow: hidden; text-overflow: ellipsis; }
+.session-head .word.needs_you { color: var(--needs); }
+.session-head .word.working { color: var(--working); }
+.session-head .word.done { color: var(--done); }
+.session-head .word.starting { color: var(--starting); }
+.ctx { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ctx .bar {
+  width: 54px; height: 6px; border-radius: 3px; background: var(--raised);
+  border: 1px solid var(--edge); overflow: hidden;
+}
+.ctx .fill { display: block; height: 100%; background: var(--working); }
+.ctx.warm .fill { background: var(--needs); }
+.ctx.hot .fill { background: #d97757; }
 .tabs {
   height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
   padding: 0 24px; border-bottom: 1px solid var(--edge);
@@ -2478,7 +2531,7 @@ mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 24px; min-height: 0; }
 
 /* transcript */
-.turn { display: flex; gap: 12px; margin-bottom: 14px; animation: slide .15s ease-out; }
+.turn { display: flex; gap: 12px; margin-bottom: 22px; animation: slide .15s ease-out; }
 @keyframes slide { from { transform: translateY(4px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .turn { animation: none; } }
 .who {
@@ -2487,7 +2540,7 @@ mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 
 }
 .who.claude { color: var(--needs); }
 .bubble {
-  flex-grow: 1; padding: 10px 14px; border-radius: 6px; background: var(--raised);
+  flex-grow: 1; padding: 11px 15px; border-radius: 6px; background: var(--raised);
   border: 1px solid var(--edge); line-height: 1.5; min-width: 0;
   white-space: pre-wrap; word-wrap: break-word;
 }
@@ -2517,8 +2570,9 @@ mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 
 .prose table { border-collapse: collapse; margin: 0 0 8px; }
 .prose th, .prose td { border: 1px solid var(--edge); padding: 4px 10px; text-align: left; }
 
-.turn.toolrow { margin-bottom: 4px; }
-.turn.toolrow + .turn:not(.toolrow) { margin-top: 10px; }
+.turn.toolrow { margin-bottom: 5px; }
+.turn:not(.toolrow) + .turn.toolrow { margin-top: -6px; }
+.turn.toolrow + .turn:not(.toolrow) { margin-top: 16px; }
 .tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono); font-size: 12px; color: var(--ink-mute); min-width: 0; }
 .tool { display: flex; gap: 8px; align-items: baseline; cursor: pointer;
@@ -2577,6 +2631,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <div class="brand">wostuast</div>
     <div class="where" id="where">—</div>
     <div class="counts" id="counts"></div>
+    <button type="button" class="theme" id="bell" title="tell me when an agent needs me"></button>
     <button type="button" class="theme" id="theme" title="light, dark, or follow the system"></button>
   </div>
   <div class="body">
@@ -2764,9 +2819,15 @@ function drawCounts() {
   }
   if (first) put(box, "span", null, "no sessions");
   const needs = (tally.get("needs_you") || { n: 0 }).n;
-  document.title = needs ? "(" + needs + ") wostuast" : "wostuast";
+  const working = (tally.get("working") || { n: 0 }).n;
+  document.title = needs
+    ? "(" + needs + ") needs you · wostuast"
+    : working ? working + " working · wostuast" : "wostuast";
+  drawIcon(needs ? "needs_you" : working ? "working"
+    : state.sessions.length ? "done" : "gone");
   $("where").textContent = state.sessions.length + " session" +
     (state.sessions.length === 1 ? "" : "s");
+  notifyAbout(state.sessions);
 }
 
 function current() {
@@ -2776,17 +2837,112 @@ function current() {
 function drawHeader() {
   const s = current();
   $("title").textContent = s ? (s.label || s.id.slice(0, 8)) : "no session";
+  const box = $("facts");
+  box.replaceChildren();
+  if (!s) return;
   const bits = [];
-  if (s) {
-    if (s.branch) bits.push(s.branch);
-    if (s.pane) bits.push("pane " + s.pane); else bits.push("not in tmux");
-    if (s.model) bits.push(s.model);
-    if (s.context_pct !== null && s.context_pct !== undefined) {
-      bits.push(Math.round(s.context_pct) + "% ctx");
-    }
-    bits.push(s.state_word);
+  if (s.branch) bits.push(s.branch);
+  bits.push(s.pane ? "pane " + s.pane : "not in tmux");
+  if (s.model) bits.push(s.model);
+  put(box, "span", null, bits.join(" · "));
+  if (s.context_pct !== null && s.context_pct !== undefined) {
+    const pct = Math.round(s.context_pct);
+    const ctx = put(box, "span", "ctx" + (pct >= 85 ? " hot" : pct >= 60 ? " warm" : ""));
+    const bar = put(ctx, "span", "bar");
+    put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
+    put(ctx, "span", null, pct + "% ctx");
   }
-  $("facts").textContent = bits.join(" · ");
+  put(box, "span", "word " + s.state, "· " + s.state_word);
+}
+
+// --- the tab icon, drawn here so it follows the colours ---------------------
+
+let iconWas = "";
+
+function drawIcon(state_) {
+  if (state_ === iconWas) return;
+  iconWas = state_;
+  const size = 32;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const pen = canvas.getContext("2d");
+  if (!pen) return;
+  const shade = getComputedStyle(document.documentElement)
+    .getPropertyValue("--" + (state_ === "needs_you" ? "needs"
+      : state_ === "working" ? "working" : state_ === "done" ? "done" : "gone")).trim();
+  pen.beginPath();
+  pen.arc(size / 2, size / 2, size / 2 - 3, 0, Math.PI * 2);
+  pen.fillStyle = shade || "#8b8f9e";
+  pen.fill();
+  let link = document.querySelector("link[rel='icon']");
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "icon";
+    document.head.appendChild(link);
+  }
+  link.href = canvas.toDataURL("image/png");
+}
+
+// --- telling you when an agent starts waiting -------------------------------
+// Only when you have asked for it, and only as a session turns amber, never
+// again for the same one.
+
+const waiting = new Set();
+
+function notificationsOn() {
+  try {
+    return localStorage.getItem("wostuast-notify") === "yes";
+  } catch (error) {
+    return false;
+  }
+}
+
+function drawBell() {
+  const button = $("bell");
+  if (!button) return;
+  const can = "Notification" in window;
+  button.textContent = !can ? "no alerts"
+    : notificationsOn() && Notification.permission === "granted" ? "alerts on"
+    : "alerts off";
+  button.disabled = !can;
+}
+
+async function toggleNotifications() {
+  if (!("Notification" in window)) return;
+  if (notificationsOn()) {
+    try { localStorage.setItem("wostuast-notify", "no"); } catch (error) {}
+    drawBell();
+    return;
+  }
+  const answer = Notification.permission === "granted"
+    ? "granted" : await Notification.requestPermission();
+  try {
+    localStorage.setItem("wostuast-notify", answer === "granted" ? "yes" : "no");
+  } catch (error) {}
+  drawBell();
+}
+
+function notifyAbout(sessions) {
+  const now = new Set(sessions.filter((s) => s.state === "needs_you").map((s) => s.id));
+  for (const id of waiting) if (!now.has(id)) waiting.delete(id);
+  if (!notificationsOn() || !("Notification" in window)
+      || Notification.permission !== "granted") {
+    for (const id of now) waiting.add(id);   // do not shout about a backlog later
+    return;
+  }
+  for (const session of sessions) {
+    if (session.state !== "needs_you" || waiting.has(session.id)) continue;
+    waiting.add(session.id);
+    try {
+      const note = new Notification(session.label + " needs you", {
+        body: session.reason || "waiting for you",
+        tag: "wostuast-" + session.id,
+      });
+      note.onclick = () => { window.focus(); choose(session.id); note.close(); };
+    } catch (error) {
+      // Some browsers refuse without a service worker. Nothing else breaks.
+    }
+  }
 }
 
 // --- the transcript ---------------------------------------------------------
@@ -3185,6 +3341,8 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
+$("bell").addEventListener("click", () => { toggleNotifications(); });
+drawBell();
 $("find").addEventListener("input", (typed) => {
   state.find = typed.target.value.trim().toLowerCase();
   draw();

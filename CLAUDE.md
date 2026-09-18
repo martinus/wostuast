@@ -116,5 +116,6 @@ tool behind.
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
 2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
 3. **Read** — next. Files tab and Diff tab.
-4. **Act** — jump, send, Peek, attention.
+4. **Act** — jump, send, Peek. Attention (title, icon, notifications) arrived
+   early, in milestone 2, because it was asked for.
 5. **Shine** — light theme, motion, empty states, README.

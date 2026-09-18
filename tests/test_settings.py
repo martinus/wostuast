@@ -160,7 +160,7 @@ def test_our_commands_are_matched_by_shape_not_by_string(ws):
 
 def test_nothing_else_is_ours(ws):
     for command in ["my-guard.sh", "wostuast", "wostuast serve", "not-wostuast hook",
-                    "wostuast hook --extra", "", None, 7]:
+                    "", None, 7]:
         assert not ws.is_ours(command, "hook")
 
 
@@ -252,3 +252,37 @@ def test_a_real_entry_in_that_same_key_always_survives(ws):
     ws.add_hooks(settings, OURS)
     ws.remove_hooks(settings)
     assert settings["hooks"]["Stop"] == [{"hooks": [{"command": "mine.sh"}]}]
+
+
+def test_install_does_not_wrap_a_line_it_wrote_itself(ws):
+    """Run install, paste the suggested line, run install again: it used to
+    offer to wrap its own command in itself."""
+    chained = "/home/m/.local/bin/wostuast status --then 'python3 ~/.claude/line.py'"
+    settings = {"statusLine": {"type": "command", "command": chained}}
+    assert ws.add_status_line(settings, "/home/m/.local/bin/wostuast status") == []
+    assert settings["statusLine"]["command"] == chained
+
+
+def test_a_chained_status_line_is_recognised_as_ours(ws):
+    assert ws.is_ours("wostuast status --then 'x'", "status")
+    assert ws.is_ours("/home/m/.local/bin/wostuast status --then 'a b c'", "status")
+    assert ws.is_ours("wostuast hook", "hook")
+    assert not ws.is_ours("wostuast status --then 'x'", "hook")
+    assert not ws.is_ours("their-line.sh --then 'x'", "status")
+
+
+def test_uninstall_removes_a_chained_status_line(ws):
+    settings = {"statusLine": {"type": "command",
+                               "command": "wostuast status --then 'mine.sh'"}}
+    assert ws.remove_status_line(settings) == ["removed status line"]
+    assert "statusLine" not in settings
+
+
+def test_a_path_with_a_space_is_still_quoted(ws, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setattr(ws, "install_path", lambda: Path("/home/a b/wostuast"))
+    settings = {"statusLine": {"type": "command", "command": "mine.sh"}}
+    notes = ws.add_status_line(settings, ws.status_command(ws.install_path()))
+    line = [n for n in notes if "--then" in n][0].strip()
+    assert ws.words_of(line)[:1] == ["/home/a b/wostuast"]
