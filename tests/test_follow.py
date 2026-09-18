@@ -84,7 +84,12 @@ def test_the_follower_reads_new_events(ws):
 
 
 def test_nothing_is_lost_when_the_log_rotates_under_the_follower(ws, monkeypatch):
-    """The hook rotates, not the daemon, so this happens without warning."""
+    """The hook rotates, not the daemon, so this happens without warning.
+
+    A rotation makes the archive tail read a file it has already read, so some
+    events arrive a second time. Losing one is the failure; repeating one is
+    not, and `Store.apply` ignores an event older than the session has seen.
+    """
     monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
     follower = ws.EventFollower()
     seen: list[int] = []
@@ -95,7 +100,7 @@ def test_nothing_is_lost_when_the_log_rotates_under_the_follower(ws, monkeypatch
         seen += [e["n"] for e in follower.new_events()]
         assert written < 200
     seen += [e["n"] for e in follower.new_events()]
-    assert seen == list(range(written)), "an event went missing across the rotation"
+    assert set(seen) == set(range(written)), "an event went missing"
 
 
 def test_events_written_between_polls_survive_a_rotation(ws, monkeypatch):
@@ -109,8 +114,42 @@ def test_events_written_between_polls_survive_a_rotation(ws, monkeypatch):
         ws.append_event({"session_id": "s", "n": written, "pad": "x" * 60})
         written += 1
         assert written < 200
-    seen = [e["n"] for e in follower.new_events()]
-    assert seen == list(range(1, written)), f"got {seen}"
+    assert set(e["n"] for e in follower.new_events()) >= set(range(1, written))
+
+
+def test_a_daemon_started_after_a_rotation_still_sees_the_history(ws, monkeypatch):
+    """It used to tail only the live file, so every session that started before
+    the rotation lost its cwd, its pane and its pid."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    ws.append_event({"session_id": "s", "hook_event_name": "SessionStart",
+                     "cwd": "/w/repo/dir", "pane": "%7", "pid": 1, "ts": 1000.0})
+    n = 0
+    while not ws.rotated_events_path().exists():
+        ws.append_event({"session_id": "s", "hook_event_name": "PreToolUse",
+                         "tool_name": "Bash", "tool_input": {"command": "x" * 60},
+                         "pid": 1, "ts": 1001.0 + n})
+        n += 1
+        assert n < 200
+
+    store = ws.Store()                      # as if the daemon had just started
+    store.follow()
+    session = store.sessions["s"]
+    assert session.cwd == "/w/repo/dir"
+    assert session.pane == "%7"
+
+
+def test_an_event_delivered_twice_does_not_rewind_a_session(ws):
+    """A rotation re-reads the archive, so old events arrive after new ones."""
+    store = ws.Store()
+    start = {"session_id": "s", "hook_event_name": "SessionStart",
+             "cwd": "/w/repo/dir", "pid": 1, "ts": 1000.0}
+    store.apply(start)
+    store.apply({"session_id": "s", "hook_event_name": "Stop", "ts": 1005.0})
+    assert store.sessions["s"].state == "done"
+
+    store.apply(start)                      # the archive, read again
+    assert store.sessions["s"].state == "done"
+    assert store.sessions["s"].cwd == "/w/repo/dir"
 
 
 def test_broken_lines_do_not_stop_the_follower(ws):

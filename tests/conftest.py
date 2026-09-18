@@ -120,3 +120,21 @@ def served(ws, stub_git):
         daemon.stopping.set()
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture
+def transcript_file(ws, tmp_path):
+    """A path where a real transcript would be: under the Claude config dir.
+
+    `safe_transcript` refuses anything else, so a test that writes one somewhere
+    convenient would be testing a path the daemon will not open.
+    """
+
+    def make(name="s1", lines=()):
+        folder = ws.settings_path().parent / "projects" / "-w-repo-dir"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{name}.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in lines))
+        return path
+
+    return make

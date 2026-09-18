@@ -165,3 +165,41 @@ def test_needs_you_sorts_first_with_the_longest_wait_on_top(ws, store):
     ws.append_event(event("UserPromptSubmit", sid="busy", prompt="x", ts=1006.0))
     store.refresh(now=1010.0, alive=lambda p: True)
     assert [r["id"] for r in store.rows] == ["early", "late", "busy", "done"]
+
+
+def test_a_refresh_asked_for_during_the_cool_down_is_not_lost(ws, monkeypatch):
+    """It used to be dropped rather than deferred, so a write landing just
+    after a git run left the row stale until something else asked again."""
+    calls = []
+
+    def fake(dirs):
+        calls.append(sorted(dirs))
+        return {d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
+
+    monkeypatch.setattr(ws, "git_facts_many", fake)
+    store = ws.Store()
+    ws.append_event(event("SessionStart"))
+    store.refresh(now=1000.0, alive=lambda p: True)
+    assert len(calls) == 1
+
+    # an edit two seconds later, well inside the interval
+    ws.append_event(event("PostToolUse", tool_name="Edit",
+                          tool_input={"file_path": "/w/repo/dir/a.py"}, ts=1002.0))
+    store.refresh(now=1002.0, alive=lambda p: True)
+    assert len(calls) == 1, "git ran too soon"
+
+    # and then nothing else happens at all. The ask must still be waiting.
+    store.refresh(now=1003.0, alive=lambda p: True)
+    assert len(calls) == 1
+    store.refresh(now=1015.0, alive=lambda p: True)
+    assert len(calls) == 2, "the request was dropped instead of deferred"
+
+
+def test_a_session_too_old_is_forgotten_not_merely_hidden(ws, store):
+    """Everything hung off a session id is kept with it, so the daemon must
+    let go of the id itself."""
+    ws.append_event(event("Stop"))
+    store.refresh(now=1000.0, alive=lambda p: True)
+    assert "s1" in store.sessions
+    store.refresh(now=1000.0 + ws.SESSION_MAX_AGE + 10, alive=lambda p: True)
+    assert store.sessions == {}

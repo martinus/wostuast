@@ -384,30 +384,25 @@ def stat_key(path: Path) -> tuple[int, int]:
 
 
 class EventFollower:
-    """Follows the event log, and does not lose what rotation moved aside.
+    """Follows the event log, both files of it.
 
     The hook rotates the log, not the daemon, so the file can be renamed under
-    the follower at any moment. When that happens the last events of the old
-    file have usually not been read yet, so they are read from its new name
-    before the fresh file is picked up.
+    the follower at any moment, and a daemon can start when a rotation has
+    already happened. One tail on each name covers both: the archive is read
+    whole on the first look and is quiet after that, and a rotation simply
+    looks like a new file under each name.
+
+    A rotation makes the archive tail read events it has already delivered.
+    That is safe because `Store.apply` ignores an event older than the session
+    it belongs to has already seen.
     """
 
     def __init__(self) -> None:
+        self.older = Tail(rotated_events_path())
         self.tail = Tail(events_path())
 
     def new_lines(self) -> list[bytes]:
-        lines: list[bytes] = []
-        live = stat_key(events_path())
-        if self.tail.key != (0, 0) and live != (0, 0) and live != self.tail.key:
-            # Our file was moved aside. Finish it under its new name. Should a
-            # second rotation have discarded it, the reader starts that file
-            # from the top and delivers events again, which is safe: folding
-            # the same event twice gives the same answer.
-            moved = Tail(rotated_events_path(), self.tail.offset, self.tail.partial,
-                         self.tail.key)
-            lines += moved.read_new()
-        lines += self.tail.read_new()
-        return lines
+        return self.older.read_new() + self.tail.read_new()
 
     def new_events(self) -> Iterator[dict[str, Any]]:
         yield from json_objects(self.new_lines())
@@ -566,6 +561,11 @@ class Store:
         name = str(event.get("hook_event_name") or "")
         ts = to_float(event.get("ts"))
 
+        if ts and ts < session.last_ts:
+            # Older than what this session has already folded. A rotation makes
+            # the archive deliver events a second time, and replaying them here
+            # would set the state back to what it was then.
+            return session
         if ts > session.last_ts:
             session.last_ts = ts
         for key in ("cwd", "transcript_path"):
@@ -598,11 +598,13 @@ class Store:
         self.fold(self.follower.new_events())
 
     def visible(self, now: float) -> list[Session]:
-        return [
-            session
-            for session in self.sessions.values()
-            if now - session.last_ts <= SESSION_MAX_AGE
-        ]
+        """The sessions worth showing. A session too old to show is forgotten,
+        not merely hidden: the daemon runs for days and everything hung off a
+        session id, transcript readers included, would be kept with it."""
+        for session_id, session in list(self.sessions.items()):
+            if now - session.last_ts > SESSION_MAX_AGE:
+                del self.sessions[session_id]
+        return list(self.sessions.values())
 
     def refresh(
         self, now: float | None = None, alive: Callable[[int], bool] | None = None
@@ -644,12 +646,17 @@ class Store:
         read. Both are held to one run per directory per GIT_MIN_INTERVAL,
         because git status on a large worktree is not cheap."""
         never_read = {s.cwd for s in sessions if s.cwd and s.cwd not in self.git_read}
-        wanted = [
+        asked = self.git_wanted | never_read
+        ready = {
             directory
-            for directory in self.git_wanted | never_read
+            for directory in asked
             if moment - self.git_read.get(directory, 0.0) >= GIT_MIN_INTERVAL
-        ]
-        self.git_wanted.clear()
+        }
+        # Keep the ones still inside the cool-down. Clearing them all dropped
+        # the request instead of deferring it, so a write that landed just
+        # after a git run left the row stale for good.
+        self.git_wanted = asked - ready
+        wanted = sorted(ready)
         if not wanted:
             return
         facts = git_facts_many(wanted)
@@ -994,6 +1001,7 @@ def sort_sessions(sessions: list[Session]) -> list[Session]:
 class Block:
     """One thing the Transcript tab shows, in the order it happened."""
 
+    seq: int = -1               # its place in the transcript, and its identity
     kind: str = "text"          # prompt, text, thinking, tool, divider
     ts: float = 0.0
     text: str = ""              # prompt and assistant text, as Markdown
@@ -1037,6 +1045,8 @@ def edit_counts(tool_input: Any) -> tuple[int, int]:
 
     if "new_string" in data or "old_string" in data:
         return lines("new_string"), lines("old_string")
+    if "new_source" in data or "old_source" in data:   # NotebookEdit
+        return lines("new_source"), lines("old_source")
     if "content" in data:
         return lines("content"), 0
     return 0, 0
@@ -1081,12 +1091,16 @@ class Transcript:
             touched += self.add(record)
         return touched
 
+    def keep(self, block: Block) -> Block:
+        """Give a block its number and put it at the end."""
+        block.seq = len(self.blocks)
+        self.blocks.append(block)
+        return block
+
     def add(self, record: dict[str, Any]) -> list[Block]:
         kind = str(record.get("type") or "")
         if kind == "summary":
-            block = Block(kind="divider", text="context compacted")
-            self.blocks.append(block)
-            return [block]
+            return [self.keep(Block(kind="divider", text="context compacted"))]
         if kind not in ("user", "assistant"):
             return []
 
@@ -1099,10 +1113,8 @@ class Transcript:
         if isinstance(content, str):
             if not content.strip():
                 return []
-            block = Block(kind="prompt" if kind == "user" else "text", ts=ts,
-                          text=content)
-            self.blocks.append(block)
-            return [block]
+            return [self.keep(Block(kind="prompt" if kind == "user" else "text",
+                                    ts=ts, text=content))]
         if not isinstance(content, list):
             return []
 
@@ -1148,8 +1160,7 @@ class Transcript:
             return held          # an existing block changed; it is not a new one
         else:
             return None
-        self.blocks.append(block)
-        return block
+        return self.keep(block)
 
 
 # --- git facts: what git says about the agent's directory --------------------
@@ -1316,6 +1327,26 @@ def read_status(session_id: str) -> Status:
         agent=str(payload.get("agent") or ""),
         version=str(payload.get("version") or ""),
     )
+
+
+def safe_transcript(path: str) -> Path | None:
+    """A transcript we are willing to open, or None.
+
+    The path arrives in an event, so it is input, not fact. Anything able to
+    write the log could otherwise name any file on the machine and the daemon
+    would serve it. A transcript lives under the Claude config directory and
+    ends in .jsonl; nothing else is opened. PLAN.md section 4.4.1.
+    """
+    if not path:
+        return None
+    try:
+        target = Path(path).resolve()
+        root = settings_path().parent.resolve()
+    except OSError:
+        return None
+    if target.suffix != ".jsonl":
+        return None
+    return target if target.is_relative_to(root) else None
 
 
 def safe_name(session_id: str) -> str:
@@ -1627,6 +1658,7 @@ class Daemon:
         self.store = Store()
         self.hub = Hub()
         self.transcripts: dict[str, Transcript] = {}
+        self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.started = time.time()
 
@@ -1636,13 +1668,37 @@ class Daemon:
     def transcript(self, session_id: str) -> Transcript | None:
         """The transcript reader for a session, made on first use."""
         session = self.session(session_id)
-        if session is None or not session.transcript_path:
+        if session is None:
+            return None
+        path = safe_transcript(session.transcript_path)
+        if path is None:
             return None
         held = self.transcripts.get(session_id)
-        if held is None or held.tail.path != Path(session.transcript_path):
-            held = Transcript(session.transcript_path, session.cwd)
+        if held is None or held.tail.path != path:
+            held = Transcript(str(path), session.cwd)
             self.transcripts[session_id] = held
         return held
+
+    def read_transcript(self, session_id: str) -> list[Block] | None:
+        """Read whatever is new, tell the watchers, and hand back every block.
+
+        Both the tick and a request for the tab come through here, under one
+        lock. Two threads calling `read_new` at once moved the byte offset
+        twice, which then looked like a shrinking file and re-read the whole
+        transcript from the top. Reading in a request and not telling the
+        watchers lost those blocks for every other tab.
+        """
+        with self.lock:
+            reader = self.transcript(session_id)
+            if reader is None:
+                return None
+            changed = reader.read_new()
+            blocks = list(reader.blocks)
+        if changed:
+            self.hub.send("transcript",
+                          {"id": session_id, "blocks": blocks_json(changed)},
+                          session_id=session_id)
+        return blocks
 
     def sessions_payload(self) -> dict[str, Any]:
         return {"now": time.time(), "sessions": self.store.rows}
@@ -1652,14 +1708,7 @@ class Daemon:
         if self.store.refresh():
             self.hub.send("sessions", self.sessions_payload())
         for session_id in self.hub.watchers():
-            reader = self.transcript(session_id)
-            if reader is None:
-                continue
-            changed = reader.read_new()
-            if changed:
-                self.hub.send("transcript",
-                              {"id": session_id, "blocks": blocks_json(changed)},
-                              session_id=session_id)
+            self.read_transcript(session_id)
         self.forget_gone()
 
     def forget_gone(self) -> None:
@@ -1668,9 +1717,10 @@ class Daemon:
         A reader holds every block of a transcript. Without this they pile up
         for as long as the daemon runs, one for every session ever selected.
         """
-        for session_id in list(self.transcripts):
-            if session_id not in self.store.sessions:
-                del self.transcripts[session_id]
+        with self.lock:
+            for session_id in list(self.transcripts):
+                if session_id not in self.store.sessions:
+                    del self.transcripts[session_id]
 
     def run(self) -> None:
         while not self.stopping.is_set():
@@ -1725,9 +1775,24 @@ def make_server(daemon: Daemon, port: int) -> Any:
             body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
             self.reply(code, body, "application/json; charset=utf-8")
 
+        def ours(self) -> bool:
+            """True when this request really is for the loopback address.
+
+            Binding to 127.0.0.1 keeps other machines out, and sending no
+            Access-Control-Allow-Origin keeps another site from reading the
+            answer. Neither stops a site pointing its own name at 127.0.0.1:
+            the browser then treats us as that site's own origin and lets it
+            read everything. The Host header is what gives that away.
+            """
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+            return host in ("localhost", "127.0.0.1", "::1", "")
+
         def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
             from urllib.parse import parse_qs, urlparse
 
+            if not self.ours():
+                self.reply_json({"error": "wostuast answers on localhost only"}, 403)
+                return
             url = urlparse(self.path)
             path = url.path
             query = parse_qs(url.query)
@@ -1757,16 +1822,12 @@ def make_server(daemon: Daemon, port: int) -> Any:
                     pass
 
         def transcript(self, session_id: str, query: dict[str, list[str]]) -> None:
-            reader = daemon.transcript(session_id)
-            if reader is None:
-                session = daemon.session(session_id)
-                where = session.transcript_path if session else ""
+            blocks = daemon.read_transcript(session_id)
+            if blocks is None:
                 self.reply_json({"id": session_id, "blocks": [],
-                                 "missing": where or "no transcript for this session"})
+                                 "missing": "no transcript for this session"})
                 return
-            reader.read_new()
-            self.reply_json({"id": session_id,
-                             "blocks": blocks_json(reader.blocks)})
+            self.reply_json({"id": session_id, "blocks": blocks_json(blocks)})
 
         def stream(self, watching: str) -> None:
             self.send_response(200)
@@ -2848,14 +2909,15 @@ async function load() {
   draw();
 }
 
+// Every block carries its place in the transcript, so a block that arrives
+// twice lands in the same slot. Appending whatever arrived showed the whole
+// history a second time after a reconnect, and could double a block that the
+// first fetch and the first push both carried.
 function mergeBlocks(blocks) {
   const moved = [];
   for (const block of blocks) {
-    const at = block.tool_use_id
-      ? state.blocks.findIndex((b) => b.tool_use_id === block.tool_use_id)
-      : -1;
-    if (at >= 0) { state.blocks[at] = block; moved.push(at); }
-    else { state.blocks.push(block); moved.push(state.blocks.length - 1); }
+    state.blocks[block.seq] = block;
+    moved.push(block.seq);
   }
   return moved;
 }
@@ -2880,8 +2942,12 @@ function resubscribe() {
     state.skew = body.now - Date.now() / 1000;
     state.sessions = body.sessions || [];
     if (!current() && state.sessions.length) {
-      state.chosen = state.sessions[0].id;
-      load();
+      // Pick the first one for the reader. It has to go through choose(), or
+      // the stream stays on watch="" and this session, the one actually on
+      // screen, never receives a transcript update.
+      const first = state.sessions[0].id;
+      state.chosen = null;
+      choose(first);
     }
     drawSessions();
     drawHeader();
@@ -2893,6 +2959,8 @@ function resubscribe() {
     if (body.id !== state.chosen) return;
     patchTranscript(mergeBlocks(body.blocks || []));
   });
+
+  stream.onopen = () => { document.body.classList.remove("lost"); };
 
   stream.onerror = () => {
     document.body.classList.add("lost");

@@ -48,14 +48,13 @@ HOSTILE = (
 
 
 @pytest.fixture
-def page_at(ws, tmp_path, monkeypatch):
+def page_at(ws, tmp_path, monkeypatch, transcript_file):
     """A daemon with one session whose transcript holds hostile Markdown."""
     monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
         d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
     monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
 
-    transcript = tmp_path / "t.jsonl"
-    transcript.write_text("\n".join(json.dumps(r) for r in [
+    transcript = transcript_file("s1", [
         {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
          "message": {"role": "user", "content": "Do the thing."}},
         {"type": "assistant", "timestamp": "2026-09-18T14:03:00.000Z",
@@ -69,7 +68,7 @@ def page_at(ws, tmp_path, monkeypatch):
          "message": {"role": "user", "content": [
              {"type": "tool_result", "tool_use_id": "t1",
               "content": "14 passed in 0.31s\nall good"}]}},
-    ]) + "\n")
+    ])
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
                      "cwd": str(tmp_path), "pane": "%7", "pid": 1,
                      "ts": time.time(), "transcript_path": str(transcript)})
@@ -82,14 +81,15 @@ def page_at(ws, tmp_path, monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     daemon.store.refresh()
     try:
-        yield f"http://127.0.0.1:{port}/"
+        yield daemon, f"http://127.0.0.1:{port}/"
     finally:
         daemon.stopping.set()
         server.shutdown()
         server.server_close()
 
 
-def open_page(play, url, scheme="dark"):
+def open_page(play, where, scheme="dark"):
+    url = where[1] if isinstance(where, tuple) else where
     browser = play.chromium.launch(executable_path=browser_path(),
                                    args=["--no-sandbox"])
     page = browser.new_page(viewport={"width": 1440, "height": 900},
@@ -217,5 +217,53 @@ def test_a_tab_that_is_not_built_yet_does_nothing(page_at):
             assert page.locator(".tab[data-tab='transcript']").get_attribute(
                 "aria-selected") == "true"
             assert page.locator(".turn").count() == turns
+        finally:
+            browser.close()
+
+
+def test_the_session_the_page_picks_for_you_is_watched(page_at, ws):
+    """The page auto-selects the first session. It used to set it without
+    subscribing, so the stream stayed on watch="" and the transcript of the
+    one session actually on screen never updated."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            before = page.locator(".turn").count()
+            assert page.locator(".row.chosen").count() == 1
+
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write(json.dumps({
+                    "type": "assistant", "timestamp": "2026-09-18T14:09:00.000Z",
+                    "message": {"role": "assistant", "content": [
+                        {"type": "text", "text": "A brand new line."}]}}) + "\n")
+            daemon.tick()
+            page.wait_for_timeout(1200)
+            assert page.locator(".turn").count() == before + 1
+            assert "A brand new line." in page.locator(".content").inner_text()
+        finally:
+            browser.close()
+
+
+def daemon_transcript(daemon):
+    return daemon.transcript("s1").tail.path
+
+
+def test_the_same_blocks_arriving_twice_are_not_shown_twice(page_at):
+    """A reconnected stream re-sends the transcript from the beginning, and the
+    first fetch and the first push can carry the same block. Each block knows
+    its place, so it lands in the same slot either way."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            before = page.locator(".turn").count()
+            assert before > 1
+            blocks = daemon.read_transcript("s1")
+            daemon.hub.send("transcript",
+                            {"id": "s1", "blocks": [dict(b.__dict__) for b in blocks]},
+                            session_id="s1")
+            page.wait_for_timeout(800)
+            assert page.locator(".turn").count() == before
         finally:
             browser.close()

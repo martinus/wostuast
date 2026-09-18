@@ -70,8 +70,20 @@ settings.
   `cmd_hook` does not just add noise: it answers a permission prompt for the
   user. Logging goes to the log file. Tests assert the silence for that event
   by name; never weaken them.
-- **Handlers assign, they never accumulate.** Folding the same event twice must
-  give the same answer; milestone 2 folds only the new tail of the log.
+- **Folding an event twice must change nothing.** Handlers assign and never
+  accumulate, and `Store.apply` drops an event older than the session has
+  already seen. A rotation makes the daemon read the archive again, so old
+  events really do arrive after new ones.
+- **A path out of the event log is input, not fact.** `transcript_path` goes
+  through `safe_transcript`, which opens nothing outside the Claude config
+  directory. `cwd` is used for git and for shortening paths, never to open a
+  file the page asked for.
+- **The daemon answers on localhost only.** Binding to 127.0.0.1 and sending no
+  CORS header is not enough: a site can point its own name at 127.0.0.1 and the
+  browser will then let it read us. `Handler.ours()` checks the Host header.
+- **One lock around the transcript readers.** The tick thread and request
+  threads both read them; two `read_new` calls at once move the byte offset
+  twice, which looks like a shrinking file and re-reads everything.
 - **The state directory is private.** `0700` for directories, `0600` for files,
   via `private_dir` and `private_file`. The log holds every prompt and every
   command an agent ran.

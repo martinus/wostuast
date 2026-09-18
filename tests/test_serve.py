@@ -77,12 +77,11 @@ def test_sessions_are_json(ws, served):
     assert body["sessions"][0]["branch"] == "main"
 
 
-def test_a_transcript_is_served(ws, served, tmp_path):
+def test_a_transcript_is_served(ws, served, transcript_file):
     daemon, base = served
-    path = tmp_path / "t.jsonl"
-    path.write_text(json.dumps({
+    path = transcript_file("s1", [{
         "type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
-        "message": {"role": "user", "content": "hello there"}}) + "\n")
+        "message": {"role": "user", "content": "hello there"}}])
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
     status, body = get(f"{base}/api/session/s1/transcript")
@@ -154,10 +153,9 @@ def test_a_change_is_pushed(ws, served):
     assert got[1][1]["sessions"][0]["state"] == "done"
 
 
-def test_a_transcript_change_reaches_only_its_watcher(ws, served, tmp_path):
+def test_a_transcript_change_reaches_only_its_watcher(ws, served, transcript_file):
     daemon, base = served
-    path = tmp_path / "t.jsonl"
-    path.write_text("")
+    path = transcript_file("s1")
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
 
@@ -176,9 +174,9 @@ def test_a_transcript_change_reaches_only_its_watcher(ws, served, tmp_path):
     assert got[1][1]["blocks"][0]["text"] == "a line"
 
 
-def test_a_client_that_watches_nothing_gets_no_transcript(ws, served, tmp_path):
+def test_a_client_that_watches_nothing_gets_no_transcript(ws, served, transcript_file):
     daemon, base = served
-    ws.append_event(event("SessionStart", transcript_path=str(tmp_path / "t.jsonl")))
+    ws.append_event(event("SessionStart", transcript_path=str(transcript_file("s1"))))
     daemon.store.refresh()
     client = daemon.hub.add("")           # watching nothing
     daemon.hub.send("transcript", {"id": "s1"}, session_id="s1")
@@ -242,16 +240,73 @@ def test_a_deeper_path_is_not_mistaken_for_a_session(served):
         assert caught.value.code == 404, bad
 
 
-def test_readers_are_dropped_when_their_session_goes(ws, served, tmp_path):
+def test_readers_are_dropped_when_their_session_goes(ws, served, transcript_file):
     """A reader holds a whole transcript. They must not pile up."""
     daemon, _ = served
-    path = tmp_path / "t.jsonl"
-    path.write_text("")
-    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    ws.append_event(event("SessionStart",
+                          transcript_path=str(transcript_file("s1"))))
     daemon.store.refresh()
     assert daemon.transcript("s1") is not None
     assert "s1" in daemon.transcripts
 
-    daemon.store.sessions.clear()
+    # A session too old to show is forgotten, and its reader goes with it.
+    daemon.store.visible(time.time() + ws.SESSION_MAX_AGE + 10)
     daemon.forget_gone()
     assert daemon.transcripts == {}
+
+
+def test_a_transcript_outside_the_claude_directory_is_refused(ws, served, tmp_path):
+    """The path comes out of the log, so it is input, not fact."""
+    daemon, base = served
+    sneaky = tmp_path / "secrets.jsonl"
+    sneaky.write_text("{}\n")
+    ws.append_event(event("SessionStart", transcript_path=str(sneaky)))
+    daemon.store.refresh()
+    assert daemon.transcript("s1") is None
+    status, body = get(f"{base}/api/session/s1/transcript")
+    assert body["blocks"] == []
+    assert "missing" in body
+
+
+def test_a_transcript_must_end_in_jsonl(ws, served, transcript_file):
+    daemon, _ = served
+    path = transcript_file("s1")
+    other = path.with_suffix(".txt")
+    other.write_text("{}\n")
+    ws.append_event(event("SessionStart", transcript_path=str(other)))
+    daemon.store.refresh()
+    assert daemon.transcript("s1") is None
+
+
+def test_a_request_for_another_host_is_refused(served):
+    """Binding to loopback does not stop a site pointing its own name here."""
+    daemon, base = served
+    ask = urllib.request.Request(f"{base}/api/sessions",
+                                 headers={"Host": "evil.example.com"})
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        urllib.request.urlopen(ask, timeout=5)
+    assert caught.value.code == 403
+
+
+def test_the_reader_is_only_advanced_in_one_place(ws, served, transcript_file):
+    """Two threads calling read_new at once moved the offset twice, which then
+    looked like a shrinking file and re-read the whole transcript."""
+    daemon, base = served
+    lines = [{"type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
+              "message": {"role": "user", "content": f"line {i}"}} for i in range(50)]
+    path = transcript_file("s1", lines)
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+
+    seen = []
+
+    def fetch():
+        seen.append(len(daemon.read_transcript("s1") or []))
+
+    threads = [threading.Thread(target=fetch) for _ in range(8)]
+    for one in threads:
+        one.start()
+    for one in threads:
+        one.join()
+    assert set(seen) == {50}, f"got {sorted(set(seen))}"
+    assert len(daemon.transcript("s1").blocks) == 50
