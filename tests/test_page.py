@@ -650,6 +650,54 @@ def test_touching_another_file_leaves_the_open_one_alone(repo_page):
             browser.close()
 
 
+def test_the_find_box_sits_above_the_file_list(repo_page):
+    """One box, moved to where it is used. Two would be two values to keep in
+    step, and `/` would have to guess which one it meant."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.id") == "findhome"
+            show_tab(page, "files")
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.className") == "findslot"
+            assert page.eval_on_selector(
+                "#find", "el => el.closest('.side') !== null")
+            # and it goes back when a tab without a list is chosen
+            show_tab(page, "transcript")
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.id") == "findhome"
+        finally:
+            browser.close()
+
+
+def test_the_find_box_keeps_focus_while_you_type(repo_page):
+    """It is moved only when its parent is wrong. Re-homing it on every draw
+    would detach it mid-keystroke and drop the caret."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click("#find")
+            page.keyboard.type("note", delay=60)
+            page.wait_for_timeout(400)
+            assert page.evaluate("document.activeElement.id") == "find"
+            assert page.input_value("#find") == "note"
+        finally:
+            browser.close()
+
+
+def test_the_diff_tab_gets_the_box_too(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.className") == "findslot"
+        finally:
+            browser.close()
+
+
 def test_a_worktree_without_markdown_says_so(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)

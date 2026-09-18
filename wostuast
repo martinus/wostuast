@@ -2958,11 +2958,11 @@ body {
 }
 .tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
 .tab:disabled { color: var(--edge-bright); cursor: default; }
+.findhome { margin-left: auto; display: flex; align-items: center; }
 .find {
-  margin-left: auto; align-self: center; width: 240px; height: 26px;
-  padding: 0 10px; border-radius: 5px; border: 1px solid var(--edge);
-  background: var(--raised); color: var(--ink); font-family: var(--mono);
-  font-size: 12px;
+  width: 240px; height: 26px; padding: 0 10px; border-radius: 5px;
+  border: 1px solid var(--edge); background: var(--raised); color: var(--ink);
+  font-family: var(--mono); font-size: 12px;
 }
 .find:focus { outline: none; border-color: var(--needs); }
 .find::placeholder { color: var(--ink-faint); }
@@ -3045,9 +3045,16 @@ body:not(.show-thinking) .thinking { display: none; }
 
 /* files and diff: a list on the left, what it names on the right */
 .content.split { padding: 0; overflow: hidden; display: flex; }
+.side {
+  width: 268px; flex-shrink: 0; display: flex; flex-direction: column;
+  min-height: 0; border-right: 1px solid var(--edge);
+}
+.findslot { flex-shrink: 0; display: flex; padding: 8px 10px;
+  border-bottom: 1px solid var(--edge); }
+.findslot .find { width: 100%; }
 .filelist {
-  width: 268px; flex-shrink: 0; overflow-y: auto; padding: 8px 0;
-  border-right: 1px solid var(--edge); font-family: var(--mono); font-size: 12px;
+  flex-grow: 1; overflow-y: auto; padding: 8px 0;
+  font-family: var(--mono); font-size: 12px;
 }
 .filelist button {
   display: block; width: 100%; padding: 7px 14px; text-align: left;
@@ -3180,8 +3187,10 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button class="tab" role="tab" aria-selected="false" data-tab="diff">3 Diff<span
           class="badge" id="diffcount" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="peek" disabled>4 Peek</button>
-        <input class="find" id="find" type="search" placeholder="find in transcript  /"
-               autocomplete="off" spellcheck="false">
+        <div class="findhome" id="findhome">
+          <input class="find" id="find" type="search" placeholder="find in transcript  /"
+                 autocomplete="off" spellcheck="false">
+        </div>
         <div class="live" id="live"></div>
       </div>
       <div class="content" id="content"></div>
@@ -3717,16 +3726,30 @@ function drawTool(parent, block, index) {
 // away the reader's place in the document every time the agent touched some
 // other file — and the keys that guarded against that lived in `state`, where
 // nothing kept them in step with the DOM. The DOM remembers instead.
+// One find box, moved to where it is used: above the file list on a tab that
+// has one, and in the tab strip for the transcript. Two boxes would mean two
+// values to keep in step, and `/` would have to guess which one it meant.
+// It is only ever moved when its parent is wrong, so typing does not blur it.
+function homeFind(where) {
+  const box = $("find");
+  if (box.parentNode !== where) where.appendChild(box);
+}
+
 function split(box, tab, bodyClass) {
   if (box.dataset.tab !== tab) {
+    homeFind($("findhome"));   // it may be inside what is about to be cleared
     box.replaceChildren();
     box.dataset.tab = tab;
     box.dataset.listKey = "";
     box.dataset.bodyKey = "";
-    put(box, "div", "filelist");
+    const side = put(box, "div", "side");
+    put(side, "div", "findslot");
+    put(side, "div", "filelist");
     put(box, "div", bodyClass);
   }
-  return [box.firstChild, box.lastChild];
+  const side = box.firstChild;
+  homeFind(side.firstChild);
+  return [side.lastChild, box.lastChild];
 }
 
 function fresh(box, which, key) {
@@ -3992,6 +4015,9 @@ const TAB_KEYS = ["transcript", "files", "diff", "peek"];
 function draw() {
   const box = $("content");
   box.className = "content" + (state.tab === "transcript" ? "" : " split");
+  // A tab that has no file list gives the box back before anything is
+  // cleared; `split` takes it again for the tabs that do.
+  if (state.tab === "transcript" || !current()) homeFind($("findhome"));
   if (!current()) {
     box.replaceChildren();
     box.dataset.tab = "";

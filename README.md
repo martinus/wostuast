@@ -180,10 +180,11 @@ on your behalf. Jump, send and peek arrive in milestone 4.
 **Files** lists every file in the worktree — what git tracks, plus anything
 untracked that `.gitignore` does not cover.
 
-Type to find one, the way an editor's file picker does: the letters have to
-turn up in the name in that order, but not next to each other, so `tsfi` finds
-`tests/test_files.py`. The best match sorts to the top and the letters that
-matched are picked out. Press `/` to get to the box, `Esc` to clear it.
+Type in the box above the list to find one, the way an editor's file picker
+does: the letters have to turn up in the name in that order, but not next to
+each other, so `tsfi` finds `tests/test_files.py`. The best match sorts to the
+top and the letters that matched are picked out. Press `/` to get to the box,
+`Esc` to clear it.
 
 Before you type, the order is `PLAN.md`, `CLAUDE.md` and `README.md`, then
 whatever the agent has changed with the newest first, then the rest by name.
@@ -201,8 +202,9 @@ file with more than 500 changed lines starts closed, so a large diff still
 opens at once. Untracked files are named rather than shown, because git has no
 diff for a file it does not track yet.
 
-The find box narrows the file list in both tabs, the same way it narrows the
-transcript.
+The same box does all three. It sits above the list on Files and Diff, and at
+the right of the tab strip for the transcript, where it searches for the text
+you typed rather than matching scattered letters.
 
 The page renders what an agent wrote, and an agent may have read a hostile
 file. So Markdown is parsed into an inert document, cut down to an allowlist of

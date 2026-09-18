@@ -286,9 +286,9 @@ List every file in the worktree: `git ls-files` plus untracked files not
 ignored. Not Markdown only — you want to read the code the agent is writing,
 not just the notes around it.
 
-Find a file by typing, the way an editor's file picker does: the letters have
-to turn up in the name in that order, but not next to each other, and the best
-match sorts to the top. A run of letters, the start of a path segment and the
+Find a file by typing, in a box directly above the list, the way an editor's
+file picker does: the letters have to turn up in the name in that order, but
+not next to each other, and the best match sorts to the top. A run of letters, the start of a path segment and the
 file's own name all score higher. The letters that matched are picked out in
 the name.
 
@@ -507,6 +507,7 @@ words. The first screenshot is the Transcript tab with one session in
 | The Files and Diff tabs poll from the browser | Pushing them would need the daemon to know which tab each browser is on, and to remember what it last sent. Both tabs ask git for the whole answer anyway, so a request is the same work as a push. |
 | The Files tab lists every file | Reading only the notes around the work is not reading the work. Markdown renders as Markdown, everything else as it is. |
 | Finding a file is fuzzy, finding text is not | A path is a handle you half remember, so scattered letters should find it. Prose is read, so a search over it means what you typed. |
+| One find box, moved to where it is used | Above the list on a tab that has one, in the tab strip for the transcript. Two boxes would be two values to keep in step, and `/` would have to guess which one it meant. |
 | Untracked files are named, not diffed | `git diff` shows nothing for them. Naming them is honest and costs one command; diffing each against nothing costs one command per file. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |
 | No gra dependency | Works for any worktree layout; a `repo/dir` label is all gra would add. |
