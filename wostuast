@@ -19,7 +19,7 @@ import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Sequence
 
 if TYPE_CHECKING:  # only the annotations need these; the hot paths must not pay
     import argparse
@@ -62,6 +62,19 @@ ATTENTION_NOTIFICATIONS = frozenset(
 #: A hook that is still running after this many seconds gives up and exits 0.
 #: It must never hold Claude Code, whatever goes wrong underneath it.
 HOOK_TIMEOUT = 5
+
+#: A directory's git facts are read again when an event asks for it, but never
+#: more often than this. git status on a large worktree is not cheap.
+GIT_MIN_INTERVAL = 10.0
+
+#: How often to ask whether the agents are still running.
+LIVENESS_INTERVAL = 5.0
+
+#: A finished tool of one of these kinds probably changed the working tree.
+WRITING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"})
+
+#: How much of a prompt the page is sent. It has the transcript for the rest.
+PROMPT_WIDTH = 500
 
 EVENTS_MAX_BYTES = 20 * 1024 * 1024
 LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -287,6 +300,96 @@ def read_event_file(target: Path) -> Iterator[dict[str, Any]]:
                 yield record
 
 
+# --- following files: read what is new, keep a half-written last line --------
+
+
+@dataclass
+class Tail:
+    """Reads the new lines of a file that grows, and nothing twice.
+
+    It remembers how far it has read and holds back a last line that has no
+    newline yet, because a writer can be caught mid-line. It also remembers
+    which file it was reading, by device and inode, so a file replaced under
+    the same name starts again from the beginning instead of seeking past the
+    end of a smaller one and going quiet for ever.
+    """
+
+    path: Path
+    offset: int = 0
+    partial: bytes = b""
+    key: tuple[int, int] = (0, 0)
+
+    def read_new(self) -> list[bytes]:
+        try:
+            info = self.path.stat()
+        except OSError:
+            return []
+        key = (info.st_dev, info.st_ino)
+        if key != self.key:
+            self.key, self.offset, self.partial = key, 0, b""
+        elif info.st_size < self.offset:  # rewritten shorter, under the same name
+            self.offset, self.partial = 0, b""
+        if info.st_size == self.offset:
+            return []
+        try:
+            with open(self.path, "rb") as handle:
+                handle.seek(self.offset)
+                data = handle.read()
+        except OSError:
+            return []
+        self.offset += len(data)
+        head, newline, rest = (self.partial + data).rpartition(b"\n")
+        self.partial = rest
+        if not newline:
+            return []
+        return [line for line in head.split(b"\n") if line.strip()]
+
+
+def stat_key(path: Path) -> tuple[int, int]:
+    """Which file this name points at right now, or (0, 0) if there is none."""
+    try:
+        info = path.stat()
+    except OSError:
+        return (0, 0)
+    return (info.st_dev, info.st_ino)
+
+
+class EventFollower:
+    """Follows the event log, and does not lose what rotation moved aside.
+
+    The hook rotates the log, not the daemon, so the file can be renamed under
+    the follower at any moment. When that happens the last events of the old
+    file have usually not been read yet, so they are read from its new name
+    before the fresh file is picked up.
+    """
+
+    def __init__(self) -> None:
+        self.tail = Tail(events_path())
+
+    def new_lines(self) -> list[bytes]:
+        lines: list[bytes] = []
+        live = stat_key(events_path())
+        if self.tail.key != (0, 0) and live != (0, 0) and live != self.tail.key:
+            # Our file was moved aside. Finish it under its new name. Should a
+            # second rotation have discarded it, the reader starts that file
+            # from the top and delivers events again, which is safe: folding
+            # the same event twice gives the same answer.
+            moved = Tail(rotated_events_path(), self.tail.offset, self.tail.partial,
+                         self.tail.key)
+            lines += moved.read_new()
+        lines += self.tail.read_new()
+        return lines
+
+    def new_events(self) -> Iterator[dict[str, Any]]:
+        for line in self.new_lines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                yield record
+
+
 # --- session model: the state machine of section 4.3 -------------------------
 
 
@@ -400,10 +503,21 @@ def clip(text: str, width: int) -> str:
 
 
 class Store:
-    """All sessions, built by replaying the event log. The only mutable state."""
+    """Every session, and the rows the page shows. The one piece of state.
+
+    The daemon keeps one and a single thread writes it; readers take `rows`,
+    which is replaced whole and never edited in place, so they need no lock and
+    can never see half of an update.
+    """
 
     def __init__(self) -> None:
         self.sessions: dict[str, Session] = {}
+        self.follower = EventFollower()
+        self.rows: list[dict[str, Any]] = []
+        self.git_read: dict[str, float] = {}
+        self.git_wanted: set[str] = set()
+        self.status_seen: dict[str, float] = {}
+        self.liveness_checked = 0.0
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -439,7 +553,124 @@ class Store:
             handler(session, event, ts)
         elif name:
             session.last_event = name
+
+        if session.cwd and touched_the_tree(name, event):
+            self.git_wanted.add(session.cwd)
         return session
+
+    def fold(self, events: Iterable[dict[str, Any]]) -> None:
+        for event in events:
+            self.apply(event)
+
+    def follow(self) -> None:
+        """Fold whatever has been appended since the last look."""
+        self.fold(self.follower.new_events())
+
+    def visible(self, now: float) -> list[Session]:
+        return [
+            session
+            for session in self.sessions.values()
+            if now - session.last_ts <= SESSION_MAX_AGE
+        ]
+
+    def refresh(
+        self, now: float | None = None, alive: Callable[[int], bool] | None = None
+    ) -> bool:
+        """Bring everything up to date and rebuild the rows.
+
+        Returns True when the rows changed, which is also the daemon's answer
+        to "is there anything to tell the browsers about?".
+        """
+        moment = now if now is not None else time.time()
+        self.follow()
+        sessions = self.visible(moment)
+
+        if moment - self.liveness_checked >= LIVENESS_INTERVAL:
+            self.liveness_checked = moment
+            for session in sessions:
+                mark_dead(session, alive)
+
+        for session in sessions:
+            self.reload_status(session)
+
+        wanted = [
+            directory
+            for directory in self.git_wanted | {
+                s.cwd for s in sessions if s.cwd and s.cwd not in self.git_read
+            }
+            if moment - self.git_read.get(directory, 0.0) >= GIT_MIN_INTERVAL
+        ]
+        self.git_wanted.clear()
+        if wanted:
+            facts = git_facts_many(wanted)
+            for directory, found in facts.items():
+                self.git_read[directory] = moment
+            for session in sessions:
+                if session.cwd in facts:
+                    session.git = facts[session.cwd]
+
+        rows = [row(session) for session in sort_sessions(sessions)]
+        changed = rows != self.rows
+        self.rows = rows
+        return changed
+
+    def reload_status(self, session: Session) -> None:
+        """Read the status file again, but only when it has been written."""
+        try:
+            mtime = status_path(session.session_id).stat().st_mtime
+        except OSError:
+            return
+        if self.status_seen.get(session.session_id) == mtime:
+            return
+        self.status_seen[session.session_id] = mtime
+        session.status = read_status(session.session_id)
+
+
+def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
+    """True when this event suggests the working tree may have changed."""
+    if event_name == "Stop":
+        return True
+    if event_name in ("PostToolUse", "PostToolUseFailure"):
+        return str(event.get("tool_name") or "") in WRITING_TOOLS
+    return False
+
+
+def row(session: Session) -> dict[str, Any]:
+    """One session as the page wants it: flat, small, and ready to compare.
+
+    It is built by hand rather than from the dataclass, so that adding a field
+    to `Session` never quietly sends something to the browser. Rows are
+    compared with `!=` to decide what to push, so everything in here must be a
+    plain value, and nothing in here may depend on the current time: a row that
+    ages by itself would look changed every second and the page would be sent
+    the whole list for ever. `since` is a moment, and the page counts from it.
+    """
+    facts = session.git
+    return {
+        "id": session.session_id,
+        "label": session.label,
+        "state": session.state,
+        "state_word": STATE_WORDS.get(session.state, session.state),
+        "cwd": session.cwd,
+        "pane": session.pane,
+        "repo": facts.repo,
+        "branch": facts.branch,
+        "ahead": facts.ahead,
+        "behind": facts.behind,
+        "dirty": facts.dirty,
+        "touched_files": facts.touched_files,
+        "changes": changes_column(facts),
+        "reason": session.reason,
+        "last_event": session.last_event,
+        "last_tool": session.last_tool,
+        "last_prompt": clip(session.last_prompt, PROMPT_WIDTH),
+        "since": round(session.since, 3),
+        "name": session.status.name,
+        "model": session.status.model,
+        "context_pct": session.status.context_pct,
+        "end_reason": session.end_reason,
+        "has_transcript": bool(session.transcript_path),
+    }
 
 
 def _clear_attention(session: Session) -> None:
@@ -688,20 +919,22 @@ def build_sessions(
     now: float | None = None,
     alive: Callable[[int], bool] | None = None,
 ) -> list[Session]:
-    """Replay the log into sessions. Git facts cost a subprocess, so they are
-    left to add_git_facts, which only the commands that show them call."""
+    """Replay the whole log once, for a command that runs and exits.
+
+    The daemon does not use this: it keeps a Store and folds only what is new.
+    Both go through the same Store, so "which sessions are shown, and in what
+    order" is written down once.
+
+    Git facts cost a subprocess, so they are left to add_git_facts, which only
+    the commands that show them call.
+    """
     store = Store()
-    for event in events if events is not None else read_events():
-        store.apply(event)
+    store.fold(events if events is not None else read_events())
     moment = now if now is not None else time.time()
-    sessions = [
-        session
-        for session in store.sessions.values()
-        if moment - session.last_ts <= SESSION_MAX_AGE
-    ]
+    sessions = store.visible(moment)
     for session in sessions:
         mark_dead(session, alive)
-        session.status = read_status(session.session_id)
+        store.reload_status(session)
     return sort_sessions(sessions)
 
 
@@ -820,16 +1053,22 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     return facts
 
 
-def add_git_facts(sessions: Sequence[Session]) -> None:
-    """Fill in git facts for every session, one directory at a time but all at
-    once: git waits on disk, so ten worktrees cost about as long as one."""
+def git_facts_many(directories: Sequence[str]) -> dict[str, GitFacts]:
+    """Read several directories at once. git waits on disk, so ten worktrees
+    cost about as long as one. It reads and returns; it assigns nothing, so
+    only the thread that called it ever writes to a session."""
     from concurrent.futures import ThreadPoolExecutor
 
-    directories = sorted({session.cwd for session in sessions if session.cwd})
-    if not directories:
-        return
-    with ThreadPoolExecutor(max_workers=min(8, len(directories))) as pool:
-        facts = dict(zip(directories, pool.map(git_facts, directories)))
+    wanted = sorted({directory for directory in directories if directory})
+    if not wanted:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
+        return dict(zip(wanted, pool.map(git_facts, wanted)))
+
+
+def add_git_facts(sessions: Sequence[Session]) -> None:
+    """Fill in git facts for every session."""
+    facts = git_facts_many([session.cwd for session in sessions])
     for session in sessions:
         session.git = facts.get(session.cwd, GitFacts())
 
