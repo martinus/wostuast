@@ -74,8 +74,15 @@ one line to the events file:
 
 - `pane` is `$TMUX_PANE` from the hook's environment. It is empty outside
   tmux. This is the only link to tmux, and it is free.
-- `pid` is `$PPID`, the Claude process. The daemon uses it to detect a
-  session that was killed and sent no `SessionEnd`.
+- `pid` is the Claude Code process, found by walking up from `$PPID` to the
+  nearest ancestor named `claude`. `$PPID` itself is **not** the agent: Claude
+  Code runs a command hook through a shell, and that shell dies with the hook,
+  so using it showed every live session as killed seconds after it started.
+  The raw `$PPID` is kept as `shell_pid`, because the log keeps what it is
+  given. Where there is no `/proc` the pid is 0 and the session is simply never
+  reported as killed; saying nothing beats saying something wrong.
+  The daemon uses the pid to detect a session that was killed and sent no
+  `SessionEnd`.
 - The hook must exit 0 fast and must never block Claude. Wrap everything in
   try/except, and set a deadline, because a `try` cannot catch a wait: reading
   stdin blocks until the writer closes it, and a file lock can stall. If the
@@ -144,8 +151,13 @@ else `repo/dirname`.
 
 Each session also carries git facts, refreshed on every `Stop`, on
 `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`Bash`, and at most every 10 s:
-`repo` (basename of the top-level dir or of the remote), `branch`, `ahead`,
-`behind`, `dirty` (bool), `touched_files` (count of changed files vs base).
+`repo`, `branch`, `ahead`, `behind`, `dirty` (bool), `touched_files` (count of
+changed files vs base).
+
+`repo` is read from `--git-common-dir`, which points at the repository itself.
+A hidden name means the repository is the directory above it, which covers both
+`<repo>/.git` and the `<repo>/.bare` layout that worktrees are usually built
+on. Otherwise the name is the directory's own, without a trailing `.git`.
 Run git with `subprocess`, `-C cwd`, short timeouts, and never let a git error
 crash the daemon.
 

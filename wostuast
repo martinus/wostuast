@@ -539,6 +539,67 @@ def to_int(value: Any) -> int:
         return 0
 
 
+#: What the Claude Code process is called. `claude` is the usual name; a
+#: development checkout runs under node, so its command line is checked too.
+AGENT_NAMES = ("claude", "node", "bun", "deno")
+
+
+def process_name(pid: int) -> str:
+    """The command name of a process. Reads /proc; never runs a subprocess."""
+    try:
+        return Path(f"/proc/{pid}/comm").read_text().strip()
+    except OSError:
+        return ""
+
+
+def process_args(pid: int) -> str:
+    """The command line of a process, with its NUL separators turned to spaces."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def parent_pid(pid: int) -> int:
+    """The parent of a process, or 0. The name in /proc/<pid>/stat is wrapped in
+    brackets and may hold spaces, so the fields are read after the last one."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return 0
+    fields = stat.rpartition(")")[2].split()
+    return to_int(fields[1]) if len(fields) > 1 else 0
+
+
+def looks_like_claude(pid: int) -> bool:
+    name = process_name(pid)
+    if name == "claude":
+        return True
+    return name in AGENT_NAMES and "claude" in process_args(pid)
+
+
+def agent_pid() -> int:
+    """The Claude Code process that fired this hook, or 0 when we cannot tell.
+
+    Claude Code runs a command hook through a shell, so our own parent is that
+    shell and it dies as soon as we do. Taking it for the agent made every
+    session show as killed seconds after it started. Walking up finds the
+    process that owns the session instead.
+
+    Where there is no /proc, this returns 0 and the session is simply never
+    reported as killed. Saying nothing beats saying something wrong.
+    """
+    pid = os.getppid()
+    for _ in range(12):
+        if pid <= 1:
+            return 0
+        if looks_like_claude(pid):
+            return pid
+        pid = parent_pid(pid)
+    return 0
+
+
 def pid_alive(pid: int) -> bool:
     """True when the process still exists."""
     if pid <= 0:
@@ -652,6 +713,24 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
     return branch.strip(), ahead, behind
 
 
+def repo_name(git_dir: str) -> str:
+    """The name of the repository that owns a git directory.
+
+    `--git-common-dir` points at the repository itself, which is named in one
+    of three ways: `<repo>/.git` for a plain clone, `<repo>/.bare` or another
+    dotted name for the bare layout worktrees are usually built on, and
+    `<repo>.git` for a bare clone. A hidden name means the repository is the
+    directory above; otherwise the name is the directory's own, without `.git`.
+    """
+    path = git_dir.strip().rstrip("/")
+    if not path:
+        return ""
+    name = os.path.basename(path)
+    if name.startswith("."):
+        return os.path.basename(os.path.dirname(path))
+    return re.sub(r"\.git$", "", name)
+
+
 def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     """Read the repository name, branch, ahead, behind and dirty state.
 
@@ -674,9 +753,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     if paths is None:
         paths = git("rev-parse", "--show-toplevel")
     if paths:
-        first = paths.splitlines()[0].rstrip("/")
-        root = os.path.dirname(first) if first.endswith(".git") else first
-        facts.repo = os.path.basename(root)
+        facts.repo = repo_name(paths.splitlines()[0])
 
     status = git("status", "--porcelain", "--branch")
     if status is not None:
@@ -1041,7 +1118,8 @@ def cmd_hook(args: argparse.Namespace) -> int:
         record = read_stdin_json()
         record["ts"] = time.time()
         record["pane"] = os.environ.get("TMUX_PANE", "")
-        record["pid"] = os.getppid()
+        record["pid"] = agent_pid()
+        record["shell_pid"] = os.getppid()
         append_event(record)
         stand_down()
     except BaseException as error:  # a hook must never block Claude Code

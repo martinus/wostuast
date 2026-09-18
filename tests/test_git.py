@@ -163,3 +163,28 @@ def test_run_keeps_blank_lines(ws):
     import sys
 
     assert ws.run([sys.executable, "-c", r"print('\n\na\n\n')"]) == "\n\na\n\n\n"
+
+
+def test_a_bare_layout_keeps_the_project_name(ws, tmp_path):
+    """The layout worktrees are usually built on: a bare repo in `<project>/.bare`
+    with each worktree beside it. The repository is the directory above."""
+    project = tmp_path / "oans"
+    project.mkdir()
+    bare = project / ".bare"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)],
+                   check=True, capture_output=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(bare), str(seed)], check=True,
+                   capture_output=True)
+    git(seed, "config", "user.email", "t@e.com")
+    git(seed, "config", "user.name", "T")
+    (seed / "a.txt").write_text("1\n")
+    git(seed, "add", "."), git(seed, "commit", "-qm", "first")
+    git(seed, "push", "-q", "origin", "main")
+
+    tree = project / "gladbird"
+    subprocess.run(["git", "-C", str(bare), "worktree", "add", "-q", str(tree), "main"],
+                   check=True, capture_output=True)
+    facts = ws.git_facts(str(tree))
+    assert facts.repo == "oans", f"got {facts.repo!r}"
+    assert ws.path_label(str(tree), facts.repo) == "oans/gladbird"
