@@ -61,7 +61,27 @@ Do not build these. If a feature needs one of them, leave the feature out.
 
 `wostuast install` registers `wostuast hook` for these Claude Code hook events:
 `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-`Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`.
+`PostToolUseFailure`, `PermissionRequest`, `Notification`, `Stop`,
+`SubagentStop`, `PreCompact`, `SessionEnd`.
+
+`PermissionRequest` fires as the permission dialog appears. `Notification` says
+the same thing, but Claude Code only sends it once you have been idle for six
+seconds, and checks on a six second timer, so it arrives up to twelve seconds
+late. Measured against a real session: the row still read `working` three
+seconds after the dialog was up. A tool whose first job is "who needs me?"
+cannot be twelve seconds behind, so wostuast listens for both.
+
+Nothing fires when you answer the dialog. Saying No sends no hook at all, so
+wostuast cannot see a denial: the session keeps `needs_you`, which is still
+true, because the agent is now waiting for you to say what to do instead. Only
+the reason on the row is older than it looks. Do not invent an event that does
+not exist; the Peek tab in milestone 4 is what settles "waiting for what".
+
+`PermissionRequest` can decide a permission: Claude Code reads a decision out
+of the hook's stdout. wostuast prints nothing, which means no decision, and the
+dialog behaves as if wostuast were not installed. This is the one place where
+the hook's silence is the difference between watching and acting, and the tests
+assert it for this event by name.
 
 `wostuast hook` reads the hook JSON from stdin, adds three fields, and appends
 one line to the events file:
@@ -74,8 +94,15 @@ one line to the events file:
 
 - `pane` is `$TMUX_PANE` from the hook's environment. It is empty outside
   tmux. This is the only link to tmux, and it is free.
-- `pid` is `$PPID`, the Claude process. The daemon uses it to detect a
-  session that was killed and sent no `SessionEnd`.
+- `pid` is the Claude Code process, found by walking up from `$PPID` to the
+  nearest ancestor named `claude`. `$PPID` itself is **not** the agent: Claude
+  Code runs a command hook through a shell, and that shell dies with the hook,
+  so using it showed every live session as killed seconds after it started.
+  The raw `$PPID` is kept as `shell_pid`, because the log keeps what it is
+  given. Where there is no `/proc` the pid is 0 and the session is simply never
+  reported as killed; saying nothing beats saying something wrong.
+  The daemon uses the pid to detect a session that was killed and sent no
+  `SessionEnd`.
 - The hook must exit 0 fast and must never block Claude. Wrap everything in
   try/except, and set a deadline, because a `try` cannot catch a wait: reading
   stdin blocks until the writer closes it, and a file lock can stall. If the
@@ -124,7 +151,9 @@ One session per `session_id`. Derive state from events, in this order:
 | `SessionStart` | `starting` | Record `cwd`, `transcript_path`, `pane`, `pid` |
 | `UserPromptSubmit` | `working` | Store the prompt as `last_prompt` |
 | `PreToolUse` / `PostToolUse` | `working` | Store `last_tool` (name + short summary) |
-| `Notification`, permission | `needs_you` | `attention_since = ts`, `reason = tool + command` |
+| `PermissionRequest` | `needs_you` | At once, as the dialog appears |
+| `PostToolUseFailure` | `working` | The tool ran and failed, was interrupted, or timed out |
+| `Notification`, permission | `needs_you` | The same thing, up to 12 s later |
 | `Notification`, idle | `needs_you` | `reason = "waiting for input"` |
 | `Stop` | `done` | Agent finished its turn |
 | `SubagentStop` | unchanged | Only update `last_event` |
@@ -144,8 +173,13 @@ else `repo/dirname`.
 
 Each session also carries git facts, refreshed on every `Stop`, on
 `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`Bash`, and at most every 10 s:
-`repo` (basename of the top-level dir or of the remote), `branch`, `ahead`,
-`behind`, `dirty` (bool), `touched_files` (count of changed files vs base).
+`repo`, `branch`, `ahead`, `behind`, `dirty` (bool), `touched_files` (count of
+changed files vs base).
+
+`repo` is read from `--git-common-dir`, which points at the repository itself.
+A hidden name means the repository is the directory above it, which covers both
+`<repo>/.git` and the `<repo>/.bare` layout that worktrees are usually built
+on. Otherwise the name is the directory's own, without a trailing `.git`.
 Run git with `subprocess`, `-C cwd`, short timeouts, and never let a git error
 crash the daemon.
 
@@ -451,8 +485,11 @@ words. The first screenshot is the Transcript tab with one session in
 ## 13. Questions, answered
 
 1. **Port.** 7331 by default.
-2. **Label.** The session name when there is one, else `repo/dirname`. Never
-   the full path.
+2. **Label.** `name · repo/dirname`, and just `repo/dirname` when there is no
+   name. Never the full path. Claude Code titles a session from its first
+   prompt, so nearly every session has a name; showing only the name loses
+   which worktree the agent stands in, which is exactly what you need when
+   several are running.
 3. **Send.** Works for `done`. Hidden for `ended` and `dead`.
 4. **Session names.** `/rename` sets one, and only the status line sees it.
    wostuast cannot rename a session from outside: the only way back into the

@@ -35,6 +35,8 @@ HOOK_EVENTS: tuple[str, ...] = (
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionRequest",
     "Notification",
     "Stop",
     "SubagentStop",
@@ -42,8 +44,10 @@ HOOK_EVENTS: tuple[str, ...] = (
     "SessionEnd",
 )
 
-#: These two hook events take a tool matcher. The others do not.
-MATCHER_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
+#: These hook events take a tool matcher. The others do not.
+MATCHER_EVENTS = frozenset(
+    {"PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"}
+)
 
 #: A tmux pane id, as `$TMUX_PANE` gives it. The pane is the only value that
 #: travels from an event payload onto a command line, so the derived field is
@@ -333,10 +337,18 @@ class Session:
 
     @property
     def label(self) -> str:
-        """What to call this session: its name if it has one, else repo/dirname."""
-        if self.status.name:
-            return self.status.name
-        return path_label(self.cwd, self.git.repo)
+        """What to call this session: its name, and where it is standing.
+
+        Claude Code titles a session from its first prompt, so most sessions
+        have a name whether or not anyone ran `/rename`. The name alone reads
+        well but loses the worktree, which is the thing you need when several
+        agents are running, so both are shown. A session with no name is just
+        its place.
+        """
+        place = path_label(self.cwd, self.git.repo)
+        if not self.status.name:
+            return place
+        return f"{clip(self.status.name, 40)} · {place}"
 
     @property
     def since(self) -> float:
@@ -451,6 +463,10 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
 
 
 def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
+    # A new tool call means the last permission question is answered, whether
+    # it was allowed or denied. PermissionRequest for this tool arrives next
+    # and sets the waiting state again if there is one.
+    _clear_attention(session)
     session.state = "working"
     session.last_tool = tool_summary(
         str(event.get("tool_name") or ""), event.get("tool_input"), session.cwd
@@ -462,6 +478,41 @@ def _on_post_tool(session: Session, event: dict[str, Any], ts: float) -> None:
     # A tool result means the agent is running again, so it no longer waits.
     _clear_attention(session)
     _on_pre_tool(session, event, ts)
+
+
+def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
+    """The tool ran and failed, or was interrupted or timed out.
+
+    It does not cover a denied permission. Saying No to the dialog fires no
+    hook at all, which was measured against a real session: the log ends at the
+    `Notification` and nothing follows it. So wostuast cannot see a denial, and
+    a session that was denied keeps the waiting state it already had. That is
+    not wrong, because the agent really is waiting for you to say what to do
+    instead; only the reason it shows is older than it looks.
+    """
+    _clear_attention(session)
+    session.state = "working"
+    name = str(event.get("tool_name") or "")
+    summary = tool_summary(name, event.get("tool_input"), session.cwd) if name else "tool"
+    if event.get("is_interrupt"):
+        session.last_event = f"{summary} interrupted"
+    else:
+        session.last_event = f"{summary} failed"
+
+
+def _on_permission_request(session: Session, event: dict[str, Any], ts: float) -> None:
+    """The permission dialog is on screen. This is the moment you are needed.
+
+    `Notification` says the same thing, but only after you have been idle for
+    six seconds, and it is checked on a six second timer, so it arrives up to
+    twelve seconds late. For a tool whose first job is answering "who needs
+    me?", that is too slow. This event fires as the dialog appears.
+    """
+    session.state = "needs_you"
+    session.attention_since = ts
+    name = str(event.get("tool_name") or "")
+    summary = tool_summary(name, event.get("tool_input"), session.cwd) if name else ""
+    session.reason = f"permission: {summary}" if summary else "permission"
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -512,6 +563,8 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "UserPromptSubmit": _on_prompt,
     "PreToolUse": _on_pre_tool,
     "PostToolUse": _on_post_tool,
+    "PostToolUseFailure": _on_tool_failed,
+    "PermissionRequest": _on_permission_request,
     "Notification": _on_notification,
     "Stop": _on_stop,
     "SubagentStop": _on_subagent_stop,
@@ -537,6 +590,67 @@ def to_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+#: What the Claude Code process is called. `claude` is the usual name; a
+#: development checkout runs under node, so its command line is checked too.
+AGENT_NAMES = ("claude", "node", "bun", "deno")
+
+
+def process_name(pid: int) -> str:
+    """The command name of a process. Reads /proc; never runs a subprocess."""
+    try:
+        return Path(f"/proc/{pid}/comm").read_text().strip()
+    except OSError:
+        return ""
+
+
+def process_args(pid: int) -> str:
+    """The command line of a process, with its NUL separators turned to spaces."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def parent_pid(pid: int) -> int:
+    """The parent of a process, or 0. The name in /proc/<pid>/stat is wrapped in
+    brackets and may hold spaces, so the fields are read after the last one."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return 0
+    fields = stat.rpartition(")")[2].split()
+    return to_int(fields[1]) if len(fields) > 1 else 0
+
+
+def looks_like_claude(pid: int) -> bool:
+    name = process_name(pid)
+    if name == "claude":
+        return True
+    return name in AGENT_NAMES and "claude" in process_args(pid)
+
+
+def agent_pid() -> int:
+    """The Claude Code process that fired this hook, or 0 when we cannot tell.
+
+    Claude Code runs a command hook through a shell, so our own parent is that
+    shell and it dies as soon as we do. Taking it for the agent made every
+    session show as killed seconds after it started. Walking up finds the
+    process that owns the session instead.
+
+    Where there is no /proc, this returns 0 and the session is simply never
+    reported as killed. Saying nothing beats saying something wrong.
+    """
+    pid = os.getppid()
+    for _ in range(12):
+        if pid <= 1:
+            return 0
+        if looks_like_claude(pid):
+            return pid
+        pid = parent_pid(pid)
+    return 0
 
 
 def pid_alive(pid: int) -> bool:
@@ -652,6 +766,24 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
     return branch.strip(), ahead, behind
 
 
+def repo_name(git_dir: str) -> str:
+    """The name of the repository that owns a git directory.
+
+    `--git-common-dir` points at the repository itself, which is named in one
+    of three ways: `<repo>/.git` for a plain clone, `<repo>/.bare` or another
+    dotted name for the bare layout worktrees are usually built on, and
+    `<repo>.git` for a bare clone. A hidden name means the repository is the
+    directory above; otherwise the name is the directory's own, without `.git`.
+    """
+    path = git_dir.strip().rstrip("/")
+    if not path:
+        return ""
+    name = os.path.basename(path)
+    if name.startswith("."):
+        return os.path.basename(os.path.dirname(path))
+    return re.sub(r"\.git$", "", name)
+
+
 def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     """Read the repository name, branch, ahead, behind and dirty state.
 
@@ -674,9 +806,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     if paths is None:
         paths = git("rev-parse", "--show-toplevel")
     if paths:
-        first = paths.splitlines()[0].rstrip("/")
-        root = os.path.dirname(first) if first.endswith(".git") else first
-        facts.repo = os.path.basename(root)
+        facts.repo = repo_name(paths.splitlines()[0])
 
     status = git("status", "--porcelain", "--branch")
     if status is not None:
@@ -1030,18 +1160,24 @@ def cmd_hook(args: argparse.Namespace) -> int:
     """Read the hook JSON from stdin and append one line. Always exit 0.
 
     It prints nothing, and that silence is load-bearing. Claude Code reads a
-    hook's stdout as the hook's answer, and for PreToolUse that answer can allow
-    or deny a tool; exit code 2 blocks it outright. wostuast has no opinion and
-    must never have one, because approving without seeing the pane is how
-    directories get deleted. So: no print, and exit 0 whatever happens.
-    Anything worth saying goes to the log file, never to stdout or stderr.
+    hook's stdout as the hook's answer. For PreToolUse that answer can allow or
+    deny a tool, and PermissionRequest, which we register so that a waiting
+    agent turns amber at once, takes a decision to allow or deny outright.
+    Printing nothing means "no opinion", and the dialog behaves as if we were
+    not here.
+
+    So: never print in this function, and never print in anything it calls.
+    wostuast must have no opinion, because approving without seeing the pane is
+    how directories get deleted. Exit 0 whatever happens, and say anything
+    worth saying in the log file.
     """
     try:
         give_up_after(HOOK_TIMEOUT)
         record = read_stdin_json()
         record["ts"] = time.time()
         record["pane"] = os.environ.get("TMUX_PANE", "")
-        record["pid"] = os.getppid()
+        record["pid"] = agent_pid()
+        record["shell_pid"] = os.getppid()
         append_event(record)
         stand_down()
     except BaseException as error:  # a hook must never block Claude Code

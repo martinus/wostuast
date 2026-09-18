@@ -24,16 +24,17 @@ wostuast uninstall   # remove the hooks; keep the event log
 `wostuast ls` prints one row per session:
 
 ```
-STATE      SESSION                   BRANCH          CHANGES  PANE  AGE    LAST
-needs you  oans/warmhare             feature/search  ↑2 ●5    %7    38 s   permission: Bash cmake --build build -j
-working    goldfish                  main            ●1       %9    4 s    Edit src/table.cpp
-done       unordered_dense/calmpuma  fix/issue-142   ↑1 ✓     %11   4 min  stopped
+STATE      SESSION                                   BRANCH          CHANGES  PANE  AGE    LAST
+needs you  Add substring search · oans/warmhare      feature/search  ↑2 ●5    %7    38 s   permission: Bash cmake --build build -j
+working    Speed up the table render · oans          main            ●1       %9    4 s    Edit src/table.cpp
+done       Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓     %11   4 min  stopped
 
 1 needs you · 1 working · 1 done
 ```
 
-`goldfish` is a session named with `/rename`. The other two fall back to
-`repo/dirname`.
+A session is named after its first prompt, and `/rename` changes that name. The
+worktree is shown next to it, because the name alone does not say where an
+agent is standing. A session with no name is just its worktree.
 
 ## How it works
 
@@ -136,8 +137,8 @@ status line carries both. So `install` also registers `wostuast status` as your
 Without the status line wostuast still works. Sessions then have no name and no
 context percent.
 
-Name a session in Claude Code with `/rename`. wostuast reads that name and
-never writes it.
+Claude Code names a session after its first prompt, and `/rename` changes that
+name. wostuast reads the name and never writes it.
 
 ## Status
 

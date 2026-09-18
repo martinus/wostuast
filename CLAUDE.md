@@ -55,8 +55,11 @@ settings.
   reads; the user types.
 - **Never approve a permission prompt.** The user approves in the terminal.
   The hook prints nothing, and that silence is the mechanism: Claude Code reads
-  a hook's stdout as its answer. One `print()` in `cmd_hook` speaks for the
-  user. Logging goes to the log file.
+  a hook's stdout as its answer. We register `PermissionRequest`, which takes a
+  decision to allow or deny straight from stdout, so one `print()` in
+  `cmd_hook` does not just add noise: it answers a permission prompt for the
+  user. Logging goes to the log file. Tests assert the silence for that event
+  by name; never weaken them.
 - **Handlers assign, they never accumulate.** Folding the same event twice must
   give the same answer; milestone 2 folds only the new tail of the log.
 - **The state directory is private.** `0700` for directories, `0600` for files,

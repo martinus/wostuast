@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 
@@ -214,3 +216,180 @@ def test_sort_puts_the_longest_wait_first(ws):
         make("starting", sid="s", last_ts=80.0),
     ]
     assert [s.session_id for s in ws.sort_sessions(rows)] == ["n1", "n2", "w", "d", "s", "e"]
+
+
+# --- finding the agent's own process ----------------------------------------
+
+
+def test_repo_name_for_every_layout(ws):
+    assert ws.repo_name("/home/m/oans/.bare") == "oans"          # bare layout
+    assert ws.repo_name("/home/m/myrepo/.git") == "myrepo"       # plain clone
+    assert ws.repo_name("/home/m/myrepo.git") == "myrepo"        # bare clone
+    assert ws.repo_name("/home/m/proj/.bare/") == "proj"         # trailing slash
+    assert ws.repo_name("/home/m/p/.git/worktrees/x") == "x"
+    assert ws.repo_name("") == ""
+    assert ws.repo_name("   ") == ""
+
+
+def test_reading_a_process_that_is_not_there(ws):
+    assert ws.process_name(999999) == ""
+    assert ws.process_args(999999) == ""
+    assert ws.parent_pid(999999) == 0
+
+
+def test_reading_our_own_process(ws):
+    import os
+
+    assert ws.parent_pid(os.getpid()) == os.getppid()
+    assert ws.process_name(os.getpid()) != ""
+
+
+def test_the_agent_pid_walks_past_the_shell(ws, tmp_path):
+    """Claude Code runs a command hook through a shell, so our parent is that
+    shell and it dies with us. Taking it for the agent showed every session as
+    killed seconds after it started.
+    """
+    import os
+    import subprocess
+    import sys
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    (tmp_path / "probe.py").write_text(
+        "import importlib.machinery, importlib.util, os, sys\n"
+        f"loader = importlib.machinery.SourceFileLoader('w', {str(root / 'wostuast')!r})\n"
+        "spec = importlib.util.spec_from_loader(loader.name, loader)\n"
+        "m = importlib.util.module_from_spec(spec); sys.modules['w'] = m\n"
+        "loader.exec_module(m)\n"
+        "print('AGENT', m.agent_pid(), 'SHELL', os.getppid())\n"
+    )
+    (tmp_path / "outer.py").write_text(
+        "import os, subprocess, sys\n"
+        "print('CLAUDE', os.getpid(), flush=True)\n"
+        "subprocess.run(['sh', '-c', sys.argv[1] + ' ' + sys.argv[2]], env=os.environ)\n"
+    )
+    claude = tmp_path / "claude"
+    claude.symlink_to(sys.executable)
+
+    done = subprocess.run(
+        [str(claude), str(tmp_path / "outer.py"), str(claude), str(tmp_path / "probe.py")],
+        capture_output=True, text=True, timeout=60,
+    )
+    found = {}
+    for line in done.stdout.splitlines():
+        parts = line.split()
+        if parts and parts[0] == "CLAUDE":
+            found["claude"] = int(parts[1])
+        if parts and parts[0] == "AGENT":
+            found["agent"] = int(parts[1])
+            found["shell"] = int(parts[3])
+
+    assert "agent" in found, done.stdout + done.stderr
+    assert found["agent"] == found["claude"], "did not walk past the shell"
+    assert found["shell"] != found["claude"], "the shell was not a separate process"
+
+
+def test_a_session_without_an_agent_pid_is_never_called_killed(ws):
+    """Where there is no /proc we cannot find the agent. Saying nothing beats
+    saying the session was killed when it is running fine."""
+    session = ws.Session(session_id="s", pid=0, state="working")
+    ws.mark_dead(session, alive=lambda pid: False)
+    assert session.state == "working"
+
+
+# --- the permission dialog ---------------------------------------------------
+
+
+def test_a_permission_request_needs_you_at_once(ws):
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1000.0),
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.5),
+    )
+    assert session.state == "needs_you"
+    assert session.attention_since == 1000.5
+    assert session.reason == "permission: Bash ls ~"
+
+
+def test_the_late_notification_does_not_undo_it(ws):
+    """Notification says the same thing up to twelve seconds later. It must not
+    move the waiting time forward, or the row would show the wrong age."""
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1000.0),
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.5),
+        event("Notification", notification_type="permission_prompt",
+              message="Claude needs your permission", ts=1012.0),
+    )
+    assert session.state == "needs_you"
+    assert session.reason == "permission: Bash ls ~"
+
+
+def test_approving_clears_it(ws):
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("PostToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1005.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""
+
+
+def test_denying_and_moving_on_clears_it(ws):
+    """A denial brings no PostToolUse. The next tool call is what says the
+    question was answered, so the row must not keep the old reason."""
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("PreToolUse", tool_name="Read", tool_input={"file_path": "/w/repo/dir/a.py"},
+              ts=1006.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""
+    assert session.last_event == "Read a.py"
+
+
+def test_a_permission_request_without_a_tool_still_needs_you(ws):
+    session = fold(ws, event("PermissionRequest", ts=1000.0))
+    assert session.state == "needs_you"
+    assert session.reason == "permission"
+
+
+def test_a_tool_that_failed_clears_the_waiting(ws):
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("PostToolUseFailure", tool_name="Bash", tool_input={"command": "ls ~"},
+              error="command not found", ts=1005.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""
+    assert session.last_event == "Bash ls ~ failed"
+
+
+def test_an_interrupted_tool_says_so(ws):
+    session = fold(
+        ws,
+        event("PostToolUseFailure", tool_name="Bash", tool_input={"command": "sleep 99"},
+              error="interrupted", is_interrupt=True, ts=1005.0),
+    )
+    assert session.last_event == "Bash sleep 99 interrupted"
+
+
+def test_a_denied_permission_sends_no_event_at_all(ws):
+    """Measured against a real session: saying No to the dialog fires no hook.
+    The log ends at the Notification. So the session keeps waiting, which is
+    still true, and nothing here may pretend otherwise.
+    """
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1000.0),
+        event("Notification", notification_type="permission_prompt",
+              message="Claude needs your permission", ts=1012.0),
+    )
+    assert session.state == "needs_you"
+    assert session.attention_since == 1012.0
