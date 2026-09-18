@@ -1,0 +1,31 @@
+{
+  "session_id": "7f2a1c4e-0000-4000-8000-000000000001",
+  "session_name": "warmhare",
+  "transcript_path": "/home/martin/.claude/projects/-home-martin-oans-warmhare/7f2a1c4e.jsonl",
+  "cwd": "/home/martin/oans/warmhare",
+  "model": {
+    "id": "claude-opus-5",
+    "display_name": "Opus 5"
+  },
+  "workspace": {
+    "current_dir": "/home/martin/oans/warmhare",
+    "project_dir": "/home/martin/oans/warmhare"
+  },
+  "version": "2.1.276",
+  "output_style": {
+    "name": "default"
+  },
+  "context_window": {
+    "total_input_tokens": 120000,
+    "total_output_tokens": 8000,
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 82000,
+      "output_tokens": 900,
+      "cache_creation_input_tokens": 1200,
+      "cache_read_input_tokens": 60000
+    },
+    "used_percentage": 41.0,
+    "remaining_percentage": 59.0
+  }
+}

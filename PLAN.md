@@ -77,16 +77,45 @@ one line to the events file:
 - `pid` is `$PPID`, the Claude process. The daemon uses it to detect a
   session that was killed and sent no `SessionEnd`.
 - The hook must exit 0 fast and must never block Claude. Wrap everything in
-  try/except. If the file cannot be written, exit 0 anyway.
+  try/except, and set a deadline, because a `try` cannot catch a wait: reading
+  stdin blocks until the writer closes it, and a file lock can stall. If the
+  file cannot be written, exit 0 anyway.
+- The hook prints nothing. Claude Code reads a hook's stdout as its answer, and
+  for `PreToolUse` that answer can allow or deny the tool. wostuast has no
+  answer. This silence is the whole mechanism behind "never approve"; anything
+  worth saying goes to the log file.
 - Keep the raw payload. Do not strip fields; new hook fields must not break
   old versions.
+- Handlers assign, they never accumulate. Folding the same event twice must
+  give the same answer, because the daemon folds only the new tail of the log.
+- The state directory is `0700` and its files are `0600`. The log holds every
+  prompt, every command and every result.
 
 The events file is append-only. `wostuast serve` reads it from the start on
 launch, then follows it. Rotate when it passes 20 MB: rename to
 `events.1.jsonl`, start fresh. Sessions that ended more than 7 days ago are
 not shown.
 
-### 4.2 Session state
+### 4.2 The status line
+
+Hooks do not carry the session name or the context usage. The Claude Code
+status line does. `wostuast install` also registers `wostuast status` as the
+`statusLine` command, but only when the user has none. It reads the status
+payload from stdin, keeps the few useful fields in
+`~/.local/state/wostuast/status/<session_id>.json`, and prints one short line
+back to the terminal.
+
+The status line runs on every redraw, so it never appends to the event log. It
+overwrites one small file, which holds the latest value, not a history.
+
+Kept fields: `session_name` (set by `/rename`), `model.display_name`,
+`context_window.used_percentage`, `agent.name`, `version`. Everything else is
+dropped.
+
+Without the status line wostuast still works. Sessions then have no name and
+no context percent.
+
+### 4.3 Session state
 
 One session per `session_id`. Derive state from events, in this order:
 
@@ -106,6 +135,13 @@ One session per `session_id`. Derive state from events, in this order:
 `needs_you` clears on the next `UserPromptSubmit` or `PostToolUse` for that
 session. Show how long it has been waiting.
 
+A `Notification` means `needs_you` when its `notification_type` is
+`permission_prompt`, `idle_prompt` or `elicitation_dialog`. `auth_success` does
+not. Older Claude Code versions send no type; read the message instead.
+
+The label of a session is its `session_name` when the status line gave one,
+else `repo/dirname`.
+
 Each session also carries git facts, refreshed on every `Stop`, on
 `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`Bash`, and at most every 10 s:
 `repo` (basename of the top-level dir or of the remote), `branch`, `ahead`,
@@ -113,7 +149,7 @@ Each session also carries git facts, refreshed on every `Stop`, on
 Run git with `subprocess`, `-C cwd`, short timeouts, and never let a git error
 crash the daemon.
 
-### 4.3 The daemon
+### 4.4 The daemon
 
 `wostuast serve [--port 7331] [--open]`
 
@@ -136,7 +172,35 @@ crash the daemon.
 - Watch files with polling (mtime every 1 s). Do not add inotify
   dependencies. Polling is fine at this scale.
 
-### 4.4 The tmux verbs
+#### 4.4.1 Rules for the HTTP surface
+
+Decide these before writing the daemon, not after. `send` types into a
+terminal, so the page is not an ordinary local page.
+
+1. **Any website can reach a localhost port.** A cross-origin `fetch` with
+   `text/plain` is a "simple request": the browser sends it with no preflight.
+   The attacker cannot read the reply, and does not need to — the effect is
+   `tmux send-keys` followed by Enter. So every `POST` needs a token that the
+   daemon generates at start and prints into the page, plus a check that the
+   `Origin` header is ours or absent. Without this, a page in another tab can
+   type a command into your terminal. This is also how wostuast could end up
+   approving a permission prompt: not through a button, but through someone
+   else's page typing `y` into your pane.
+2. **`marked` does not sanitize.** It dropped its `sanitize` option in
+   version 5 and passes raw HTML through. An agent that reads a hostile README
+   puts that HTML into the transcript. Escape HTML in the Markdown source
+   before `marked` sees it, and use `textContent`, never `innerHTML`, for every
+   value that came from an event: `label`, `branch`, `last_prompt`,
+   `last_tool`, `reason`, `last_event`.
+3. **`cwd` and `transcript_path` come from the log and are not trusted.** The
+   transcript path is outside the worktree by design, so path confinement does
+   not cover it: require it to resolve under the Claude config directory and to
+   end in `.jsonl`. Require `cwd` to be an existing directory.
+4. **`<id>` in a route is a dictionary key, never a path component.** Only
+   `path=` is ever joined to a directory, and only through the one confinement
+   function section 8 tests.
+
+### 4.5 The tmux verbs
 
 Only three tmux commands exist in the code. Each takes the pane id from the
 session.
@@ -149,7 +213,7 @@ session.
 
 If `pane` is empty, hide the verbs for that session and show "not in tmux".
 
-### 4.5 The transcript
+### 4.6 The transcript
 
 Claude Code writes `~/.claude/projects/<escaped-cwd>/<session>.jsonl`. The
 event carries the exact path. Parse it into blocks:
@@ -172,14 +236,14 @@ Follow the file: remember the byte offset, read new lines, push them over SSE.
 A partial trailing line is kept for the next read. Do not re-parse the whole
 file on every change.
 
-### 4.6 Files tab
+### 4.7 Files tab
 
 List `*.md` in the worktree: `git ls-files` plus untracked files not ignored.
 Sort with `PLAN.md`, `CLAUDE.md`, `README.md` first, then most recently
 modified. Render the selected file as Markdown. Reload it when its mtime
 changes and keep the scroll position.
 
-### 4.7 Diff tab
+### 4.8 Diff tab
 
 Base = `origin/HEAD` if it exists, else `main`, else `master`. Show
 `git diff <base>...HEAD` followed by uncommitted changes (`git diff HEAD`),
@@ -274,6 +338,7 @@ and `Enter`.
 wostuast install       # install to ~/.local/bin, register hooks in ~/.claude/settings.json
 wostuast uninstall     # remove hooks; leave the events file
 wostuast hook          # the hook entry point (stdin JSON → events file)
+wostuast status        # the status line entry point (stdin JSON → status file)
 wostuast serve         # start the daemon; --open opens the browser
 wostuast ls            # one table of sessions in the terminal, same data as the sidebar
 wostuast doctor        # check: tmux present, hooks registered, events file writable
@@ -281,8 +346,9 @@ wostuast doctor        # check: tmux present, hooks registered, events file writ
 
 `install` edits `~/.claude/settings.json` in place: parse, add hook entries
 that are not there yet, write back with the original indentation. Never
-remove entries that are not ours. `uninstall` removes only entries whose
-command is `wostuast hook`. Both print what they changed.
+remove entries that are not ours. It also sets `statusLine`, but only when the
+user has none; otherwise it prints the line to add by hand. `uninstall` removes
+only entries whose command is ours. Both print what they changed.
 
 The install one-liner, like gra:
 
@@ -293,15 +359,21 @@ python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/mai
 ## 7. Code shape
 
 - One file, `wostuast`, Python 3.10+, executable, `#!/usr/bin/env python3`.
-- Order inside the file: constants, event log, session model, git facts,
-  transcript parser, diff parser, ANSI converter, tmux verbs, HTTP server,
-  CLI, then the embedded page (HTML, CSS, JS, vendored marked) as the last
-  string constant.
+- Order inside the file: constants, log, event log, session model, git facts,
+  status line, settings.json, output helpers, transcript parser, diff parser,
+  ANSI converter, tmux verbs, HTTP server, CLI, then the embedded page (HTML,
+  CSS, JS, vendored marked) as the last string constant.
 - Every module-level section starts with a comment that says what it does
   in one line.
 - Type hints everywhere. `dataclass` for `Session`, `Event`, `Block`,
   `DiffFile`, `Hunk`.
-- No global mutable state except one `Store` object.
+- No module-level mutable state. The daemon owns exactly two objects: a
+  `Store` for what the sessions are doing, and a registry of connected
+  browsers. They have different lifetimes, so they are not one object.
+- One thread writes to the `Store`; request threads only read. Readers read a
+  finished snapshot, which is also what tells the daemon which rows changed.
+- `Session` holds what the page shows. Byte offsets and file mtimes belong to
+  whatever is following the file, not to the session.
 - Log to `~/.local/state/wostuast/wostuast.log`, plain text, rotated at 5 MB.
 
 ## 8. Tests
@@ -310,7 +382,7 @@ python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/mai
 recorded transcript JSONL, a recorded `git diff` output, a recorded
 `capture-pane -e` output. Test:
 
-- state machine: every transition in the table in 4.2, plus "pid gone".
+- state machine: every transition in the table in 4.3, plus "pid gone".
 - transcript parser: each tool summary, thinking hidden, partial trailing
   line, compaction marker.
 - diff parser: multiple files, renames, binary files, empty diff.
@@ -318,6 +390,9 @@ recorded transcript JSONL, a recorded `git diff` output, a recorded
 - path confinement: `..`, absolute paths, symlinks out of the worktree.
 - `install`/`uninstall`: settings.json round-trips unchanged except our
   entries.
+- status line: the payload is read, the name and context survive, a session id
+  never escapes the status directory.
+- git facts: a clean repository, a dirty one, ahead and behind, a worktree.
 
 The server is tested with `http.client` against a started instance on a
 random port. tmux is not required for tests: the three verbs are one
@@ -349,7 +424,7 @@ words. The first screenshot is the Transcript tab with one session in
 
 - Read this file first. Then open the two mockups.
 - Ask before adding any dependency, any file besides `wostuast` and
-  `tests/`, or any tmux command beyond the three in 4.4.
+  `tests/`, or any tmux command beyond the three in 4.5.
 - Prefer deleting a feature over adding a config option.
 - Keep the plain-language style of this file in code comments, `--help`
   text, and docs: short sentences, one idea per sentence, active voice.
@@ -369,13 +444,20 @@ words. The first screenshot is the Transcript tab with one session in
 | Own diff renderer | Small, matches the design, no vendored library besides `marked`. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |
 | No gra dependency | Works for any worktree layout; a `repo/dir` label is all gra would add. |
+| Session name and context come from the status line | Hooks do not carry them. The status line payload has `session_name` and `used_percentage`, and costs one small file. |
+| The status line writes one file per session, not events | It runs on every redraw. An append would flood the log with nothing new. |
+| `install` never overwrites an existing status line | The status line is the user's own. wostuast prints the line to add instead. |
 
-## 13. Open questions for Martin
+## 13. Questions, answered
 
-Answer these before milestone 2 if you have an opinion; otherwise the
-defaults apply.
-
-1. Port: 7331 by default?
-2. Label for a session: `repo/dirname` (default) or the full path?
-3. Should `send` also work for `done`/`ended` sessions? Default: yes for
-   `done`, hidden for `ended`/`dead`.
+1. **Port.** 7331 by default.
+2. **Label.** The session name when there is one, else `repo/dirname`. Never
+   the full path.
+3. **Send.** Works for `done`. Hidden for `ended` and `dead`.
+4. **Session names.** `/rename` sets one, and only the status line sees it.
+   wostuast cannot rename a session from outside: the only way back into the
+   terminal is `tmux send-keys`, and typing `/rename` into a live agent would
+   break whatever the user is doing. So wostuast reads the name and never
+   writes it.
+5. **Context percent.** The status line carries it. Show it when the status
+   line is registered, and leave the field out when it is not.

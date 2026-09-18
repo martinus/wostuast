@@ -1,0 +1,1318 @@
+#!/usr/bin/env python3
+"""wostuast - see what your coding agents are doing.
+
+Claude Code hooks append one JSON line per event to a log file. This script is
+the hook that writes those lines, the reader that turns them into sessions, and
+(from milestone 2) the daemon that serves the page.
+
+Run `wostuast --help` for the commands.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+import sys
+import time
+from collections import Counter
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Sequence
+
+if TYPE_CHECKING:  # only the annotations need these; the hot paths must not pay
+    import argparse
+
+# --- constants: paths, hook names, limits -----------------------------------
+
+VERSION = "0.1.0"
+RAW_URL = "https://raw.githubusercontent.com/martinus/wostuast/main/wostuast"
+
+#: The hook events wostuast records. Claude Code sends one JSON object per event.
+HOOK_EVENTS: tuple[str, ...] = (
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Notification",
+    "Stop",
+    "SubagentStop",
+    "PreCompact",
+    "SessionEnd",
+)
+
+#: These two hook events take a tool matcher. The others do not.
+MATCHER_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
+
+#: A tmux pane id, as `$TMUX_PANE` gives it. The pane is the only value that
+#: travels from an event payload onto a command line, so the derived field is
+#: checked even though the log keeps whatever it was sent.
+PANE_PATTERN = re.compile(r"^%\d+$")
+
+#: A notification with one of these types means the agent waits for you.
+ATTENTION_NOTIFICATIONS = frozenset(
+    {"permission_prompt", "idle_prompt", "elicitation_dialog"}
+)
+
+#: A hook that is still running after this many seconds gives up and exits 0.
+#: It must never hold Claude Code, whatever goes wrong underneath it.
+HOOK_TIMEOUT = 5
+
+EVENTS_MAX_BYTES = 20 * 1024 * 1024
+LOG_MAX_BYTES = 5 * 1024 * 1024
+SESSION_MAX_AGE = 7 * 24 * 3600
+RUN_TIMEOUT = 2.0
+
+#: Every state, in the order the sidebar shows them: the word and the colour.
+STATE_WORDS = {
+    "needs_you": "needs you",
+    "working": "working",
+    "done": "done",
+    "starting": "starting",
+    "ended": "ended",
+    "dead": "killed",
+}
+
+STATE_COLORS = {
+    "needs_you": "\033[33m",
+    "working": "\033[32m",
+    "done": "\033[34m",
+    "starting": "\033[36m",
+    "ended": "\033[90m",
+    "dead": "\033[90m",
+}
+
+#: Sort order, taken from the order of STATE_WORDS so the two cannot drift.
+STATE_ORDER = {state: index for index, state in enumerate(STATE_WORDS)}
+
+
+def state_dir() -> Path:
+    """Where wostuast keeps its files. WOSTUAST_STATE overrides it, for tests."""
+    override = os.environ.get("WOSTUAST_STATE")
+    if override:
+        return Path(override)
+    base = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
+    return Path(base) / "wostuast"
+
+
+def private_dir(path: Path) -> None:
+    """Make the directory, and keep it to this user alone.
+
+    The event log holds every prompt, every command an agent ran and every
+    result it saw. On a shared machine the default 0o755 would let anyone read
+    it. `mode=` applies only when the directory is created, so an existing one
+    is corrected too.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def private_file(path: Path) -> None:
+    """Keep a file we just wrote to this user alone."""
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def events_path() -> Path:
+    return state_dir() / "events.jsonl"
+
+
+def rotated_events_path() -> Path:
+    """Where the log moves when it grows too big. It is still history."""
+    return state_dir() / "events.1.jsonl"
+
+
+def status_dir() -> Path:
+    return state_dir() / "status"
+
+
+def status_path(session_id: str) -> Path:
+    """The status file of one session. The name is never trusted; see safe_name."""
+    return status_dir() / f"{safe_name(session_id)}.json"
+
+
+def log_path() -> Path:
+    return state_dir() / "wostuast.log"
+
+
+def settings_path() -> Path:
+    """The Claude Code user settings file. CLAUDE_CONFIG_DIR overrides the dir."""
+    base = os.environ.get("CLAUDE_CONFIG_DIR")
+    root = Path(base) if base else Path.home() / ".claude"
+    return root / "settings.json"
+
+
+def install_path() -> Path:
+    return Path.home() / ".local" / "bin" / "wostuast"
+
+
+def hook_command(target: Path) -> str:
+    """The command install writes, doctor looks for, and uninstall removes."""
+    return f"{target} hook"
+
+
+def status_command(target: Path) -> str:
+    """The same, for the status line."""
+    return f"{target} status"
+
+
+# --- log: a plain text log, so a broken hook leaves a trace ------------------
+
+
+def log(message: str) -> None:
+    """Append one line to the log file. Never raise."""
+    try:
+        path = log_path()
+        private_dir(path.parent)
+        rotate(path, LOG_MAX_BYTES, path.with_name(path.name + ".1"))
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(f"{stamp} {message}\n")
+        private_file(path)
+    except Exception:
+        pass
+
+
+def write_atomic(path: Path, text: str, private: bool = False) -> None:
+    """Write the whole file or none of it, so a reader never sees half a file.
+
+    The temporary name carries this process's pid. A fixed name would be shared
+    by two writers, and one could rename the other's half-written file into
+    place. The status line runs on every redraw, so two writers is normal.
+    """
+    if private:
+        private_dir(path.parent)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        if private:
+            temporary.chmod(0o600)
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+
+def rotate(path: Path, limit: int, backup: Path) -> None:
+    """Move the file aside when it grows past the limit. Never raise."""
+    try:
+        if path.exists() and path.stat().st_size > limit:
+            path.replace(backup)
+    except OSError:
+        pass
+
+
+# --- event log: append only, one JSON object per line ------------------------
+
+
+def append_event(record: dict[str, Any]) -> None:
+    """Append one event. The caller has already added ts, pane and pid.
+
+    The lock is taken before the size is measured, so two hooks crossing the
+    limit at the same moment cannot both rename the log and throw one of the
+    two archives away. The second one sees a small file and simply appends.
+    """
+    target = events_path()
+    private_dir(target.parent)
+    line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+    with open(target, "a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if os.fstat(handle.fileno()).st_size > EVENTS_MAX_BYTES:
+            os.replace(target, rotated_events_path())
+            # The handle still points at the file we just renamed. Reopen, so
+            # this event lands in the fresh log rather than in the archive.
+            with open(target, "a", encoding="utf-8") as fresh:
+                fcntl.flock(fresh.fileno(), fcntl.LOCK_EX)
+                fresh.write(line)
+            private_file(target)
+            private_file(rotated_events_path())
+            return
+        handle.write(line)
+        handle.flush()
+    private_file(target)
+
+
+def count_events() -> int:
+    """How many lines the log holds. It counts newlines, it does not parse."""
+    total = 0
+    for path in (rotated_events_path(), events_path()):
+        try:
+            with open(path, "rb") as handle:
+                total += sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
+        except OSError:
+            continue
+    return total
+
+
+def read_events() -> Iterator[dict[str, Any]]:
+    """Read the whole log from the start, oldest file first.
+
+    The rotated file comes first because it holds the older half. Reading only
+    the current file would lose the SessionStart of every session that began
+    before the last rotation, and with it their cwd, pane and pid.
+    """
+    for path in (rotated_events_path(), events_path()):
+        yield from read_event_file(path)
+
+
+def read_event_file(target: Path) -> Iterator[dict[str, Any]]:
+    """Read one log file. A missing file is empty; broken lines are skipped."""
+    if not target.exists():
+        return
+    with open(target, "rb") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                # json.loads takes bytes and decodes them itself, in C.
+                # Broken UTF-8 raises UnicodeDecodeError, which is a ValueError.
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                yield record
+
+
+# --- session model: the state machine of section 4.3 -------------------------
+
+
+@dataclass
+class GitFacts:
+    """What git says about the directory an agent stands in."""
+
+    repo: str = ""
+    branch: str = ""
+    ahead: int = 0
+    behind: int = 0
+    dirty: bool = False
+    touched_files: int = 0
+
+
+@dataclass
+class Status:
+    """The latest status line payload of a session, written by `wostuast status`."""
+
+    ts: float = 0.0
+    name: str = ""
+    model: str = ""
+    context_pct: float | None = None
+    agent: str = ""
+    version: str = ""
+
+
+@dataclass
+class Session:
+    """One Claude Code session, built from its events."""
+
+    session_id: str
+    cwd: str = ""
+    pane: str = ""
+    pid: int = 0
+    transcript_path: str = ""
+    state: str = "starting"
+    last_ts: float = 0.0
+    last_event: str = ""
+    last_prompt: str = ""
+    last_tool: str = ""
+    reason: str = ""
+    attention_since: float = 0.0
+    end_reason: str = ""
+    last_compaction: float = 0.0
+    git: GitFacts = field(default_factory=GitFacts)
+    status: Status = field(default_factory=Status)
+
+    @property
+    def label(self) -> str:
+        """What to call this session: its name if it has one, else repo/dirname."""
+        if self.status.name:
+            return self.status.name
+        return path_label(self.cwd, self.git.repo)
+
+    @property
+    def since(self) -> float:
+        """The moment a row's age counts from: the wait, or the last event."""
+        return self.attention_since if self.state == "needs_you" else self.last_ts
+
+
+def path_label(cwd: str, repo: str = "") -> str:
+    """`repo/dirname` for a worktree, plain `dirname` when both are the same."""
+    if not cwd:
+        return "?"
+    name = os.path.basename(cwd.rstrip("/")) or cwd
+    if repo and repo != name:
+        return f"{repo}/{name}"
+    return name
+
+
+def tool_summary(tool_name: str, tool_input: Any, cwd: str = "") -> str:
+    """One short line for a tool call, as used in the sidebar and the transcript."""
+    name = tool_name or "tool"
+    data = tool_input if isinstance(tool_input, dict) else {}
+
+    def short_path(value: Any) -> str:
+        text = str(value or "")
+        if cwd and text.startswith(cwd.rstrip("/") + "/"):
+            text = text[len(cwd.rstrip("/")) + 1 :]
+        return text
+
+    if name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
+        path = data.get("file_path") or data.get("notebook_path") or data.get("path")
+        return f"{name} {short_path(path)}".strip()
+    if name == "Bash":
+        return f"Bash {clip(str(data.get('command') or ''), 60)}".strip()
+    if name in ("Grep", "Glob"):
+        return f"{name} {clip(str(data.get('pattern') or ''), 60)}".strip()
+    if name == "Task":
+        return f"Task {clip(str(data.get('description') or ''), 60)}".strip()
+    if not data:
+        return name
+    return f"{name} {clip(json.dumps(data, ensure_ascii=False, default=str), 80)}"
+
+
+def clip(text: str, width: int) -> str:
+    """Cut text to width and mark the cut."""
+    text = " ".join(text.split())
+    if len(text) <= width:
+        return text
+    return text[: width - 1] + "…"
+
+
+class Store:
+    """All sessions, built by replaying the event log. The only mutable state."""
+
+    def __init__(self) -> None:
+        self.sessions: dict[str, Session] = {}
+
+    def get(self, session_id: str) -> Session:
+        session = self.sessions.get(session_id)
+        if session is None:
+            session = Session(session_id=session_id)
+            self.sessions[session_id] = session
+        return session
+
+    def apply(self, event: dict[str, Any]) -> Session | None:
+        """Fold one event into its session. Returns the session it changed."""
+        session_id = str(event.get("session_id") or "")
+        if not session_id:
+            return None
+        session = self.get(session_id)
+        name = str(event.get("hook_event_name") or "")
+        ts = to_float(event.get("ts"))
+
+        if ts > session.last_ts:
+            session.last_ts = ts
+        for key in ("cwd", "transcript_path"):
+            value = event.get(key)
+            if value:
+                setattr(session, key, str(value))
+        pane = str(event.get("pane") or "")
+        if pane and PANE_PATTERN.match(pane):
+            session.pane = pane
+        pid = to_int(event.get("pid"))
+        if pid:
+            session.pid = pid
+
+        handler = _HANDLERS.get(name)
+        if handler is not None:
+            handler(session, event, ts)
+        elif name:
+            session.last_event = name
+        return session
+
+
+def _clear_attention(session: Session) -> None:
+    """Forget that the agent was waiting. Every caller sets the state itself."""
+    session.attention_since = 0.0
+    session.reason = ""
+
+
+def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> None:
+    session.state = "starting"
+    session.end_reason = ""
+    source = str(event.get("source") or "")
+    session.last_event = f"started ({source})" if source else "started"
+
+
+def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
+    _clear_attention(session)
+    session.state = "working"
+    session.last_prompt = str(event.get("prompt") or "")
+    session.last_event = f"prompt: {session.last_prompt}"
+
+
+def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
+    session.state = "working"
+    session.last_tool = tool_summary(
+        str(event.get("tool_name") or ""), event.get("tool_input"), session.cwd
+    )
+    session.last_event = session.last_tool
+
+
+def _on_post_tool(session: Session, event: dict[str, Any], ts: float) -> None:
+    # A tool result means the agent is running again, so it no longer waits.
+    _clear_attention(session)
+    _on_pre_tool(session, event, ts)
+
+
+def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
+    kind = str(event.get("notification_type") or "")
+    message = str(event.get("message") or "")
+    if not kind:
+        # Older Claude Code versions send no type. Read the message instead.
+        kind = "idle_prompt" if "waiting for your input" in message else "permission_prompt"
+    if kind not in ATTENTION_NOTIFICATIONS:
+        session.last_event = message or kind
+        return
+    session.state = "needs_you"
+    session.attention_since = ts
+    if kind == "idle_prompt":
+        session.reason = "waiting for input"
+    elif session.last_tool:
+        session.reason = f"permission: {session.last_tool}"
+    else:
+        session.reason = message or "permission"
+
+
+def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
+    _clear_attention(session)
+    session.state = "done"
+    session.last_event = "stopped"
+
+
+def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> None:
+    agent = str(event.get("agent_type") or "subagent")
+    session.last_event = f"{agent} finished"
+
+
+def _on_pre_compact(session: Session, event: dict[str, Any], ts: float) -> None:
+    session.last_compaction = ts
+    trigger = str(event.get("trigger") or "")
+    session.last_event = f"context compacted ({trigger})" if trigger else "context compacted"
+
+
+def _on_session_end(session: Session, event: dict[str, Any], ts: float) -> None:
+    _clear_attention(session)
+    session.state = "ended"
+    session.end_reason = str(event.get("reason") or "")
+    session.last_event = f"ended ({session.end_reason})" if session.end_reason else "ended"
+
+
+_HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
+    "SessionStart": _on_session_start,
+    "UserPromptSubmit": _on_prompt,
+    "PreToolUse": _on_pre_tool,
+    "PostToolUse": _on_post_tool,
+    "Notification": _on_notification,
+    "Stop": _on_stop,
+    "SubagentStop": _on_subagent_stop,
+    "PreCompact": _on_pre_compact,
+    "SessionEnd": _on_session_end,
+}
+
+
+def to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def opt_float(value: Any) -> float | None:
+    """A number that may be absent. Missing stays missing, it does not become 0."""
+    return None if value is None else to_float(value)
+
+
+def to_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def pid_alive(pid: int) -> bool:
+    """True when the process still exists."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def mark_dead(session: Session, alive: Callable[[int], bool] | None = None) -> None:
+    """A session whose process is gone is dead, even without a SessionEnd.
+
+    `alive` defaults to None, not to pid_alive, so that tests can replace the
+    module's pid_alive. A default bound at import would not see the change.
+    """
+    check = alive or pid_alive
+    if session.state == "ended":
+        return
+    if session.pid and not check(session.pid):
+        session.state = "dead"
+        if not session.end_reason:
+            session.end_reason = "process gone"
+
+
+def build_sessions(
+    events: Sequence[dict[str, Any]] | Iterator[dict[str, Any]] | None = None,
+    now: float | None = None,
+    alive: Callable[[int], bool] | None = None,
+) -> list[Session]:
+    """Replay the log into sessions. Git facts cost a subprocess, so they are
+    left to add_git_facts, which only the commands that show them call."""
+    store = Store()
+    for event in events if events is not None else read_events():
+        store.apply(event)
+    moment = now if now is not None else time.time()
+    sessions = [
+        session
+        for session in store.sessions.values()
+        if moment - session.last_ts <= SESSION_MAX_AGE
+    ]
+    for session in sessions:
+        mark_dead(session, alive)
+        session.status = read_status(session.session_id)
+    return sort_sessions(sessions)
+
+
+def sort_sessions(sessions: list[Session]) -> list[Session]:
+    """needs_you first and the longest wait on top, ended and dead last."""
+    return sorted(
+        sessions,
+        key=lambda s: (
+            STATE_ORDER.get(s.state, 9),
+            # The longest wait first, but the newest of everything else first.
+            s.since if s.state == "needs_you" else -s.since,
+            s.label,
+        ),
+    )
+
+
+# --- git facts: what git says about the agent's directory --------------------
+
+
+def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT) -> str | None:
+    """Run a command and return its stdout, unchanged. None on any failure.
+
+    It does not strip: `tmux capture-pane` needs its blank lines kept.
+    """
+    import subprocess
+
+    try:
+        done = subprocess.run(
+            list(args),
+            cwd=cwd or None,
+            capture_output=True,
+            text=True,
+            errors="replace",  # a pane or a diff may hold bytes that are not UTF-8
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout
+
+
+def parse_status_branch(header: str) -> tuple[str, int, int]:
+    """Read the `## ` line of `git status --branch`: branch, ahead, behind.
+
+    It looks like `## main...origin/main [ahead 2, behind 1]`. The upstream and
+    the counts are left out when there are none. A fresh repository says
+    `## No commits yet on main`.
+    """
+    text = header[3:] if header.startswith("## ") else header
+    ahead = behind = 0
+    if "[" in text:
+        text, _, counts = text.partition(" [")
+        for word, value in re.findall(r"(ahead|behind) (\d+)", counts):
+            if word == "ahead":
+                ahead = int(value)
+            else:
+                behind = int(value)
+    text = text.partition("...")[0]
+    branch = text.rpartition(" ")[2] if text.startswith("No commits yet on ") else text
+    return branch.strip(), ahead, behind
+
+
+def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
+    """Read the repository name, branch, ahead, behind and dirty state.
+
+    Two git runs, not four: one gives both directories, the other gives the
+    branch, the counts and the changed files at once. A git error gives empty
+    facts, because a directory need not be a repository at all.
+    """
+    facts = GitFacts()
+    if not cwd or not os.path.isdir(cwd):
+        return facts
+
+    def git(*args: str) -> str | None:
+        out = runner(["git", "-C", cwd, *args])
+        return None if out is None else out.strip()
+
+    # --git-common-dir points at the main repository, so a worktree keeps its
+    # repository's name. --path-format needs git 2.31; older git falls back to
+    # the top level, which for a worktree is the worktree itself.
+    paths = git("rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
+    if paths is None:
+        paths = git("rev-parse", "--show-toplevel")
+    if paths:
+        first = paths.splitlines()[0].rstrip("/")
+        root = os.path.dirname(first) if first.endswith(".git") else first
+        facts.repo = os.path.basename(root)
+
+    status = git("status", "--porcelain", "--branch")
+    if status is not None:
+        lines = status.splitlines()
+        if lines and lines[0].startswith("## "):
+            facts.branch, facts.ahead, facts.behind = parse_status_branch(lines[0])
+            lines = lines[1:]
+        changed = [line for line in lines if line.strip()]
+        facts.touched_files = len(changed)
+        facts.dirty = bool(changed)
+    return facts
+
+
+def add_git_facts(sessions: Sequence[Session]) -> None:
+    """Fill in git facts for every session, one directory at a time but all at
+    once: git waits on disk, so ten worktrees cost about as long as one."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    directories = sorted({session.cwd for session in sessions if session.cwd})
+    if not directories:
+        return
+    with ThreadPoolExecutor(max_workers=min(8, len(directories))) as pool:
+        facts = dict(zip(directories, pool.map(git_facts, directories)))
+    for session in sessions:
+        session.git = facts.get(session.cwd, GitFacts())
+
+
+# --- status: the status line payload, which carries name and context ---------
+
+
+def status_from_payload(payload: dict[str, Any], now: float | None = None) -> Status:
+    """Pick the few fields wostuast shows out of the status line JSON."""
+    def nested(key: str) -> dict[str, Any]:
+        value = payload.get(key)
+        return value if isinstance(value, dict) else {}
+
+    return Status(
+        ts=now if now is not None else time.time(),
+        name=str(payload.get("session_name") or ""),
+        model=str(nested("model").get("display_name") or ""),
+        context_pct=opt_float(nested("context_window").get("used_percentage")),
+        agent=str(nested("agent").get("name") or ""),
+        version=str(payload.get("version") or ""),
+    )
+
+
+def write_status(session_id: str, status: Status) -> None:
+    """Overwrite the status file of a session. It holds the latest value only."""
+    if not session_id:
+        return
+    write_atomic(status_path(session_id), json.dumps(asdict(status)), private=True)
+
+
+def read_status(session_id: str) -> Status:
+    """Read the status file of a session. A missing file gives an empty status."""
+    try:
+        payload = json.loads(status_path(session_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return Status()
+    if not isinstance(payload, dict):
+        return Status()
+    return Status(
+        ts=to_float(payload.get("ts")),
+        name=str(payload.get("name") or ""),
+        model=str(payload.get("model") or ""),
+        context_pct=opt_float(payload.get("context_pct")),
+        agent=str(payload.get("agent") or ""),
+        version=str(payload.get("version") or ""),
+    )
+
+
+def safe_name(session_id: str) -> str:
+    """A session id is a UUID, but never trust it as a file name."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:128] or "unknown"
+
+
+def status_line(status: Status, cwd: str) -> str:
+    """The one line wostuast prints as the status line."""
+    parts = [status.name or path_label(cwd)]
+    if status.agent:
+        parts.append(status.agent)
+    if status.model:
+        parts.append(status.model)
+    if status.context_pct is not None:
+        parts.append(f"{status.context_pct:.0f}% ctx")
+    return " · ".join(parts)
+
+
+def drop_old_status(now: float | None = None) -> None:
+    """Remove status files of sessions that are long gone."""
+    moment = now if now is not None else time.time()
+    try:
+        for entry in status_dir().glob("*.json"):
+            if moment - entry.stat().st_mtime > SESSION_MAX_AGE:
+                entry.unlink()
+    except OSError:
+        pass
+
+
+# --- settings.json: add and remove our hooks without touching anything else --
+
+
+def detect_indent(text: str) -> int | str:
+    """Guess the indentation of a JSON file so we write it back the same way."""
+    match = re.search(r"\n([ \t]+)\S", text)
+    if not match:
+        return 2
+    lead = match.group(1)
+    return "\t" if lead.startswith("\t") else len(lead)
+
+
+def hook_entry(command: str) -> dict[str, Any]:
+    return {"type": "command", "command": command}
+
+
+def is_ours(command: Any, verb: str) -> bool:
+    """True when this command runs our program with this verb.
+
+    It matches the shape, not the exact string: `wostuast hook`,
+    `~/.local/bin/wostuast hook` and `./wostuast hook` are all ours. Matching
+    the exact string made `doctor` report "hooks missing" for an install from
+    a checkout, and left such an entry behind on `uninstall`.
+    """
+    if not isinstance(command, str):
+        return False
+    words = command.split()
+    return len(words) == 2 and words[1] == verb and os.path.basename(words[0]) == "wostuast"
+
+
+def has_verb(group: Any, verb: str) -> bool:
+    """True when this matcher group already runs our program with this verb."""
+    if not isinstance(group, dict):
+        return False
+    return any(
+        isinstance(entry, dict) and is_ours(entry.get("command"), verb)
+        for entry in group.get("hooks") or []
+    )
+
+
+def add_hooks(settings: dict[str, Any], command: str) -> list[str]:
+    """Add our hook entries. Returns one line per change."""
+    changes: list[str] = []
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("settings.json has a 'hooks' key that is not an object")
+    for event in HOOK_EVENTS:
+        groups = hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            raise ValueError(f"settings.json has a '{event}' key that is not a list")
+        if any(has_verb(group, "hook") for group in groups):
+            continue
+        group: dict[str, Any] = {"hooks": [hook_entry(command)]}
+        if event in MATCHER_EVENTS:
+            group = {"matcher": "*", **group}
+        groups.append(group)
+        changes.append(f"added hook {event}")
+    return changes
+
+
+def remove_hooks(settings: dict[str, Any]) -> list[str]:
+    """Remove only the entries that run our program.
+
+    A key we took nothing out of is left exactly as it was, empty list and all.
+    A key we emptied is removed, so a machine that had no hooks before install
+    has none after uninstall. The one case those two rules cannot tell apart is
+    a key the user left empty that we then added to: it ends up removed rather
+    than empty. Claude Code reads both as "no hooks for this event", so nothing
+    is lost, and no entry of the user's is ever touched.
+    """
+    changes: list[str] = []
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return changes
+    for event in list(hooks.keys()):
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
+            continue
+        kept_groups = []
+        removed_here = False
+        for group in groups:
+            entries = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(entries, list):
+                kept_groups.append(group)
+                continue
+            kept = [
+                entry
+                for entry in entries
+                if not (isinstance(entry, dict) and is_ours(entry.get("command"), "hook"))
+            ]
+            if len(kept) != len(entries):
+                changes.append(f"removed hook {event}")
+                removed_here = True
+            if kept:
+                group["hooks"] = kept
+                kept_groups.append(group)
+        # Only rewrite a key we actually took something out of. An empty list
+        # the user put there is theirs, and deleting it would be a silent edit.
+        if not removed_here:
+            continue
+        if kept_groups:
+            hooks[event] = kept_groups
+        else:
+            del hooks[event]
+    if changes and not hooks:
+        settings.pop("hooks", None)
+    return changes
+
+
+def add_status_line(settings: dict[str, Any], command: str) -> list[str]:
+    """Register our status line, but never overwrite one the user already has."""
+    current = settings.get("statusLine")
+    if isinstance(current, dict) and is_ours(current.get("command"), "status"):
+        return []
+    if current:
+        return [
+            "kept your status line; add this yourself for names and context: "
+            f"{command}"
+        ]
+    settings["statusLine"] = {"type": "command", "command": command}
+    return ["added status line"]
+
+
+def remove_status_line(settings: dict[str, Any]) -> list[str]:
+    """Remove the status line only when it is ours."""
+    current = settings.get("statusLine")
+    if isinstance(current, dict) and is_ours(current.get("command"), "status"):
+        del settings["statusLine"]
+        return ["removed status line"]
+    return []
+
+
+def load_settings(path: Path) -> tuple[dict[str, Any], int | str, bool]:
+    """Read settings.json. Returns the data, its indentation and its last newline."""
+    if not path.exists():
+        return {}, 2, True
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        return {}, 2, True
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} does not hold a JSON object")
+    return data, detect_indent(text), text.endswith("\n")
+
+
+def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: bool) -> None:
+    text = json.dumps(data, indent=indent, ensure_ascii=False)
+    write_atomic(path, text + "\n" if newline else text)
+
+
+# --- output helpers ----------------------------------------------------------
+
+
+def use_color() -> bool:
+    """Colour only a real terminal, and never when NO_COLOR is set."""
+    return not os.environ.get("NO_COLOR") and sys.stdout.isatty()
+
+
+RESET = "\033[0m"
+
+
+def paint(text: str, state: str, color: bool) -> str:
+    if not color:
+        return text
+    return f"{STATE_COLORS.get(state, '')}{text}{RESET}"
+
+
+def ago(seconds: float) -> str:
+    """A short age, for example `4 min` or `2 h`."""
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return f"{int(seconds)} s"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} min"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)} h"
+    return f"{int(seconds // 86400)} d"
+
+
+def changes_column(facts: GitFacts) -> str:
+    parts = []
+    if facts.ahead:
+        parts.append(f"↑{facts.ahead}")
+    if facts.behind:
+        parts.append(f"↓{facts.behind}")
+    if facts.dirty:
+        parts.append(f"●{facts.touched_files}")
+    elif facts.branch:
+        parts.append("✓")
+    return " ".join(parts)
+
+
+def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
+    """Left-align every column. The last one is not padded. Each row says its
+    own state, which gives it its colour; an empty state means no colour."""
+    if not rows:
+        return ""
+    widths = [0] * len(rows[0][1])
+    for _, cells in rows:
+        for index, cell in enumerate(cells[:-1]):
+            widths[index] = max(widths[index], len(cell))
+    lines = []
+    for state, cells in rows:
+        padded = [cell.ljust(widths[index]) for index, cell in enumerate(cells[:-1])]
+        line = "  ".join([*padded, cells[-1]]).rstrip()
+        lines.append(paint(line, state, color) if state else line)
+    return "\n".join(lines)
+
+
+# --- commands ----------------------------------------------------------------
+
+
+def give_up_after(seconds: int) -> None:
+    """Set a deadline for this process. Passing it raises, nothing more waits.
+
+    The hook and the status line both read stdin, which blocks until the writer
+    closes it, and both take a file lock, which a network filesystem can stall.
+    Neither may hold Claude Code, so the whole call runs under one deadline
+    instead of guarding each wait. Where there is no SIGALRM, there is no
+    deadline, and the call behaves as it did before.
+    """
+    import signal
+
+    def out_of_time(number: int, frame: Any) -> None:
+        raise TimeoutError(f"gave up after {seconds} s")
+
+    try:
+        signal.signal(signal.SIGALRM, out_of_time)
+        signal.alarm(seconds)
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def stand_down() -> None:
+    """Cancel the deadline set by give_up_after."""
+    import signal
+
+    try:
+        signal.alarm(0)
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def read_stdin_json() -> dict[str, Any]:
+    """Read one JSON object from stdin. Anything else reads as empty."""
+    raw = sys.stdin.read()
+    payload = json.loads(raw) if raw.strip() else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """Read the hook JSON from stdin and append one line. Always exit 0.
+
+    It prints nothing, and that silence is load-bearing. Claude Code reads a
+    hook's stdout as the hook's answer, and for PreToolUse that answer can allow
+    or deny a tool; exit code 2 blocks it outright. wostuast has no opinion and
+    must never have one, because approving without seeing the pane is how
+    directories get deleted. So: no print, and exit 0 whatever happens.
+    Anything worth saying goes to the log file, never to stdout or stderr.
+    """
+    try:
+        give_up_after(HOOK_TIMEOUT)
+        record = read_stdin_json()
+        record["ts"] = time.time()
+        record["pane"] = os.environ.get("TMUX_PANE", "")
+        record["pid"] = os.getppid()
+        append_event(record)
+        stand_down()
+    except BaseException as error:  # a hook must never block Claude Code
+        stand_down()
+        log(f"hook failed: {error!r}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Read the status line JSON from stdin, keep it, and print one line."""
+    try:
+        give_up_after(HOOK_TIMEOUT)
+        payload = read_stdin_json()
+        status = status_from_payload(payload)
+        write_status(str(payload.get("session_id") or ""), status)
+        stand_down()
+        print(status_line(status, str(payload.get("cwd") or "")))
+    except BaseException as error:
+        stand_down()
+        log(f"status failed: {error!r}")
+    return 0
+
+
+def cmd_ls(args: argparse.Namespace) -> int:
+    """Print one row per session, in the order of the sidebar."""
+    drop_old_status()
+    sessions = build_sessions()
+    if not sessions:
+        print("no sessions yet.")
+        print("start a Claude Code session in tmux; run `wostuast doctor` to check the setup.")
+        return 0
+    # Sort again: the label a row sorts by is only complete once git has spoken.
+    add_git_facts(sessions)
+    sessions = sort_sessions(sessions)
+    now = time.time()
+    color = use_color()
+
+    rows: list[tuple[str, list[str]]] = [
+        ("", ["STATE", "SESSION", "BRANCH", "CHANGES", "PANE", "AGE", "LAST"])
+    ]
+    for session in sessions:
+        rows.append(
+            (
+                session.state,
+                [
+                    STATE_WORDS.get(session.state, session.state),
+                    session.label,
+                    session.git.branch or "-",
+                    changes_column(session.git) or "-",
+                    session.pane or "-",
+                    ago(now - session.since),
+                    clip(session.reason or session.last_event, 60),
+                ],
+            )
+        )
+    print(table(rows, color))
+
+    counts = Counter(session.state for session in sessions)
+    summary = " · ".join(
+        f"{counts[state]} {STATE_WORDS[state]}" for state in STATE_ORDER if counts.get(state)
+    )
+    print()
+    print(summary)
+    return 0
+
+
+def which_tmux() -> bool:
+    import shutil
+
+    return shutil.which("tmux") is not None
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Check the setup and say what is wrong."""
+    problems = 0
+    lines: list[str] = []
+
+    def report(ok: bool, good: str, bad: str, fatal: bool = True) -> None:
+        nonlocal problems
+        if ok:
+            lines.append(f"  ok    {good}")
+        else:
+            lines.append(f"  {'FAIL' if fatal else 'note'}  {bad}")
+            if fatal:
+                problems += 1
+
+    report(sys.version_info >= (3, 10), f"python {sys.version.split()[0]}",
+           f"python {sys.version.split()[0]} is older than 3.10")
+
+    directory = state_dir()
+    trouble = ""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as error:
+        trouble = str(error)
+    report(not trouble, f"state directory {directory}",
+           f"cannot write {directory}: {trouble}")
+
+    events = events_path()
+    count = count_events()
+    report(events.exists(), f"event log {events} with {count} events",
+           f"no events yet at {events}; run a Claude Code session", fatal=False)
+
+    path = settings_path()
+    settings: dict[str, Any] = {}
+    try:
+        settings, _, _ = load_settings(path)
+    except (OSError, ValueError) as error:
+        report(False, "", f"cannot read {path}: {error}")
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    missing = [
+        event
+        for event in HOOK_EVENTS
+        if not any(has_verb(group, "hook") for group in (hooks.get(event) or []))
+    ]
+    report(not missing, f"all {len(HOOK_EVENTS)} hooks registered in {path}",
+           f"hooks missing in {path}: {', '.join(missing)}; run `wostuast install`")
+
+    current = settings.get("statusLine")
+    mine = isinstance(current, dict) and is_ours(current.get("command"), "status")
+    report(mine, "status line registered (session names and context)",
+           "status line not registered; without it sessions have no name and no context percent",
+           fatal=False)
+
+    report(which_tmux(), "tmux found",
+           "tmux not found; jump, send and peek stay hidden", fatal=False)
+    report(install_path().exists(), f"installed at {install_path()}",
+           f"not installed at {install_path()}; run `wostuast install`", fatal=False)
+
+    print("wostuast doctor")
+    print("\n".join(lines))
+    print()
+    print("all good." if problems == 0 else f"{problems} problem(s) to fix.")
+    return 1 if problems else 0
+
+
+def self_source() -> str:
+    """Our own source code, so `install` can copy it. Downloads it if needed."""
+    here = Path(__file__).resolve() if "__file__" in globals() else None
+    if here and here.is_file():
+        return here.read_text(encoding="utf-8")
+    import urllib.request
+
+    with urllib.request.urlopen(RAW_URL, timeout=30) as response:
+        return response.read().decode("utf-8")
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    """Copy wostuast to ~/.local/bin and register the hooks and the status line."""
+    changes: list[str] = []
+    target = install_path()
+    source = self_source()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        current = target.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        current = ""
+    if current != source:
+        # This file is registered as a hook on nine events in every running
+        # session. Writing it in place would let a hook read half a file and
+        # die. Write beside it and rename, which is atomic; a hook that is
+        # already running keeps the old file open and finishes normally.
+        spare = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        try:
+            spare.write_text(source, encoding="utf-8")
+            spare.chmod(0o755)
+            spare.replace(target)
+        finally:
+            try:
+                spare.unlink()
+            except OSError:
+                pass
+        changes.append(f"wrote {target}")
+
+    path = settings_path()
+    try:
+        settings, indent, newline = load_settings(path)
+    except (OSError, ValueError) as error:
+        print(f"cannot read {path}: {error}", file=sys.stderr)
+        return 1
+    try:
+        changes += add_hooks(settings, hook_command(target))
+        changes += add_status_line(settings, status_command(target))
+    except ValueError as error:
+        print(f"{path}: {error}", file=sys.stderr)
+        return 1
+    save_settings(path, settings, indent, newline)
+
+    for line in changes or ["nothing to change"]:
+        print(line)
+    if str(target.parent) not in os.environ.get("PATH", "").split(os.pathsep):
+        print(f"note: {target.parent} is not on your PATH")
+    print("restart your Claude Code sessions so they pick up the hooks.")
+    return 0
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    """Remove our hooks and our status line. Leave the event log alone."""
+    target = install_path()
+    path = settings_path()
+    try:
+        settings, indent, newline = load_settings(path)
+    except (OSError, ValueError) as error:
+        print(f"cannot read {path}: {error}", file=sys.stderr)
+        return 1
+    changes = remove_hooks(settings)
+    changes += remove_status_line(settings)
+    if changes:
+        save_settings(path, settings, indent, newline)
+    for line in changes or ["nothing to change"]:
+        print(line)
+    print(f"the event log stays at {events_path()}")
+    if target.exists():
+        print(f"remove the program yourself with: rm {target}")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    print("serve arrives in milestone 2. For now use `wostuast ls`.", file=sys.stderr)
+    return 1
+
+
+# --- command line ------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="wostuast",
+        description="See what your coding agents are doing.",
+    )
+    parser.add_argument("--version", action="version", version=f"wostuast {VERSION}")
+    subparsers = parser.add_subparsers(dest="command")
+
+    commands = [
+        ("install", cmd_install, "copy to ~/.local/bin and register the hooks"),
+        ("uninstall", cmd_uninstall, "remove the hooks; keep the event log"),
+        ("hook", cmd_hook, "the hook entry point; reads JSON from stdin"),
+        ("status", cmd_status, "the status line entry point; reads JSON from stdin"),
+        ("ls", cmd_ls, "list the sessions"),
+        ("doctor", cmd_doctor, "check the setup"),
+        ("serve", cmd_serve, "start the daemon (milestone 2)"),
+    ]
+    for name, handler, help_text in commands:
+        sub = subparsers.add_parser(name, help=help_text, description=help_text)
+        sub.set_defaults(handler=handler)
+    return parser
+
+
+#: The two verbs Claude Code calls itself. They skip argparse, because the hook
+#: runs on every tool call and the status line runs on every redraw.
+FAST_PATH = {"hook": cmd_hook, "status": cmd_status}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    words = list(argv) if argv is not None else sys.argv[1:]
+    if len(words) == 1 and words[0] in FAST_PATH:
+        return FAST_PATH[words[0]](None)
+
+    parser = build_parser()
+    args = parser.parse_args(words)
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 0
+    return handler(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
