@@ -951,6 +951,181 @@ def sort_sessions(sessions: list[Session]) -> list[Session]:
     )
 
 
+# --- transcript: the session's own jsonl, turned into blocks -----------------
+
+
+@dataclass
+class Block:
+    """One thing the Transcript tab shows, in the order it happened."""
+
+    kind: str = "text"          # prompt, text, thinking, tool, divider
+    ts: float = 0.0
+    text: str = ""              # prompt and assistant text, as Markdown
+    tool: str = ""              # the tool's name
+    target: str = ""            # the path, command or pattern it worked on
+    added: int = 0              # lines an edit added
+    removed: int = 0            # lines an edit removed
+    result: str = ""            # the tool's output, shown when expanded
+    failed: bool = False
+    tool_use_id: str = ""
+
+
+def parse_timestamp(value: Any) -> float:
+    """The transcript stamps lines in ISO 8601 with a Z. Turn it into seconds."""
+    text = str(value or "")
+    if not text:
+        return 0.0
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def edit_counts(tool_input: Any) -> tuple[int, int]:
+    """How many lines an edit adds and removes, counted from its strings."""
+    data = tool_input if isinstance(tool_input, dict) else {}
+    edits = data.get("edits")
+    if isinstance(edits, list):
+        added = removed = 0
+        for one in edits:
+            more, fewer = edit_counts(one)
+            added += more
+            removed += fewer
+        return added, removed
+
+    def lines(key: str) -> int:
+        text = data.get(key)
+        return len(str(text).splitlines()) if text else 0
+
+    if "new_string" in data or "old_string" in data:
+        return lines("new_string"), lines("old_string")
+    if "content" in data:
+        return lines("content"), 0
+    return 0, 0
+
+
+def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
+    """What a tool call worked on, without its tool name in front."""
+    summary = tool_summary(tool_name, tool_input, cwd)
+    head, space, rest = summary.partition(" ")
+    return rest if space and head == tool_name else ""
+
+
+def result_text(content: Any) -> str:
+    """A tool result is usually a string, and sometimes a list of blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for piece in content:
+            if isinstance(piece, dict) and piece.get("type") == "text":
+                parts.append(str(piece.get("text") or ""))
+            elif isinstance(piece, str):
+                parts.append(piece)
+        return "\n".join(parts)
+    if content is None:
+        return ""
+    return json.dumps(content, ensure_ascii=False, default=str)
+
+
+class Transcript:
+    """Reads a session's transcript into blocks, and follows it as it grows.
+
+    A tool result arrives after its call, in a later line, so the blocks are
+    kept by `tool_use_id` and the result is attached when it turns up. That is
+    also why parsing is incremental: the same block is edited in place rather
+    than the file being read again.
+    """
+
+    def __init__(self, path: str, cwd: str = "") -> None:
+        self.tail = Tail(Path(path))
+        self.cwd = cwd
+        self.blocks: list[Block] = []
+        self.by_tool_use: dict[str, Block] = {}
+
+    def read_new(self) -> list[Block]:
+        """Parse whatever has been appended. Returns every block that changed."""
+        touched: list[Block] = []
+        for line in self.tail.read_new():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                touched += self.add(record)
+        return touched
+
+    def add(self, record: dict[str, Any]) -> list[Block]:
+        kind = str(record.get("type") or "")
+        if kind == "summary":
+            block = Block(kind="divider", text="context compacted")
+            self.blocks.append(block)
+            return [block]
+        if kind not in ("user", "assistant"):
+            return []
+
+        message = record.get("message")
+        if not isinstance(message, dict):
+            return []
+        ts = parse_timestamp(record.get("timestamp"))
+        content = message.get("content")
+
+        if isinstance(content, str):
+            if not content.strip():
+                return []
+            block = Block(kind="prompt" if kind == "user" else "text", ts=ts,
+                          text=content)
+            self.blocks.append(block)
+            return [block]
+        if not isinstance(content, list):
+            return []
+
+        touched: list[Block] = []
+        for piece in content:
+            if not isinstance(piece, dict):
+                continue
+            block = self.add_piece(kind, piece, ts)
+            if block is not None:
+                touched.append(block)
+        return touched
+
+    def add_piece(self, role: str, piece: dict[str, Any], ts: float) -> Block | None:
+        kind = str(piece.get("type") or "")
+        if kind == "text":
+            text = str(piece.get("text") or "")
+            if not text.strip():
+                return None
+            block = Block(kind="prompt" if role == "user" else "text", ts=ts, text=text)
+        elif kind == "thinking":
+            text = str(piece.get("thinking") or "")
+            if not text.strip():
+                return None
+            block = Block(kind="thinking", ts=ts, text=text)
+        elif kind == "tool_use":
+            name = str(piece.get("name") or "")
+            tool_input = piece.get("input")
+            added, removed = edit_counts(tool_input)
+            block = Block(kind="tool", ts=ts, tool=name,
+                          target=tool_target(name, tool_input, self.cwd),
+                          added=added, removed=removed,
+                          tool_use_id=str(piece.get("id") or ""))
+            if block.tool_use_id:
+                self.by_tool_use[block.tool_use_id] = block
+        elif kind == "tool_result":
+            held = self.by_tool_use.get(str(piece.get("tool_use_id") or ""))
+            if held is None:
+                return None
+            held.result = result_text(piece.get("content"))
+            held.failed = bool(piece.get("is_error"))
+            return held          # an existing block changed; it is not a new one
+        else:
+            return None
+        self.blocks.append(block)
+        return block
+
+
 # --- git facts: what git says about the agent's directory --------------------
 
 
