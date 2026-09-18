@@ -485,8 +485,11 @@ words. The first screenshot is the Transcript tab with one session in
 ## 13. Questions, answered
 
 1. **Port.** 7331 by default.
-2. **Label.** The session name when there is one, else `repo/dirname`. Never
-   the full path.
+2. **Label.** `name · repo/dirname`, and just `repo/dirname` when there is no
+   name. Never the full path. Claude Code titles a session from its first
+   prompt, so nearly every session has a name; showing only the name loses
+   which worktree the agent stands in, which is exactly what you need when
+   several are running.
 3. **Send.** Works for `done`. Hidden for `ended` and `dead`.
 4. **Session names.** `/rename` sets one, and only the status line sees it.
    wostuast cannot rename a session from outside: the only way back into the

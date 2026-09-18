@@ -337,10 +337,18 @@ class Session:
 
     @property
     def label(self) -> str:
-        """What to call this session: its name if it has one, else repo/dirname."""
-        if self.status.name:
-            return self.status.name
-        return path_label(self.cwd, self.git.repo)
+        """What to call this session: its name, and where it is standing.
+
+        Claude Code titles a session from its first prompt, so most sessions
+        have a name whether or not anyone ran `/rename`. The name alone reads
+        well but loses the worktree, which is the thing you need when several
+        agents are running, so both are shown. A session with no name is just
+        its place.
+        """
+        place = path_label(self.cwd, self.git.repo)
+        if not self.status.name:
+            return place
+        return f"{clip(self.status.name, 40)} · {place}"
 
     @property
     def since(self) -> float:

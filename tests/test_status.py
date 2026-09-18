@@ -70,12 +70,21 @@ def test_old_status_files_are_dropped(ws):
     assert (ws.status_dir() / "new.json").exists()
 
 
-def test_the_name_becomes_the_session_label(ws):
+def test_the_label_shows_the_name_and_the_worktree(ws):
+    """With several agents running, the name alone does not say where one is."""
     session = ws.Session(session_id="s", cwd="/home/martin/oans/warmhare")
     session.git = ws.GitFacts(repo="oans")
     assert session.label == "oans/warmhare"
-    session.status = ws.Status(name="warmhare")
-    assert session.label == "warmhare"
+    session.status = ws.Status(name="List files in home")
+    assert session.label == "List files in home · oans/warmhare"
+
+
+def test_a_very_long_title_is_cut(ws):
+    session = ws.Session(session_id="s", cwd="/w/dir")
+    session.status = ws.Status(name="x" * 200)
+    name, _, place = session.label.partition(" · ")
+    assert len(name) == 40
+    assert place == "dir"
 
 
 def test_status_command_stores_the_payload_and_prints_one_line(run_cli, tmp_path,
