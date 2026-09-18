@@ -15,6 +15,7 @@ things are and how to work here. When the two disagree, `PLAN.md` wins.
 | `tests/fixtures/README.md` | The Claude Code hook and status line payload fields. |
 | `docs/mockups/` | The visual target for the page. Open them in a browser. |
 | `PLAN.md` | The brief: goals, non-goals, design, milestones. |
+| `README.md` | What a user reads. Keep it in step with the commands. |
 
 ## Run it
 
@@ -37,8 +38,10 @@ settings.
 
 ## Rules
 
-- **One file.** All of the program lives in `wostuast`. The page, the CSS and
-  the JavaScript become string constants at the end of it.
+- **One file, at the root.** All of the program lives in `wostuast`. The page,
+  the CSS and the JavaScript become string constants at the end of it. Do not
+  move it into `src/` or split it: the install one-liner curls that exact path,
+  and a split would need a build step, which `PLAN.md` rules out.
 - **Standard library only.** Python 3.10 or newer. No pip install. JavaScript
   libraries are allowed only when vendored into the single file.
 - **Ask first** before adding a dependency, a file besides `wostuast` and
