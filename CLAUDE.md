@@ -43,9 +43,15 @@ settings.
   the CSS and the JavaScript become string constants at the end of it. Do not
   move it into `src/` or split it: the install one-liner curls that exact path,
   and a split would need a build step, which `PLAN.md` rules out.
-- **Standard library only.** Python 3.10 or newer. No pip install. JavaScript
-  libraries are allowed only when vendored into the single file. Exactly one is
-  vendored: `marked`, inside `PAGE`, with its licence header.
+- **Standard library only.** Python 3.10 or newer. No pip install.
+- **A library the page cannot work without is vendored; one that only improves
+  it is fetched.** Exactly one is vendored: `marked`, inside `PAGE`, with its
+  licence header — without it the transcript is unreadable. `highlight.js`
+  comes from a CDN, because 122 KB in a 205 KB file is too much to pay for
+  paint. A fetched library carries an `integrity` hash, is asked for only when
+  something needs it, and must degrade to nothing when it does not arrive.
+  Any script on this page can `POST` to `/send`, which types into the user's
+  terminal, so the hash is not optional.
 - **The page never trusts what an agent wrote.** Markdown is parsed into an
   inert `<template>`, scrubbed to an allowlist, and only then inserted. Values
   from events are set with `textContent`. Assigning to `innerHTML` first would

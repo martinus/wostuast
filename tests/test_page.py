@@ -955,3 +955,127 @@ def test_typing_finds_a_file_past_the_first_five_thousand(big_page):
             assert names == ["native/shared/libcorrelation/src/Action.h"]
         finally:
             browser.close()
+
+
+# --- syntax highlighting ----------------------------------------------------
+
+# The highlighter is fetched, not vendored, so every test here works whether
+# or not the machine running it can reach a CDN: the page is handed a stand-in
+# and the real download is never started.
+
+STUB = """hljsAsked = Promise.resolve({
+  getLanguage: () => true,
+  highlight: (text, how) => ({ value: %s }),
+});"""
+
+
+def open_code(page, stub, name="code.py"):
+    """Put a stand-in highlighter in place, then open a file that is not
+    Markdown."""
+    show_tab(page, "files")
+    page.evaluate(STUB % stub)
+    page.click(f".filelist button:has-text('{name}')")
+    page.wait_for_timeout(400)
+
+
+def test_code_is_painted(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
+            assert page.locator(".filebody pre .hljs-keyword").inner_text() == "print"
+            assert page.locator(".filebody pre").inner_text() == "print(1)"
+        finally:
+            browser.close()
+
+
+def test_the_page_does_not_trust_the_highlighter_either(repo_page):
+    """Its output goes through the same inert template the Markdown does. A
+    span dressed as our own chrome, an attribute, and an element that is not a
+    span all come out as text."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
+                            " + '<img src=x onerror=\"window.pwned=1\">'"
+                            " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
+            body = page.locator(".filebody pre")
+            assert page.evaluate("window.pwned") is None
+            assert body.locator("img").count() == 0
+            assert body.locator(".row").count() == 0
+            assert body.locator("[onclick]").count() == 0
+            assert body.locator("#n").count() == 0
+            # the text survives, only the dressing is gone
+            assert body.locator(".hljs-string").inner_text() == "b"
+            assert body.inner_text() == "ab"
+        finally:
+            browser.close()
+
+
+def test_a_sublanguage_class_survives(repo_page):
+    """hljs writes `hljs-title function_` as one span with two classes."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
+            assert page.locator(".filebody pre .hljs-title.function_").count() == 1
+        finally:
+            browser.close()
+
+
+def test_no_highlighter_still_shows_the_file(repo_page):
+    """Offline, blocked, or bytes that do not match the hash: the code is
+    still code, just unpainted."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate("hljsAsked = Promise.resolve(null);")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            assert page.locator(".filebody pre").inner_text().strip() == (
+                "print(1)\nprint(2)")
+            assert page.locator(".filebody pre span").count() == 0
+        finally:
+            browser.close()
+
+
+def test_the_highlighter_is_pinned_and_asked_for_late(repo_page):
+    """Any script on this page can POST to /send, which types into a terminal,
+    so a script from someone else's server carries the hash of its bytes. And
+    a session that only reads transcripts reaches the network never."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            asked = "document.querySelectorAll('script[src*=highlight]').length"
+            assert page.evaluate(asked) == 0      # the transcript asks for nothing
+            show_tab(page, "files")
+            assert page.evaluate(asked) == 0      # nor does a Markdown file
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            tag = page.locator("script[src*='highlight']")
+            assert tag.count() == 1
+            assert tag.get_attribute("src").startswith("https://")
+            assert tag.get_attribute("integrity").startswith("sha384-")
+            assert tag.get_attribute("crossorigin") == "anonymous"
+        finally:
+            browser.close()
+
+
+def test_a_file_that_is_not_markdown_has_no_box(repo_page):
+    """A shell script is the whole page here, not a quotation inside a
+    document that does not exist."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            look = page.eval_on_selector(".filebody pre", """el => {
+              const seen = getComputedStyle(el);
+              return [seen.borderTopWidth, seen.backgroundColor];
+            }""")
+            assert look[0] == "0px"
+            assert look[1] in ("rgba(0, 0, 0, 0)", "transparent")
+        finally:
+            browser.close()

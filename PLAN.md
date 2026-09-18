@@ -45,7 +45,11 @@ Do not build these. If a feature needs one of them, leave the feature out.
   standing in a directory". Nothing more.
 - Do not use Electron, Tauri, React, or a build step.
 - Do not add Python dependencies beyond the standard library (3.10+).
-  JavaScript libraries are allowed only when vendored into the single file.
+- A JavaScript library the page cannot work without is vendored into the
+  single file. One that only improves the page is fetched from a CDN, pinned
+  by hash, and must degrade to nothing when it does not arrive. `marked` is
+  the first kind: without it the transcript is unreadable. `highlight.js` is
+  the second: without it code is still code, just unpainted.
 
 ## 4. How it works
 
@@ -445,11 +449,25 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
   and which a monospace face wastes room on. Load from Google Fonts with a
   `system-ui` / `ui-monospace` fallback stack, so the page still looks right
   offline.
-- Syntax highlighting: one more vendored library, `highlight.js`, used only
-  through its element API, which reads `textContent` and builds elements. It
-  never takes HTML from us and we never take HTML from it, so the rule that
-  the page does not trust what an agent wrote still holds. It is the second
-  and last library; ask before vendoring it.
+- Syntax highlighting: `highlight.js`, fetched from a CDN rather than
+  vendored. Vendoring it would add 122 KB to a 205 KB file — three times what
+  `marked` costs — to paint code that is perfectly readable unpainted. The
+  page already fetches its fonts, and already looks right without them.
+  Three rules make it safe and quiet:
+  - **Pinned.** `integrity` holds the hash of the exact bytes, and
+    `crossorigin="anonymous"` is what lets the browser check it. Any script on
+    this page can `POST` to `/send`, which types into your terminal, so an
+    unpinned script from someone else's server would be a way into it. A
+    hijacked CDN gets you no highlighting, never other code.
+  - **Asked for late.** The tag is added when the first file that is not
+    Markdown is opened, not when the page loads. Reading transcripts all day
+    reaches the network never.
+  - **Not trusted either.** Its output goes into an inert `<template>` and is
+    cut down to text and `span` elements whose class starts with `hljs-`,
+    the same way `marked`'s output is. The page does not trust the
+    highlighter more than it trusts the agent.
+  The colours are ours, written against the palette in this section. Their
+  stylesheets are not fetched.
 - No gradients, no shadows except the soft ring on the needs-you dot, no
   icons except a few inline stroke SVGs, no emoji anywhere.
 - Motion: a row that changes state fades its dot (200 ms). A new transcript
@@ -638,7 +656,9 @@ words. The first screenshot is the Transcript tab with one session in
 | A tree by default, a flat list while typing | A tree is how you read a repository you do not know, and its indent carries the directory, so a row shows only the last part. A match list has no tree to sit in. |
 | Only the rows on screen are built | Ten thousand buttons cost ten thousand buttons. A window over a fixed row height costs the same for ten matches and ten thousand, so no answer has to be cut to stay quick. |
 | Column widths belong to the reader | Paths are long, screens differ, and the alternative to a drag handle is a config option, which this file prefers to delete. |
-| Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. `highlight.js` through its element API takes no HTML from us and gives none back. |
+| Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
+| That library is fetched, not vendored | 122 KB of highlighter in a 205 KB file is three times what `marked` costs, for a nicety. The split is what the page cannot work without against what only improves it: `marked` is vendored, this is not. |
+| It is pinned by hash and asked for late | Any script on this page can type into your terminal through `/send`. `integrity` means a hijacked CDN gets you no highlighting rather than other code, and a tag added on the first code file means a transcript-only session never asks. |
 
 ## 13. Questions, answered
 

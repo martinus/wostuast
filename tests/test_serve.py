@@ -383,3 +383,34 @@ def test_a_session_that_is_gone_is_a_404_on_every_new_route(served):
         with pytest.raises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(f"{base}/api/session/nobody/{verb}", timeout=5)
         assert caught.value.code == 404
+
+
+# --- the page's one external dependency -------------------------------------
+
+
+def test_the_highlighter_is_pinned_in_the_page(ws):
+    """The page fetches one script at runtime. Any script on the page can POST
+    to /send, which types into a terminal, so it carries the hash of its exact
+    bytes and the browser refuses anything else."""
+    assert 'HLJS_SRC =\n  "https://' in ws.PAGE
+    assert '"sha384-' in ws.PAGE
+    assert "tag.integrity = HLJS_HASH;" in ws.PAGE
+    assert 'tag.crossOrigin = "anonymous";' in ws.PAGE
+
+
+def test_the_pin_still_matches_what_the_cdn_serves(ws):
+    """A hash that has drifted from the file it names means no highlighting
+    for anyone, and nothing else would say so. Skipped without a network."""
+    import base64
+    import hashlib
+    import re
+
+    where = re.search(r'HLJS_SRC =\n  "([^"]+)"', ws.PAGE)
+    pinned = re.search(r'HLJS_HASH =\n  "([^"]+)"', ws.PAGE)
+    assert where and pinned
+    try:
+        raw = urllib.request.urlopen(where.group(1), timeout=30).read()
+    except (urllib.error.URLError, OSError) as error:   # offline, or blocked
+        pytest.skip(f"cannot reach {where.group(1)}: {error}")
+    got = "sha384-" + base64.b64encode(hashlib.sha384(raw).digest()).decode()
+    assert got == pinned.group(1)

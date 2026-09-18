@@ -194,10 +194,19 @@ Before you type, the order is `PLAN.md`, `CLAUDE.md` and `README.md`, then
 whatever the agent has changed with the newest first, then the rest by name.
 A changed file carries a dot.
 
-A Markdown file is rendered; anything else is shown as it is, without syntax
-highlighting. A binary file is named, not shown. The open file is read again
-within a couple of seconds of the agent changing it, and you keep your place
-in it.
+A Markdown file is rendered; anything else is shown as code, with syntax
+highlighting and no box around it. A binary file is named, not shown. The open
+file is read again within a couple of seconds of the agent changing it, and you
+keep your place in it.
+
+The highlighter is the one thing the page fetches from the internet, and the
+only one that is not inside `wostuast` itself: 122 KB of it would be more than
+half the program again, to paint code that reads well enough unpainted. It is
+asked for when you open your first file that is not Markdown, so a session
+spent reading transcripts never asks. The `<script>` tag carries the hash of
+the exact bytes, because any script on this page could type into your terminal
+through the send box. Without a network you get the same code without the
+colour.
 
 **Diff** shows the change in two halves: what the branch has committed against
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file

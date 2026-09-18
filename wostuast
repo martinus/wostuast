@@ -2889,6 +2889,11 @@ PAGE = r"""<!doctype html>
   --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
   --code: #0f1014; --code-ink: #c9ccd8;
+  /* Syntax colours. Amber is not among them: it is the one warm colour on
+     this page and it means "an agent needs you". */
+  --syn-key: #9a8cf0; --syn-str: #8fcf9f; --syn-num: #5bb0b5;
+  --syn-com: #6f7385; --syn-fn: #7fb3e0; --syn-meta: #8b8f9e;
+  --syn-attr: #c6a2d8;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
 }
@@ -2904,6 +2909,9 @@ PAGE = r"""<!doctype html>
   --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
   --code: #eceae3; --code-ink: #33363d;
+  --syn-key: #5b3fb0; --syn-str: #26694a; --syn-num: #1d6f74;
+  --syn-com: #8b8e96; --syn-fn: #2a6ea8; --syn-meta: #6a6d76;
+  --syn-attr: #7a3f8f;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -3179,10 +3187,27 @@ body:not(.show-thinking) .thinking { display: none; }
 .filelist .lit { color: var(--needs-warm); font-weight: 600; }
 .filelist button.chosen .lit { color: var(--needs); }
 .filebody pre.plain {
-  margin: 0; padding: 12px 14px; border-radius: 6px; background: var(--code);
-  border: 1px solid var(--edge); color: var(--code-ink); font-family: var(--mono);
+  /* No box. A file that is not Markdown is the whole page here, not a
+     quotation inside a document that does not exist, and the border made a
+     shell script look like one. */
+  margin: 0; padding: 0; color: var(--code-ink); font-family: var(--mono);
   font-size: 12.5px; line-height: 1.6; white-space: pre; overflow-x: auto;
 }
+/* Our colours, not the highlighter's: its stylesheets are not fetched. */
+.hljs-comment, .hljs-quote { color: var(--syn-com); font-style: italic; }
+.hljs-keyword, .hljs-literal, .hljs-selector-tag,
+.hljs-doctag, .hljs-operator { color: var(--syn-key); }
+.hljs-string, .hljs-regexp, .hljs-char, .hljs-symbol,
+.hljs-bullet, .hljs-addition { color: var(--syn-str); }
+.hljs-number { color: var(--syn-num); }
+.hljs-title, .hljs-section, .hljs-name,
+.hljs-built_in, .hljs-type, .hljs-class { color: var(--syn-fn); }
+.hljs-meta, .hljs-comment .hljs-doctag { color: var(--syn-meta); }
+.hljs-attr, .hljs-attribute, .hljs-property,
+.hljs-variable, .hljs-template-variable { color: var(--syn-attr); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+.hljs-deletion { color: var(--cut-ink); }
 .filelist .plain { padding: 5px 16px; color: var(--ink-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plus { color: var(--working); }
@@ -3669,6 +3694,109 @@ function markdown(parent, text) {
   return node;
 }
 
+// --- painting code ----------------------------------------------------------
+
+// The one thing this page fetches at runtime. It is not vendored: 122 KB of
+// highlighter inside a 205 KB program is three times what `marked` costs, to
+// paint code that reads perfectly well unpainted. So it is fetched, and every
+// path through here works when it does not arrive.
+//
+// `integrity` is the hash of the exact bytes and `crossorigin` is what lets
+// the browser check it. Any script on this page can POST to /send, which types
+// into the user's terminal, so a script from someone else's server without a
+// hash would be a way into it. A hijacked CDN gets you no colour, never code.
+const HLJS_SRC =
+  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js";
+const HLJS_HASH =
+  "sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp";
+
+// Files whose language the suffix does not give away. A name with no suffix
+// at all — Makefile, Dockerfile — is looked up whole.
+const BY_NAME = {
+  "Makefile": "makefile", "makefile": "makefile", "GNUmakefile": "makefile",
+  "Dockerfile": "dockerfile", "CMakeLists.txt": "cmake",
+  ".bashrc": "bash", ".bash_profile": "bash", ".zshrc": "bash",
+  ".profile": "bash", ".gitconfig": "ini", ".gitignore": "plaintext",
+};
+const BY_SUFFIX = {
+  h: "c", hpp: "cpp", hh: "cpp", hxx: "cpp", cc: "cpp", cxx: "cpp",
+  mk: "makefile", cmake: "cmake", sh: "bash", zsh: "bash",
+  yml: "yaml", tsx: "typescript", jsx: "javascript", rs: "rust",
+  toml: "ini", cfg: "ini", conf: "ini",
+};
+
+// Asked for when the first file that is not Markdown opens, never on load.
+// Reading transcripts all day then reaches the network never. One promise, so
+// a second file does not start a second download.
+let hljsAsked = null;
+
+function hljsReady() {
+  if (hljsAsked) return hljsAsked;
+  hljsAsked = new Promise((settle) => {
+    const tag = document.createElement("script");
+    tag.src = HLJS_SRC;
+    tag.integrity = HLJS_HASH;
+    tag.crossOrigin = "anonymous";
+    // Offline, blocked, or bytes that do not match the hash all land here.
+    tag.addEventListener("error", () => settle(null));
+    tag.addEventListener("load", () => settle(window.hljs || null));
+    document.head.appendChild(tag);
+  });
+  return hljsAsked;
+}
+
+function languageOf(path) {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  if (BY_NAME[base]) return BY_NAME[base];
+  const dot = base.lastIndexOf(".");
+  if (dot < 1) return null;              // no suffix, or a dotfile we do not know
+  const suffix = base.slice(dot + 1).toLowerCase();
+  return BY_SUFFIX[suffix] || suffix;
+}
+
+// Only text and the highlighter's own spans survive. The page does not trust
+// what an agent wrote, and it does not trust the highlighter more than that:
+// this is the same inert <template> the Markdown path uses, with a narrower
+// allowlist.
+function paintedInto(holder, marked_up) {
+  holder.innerHTML = marked_up;
+  const walk = (node) => {
+    for (const child of Array.from(node.children)) {
+      // `hljs-title function_` is one span with two classes, so the whole
+      // list is filtered rather than matched. A bare word is not allowed
+      // through: `row` or `tab` would dress a span up as our own chrome.
+      const classes = (child.getAttribute("class") || "").split(/\s+/)
+        .filter((one) => /^(hljs-[\w-]+|[a-z][\w]*_)$/.test(one));
+      if (child.tagName !== "SPAN" || !classes.length) {
+        child.replaceWith(document.createTextNode(child.textContent || ""));
+        continue;
+      }
+      for (const name of child.getAttributeNames()) child.removeAttribute(name);
+      child.setAttribute("class", classes.join(" "));
+      walk(child);
+    }
+  };
+  walk(holder.content);
+  return holder.content;
+}
+
+// The text is on the page before this returns, so a slow or missing CDN shows
+// the file at once and paints it a moment later, or never.
+async function paint(node, path, text) {
+  const want = node.dataset.path;
+  const lib = await hljsReady();
+  if (!lib || !node.isConnected || node.dataset.path !== want) return;
+  const language = languageOf(path);
+  if (!language || !lib.getLanguage(language)) return;
+  try {
+    const done = lib.highlight(text, { language, ignoreIllegals: true });
+    node.replaceChildren(paintedInto(document.createElement("template"),
+                                     done.value));
+  } catch (error) {
+    // A language that throws leaves the plain text that is already there.
+  }
+}
+
 // One node per block, kept so that a change redraws that block and no other.
 // Rebuilding the lot re-ran marked over the whole history on every update, and
 // restarted the slide-in of every turn each time one line arrived.
@@ -3999,9 +4127,11 @@ function drawFiles(box) {
   } else if (MARKDOWN.test(state.file)) {
     markdown(pane, state.fileText);
   } else {
-    // Not prose, so it is shown as it is. textContent, and no highlighting:
-    // that is milestone 4's fourth stage.
-    put(pane, "pre", "plain", state.fileText);
+    // The text goes up first and the colour arrives after, so a CDN that is
+    // slow or gone costs the reader nothing but paint.
+    const code = put(pane, "pre", "plain", state.fileText);
+    code.dataset.path = state.file;
+    paint(code, state.file, state.fileText);
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
