@@ -80,3 +80,61 @@ def written_events(ws, recorded_events, monkeypatch):
     monkeypatch.setattr(ws, "SESSION_MAX_AGE", 10**12)
     monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
     return recorded_events
+
+
+def event(name, sid="s1", **extra):
+    """One hook event, with the fields every event carries already filled in."""
+    base = {
+        "session_id": sid,
+        "hook_event_name": name,
+        "cwd": extra.pop("cwd", "/w/repo/dir"),
+        "pane": "%1",
+        "pid": 4242,
+        "ts": extra.pop("ts", 1000.0),
+    }
+    base.update(extra)
+    return base
+
+
+@pytest.fixture
+def stub_git(ws, monkeypatch):
+    """Answer for git and for liveness, so a test stays about its own subject."""
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+
+
+@pytest.fixture
+def served(ws, stub_git):
+    """A daemon on a free port. Yields (daemon, base url)."""
+    import threading
+
+    daemon = ws.Daemon()
+    server = ws.make_server(daemon, 0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    daemon.store.refresh()
+    try:
+        yield daemon, f"http://127.0.0.1:{port}"
+    finally:
+        daemon.stopping.set()
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+def transcript_file(ws, tmp_path):
+    """A path where a real transcript would be: under the Claude config dir.
+
+    `safe_transcript` refuses anything else, so a test that writes one somewhere
+    convenient would be testing a path the daemon will not open.
+    """
+
+    def make(name="s1", lines=()):
+        folder = ws.settings_path().parent / "projects" / "-w-repo-dir"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{name}.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in lines))
+        return path
+
+    return make
