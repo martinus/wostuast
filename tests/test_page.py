@@ -267,3 +267,112 @@ def test_the_same_blocks_arriving_twice_are_not_shown_twice(page_at):
             assert page.locator(".turn").count() == before
         finally:
             browser.close()
+
+
+def test_the_colours_can_be_switched_and_are_remembered(page_at):
+    """The light values used to live inside a media query, so choosing light on
+    a dark machine could not work at all."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser = play.chromium.launch(executable_path=browser_path(),
+                                       args=["--no-sandbox"])
+        try:
+            page = browser.new_page(viewport={"width": 1440, "height": 900},
+                                    color_scheme="dark")
+            page.goto(path, wait_until="domcontentloaded")
+            page.wait_for_selector(".row", timeout=15000)
+            dark = page.evaluate("getComputedStyle(document.body).backgroundColor")
+            assert page.locator("#theme").inner_text() == "auto"
+
+            page.locator("#theme").click()           # auto -> light
+            page.wait_for_timeout(150)
+            light = page.evaluate("getComputedStyle(document.body).backgroundColor")
+            assert light != dark, "light on a dark machine did nothing"
+            assert page.locator("#theme").inner_text() == "light"
+
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(".row", timeout=15000)
+            assert page.evaluate(
+                "getComputedStyle(document.body).backgroundColor") == light
+            assert page.locator("#theme").inner_text() == "light"
+
+            page.locator("#theme").click()           # light -> dark
+            page.locator("#theme").click()           # dark -> auto
+            page.wait_for_timeout(150)
+            assert page.locator("#theme").inner_text() == "auto"
+            assert page.evaluate(
+                "getComputedStyle(document.body).backgroundColor") == dark
+        finally:
+            browser.close()
+
+
+def test_typing_finds_text_in_the_transcript(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            everything = page.locator(".turn").count()
+            page.locator("#find").fill("pytest")
+            page.wait_for_timeout(250)
+            assert page.locator(".turn").count() < everything
+            assert page.locator("mark").count() >= 1
+            assert "pytest" in page.locator("mark").first.inner_text().lower()
+            assert " of " in page.locator("#live").inner_text()
+
+            page.locator("#find").fill("")
+            page.wait_for_timeout(250)
+            assert page.locator(".turn").count() == everything
+            assert page.locator("mark").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_search_that_matches_nothing_says_so(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.locator("#find").fill("zzzznotherezzzz")
+            page.wait_for_timeout(250)
+            assert page.locator(".turn").count() == 0
+            assert "Nothing here matches" in page.locator(".content").inner_text()
+        finally:
+            browser.close()
+
+
+def test_searching_never_re_parses_what_an_agent_wrote(page_at):
+    """Highlighting walks text nodes. A search that looks like markup must not
+    become markup."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.locator("#find").fill("<img")
+            page.wait_for_timeout(250)
+            assert page.evaluate("window.PWNED ?? null") is None
+            assert page.locator(".prose img").count() == 0
+            assert page.locator("mark").count() >= 1
+        finally:
+            browser.close()
+
+
+def test_a_regex_in_the_search_box_is_taken_literally(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.locator("#find").fill("len(hits)")
+            page.wait_for_timeout(250)
+            assert page.locator("mark").count() >= 1
+            assert "len(hits)" in page.locator("mark").first.inner_text()
+        finally:
+            browser.close()
+
+
+def test_keys_do_not_fire_while_typing_in_the_search_box(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.locator("#find").focus()
+            page.keyboard.type("j")
+            page.wait_for_timeout(150)
+            assert page.locator("#find").input_value() == "j"
+            assert page.evaluate("document.getElementById('help').open") is False
+        finally:
+            browser.close()

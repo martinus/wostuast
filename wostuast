@@ -1492,9 +1492,18 @@ def add_status_line(settings: dict[str, Any], command: str) -> list[str]:
     if isinstance(current, dict) and is_ours(current.get("command"), "status"):
         return []
     if current:
+        yours = current.get("command") if isinstance(current, dict) else ""
+        if not isinstance(yours, str) or not yours:
+            return ["kept your status line; wostuast could not read it to suggest a line"]
+        import shlex
+
         return [
-            "kept your status line; add this yourself for names and context: "
-            f"{command}"
+            "kept your status line, because Claude Code allows only one.",
+            "  To have both, change statusLine.command in your settings to:",
+            f"    {command} --then {shlex.quote(yours)}",
+            "  wostuast then reads the session name and context percent and runs",
+            "  your line, so the terminal shows exactly what it shows today.",
+            "  Without this, sessions have no name and no context percent.",
         ]
     settings["statusLine"] = {"type": "command", "command": command}
     return ["added status line"]
@@ -1933,18 +1942,55 @@ def cmd_hook(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    """Read the status line JSON from stdin, keep it, and print one line."""
+    """Read the status line JSON from stdin, keep it, and print one line.
+
+    Claude Code allows one status line command, and the payload arrives on
+    stdin, which can only be read once. So a user who already has a status line
+    cannot simply add ours next to it. `--then` is the way to have both: we
+    read the payload, keep what we need, and hand the same text to their
+    command, whose output is what the terminal shows.
+    """
+    raw = ""
     try:
         give_up_after(HOOK_TIMEOUT)
-        payload = read_stdin_json()
+        raw = sys.stdin.read()
+        payload = json.loads(raw) if raw.strip() else {}
+        if not isinstance(payload, dict):
+            payload = {}
         status = status_from_payload(payload)
         write_status(str(payload.get("session_id") or ""), status)
         stand_down()
-        print(status_line(status, str(payload.get("cwd") or "")))
     except BaseException as error:
         stand_down()
         log(f"status failed: {error!r}")
+        payload = {}
+
+    then = getattr(args, "then", None)
+    if then:
+        print(run_status_line(then, raw), end="")
+        return 0
+    print(status_line(status_from_payload(payload), str(payload.get("cwd") or "")))
     return 0
+
+
+def run_status_line(command: str, payload: str) -> str:
+    """Run the status line the user already had, and give back what it printed.
+
+    It runs through a shell because that is how Claude Code runs it, and it is
+    the user's own command either way. A command that hangs or fails prints
+    nothing rather than holding up the terminal.
+    """
+    import subprocess
+
+    try:
+        done = subprocess.run(
+            command, shell=True, input=payload, capture_output=True,
+            text=True, errors="replace", timeout=HOOK_TIMEOUT, check=False,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        log(f"the status line {command!r} failed: {error!r}")
+        return ""
+    return done.stdout
 
 
 def cmd_ls(args: argparse.Namespace) -> int:
@@ -2213,6 +2259,9 @@ def build_parser() -> argparse.ArgumentParser:
     for name, handler, help_text in commands:
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
         sub.set_defaults(handler=handler)
+        if name == "status":
+            sub.add_argument("--then", metavar="COMMAND",
+                             help="run this status line too, and print its output")
         if name == "serve":
             sub.add_argument("--port", type=int, default=DEFAULT_PORT,
                              help=f"the port to listen on (default {DEFAULT_PORT})")
@@ -2254,6 +2303,18 @@ PAGE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wostuast</title>
+<script>
+// Before anything is painted, so the page never flashes the wrong colours.
+// The choice is this browser's alone; the daemon neither knows nor cares.
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem("wostuast-theme"); } catch (e) {}
+  var system = window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light" : "dark";
+  document.documentElement.dataset.theme = stored || system;
+  document.documentElement.dataset.themeChoice = stored || "system";
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
@@ -2269,21 +2330,17 @@ PAGE = r"""<!doctype html>
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
 }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg: #f6f5f1; --panel: #efeee9; --raised: #e7e6e0; --chosen: #dedcd4;
-    --edge: #d8d6cd; --edge-bright: #c3c0b5;
-    --ink: #2f3138; --ink-bright: #14151a; --ink-soft: #4c4f58;
-    --ink-mute: #6a6d76; --ink-faint: #8b8e96;
-    --needs: #a86c10; --needs-warm: #8a5709; --working: #2f7f52;
-    --done: #2a6ea8;
-    --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
-    --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
-    --code: #eceae3; --code-ink: #33363d;
-  }
+:root[data-theme="light"] {
+  --bg: #f6f5f1; --panel: #efeee9; --raised: #e7e6e0; --chosen: #dedcd4;
+  --edge: #d8d6cd; --edge-bright: #c3c0b5;
+  --ink: #2f3138; --ink-bright: #14151a; --ink-soft: #4c4f58;
+  --ink-mute: #6a6d76; --ink-faint: #8b8e96;
+  --needs: #a86c10; --needs-warm: #8a5709; --working: #2f7f52;
+  --done: #2a6ea8;
+  --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
+  --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
+  --code: #eceae3; --code-ink: #33363d;
 }
-/* The defaults above are the dark ones, so a page marked dark needs nothing
-   here: the light block is guarded by :not([data-theme="dark"]). */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -2303,6 +2360,12 @@ body {
 .counts { margin-left: auto; display: flex; gap: 6px; align-items: center;
   color: var(--ink-mute); }
 .counts .sep { color: var(--edge-bright); margin: 0 6px; }
+.theme {
+  margin-left: 12px; padding: 2px 10px; border-radius: 5px;
+  border: 1px solid var(--edge-bright); background: none; color: var(--ink-mute);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
 .dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%; }
 .dot.needs_you { background: var(--needs); }
 .dot.working { background: var(--working); }
@@ -2400,8 +2463,18 @@ body {
 }
 .tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
 .tab:disabled { color: var(--edge-bright); cursor: default; }
-.live { margin-left: auto; display: inline-flex; align-items: center;
-  color: var(--ink-faint); font-size: 12px; }
+.find {
+  margin-left: auto; align-self: center; width: 240px; height: 26px;
+  padding: 0 10px; border-radius: 5px; border: 1px solid var(--edge);
+  background: var(--raised); color: var(--ink); font-family: var(--mono);
+  font-size: 12px;
+}
+.find:focus { outline: none; border-color: var(--needs); }
+.find::placeholder { color: var(--ink-faint); }
+.live { margin-left: 12px; display: inline-flex; align-items: center;
+  color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
+mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 1px; }
+.nohits { color: var(--ink-mute); padding: 4px 0; }
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 24px; min-height: 0; }
 
 /* transcript */
@@ -2504,14 +2577,15 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <div class="brand">wostuast</div>
     <div class="where" id="where">—</div>
     <div class="counts" id="counts"></div>
+    <button type="button" class="theme" id="theme" title="light, dark, or follow the system"></button>
   </div>
   <div class="body">
     <div class="sidebar">
       <div class="sidebar-head">Sessions</div>
       <div class="rows" id="rows"></div>
       <div class="hints">
-        <div><b>j k</b> move &nbsp; <b>n</b> next needs-you</div>
-        <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>?</b> keys</div>
+        <div><b>j k</b> move &nbsp; <b>n</b> next needs-you &nbsp; <b>/</b> find</div>
+        <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
       </div>
     </div>
     <div class="main">
@@ -2524,6 +2598,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button class="tab" role="tab" aria-selected="false" data-tab="files" disabled>2 Files</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="diff" disabled>3 Diff</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="peek" disabled>4 Peek</button>
+        <input class="find" id="find" type="search" placeholder="find in transcript  /"
+               autocomplete="off" spellcheck="false">
         <div class="live" id="live"></div>
       </div>
       <div class="content" id="content"></div>
@@ -2536,8 +2612,10 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   <dl>
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
+    <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 4</dt><dd>tabs (only Transcript so far)</dd>
     <dt>t</dt><dd>show or hide thinking</dd>
+    <dt>c</dt><dd>colours: auto, light, dark</dd>
     <dt>?</dt><dd>this list</dd>
     <dt>Esc</dt><dd>close</dd>
   </dl>
@@ -2558,12 +2636,48 @@ const state = {
   tab: "transcript",
   nodes: [],
   blocks: [],
+  find: "",
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
 };
 
 const $ = (id) => document.getElementById(id);
+
+// --- colours ----------------------------------------------------------------
+// Three choices: follow the system, or pin one. The pinned one is remembered in
+// this browser, so it survives a reload and never leaves the machine.
+
+const THEME_ORDER = ["system", "light", "dark"];
+
+function systemTheme() {
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function themeChoice() {
+  return document.documentElement.dataset.themeChoice || "system";
+}
+
+function applyTheme(choice) {
+  document.documentElement.dataset.themeChoice = choice;
+  document.documentElement.dataset.theme = choice === "system" ? systemTheme() : choice;
+  try {
+    if (choice === "system") localStorage.removeItem("wostuast-theme");
+    else localStorage.setItem("wostuast-theme", choice);
+  } catch (error) {
+    // A browser that refuses storage still gets the colours, just not the memory.
+  }
+  const button = $("theme");
+  if (button) button.textContent = { system: "auto", light: "light", dark: "dark" }[choice];
+}
+
+function nextTheme() {
+  applyTheme(THEME_ORDER[(THEME_ORDER.indexOf(themeChoice()) + 1) % THEME_ORDER.length]);
+}
+
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  if (themeChoice() === "system") applyTheme("system");
+});
 
 // Everything below comes from an agent. It is never trusted as HTML.
 function put(parent, tag, cls, text) {
@@ -2777,20 +2891,73 @@ function nearBottom(box) {
   return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
 }
 
+function blockText(block) {
+  return [block.text, block.tool, block.target, block.result]
+    .filter(Boolean).join(" ").toLowerCase();
+}
+
+function matches(block) {
+  return !state.find || blockText(block).includes(state.find);
+}
+
+// Wrap every occurrence of the search in <mark>. It walks text nodes, so a
+// word split across a tag is missed and nothing an agent wrote is ever
+// re-parsed as HTML.
+function markHits(node, needle) {
+  if (!needle) return;
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  const found = [];
+  while (walker.nextNode()) {
+    if (walker.currentNode.nodeValue.toLowerCase().includes(needle)) {
+      found.push(walker.currentNode);
+    }
+  }
+  for (const text of found) {
+    const parts = text.nodeValue.split(new RegExp("(" + escapeRegex(needle) + ")", "ig"));
+    const holder = document.createDocumentFragment();
+    for (let i = 0; i < parts.length; i += 1) {
+      if (!parts[i]) continue;
+      if (i % 2) put(holder, "mark", null, parts[i]);
+      else holder.appendChild(document.createTextNode(parts[i]));
+    }
+    text.replaceWith(holder);
+  }
+}
+
+function escapeRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function drawTranscript(box) {
   box.replaceChildren();
   state.nodes = [];
   if (!state.blocks.length) {
     const empty = put(box, "div", "empty");
     put(empty, "p", null, "Nothing in this transcript yet.");
+    updateLive(0);
     return;
   }
+  let shown = 0;
   for (let index = 0; index < state.blocks.length; index += 1) {
-    const node = blockNode(state.blocks[index], index);
-    state.nodes.push(node);
+    const block = state.blocks[index];
+    if (!block) continue;
+    const node = blockNode(block, index);
+    state.nodes[index] = node;
+    if (!matches(block)) continue;
+    markHits(node, state.find);
     box.appendChild(node);
+    shown += 1;
   }
-  box.scrollTop = box.scrollHeight;
+  if (state.find && !shown) put(box, "div", "nohits", "Nothing here matches.");
+  updateLive(shown);
+  if (!state.find) box.scrollTop = box.scrollHeight;
+  else box.scrollTop = 0;
+}
+
+function updateLive(shown) {
+  if (!state.find) { $("live").textContent = state.live || ""; return; }
+  const total = state.blocks.filter(Boolean).length;
+  $("live").textContent = shown + " of " + total;
 }
 
 // Redraw one block where it stands, without touching anything else.
@@ -2805,6 +2972,7 @@ function redrawBlock(index) {
 function patchTranscript(indexes) {
   const box = $("content");
   if (state.tab !== "transcript" || !state.nodes) return;
+  if (state.find) { drawTranscript(box); return; }   // the filter decides what shows
   if (!state.nodes.length) { drawTranscript(box); return; }
   const stick = nearBottom(box);
   for (const index of indexes) {
@@ -2951,7 +3119,8 @@ function resubscribe() {
     }
     drawSessions();
     drawHeader();
-    $("live").textContent = "live";
+    state.live = "live";
+    if (!state.find) $("live").textContent = "live";
   });
 
   stream.addEventListener("transcript", (message) => {
@@ -2964,7 +3133,8 @@ function resubscribe() {
 
   stream.onerror = () => {
     document.body.classList.add("lost");
-    $("live").textContent = "reconnecting";
+    state.live = "reconnecting";
+    if (!state.find) $("live").textContent = "reconnecting";
   };
 }
 
@@ -2991,12 +3161,14 @@ document.addEventListener("keydown", (press) => {
   if (press.key === "Escape") { if (help.open) help.close(); return; }
   if (press.metaKey || press.ctrlKey || press.altKey) return;
   const tag = (press.target.tagName || "").toLowerCase();
-  if (tag === "input" || tag === "textarea") return;
+  if (tag === "input" || tag === "textarea") return;   // typing, not commanding
   switch (press.key) {
+    case "/": $("find").focus(); break;
     case "j": move(1); break;
     case "k": move(-1); break;
     case "n": nextNeedsYou(); break;
     case "t": document.body.classList.toggle("show-thinking"); break;
+    case "c": nextTheme(); break;
     case "?": help.open ? help.close() : help.showModal(); break;
     case "1": case "2": case "3": case "4":
       showTab(TAB_KEYS["1234".indexOf(press.key)]);
@@ -3012,6 +3184,19 @@ setInterval(tickAges, 1000);
 for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
+$("theme").addEventListener("click", nextTheme);
+$("find").addEventListener("input", (typed) => {
+  state.find = typed.target.value.trim().toLowerCase();
+  draw();
+});
+$("find").addEventListener("keydown", (press) => {
+  if (press.key !== "Escape") return;
+  $("find").value = "";
+  state.find = "";
+  $("find").blur();
+  draw();
+});
+applyTheme(themeChoice());
 
 drawSessions();
 drawHeader();

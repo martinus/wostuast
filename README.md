@@ -159,7 +159,13 @@ file. So Markdown is parsed into an inert document, cut down to an allowlist of
 elements, and only then shown; raw HTML is displayed as text rather than obeyed.
 There are tests in a real browser for exactly this.
 
-Light and dark both work, following your system setting.
+The button in the top right switches the colours: **auto**, which follows your
+system, then **light**, then **dark**. The choice stays in that browser. `c`
+does the same from the keyboard.
+
+Type in the box at the right of the tab strip, or press `/`, to find text in
+the transcript. It shows only the parts that match and marks the words, and
+counts what it kept. `Esc` clears it.
 
 ## Status
 

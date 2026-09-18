@@ -100,3 +100,40 @@ def test_status_command_stores_the_payload_and_prints_one_line(run_cli, tmp_path
 
 def test_status_command_survives_broken_input(run_cli):
     assert run_cli(["status"], "not json").returncode == 0
+
+
+def test_the_status_line_can_run_the_one_you_already_had(run_cli, recorded_status):
+    """Claude Code allows one status line and the payload can only be read
+    once, so chaining is the only way to keep both."""
+    done = run_cli(["status", "--then", "cat | wc -c"], json.dumps(recorded_status))
+    assert done.returncode == 0
+    assert done.stdout.strip().isdigit(), done.stdout
+    assert int(done.stdout.strip()) == len(json.dumps(recorded_status))
+
+
+def test_the_chained_line_still_gets_the_payload(run_cli, recorded_status, tmp_path):
+    done = run_cli(["status", "--then",
+                    "python3 -c \"import sys,json; print(json.load(sys.stdin)['session_name'])\""],
+                   json.dumps(recorded_status))
+    assert done.stdout.strip() == "warmhare"
+
+
+def test_we_still_record_the_session_when_chaining(run_cli, tmp_path, recorded_status):
+    run_cli(["status", "--then", "echo mine"], json.dumps(recorded_status))
+    stored = json.loads(
+        (tmp_path / "state" / "status" / f"{recorded_status['session_id']}.json").read_text())
+    assert stored["name"] == "warmhare"
+    assert stored["context_pct"] == 41.0
+
+
+def test_a_chained_line_that_fails_prints_nothing_and_still_exits_zero(run_cli,
+                                                                      recorded_status):
+    done = run_cli(["status", "--then", "exit 3"], json.dumps(recorded_status))
+    assert done.returncode == 0
+    assert done.stdout == ""
+
+
+def test_a_chained_line_that_is_not_a_command_does_not_crash(run_cli, recorded_status):
+    done = run_cli(["status", "--then", "definitely-not-here --x"],
+                   json.dumps(recorded_status))
+    assert done.returncode == 0
