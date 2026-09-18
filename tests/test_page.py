@@ -493,16 +493,92 @@ def show_tab(page, name):
     page.wait_for_timeout(700)
 
 
-def test_the_files_tab_lists_markdown_and_renders_it(repo_page):
+def test_the_files_tab_lists_every_file(repo_page):
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "files")
             names = page.eval_on_selector_all(
                 ".filelist button .name", "els => els.map(e => e.textContent)")
-            assert names == ["README.md", "NOTES.md"]   # pinned first, then newest
-            assert "code.py" not in names
+            assert names[0] == "README.md"          # pinned
+            assert set(names) == {"README.md", "NOTES.md", "code.py"}
             assert "The readme" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(700)
+            assert page.locator(".filebody .prose").count() == 0
+            assert "print(1)" in page.locator(".filebody pre.plain").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_changed_file_is_marked(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            touched = page.eval_on_selector_all(
+                ".filelist button.touched .name", "els => els.map(e => e.textContent)")
+            assert sorted(touched) == ["NOTES.md", "README.md"]
+        finally:
+            browser.close()
+
+
+def test_typing_finds_a_file_by_scattered_letters(repo_page):
+    """A file picker, not a filter: `nsmd` has to find NOTES.md the way it does
+    in an editor. The letters must turn up in that order, but not together,
+    and the ones that matched are picked out."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "nsmd")
+            page.wait_for_timeout(400)
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names == ["NOTES.md"]
+            lit = page.eval_on_selector_all(
+                ".filelist .lit", "els => els.map(e => e.textContent).join('')")
+            assert lit.lower() == "nsmd"
+            # The letters have to be in order; these are the same four, not.
+            page.fill("#find", "dmsn")
+            page.wait_for_timeout(400)
+            assert page.locator(".filelist button").count() == 0
+        finally:
+            browser.close()
+
+
+def test_the_best_match_comes_first(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "py")
+            page.wait_for_timeout(400)
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "code.py"
+        finally:
+            browser.close()
+
+
+def test_a_name_that_matches_nothing_says_so(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "zzqq")
+            page.wait_for_timeout(400)
+            assert page.locator(".filelist button").count() == 0
+            assert "no name matches" in page.locator(".filelist").inner_text()
         finally:
             browser.close()
 
@@ -579,7 +655,8 @@ def test_a_worktree_without_markdown_says_so(page_at):
         browser, page = open_page(play, page_at)
         try:
             show_tab(page, "files")
-            assert "no Markdown" in page.locator(".filebody").inner_text()
+            assert "no file that git knows about" in \
+                page.locator(".filebody").inner_text()
         finally:
             browser.close()
 

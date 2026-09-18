@@ -1292,13 +1292,20 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
 # --- files and diffs: what the worktree holds --------------------------------
 
 #: The Files tab renders prose, so it lists Markdown and nothing else.
-MARKDOWN_SUFFIXES = frozenset({".md", ".markdown"})
-
 #: These come first in the Files tab, in this order. They say what the work is.
 PINNED_FILES = ("PLAN.md", "CLAUDE.md", "README.md")
 
-#: A file longer than this is cut. The tab renders prose, not data.
+#: A file longer than this is cut.
 FILE_MAX_BYTES = 512 * 1024
+
+#: How many names the Files tab is sent. A repository with more files than
+#: this is one you find by typing, not by scrolling.
+FILES_SHOWN = 5000
+
+#: A NUL byte in the first of a file says it is not text. Every editor guesses
+#: this way, and every editor is sometimes wrong; being wrong here shows a
+#: "binary file" note instead of a screen of control characters.
+BINARY_SNIFF = 8000
 
 #: A diff longer than this is cut. No page can show more, and parsing the rest
 #: would cost more than it is worth.
@@ -1317,30 +1324,73 @@ class FileEntry:
     """One file the Files tab offers."""
 
     path: str = ""          # relative to the worktree root
-    mtime: float = 0.0
+    mtime: float = 0.0      # only read for a changed file; 0 for the rest
+    changed: bool = False   # git says this one differs from the last commit
 
 
 @dataclass
 class Worktree:
-    """A worktree's root, and the files in it worth reading."""
+    """A worktree's root, and the files in it."""
 
     root: str = ""
     files: list[FileEntry] = field(default_factory=list)
+    total: int = 0          # before the list was cut to FILES_SHOWN
 
 
-def file_order(entry: FileEntry) -> tuple[int, float, str]:
-    """PLAN.md, CLAUDE.md and README.md first, then the newest change first."""
-    rank = PINNED_FILES.index(entry.path) if entry.path in PINNED_FILES else len(PINNED_FILES)
-    return (rank, -entry.mtime, entry.path)
+@dataclass
+class FileText:
+    """One file's content, as the page gets it."""
+
+    text: str = ""
+    mtime: float = 0.0
+    binary: bool = False
+
+
+def file_order(entry: FileEntry) -> tuple[int, int, float, str]:
+    """The order of the list before anyone types.
+
+    Three tiers. PLAN.md, CLAUDE.md and README.md first, because they say what
+    the work is. Then whatever the agent has changed, newest first, because
+    that is the question this tool exists to answer. Then the rest by name.
+    Typing replaces all of this with how well a name matches.
+    """
+    if entry.path in PINNED_FILES:
+        return (0, PINNED_FILES.index(entry.path), 0.0, entry.path)
+    if entry.changed:
+        return (1, 0, -entry.mtime, entry.path)
+    return (2, 0, 0.0, entry.path)
+
+
+def changed_files(cwd: str, runner: Callable[..., str | None] = run) -> set[str]:
+    """The files git says differ from the last commit, untracked ones included.
+
+    `-z` gives one NUL-terminated record per file: two status letters, a
+    space, then the name. A rename carries the old name as a second record,
+    which is the name we want no more than the new one, so both are kept.
+    """
+    out = runner(["git", "-C", cwd, "status", "--porcelain", "-z",
+                  "--untracked-files=all"])
+    names = set()
+    for record in (out or "").split("\0"):
+        if len(record) > 3:
+            names.add(record[3:])
+        elif record:
+            names.add(record)   # the second half of a rename: a bare name
+    return names
 
 
 def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktree:
-    """The Markdown files in a worktree, in the order the tab shows them.
+    """Every file in a worktree, in the order the tab shows them.
 
     `git ls-files` gives what git tracks; asked a second way it gives the
     untracked files that .gitignore does not cover. A file git ignores is
-    build output, so it is left out. `-z` separates the names with a NUL,
-    which is the only separator a file name cannot hold.
+    build output, so it is left out; nothing else is. `-z` separates the names
+    with a NUL, which is the only separator a file name cannot hold.
+
+    Only a changed file is stat'ed. A repository holds tens of thousands of
+    files and tens of changed ones, and the modification time is only read to
+    sort those few — asking the disk about every file, every poll, would cost
+    far more than the answer is worth.
     """
     tree = Worktree()
     if not cwd or not os.path.isdir(cwd):
@@ -1353,15 +1403,18 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktre
     listed = runner(["git", "-C", tree.root, "ls-files", "-z"])
     if listed:
         names.update(name for name in listed.split("\0") if name)
-    for name in names:
-        if os.path.splitext(name)[1].lower() not in MARKDOWN_SUFFIXES:
-            continue
-        try:
-            info = os.stat(os.path.join(tree.root, name))
-        except OSError:
-            continue        # listed but since deleted, or a link with no target
-        tree.files.append(FileEntry(path=name, mtime=info.st_mtime))
+    touched = changed_files(tree.root, runner)
+    for name in sorted(names):
+        entry = FileEntry(path=name, changed=name in touched)
+        if entry.changed or name in PINNED_FILES:
+            try:
+                entry.mtime = os.stat(os.path.join(tree.root, name)).st_mtime
+            except OSError:
+                continue    # listed but since deleted, or a link with no target
+        tree.files.append(entry)
     tree.files.sort(key=file_order)
+    tree.total = len(tree.files)
+    del tree.files[FILES_SHOWN:]
     return tree
 
 
@@ -1376,33 +1429,58 @@ def untracked_files(cwd: str, runner: Callable[..., str | None] = run) -> list[s
     return sorted(name for name in (listed or "").split("\0") if name)
 
 
+def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) -> bool:
+    """True when git offers this exact name: tracked, or untracked and not
+    ignored. It is the same question the listing answers, asked about one name
+    so that reading a file does not cost a walk of the whole repository.
+
+    git reads what follows `--` as a pathspec, never as an option, and the
+    answer has to come back spelled exactly as it was asked for. A pathspec
+    that climbs out of the worktree makes git fail, and one holding a glob or
+    a `:(magic)` prefix matches other names than the one it was given — so
+    neither can pass this.
+    """
+    if not wanted:
+        return False
+    out = runner(["git", "-C", cwd, "ls-files", "-z", "--cached", "--others",
+                  "--exclude-standard", "--", wanted])
+    return wanted in (out or "").split("\0")
+
+
 def read_worktree_file(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run
-) -> str | None:
-    """The text of one file the Files tab offered, or None.
+) -> FileText | None:
+    """One file's content, or None.
 
-    The name comes from the page, so it is input, not fact. It has to be one of
-    the names the listing holds, and the file it points at has to stay inside
-    the worktree once every link is followed. Those two checks together cover
+    The name comes from the page, so it is input, not fact. It has to be a
+    name git itself offers, and the file it points at has to stay inside the
+    worktree once every link is followed. Those two checks together cover
     `..`, an absolute path and a symbolic link out of the tree, without having
     to guess at each of them. See PLAN.md section 4.4.1.
     """
-    tree = worktree_files(cwd, runner)
-    if not any(one.path == wanted for one in tree.files):
+    root = runner(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
+    if not root or not root.strip():
         return None
-    target = inside(tree.root, Path(tree.root) / wanted)
+    root = root.strip()
+    if not is_listed(root, wanted, runner):
+        return None
+    target = inside(root, Path(root) / wanted)
     if target is None:
         return None
     try:
         if not target.is_file():
             return None
+        found = FileText(mtime=target.stat().st_mtime)
         raw = target.read_bytes()
     except OSError:
         return None
-    text = raw[:FILE_MAX_BYTES].decode("utf-8", "replace")
+    if b"\0" in raw[:BINARY_SNIFF]:
+        found.binary = True
+        return found
+    found.text = raw[:FILE_MAX_BYTES].decode("utf-8", "replace")
     if len(raw) > FILE_MAX_BYTES:
-        text += "\n\n*The rest of this file is not shown.*\n"
-    return text
+        found.text += "\n\n… the rest of this file is not shown.\n"
+    return found
 
 
 @dataclass
@@ -2191,6 +2269,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
                 return
             tree = worktree_files(session.cwd)
             self.reply_json({"id": session_id, "root": tree.root,
+                             "total": tree.total,
                              "files": [asdict(one) for one in tree.files]})
 
         def file(self, session_id: str, query: dict[str, list[str]]) -> None:
@@ -2203,7 +2282,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
                 self.reply_json({"id": session_id, "path": wanted,
                                  "missing": "that file is not in this worktree"}, 404)
                 return
-            self.reply_json({"id": session_id, "path": wanted, "text": found})
+            self.reply_json(dict(asdict(found), id=session_id, path=wanted))
 
         def diff(self, session_id: str, query: dict[str, list[str]]) -> None:
             session = self.known(session_id)
@@ -2987,6 +3066,17 @@ body:not(.show-thinking) .thinking { display: none; }
   padding: 12px 14px 4px; font-size: 11px; letter-spacing: .08em;
   text-transform: uppercase; color: var(--ink-faint);
 }
+.filelist button.touched .name::after {
+  content: "\25cf"; margin-left: 6px; color: var(--needs); font-size: 9px;
+  vertical-align: middle;
+}
+.filelist .lit { color: var(--needs-warm); font-weight: 600; }
+.filelist button.chosen .lit { color: var(--needs); }
+.filebody pre.plain {
+  margin: 0; padding: 12px 14px; border-radius: 6px; background: var(--code);
+  border: 1px solid var(--edge); color: var(--code-ink); font-family: var(--mono);
+  font-size: 12.5px; line-height: 1.6; white-space: pre; overflow-x: auto;
+}
 .filelist .plain { padding: 5px 16px; color: var(--ink-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plus { color: var(--working); }
@@ -3133,8 +3223,11 @@ const state = {
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
   files: [],            // the Files tab listing
+  filesTotal: 0,        // how many the worktree holds, before the list was cut
+  listTick: 0,          // turns left before the listing is asked for again
   file: null,           // the file it shows
   fileText: "",
+  fileBinary: false,
   fileMtime: 0,         // which version of that text is loaded
   diff: null,
   diffRaw: "",          // the last answer, as it arrived, to compare against
@@ -3497,12 +3590,10 @@ function blockText(block) {
     .filter(Boolean).join(" ").toLowerCase();
 }
 
-function hit(text) {
-  return !state.find || String(text).toLowerCase().includes(state.find);
-}
-
 function matches(block) {
-  return hit(blockText(block));
+  // The transcript is prose, so it is searched for what you typed, not for
+  // the letters of it scattered about. File names are matched by `fuzzy`.
+  return !state.find || blockText(block).includes(state.find);
 }
 
 // Wrap every occurrence of the search in <mark>. It walks text nodes, so a
@@ -3644,21 +3735,101 @@ function fresh(box, which, key) {
   return true;
 }
 
+// --- finding a file by typing ----------------------------------------------
+
+// How many names are drawn at once. The rest are found by typing, which is
+// the point: a list of ten thousand buttons helps nobody and is slow to build.
+const NAMES_SHOWN = 300;
+
+// Which files are Markdown, and so get rendered rather than shown as they are.
+const MARKDOWN = /\.(md|markdown)$/i;
+
+// The letters you type have to turn up in the name in that order, but they do
+// not have to be next to each other: `tsfi` finds `tests/test_files.py`. This
+// is what a file picker in an editor does, and typing three letters beats
+// scrolling a list every time.
+//
+// The score decides the order. A run of letters counts for much more than the
+// same letters scattered, the start of a path segment or a word counts extra,
+// and so does the file's own name over the directories above it.
+function fuzzy(text, query) {
+  const lower = text.toLowerCase();
+  const at = [];
+  let score = 0;
+  let from = 0;
+  let run = 0;
+  const base = lower.lastIndexOf("/") + 1;
+  for (const want of query) {
+    const found = lower.indexOf(want, from);
+    if (found < 0) return null;
+    run = (found === from && at.length) ? run + 1 : 0;
+    score += 10 + run * 14;
+    const before = found ? lower[found - 1] : "/";
+    if ("/-_. ".includes(before)) score += 10;
+    if (found >= base) score += 6;
+    score -= Math.min(found - from, 12);      // letters it had to step over
+    at.push(found);
+    from = found + 1;
+  }
+  return { score: score - lower.length / 50, at };
+}
+
+// The files to show, best match first. With nothing typed the order is the
+// one the daemon sent: the named files, then what the agent changed.
+function pick(entries) {
+  if (!state.find) return entries.map((one) => ({ one, at: [] }));
+  const found = [];
+  for (const one of entries) {
+    const got = fuzzy(one.path, state.find);
+    if (got) found.push({ one, at: got.at, score: got.score });
+  }
+  found.sort((a, b) => b.score - a.score);
+  return found;
+}
+
+// The name, with the letters that matched picked out. Every piece is a text
+// node, so a file name is never read as markup.
+function putName(parent, text, at) {
+  const node = put(parent, "span", "name");
+  let done = 0;
+  for (const index of at) {
+    if (index > done) {
+      node.appendChild(document.createTextNode(text.slice(done, index)));
+    }
+    put(node, "b", "lit", text[index]);
+    done = index + 1;
+  }
+  if (done < text.length) {
+    node.appendChild(document.createTextNode(text.slice(done)));
+  }
+  return node;
+}
+
 function drawFiles(box) {
   const [list, pane] = split(box, "files", "filebody");
-  const listed = state.files.filter((one) => hit(one.path));
+  const found = pick(state.files);
+  const listed = found.slice(0, NAMES_SHOWN);
 
   // The sidebar shows names, so only the names decide whether it is redrawn.
   // Folding the mtimes in here is what used to re-render the open document.
-  if (fresh(box, "listKey", JSON.stringify([listed.map((one) => one.path), state.file]))) {
+  if (fresh(box, "listKey", JSON.stringify(
+      [listed.map((hit_) => hit_.one.path), state.file, found.length]))) {
     list.replaceChildren();
-    for (const one of listed) {
-      const button = put(list, "button", state.file === one.path ? "chosen" : "");
+    for (const { one, at } of listed) {
+      const button = put(list, "button",
+                         (state.file === one.path ? "chosen" : "") +
+                         (one.changed ? " touched" : ""));
       button.type = "button";
       button.title = one.path;
-      markHits(put(button, "span", "name", one.path), state.find);
+      putName(button, one.path, at);
       button.addEventListener("click", () => chooseFile(one.path));
     }
+    const total = state.filesTotal || state.files.length;
+    if (found.length > listed.length || total > state.files.length) {
+      put(list, "div", "plain",
+          listed.length + " of " + Math.max(found.length, total) + " — type to narrow");
+    }
+    if (state.find && !found.length) put(list, "div", "plain", "no name matches");
   }
 
   const same = (box.dataset.bodyKey || "").split("\n")[0] === String(state.file);
@@ -3668,18 +3839,27 @@ function drawFiles(box) {
   if (!state.file) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, state.files.length
-      ? "Pick a file on the left."
-      : "This worktree holds no Markdown that git knows about.");
+      ? "Pick a file on the left, or type to find one."
+      : "This worktree holds no file that git knows about.");
     return;
   }
   put(pane, "div", "where", state.file);
-  markdown(pane, state.fileText);
+  if (state.fileBinary) {
+    put(pane, "div", "note", "Binary file. There is nothing to show.");
+  } else if (MARKDOWN.test(state.file)) {
+    markdown(pane, state.fileText);
+  } else {
+    // Not prose, so it is shown as it is. textContent, and no highlighting:
+    // PLAN.md rules a syntax highlighter out of the first version.
+    put(pane, "pre", "plain", state.fileText);
+  }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
 
 function forgetFile(path) {
   state.file = path;
   state.fileText = "";
+  state.fileBinary = false;
   state.fileMtime = 0;
 }
 
@@ -3706,7 +3886,7 @@ function drawDiff(box) {
   const report = state.diff || { sections: [], untracked: [] };
   let shown = 0;
   for (const section of report.sections) {
-    const files = (section.files || []).filter((one) => hit(one.path));
+    const files = (section.files || []).filter((one) => fuzzy(one.path, state.find));
     if (!files.length) continue;
     shown += files.length;
     put(list, "div", "head", section.title);
@@ -3716,7 +3896,7 @@ function drawDiff(box) {
       const button = put(list, "button");
       button.type = "button";
       button.title = one.path;
-      markHits(put(button, "span", "name", one.path), state.find);
+      putName(button, one.path, (fuzzy(one.path, state.find) || {}).at || []);
       putCounts(put(button, "span", "counts"), one);
       button.addEventListener("click",
                               () => node.scrollIntoView({ block: "start" }));
@@ -3831,6 +4011,7 @@ function showTab(name) {
   }
   $("find").placeholder = (name === "transcript" ? "find in transcript  /"
                                                  : "find a file  /");
+  state.listTick = 0;       // a tab just opened wants the listing now
   load();
   resubscribe();
 }
@@ -3855,6 +4036,8 @@ function choose(id) {
   state.open.clear();
   forgetFile(null);
   state.files = [];
+  state.filesTotal = 0;
+  state.listTick = 0;
   state.diff = null;
   state.diffRaw = "";
   state.diffAt += 1;
@@ -3905,21 +4088,32 @@ async function loadTranscript() {
 
 async function loadFiles() {
   const want = state.chosen;
-  const body = await ask(want, "files");
-  if (!body || state.chosen !== want) return;
-  state.files = body.files || [];
-  if (!state.files.some((one) => one.path === state.file)) {
-    forgetFile(state.files.length ? state.files[0].path : null);
+  // A name appears or goes when a file is created or deleted, which is rare.
+  // The file you are reading changes while you read it. So the listing is
+  // asked for every fifth turn and the open file every turn.
+  if (state.listTick <= 0) {
+    const body = await ask(want, "files");
+    if (!body || state.chosen !== want) return;
+    state.listTick = 5;
+    state.files = body.files || [];
+    state.filesTotal = body.total || state.files.length;
+    if (!state.files.some((one) => one.path === state.file)) {
+      forgetFile(state.files.length ? state.files[0].path : null);
+    }
   }
-  // Only a file whose mtime moved is read again, so the tab keeps its place
-  // in a file the agent has not touched.
-  const shown = state.files.find((one) => one.path === state.file);
-  if (shown && shown.mtime !== state.fileMtime) {
-    const text = await ask(want, "file",
-                           "?path=" + encodeURIComponent(shown.path));
-    if (!text || state.chosen !== want || state.file !== shown.path) return;
-    state.fileText = text.text || text.missing || "";
-    state.fileMtime = shown.mtime;
+  state.listTick -= 1;
+
+  if (state.file) {
+    const body = await ask(want, "file",
+                           "?path=" + encodeURIComponent(state.file));
+    if (!body || state.chosen !== want) return;
+    // Only a file whose mtime moved is drawn again, so the tab keeps your
+    // place in a file the agent has not touched.
+    if (body.mtime !== state.fileMtime) {
+      state.fileText = body.text || body.missing || "";
+      state.fileBinary = !!body.binary;
+      state.fileMtime = body.mtime || 0;
+    }
   }
   draw();
 }

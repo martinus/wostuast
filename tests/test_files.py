@@ -23,10 +23,12 @@ def seeded(repo):
 # --- the listing -------------------------------------------------------------
 
 
-def test_only_markdown_is_listed(ws, seeded):
+def test_every_file_is_listed_whatever_its_kind(ws, seeded):
     tree = ws.worktree_files(str(seeded))
     assert tree.root == str(seeded)
-    assert sorted(one.path for one in tree.files) == ["README.md", "notes.md"]
+    assert sorted(one.path for one in tree.files) == [
+        "README.md", "code.py", "notes.md"]
+    assert tree.total == 3
 
 
 def test_an_untracked_file_is_listed(ws, seeded):
@@ -41,16 +43,50 @@ def test_an_ignored_file_is_not_listed(ws, seeded):
     (seeded / "build" / "out.md").write_text("# out\n")
     paths = [one.path for one in ws.worktree_files(str(seeded)).files]
     assert "build/out.md" not in paths
+    assert ".gitignore" in paths
 
 
-def test_the_named_files_come_first_then_the_newest(ws, seeded):
+def test_the_named_files_come_first(ws, seeded):
     (seeded / "PLAN.md").write_text("# plan\n")
     (seeded / "CLAUDE.md").write_text("# claude\n")
-    # notes.md is touched last, so it beats README.md on age but not on name.
-    os.utime(seeded / "notes.md", (2_000_000_000, 2_000_000_000))
     paths = [one.path for one in ws.worktree_files(str(seeded)).files]
     assert paths[:3] == ["PLAN.md", "CLAUDE.md", "README.md"]
-    assert paths[3] == "notes.md"
+
+
+def test_a_changed_file_comes_before_an_untouched_one(ws, seeded):
+    """The question this tool exists to answer is what the agent just did, so
+    what it touched sorts above the rest of the repository."""
+    (seeded / "a-first-by-name.txt").write_text("quiet\n")
+    git(seeded, "add", "."), git(seeded, "commit", "-qm", "quiet")
+    (seeded / "notes.md").write_text("# notes\n\ntouched\n")
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
+    assert paths[0] == "README.md"          # pinned, so it still wins
+    assert paths[1] == "notes.md"           # changed
+    assert "a-first-by-name.txt" in paths[2:]
+
+
+def test_the_newest_change_leads_the_changed_files(ws, seeded):
+    (seeded / "notes.md").write_text("# notes\n\nfirst\n")
+    (seeded / "code.py").write_text("print(2)\n")
+    os.utime(seeded / "code.py", (2_000_000_000, 2_000_000_000))
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
+    assert paths[:3] == ["README.md", "code.py", "notes.md"]   # pinned, then newest
+
+
+def test_a_changed_file_says_so(ws, seeded):
+    (seeded / "notes.md").write_text("# notes\n\ntouched\n")
+    changed = {one.path: one.changed for one in ws.worktree_files(str(seeded)).files}
+    assert changed["notes.md"] is True
+    assert changed["code.py"] is False
+
+
+def test_a_very_large_repository_is_cut_but_counted(ws, seeded, monkeypatch):
+    monkeypatch.setattr(ws, "FILES_SHOWN", 2)
+    for index in range(6):
+        (seeded / f"f{index}.txt").write_text("x")
+    tree = ws.worktree_files(str(seeded))
+    assert len(tree.files) == 2
+    assert tree.total == 9
 
 
 def test_a_pinned_name_deeper_in_the_tree_is_not_pinned(ws, seeded):
@@ -73,7 +109,7 @@ def test_a_missing_directory_lists_nothing(ws):
 def test_a_listed_file_that_was_deleted_is_skipped(ws, seeded):
     (seeded / "notes.md").unlink()
     paths = [one.path for one in ws.worktree_files(str(seeded)).files]
-    assert paths == ["README.md"]
+    assert paths == ["README.md", "code.py"]
 
 
 def test_a_worktree_lists_its_own_files(ws, seeded, tmp_path):
@@ -89,11 +125,41 @@ def test_a_worktree_lists_its_own_files(ws, seeded, tmp_path):
 
 
 def test_a_listed_file_is_read(ws, seeded):
-    assert ws.read_worktree_file(str(seeded), "README.md") == "# readme\n\nhello\n"
+    found = ws.read_worktree_file(str(seeded), "README.md")
+    assert found.text == "# readme\n\nhello\n"
+    assert found.binary is False
+    assert found.mtime > 0
 
 
-def test_a_file_outside_the_listing_is_refused(ws, seeded):
-    assert ws.read_worktree_file(str(seeded), "code.py") is None
+def test_a_file_that_is_not_markdown_is_read_too(ws, seeded):
+    assert ws.read_worktree_file(str(seeded), "code.py").text == "print(1)\n"
+
+
+def test_a_binary_file_is_named_rather_than_shown(ws, seeded):
+    (seeded / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\0\0\0binary")
+    found = ws.read_worktree_file(str(seeded), "logo.png")
+    assert found.binary is True
+    assert found.text == ""
+
+
+def test_a_file_git_ignores_is_refused(ws, seeded):
+    (seeded / ".gitignore").write_text("secret.txt\n")
+    (seeded / "secret.txt").write_text("shh\n")
+    assert ws.read_worktree_file(str(seeded), "secret.txt") is None
+
+
+def test_a_pathspec_that_matches_another_name_is_refused(ws, seeded):
+    """git reads the name as a pathspec, so a glob would match real files. The
+    answer has to come back spelled exactly as it was asked for."""
+    assert ws.read_worktree_file(str(seeded), "*.py") is None
+    assert ws.read_worktree_file(str(seeded), ":(glob)**/*.md") is None
+
+
+def test_a_file_git_does_not_know_is_refused(ws, seeded):
+    (seeded / ".gitignore").write_text("build/\n")
+    (seeded / "build").mkdir()
+    (seeded / "build" / "out.txt").write_text("out\n")
+    assert ws.read_worktree_file(str(seeded), "build/out.txt") is None
 
 
 def test_a_path_that_climbs_out_is_refused(ws, seeded, tmp_path):
@@ -120,14 +186,14 @@ def test_a_link_that_leaves_the_worktree_is_refused(ws, seeded, tmp_path):
 def test_a_long_file_is_cut(ws, seeded, monkeypatch):
     monkeypatch.setattr(ws, "FILE_MAX_BYTES", 20)
     (seeded / "notes.md").write_text("x" * 100)
-    found = ws.read_worktree_file(str(seeded), "notes.md")
+    found = ws.read_worktree_file(str(seeded), "notes.md").text
     assert found.startswith("x" * 20)
     assert "not shown" in found
 
 
 def test_bytes_that_are_not_utf8_do_not_raise(ws, seeded):
     (seeded / "notes.md").write_bytes(b"# notes \xff\xfe\n")
-    assert "# notes" in ws.read_worktree_file(str(seeded), "notes.md")
+    assert "# notes" in ws.read_worktree_file(str(seeded), "notes.md").text
 
 
 # --- parsing a diff ----------------------------------------------------------

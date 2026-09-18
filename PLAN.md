@@ -195,10 +195,11 @@ crash the daemon.
   - `GET /api/events` → Server-Sent Events. Push `session` updates and
     `transcript` deltas for the session the client watches.
   - `GET /api/session/<id>/transcript` → parsed transcript as JSON blocks.
-  - `GET /api/session/<id>/files` → Markdown files in the worktree, with the
-    mtime of each.
-  - `GET /api/session/<id>/file?path=…` → one file's text (the path must be
-    one the listing offered, and must stay inside the worktree).
+  - `GET /api/session/<id>/files` → every file in the worktree, each marked
+    with whether git says it changed.
+  - `GET /api/session/<id>/file?path=…` → one file's text, mtime and whether
+    it is binary. The path must be a name git itself offers, and must stay
+    inside the worktree.
   - `GET /api/session/<id>/diff` → parsed diff as JSON.
   - `GET /api/session/<id>/peek` → captured pane text.
   - `POST /api/session/<id>/jump`, `POST /api/session/<id>/send`
@@ -236,10 +237,12 @@ terminal, so the page is not an ordinary local page.
 4. **`<id>` in a route is a dictionary key, never a path component.** Only
    `path=` is ever joined to a directory, and only through the one confinement
    function section 8 tests. That function does not try to spot a bad path: it
-   requires the name to be one the listing itself offered, and then requires
-   the resolved file to sit inside the worktree. The first check rules out
-   `..` and an absolute path; the second rules out a symbolic link that git
-   tracks and that points somewhere else.
+   asks git whether it offers that exact name, and then requires the resolved
+   file to sit inside the worktree. The first check rules out `..`, an
+   absolute path, an ignored file and a pathspec glob — git reads the name
+   after `--`, so it can never be an option, and a glob comes back spelled
+   differently from what was asked for. The second rules out a symbolic link
+   that git tracks and that points somewhere else.
 
 ### 4.5 The tmux verbs
 
@@ -279,10 +282,28 @@ file on every change.
 
 ### 4.7 Files tab
 
-List `*.md` in the worktree: `git ls-files` plus untracked files not ignored.
-Sort with `PLAN.md`, `CLAUDE.md`, `README.md` first, then most recently
-modified. Render the selected file as Markdown. Reload it when its mtime
+List every file in the worktree: `git ls-files` plus untracked files not
+ignored. Not Markdown only — you want to read the code the agent is writing,
+not just the notes around it.
+
+Find a file by typing, the way an editor's file picker does: the letters have
+to turn up in the name in that order, but not next to each other, and the best
+match sorts to the top. A run of letters, the start of a path segment and the
+file's own name all score higher. The letters that matched are picked out in
+the name.
+
+Before anything is typed the order is three tiers: `PLAN.md`, `CLAUDE.md` and
+`README.md`, then whatever the agent has changed with the newest first, then
+the rest by name. A changed file carries a dot.
+
+Render a Markdown file as Markdown and anything else as it is, in a monospace
+block, with no syntax highlighting. A file with a NUL byte near the start is
+binary; say so rather than showing it. Reload the open file when its mtime
 changes and keep the scroll position.
+
+Only a changed file is stat'ed. A repository holds tens of thousands of files
+and tens of changed ones, so asking the disk about every file on every poll
+would cost far more than the answer is worth.
 
 ### 4.8 Diff tab
 
@@ -484,7 +505,8 @@ words. The first screenshot is the Transcript tab with one session in
 | Markdown in the browser | The browser is the best Markdown renderer available; Python stdlib has none. |
 | Own diff renderer | Small, matches the design, no vendored library besides `marked`. |
 | The Files and Diff tabs poll from the browser | Pushing them would need the daemon to know which tab each browser is on, and to remember what it last sent. Both tabs ask git for the whole answer anyway, so a request is the same work as a push. |
-| The Files tab lists Markdown only | It renders prose. A source file belongs in the Diff tab, where the change is what matters. |
+| The Files tab lists every file | Reading only the notes around the work is not reading the work. Markdown renders as Markdown, everything else as it is. |
+| Finding a file is fuzzy, finding text is not | A path is a handle you half remember, so scattered letters should find it. Prose is read, so a search over it means what you typed. |
 | Untracked files are named, not diffed | `git diff` shows nothing for them. Naming them is honest and costs one command; diffing each against nothing costs one command per file. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |
 | No gra dependency | Works for any worktree layout; a `repo/dir` label is all gra would add. |

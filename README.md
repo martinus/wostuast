@@ -177,11 +177,22 @@ on your behalf. Jump, send and peek arrive in milestone 4.
 
 **Transcript** is what the agent said and did, as it happens.
 
-**Files** lists the Markdown in the worktree — what git tracks, plus anything
-untracked that `.gitignore` does not cover — and renders the one you pick.
-`PLAN.md`, `CLAUDE.md` and `README.md` come first; the rest follow, newest
-change first. A file the agent edits is read again within a couple of seconds,
-and you keep your place in it.
+**Files** lists every file in the worktree — what git tracks, plus anything
+untracked that `.gitignore` does not cover.
+
+Type to find one, the way an editor's file picker does: the letters have to
+turn up in the name in that order, but not next to each other, so `tsfi` finds
+`tests/test_files.py`. The best match sorts to the top and the letters that
+matched are picked out. Press `/` to get to the box, `Esc` to clear it.
+
+Before you type, the order is `PLAN.md`, `CLAUDE.md` and `README.md`, then
+whatever the agent has changed with the newest first, then the rest by name.
+A changed file carries a dot.
+
+A Markdown file is rendered; anything else is shown as it is, without syntax
+highlighting. A binary file is named, not shown. The open file is read again
+within a couple of seconds of the agent changing it, and you keep your place
+in it.
 
 **Diff** shows the change in two halves: what the branch has committed against
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file
