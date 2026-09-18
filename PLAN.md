@@ -45,7 +45,11 @@ Do not build these. If a feature needs one of them, leave the feature out.
   standing in a directory". Nothing more.
 - Do not use Electron, Tauri, React, or a build step.
 - Do not add Python dependencies beyond the standard library (3.10+).
-  JavaScript libraries are allowed only when vendored into the single file.
+- Do not vendor a JavaScript library into the single file. The two the page
+  uses, `marked` and `highlight.js`, are fetched from a CDN and pinned by the
+  hash of their bytes. Each must degrade to something readable when it does
+  not arrive: Markdown is written to be read as plain text, and code reads
+  well enough without colour.
 
 ## 4. How it works
 
@@ -75,7 +79,7 @@ Nothing fires when you answer the dialog. Saying No sends no hook at all, so
 wostuast cannot see a denial: the session keeps `needs_you`, which is still
 true, because the agent is now waiting for you to say what to do instead. Only
 the reason on the row is older than it looks. Do not invent an event that does
-not exist; the Peek tab in milestone 4 is what settles "waiting for what".
+not exist; the Peek tab in milestone 5 is what settles "waiting for what".
 
 `PermissionRequest` can decide a permission: Claude Code reads a decision out
 of the hook's stdout. wostuast prints nothing, which means no decision, and the
@@ -195,8 +199,12 @@ crash the daemon.
   - `GET /api/events` → Server-Sent Events. Push `session` updates and
     `transcript` deltas for the session the client watches.
   - `GET /api/session/<id>/transcript` → parsed transcript as JSON blocks.
-  - `GET /api/session/<id>/files` → every file in the worktree, each marked
-    with whether git says it changed.
+  - `GET /api/session/<id>/files[?have=<tag>]` → every file in the worktree.
+    The names come as one newline-joined string with a tag, and the changed
+    ones come as a short list of their own. A request carrying the tag the
+    daemon still holds gets that tag and the changed files back, and no
+    names. The daemon keeps the listing between requests, because listing a
+    large repository costs git real time.
   - `GET /api/session/<id>/file?path=…` → one file's text, mtime and whether
     it is binary. The path must be a name git itself offers, and must stay
     inside the worktree.
@@ -238,12 +246,16 @@ terminal, so the page is not an ordinary local page.
    `path=` is ever joined to a directory, and only through the one confinement
    function section 8 tests. That function does not try to spot a bad path: it
    asks git whether it offers that exact name, and then requires the resolved
-   file to sit inside the worktree. The first check rules out `..`, an
-   absolute path and an ignored file — git reads the name after `--` as a
-   pathspec, never as an option, `:(literal)` in front of it stops the name
-   meaning anything but itself, and the answer still has to come back spelled
-   exactly as it was asked for. The second rules out a symbolic link that git
-   tracks and that points somewhere else.
+   file to sit inside the worktree. The first check rules out `..` and an
+   absolute path — git reads the name after `--` as a pathspec, never as an
+   option, `:(literal)` in front of it stops the name meaning anything but
+   itself, and the answer still has to come back spelled exactly as it was
+   asked for. The second rules out a symbolic link that git tracks and that
+   points somewhere else. An ignored file, which the Files tab now lists, is
+   offered by a second question of exactly the same shape — `--others
+   --ignored`, the same `--`, the same `:(literal)`, the same comparison —
+   asked only when the first says no. Two exact questions, never one clever
+   pattern.
 
 ### 4.5 The tmux verbs
 
@@ -283,55 +295,107 @@ file on every change.
 
 ### 4.7 Files tab
 
-List every file in the worktree: `git ls-files` plus untracked files not
-ignored. Not Markdown only — you want to read the code the agent is writing,
-not just the notes around it.
+**It lists every file.** What `git ls-files` tracks, plus untracked files that
+.gitignore does not cover, plus ignored files that sit outside an ignored
+directory. An ignored directory — `build`, `node_modules`, `.venv` — is one
+entry in the tree, read from disk only when you open it. Walking it to name a
+quarter of a million object files would cost more than any answer inside it.
+A generated file next to its sources is the ignored file people look for, and
+that one is listed like any other.
 
-Find a file by typing, in a box directly above the list, the way an editor's
-file picker does: the letters have to turn up in the name in that order, but
-not next to each other, and the best match sorts to the top. A run of letters, the start of a path segment and the
-file's own name all score higher. The letters that matched are picked out in
-the name.
+**The browser searches every name.** The first version sent the first five
+thousand names and let the browser search those. In a repository of 52,799
+files, typing `libcorrelation` found 16 files and missed more than a
+thousand, because the thousand were never sent. A search that can only see
+part of the list is not a search. Either the browser holds every name or the
+tab says plainly that it does not.
 
-Before anything is typed the order is three tiers: `PLAN.md`, `CLAUDE.md` and
-`README.md`, then whatever the agent has changed with the newest first, then
-the rest by name. A changed file carries a dot.
+**The daemon keeps the list; it is sent once.** Listing a large repository
+costs git real time, so the daemon lists it at most every few seconds and
+keeps the answer. The names go to the browser as one newline-joined string
+with a tag. The browser asks with the tag it already has, and an unchanged
+listing answers with that tag and the changed files alone. Typing then costs
+nothing at all, and a poll costs a few hundred bytes instead of a few hundred
+kilobytes.
 
-Render a Markdown file as Markdown and anything else as it is, in a monospace
-block, with no syntax highlighting. A file with a NUL byte near the start is
-binary; say so rather than showing it. Reload the open file when its mtime
-changes and keep the scroll position.
+**git failing must never read as an empty worktree.** The listing ran under
+the same two second timeout as every other git call. Two seconds is not
+enough for `ls-files` and `status` over fifty thousand files, so the call
+returned nothing, and nothing rendered as "this worktree holds no file that
+git knows about" — sometimes on opening the tab, sometimes not, which is what
+made it look random. The listing gets the timeout a large repository needs,
+and a timeout says it timed out. This is the same bug as a failed diff
+reading as "nothing changed".
 
-Only a changed file is stat'ed. A repository holds tens of thousands of files
-and tens of changed ones, so asking the disk about every file on every poll
-would cost far more than the answer is worth. For the same reason the open
-file is asked for on every poll and the listing on every other one.
+**A tree, until you type.** With nothing typed the left column is a directory
+tree: directories collapsed, the path to the open file expanded, `PLAN.md`,
+`CLAUDE.md` and `README.md` at the top, a changed file marked with a dot and
+the directories above it marked too. A tree is how you read an unfamiliar
+repository, and it also cures the long names: the indent carries the
+directory, so a row only has to show the last part.
 
-Everything works from the top of the worktree, never from the agent's own
-directory. git reports a diff with root-relative paths whatever directory it
-ran in, so a session standing in a subdirectory would otherwise get a file
-list and a diff that do not agree.
+Typing replaces the tree with a flat list of matches, best first. The letters
+have to turn up in the path in that order but not next to each other, a run
+of letters counts for far more than the same letters scattered, the start of
+a path segment and the file's own name count extra, and the letters that
+matched are picked out. A long path in the flat list is cut at the front, not
+the end: the end is the part you were looking for.
+
+**Only what is on screen is built.** Rows are one height, so the list builds
+the rows in view and a little either side and moves that window as it
+scrolls. Ten thousand matches then cost the same as ten, and no answer has to
+be cut to keep the page quick.
+
+**Reading a file.** Markdown renders as Markdown. Everything else is
+monospace text with syntax highlighting, set on the page itself — no box, no
+border, no second background. The border made a shell script look like a
+quotation inside a document that was not there, while a Markdown file, which
+has no border, looked right.
+
+**Only a changed file is stat'ed.** A repository holds tens of thousands of
+files and tens of changed ones. The modification time is read to sort those
+few and to know when to read the open file again; asking the disk about every
+file, every poll, would cost far more than the answer is worth.
+
+**Everything works from the top of the worktree, never from the agent's own
+directory.** git reports a diff with paths relative to the root whatever
+directory it ran in, so a session standing in a subdirectory would otherwise
+get a file list and a diff that do not agree.
 
 ### 4.8 Diff tab
 
 Base = `origin/HEAD` if it exists, else `main`, else `master`. Show
 `git diff <base>...HEAD` followed by uncommitted changes (`git diff HEAD`),
-in two sections. Parse the unified diff yourself (files, hunks, lines). Render
-with a file list on the left and hunks on the right, like the mockup. No
-syntax highlighting in the first version. Large diffs: collapse files over
-500 lines, expand on click.
+in two sections. Parse the unified diff yourself (files, hunks, lines).
+
+The left column is the same column as the Files tab: the same tree, the same
+find box, the same windowed rows. One component, drawn from a different list.
+
+**An untracked file can be selected.** It was named and nothing more, so it
+was the one thing on the tab you could not click. git has no diff for a file
+it does not track, but every line in it is new, so selecting one reads the
+file through the same route the Files tab uses and shows it as one added
+block. That is what the file is: an addition nobody has staged.
+
+Syntax highlighting applies to diff lines as well, under the added and
+removed tints. Large diffs: collapse files over 500 lines, expand on click.
 
 ## 5. The page
 
 One HTML page, embedded in the Python file as a string. Vanilla JavaScript.
-Markdown rendered in the browser with a vendored copy of `marked` (minified,
-pinned version, license header kept). Everything else hand-written.
+Markdown is rendered in the browser by `marked`, fetched and pinned as 5.2
+describes. Everything else is hand-written.
 
 ### 5.1 Layout
 
 Follow `docs/mockups/transcript-tab.html` and `docs/mockups/diff-tab.html`.
 Open them in a browser before you start. They are static HTML with inline
 styles; use them as the visual target, not as code to copy.
+
+Two column edges can be dragged: between the sidebar and the body, and
+between a tab's file column and what it shows. Path names are long, and no
+width chosen here is the right one for every repository. Each width is
+remembered, and a double-click on the edge puts it back.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -349,10 +413,25 @@ styles; use them as the visual target, not as code to copy.
 Sidebar rows, top to bottom: `needs_you` first (oldest wait first), then
 `working`, `done`, `starting`, then `ended`/`dead` dimmed. Each row:
 
-- line 1: state dot, label (`repo/dirname`, monospace), state word
-- line 2: branch, `↑n ↓n`, `● dirty` or `✓ clean`, `n files`
-- line 3: the last event in words, e.g. `permission: Bash cmake --build`,
+- line 1: state dot, `repo/dirname` in bright monospace, state word
+- line 2: the session's own name, smaller and muted, when the status line
+  gave one
+- line 3: branch, `↑n ↓n`, `● dirty` or `✓ clean`, `n files`
+- line 4: the last event in words, e.g. `permission: Bash cmake --build`,
   `editing src/table.cpp`, `stopped 4 min ago`
+
+Where the agent is standing is the headline, and its name comes second. The
+two used to share one string, `name · repo/dirname`, and the name — which
+Claude Code writes from the first prompt, so it is often long and often
+vague — pushed the worktree off the end of the row. The row answers "which
+worktree?" first, because that is the one fact you cannot get anywhere else
+on the page.
+
+Your words and Claude's are told apart at a glance: your turn carries a
+coloured rail down its left edge and a face of its own, Claude's is plain
+prose on the page. Both were bubbles of the same grey, set apart only by a
+small word in a narrow column, and in a long transcript that is not enough
+to find where you last spoke.
 
 ### 5.2 Design
 
@@ -366,8 +445,40 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
   `rgba(107,191,138,.14)` + `#9fe0b8`, removed `rgba(217,119,87,.14)` +
   `#f0a08a`.
 - Fonts: `IBM Plex Mono` for chrome, labels, code; `IBM Plex Sans` for
-  rendered prose. Load from Google Fonts with a `system-ui` /
-  `ui-monospace` fallback stack, so the page still looks right offline.
+  rendered prose; `IBM Plex Sans Condensed` for file names, which are long
+  and which a monospace face wastes room on. Load from Google Fonts with a
+  `system-ui` / `ui-monospace` fallback stack, so the page still looks right
+  offline.
+- Two libraries, both fetched, neither vendored: `marked` renders the
+  transcript and `highlight.js` paints code. Together they are 157 KB against
+  a 175 KB program — the program would be nearly twice the size to carry
+  them, for a one-line install that curls it. The page already fetches its
+  fonts, and already looks right without them. wostuast also watches an agent
+  that cannot run without a network, so a page that wants one costs almost
+  nothing.
+  - **Pinned.** `integrity` holds the hash of the exact bytes, and
+    `crossorigin="anonymous"` is what lets the browser check it. Any script on
+    this page can `POST` to `/send`, which types into your terminal, so an
+    unpinned script from someone else's server would be a way into it. A CDN
+    that has been tampered with gets you the fallback below, never other code.
+    One function adds both tags, so there is one place a hash could go
+    missing.
+  - **Each degrades to something readable.** Without `marked` the transcript
+    is the Markdown source as text, which is what Markdown is for. Without
+    `highlight.js` code is code without colour. Neither ever leaves a tab
+    blank, and a test holds each fallback.
+  - **Asked for at the right moment.** `marked` goes out as the page starts,
+    because the transcript is the tab it opens on, and the transcript is drawn
+    as text first and again as Markdown when it lands. `highlight.js` waits
+    until the first file that is not Markdown is opened, so reading
+    transcripts all day reaches it never.
+  - **Neither is trusted.** Both outputs go into an inert `<template>` and are
+    cut down to an allowlist before they are inserted — elements for
+    `marked`, text and the highlighter's own `span` classes for
+    `highlight.js`. The page does not trust a library more than it trusts the
+    agent.
+  The syntax colours are ours, written against the palette in this section.
+  Their stylesheets are not fetched.
 - No gradients, no shadows except the soft ring on the needs-you dot, no
   icons except a few inline stroke SVGs, no emoji anywhere.
 - Motion: a row that changes state fades its dot (200 ms). A new transcript
@@ -431,7 +542,7 @@ python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/mai
 - Order inside the file: constants, log, event log, session model, git facts,
   status line, settings.json, output helpers, transcript parser, diff parser,
   ANSI converter, tmux verbs, HTTP server, CLI, then the embedded page (HTML,
-  CSS, JS, vendored marked) as the last string constant.
+  CSS, JS) as the last string constant.
 - Every module-level section starts with a comment that says what it does
   in one line.
 - Type hints everywhere. `dataclass` for `Session`, `Event`, `Block`,
@@ -462,6 +573,13 @@ recorded transcript JSONL, a recorded `git diff` output, a recorded
 - status line: the payload is read, the name and context survive, a session id
   never escapes the status directory.
 - git facts: a clean repository, a dirty one, ahead and behind, a worktree.
+- the file listing: every name reaches the page, a tag that has not moved
+  sends no names again, a git call that times out answers "git did not
+  answer" and never an empty list, an ignored file is listed and an ignored
+  directory is one entry.
+- finding a file: a query that matches a thousand names in a repository of
+  fifty thousand returns a thousand, not the first few that fit in a cut
+  list.
 
 The server is tested with `http.client` against a started instance on a
 random port. tmux is not required for tests: the three verbs are one
@@ -476,8 +594,28 @@ Commit at the end of each milestone. Each one leaves a working tool.
 2. **Watch.** `serve`, the page with sidebar and Transcript tab, live over
    SSE. This is the first thing worth a screenshot.
 3. **Read.** Files tab and Diff tab.
-4. **Act.** jump, send, Peek, attention (title, favicon, notification).
-5. **Shine.** Light theme, motion, empty states, keyboard help, README with
+4. **Fit.** The Files and Diff tabs, on a real repository. Milestone 3 was
+   built and judged against this repository, which holds 26 files. The first
+   large one it met — 52,799 files — showed that four things were wrong and
+   four more were cramped. Four stages, in this order, each one leaving a
+   working tool.
+
+   1. **Correct.** The search sees every name, not the first five thousand.
+      git running out of time says so instead of reading as an empty
+      worktree. An untracked file on the Diff tab can be selected. Ignored
+      files are listed. Nothing here is about speed or looks; it is about
+      answers that are wrong today.
+   2. **Fast.** The daemon keeps the listing and sends it once, with a tag.
+      The browser builds only the rows on screen. The tab opens at once on a
+      repository of any size, and typing never waits for the network.
+   3. **Room.** Drag the sidebar edge and the file column edge. File names in
+      a condensed face. No border around a file that is not Markdown.
+   4. **Read.** A directory tree instead of a flat list. Syntax
+      highlighting. Your words told apart from Claude's. The worktree name in
+      front on the sidebar row.
+
+5. **Act.** jump, send, Peek, attention (title, favicon, notification).
+6. **Shine.** Light theme, motion, empty states, keyboard help, README with
    two screenshots and one short GIF, `docs/` in the same plain style as this
    file.
 
@@ -510,17 +648,29 @@ words. The first screenshot is the Transcript tab with one session in
 | Pane id from `$TMUX_PANE` in the hook | No tmux discovery code. Three commands is all the tmux knowledge there is. |
 | Polling instead of inotify | No dependency; scale is ten files. |
 | Markdown in the browser | The browser is the best Markdown renderer available; Python stdlib has none. |
-| Own diff renderer | Small, matches the design, no vendored library besides `marked`. |
+| Own diff renderer | Small, matches the design, and one less library to fetch. |
 | The Files and Diff tabs poll from the browser | Pushing them would need the daemon to know which tab each browser is on, and to remember what it last sent. Both tabs ask git for the whole answer anyway, so a request is the same work as a push. |
 | The Files tab lists every file | Reading only the notes around the work is not reading the work. Markdown renders as Markdown, everything else as it is. |
 | Finding a file is fuzzy, finding text is not | A path is a handle you half remember, so scattered letters should find it. Prose is read, so a search over it means what you typed. |
 | One find box, moved to where it is used | Above the list on a tab that has one, in the tab strip for the transcript. Two boxes would be two values to keep in step, and `/` would have to guess which one it meant. |
-| Untracked files are named, not diffed | `git diff` shows nothing for them. Naming them is honest and costs one command; diffing each against nothing costs one command per file. |
+| An untracked file opens as one added block | `git diff` shows nothing for it, so it was named and left unclickable — the one thing on the tab you could not open. Every line in it is new, and the file route already reads it. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |
 | No gra dependency | Works for any worktree layout; a `repo/dir` label is all gra would add. |
 | Session name and context come from the status line | Hooks do not carry them. The status line payload has `session_name` and `used_percentage`, and costs one small file. |
 | The status line writes one file per session, not events | It runs on every redraw. An append would flood the log with nothing new. |
 | `install` never overwrites an existing status line | The status line is the user's own. wostuast prints the line to add instead. |
+| The browser holds every name, or says it does not | A search over the first five thousand of 52,799 names found 16 files and missed a thousand. A partial search gives a wrong answer and looks like a right one. |
+| The listing is sent once, with a tag | Names change rarely; which files changed moves every few seconds. Sending them together made every poll cost the whole repository. |
+| The listing gets its own timeout | Two seconds fits `git status` in a small worktree and nothing else. A shared timeout is a shared limit, and the tabs do not share a size. |
+| A git failure never renders as an empty answer | "No files" and "git did not answer" look the same and mean opposite things. This was already true of the diff; the listing had the same hole. |
+| An ignored directory is one entry | `node_modules` holds more files than the repository does. Naming it and reading it when opened costs nothing; walking it costs everything. An ignored file outside one is listed like any other, because that is the ignored file people look for. |
+| A tree by default, a flat list while typing | A tree is how you read a repository you do not know, and its indent carries the directory, so a row shows only the last part. A match list has no tree to sit in. |
+| Only the rows on screen are built | Ten thousand buttons cost ten thousand buttons. A window over a fixed row height costs the same for ten matches and ten thousand, so no answer has to be cut to stay quick. |
+| Column widths belong to the reader | Paths are long, screens differ, and the alternative to a drag handle is a config option, which this file prefers to delete. |
+| Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
+| Nothing is vendored | `marked` and `highlight.js` are 157 KB against a 175 KB program. Carrying them would nearly double the file the install one-liner curls, and the page already fetches its fonts. |
+| Both are pinned by hash | Any script on this page can type into your terminal through `/send`. `integrity` means a CDN that has been tampered with gets you the fallback rather than other code. |
+| Both fall back to something readable | Markdown reads as text and code reads without colour, so a page that cannot reach a CDN is degraded, never broken. This is what makes fetching them acceptable at all. |
 
 ## 13. Questions, answered
 

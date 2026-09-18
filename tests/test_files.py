@@ -80,13 +80,98 @@ def test_a_changed_file_says_so(ws, seeded):
     assert changed["code.py"] is False
 
 
-def test_a_very_large_repository_is_cut_but_counted(ws, seeded, monkeypatch):
-    monkeypatch.setattr(ws, "FILES_SHOWN", 2)
+def test_a_repository_past_the_ceiling_is_cut_and_says_so(ws, seeded, monkeypatch):
+    monkeypatch.setattr(ws, "FILES_MAX", 2)
     for index in range(6):
         (seeded / f"f{index}.txt").write_text("x")
     tree = ws.worktree_files(str(seeded))
     assert len(tree.files) == 2
     assert tree.total == 9
+    assert tree.cut is True
+
+
+def test_a_repository_of_five_thousand_files_is_not_cut(ws, tmp_path):
+    """The first version sent the first 5000 names of 52,799 and let the page
+    search those. Typing `libcorrelation` then found 16 files and missed more
+    than a thousand, because the thousand were never sent."""
+    repo = tmp_path / "big"
+    (repo / "deep" / "down").mkdir(parents=True)
+    git(repo, "init", "-q", ".")
+    git(repo, "config", "user.email", "t@example.com")
+    git(repo, "config", "user.name", "T")
+    for index in range(5200):
+        (repo / f"f{index:05d}.txt").write_text("x")
+    (repo / "deep" / "down" / "libcorrelation.h").write_text("x")
+    git(repo, "add", "-A")
+
+    tree = ws.worktree_files(str(repo))
+    assert tree.cut is False
+    assert len(tree.files) == tree.total == 5201
+    # The one that sorts last is the one the cut used to throw away.
+    assert "deep/down/libcorrelation.h" in [one.path for one in tree.files]
+
+
+def test_an_ignored_file_is_listed(ws, seeded):
+    """A generated file among its sources is the ignored file people look
+    for, and the tab used to leave it out entirely."""
+    (seeded / ".gitignore").write_text("generated.h\n")
+    (seeded / "generated.h").write_text("#pragma once\n")
+    assert "generated.h" in [one.path for one in ws.worktree_files(str(seeded)).files]
+
+
+def test_an_ignored_directory_is_not_walked(ws, seeded):
+    """`node_modules` holds more files than the repository does. git collapses
+    it to one entry ending in a slash, and a name nobody can open is dropped.
+    """
+    (seeded / ".gitignore").write_text("node_modules/\n")
+    (seeded / "node_modules").mkdir()
+    for index in range(5):
+        (seeded / "node_modules" / f"m{index}.js").write_text("x")
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
+    assert not [one for one in paths if one.startswith("node_modules")]
+
+
+def test_a_listing_git_could_not_read_is_not_an_empty_worktree(ws, seeded):
+    """Two seconds fits `git status` in a small worktree and nothing else.
+    Over fifty thousand files the call timed out, nothing came back, and
+    nothing drew as "this worktree holds no file that git knows about"."""
+    def broken(args, **rest):
+        return None if "ls-files" in args else ws.run(args, **rest)
+
+    tree = ws.worktree_files(str(seeded), runner=broken)
+    assert tree.failed is True
+    assert tree.root
+
+
+def test_a_listing_that_worked_is_not_marked_failed(ws, seeded):
+    tree = ws.worktree_files(str(seeded))
+    assert tree.failed is False
+    assert tree.files
+
+
+def test_one_failed_listing_still_returns_the_others(ws, seeded):
+    """A short list with a warning beats no list at all."""
+    def broken(args, **rest):
+        return None if "--ignored" in args else ws.run(args, **rest)
+
+    tree = ws.worktree_files(str(seeded))
+    whole = [one.path for one in tree.files]
+    partial = ws.worktree_files(str(seeded), runner=broken)
+    assert partial.failed is True
+    assert [one.path for one in partial.files] == whole
+
+
+def test_the_listing_gets_its_own_timeout(ws, seeded):
+    """The listing is the one git call whose cost grows with the repository."""
+    seen = []
+
+    def watch(args, **rest):
+        seen.append(rest.get("timeout"))
+        return ws.run(args, **rest)
+
+    ws.worktree_files(str(seeded), runner=watch)
+    assert ws.LIST_TIMEOUT > ws.RUN_TIMEOUT
+    assert seen.count(ws.LIST_TIMEOUT) == 4    # three listings and the status
 
 
 def test_a_pinned_name_deeper_in_the_tree_is_not_pinned(ws, seeded):
@@ -142,10 +227,14 @@ def test_a_binary_file_is_named_rather_than_shown(ws, seeded):
     assert found.text == ""
 
 
-def test_a_file_git_ignores_is_refused(ws, seeded):
-    (seeded / ".gitignore").write_text("secret.txt\n")
-    (seeded / "secret.txt").write_text("shh\n")
-    assert ws.read_worktree_file(str(seeded), "secret.txt") is None
+def test_a_file_git_ignores_can_be_read(ws, seeded):
+    """The Files tab lists ignored files, so reading one has to be allowed.
+    A generated header next to its sources is the file people look for."""
+    (seeded / ".gitignore").write_text("generated.h\n")
+    (seeded / "generated.h").write_text("#pragma once\n")
+    found = ws.read_worktree_file(str(seeded), "generated.h")
+    assert found is not None
+    assert found.text == "#pragma once\n"
 
 
 def test_a_pathspec_that_matches_another_name_is_refused(ws, seeded):
@@ -171,11 +260,17 @@ def test_the_git_directory_is_not_readable(ws, seeded):
     assert ws.read_worktree_file(str(seeded), ".git/config") is None
 
 
-def test_a_file_git_does_not_know_is_refused(ws, seeded):
+def test_a_file_inside_an_ignored_directory_is_readable_but_not_listed(ws, seeded):
+    """The listing collapses an ignored directory to keep node_modules out of
+    it. The guard answers a different question — is this safe to open — and
+    a file under an ignored directory is as safe as any other in the tree."""
     (seeded / ".gitignore").write_text("build/\n")
     (seeded / "build").mkdir()
     (seeded / "build" / "out.txt").write_text("out\n")
-    assert ws.read_worktree_file(str(seeded), "build/out.txt") is None
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
+    assert "build/out.txt" not in paths
+    assert "build/" not in paths
+    assert ws.read_worktree_file(str(seeded), "build/out.txt").text == "out\n"
 
 
 def test_a_path_that_climbs_out_is_refused(ws, seeded, tmp_path):

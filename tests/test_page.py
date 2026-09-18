@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -33,9 +34,41 @@ def browser_path() -> str | None:
     return None
 
 
-sync_playwright = pytest.importorskip(
+start_playwright = pytest.importorskip(
     "playwright.sync_api", reason="playwright is not installed"
 ).sync_playwright
+
+# One Playwright and one browser for the whole file. Starting Playwright costs
+# 0.43 s and launching Chromium 0.15 s, and there are fifty-odd tests here, so
+# half a minute of every run went on starting the same two things again and
+# again. A context costs 0.03 s and shares nothing — its own storage, its own
+# cookies — so each test is still on its own.
+_shared: list = []
+
+
+def shared_browser():
+    if not _shared:
+        play = start_playwright().start()
+        _shared.append(play)
+        _shared.append(play.chromium.launch(executable_path=browser_path(),
+                                            args=["--no-sandbox"]))
+    return _shared[1]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _close_the_browser():
+    yield
+    if _shared:
+        play, browser = _shared
+        browser.close()
+        play.stop()
+        _shared.clear()
+
+
+@contextmanager
+def sync_playwright():
+    """The shared browser, in the shape the tests already ask for it."""
+    yield shared_browser()
 
 pytestmark = pytest.mark.skipif(browser_path() is None, reason="no browser here")
 
@@ -90,15 +123,53 @@ def page_at(ws, tmp_path, monkeypatch, transcript_file):
         server.server_close()
 
 
-def open_page(play, where, scheme="dark"):
+MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
+
+
+# What each tab has drawn once its first answer has arrived. Waiting for the
+# thing itself beats sleeping for long enough: it is both quicker and surer.
+# The transcript shares the box with the two split tabs, so "the box has a
+# child" is already true while the file columns are still standing in it. It
+# has to have stopped being split as well.
+DRAWN = {"transcript": "#content:not(.split) > *", "files": ".filebody > *",
+         "diff": ".diffbody > *"}
+
+
+def fresh_context(play, scheme="dark", with_marked=True):
+    """A context of its own, with everything the page fetches answered from
+    here, so that no test needs a network.
+
+    marked gets the real bytes, which means the page's `integrity` hash is
+    checked for real on every one of these tests. The highlighter is refused,
+    which is what being offline looks like; the tests that want one hand the
+    page a stand-in instead. The fonts are answered empty: a stylesheet in the
+    head holds up the script after it, and no test looks at a typeface.
+    """
+    context = play.new_context(viewport={"width": 1440, "height": 900},
+                               color_scheme=scheme)
+    context.route("**/marked.min.js", lambda route: route.fulfill(
+        path=str(MARKED), content_type="application/javascript",
+        headers={"access-control-allow-origin": "*"})
+        if with_marked else route.abort())
+    context.route("**/highlight.min.js", lambda route: route.abort())
+    context.route("**/fonts.googleapis.com/**", lambda route: route.fulfill(
+        status=200, content_type="text/css", body=""))
+    return context
+
+
+def open_page(play, where, scheme="dark", with_marked=True):
+    """A fresh context on the shared browser. What comes back is the context,
+    so a test that closes `browser` closes its own and nobody else's."""
     url = where[1] if isinstance(where, tuple) else where
-    browser = play.chromium.launch(executable_path=browser_path(),
-                                   args=["--no-sandbox"])
-    page = browser.new_page(viewport={"width": 1440, "height": 900},
-                            color_scheme=scheme)
+    browser = fresh_context(play, scheme, with_marked)
+    page = browser.new_page()
     page.goto(url, wait_until="domcontentloaded")
     page.wait_for_selector(".row", timeout=15000)
-    page.wait_for_timeout(600)
+    # Wait for the first draw rather than for a length of time.
+    ready = "document.querySelector('#content > *') !== null"
+    if with_marked:
+        ready = "!!window.marked && " + ready
+    page.wait_for_function(ready, timeout=15000)
     return browser, page
 
 
@@ -293,11 +364,9 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
     a dark machine could not work at all."""
     daemon, path = page_at
     with sync_playwright() as play:
-        browser = play.chromium.launch(executable_path=browser_path(),
-                                       args=["--no-sandbox"])
+        browser = fresh_context(play)
         try:
-            page = browser.new_page(viewport={"width": 1440, "height": 900},
-                                    color_scheme="dark")
+            page = browser.new_page()
             page.goto(path, wait_until="domcontentloaded")
             page.wait_for_selector(".row", timeout=15000)
             dark = page.evaluate("getComputedStyle(document.body).backgroundColor")
@@ -488,9 +557,34 @@ def repo_page(ws, served, repo):
     return repo, base
 
 
+@pytest.fixture
+def big_page(ws, served, tmp_path):
+    """A session in a repository with more files than the old list would send."""
+    from conftest import git_in as git
+
+    root = tmp_path / "big"
+    (root / "native" / "shared" / "libcorrelation" / "src").mkdir(parents=True)
+    git(root, "init", "-q", "-b", "main")
+    git(root, "config", "user.email", "t@example.com")
+    git(root, "config", "user.name", "T")
+    for index in range(5200):
+        (root / f"f{index:05d}.txt").write_text("x")
+    (root / "native" / "shared" / "libcorrelation" / "src" / "Action.h").write_text(
+        "// deep\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "first")
+
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(root), ts=time.time(),
+                                   pane="%7", pid=1))
+    daemon.store.refresh()
+    return root, base
+
+
 def show_tab(page, name):
+    """Open a tab and wait for its first answer, not for a fixed time."""
     page.click(f".tab[data-tab='{name}']")
-    page.wait_for_timeout(700)
+    page.wait_for_selector(DRAWN[name], timeout=15000)
 
 
 def test_the_files_tab_lists_every_file(repo_page):
@@ -621,10 +715,11 @@ def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
         try:
             show_tab(page, "files")
             page.eval_on_selector(".filebody", "el => el.scrollTop = 900")
-            page.wait_for_timeout(400)
             (root / "README.md").write_text(long_file + "\n\nand one more\n")
-            page.wait_for_timeout(3000)       # one poll, and then some
-            assert "and one more" in page.locator(".filebody .prose").inner_text()
+            # Wait for the new line to arrive, not for a poll to have passed.
+            page.wait_for_function(
+                "document.querySelector('.filebody .prose').innerText"
+                ".includes('and one more')", timeout=15000)
             where = page.eval_on_selector(".filebody", "el => el.scrollTop")
             assert where > 500, "the reader was thrown back to the top"
         finally:
@@ -741,11 +836,11 @@ def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
                 ".filelist button .name",
                 "els => els.map(e => e.textContent)")[0] == "CLAUDE.md"
             (root / "CLAUDE.md").write_text("# claude\n\nedited\n")
-            page.wait_for_timeout(6000)      # the listing is asked for again
+            # Wait for the dot, not for long enough that it must have come.
+            page.wait_for_selector(where, timeout=15000)
             names = page.eval_on_selector_all(
                 ".filelist button .name", "els => els.map(e => e.textContent)")
             assert names[0] == "CLAUDE.md", "it should not have moved"
-            assert page.locator(where).count() == 1
         finally:
             browser.close()
 
@@ -809,9 +904,45 @@ def test_an_untracked_file_is_named(repo_page):
             # The names are listed once, on the left; the note says what they
             # are. Printing them in both places was the same list twice.
             names = page.eval_on_selector_all(
-                ".filelist .plain", "els => els.map(e => e.textContent)")
-            assert names == ["NOTES.md"]
+                ".filelist button", "els => els.map(e => e.textContent)")
+            assert "NOTES.md" in names
             assert "1 untracked file" in page.locator(".diffbody .note").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_untracked_file_opens_as_one_added_block(repo_page):
+    """git has no diff for it, so it was named and left unclickable — the one
+    thing on the tab you could not open."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            block = page.locator(".dfile:has(.what:text-is('untracked'))")
+            assert block.count() == 1
+            assert block.locator(".path").inner_text() == "NOTES.md"
+            first = block.locator(".dline.added").first.inner_text()
+            assert first == "+# Notes"
+            assert block.locator(".dline.removed").count() == 0
+        finally:
+            browser.close()
+
+
+def test_git_failing_does_not_read_as_an_empty_worktree(repo_page):
+    """"No files" and "git did not answer" look the same and mean opposite
+    things. A two second timeout over fifty thousand files drew the first."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate("state.names = []; state.file = null;"
+                          " state.filesFailed = true; draw()")
+            page.wait_for_timeout(200)
+            said = page.locator(".filebody .empty").inner_text()
+            assert "git did not answer" in said
+            assert "holds no file" not in said
         finally:
             browser.close()
 
@@ -876,5 +1007,179 @@ def test_a_directory_that_is_not_a_repository_says_so(page_at):
             show_tab(page, "diff")
             assert "no branch to compare" in page.locator(".diffbody").inner_text()
             assert page.locator("#diffcount").is_hidden()
+        finally:
+            browser.close()
+
+
+def test_typing_finds_a_file_past_the_first_five_thousand(big_page):
+    """The listing stopped at 5000 names sorted by name, so everything under
+    `native/` was cut before the matcher saw it. In a 52,799 file repository
+    `libcorrelation` found 16 files and missed more than a thousand."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "libcorrelation")
+            page.wait_for_timeout(600)
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names == ["native/shared/libcorrelation/src/Action.h"]
+        finally:
+            browser.close()
+
+
+# --- syntax highlighting ----------------------------------------------------
+
+# The highlighter is fetched, not vendored, so every test here works whether
+# or not the machine running it can reach a CDN: the page is handed a stand-in
+# and the real download is never started.
+
+STUB = """hljsAsked = Promise.resolve({
+  getLanguage: () => true,
+  highlight: (text, how) => ({ value: %s }),
+});"""
+
+
+def open_code(page, stub, name="code.py"):
+    """Put a stand-in highlighter in place, then open a file that is not
+    Markdown."""
+    show_tab(page, "files")
+    page.evaluate(STUB % stub)
+    page.click(f".filelist button:has-text('{name}')")
+    page.wait_for_timeout(400)
+
+
+def test_code_is_painted(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
+            assert page.locator(".filebody pre .hljs-keyword").inner_text() == "print"
+            assert page.locator(".filebody pre").inner_text() == "print(1)"
+        finally:
+            browser.close()
+
+
+def test_the_page_does_not_trust_the_highlighter_either(repo_page):
+    """Its output goes through the same inert template the Markdown does. A
+    span dressed as our own chrome, an attribute, and an element that is not a
+    span all come out as text."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
+                            " + '<img src=x onerror=\"window.pwned=1\">'"
+                            " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
+            body = page.locator(".filebody pre")
+            assert page.evaluate("window.pwned") is None
+            assert body.locator("img").count() == 0
+            assert body.locator(".row").count() == 0
+            assert body.locator("[onclick]").count() == 0
+            assert body.locator("#n").count() == 0
+            # the text survives, only the dressing is gone
+            assert body.locator(".hljs-string").inner_text() == "b"
+            assert body.inner_text() == "ab"
+        finally:
+            browser.close()
+
+
+def test_a_sublanguage_class_survives(repo_page):
+    """hljs writes `hljs-title function_` as one span with two classes."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
+            assert page.locator(".filebody pre .hljs-title.function_").count() == 1
+        finally:
+            browser.close()
+
+
+def test_no_highlighter_still_shows_the_file(repo_page):
+    """Offline, blocked, or bytes that do not match the hash: the code is
+    still code, just unpainted."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate("hljsAsked = Promise.resolve(null);")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            assert page.locator(".filebody pre").inner_text().strip() == (
+                "print(1)\nprint(2)")
+            assert page.locator(".filebody pre span").count() == 0
+        finally:
+            browser.close()
+
+
+def test_the_highlighter_is_pinned_and_asked_for_late(repo_page):
+    """Any script on this page can POST to /send, which types into a terminal,
+    so a script from someone else's server carries the hash of its bytes. And
+    a session that only reads transcripts reaches the network never."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            asked = "document.querySelectorAll('script[src*=highlight]').length"
+            assert page.evaluate(asked) == 0      # the transcript asks for nothing
+            show_tab(page, "files")
+            assert page.evaluate(asked) == 0      # nor does a Markdown file
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            tag = page.locator("script[src*='highlight']")
+            assert tag.count() == 1
+            assert tag.get_attribute("src").startswith("https://")
+            assert tag.get_attribute("integrity").startswith("sha384-")
+            assert tag.get_attribute("crossorigin") == "anonymous"
+        finally:
+            browser.close()
+
+
+def test_a_file_that_is_not_markdown_has_no_box(repo_page):
+    """A shell script is the whole page here, not a quotation inside a
+    document that does not exist."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            look = page.eval_on_selector(".filebody pre", """el => {
+              const seen = getComputedStyle(el);
+              return [seen.borderTopWidth, seen.backgroundColor];
+            }""")
+            assert look[0] == "0px"
+            assert look[1] in ("rgba(0, 0, 0, 0)", "transparent")
+        finally:
+            browser.close()
+
+
+def test_without_marked_the_transcript_is_still_readable(page_at):
+    """Markdown is written to be read as plain text, so a fetch that never
+    arrives costs the rendering and nothing else. The tab is never blank."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at, with_marked=False)
+        try:
+            page.wait_for_timeout(700)
+            assert page.evaluate("!!window.marked") is False
+            said = page.locator(".prose").first.inner_text()
+            assert said                       # there is text, not an empty box
+            assert page.locator(".prose h1, .prose h2, .prose ul").count() == 0
+            assert page.locator(".nohits").count() == 0
+        finally:
+            browser.close()
+
+
+def test_marked_is_pinned_too(page_at):
+    """Both fetched scripts carry the hash of their bytes. The page is served
+    the real marked here, so this checks the pin as the browser does."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.wait_for_timeout(700)
+            assert page.evaluate("!!window.marked") is True
+            tag = page.locator("script[src*='marked']")
+            assert tag.count() == 1
+            assert tag.get_attribute("src").startswith("https://")
+            assert tag.get_attribute("integrity").startswith("sha384-")
+            assert tag.get_attribute("crossorigin") == "anonymous"
         finally:
             browser.close()

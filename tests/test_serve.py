@@ -329,8 +329,24 @@ def test_the_file_listing_is_served(repo_session):
     status, body = get(f"{base}/api/session/s1/files")
     assert status == 200
     assert body["root"] == str(root)
-    assert [one["path"] for one in body["files"]] == ["README.md"]
-    assert body["files"][0]["mtime"] > 0
+    assert body["names"].split("\0") == ["README.md"]
+    assert body["total"] == 1
+    assert body["cut"] is False
+    assert body["failed"] is False
+
+
+def test_every_name_is_served_and_the_changed_ones_are_named(repo_session):
+    """The names go as one string because fifty thousand objects cost
+    megabytes a poll. The changed ones are a short list of their own."""
+    root, base = repo_session
+    (root / "notes.md").write_text("# notes\n")
+    (root / "deep").mkdir()
+    (root / "deep" / "code.py").write_text("print(1)\n")
+    status, body = get(f"{base}/api/session/s1/files")
+    assert status == 200
+    assert sorted(body["names"].split("\0")) == ["README.md", "deep/code.py",
+                                                 "notes.md"]
+    assert sorted(body["changed"]) == ["deep/code.py", "notes.md"]
 
 
 def test_one_file_is_served(repo_session):
@@ -367,3 +383,62 @@ def test_a_session_that_is_gone_is_a_404_on_every_new_route(served):
         with pytest.raises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(f"{base}/api/session/nobody/{verb}", timeout=5)
         assert caught.value.code == 404
+
+
+# --- the page's one external dependency -------------------------------------
+
+
+def fetched_scripts(page):
+    """Every script the page fetches, as (name, url, hash)."""
+    import re
+
+    found = []
+    for name in ("MARKED", "HLJS"):
+        where = re.search(name + r'_SRC =\n  "([^"]+)"', page)
+        pinned = re.search(name + r'_HASH =\n  "([^"]+)"', page)
+        assert where and pinned, name
+        found.append((name, where.group(1), pinned.group(1)))
+    return found
+
+
+def test_every_fetched_script_is_pinned(ws):
+    """Any script on this page can POST to /send, which types into a terminal.
+    So each one carries the hash of its exact bytes, over https, and the
+    browser refuses anything else."""
+    for name, where, pinned in fetched_scripts(ws.PAGE):
+        assert where.startswith("https://"), name
+        assert pinned.startswith("sha384-"), name
+    assert "tag.integrity = hash;" in ws.PAGE
+    assert 'tag.crossOrigin = "anonymous";' in ws.PAGE
+    # One fetcher, so there is one place where a hash could be dropped.
+    assert ws.PAGE.count("document.head.appendChild(tag)") == 1
+
+
+def test_the_pins_still_match_what_the_cdn_serves(ws):
+    """A hash that has drifted from the file it names means the script is
+    refused for everyone, and nothing else would say so. Skipped offline."""
+    import base64
+    import hashlib
+
+    for name, where, pinned in fetched_scripts(ws.PAGE):
+        try:
+            raw = urllib.request.urlopen(where, timeout=30).read()
+        except (urllib.error.URLError, OSError) as error:   # offline, blocked
+            pytest.skip(f"cannot reach {where}: {error}")
+        got = "sha384-" + base64.b64encode(hashlib.sha384(raw).digest()).decode()
+        assert got == pinned, name
+
+
+def test_the_marked_fixture_is_the_pinned_one(ws):
+    """The page tests serve marked from tests/fixtures, and the browser checks
+    the page's own hash against it. If the two drift apart every page test
+    fails at once, so they are compared here where the reason is plain."""
+    import base64
+    import hashlib
+    from pathlib import Path
+
+    raw = (Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
+           ).read_bytes()
+    got = "sha384-" + base64.b64encode(hashlib.sha384(raw).digest()).decode()
+    pinned = dict((name, hash_) for name, _, hash_ in fetched_scripts(ws.PAGE))
+    assert got == pinned["MARKED"]

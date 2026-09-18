@@ -161,7 +161,7 @@ ssh -N -L 7331:127.0.0.1:7331 you@your-server
 Leave that running and open `http://127.0.0.1:7331` on your own computer. The
 traffic is carried by SSH, and the server exposes nothing new.
 
-This is on purpose, not an oversight. From milestone 4 the page can type into
+This is on purpose, not an oversight. From milestone 5 the page can type into
 your tmux pane, and a port on the network that can type into a shell is not
 something to leave one firewall rule away. wostuast also checks the `Host`
 header, so a request for `http://your-server:7331/` is refused even if it
@@ -171,36 +171,52 @@ itself as the agents work: there is no reload button because there is nothing
 to reload.
 
 It sends no request back that changes anything, so nothing on that page can act
-on your behalf. Jump, send and peek arrive in milestone 4.
+on your behalf. Jump, send and peek arrive in milestone 5.
 
 ### The tabs
 
 **Transcript** is what the agent said and did, as it happens.
 
-**Files** lists every file in the worktree — what git tracks, plus anything
-untracked that `.gitignore` does not cover.
+**Files** lists every file in the worktree: what git tracks, what is untracked,
+and what `.gitignore` covers. An ignored directory such as `node_modules` is
+left out whole, because walking it would cost more than any answer inside it.
+An ignored file that sits among tracked files — a generated header — is listed
+like any other.
 
 Type in the box above the list to find one, the way an editor's file picker
 does: the letters have to turn up in the name in that order, but not next to
 each other, so `tsfi` finds `tests/test_files.py`. The best match sorts to the
 top and the letters that matched are picked out. Press `/` to get to the box,
-`Esc` to clear it.
+`Esc` to clear it. Every name in the repository is searched, however many
+there are.
 
 Before you type, the order is `PLAN.md`, `CLAUDE.md` and `README.md`, then
 whatever the agent has changed with the newest first, then the rest by name.
 A changed file carries a dot.
 
-A Markdown file is rendered; anything else is shown as it is, without syntax
-highlighting. A binary file is named, not shown. The open file is read again
-within a couple of seconds of the agent changing it, and you keep your place
-in it.
+A Markdown file is rendered; anything else is shown as code, with syntax
+highlighting and no box around it. A binary file is named, not shown. The open
+file is read again within a couple of seconds of the agent changing it, and you
+keep your place in it.
+
+The page fetches two scripts and nothing else: `marked`, which renders the
+Markdown, and `highlight.js`, which paints the code. Neither is inside
+`wostuast` — together they are 157 KB against a 175 KB program, and the install
+one-liner curls that program. Each `<script>` tag carries the hash of the exact
+bytes, because any script on this page could type into your terminal through
+the send box, so a CDN that has been tampered with gets you the fallback rather
+than someone else's code.
+
+Both fall back. Without `marked` the transcript is its own Markdown source as
+text, which is what Markdown is for. Without `highlight.js` the code is the
+same code without the colour. Nothing goes blank.
 
 **Diff** shows the change in two halves: what the branch has committed against
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file
 list on the left says how much each one moved; clicking a name jumps to it. A
 file with more than 500 changed lines starts closed, so a large diff still
-opens at once. Untracked files are named rather than shown, because git has no
-diff for a file it does not track yet.
+opens at once. git has no diff for an untracked file, so picking one shows it
+as a single added block: every line in it is new.
 
 The same box does all three. It sits above the list on Files and Diff, and at
 the right of the tab strip for the transcript, where it searches for the text
@@ -231,8 +247,8 @@ counts what it kept. `Esc` clears it.
 
 Milestones 1 to 3 of [`PLAN.md`](PLAN.md) are done: wostuast records your
 sessions, lists them in the terminal, and serves a live page with the
-transcript, the worktree's Markdown and its diff. Jump, send and peek come in
-milestone 4.
+transcript, the worktree's files and its diff. Milestone 4 makes those two
+tabs fit a large repository. Jump, send and peek come in milestone 5.
 
 `PLAN.md` is the complete brief. [`CLAUDE.md`](CLAUDE.md) says how to work in
 this repository.

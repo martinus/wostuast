@@ -20,7 +20,7 @@ things are and how to work here. When the two disagree, `PLAN.md` wins.
 ## Run it
 
 ```
-pytest -q                      # run before every commit
+pytest -q                      # run before every commit (about 2 minutes)
 pytest tests/test_page.py -q   # the page, in a real browser (skipped without one)
 ./wostuast doctor              # check the setup
 ./wostuast ls                  # list the sessions
@@ -43,9 +43,16 @@ settings.
   the CSS and the JavaScript become string constants at the end of it. Do not
   move it into `src/` or split it: the install one-liner curls that exact path,
   and a split would need a build step, which `PLAN.md` rules out.
-- **Standard library only.** Python 3.10 or newer. No pip install. JavaScript
-  libraries are allowed only when vendored into the single file. Exactly one is
-  vendored: `marked`, inside `PAGE`, with its licence header.
+- **Standard library only.** Python 3.10 or newer. No pip install.
+- **No JavaScript library is vendored.** `marked` and `highlight.js` are
+  fetched, through the one `fetchScript` function, and each carries the hash
+  of its exact bytes. Any script on this page can `POST` to `/send`, which
+  types into the user's terminal, so the hash is not optional and neither is
+  `crossorigin`, which is what lets the browser check it. Each library must
+  degrade to something readable: without `marked` the transcript is its own
+  source as text, and without `highlight.js` code has no colour. Tests hold
+  both fallbacks, and `tests/fixtures/marked.min.js` is what the page tests
+  serve, so no test needs a network.
 - **The page never trusts what an agent wrote.** Markdown is parsed into an
   inert `<template>`, scrubbed to an allowlist, and only then inserted. Values
   from events are set with `textContent`. Assigning to `innerHTML` first would
@@ -81,11 +88,12 @@ settings.
 - **A path out of the page is input too.** `read_worktree_file` opens a file
   only when `is_listed` says git offers that exact name, and only when
   `inside` says the resolved path is still in the worktree. The first rules
-  out `..`, an absolute path and an ignored file; the second rules out a
-  tracked symbolic link that points elsewhere. Keep all three parts of the
-  first one — the `:(literal)` prefix, the `--`, and comparing the answer to
-  what was asked for. Do not replace either check with a pattern that tries
-  to spot a bad path.
+  out `..` and an absolute path; the second rules out a tracked symbolic link
+  that points elsewhere. Keep all three parts of the first one — the
+  `:(literal)` prefix, the `--`, and comparing the answer to what was asked
+  for. An ignored file is asked about the same way, `--others --ignored`,
+  with all three parts again. Do not replace either check with a pattern that
+  tries to spot a bad path.
 - **Work from the worktree root, not from the agent's directory.** git
   reports a diff with root-relative paths whatever directory it ran in, so a
   session standing in a subdirectory gets a file list that does not agree
@@ -100,6 +108,16 @@ settings.
   modification time is read to sort those few and to know when to read the
   open file again; asking the disk about all of them, every poll, is the
   mistake to avoid.
+- **The page searches every name, or it says it cannot.** Sending the first
+  five thousand of 52,799 names made `libcorrelation` find 16 files and miss
+  a thousand. A search that sees part of the list gives a wrong answer that
+  looks like a right one.
+- **A git call that fails must not render as an empty answer.** The listing
+  ran under the 2 s timeout every other git call uses, and a large repository
+  timed out, and nothing came back, and nothing drew as "this worktree holds
+  no file that git knows about". "No files" and "git did not answer" look the
+  same and mean opposite things. The diff already had this fixed; the listing
+  did not.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 and sending no
   CORS header is not enough: a site can point its own name at 127.0.0.1 and the
   browser will then let it read us. `Handler.ours()` checks the Host header.
@@ -121,6 +139,12 @@ settings.
   command an agent ran.
 - **Keep the raw payload.** Do not strip fields from a hook event. A new field
   from a newer Claude Code must not break an older wostuast.
+- **The page tests share one browser and wait for things, not for seconds.**
+  Starting Playwright costs 0.43 s and launching Chromium 0.15 s, so doing
+  both per test spent half a minute on nothing; each test gets its own
+  context instead, which costs 0.03 s and shares no storage. `open_page` and
+  `show_tab` wait for what the page has drawn. A `wait_for_timeout` is only
+  right when the test has to prove something did **not** happen.
 
 ## Style
 
@@ -148,6 +172,9 @@ tool behind.
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
 2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
 3. **Read** — done. Files tab and Diff tab.
-4. **Act** — next. jump, send, Peek. Attention (title, icon, notifications)
+4. **Fit** — next. The two worktree tabs, on a real repository. Four stages
+   in order: correct, fast, room, read. `PLAN.md` section 9 lists what is in
+   each one.
+5. **Act** — jump, send, Peek. Attention (title, icon, notifications)
    arrived early, in milestone 2, because it was asked for.
-5. **Shine** — light theme, motion, empty states, README.
+6. **Shine** — light theme, motion, empty states, README.
