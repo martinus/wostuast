@@ -199,14 +199,17 @@ highlighting and no box around it. A binary file is named, not shown. The open
 file is read again within a couple of seconds of the agent changing it, and you
 keep your place in it.
 
-The highlighter is the one thing the page fetches from the internet, and the
-only one that is not inside `wostuast` itself: 122 KB of it would be more than
-half the program again, to paint code that reads well enough unpainted. It is
-asked for when you open your first file that is not Markdown, so a session
-spent reading transcripts never asks. The `<script>` tag carries the hash of
-the exact bytes, because any script on this page could type into your terminal
-through the send box. Without a network you get the same code without the
-colour.
+The page fetches two scripts and nothing else: `marked`, which renders the
+Markdown, and `highlight.js`, which paints the code. Neither is inside
+`wostuast` — together they are 157 KB against a 175 KB program, and the install
+one-liner curls that program. Each `<script>` tag carries the hash of the exact
+bytes, because any script on this page could type into your terminal through
+the send box, so a CDN that has been tampered with gets you the fallback rather
+than someone else's code.
+
+Both fall back. Without `marked` the transcript is its own Markdown source as
+text, which is what Markdown is for. Without `highlight.js` the code is the
+same code without the colour. Nothing goes blank.
 
 **Diff** shows the change in two halves: what the branch has committed against
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file

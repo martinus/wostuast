@@ -44,14 +44,15 @@ settings.
   move it into `src/` or split it: the install one-liner curls that exact path,
   and a split would need a build step, which `PLAN.md` rules out.
 - **Standard library only.** Python 3.10 or newer. No pip install.
-- **A library the page cannot work without is vendored; one that only improves
-  it is fetched.** Exactly one is vendored: `marked`, inside `PAGE`, with its
-  licence header — without it the transcript is unreadable. `highlight.js`
-  comes from a CDN, because 122 KB in a 205 KB file is too much to pay for
-  paint. A fetched library carries an `integrity` hash, is asked for only when
-  something needs it, and must degrade to nothing when it does not arrive.
-  Any script on this page can `POST` to `/send`, which types into the user's
-  terminal, so the hash is not optional.
+- **No JavaScript library is vendored.** `marked` and `highlight.js` are
+  fetched, through the one `fetchScript` function, and each carries the hash
+  of its exact bytes. Any script on this page can `POST` to `/send`, which
+  types into the user's terminal, so the hash is not optional and neither is
+  `crossorigin`, which is what lets the browser check it. Each library must
+  degrade to something readable: without `marked` the transcript is its own
+  source as text, and without `highlight.js` code has no colour. Tests hold
+  both fallbacks, and `tests/fixtures/marked.min.js` is what the page tests
+  serve, so no test needs a network.
 - **The page never trusts what an agent wrote.** Markdown is parsed into an
   inert `<template>`, scrubbed to an allowlist, and only then inserted. Values
   from events are set with `textContent`. Assigning to `innerHTML` first would

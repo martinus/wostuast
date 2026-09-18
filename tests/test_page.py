@@ -90,12 +90,25 @@ def page_at(ws, tmp_path, monkeypatch, transcript_file):
         server.server_close()
 
 
-def open_page(play, where, scheme="dark"):
+MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
+
+
+def open_page(play, where, scheme="dark", with_marked=True):
     url = where[1] if isinstance(where, tuple) else where
     browser = play.chromium.launch(executable_path=browser_path(),
                                    args=["--no-sandbox"])
     page = browser.new_page(viewport={"width": 1440, "height": 900},
                             color_scheme=scheme)
+    # The two scripts the page fetches are answered from here, so no test
+    # needs a network. marked gets the real bytes, which means the page's
+    # `integrity` hash is checked for real on every one of these tests; the
+    # highlighter is refused, which is what being offline looks like, and the
+    # tests that want one hand the page a stand-in instead.
+    page.route("**/marked.min.js", lambda route: route.fulfill(
+        path=str(MARKED), content_type="application/javascript",
+        headers={"access-control-allow-origin": "*"})
+        if with_marked else route.abort())
+    page.route("**/highlight.min.js", lambda route: route.abort())
     page.goto(url, wait_until="domcontentloaded")
     page.wait_for_selector(".row", timeout=15000)
     page.wait_for_timeout(600)
@@ -1077,5 +1090,38 @@ def test_a_file_that_is_not_markdown_has_no_box(repo_page):
             }""")
             assert look[0] == "0px"
             assert look[1] in ("rgba(0, 0, 0, 0)", "transparent")
+        finally:
+            browser.close()
+
+
+def test_without_marked_the_transcript_is_still_readable(page_at):
+    """Markdown is written to be read as plain text, so a fetch that never
+    arrives costs the rendering and nothing else. The tab is never blank."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at, with_marked=False)
+        try:
+            page.wait_for_timeout(700)
+            assert page.evaluate("!!window.marked") is False
+            said = page.locator(".prose").first.inner_text()
+            assert said                       # there is text, not an empty box
+            assert page.locator(".prose h1, .prose h2, .prose ul").count() == 0
+            assert page.locator(".nohits").count() == 0
+        finally:
+            browser.close()
+
+
+def test_marked_is_pinned_too(page_at):
+    """Both fetched scripts carry the hash of their bytes. The page is served
+    the real marked here, so this checks the pin as the browser does."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.wait_for_timeout(700)
+            assert page.evaluate("!!window.marked") is True
+            tag = page.locator("script[src*='marked']")
+            assert tag.count() == 1
+            assert tag.get_attribute("src").startswith("https://")
+            assert tag.get_attribute("integrity").startswith("sha384-")
+            assert tag.get_attribute("crossorigin") == "anonymous"
         finally:
             browser.close()
