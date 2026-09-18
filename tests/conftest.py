@@ -122,6 +122,31 @@ def served(ws, stub_git):
         server.server_close()
 
 
+def git_in(cwd, *args):
+    """Run one git command in a test repository, and fail loudly if it fails."""
+    subprocess.run(["git", "-C", str(cwd), *args], check=True,
+                   capture_output=True, text=True)
+
+
+@pytest.fixture
+def repo(tmp_path):
+    """A repository with one commit on main.
+
+    Several test files need one, so it lives here: git's own facts, the file
+    listing, the diff, and the page. Each of them seeds whatever else it needs
+    on top.
+    """
+    root = tmp_path / "myrepo"
+    root.mkdir()
+    git_in(root, "init", "-q", "-b", "main")
+    git_in(root, "config", "user.email", "t@example.com")
+    git_in(root, "config", "user.name", "T")
+    (root / "README.md").write_text("# readme\n\nhello\n")
+    git_in(root, "add", ".")
+    git_in(root, "commit", "-qm", "first")
+    return root
+
+
 @pytest.fixture
 def transcript_file(ws, tmp_path):
     """A path where a real transcript would be: under the Claude config dir.

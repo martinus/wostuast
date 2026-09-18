@@ -88,9 +88,15 @@ settings.
   CORS header is not enough: a site can point its own name at 127.0.0.1 and the
   browser will then let it read us. `Handler.ours()` checks the Host header.
 - **The Files and Diff tabs poll from the browser, and only while on screen.**
-  `POLL` in the page says how often. The daemon pushes the transcript and
-  nothing else: it does not know which tab a browser is on, and keeping it
-  that way is why `Hub` stays small. A hidden tab asks for nothing.
+  `TABS` in the page holds one entry per tab — how to draw it, how to load it,
+  and how often to ask again — so a new tab is one entry, not six edits. The
+  daemon pushes the transcript and nothing else: it does not know which tab a
+  browser is on, and keeping it that way is why `Hub` stays small.
+- **A split tab keeps its two columns and redraws one at a time.** `split()`
+  builds them once and `fresh()` decides what changed, both reading the DOM
+  rather than a field in `state`. One key over the whole tab meant an agent
+  saving any Markdown re-rendered the file you were reading, every two
+  seconds, and lost your place in it.
 - **One lock around the transcript readers.** The tick thread and request
   threads both read them; two `read_new` calls at once move the byte offset
   twice, which looks like a shrinking file and re-reads everything.

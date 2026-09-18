@@ -316,27 +316,12 @@ def test_the_reader_is_only_advanced_in_one_place(ws, served, transcript_file):
 
 
 @pytest.fixture
-def repo_session(ws, served, tmp_path):
+def repo_session(ws, served, repo):
     """A session whose cwd is a real repository with one commit."""
-    import subprocess
-
     daemon, base = served
-    root = tmp_path / "myrepo"
-    root.mkdir()
-
-    def git(*args):
-        subprocess.run(["git", "-C", str(root), *args], check=True,
-                       capture_output=True, text=True)
-
-    git("init", "-q", "-b", "main")
-    git("config", "user.email", "t@example.com")
-    git("config", "user.name", "T")
-    (root / "README.md").write_text("# readme\n\nhello\n")
-    git("add", ".")
-    git("commit", "-qm", "first")
-    ws.append_event(event("SessionStart", cwd=str(root)))
+    ws.append_event(event("SessionStart", cwd=str(repo)))
     daemon.store.refresh()
-    return root, base
+    return repo, base
 
 
 def test_the_file_listing_is_served(repo_session):

@@ -7,65 +7,56 @@ import subprocess
 
 import pytest
 
-
-def git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                   capture_output=True, text=True)
+from conftest import git_in as git
 
 
 @pytest.fixture
-def repo(tmp_path):
-    """A repository with a commit on main, so a diff has something to compare."""
-    root = tmp_path / "myrepo"
-    root.mkdir()
-    git(root, "init", "-q", "-b", "main")
-    git(root, "config", "user.email", "t@example.com")
-    git(root, "config", "user.name", "T")
-    (root / "README.md").write_text("# readme\n\nhello\n")
-    (root / "notes.md").write_text("# notes\n")
-    (root / "code.py").write_text("print(1)\n")
-    git(root, "add", ".")
-    git(root, "commit", "-qm", "first")
-    return root
+def seeded(repo):
+    """The shared repository, plus a second Markdown file and some code."""
+    (repo / "notes.md").write_text("# notes\n")
+    (repo / "code.py").write_text("print(1)\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "more")
+    return repo
 
 
 # --- the listing -------------------------------------------------------------
 
 
-def test_only_markdown_is_listed(ws, repo):
-    tree = ws.worktree_files(str(repo))
-    assert tree.root == str(repo)
+def test_only_markdown_is_listed(ws, seeded):
+    tree = ws.worktree_files(str(seeded))
+    assert tree.root == str(seeded)
     assert sorted(one.path for one in tree.files) == ["README.md", "notes.md"]
 
 
-def test_an_untracked_file_is_listed(ws, repo):
-    (repo / "draft.md").write_text("# draft\n")
-    paths = [one.path for one in ws.worktree_files(str(repo)).files]
+def test_an_untracked_file_is_listed(ws, seeded):
+    (seeded / "draft.md").write_text("# draft\n")
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
     assert "draft.md" in paths
 
 
-def test_an_ignored_file_is_not_listed(ws, repo):
-    (repo / ".gitignore").write_text("build/\n")
-    (repo / "build").mkdir()
-    (repo / "build" / "out.md").write_text("# out\n")
-    paths = [one.path for one in ws.worktree_files(str(repo)).files]
+def test_an_ignored_file_is_not_listed(ws, seeded):
+    (seeded / ".gitignore").write_text("build/\n")
+    (seeded / "build").mkdir()
+    (seeded / "build" / "out.md").write_text("# out\n")
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
     assert "build/out.md" not in paths
 
 
-def test_the_named_files_come_first_then_the_newest(ws, repo):
-    (repo / "PLAN.md").write_text("# plan\n")
-    (repo / "CLAUDE.md").write_text("# claude\n")
+def test_the_named_files_come_first_then_the_newest(ws, seeded):
+    (seeded / "PLAN.md").write_text("# plan\n")
+    (seeded / "CLAUDE.md").write_text("# claude\n")
     # notes.md is touched last, so it beats README.md on age but not on name.
-    os.utime(repo / "notes.md", (2_000_000_000, 2_000_000_000))
-    paths = [one.path for one in ws.worktree_files(str(repo)).files]
+    os.utime(seeded / "notes.md", (2_000_000_000, 2_000_000_000))
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
     assert paths[:3] == ["PLAN.md", "CLAUDE.md", "README.md"]
     assert paths[3] == "notes.md"
 
 
-def test_a_pinned_name_deeper_in_the_tree_is_not_pinned(ws, repo):
-    (repo / "docs").mkdir()
-    (repo / "docs" / "README.md").write_text("# deep\n")
-    paths = [one.path for one in ws.worktree_files(str(repo)).files]
+def test_a_pinned_name_deeper_in_the_tree_is_not_pinned(ws, seeded):
+    (seeded / "docs").mkdir()
+    (seeded / "docs" / "README.md").write_text("# deep\n")
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
     assert paths[0] == "README.md"
     assert "docs/README.md" in paths[1:]
 
@@ -79,15 +70,15 @@ def test_a_missing_directory_lists_nothing(ws):
     assert ws.worktree_files("/no/such/place").files == []
 
 
-def test_a_listed_file_that_was_deleted_is_skipped(ws, repo):
-    (repo / "notes.md").unlink()
-    paths = [one.path for one in ws.worktree_files(str(repo)).files]
+def test_a_listed_file_that_was_deleted_is_skipped(ws, seeded):
+    (seeded / "notes.md").unlink()
+    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
     assert paths == ["README.md"]
 
 
-def test_a_worktree_lists_its_own_files(ws, repo, tmp_path):
+def test_a_worktree_lists_its_own_files(ws, seeded, tmp_path):
     tree_dir = tmp_path / "side"
-    git(repo, "worktree", "add", "-q", str(tree_dir), "-b", "side")
+    git(seeded, "worktree", "add", "-q", str(tree_dir), "-b", "side")
     (tree_dir / "only-here.md").write_text("# here\n")
     paths = [one.path for one in ws.worktree_files(str(tree_dir)).files]
     assert "only-here.md" in paths
@@ -97,52 +88,46 @@ def test_a_worktree_lists_its_own_files(ws, repo, tmp_path):
 # --- reading one file --------------------------------------------------------
 
 
-def test_a_listed_file_is_read(ws, repo):
-    found = ws.read_worktree_file(str(repo), "README.md")
-    assert found is not None
-    assert found.text == "# readme\n\nhello\n"
-    assert found.cut is False
-    assert found.mtime > 0
+def test_a_listed_file_is_read(ws, seeded):
+    assert ws.read_worktree_file(str(seeded), "README.md") == "# readme\n\nhello\n"
 
 
-def test_a_file_outside_the_listing_is_refused(ws, repo):
-    assert ws.read_worktree_file(str(repo), "code.py") is None
+def test_a_file_outside_the_listing_is_refused(ws, seeded):
+    assert ws.read_worktree_file(str(seeded), "code.py") is None
 
 
-def test_a_path_that_climbs_out_is_refused(ws, repo, tmp_path):
+def test_a_path_that_climbs_out_is_refused(ws, seeded, tmp_path):
     (tmp_path / "secret.md").write_text("# secret\n")
-    assert ws.read_worktree_file(str(repo), "../secret.md") is None
+    assert ws.read_worktree_file(str(seeded), "../secret.md") is None
 
 
-def test_an_absolute_path_is_refused(ws, repo, tmp_path):
+def test_an_absolute_path_is_refused(ws, seeded, tmp_path):
     (tmp_path / "secret.md").write_text("# secret\n")
-    assert ws.read_worktree_file(str(repo), str(tmp_path / "secret.md")) is None
+    assert ws.read_worktree_file(str(seeded), str(tmp_path / "secret.md")) is None
 
 
-def test_a_link_that_leaves_the_worktree_is_refused(ws, repo, tmp_path):
+def test_a_link_that_leaves_the_worktree_is_refused(ws, seeded, tmp_path):
     outside = tmp_path / "secret.md"
     outside.write_text("# secret\n")
-    (repo / "link.md").symlink_to(outside)
-    git(repo, "add", "link.md")
+    (seeded / "link.md").symlink_to(outside)
+    git(seeded, "add", "link.md")
     # git lists it, so the listing alone would hand it over; the resolved path
     # is what refuses it.
-    assert "link.md" in [one.path for one in ws.worktree_files(str(repo)).files]
-    assert ws.read_worktree_file(str(repo), "link.md") is None
+    assert "link.md" in [one.path for one in ws.worktree_files(str(seeded)).files]
+    assert ws.read_worktree_file(str(seeded), "link.md") is None
 
 
-def test_a_long_file_is_cut(ws, repo, monkeypatch):
+def test_a_long_file_is_cut(ws, seeded, monkeypatch):
     monkeypatch.setattr(ws, "FILE_MAX_BYTES", 20)
-    (repo / "notes.md").write_text("x" * 100)
-    found = ws.read_worktree_file(str(repo), "notes.md")
-    assert found.cut is True
-    assert found.text.startswith("x" * 20)
-    assert "not shown" in found.text
+    (seeded / "notes.md").write_text("x" * 100)
+    found = ws.read_worktree_file(str(seeded), "notes.md")
+    assert found.startswith("x" * 20)
+    assert "not shown" in found
 
 
-def test_bytes_that_are_not_utf8_do_not_raise(ws, repo):
-    (repo / "notes.md").write_bytes(b"# notes \xff\xfe\n")
-    found = ws.read_worktree_file(str(repo), "notes.md")
-    assert found is not None and "# notes" in found.text
+def test_bytes_that_are_not_utf8_do_not_raise(ws, seeded):
+    (seeded / "notes.md").write_bytes(b"# notes \xff\xfe\n")
+    assert "# notes" in ws.read_worktree_file(str(seeded), "notes.md")
 
 
 # --- parsing a diff ----------------------------------------------------------
@@ -211,6 +196,20 @@ def test_a_rename_without_changes_is_read_from_its_header(ws):
     assert one.hunks == []
 
 
+def test_a_rename_is_read_from_the_rename_lines_when_the_header_lies(ws):
+    """`diff --git a/x b/y` cannot be split when a name holds ` b/`, which is
+    why git also writes `rename from` and `rename to`. Without those two
+    branches this file comes out with both paths wrong."""
+    text = ("diff --git a/x.txt b/y b/z.txt\n"
+            "similarity index 100%\n"
+            "rename from x.txt\n"
+            "rename to y b/z.txt\n")
+    one = ws.parse_diff(text)[0]
+    assert one.old_path == "x.txt"
+    assert one.path == "y b/z.txt"
+    assert one.status == "renamed"
+
+
 def test_a_binary_file_is_marked(ws):
     text = ("diff --git a/logo.png b/logo.png\n"
             "index 1111111..2222222 100644\n"
@@ -255,13 +254,23 @@ def test_a_name_with_a_space_is_read_from_the_marker_lines(ws):
 # --- the whole report --------------------------------------------------------
 
 
-def test_the_base_falls_back_to_main(ws, repo):
-    assert ws.diff_base(str(repo)) == "main"
+def test_untracked_files_are_listed_in_name_order(ws, seeded):
+    (seeded / "b.md").write_text("b")
+    (seeded / "a.md").write_text("a")
+    assert ws.untracked_files(str(seeded)) == ["a.md", "b.md"]
 
 
-def test_the_base_is_what_the_remote_says(ws, repo, tmp_path):
+def test_a_directory_without_git_has_no_untracked_files(ws, tmp_path):
+    assert ws.untracked_files(str(tmp_path)) == []
+
+
+def test_the_base_falls_back_to_main(ws, seeded):
+    assert ws.diff_base(str(seeded)) == "main"
+
+
+def test_the_base_is_what_the_remote_says(ws, seeded, tmp_path):
     clone = tmp_path / "clone"
-    subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True,
+    subprocess.run(["git", "clone", "-q", str(seeded), str(clone)], check=True,
                    capture_output=True)
     assert ws.diff_base(str(clone)) == "origin/main"
 
@@ -273,13 +282,13 @@ def test_a_repository_without_a_base_says_so(ws, tmp_path):
     assert ws.diff_base(str(root)) == ""
 
 
-def test_the_branch_work_and_the_uncommitted_work_are_apart(ws, repo):
-    git(repo, "checkout", "-qb", "side")
-    (repo / "notes.md").write_text("# notes\n\ncommitted\n")
-    git(repo, "commit", "-qam", "second")
-    (repo / "README.md").write_text("# readme\n\nchanged but not committed\n")
+def test_the_branch_work_and_the_uncommitted_work_are_apart(ws, seeded):
+    git(seeded, "checkout", "-qb", "side")
+    (seeded / "notes.md").write_text("# notes\n\ncommitted\n")
+    git(seeded, "commit", "-qam", "second")
+    (seeded / "README.md").write_text("# readme\n\nchanged but not committed\n")
 
-    report = ws.worktree_diff(str(repo))
+    report = ws.worktree_diff(str(seeded))
     assert report.base == "main"
     committed, uncommitted = report.sections
     assert committed.name == "committed"
@@ -288,24 +297,24 @@ def test_the_branch_work_and_the_uncommitted_work_are_apart(ws, repo):
     assert [one.path for one in uncommitted.files] == ["README.md"]
 
 
-def test_an_untracked_file_is_named_rather_than_left_out(ws, repo):
-    (repo / "brand-new.md").write_text("# new\n")
-    report = ws.worktree_diff(str(repo))
+def test_an_untracked_file_is_named_rather_than_left_out(ws, seeded):
+    (seeded / "brand-new.md").write_text("# new\n")
+    report = ws.worktree_diff(str(seeded))
     assert report.untracked == ["brand-new.md"]
     assert all(not section.files for section in report.sections)
 
 
-def test_only_so_many_untracked_files_are_named(ws, repo, monkeypatch):
+def test_only_so_many_untracked_files_are_named(ws, seeded, monkeypatch):
     monkeypatch.setattr(ws, "UNTRACKED_SHOWN", 3)
     for index in range(10):
-        (repo / f"f{index}.md").write_text("x")
-    assert len(ws.worktree_diff(str(repo)).untracked) == 3
+        (seeded / f"f{index}.md").write_text("x")
+    assert len(ws.worktree_diff(str(seeded)).untracked) == 3
 
 
-def test_a_diff_that_is_too_long_is_cut(ws, repo, monkeypatch):
+def test_a_diff_that_is_too_long_is_cut(ws, seeded, monkeypatch):
     monkeypatch.setattr(ws, "DIFF_MAX_BYTES", 200)
-    (repo / "notes.md").write_text("\n".join(f"line {n}" for n in range(500)))
-    report = ws.worktree_diff(str(repo))
+    (seeded / "notes.md").write_text("\n".join(f"line {n}" for n in range(500)))
+    report = ws.worktree_diff(str(seeded))
     assert report.cut is True
 
 

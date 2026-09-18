@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+import conftest
+
 CHROMIUM = [
     "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
     "/usr/bin/chromium",
@@ -465,47 +467,25 @@ def test_alerts_are_off_until_you_ask(page_at):
 
 
 @pytest.fixture
-def repo_page(ws, tmp_path, monkeypatch):
-    """A daemon whose one session sits in a real repository with a change."""
-    import subprocess
+def repo_page(ws, served, repo):
+    """A session in a real repository: one committed change, one not."""
+    from conftest import git_in as git
 
-    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
-    root = tmp_path / "myrepo"
-    root.mkdir()
+    (repo / "README.md").write_text("# The readme\n\nfirst line\n")
+    (repo / "code.py").write_text("print(1)\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "seed")
+    git(repo, "checkout", "-qb", "side")
+    (repo / "code.py").write_text("print(1)\nprint(2)\n")
+    git(repo, "commit", "-qam", "second")
+    (repo / "README.md").write_text("# The readme\n\nfirst line\nsecond line\n")
+    (repo / "NOTES.md").write_text("# Notes\n\n" + HOSTILE)
 
-    def git(*args):
-        subprocess.run(["git", "-C", str(root), *args], check=True,
-                       capture_output=True, text=True)
-
-    git("init", "-q", "-b", "main")
-    git("config", "user.email", "t@example.com")
-    git("config", "user.name", "T")
-    (root / "README.md").write_text("# The readme\n\nfirst line\n")
-    (root / "code.py").write_text("print(1)\n")
-    git("add", ".")
-    git("commit", "-qm", "first")
-    # One committed change on a branch, and one that is not committed.
-    git("checkout", "-qb", "side")
-    (root / "code.py").write_text("print(1)\nprint(2)\n")
-    git("commit", "-qam", "second")
-    (root / "README.md").write_text("# The readme\n\nfirst line\nsecond line\n")
-    (root / "NOTES.md").write_text("# Notes\n\n" + HOSTILE)
-
-    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": str(root), "pane": "%7", "pid": 1,
-                     "ts": time.time()})
-
-    daemon = ws.Daemon()
-    server = ws.make_server(daemon, 0)
-    port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(repo), ts=time.time(),
+                                   pane="%7", pid=1))
     daemon.store.refresh()
-    try:
-        yield root, f"http://127.0.0.1:{port}/"
-    finally:
-        daemon.stopping.set()
-        server.shutdown()
-        server.server_close()
+    return repo, base
 
 
 def show_tab(page, name):
@@ -575,6 +555,25 @@ def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
             browser.close()
 
 
+def test_touching_another_file_leaves_the_open_one_alone(repo_page):
+    """The sidebar and the document are redrawn apart. One key over both meant
+    that an agent saving any Markdown re-rendered the file you were reading,
+    every two seconds, and threw away where you were in it."""
+    root, _ = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate(
+                "window.__doc = document.querySelector('.filebody .prose')")
+            (root / "NOTES.md").write_text("# Notes\n\ntouched again\n")
+            page.wait_for_timeout(3000)       # two polls
+            assert page.evaluate("window.__doc.isConnected"), \
+                "the open document was rebuilt for another file's change"
+        finally:
+            browser.close()
+
+
 def test_a_worktree_without_markdown_says_so(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
@@ -630,8 +629,12 @@ def test_an_untracked_file_is_named(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "diff")
-            note = page.locator(".diffbody .note").inner_text()
-            assert "untracked" in note and "NOTES.md" in note
+            # The names are listed once, on the left; the note says what they
+            # are. Printing them in both places was the same list twice.
+            names = page.eval_on_selector_all(
+                ".filelist .plain", "els => els.map(e => e.textContent)")
+            assert names == ["NOTES.md"]
+            assert "1 untracked file" in page.locator(".diffbody .note").inner_text()
         finally:
             browser.close()
 
@@ -662,10 +665,11 @@ def test_a_long_file_starts_closed_and_opens_on_click(repo_page):
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
-            page.evaluate("state.diff = null")   # the cut-off is sent, not guessed
             show_tab(page, "diff")
             page.wait_for_timeout(400)
-            page.evaluate("state.diff.big = 20; state.diffKey = 'again'; draw()")
+            # The page owns the cut-off, so the test moves the page's own
+            # number rather than pretending the daemon sent a different one.
+            page.evaluate("BIG_LINES = 20; state.diffAt += 1; draw()")
             page.wait_for_timeout(200)
             big = page.locator(".dfile:has-text('big.txt')").last
             assert "hidden" in big.locator(".why").inner_text()
