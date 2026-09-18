@@ -442,3 +442,38 @@ def test_the_marked_fixture_is_the_pinned_one(ws):
     got = "sha384-" + base64.b64encode(hashlib.sha384(raw).digest()).decode()
     pinned = dict((name, hash_) for name, _, hash_ in fetched_scripts(ws.PAGE))
     assert got == pinned["MARKED"]
+
+
+def test_a_listing_that_has_not_moved_sends_no_names(repo_session):
+    """Fifty thousand names weigh 1.7 MB and change when a file is added or
+    removed, which is rare. Which files changed moves every few seconds and is
+    a few hundred bytes. So the browser sends back the tag it holds."""
+    root, base = repo_session
+    status, first = get(f"{base}/api/session/s1/files")
+    assert status == 200
+    assert first["tag"]
+    assert "names" in first
+
+    status, again = get(f"{base}/api/session/s1/files?have={first['tag']}")
+    assert status == 200
+    assert again["tag"] == first["tag"]
+    assert "names" not in again
+    assert again["total"] == first["total"]
+
+    # A tag we do not hold gets the names back.
+    status, other = get(f"{base}/api/session/s1/files?have=notthisone")
+    assert other["names"] == first["names"]
+
+
+def test_a_new_file_moves_the_tag(repo_session):
+    root, base = repo_session
+    _, first = get(f"{base}/api/session/s1/files")
+    (root / "fresh.txt").write_text("new\n")
+    # The listing is held for a few seconds, so wait for it to be read again.
+    for _ in range(60):
+        time.sleep(0.25)
+        _, again = get(f"{base}/api/session/s1/files?have={first['tag']}")
+        if again["tag"] != first["tag"]:
+            break
+    assert again["tag"] != first["tag"]
+    assert "fresh.txt" in again["names"].split("\0")

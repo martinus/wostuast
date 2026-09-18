@@ -310,13 +310,24 @@ thousand, because the thousand were never sent. A search that can only see
 part of the list is not a search. Either the browser holds every name or the
 tab says plainly that it does not.
 
-**The daemon keeps the list; it is sent once.** Listing a large repository
-costs git real time, so the daemon lists it at most every few seconds and
-keeps the answer. The names go to the browser as one newline-joined string
-with a tag. The browser asks with the tag it already has, and an unchanged
-listing answers with that tag and the changed files alone. Typing then costs
-nothing at all, and a poll costs a few hundred bytes instead of a few hundred
-kilobytes.
+**The daemon keeps the list; it is sent once.** Listing 52,201 files costs
+git 324 ms, so the daemon keeps the answer and shares it. A stale one is
+handed over at once and read again behind it, so only a worktree nobody has
+asked about yet makes anyone wait. Asking again then costs 3 ms.
+
+The names go to the browser as one NUL-separated string with a tag. The
+browser asks with the tag it already holds, and a listing that has not moved
+answers with that tag and the changed files alone: **1733 KB on the first
+ask, 0.2 KB on every poll after it**.
+
+**The order the names are sent in depends only on which files exist.** It is
+the pinned names, then the rest by name. It cannot depend on what has
+changed, or it would move every time an agent saved anything — every few
+seconds — and the whole list would come down the wire again each time, which
+is the saving gone. The page gets the changed names and their times, which is
+tens of entries, and lifts them into the three tiers below itself. Measured:
+after an agent edits a tracked file, the tag does not move and the poll is
+still 0.2 KB.
 
 **git failing must never read as an empty worktree.** The listing ran under
 the same two second timeout as every other git call. Two seconds is not
@@ -327,12 +338,18 @@ made it look random. The listing gets the timeout a large repository needs,
 and a timeout says it timed out. This is the same bug as a failed diff
 reading as "nothing changed".
 
-**A tree, until you type.** With nothing typed the left column is a directory
-tree: directories collapsed, the path to the open file expanded, `PLAN.md`,
-`CLAUDE.md` and `README.md` at the top, a changed file marked with a dot and
-the directories above it marked too. A tree is how you read an unfamiliar
-repository, and it also cures the long names: the indent carries the
-directory, so a row only has to show the last part.
+**Three tiers, until you type.** `PLAN.md`, `CLAUDE.md` and `README.md`
+first, because they say what the work is. Then whatever the agent has
+changed, newest first, because that is the question this tool exists to
+answer. Then the rest. A changed file carries a dot. The page builds this
+from the names and the changed times, in one pass and a sort of the few that
+moved — never a sort of fifty thousand.
+
+**A tree, in stage 4.** The left column becomes a directory tree: directories
+collapsed, the path to the open file expanded, a changed file's directories
+marked too. A tree is how you read an unfamiliar repository, and it also
+cures the long names: the indent carries the directory, so a row only has to
+show the last part.
 
 Typing replaces the tree with a flat list of matches, best first. The letters
 have to turn up in the path in that order but not next to each other, a run
@@ -341,10 +358,13 @@ a path segment and the file's own name count extra, and the letters that
 matched are picked out. A long path in the flat list is cut at the front, not
 the end: the end is the part you were looking for.
 
-**Only what is on screen is built.** Rows are one height, so the list builds
-the rows in view and a little either side and moves that window as it
-scrolls. Ten thousand matches then cost the same as ten, and no answer has to
-be cut to keep the page quick.
+**Only what is on screen is built.** Every row is one height, so where you
+are in the list is arithmetic rather than a measurement. The list builds the
+rows in view and a little either side, and two spacers stand in for the rest
+and hold the scrollbar where it belongs. Ten thousand matches then cost the
+same as ten, and no answer has to be cut to keep the page quick. How many
+matched, or why none did, goes in a strip above the list, where it is
+readable without scrolling to the end of ten thousand rows.
 
 **Reading a file.** Markdown renders as Markdown. Everything else is
 monospace text with syntax highlighting, set on the page itself — no box, no
@@ -660,7 +680,9 @@ words. The first screenshot is the Transcript tab with one session in
 | The status line writes one file per session, not events | It runs on every redraw. An append would flood the log with nothing new. |
 | `install` never overwrites an existing status line | The status line is the user's own. wostuast prints the line to add instead. |
 | The browser holds every name, or says it does not | A search over the first five thousand of 52,799 names found 16 files and missed a thousand. A partial search gives a wrong answer and looks like a right one. |
-| The listing is sent once, with a tag | Names change rarely; which files changed moves every few seconds. Sending them together made every poll cost the whole repository. |
+| The listing is sent once, with a tag | Names change rarely; which files changed moves every few seconds. Sending them together made every poll cost the whole repository: 1733 KB against the 0.2 KB it costs now. |
+| The order sent is not the order read | An order that depended on what had changed would move whenever an agent saved anything, and the tag with it, and the whole list would come down the wire again. The page holds the names and lifts the few that moved. |
+| A stale listing is served, then read again behind | Waiting on git while an answer sits in hand helps nobody. Only a worktree nobody has asked about yet makes anyone wait, and that is once. |
 | The listing gets its own timeout | Two seconds fits `git status` in a small worktree and nothing else. A shared timeout is a shared limit, and the tabs do not share a size. |
 | A git failure never renders as an empty answer | "No files" and "git did not answer" look the same and mean opposite things. This was already true of the diff; the listing had the same hole. |
 | An ignored directory is one entry | `node_modules` holds more files than the repository does. Naming it and reading it when opened costs nothing; walking it costs everything. An ignored file outside one is listed like any other, because that is the ignored file people look for. |

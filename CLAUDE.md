@@ -108,6 +108,16 @@ settings.
   modification time is read to sort those few and to know when to read the
   open file again; asking the disk about all of them, every poll, is the
   mistake to avoid.
+- **The daemon holds one listing per worktree, and the page holds the names.**
+  `Files` keeps the answer for `LIST_FRESH` seconds and hands a stale one over
+  at once while it is read again behind, so only a worktree nobody has asked
+  about yet makes anyone wait. The names go with a tag; the browser sends the
+  tag back and a listing that has not moved answers without them. That is
+  1733 KB against 0.2 KB on a poll, so **the order the names are sent in must
+  depend only on which files exist** — `file_order` is pinned-then-name for
+  exactly that reason. `inOrder` in the page builds the three tiers the reader
+  sees. Put the changed tier back in `file_order` and the tag moves every time
+  an agent saves, and the saving is gone.
 - **The page searches every name, or it says it cannot.** Sending the first
   five thousand of 52,799 names made `libcorrelation` find 16 files and miss
   a thousand. A search that sees part of the list gives a wrong answer that
