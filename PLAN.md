@@ -321,7 +321,7 @@ answers with that tag and the changed files alone: **1733 KB on the first
 ask, 0.2 KB on every poll after it**.
 
 **The order the names are sent in depends only on which files exist.** It is
-the pinned names, then the rest by name. It cannot depend on what has
+the pinned names, then the rest by name: one sort and three names lifted. It cannot depend on what has
 changed, or it would move every time an agent saved anything — every few
 seconds — and the whole list would come down the wire again each time, which
 is the saving gone. The page gets the changed names and their times, which is

@@ -67,8 +67,8 @@ def test_the_order_sent_does_not_move_when_a_file_changes(ws, seeded):
     (seeded / "notes.md").write_text("# notes\n\ntouched\n")
     after = ws.worktree_files(str(seeded))
     assert [one.path for one in after.files] == before
-    assert ws.listing_tag([one.path for one in after.files]) == \
-        ws.listing_tag(before)
+    assert ws.listing_tag("\0".join(one.path for one in after.files)) == \
+        ws.listing_tag("\0".join(before))
     # It is still marked, and its time is still read, so the page can lift it.
     touched = [one for one in after.files if one.path == "notes.md"][0]
     assert touched.changed is True

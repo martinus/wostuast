@@ -114,17 +114,17 @@ settings.
   about yet makes anyone wait. The names go with a tag; the browser sends the
   tag back and a listing that has not moved answers without them. That is
   1733 KB against 0.2 KB on a poll, so **the order the names are sent in must
-  depend only on which files exist** — `file_order` is pinned-then-name for
-  exactly that reason. `inOrder` in the page builds the three tiers the reader
-  sees. Put the changed tier back in `file_order` and the tag moves every time
-  an agent saves, and the saving is gone.
+  depend only on which files exist** — `in_order` is pinned-then-name for
+  exactly that reason. Put a changed tier back into it and the tag moves every
+  time an agent saves, and the saving is gone. The order the reader sees is
+  the page's, and `dirFiles` is the only place that decides it.
 - **The Files tab is a tree, and the tiers live inside it.** `dirFiles` orders
   each directory's own files — named, then changed newest first, then the rest
   — rather than listing them again in a section above the tree, which in a
   small repository is most of the list twice. `openDirs` opens a directory
-  holding a change, because a closed tree cannot say what the agent just did;
-  `shutdirs` is what the reader closed, and it wins, so the tree never fights
-  the hand on it.
+  holding a change, because a closed tree cannot say what the agent just did,
+  and `state.dirs` — one map of what the reader opened or closed by hand —
+  wins over it, so the tree never fights the hand on it.
 - **The page searches every name, or it says it cannot.** Sending the first
   five thousand of 52,799 names made `libcorrelation` find 16 files and miss
   a thousand. A search that sees part of the list gives a wrong answer that

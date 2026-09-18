@@ -1370,7 +1370,7 @@ class FileText:
     binary: bool = False
 
 
-def file_order(entry: FileEntry) -> tuple[int, int, str]:
+def in_order(names: set[str]) -> list[str]:
     """The order the names are sent in: PLAN.md, CLAUDE.md and README.md
     first, because they say what the work is, then the rest by name.
 
@@ -1384,10 +1384,17 @@ def file_order(entry: FileEntry) -> tuple[int, int, str]:
     Where a changed file sits in the list the reader sees is the page's
     business. It gets the changed names and their times, which is tens of
     entries, and lifts them to the top itself.
+
+    One sort, then three names lifted. Sorting and then sorting again by a key
+    function looks wasteful and is not: over fifty thousand files the second
+    sort is nearly free, because the list is already in order, while building
+    fifty thousand key tuples to do it costs twice what the whole job should.
+    Measured: 45 ms that way, 89 ms with the first sort dropped, 35 ms like
+    this.
     """
-    if entry.path in PINNED_FILES:
-        return (0, PINNED_FILES.index(entry.path), entry.path)
-    return (1, 0, entry.path)
+    head = [name for name in PINNED_FILES if name in names]
+    return head + [name for name in sorted(names)
+                   if name not in PINNED_FILES]
 
 
 def worktree_root(cwd: str, runner: Callable[..., str | None] = run) -> str:
@@ -1452,7 +1459,8 @@ def git_names(
     return [name for name in out.split("\0") if name]
 
 
-def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktree:
+def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
+                   root: str = "") -> Worktree:
     """Every file in a worktree, in the order the tab shows them.
 
     Three listings. What git tracks, the untracked files .gitignore does not
@@ -1475,7 +1483,7 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktre
     far more than the answer is worth.
     """
     tree = Worktree()
-    tree.root = worktree_root(cwd, runner)
+    tree.root = root or worktree_root(cwd, runner)
     if not tree.root:
         return tree
     parts = [
@@ -1491,18 +1499,14 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktre
         if part is not None:
             names.update(name for name in part if not name.endswith("/"))
     touched = touched or set()
-    # Not sorted here: `file_order` ends with the path, so it decides the
-    # whole order on its own. Sorting fifty thousand names twice is one sort
-    # too many.
-    for name in names:
+    for name in in_order(names):
         entry = FileEntry(path=name, changed=name in touched)
-        if entry.changed or name in PINNED_FILES:
+        if entry.changed:
             try:
                 entry.mtime = os.stat(os.path.join(tree.root, name)).st_mtime
             except OSError:
                 continue    # listed but since deleted, or a link with no target
         tree.files.append(entry)
-    tree.files.sort(key=file_order)
     tree.total = len(tree.files)
     if tree.total > FILES_MAX:
         del tree.files[FILES_MAX:]
@@ -1510,8 +1514,8 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run) -> Worktre
     return tree
 
 
-def listing_tag(names: Sequence[str]) -> str:
-    """A short name for one set of file names.
+def listing_tag(names: str) -> str:
+    """A short name for one set of file names, given them already joined.
 
     The browser sends back the tag it already holds, and an answer that still
     has that tag carries no names at all. Names change when a file is added or
@@ -1520,8 +1524,7 @@ def listing_tag(names: Sequence[str]) -> str:
     """
     import hashlib
 
-    digest = hashlib.sha1("\0".join(names).encode("utf-8", "replace"))
-    return digest.hexdigest()[:16]
+    return hashlib.sha1(names.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 @dataclass
@@ -1531,6 +1534,11 @@ class Listing:
     tree: Worktree = field(default_factory=Worktree)
     tag: str = ""
     read_at: float = 0.0
+    # Built with the listing, not per request. The names weigh 1.7 MB in a
+    # large repository and joining them costs 6 ms, which a poll that is only
+    # asking "have they moved?" should not pay.
+    names: str = ""
+    changed: dict[str, float] = field(default_factory=dict)
 
 
 class Files:
@@ -1538,8 +1546,8 @@ class Files:
 
     Asking git costs about a third of a second over fifty thousand files, the
     Files tab asks again every couple of seconds, and several browsers may be
-    watching one worktree. So one answer is kept and shared. A stale one is
-    handed over at once and read again behind it, so only a worktree nobody
+    watching the same worktree. So one answer is kept and shared. A stale one
+    is handed over at once and read again behind it, so only a worktree nobody
     has asked about yet makes anyone wait.
 
     The daemon owns one of these and never warms it in the tick. It does no
@@ -1551,9 +1559,24 @@ class Files:
         import threading
 
         self.held: dict[str, Listing] = {}
+        self.roots: dict[str, str] = {}     # a session's directory to its top
         self.gates: dict[str, Any] = {}
-        self.reading: set[str] = set()
         self.lock = threading.Lock()
+
+    def root_of(self, cwd: str, runner: Callable[..., str | None]) -> str:
+        """Where this directory's worktree starts, asked once.
+
+        `git rev-parse` is cheap but it is still a process, and this ran on
+        every poll of every browser for an answer that does not move.
+        """
+        with self.lock:
+            known = self.roots.get(cwd)
+        if known is not None:
+            return known
+        found = worktree_root(cwd, runner)
+        with self.lock:
+            self.roots[cwd] = found
+        return found
 
     def gate(self, root: str) -> Any:
         """One lock per worktree, so two readers of one root do not both ask
@@ -1568,7 +1591,7 @@ class Files:
 
     def of(self, cwd: str, runner: Callable[..., str | None] = run) -> Listing:
         """The listing for the worktree this directory sits in."""
-        root = worktree_root(cwd, runner)
+        root = self.root_of(cwd, runner)
         if not root:
             return Listing()
         gate = self.gate(root)
@@ -1583,37 +1606,41 @@ class Files:
 
     def read(self, root: str, runner: Callable[..., str | None]) -> Listing:
         """Ask git. The caller holds this root's gate."""
-        tree = worktree_files(root, runner)
-        fresh = Listing(tree=tree,
-                        tag=listing_tag([one.path for one in tree.files]),
-                        read_at=time.time())
+        tree = worktree_files(root, runner, root=root)
+        # NUL is the separator git uses, and the only one a file name cannot
+        # hold.
+        names = "\0".join(one.path for one in tree.files)
+        fresh = Listing(
+            tree=tree, names=names, tag=listing_tag(names),
+            changed={one.path: one.mtime for one in tree.files if one.changed},
+            read_at=time.time())
         with self.lock:
             self.held[root] = fresh
         return fresh
 
     def behind(self, root: str, runner: Callable[..., str | None],
                gate: Any) -> None:
-        """Read it again in a thread of its own, one at a time per root."""
+        """Read it again in a thread of its own. The gate is what says one
+        reader at a time, so nothing else has to say it."""
         import threading
 
-        with self.lock:
-            if root in self.reading:
-                return
-            self.reading.add(root)
+        if not gate.acquire(blocking=False):
+            return                      # someone is already reading this root
 
         def again() -> None:
             try:
-                with gate:
-                    held = self.held.get(root)
-                    if held is None or time.time() - held.read_at > LIST_FRESH:
-                        self.read(root, runner)
+                held = self.held.get(root)
+                if held is None or time.time() - held.read_at > LIST_FRESH:
+                    self.read(root, runner)
             except Exception as error:   # a bad read must not stop the daemon
                 log(f"listing {root} failed: {error!r}")
             finally:
-                with self.lock:
-                    self.reading.discard(root)
+                gate.release()
 
-        threading.Thread(target=again, daemon=True).start()
+        try:
+            threading.Thread(target=again, daemon=True).start()
+        except RuntimeError:            # no thread to be had; try again later
+            gate.release()
 
     def forget(self, older_than: float) -> None:
         """Drop the listings nobody has asked for in a while. A listing holds
@@ -1623,7 +1650,10 @@ class Files:
             for root in list(self.held):
                 if self.held[root].read_at < cutoff:
                     del self.held[root]
-                    self.gates.pop(root, None)
+        # Only the names go. A gate is a lock and a root is a short string,
+        # both bounded by how many worktrees this daemon has ever been asked
+        # about, and dropping a gate a background reader still holds would
+        # hand the next caller a different lock from the one in use.
 
 
 def untracked_files(cwd: str, runner: Callable[..., str | None] = run) -> list[str]:
@@ -2507,19 +2537,14 @@ def make_server(daemon: Daemon, port: int) -> Any:
                 "cut": tree.cut, "failed": tree.failed, "tag": held.tag,
                 # Name to modification time, for the few files that moved. The
                 # page needs the time to put the newest change first.
-                "changed": {one.path: one.mtime
-                            for one in tree.files if one.changed},
+                "changed": held.changed,
             }
             # The browser sends back the tag it already holds. Names change
             # when a file is added or removed, which is rare; which files have
             # changed moves every few seconds. So a poll costs a few hundred
             # bytes instead of the 1.7 MB that fifty thousand names weigh.
-            #
-            # The names go as one NUL-separated string, not as a list of
-            # objects, because NUL is the separator git uses and the only one
-            # a file name cannot hold.
             if not held.tag or query.get("have", [""])[0] != held.tag:
-                body["names"] = "\0".join(one.path for one in tree.files)
+                body["names"] = held.names
             self.reply_json(body)
 
         def file(self, session_id: str, query: dict[str, list[str]]) -> None:
@@ -3420,8 +3445,6 @@ body:not(.show-thinking) .thinking { display: none; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
 .hljs-deletion { color: var(--cut-ink); }
-.filelist .plain { padding: 5px 16px; color: var(--ink-faint);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plus { color: var(--working); }
 .minus { color: var(--cut-ink); }
 .filebody { flex-grow: 1; overflow-y: auto; padding: 20px 26px; min-width: 0; }
@@ -3518,7 +3541,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
       </div>
     </div>
-    <div class="grip" id="grip" title="drag to resize, double-click to reset"></div>
+    <div class="grip" id="grip"></div>
     <div class="main">
       <div class="session-head">
         <div class="title" id="title">no session</div>
@@ -3569,11 +3592,10 @@ const state = {
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
   names: [],            // every path in the worktree, in the order sent
-  order: [],            // the same paths, with what changed lifted to the top
+  known: new Set(),     // the same paths, for asking whether one is still there
   tree: new Map(),      // every directory, with what it holds
   marked: new Set(),    // the directories holding something that changed
-  opendirs: new Set(),  // the ones the reader opened
-  shutdirs: new Set(),  // and the ones the reader closed
+  dirs: new Map(),      // the ones the reader opened or closed by hand
   changed: new Map(),   // the ones git says the agent touched, and when
   filesTotal: 0,        // how many the worktree holds
   filesCut: false,      // more than the daemon will send
@@ -3613,16 +3635,14 @@ function rememberWidth(name, px) {
   }
 }
 
-function widthsBack() {
-  for (const name of ["--sidebar-w", "--side-w"]) {
-    let saved = "";
-    try { saved = localStorage.getItem("wostuast" + name) || ""; } catch (e) { }
-    if (saved) document.documentElement.style.setProperty(name, saved + "px");
-  }
-}
-
 function dragWidth(grip, name, least, most) {
   grip.title = "drag to resize, double-click to reset";
+  // Each handle brings its own width back, so a third one is one call and
+  // not two. The file column's is built when its tab first opens, which is
+  // when it is wanted.
+  let saved = "";
+  try { saved = localStorage.getItem("wostuast" + name) || ""; } catch (e) { }
+  if (saved) rememberWidth(name, Number(saved));
   let from = 0;
   let was = 0;
   const move = (at) => {
@@ -4305,11 +4325,14 @@ function split(box, tab, bodyClass) {
     const side = put(box, "div", "side");
     put(side, "div", "findslot");
     put(side, "div", "listnote");    // how many, or why there are none
-    const list = put(side, "div", "filelist");
-    // The window of rows follows the scrollbar, and the scrollbar is the only
-    // thing that moves it, so it is watched here rather than redrawn from the
-    // top every time.
-    list.addEventListener("scroll", () => fillList(list));
+    // Only the Files tab's list is windowed, and it is the only one whose
+    // rows are all one height. A diff row carries a second line of counts, so
+    // the arithmetic would not hold there — the tabs share the frame, not the
+    // list. The window follows the scrollbar, which is the only thing that
+    // moves it, so it is watched rather than redrawn from the top each time.
+    const windowed = tab === "files";
+    const list = put(side, "div", "filelist" + (windowed ? " fixed" : ""));
+    if (windowed) list.addEventListener("scroll", () => fillList(list));
     dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
     put(box, "div", bodyClass);
   }
@@ -4370,15 +4393,6 @@ function fuzzy(text, query) {
   return { score: score - lower.length / 50, at };
 }
 
-// Where the reader sees a file, which is not the order it arrived in.
-//
-// The daemon sends the names in an order that depends only on which files
-// exist, so that the list it holds stays good while an agent works. Three
-// tiers make the order you read: PLAN.md, CLAUDE.md and README.md first,
-// because they say what the work is; then whatever the agent has changed,
-// newest first, because that is the question this tool exists to answer; then
-// the rest as they came. It is one pass and a sort of the few that moved, not
-// a sort of fifty thousand.
 // --- the tree ---------------------------------------------------------------
 
 // Every directory, with what it holds. One pass over the names, which arrive
@@ -4425,8 +4439,9 @@ function dirsWithChanges(changed) {
 // wins over that, so the tree never fights the hand on it.
 function openDirs() {
   const open = new Set(state.marked);
-  for (const path of state.opendirs) open.add(path);
-  for (const path of state.shutdirs) open.delete(path);
+  for (const [path, wanted] of state.dirs) {
+    if (wanted) open.add(path); else open.delete(path);
+  }
   return open;
 }
 
@@ -4453,10 +4468,17 @@ function treeRows(dirs, open, rows = [], path = "", depth = 0) {
   if (!one) return rows;
   const from = path ? path.length + 1 : 0;
   for (const child of one.dirs) {
-    rows.push({ path: child, name: child.slice(from), depth, dir: true });
-    if (open.has(child)) treeRows(dirs, open, rows, child, depth + 1);
+    const wide = open.has(child);
+    rows.push({ path: child, name: child.slice(from), depth, dir: true,
+                open: wide });
+    if (wide) treeRows(dirs, open, rows, child, depth + 1);
   }
-  for (const file of dirFiles(one.files)) {
+  // Only a directory holding something named or changed needs its files put
+  // in order; everywhere else they are already in the order they arrived, and
+  // `state.marked` says which those are. It halves a fully opened tree.
+  const files = (path && !state.marked.has(path)) ? one.files
+                                                  : dirFiles(one.files);
+  for (const file of files) {
     rows.push({ path: file, name: file.slice(from), depth });
   }
   return rows;
@@ -4466,30 +4488,16 @@ function treeRows(dirs, open, rows = [], path = "", depth = 0) {
 // tree otherwise.
 function listRows() {
   if (state.find) {
-    return pick(state.order).map(
-      (hit) => ({ path: hit.path, name: hit.path, depth: 0, at: hit.at }));
+    // `pick` already made one object per match, and on a broad query that is
+    // tens of thousands. A second array of the same size, to add two fields
+    // eighty of which are ever drawn, is the row shape's problem to avoid:
+    // a flat row has no depth and its name is its path.
+    return pick(state.names);
   }
   return treeRows(state.tree, openDirs());
 }
 
-function inOrder(names, changed) {
-  if (!changed.size) return names;
-  const lifted = [...changed.keys()]
-    .filter((path) => !PINNED.includes(path))
-    .sort((a, b) => changed.get(b) - changed.get(a));
-  const moved = new Set(lifted);
-  const pinned = [];
-  const rest = [];
-  for (const path of names) {
-    if (PINNED.includes(path)) pinned.push(path);
-    else if (!moved.has(path)) rest.push(path);
-  }
-  pinned.sort((a, b) => PINNED.indexOf(a) - PINNED.indexOf(b));
-  return pinned.concat(lifted, rest);
-}
-
-// The files to show, best match first. With nothing typed the order is the
-// one above: the named files, then what the agent changed.
+// The files to show, best match first.
 //
 // It runs over every name the worktree holds, not over a slice of them. The
 // first version searched the first five thousand of 52,799, so typing
@@ -4528,7 +4536,7 @@ function putName(parent, text, at) {
 // what the list is showing: matching every name again on each scroll event
 // would cost twenty milliseconds a frame in a large repository.
 function fillList(list) {
-  if (!list.found) return;        // the Diff tab's list is not windowed
+  if (!list.found) return;        // a scroll before the first draw
   const found = list.found;
   // Clamped to the list as it is now. A scrollbar left deep in ten thousand
   // names, and then a query that matches one, would otherwise put the window
@@ -4549,7 +4557,7 @@ function fillList(list) {
 // One row: a directory that opens, or a file that is read.
 function drawRow(list, row) {
   const dir = !!row.dir;
-  const open = dir && list.open.has(row.path);
+  const open = !!row.open;
   const button = put(list, "button",
                      (dir ? "dir" : "") +
                      (!dir && state.file === row.path ? " chosen" : "") +
@@ -4558,13 +4566,13 @@ function drawRow(list, row) {
                      (open ? " open" : ""));
   button.type = "button";
   button.title = row.path;
-  button.style.paddingLeft = (14 + row.depth * 13) + "px";
+  // A match from the find box has no depth and shows its whole path.
+  button.style.paddingLeft = (14 + (row.depth || 0) * 13) + "px";
   if (dir) put(button, "span", "caret", open ? "\u25be" : "\u25b8");
-  putName(button, row.name, row.at || []);
+  putName(button, row.name || row.path, row.at || []);
   button.addEventListener("click", () => {
     if (!dir) { chooseFile(row.path); return; }
-    if (open) { state.opendirs.delete(row.path); state.shutdirs.add(row.path); }
-    else { state.shutdirs.delete(row.path); state.opendirs.add(row.path); }
+    state.dirs.set(row.path, !open);
     draw();
   });
 }
@@ -4573,7 +4581,8 @@ function drawRow(list, row) {
 // files, never the rows: a tree row can be a directory or a heading.
 function noteList(note, found) {
   note.replaceChildren();
-  const hits = found.filter((row) => !row.dir).length;
+  const hits = state.find ? found.length
+                          : found.reduce((n, row) => n + (row.dir ? 0 : 1), 0);
   if (state.filesFailed) {
     // git failing and a worktree holding nothing look the same and mean
     // opposite things, so the strip says which one this is.
@@ -4586,31 +4595,38 @@ function noteList(note, found) {
     put(note, "span", null, state.filesTotal + " files, more than one list"
         + " can answer for");
   } else {
-    put(note, "span", null, state.filesTotal +
-        (state.filesTotal === 1 ? " file" : " files"));
+    countNote(note, state.filesTotal);
   }
+}
+
+// "1 file" or "N files", in the one place that spells it.
+function countNote(note, many) {
+  put(note, "span", null, many + (many === 1 ? " file" : " files"));
 }
 
 function drawFiles(box) {
   const [list, pane, note] = split(box, "files", "filebody");
-  const found = listRows();
 
-  // What the list draws is what decides whether it is drawn again: the names
-  // in the order they are shown, which file is open, and which ones carry a
-  // dot. A pinned file does not move when it changes, so without the changed
-  // names in here its dot never appeared — the whole reason this key exists.
-  // The mtimes stay out: folding those in re-rendered the open document.
+  // What the list draws is what decides whether it is drawn again: which
+  // names there are, which file is open, which carry a dot, and which
+  // directories stand open. The names come as `filesTag`, which is the
+  // daemon's own hash of them, so this is exact rather than sampled.
+  //
+  // A pinned file does not move when it changes, so without the changed names
+  // in here its dot never appeared — the whole reason this key exists. The
+  // mtimes stay out: folding those in re-rendered the open document.
   if (fresh(box, "listKey", JSON.stringify(
-      [state.find, state.file, state.filesFailed, state.order.length,
-       state.order.slice(0, 40), [...state.changed.keys()].sort(),
-       [...state.opendirs].sort(), [...state.shutdirs].sort()]))) {
-    list.classList.add("fixed");   // every row one height, so the sums hold
+      [state.find, state.file, state.filesFailed, state.filesTag,
+       [...state.changed.keys()].sort(), [...state.dirs]]))) {
+    // Built here and not before: with a query typed this is a pass over every
+    // name in the repository, and a poll that changes nothing wants none of
+    // it.
+    const found = listRows();
     list.found = found;
-    list.open = openDirs();       // the rows read it as they are built
     // A different set of names starts at the top: the best match is the first
     // row, and that is the row you meant. A file being touched, or another
     // one being opened, is not a different set and does not move you.
-    const asked = state.find + "\n" + state.order.length;
+    const asked = state.find + "\n" + state.filesTag;
     if (list.dataset.asked !== asked) {
       list.dataset.asked = asked;
       list.scrollTop = 0;
@@ -4674,10 +4690,6 @@ function drawDiff(box) {
   const [list, pane, note] = split(box, "diff", "diffbody");
   if (!fresh(box, "bodyKey", state.diffAt + "\n" + state.find)) return;
   const place = pane.scrollTop;
-  // A diff names the files that moved, which is tens, so this list is built
-  // whole. `found` is what tells fillList to leave it alone.
-  list.found = null;
-  list.classList.remove("fixed");
   list.replaceChildren();
   pane.replaceChildren();
 
@@ -4737,8 +4749,7 @@ function drawDiff(box) {
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
   note.replaceChildren();
-  put(note, "span", null, shown + loose.length === 1 ? "1 file"
-      : (shown + loose.length) + " files");
+  countNote(note, shown + loose.length);
   drawDiffCount();
 }
 
@@ -4902,11 +4913,10 @@ function choose(id) {
   state.open.clear();
   forgetFile(null);
   state.names = [];
-  state.order = [];
+  state.known = new Set();
   state.tree = new Map();
   state.marked = new Set();
-  state.opendirs = new Set();
-  state.shutdirs = new Set();
+  state.dirs = new Map();
   state.changed = new Map();
   state.filesTotal = 0;
   state.filesCut = false;
@@ -4983,11 +4993,14 @@ async function loadFiles() {
   if (body.names !== undefined) {
     state.names = body.names ? body.names.split("\0") : [];
     state.tree = buildTree(state.names);
+    state.known = new Set(state.names);   // built once, asked every poll
   }
-  state.order = inOrder(state.names, state.changed);
   state.marked = dirsWithChanges(state.changed);
-  if (!state.names.includes(state.file)) {
-    forgetFile(state.order.length ? state.order[0] : null);
+  if (!state.known.has(state.file)) {
+    // The first file the reader will see, from the one place that decides
+    // what that order is. It runs when the open file has gone, not per poll.
+    const first = listRows().find((row) => !row.dir);
+    forgetFile(first ? first.path : null);
   }
 
   if (state.file) {
@@ -5149,7 +5162,6 @@ $("find").addEventListener("keydown", (press) => {
   draw();
 });
 applyTheme(themeChoice());
-widthsBack();
 dragWidth($("grip"), "--sidebar-w", 200, 760);
 
 drawSessions();

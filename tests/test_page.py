@@ -562,12 +562,17 @@ def repo_page(ws, served, repo):
     return repo, base
 
 
-@pytest.fixture
-def big_page(ws, served, tmp_path):
-    """A session in a repository with more files than the old list would send."""
+@pytest.fixture(scope="session")
+def big_repo(tmp_path_factory):
+    """A repository with more files than the old list would send.
+
+    Built once for the whole run: writing 5200 files and committing them costs
+    about two seconds, and several tests want it. Every one of them only reads,
+    so there is nothing to keep apart.
+    """
     from conftest import git_in as git
 
-    root = tmp_path / "big"
+    root = tmp_path_factory.mktemp("big")
     (root / "native" / "shared" / "libcorrelation" / "src").mkdir(parents=True)
     git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.email", "t@example.com")
@@ -578,12 +583,17 @@ def big_page(ws, served, tmp_path):
         "// deep\n")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "first")
+    return root
 
+
+@pytest.fixture
+def big_page(ws, served, big_repo):
+    """A session standing in that repository."""
     daemon, base = served
-    ws.append_event(conftest.event("SessionStart", cwd=str(root), ts=time.time(),
-                                   pane="%7", pid=1))
+    ws.append_event(conftest.event("SessionStart", cwd=str(big_repo),
+                                   ts=time.time(), pane="%7", pid=1))
     daemon.store.refresh()
-    return root, base
+    return big_repo, base
 
 
 def show_tab(page, name):
