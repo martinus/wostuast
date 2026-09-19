@@ -2513,3 +2513,160 @@ def test_an_untracked_file_anchors_its_comments_to_itself(repo_page):
             assert "NOTES.md:" in page.evaluate("reviewText()")
         finally:
             browser.close()
+
+
+# --- the review: milestone 7 stage 3 -----------------------------------------
+
+
+def test_a_review_survives_a_reload(repo_page):
+    """A review is written over ten minutes. Losing it to an F5 is losing the
+    work, so it is kept in this browser — and nowhere else."""
+    with sync_playwright() as play:
+        browser = fresh_context(play)
+        try:
+            page = browser.new_page()
+            page.goto(repo_page[1], wait_until="domcontentloaded")
+            page.wait_for_selector(".row")
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            comment_on_first_line(page, "still here after F5")
+
+            # Reload on the comment alone, before anything else has had a
+            # chance to save it: writing a comment is what has to keep it.
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(".row")
+            show_tab(page, "diff")
+            page.wait_for_selector(".comment")
+            assert "still here after F5" in page.locator(".comment").inner_text()
+
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            page.fill("#overall", "and so is this")
+            page.wait_for_function(
+                "document.getElementById('reviewtext')"
+                ".textContent.includes('and so is this')")
+            page.click("#reviewstop")
+
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(".row")
+            show_tab(page, "diff")
+            page.wait_for_selector(".comment")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            assert page.input_value("#overall") == "and so is this"
+        finally:
+            browser.close()
+
+
+def test_a_review_that_went_is_not_kept(repo_page):
+    with sync_playwright() as play:
+        browser = fresh_context(play)
+        try:
+            page = browser.new_page()
+            page.goto(repo_page[1], wait_until="domcontentloaded")
+            page.wait_for_selector(".row")
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            comment_on_first_line(page, "goes away")
+            page.click(".comment .link")
+            page.fill(".commentbox textarea", "")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review.length === 0")
+            assert page.evaluate(
+                "Object.keys(localStorage)"
+                ".filter((k) => k.startsWith('wostuast-review-')).length") == 0
+        finally:
+            browser.close()
+
+
+def test_storage_that_is_not_a_review_is_left_out(repo_page):
+    """What comes back was written by this page, but a browser's storage is
+    not a place to trust blindly."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate("""() => {
+              localStorage.setItem("wostuast-review-" + state.chosen, JSON.stringify(
+                {overall: 7, comments: [
+                  {anchor: "a.py\\nnew\\n1", quoted: "x", note: "a real one"},
+                  {note: "no anchor"},
+                  "not even an object",
+                  null,
+                ]}));
+              recallReview(state.chosen);
+            }""")
+            assert page.evaluate("state.review.length") == 1
+            assert page.evaluate("state.review[0].note") == "a real one"
+            assert page.evaluate("state.overall") == ""
+        finally:
+            browser.close()
+
+
+def test_a_comment_whose_line_changed_says_so(repo_page):
+    """The agent keeps working while you read. Moving the comment to whatever
+    is at that line number now would point it at different code; dropping it
+    would lose the work. It says so instead, and keeps the line it quoted."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "about the old line")
+            assert page.locator(".comment.stale").count() == 0
+            # The same line number, different text: the agent edited it.
+            page.evaluate("""() => {
+              for (const section of state.diff.sections) {
+                for (const file of section.files) {
+                  for (const hunk of file.hunks) {
+                    for (const line of hunk.lines) line.text = "something else";
+                  }
+                }
+              }
+              state.diffAt += 1;
+              redrawDiff();
+            }""")
+            page.wait_for_selector(".comment.stale")
+            shown = page.locator(".comment.stale").inner_text()
+            assert "the line has changed" in shown
+            assert "about the old line" in shown, "the note is kept"
+            assert "the line has changed" in page.evaluate("reviewText()")
+        finally:
+            browser.close()
+
+
+def test_a_comment_with_nowhere_left_to_sit_is_still_shown(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "the file went away")
+            page.evaluate("""() => {
+              for (const section of state.diff.sections) section.files = [];
+              state.diff.untracked = [];
+              state.diffAt += 1;
+              redrawDiff();
+            }""")
+            page.wait_for_selector(".diffhead.gone")
+            assert page.locator(".comment.stale").count() == 1
+            assert "the file went away" in page.locator(".comment").inner_text()
+            assert "no longer in the diff" in page.evaluate("reviewText()")
+            assert page.evaluate("state.review.length") == 1, "nothing is dropped"
+        finally:
+            browser.close()
+
+
+def test_a_review_for_a_session_that_is_gone_is_swept_up(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "mine")
+            page.evaluate("""() => {
+              localStorage.setItem("wostuast-review-someone-else", JSON.stringify(
+                {overall: "", comments: [{anchor: "a\\nnew\\n1", note: "theirs"}]}));
+              state.pruned = false;
+              drawSessions();
+            }""")
+            kept = page.evaluate(
+                "Object.keys(localStorage)"
+                ".filter((k) => k.startsWith('wostuast-review-'))")
+            assert len(kept) == 1
+            assert "someone-else" not in kept[0]
+        finally:
+            browser.close()
