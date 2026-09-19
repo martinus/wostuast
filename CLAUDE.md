@@ -199,11 +199,25 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   often the only event a session ever sends — resume one and leave it and
   nothing follows until you type. `mark_idle` settles it to `done` after
   `STARTING_MAX`, and an idle notification says the same sooner.
-- **A file with no suffix says what it is on its first line.** `languageOf`
-  takes the text as well as the path and reads the shebang when the name gives
-  nothing — `wostuast` itself is a Python program with no suffix, and so is
-  most of what lives in a bin directory. An interpreter it does not know paints
-  nothing, as before; it never guesses from the content.
+- **One renderer for a line, in `fillDiffFile`.** The Files tab, the Diff tab
+  and an untracked file all go through it; a file being read is a hunk of
+  `plain` lines. That is what makes a review work in both tabs — line 42 has
+  the same anchor either way — and why there are not three ways to draw a line
+  that drift apart.
+- **The highlighter gets the whole file; `cutIntoLines` cuts the answer up.**
+  A block comment or a long string only makes sense whole, so painting line by
+  line gets them wrong. A span crossing a newline is closed and reopened on the
+  next line. The cut walks the scrubbed fragment, never a string of HTML, and
+  a line count that disagrees with the file paints nothing: colour on the wrong
+  lines is worse than none.
+- **What language is this? Three questions, most certain first** (PLAN 4.8.1):
+  the name, then the shebang, then `file` on the daemon — asked only when the
+  first two came up empty, so a suffix never pays for a subprocess. `file` is
+  the third and last command this program runs, after git and tmux.
+  Its answers come from `BY_MIME`, a list, not wholesale. **`text/x-c` is not
+  on that list**: libmagic uses it for anything C-shaped and calls Rust and Go
+  C source, measured. No paint beats a wrong one, and nothing here guesses from
+  content beyond that list.
 - **A fill must not depend on how tall a row turns out to be.** The chosen row
   used `box-shadow: inset 0 0 0 40px`, which fills inward from each edge, so a
   row with a name, a branch and a reason on it had an untinted stripe down its
@@ -249,6 +263,14 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The tree holds the tiers.** `dirFiles` orders each directory's own files —
   named, changed newest first, then the rest. `openDirs` opens a directory
   holding a change; `state.dirs` (what the reader opened by hand) wins over it.
+- **A file is found by its name; the path is the fallback, and it must be
+  tight.** `findPath` matches the basename first, then the whole path only when
+  the matched letters span no more than `TIGHT` times the query length.
+  Matching the whole path outright let "MetricsBuilder" land across 71
+  characters and four directory names while missing the file meant. A slash in
+  the query means you meant the path. `findPath` also forgives one letter of a
+  five-plus query; `fuzzy` forgives none by default, because the session filter
+  runs through it and a short haystack cannot afford it.
 - **Search every name, or say you cannot.** Sending the first 5000 of 52,799 made
   a search find 16 files and miss a thousand: a wrong answer that looks right.
 - **A git call that failed must not render as an empty answer.** "No files" and
@@ -272,6 +294,11 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The draft lives in the browser.** A review is yours until you submit it, and
   the daemon serves every browser the same page. `recallReview` checks the shape
   of what comes back: storage is not a place to trust blindly.
+- **A comment remembers which tab wrote it.** Only one written on the diff may
+  later be told "this line is no longer in the diff". Every comment used to
+  start "gone" and only a file in the diff redeemed it, so a note on any of the
+  fifty thousand files the agent never touched carried that sentence — into the
+  message sent to the agent, as the reader's own words.
 - **The preview cannot be skipped**, and it is not editable. A quoted line is
   text an agent wrote, about to be pasted into a terminal. One text, one place it
   comes from.

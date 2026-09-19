@@ -427,8 +427,52 @@ it does not track, but every line in it is new, so selecting one reads the
 file through the same route the Files tab uses and shows it as one added
 block. That is what the file is: an addition nobody has staged.
 
-Syntax highlighting applies to diff lines as well, under the added and
-removed tints. Large diffs: collapse files over 500 lines, expand on click.
+Large diffs: collapse files over 500 lines, expand on click. Diff lines are
+not painted; only a file being read is. The marker is its own span, so the
+same could be done here, but it has not been.
+
+### 4.8.0 One renderer for a line
+
+The Files tab and the Diff tab draw a line through `fillDiffFile`, and an
+untracked file too. A file being read is a hunk of `plain` lines: no marker in
+front, one number rather than two, no tint. Three ways to draw a line would be
+three ways for them to drift apart.
+
+It is what makes a review work in both tabs. A comment is anchored by path,
+side and line, so a note left on line 42 of the diff is the same note on line
+42 of the file, and both tabs show it.
+
+The highlighter is given the **whole file** and its answer is cut into lines
+afterwards, by `cutIntoLines`. A block comment or a long string only makes
+sense whole; painting each line on its own gets them wrong. A span that
+crosses a newline is closed at the end of the line and opened again on the
+next. The cut walks the scrubbed fragment, never a string of HTML, and if it
+ever returns a different number of lines than the file has, nothing is
+painted — colour on the wrong lines is worse than none.
+
+### 4.8.1 What language is this?
+
+Three questions, most certain first, and the order matters.
+
+1. **The name.** `Makefile` and `Dockerfile` whole; otherwise the suffix.
+2. **The first line.** A script with no suffix says what it is in its shebang,
+   and `wostuast` itself is one. `#!/usr/bin/env -S python3 -u` and
+   `#!/usr/bin/python3.12` both resolve; an interpreter we do not know answers
+   nothing.
+3. **`file`, on the daemon.** Only when the first two came up empty, so it
+   costs a subprocess when such a file is opened and never otherwise. It is the
+   third and last command this program runs, after git and tmux, and a machine
+   without it simply gets no answer.
+
+`file` earns its place on one case the others cannot reach: source with no
+suffix *and* no shebang — a Python module called `helper`. But its answers are
+taken from a list, not trusted wholesale. **`text/x-c` is not on that list**:
+libmagic uses it for anything C-shaped and calls Rust and Go C source, measured
+on real files. A file with no suffix that is really C is rare; painting Rust as
+C is a confident lie, and no paint beats a wrong one.
+
+Nothing guesses from content beyond that list. `hljs.highlightAuto` would paint
+more files and mislabel them with the same confidence.
 
 ### 4.9 Review
 
@@ -873,6 +917,8 @@ without opening it first.
 | The Files and Diff tabs poll from the browser | Pushing them would need the daemon to know which tab each browser is on, and to remember what it last sent. Both tabs ask git for the whole answer anyway, so a request is the same work as a push. |
 | The Files tab lists every file | Reading only the notes around the work is not reading the work. Markdown renders as Markdown, everything else as it is. |
 | Finding a file is fuzzy, finding text is not | A path is a handle you half remember, so scattered letters should find it. Prose is read, so a search over it means what you typed. |
+| A file is found by its name, not by its whole path | Scattered over 100 characters a subsequence means nothing: "MetricsBuilder" matched `.../odin/agent/metrics/jmx/MBeanSubscriptionBuilder.java` across 71 characters and four directory names, and did not match `MetricBuilder.h`, which is what was meant. A directory can still be searched, but only when its letters sit together, and a slash in the query says you meant the path. |
+| One letter of a file query may be wrong | Hiding the file you meant over a stray `s` is worse than showing it a little lower down. Only for five letters or more, and only for files: the session haystack is a short line of text, where forgiving a letter matches half the list. |
 | One find box, moved to where it is used | Above the list on a tab that has one, in the tab strip for the transcript. Two boxes would be two values to keep in step, and `/` would have to guess which one it meant. |
 | An untracked file opens as one added block | `git diff` shows nothing for it, so it was named and left unclickable — the one thing on the tab you could not open. Every line in it is new, and the file route already reads it. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |

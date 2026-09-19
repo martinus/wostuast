@@ -248,9 +248,18 @@ like any other.
 
 Type in the box above the list to filter the tree — the branches that hold no
 match fold away, and the ones that lead to one open up. It is a file picker,
-not a filter on the names: the letters have to turn up in the name in that order, but not next to
-each other, so `tsfi` finds `tests/test_files.py`. The best match sorts to the
-top and the letters that matched are picked out. Press `/` to get to the box,
+not a filter on the names: the letters have to turn up in the name in that
+order, but not next to each other, so `mbldr` finds `MetricBuilder.h`. One
+letter of a longer query may be missing altogether, so `MetricsBuilder` finds
+`MetricBuilder.h` too.
+
+The name is what is searched. Spread across a long path the letters of a query
+mean nothing — they will land in four directories at once and match a file you
+have never heard of. A directory is found the same way when its own letters sit
+together, so `libcorrelation` finds what is under it, and typing a slash
+searches the whole path, so `tests/tsfi` finds `tests/test_files.py`.
+
+The best match sorts to the top and the letters that matched are picked out. Press `/` to get to the box,
 `Esc` to clear it. Every name in the repository is searched, however many
 there are.
 
@@ -270,8 +279,9 @@ Only the rows you can see are built, so scrolling through ten thousand
 matches costs what ten would.
 
 A Markdown file is rendered; anything else is shown as code, with syntax
-highlighting — a file with no suffix is read from its shebang, so a Python
-script called `deploy` is painted like one — line numbers down a gutter beside it, and no box around it. The
+highlighting — a file with no suffix is read from its shebang, and failing that
+from what `file` makes of it, so a Python script called `deploy` is painted like
+one — line numbers down a gutter beside it, and no box around it. The
 numbers are not part of the file, so copying the code does not take them. A binary file is named, not shown. The open
 file is read again within a couple of seconds of the agent changing it, and you
 keep your place in it.
@@ -305,10 +315,15 @@ line has none on the new side and an added one has none on the old side — and
 those numbers are not copied with the diff either. git has no diff for an untracked file, so picking one shows it
 as a single added block: every line in it is new.
 
-**Reviewing a diff.** Hover a diff line and a `+` appears in the gutter.
+**Reviewing.** Hover any line, on the Diff tab or in a file you are reading,
+and a `+` appears in the gutter.
 Click it, write what you want changed, and save. A file takes a comment of its
 own at the end of its diff, for what is about the file rather than a line.
 Clearing a comment and saving is how it goes away.
+
+A comment belongs to a line, not to a tab: one left on line 42 of the diff is
+there on line 42 of the file, and the other way round. So you can review a
+change through its diff, or read a whole file and comment anywhere in it.
 
 The comments collect into a review. "Submit review" under the file list — it
 appears with the first comment and counts them — opens a preview of the exact

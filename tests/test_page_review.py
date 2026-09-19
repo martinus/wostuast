@@ -10,6 +10,10 @@ import pytest
 
 import conftest
 from browser import (
+    comment_on_line,
+    open_file,
+    open_page,
+    code_text,
     skip_without_browser,
     sync_playwright,
     fresh_context,
@@ -154,12 +158,16 @@ def test_the_review_belongs_to_the_session_it_is_about(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .plus").first.click(force=True)
-            page.fill(".commentbox textarea", "about this session")
-            page.click(".commentbox .verb")
+            # Through the shared helper, which waits for the box to open and
+            # for the comment to land. This test hand-rolled the sequence and
+            # skipped both waits — it predates the helper — and it was the one
+            # test that failed under a full parallel run.
+            comment_on_first_line(page, "about this session")
             page.wait_for_function("state.review.length === 1")
             page.evaluate("choose('someone-else')")
-            assert page.evaluate("state.review.length") == 0
+            seen = page.evaluate(
+                """() => ({n: state.review.length, chosen: state.chosen})""")
+            assert seen == {"n": 0, "chosen": "someone-else"}
         finally:
             browser.close()
 
@@ -472,7 +480,7 @@ def test_a_comment_whose_line_changed_says_so(repo_page):
                 }
               }
               state.diffAt += 1;
-              redrawDiff();
+              redrawCode();
             }""")
             page.wait_for_selector(".comment.stale")
             shown = page.locator(".comment.stale").inner_text()
@@ -492,7 +500,7 @@ def test_a_comment_with_nowhere_left_to_sit_is_still_shown(repo_page):
               for (const section of state.diff.sections) section.files = [];
               state.diff.untracked = [];
               state.diffAt += 1;
-              redrawDiff();
+              redrawCode();
             }""")
             page.wait_for_selector(".diffhead.gone")
             assert page.locator(".comment.stale").count() == 1
@@ -519,5 +527,113 @@ def test_a_review_for_a_session_that_is_gone_is_swept_up(repo_page):
                 ".filter((k) => k.startsWith('wostuast-review-'))")
             assert len(kept) == 1
             assert "someone-else" not in kept[0]
+        finally:
+            browser.close()
+
+
+# --- reviewing from the Files tab --------------------------------------------
+
+#: One highlighter span that opens on line 2 and closes on line 4, as a real
+#: one returns for a triple-quoted string. The point of painting the file whole.
+QUOTE = "'''"
+PAINTED = ("a = 1\n"
+           '<span class="hljs-string">' + QUOTE + "\n"
+           "still inside\n"
+           + QUOTE + "</span>\n"
+           "b = 2")
+
+
+def test_any_line_of_any_file_can_be_commented_on(repo_page):
+    """Not only a line that happens to be in the diff."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page)
+            assert page.locator(".filebody .code .dline").count() >= 2
+            comment_on_line(page, 1, "the second line, from the file")
+            # Anchored to the line, on the side a diff comment would use.
+            anchor = page.evaluate("state.review[0].anchor")
+            assert anchor.startswith("code.py\n")
+            assert anchor.endswith("\nnew\n2")
+        finally:
+            browser.close()
+
+
+def test_a_comment_made_on_the_diff_shows_in_the_file(repo_page):
+    """One anchor, so the two tabs are two views of the same review."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate(
+                "([one]) => { state.review = [one]; }",
+                [{"anchor": "code.py\nnew\n2", "quoted": "print(2)",
+                  "note": "written on the diff tab"}])
+            open_file(page)
+            page.wait_for_selector(".filebody .comment")
+            assert "written on the diff tab" in page.locator(
+                ".filebody .comment").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_whole_file_is_highlighted_then_cut_into_lines(repo_page):
+    """The point of doing it this way. A block comment or a long string only
+    makes sense whole, so the highlighter is given the whole file and its
+    answer is cut up afterwards: a span that crosses a newline is closed at
+    the end of the line and opened again on the next."""
+    root, _ = repo_page
+    (root / "code.py").write_text(
+        "a = 1\n" + QUOTE + "\nstill inside\n" + QUOTE + "\nb = 2\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate(
+                "([value]) => { hljsAsked = Promise.resolve("
+                "{ getLanguage: () => true, highlight: () => ({ value }) }); }",
+                [PAINTED])
+            open_file(page)
+            page.wait_for_selector(".filebody .code .hljs-string")
+            # One span per line it covers, not one span swallowing the rows.
+            spans = page.eval_on_selector_all(
+                ".filebody .code .dline .hljs-string",
+                "els => els.map(e => e.textContent)")
+            assert spans == [QUOTE, "still inside", QUOTE]
+            assert code_text(page) == (
+                "a = 1\n" + QUOTE + "\nstill inside\n" + QUOTE + "\nb = 2")
+        finally:
+            browser.close()
+
+
+def test_a_comment_on_a_file_the_diff_never_saw_is_not_called_gone(repo_page):
+    """Now that any file can be commented on, most comments are on files the
+    agent never touched. Everything started as "gone" and only files in the
+    diff were redeemed, so those comments were drawn as "this line is no
+    longer in the diff" — and that sentence was sent to the agent, who would
+    read it as the reader's own words.
+
+    A comment says where it was written, and only one written on the diff can
+    later be told it left the diff."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate(
+                "([one]) => { state.review = [one]; state.diffAt += 1;"
+                " redrawCode(); }",
+                [{"anchor": "docs/untouched.md\nnew\n7", "quoted": "a line",
+                  "note": "about a file nobody changed"}])
+            page.wait_for_timeout(300)
+            assert page.evaluate(
+                "state.marks.get('docs/untouched.md\\nnew\\n7')") is None
+            assert page.locator(".diffhead.gone").count() == 0
+            assert "no longer in the diff" not in page.evaluate("reviewText()")
+            # A comment on a file the diff does cover is still judged.
+            page.evaluate(
+                "([one]) => { state.review.push(one); state.diffAt += 1;"
+                " redrawCode(); }",
+                [{"anchor": "code.py\nnew\n99", "quoted": "gone for good",
+                  "note": "on a line that is not there", "diff": True}])
+            page.wait_for_selector(".diffhead.gone")
+            assert "no longer in the diff" in page.evaluate("reviewText()")
         finally:
             browser.close()

@@ -1487,6 +1487,9 @@ class FileText:
     text: str = ""
     mtime: float = 0.0
     binary: bool = False
+    # What `file` made of it, when the name and the first line said nothing.
+    # The page decides what to do with it; see `languageOf`.
+    language: str = ""
 
 
 def in_order(names: set[str]) -> list[str]:
@@ -1815,6 +1818,44 @@ def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) ->
     return wanted in (out or "").split("\0")
 
 
+#: What `file --mime-type` answers, and the highlighter's name for it.
+#:
+#: `text/x-c` is not here on purpose. libmagic uses it for anything C-shaped,
+#: and it calls Rust and Go C source — measured, both of them. A file with no
+#: suffix that is really C is rare; painting Rust as C is a confident lie, and
+#: no paint beats a wrong one. The rest were checked against real files.
+BY_MIME = {
+    "text/x-script.python": "python",
+    "text/x-python": "python",
+    "text/x-shellscript": "bash",
+    "text/x-perl": "perl",
+    "text/x-ruby": "ruby",
+    "text/x-php": "php",
+    "text/x-lua": "lua",
+    "text/x-awk": "awk",
+    "text/x-c++": "cpp",
+    "text/x-java": "java",
+    "application/json": "json",
+    "text/xml": "xml",
+    "application/xml": "xml",
+}
+
+
+def sniff_language(path: Path, runner: Callable[..., str | None] = run) -> str:
+    """What `file` makes of a file whose name gives nothing away.
+
+    Only asked when the name and the shebang both came up empty, so it costs a
+    subprocess once, when a file is opened. `file` is the third and last
+    command this program runs, after git and tmux, and a machine without it
+    simply gets no answer — the page paints nothing, which is what it did
+    before this existed.
+    """
+    answer = runner(["file", "-b", "--mime-type", "--", str(path)])
+    if not answer:
+        return ""
+    return BY_MIME.get(answer.strip().lower(), "")
+
+
 def read_worktree_file(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run
 ) -> FileText | None:
@@ -1848,6 +1889,11 @@ def read_worktree_file(
     found.text = raw[:FILE_MAX_BYTES].decode("utf-8", "replace")
     if len(raw) > FILE_MAX_BYTES:
         found.text += "\n\n… the rest of this file is not shown.\n"
+    # Only when nothing cheaper can answer. A shebang is the page's to read,
+    # and it is the common shape for a file with no suffix, so asking `file`
+    # about one is a subprocess for an answer already in hand.
+    if not Path(wanted).suffix and not raw.startswith(b"#!"):
+        found.language = sniff_language(target, runner)
     return found
 
 
@@ -4021,19 +4067,11 @@ body:not(.show-thinking) .thinking { display: none; }
 .filelist button.chosen .lit { color: var(--needs); }
 /* No box. A file that is not Markdown is the whole page here, not a quotation
    inside a document that does not exist, and the border made a shell script
-   look like one. The gutter beside it shares this ramp, because the two only
-   stay level while they agree on it. */
-.filebody pre.plain, .code pre.nums {
-  margin: 0; padding: 0; font-family: var(--mono); font-size: 12.5px;
-  line-height: 1.6; white-space: pre;
-}
-.filebody pre.plain { color: var(--code-ink); overflow-x: auto;
-  flex-grow: 1; min-width: 0; }
-.code { display: flex; gap: 14px; align-items: flex-start; }
-.code pre.nums { flex-shrink: 0; text-align: right; }
+   look like one. It is drawn as diff rows, so it shares their ramp too. */
+.code { color: var(--code-ink); }
 /* Which line this was. Numbers are not the content, here or in a diff, so
    they are faint and they are not copied with it. */
-.code pre.nums, .dline .ln { color: var(--ink-faint); user-select: none; }
+.dline .ln { color: var(--ink-faint); user-select: none; }
 /* Our colours, not the highlighter's: its stylesheets are not fetched. */
 .hljs-comment, .hljs-quote { color: var(--syn-com); font-style: italic; }
 .hljs-keyword, .hljs-literal, .hljs-selector-tag,
@@ -4056,10 +4094,7 @@ body:not(.show-thinking) .thinking { display: none; }
   margin-bottom: 14px; font-family: var(--narrow); font-size: 12px;
   letter-spacing: .04em; color: var(--ink-faint);
 }
-.diffbody {
-  flex-grow: 1; overflow-y: auto; min-width: 0;
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
-}
+.diffbody { flex-grow: 1; overflow-y: auto; min-width: 0; }
 .diffhead {
   position: sticky; top: 0; z-index: 1; padding: 9px 20px;
   background: var(--panel); border-bottom: 1px solid var(--edge);
@@ -4088,7 +4123,14 @@ body:not(.show-thinking) .thinking { display: none; }
   padding: 6px 20px; background: var(--panel); color: var(--ink-mute);
   border-top: 1px solid var(--edge); white-space: pre; overflow-x: auto;
 }
-.dlines { padding: 5px 0; overflow-x: auto; color: var(--code-ink); }
+/* What makes a row a row of code. It belongs here and not on a tab's own
+   container: it used to sit on `.diffbody`, so the moment the Files tab drew
+   the same rows they came out in the proportional face, with the gutter's
+   space padding no longer lining up. A component carries its own typography. */
+.dlines {
+  padding: 5px 0; overflow-x: auto; color: var(--code-ink);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+}
 .dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
 .dline { position: relative; }
 .dline.context { color: var(--ink-mute); }
@@ -4324,6 +4366,7 @@ const state = {
   file: null,           // the file it shows
   fileText: "",
   fileBinary: false,
+  fileLang: "",         // what `file` made of it, when the name said nothing
   fileMtime: 0,         // which version of that text is loaded
   peek: [],             // the pane, as runs that each look the same
   peekRaw: "",          // the last answer, to tell a still pane from a new one
@@ -4994,7 +5037,10 @@ function fromShebang(text) {
   return null;
 }
 
-function languageOf(path, text) {
+// Three questions, most certain first: the name, the first line, then what
+// `file` made of the content back on the daemon. The order matters — `file`
+// calls Rust and Go "C source", so anything that actually knows must win.
+function languageOf(path, text, sniffed) {
   const base = path.slice(path.lastIndexOf("/") + 1);
   if (BY_NAME[base]) return BY_NAME[base];
   const dot = base.lastIndexOf(".");
@@ -5002,8 +5048,7 @@ function languageOf(path, text) {
     const suffix = base.slice(dot + 1).toLowerCase();
     return BY_SUFFIX[suffix] || suffix;
   }
-  // No suffix, or a dotfile we do not know. Ask the file itself.
-  return fromShebang(text);
+  return fromShebang(text) || sniffed || null;
 }
 
 // Only text and the highlighter's own spans survive. The page does not trust
@@ -5032,21 +5077,82 @@ function paintedInto(holder, marked_up) {
   return holder.content;
 }
 
-// The text is on the page before this returns, so a slow or missing CDN shows
-// the file at once and paints it a moment later, or never.
-async function paint(node, path, text) {
-  const want = node.dataset.path;
+// The highlighted file, cut into one fragment per line.
+//
+// The highlighter is given the whole file, because a block comment or a
+// multi-line string only makes sense whole — painting line by line gets those
+// wrong. But the page shows one row per line, so the painted result has to be
+// cut up afterwards. A span that crosses a newline is closed at the end of the
+// line and opened again on the next, which is what `open` is for.
+//
+// It walks the scrubbed fragment, never a string of HTML: whatever the
+// highlighter returned has already been through `paintedInto`.
+function cutIntoLines(painted) {
+  const lines = [document.createDocumentFragment()];
+  const open = [];                       // the spans we are inside, outermost first
+  let holder = lines[0];
+
+  function nextLine() {
+    const line = document.createDocumentFragment();
+    lines.push(line);
+    let at = line;
+    for (const span of open) {           // the same nesting, reopened
+      const copy = document.createElement("span");
+      copy.className = span.className;
+      at.appendChild(copy);
+      at = copy;
+    }
+    return at;
+  }
+
+  function walk(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const pieces = child.data.split("\n");
+        holder.appendChild(document.createTextNode(pieces[0]));
+        for (let i = 1; i < pieces.length; i += 1) {
+          holder = nextLine();
+          holder.appendChild(document.createTextNode(pieces[i]));
+        }
+        continue;
+      }
+      const copy = document.createElement("span");
+      copy.className = child.className;
+      holder.appendChild(copy);
+      open.push(child);
+      holder = copy;
+      walk(child);
+      open.pop();
+      // Back out one level, on whichever line we have ended up on.
+      holder = holder.parentNode;
+    }
+  }
+
+  walk(painted);
+  return lines;
+}
+
+// Paint a file that is drawn as rows. The text is on the page before this
+// returns, so a slow or missing CDN costs the reader nothing but colour.
+async function paintLines(box, path, text, sniffed) {
+  const want = box.dataset.path;
   const lib = await hljsReady();
-  if (!lib || !node.isConnected || node.dataset.path !== want) return;
-  const language = languageOf(path, text);
+  if (!lib || !box.isConnected || box.dataset.path !== want) return;
+  const language = languageOf(path, text, sniffed);
   if (!language || !lib.getLanguage(language)) return;
+  let lines;
   try {
     const done = lib.highlight(text, { language, ignoreIllegals: true });
-    node.replaceChildren(paintedInto(document.createElement("template"),
+    lines = cutIntoLines(paintedInto(document.createElement("template"),
                                      done.value));
   } catch (error) {
-    // A language that throws leaves the plain text that is already there.
+    return;                     // a language that throws leaves the plain text
   }
+  const rows = box.querySelectorAll(".dline > .dtext");
+  // Only when the two agree. A highlighter that returned a different number of
+  // lines than the file has would otherwise put the colour on the wrong ones.
+  if (rows.length !== lines.length) return;
+  rows.forEach((row, at) => row.replaceChildren(lines[at]));
 }
 
 // One node per block, kept so that a change redraws that block and no other.
@@ -5263,6 +5369,15 @@ function split(box, tab, bodyClass) {
   return [side.children[2], box.lastChild, side.children[1], side.children[3]];
 }
 
+// Is the reader writing a comment in what this box holds? Both row tabs are
+// rebuilt from an answer the poll replaces every couple of seconds, and a
+// rebuild under an open box would take the text with it and move the code the
+// comment is about. `redrawCode` clears `bodyKey`, which is how the box's own
+// open and close get through this.
+function holdingText(box) {
+  return state.writing !== null && box.dataset.bodyKey;
+}
+
 function fresh(box, which, key) {
   if (box.dataset[which] === key) return false;
   box.dataset[which] = key;
@@ -5293,16 +5408,26 @@ const PINNED = ["PLAN.md", "CLAUDE.md", "README.md"];
 // The score decides the order. A run of letters counts for much more than the
 // same letters scattered, the start of a path segment or a word counts extra,
 // and so does the file's own name over the directories above it.
-function fuzzy(text, query) {
+// `slack` is how many letters of the query may simply not be there. It is for
+// file names, where one wrong character should not hide the file you meant. It
+// is not for the session filter: that haystack is a short line of text, and
+// forgiving a letter there matches half the list.
+function fuzzy(text, query, slack = 0) {
   const lower = text.toLowerCase();
   const at = [];
   let score = 0;
   let from = 0;
   let run = 0;
+  let missed = 0;
   const base = lower.lastIndexOf("/") + 1;
   for (const want of query) {
     const found = lower.indexOf(want, from);
-    if (found < 0) return null;
+    if (found < 0) {
+      if (++missed > slack) return null;
+      score -= 120;              // far more than any bonus below can give back
+      run = 0;
+      continue;
+    }
     run = (found === from && at.length) ? run + 1 : 0;
     score += 10 + run * 14;
     const before = found ? lower[found - 1] : "/";
@@ -5313,6 +5438,46 @@ function fuzzy(text, query) {
     from = found + 1;
   }
   return { score: score - lower.length / 50, at };
+}
+
+// What a path is matched against: the name, unless you typed a slash.
+//
+// Matching the whole path let the letters of "MetricsBuilder" land across four
+// directory names and a filename — 71 characters apart, in
+// `.../odin/agent/metrics/jmx/MBeanSubscriptionBuilder.java` — while the file
+// actually wanted did not come back at all. Scattered over a long path, a
+// subsequence means nothing. Scattered over a name, it means what you meant.
+// A slash in the query says you are thinking about where the file is, and then
+// the whole path is fair game.
+//: How far apart the letters of a query may sit when it matches a directory
+//: rather than a name. 71 characters for a 14-letter query was the nonsense;
+//: `libcorrelation` sitting whole inside one directory name is the point.
+const TIGHT = 2.5;
+
+function findPath(path, query) {
+  // "MetricsBuilder" has an `s` that `MetricBuilder.h` does not, and hiding
+  // the file you meant over one character is worse than showing it a little
+  // lower down. A short query gets no such forgiveness: there is nothing left
+  // of "cfg" once a letter goes.
+  const slack = query.length >= 5 ? 1 : 0;
+  if (query.includes("/")) return fuzzy(path, query, slack);
+  const cut = path.lastIndexOf("/") + 1;
+  const named = fuzzy(path.slice(cut), query, slack);
+  if (named) {
+    // The name is what you were looking for, so it outranks any directory.
+    return { score: named.score + 200,
+             at: named.at.map((where) => where + cut) };
+  }
+  // Not in the name, so a directory may be what you meant — `libcorrelation`
+  // names a folder, not a file. Only the directories are searched: the name
+  // has just been rejected, and scanning it again for every one of fifty
+  // thousand paths was most of a keystroke. Only when the letters sit close
+  // together, too: spread across four directory names they mean nothing.
+  if (!cut) return null;                 // nothing but a name to search
+  const wide = fuzzy(path.slice(0, cut), query, slack);
+  if (!wide) return null;
+  const span = wide.at[wide.at.length - 1] - wide.at[0] + 1;
+  return span <= query.length * TIGHT ? wide : null;
 }
 
 // --- the tree ---------------------------------------------------------------
@@ -5473,7 +5638,7 @@ function listRows() {
 function pick(names) {
   const found = [];
   for (const path of names) {
-    const got = fuzzy(path, state.find);
+    const got = findPath(path, state.find);
     if (got) found.push({ path, at: got.at, score: got.score });
   }
   found.sort((a, b) => b.score - a.score);
@@ -5615,6 +5780,7 @@ function drawFiles(box) {
   }
 
   const same = (box.dataset.bodyKey || "").split("\n")[0] === String(state.file);
+  if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.file + "\n" + state.fileMtime)) return;
   const place = same ? pane.scrollTop : 0;   // the same file, read again
   pane.replaceChildren();
@@ -5634,18 +5800,16 @@ function drawFiles(box) {
   } else if (MARKDOWN.test(state.file)) {
     markdown(pane, state.fileText);
   } else {
-    // A gutter of its own, beside the code rather than inside it. Numbers in
-    // the same element would be copied with the code, and they would have to
-    // survive the highlighter rewriting everything between them.
-    const both = put(pane, "div", "code");
-    const lines = state.fileText.replace(/\n$/, "").split("\n");
-    put(both, "pre", "nums",
-        lines.map((one, at) => at + 1).join("\n"));
-    // The text goes up first and the colour arrives after, so a CDN that is
-    // slow or gone costs the reader nothing but paint.
-    const code = put(both, "pre", "plain", state.fileText);
+    // One row per line, through the same renderer the diff uses, so a file
+    // gets the numbers, the `+` and the comments the diff already had — and a
+    // comment on line 42 lands on the same anchor whichever tab wrote it.
+    const code = put(pane, "div", "code");
     code.dataset.path = state.file;
-    paint(code, state.file, state.fileText);
+    // The rows and the highlighter are given the very same text, so the two
+    // can never disagree about how many lines there are.
+    const body = state.fileText.replace(/\n$/, "");
+    fillDiffFile(code, asLines(state.file, body));
+    paintLines(code, state.file, body, state.fileLang);
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
@@ -5655,6 +5819,7 @@ function forgetFile(path) {
   state.file = path;
   state.fileText = "";
   state.fileBinary = false;
+  state.fileLang = "";
   state.fileMtime = 0;
 }
 
@@ -5673,11 +5838,7 @@ let BIG_LINES = 500;
 
 function drawDiff(box) {
   const [list, pane, note, foot] = split(box, "diff", "diffbody");
-  // A comment box holds what the reader is typing, and the diff is rebuilt
-  // whenever the agent saves anything. Rebuilding under an open box would take
-  // the text with it, and would move the code the comment is about while it is
-  // being written. The box closes, and then the diff catches up.
-  if (state.writing !== null && box.dataset.bodyKey) return;
+  if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.diffAt + "\n" + state.find)) return;
   const place = pane.scrollTop;
   list.replaceChildren();
@@ -5692,30 +5853,38 @@ function drawDiff(box) {
   }
   let shown = 0;
   for (const section of report.sections) {
-    const files = (section.files || []).filter((one) => fuzzy(one.path, state.find));
+    const files = [];
+    for (const one of (section.files || [])) {
+      const hit = findPath(one.path, state.find);
+      if (hit) files.push({ one, at: hit.at });
+    }
     if (!files.length) continue;
     shown += files.length;
     put(list, "div", "head", section.title);
     put(pane, "div", "diffhead " + section.name, section.title);
-    for (const one of files) {
+    for (const { one, at } of files) {
       const node = drawDiffFile(pane, one);
       const button = put(list, "button");
       button.type = "button";
       button.title = one.path;
-      putName(button, one.path, (fuzzy(one.path, state.find) || {}).at || []);
+      putName(button, one.path, at);
       putCounts(put(button, "span", "counts"), one);
       button.addEventListener("click",
                               () => node.scrollIntoView({ block: "start" }));
     }
   }
-  const loose = (report.untracked || []).filter((name) => fuzzy(name, state.find));
+  const loose = [];
+  for (const name of (report.untracked || [])) {
+    const hit = findPath(name, state.find);
+    if (hit) loose.push({ name, at: hit.at });
+  }
   if (loose.length) {
     put(list, "div", "head", "untracked");
-    for (const name of loose) {
+    for (const { name, at } of loose) {
       const button = put(list, "button", state.loose === name ? "chosen" : "");
       button.type = "button";
       button.title = name;
-      putName(button, name, (fuzzy(name, state.find) || {}).at || []);
+      putName(button, name, at);
       button.addEventListener("click", () => chooseUntracked(name));
     }
   }
@@ -5875,9 +6044,12 @@ const HUNK_AT = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 function walkHunks(one, onHunk, onLine) {
   for (const hunk of one.hunks || []) {
     const where = onHunk ? onHunk(hunk) : null;
+    // A file read as lines carries no `@@` header, and its first line is line
+    // one. A diff hunk whose header will not parse is no better off starting
+    // at zero than at one.
     const found = HUNK_AT.exec(hunk.header);
-    let old = found ? Number(found[1]) : 0;
-    let now = found ? Number(found[2]) : 0;
+    let old = found ? Number(found[1]) : 1;
+    let now = found ? Number(found[2]) : 1;
     for (const line of hunk.lines) {
       onLine(line, old, now, where);
       if (line.kind !== "added") old += 1;
@@ -5886,23 +6058,33 @@ function walkHunks(one, onHunk, onLine) {
   }
 }
 
+// `plain` is a line of a file being read rather than a line of a diff: no
+// marker in front of it, one number rather than two, and no tint. The Files
+// tab draws through here for it, so a file gets the numbers, the `+` and the
+// comments the diff already had, and a comment on line 42 lands on the same
+// anchor whichever tab it was written in.
+const SIGN = { added: "+", removed: "\u2212", context: " " };
+
 function fillDiffFile(body, one) {
-  const sign = { added: "+", removed: "\u2212", context: " " };
   walkHunks(one, (hunk) => {
-    put(body, "div", "hunk", hunk.header);
+    if (hunk.header) put(body, "div", "hunk", hunk.header);
     return put(body, "div", "dlines");
   }, (line, old, now, lines) => {
       const row = put(lines, "div", "dline " + line.kind);
-      // Both numbers in one span, lined up with spaces. The row is already
+      // The numbers in one span, lined up with spaces. The row is already
       // `white-space: pre` in a monospace face, so they stay in column
       // without a flex box and three elements around every line — a diff of
       // twelve thousand lines is the difference between 24,000 nodes and
       // 84,000. A removed line has no number on the new side and an added one
       // has none on the old side, so that side is left blank.
-      put(row, "span", "ln",
-          (line.kind === "added" ? "" : String(old)).padStart(5) +
-          (line.kind === "removed" ? "" : String(now)).padStart(6) + "  ");
-      put(row, "span", "dtext", sign[line.kind] + line.text);
+      put(row, "span", "ln", line.kind === "plain"
+          ? String(now).padStart(6) + "  "
+          : (line.kind === "added" ? "" : String(old)).padStart(5) +
+            (line.kind === "removed" ? "" : String(now)).padStart(6) + "  ");
+      // The marker is its own span so that what follows it is exactly the
+      // line, which is what the highlighter is given and what it paints.
+      if (SIGN[line.kind]) put(row, "span", "sign", SIGN[line.kind]);
+      put(row, "span", "dtext", line.text);
       const anchor = lineAnchor(one.path, line, old, now);
       if (commentAt(anchor) || state.writing === anchor) {
         putReview(put(lines, "div", "onLine"), anchor, line.text, "plus");
@@ -5910,6 +6092,13 @@ function fillDiffFile(body, one) {
         putReview(row, anchor, line.text, "plus");
       }
   });
+}
+
+// One file as lines, in the shape `fillDiffFile` wants.
+function asLines(path, text) {
+  const lines = text === "" ? [] : text.split("\n");
+  return { path, hunks: [{ header: "",
+    lines: lines.map((one) => ({ kind: "plain", text: one })) }] };
 }
 
 // --- the review ---------------------------------------------------------------
@@ -5996,9 +6185,15 @@ function pruneReviews(sessions) {
 function resolveReview(report) {
   const marks = new Map();
   if (!state.review.length) return marks;
-  for (const one of state.review) marks.set(one.anchor, "gone");
-  const untracked = new Set(report.untracked || []);
-  for (const path of untracked) {
+  // Only a comment written on a diff line can be "no longer in the diff". Now
+  // that a comment can be written on any line of any file, most of them are on
+  // files the agent never touched: nothing here has looked at those, and
+  // saying the line left the diff would be a sentence the reader never wrote.
+  // So a comment starts "gone" only if it was written against the diff.
+  for (const one of state.review) {
+    if (one.diff) marks.set(one.anchor, "gone");
+  }
+  for (const path of (report.untracked || [])) {
     // Only its name is known unless it is the one being read, so a comment on
     // it cannot be checked — and a file that is still listed is still there.
     for (const one of state.review) {
@@ -6031,17 +6226,20 @@ function writeComment(anchor, quoted, note) {
   } else if (had) {
     had.note = text;
   } else {
-    state.review.push({ anchor: anchor, quoted: quoted, note: text });
+    // Where it was written decides what can later be said about it.
+    state.review.push({ anchor: anchor, quoted: quoted, note: text,
+                        diff: state.tab === "diff" });
   }
   state.writing = null;
   keepReview();
-  redrawDiff();
+  redrawCode();
 }
 
-// The diff is rebuilt from `state.diff`, which the poll replaces every couple
-// of seconds. `fresh` holds the rebuild to when that answer changes, so a
-// comment added or removed has to say so itself.
-function redrawDiff() {
+// The Files and Diff tabs are both rebuilt from an answer the poll replaces
+// every couple of seconds, and `fresh` holds the rebuild to when that answer
+// changes — so a comment added or removed has to say so itself. They share the
+// one content box, so this redraws whichever is open.
+function redrawCode() {
   const box = $("content");
   box.dataset.bodyKey = "";
   draw();
@@ -6065,7 +6263,7 @@ function putComment(parent, one) {
   edit.type = "button";
   edit.addEventListener("click", () => {
     state.writing = one.anchor;
-    redrawDiff();
+    redrawCode();
   });
   return node;
 }
@@ -6084,9 +6282,9 @@ function putCommentBox(parent, anchor, quoted) {
   save.addEventListener("click", () => writeComment(anchor, quoted, area.value));
   const stop = put(row, "button", "link", "cancel");
   stop.type = "button";
-  stop.addEventListener("click", () => { state.writing = null; redrawDiff(); });
+  stop.addEventListener("click", () => { state.writing = null; redrawCode(); });
   area.addEventListener("keydown", (press) => {
-    if (press.key === "Escape") { state.writing = null; redrawDiff(); }
+    if (press.key === "Escape") { state.writing = null; redrawCode(); }
   });
   requestAnimationFrame(() => { area.focus(); area.select(); });
   return form;
@@ -6104,7 +6302,7 @@ function putReview(parent, anchor, quoted, cls) {
   add.title = "comment here";
   add.addEventListener("click", () => {
     state.writing = anchor;
-    redrawDiff();
+    redrawCode();
   });
   return add;
 }
@@ -6173,7 +6371,7 @@ async function submitReview() {
   state.review = [];
   state.overall = "";
   keepReview();
-  redrawDiff();
+  redrawCode();
   // Claude Code queues what arrives mid-turn, so a review sent to a working
   // agent is not lost — it is read when the turn ends. Say so, because from
   // here it looks like nothing happened.
@@ -6428,14 +6626,19 @@ async function loadFiles() {
   }
 
   if (state.file) {
-    const body = await ask(want, "file",
-                           "?path=" + encodeURIComponent(state.file));
-    if (!body || state.chosen !== want) return;
+    // The file is asked for by name, and the name can change while the answer
+    // is on its way: pick another file quickly and the first one's text landed
+    // under the second one's name, so the tab showed one file's content
+    // labelled as another. The session is not the only thing that can move.
+    const wanted = state.file;
+    const body = await ask(want, "file", "?path=" + encodeURIComponent(wanted));
+    if (!body || state.chosen !== want || state.file !== wanted) return;
     // Only a file whose mtime moved is drawn again, so the tab keeps your
     // place in a file the agent has not touched.
     if (body.mtime !== state.fileMtime) {
       state.fileText = body.text || body.missing || "";
       state.fileBinary = !!body.binary;
+      state.fileLang = body.language || "";
       state.fileMtime = body.mtime || 0;
     }
   }

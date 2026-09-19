@@ -11,6 +11,8 @@ import pytest
 
 import conftest
 from browser import (
+    open_file,
+    code_text,
     skip_without_browser,
     sync_playwright,
     open_page,
@@ -43,7 +45,7 @@ def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(700)
             assert page.locator(".filebody .prose").count() == 0
-            assert "print(1)" in page.locator(".filebody pre.plain").inner_text()
+            assert "print(1)" in code_text(page)
         finally:
             browser.close()
 
@@ -280,8 +282,9 @@ def test_code_is_painted(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
-            assert page.locator(".filebody pre.plain .hljs-keyword").inner_text() == "print"
-            assert page.locator(".filebody pre.plain").inner_text() == "print(1)"
+            assert page.locator(".filebody .code .hljs-keyword").inner_text() == "print"
+            # The stub paints the first line; the rest of the file follows it.
+            assert code_text(page) == "print(1)\nprint(2)"
         finally:
             browser.close()
 
@@ -296,7 +299,7 @@ def test_the_page_does_not_trust_the_highlighter_either(repo_page):
             open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
                             " + '<img src=x onerror=\"window.pwned=1\">'"
                             " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
-            body = page.locator(".filebody pre.plain")
+            body = page.locator(".filebody .code")
             assert page.evaluate("window.pwned") is None
             assert body.locator("img").count() == 0
             assert body.locator(".row").count() == 0
@@ -304,7 +307,7 @@ def test_the_page_does_not_trust_the_highlighter_either(repo_page):
             assert body.locator("#n").count() == 0
             # the text survives, only the dressing is gone
             assert body.locator(".hljs-string").inner_text() == "b"
-            assert body.inner_text() == "ab"
+            assert code_text(page) == "ab\nprint(2)"
         finally:
             browser.close()
 
@@ -315,7 +318,7 @@ def test_a_sublanguage_class_survives(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
-            assert page.locator(".filebody pre.plain .hljs-title.function_").count() == 1
+            assert page.locator(".filebody .code .hljs-title.function_").count() == 1
         finally:
             browser.close()
 
@@ -330,9 +333,9 @@ def test_no_highlighter_still_shows_the_file(repo_page):
             page.evaluate("hljsAsked = Promise.resolve(null);")
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(400)
-            assert page.locator(".filebody pre.plain").inner_text().strip() == (
+            assert code_text(page).strip() == (
                 "print(1)\nprint(2)")
-            assert page.locator(".filebody pre.plain span").count() == 0
+            assert page.locator(".filebody .code .dtext span").count() == 0
         finally:
             browser.close()
 
@@ -368,7 +371,7 @@ def test_a_file_that_is_not_markdown_has_no_box(repo_page):
             show_tab(page, "files")
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(400)
-            look = page.eval_on_selector(".filebody pre.plain", """el => {
+            look = page.eval_on_selector(".filebody .code", """el => {
               const seen = getComputedStyle(el);
               return [seen.borderTopWidth, seen.backgroundColor];
             }""")
@@ -621,16 +624,15 @@ def test_a_file_is_numbered_beside_the_code_not_inside_it(repo_page):
         try:
             show_tab(page, "files")
             page.click(".filelist button:has-text('code.py')")
-            page.wait_for_selector(".filebody .code .nums")
-            assert page.locator(".filebody .nums").inner_text() == "1\n2\n3\n4"
-            assert page.locator(".filebody pre.plain .ln").count() == 0
-            # both columns share a line height, so they stay level
-            look = page.eval_on_selector_all(
-                ".filebody .code pre",
-                "els => els.map(e => getComputedStyle(e).lineHeight)")
-            assert look[0] == look[1]
+            page.wait_for_selector(".filebody .code .dline")
+            got = page.eval_on_selector_all(
+                ".filebody .code .dline .ln", "els => els.map(e => e.textContent.trim())")
+            assert got == ["1", "2", "3", "4"]
+            # The number is beside the line, not part of it, so copying the
+            # code does not take it.
+            assert code_text(page) == "one\ntwo\nthree\nfour"
             assert page.eval_on_selector(
-                ".filebody .nums", "el => getComputedStyle(el).userSelect"
+                ".filebody .code .ln", "el => getComputedStyle(el).userSelect"
             ) == "none"
         finally:
             browser.close()
@@ -643,7 +645,8 @@ def test_markdown_has_no_line_numbers(repo_page):
         try:
             show_tab(page, "files")
             page.wait_for_selector(".filebody .prose")
-            assert page.locator(".filebody .nums").count() == 0
+            # Rows are what carry numbers now, and prose has none of them.
+            assert page.locator(".filebody .dline").count() == 0
         finally:
             browser.close()
 
@@ -700,5 +703,114 @@ def test_the_shebang_is_read_without_a_browser(page_at):
                 "dashS": "python", "unknown": None, "none": None,
                 "empty": None, "suffixWins": "rust",
             }
+        finally:
+            browser.close()
+
+
+def test_the_find_box_searches_the_name_not_the_whole_path(page_at):
+    """Reported from a real repository. Searching "MetricsBuilder" returned
+    `.../odin/agent/metrics/jmx/MBeanSubscriptionBuilder.java` — the letters
+    scattered over 71 characters of path, across four directory names — and
+    did not return `.../mintv2/MetricBuilder.h`, which is what was meant, over
+    one `s` that is not in it.
+
+    Scattered over a long path a subsequence means nothing. Scattered over a
+    name it means what you meant. A directory can still be searched, but only
+    when its letters sit together, and a slash says you meant the path.
+    """
+    junk = ("java-odin/introspection/src/main/java/com/dynatrace/odin/agent"
+            "/metrics/jmx/MBeanSubscriptionBuilder.java")
+    good = "native/shared/libmintv2/src/main/public/mintv2/MetricBuilder.h"
+    deep = "native/shared/libcorrelation/src/Action.h"
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            got = page.evaluate(
+                """([junk, good, deep]) => ({
+                     junk: !!findPath(junk, "metricsbuilder"),
+                     good: !!findPath(good, "metricsbuilder"),
+                     exact: !!findPath(good, "metricbuilder"),
+                     byDirectory: !!findPath(deep, "libcorrelation"),
+                     wrongDirectory: !!findPath(good, "libcorrelation"),
+                     withSlash: !!findPath(good, "mintv2/metric"),
+                     nothingTyped: !!findPath(good, ""),
+                     shortQueryIsStrict: !!findPath(good, "xyz"),
+                     nameBeatsDirectory:
+                       findPath("src/thing/parser.c", "parser").score >
+                       findPath("src/parser/thing.c", "parser").score,
+                   })""", [junk, good, deep])
+            assert got == {
+                "junk": False, "good": True, "exact": True,
+                "byDirectory": True, "wrongDirectory": False,
+                "withSlash": True, "nothingTyped": True,
+                "shortQueryIsStrict": False, "nameBeatsDirectory": True,
+            }
+        finally:
+            browser.close()
+
+
+
+
+def test_a_slow_answer_cannot_land_under_another_file(repo_page):
+    """The file is asked for by name, and the name can change while the answer
+    is on its way. Only the session was checked when it came back, so picking
+    another file quickly left the first one's text under the second one's
+    name: the tab showed one file's content labelled as another.
+
+    Found by a test that stopped sleeping for 400 ms and started waiting for
+    what the page had drawn.
+    """
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            # Hold the next answer for a file, so the switch happens under it.
+            page.evaluate("""() => {
+              window.__release = null;
+              const real = window.fetch;
+              window.fetch = (url, opts) => {
+                if (String(url).includes("/file?path=")) {
+                  window.fetch = real;      // only the one
+                  return new Promise((go) => {
+                    window.__release = () => go(real(url, opts));
+                  });
+                }
+                return real(url, opts);
+              };
+            }""")
+            # A block body, so Playwright is not handed the promise this test
+            # is holding open — awaiting it would hang the call.
+            page.evaluate("() => { forgetFile('README.md'); loadFiles(); }")
+            page.wait_for_function("window.__release !== null")
+            # Another file is picked while the first answer is still in flight.
+            page.evaluate("forgetFile('code.py');")
+            page.evaluate("window.__release();")
+            page.wait_for_timeout(400)
+            assert page.evaluate("state.file") == "code.py"
+            assert "readme" not in page.evaluate("state.fileText").lower(), (
+                "one file's text landed under another file's name")
+        finally:
+            browser.close()
+
+
+def test_a_row_of_code_is_monospace_in_both_tabs(repo_page):
+    """The mono face, size and line height sat on the Diff tab's container, so
+    when the Files tab drew the same rows they came out in the proportional
+    body face and the gutter's space padding stopped lining up. A row carries
+    its own typography."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            faces = {}
+            show_tab(page, "files")
+            open_file(page)
+            faces["files"] = page.eval_on_selector(
+                ".filebody .code .dline", "el => getComputedStyle(el).fontFamily")
+            show_tab(page, "diff")
+            page.wait_for_selector(".diffbody .dline")
+            faces["diff"] = page.eval_on_selector(
+                ".diffbody .dline", "el => getComputedStyle(el).fontFamily")
+            assert "Mono" in faces["files"], faces
+            assert faces["files"] == faces["diff"], faces
         finally:
             browser.close()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import subprocess
 import time
 
@@ -666,3 +667,76 @@ def test_a_listing_nobody_asks_about_is_dropped(ws, seeded):
     assert files.held
     files.forget(older_than=0.0)
     assert not files.held
+
+
+# --- what `file` makes of a name that gives nothing away ---------------------
+
+
+def test_file_names_a_language_the_suffix_could_not(ws, repo):
+    """A Python module with no shebang and no suffix. The name says nothing and
+    the first line says nothing, so `file` is the only thing left that knows."""
+    (repo / "helper").write_text("import os\n\n\nclass Thing:\n    def go(self):\n"
+                                 "        return {'a': 1}\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "a module")
+    found = ws.read_worktree_file(str(repo), "helper")
+    assert found is not None
+    assert found.language == "python"
+
+
+def test_a_suffix_is_never_asked_about(ws, repo):
+    """`file` is a subprocess. A name that already answers must not pay for it,
+    so the runner is watched rather than the answer."""
+    (repo / "code.py").write_text("print(1)\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "py")
+    asked = []
+
+    def watched(cmd, **rest):
+        asked.append(cmd)
+        return ws.run(cmd, **rest)
+
+    found = ws.read_worktree_file(str(repo), "code.py", runner=watched)
+    assert found is not None and found.language == ""
+    assert not any(cmd[0] == "file" for cmd in asked), "a suffix paid for a subprocess"
+
+
+def test_rust_and_go_are_not_called_c(ws, repo):
+    """Measured: libmagic answers `text/x-c` for both, and for C. Painting Rust
+    as C is a confident lie, and no paint beats a wrong one. A real C file with
+    no suffix is rare; a Rust one mislabelled would be read wrong."""
+    (repo / "rusty").write_text('fn main() {\n    println!("hi");\n}\n')
+    (repo / "gopher").write_text('package main\n\nimport "fmt"\n\n'
+                                 'func main() { fmt.Println("x") }\n')
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "two")
+    for name in ("rusty", "gopher"):
+        found = ws.read_worktree_file(str(repo), name)
+        assert found is not None
+        assert found.language == "", f"{name} was given a language it is not"
+
+
+def test_a_machine_without_file_simply_gets_no_answer(ws):
+    nowhere = pathlib.Path("/etc/hostname")
+    assert ws.sniff_language(nowhere, runner=lambda cmd: None) == ""
+    assert ws.sniff_language(nowhere, runner=lambda cmd: "") == ""
+    assert ws.sniff_language(
+        nowhere, runner=lambda cmd: "application/x-unknown-thing") == ""
+
+
+def test_a_shebang_is_not_worth_a_subprocess(ws, repo):
+    """The page reads a shebang itself, and a shebang is the common shape for
+    a file with no suffix. Asking `file` about one forks for an answer already
+    in hand — and the open file is re-read on every poll."""
+    (repo / "runme").write_text("#!/usr/bin/env python3\nimport os\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "a script")
+    asked = []
+
+    def watched(cmd, **rest):
+        asked.append(cmd)
+        return ws.run(cmd, **rest)
+
+    found = ws.read_worktree_file(str(repo), "runme", runner=watched)
+    assert found is not None and found.language == ""
+    assert not any(cmd[0] == "file" for cmd in asked), "a shebang paid for a fork"

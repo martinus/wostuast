@@ -167,18 +167,33 @@ def numbers(page, under):
 # or not the machine running it can reach a CDN: the page is handed a stand-in
 # and the real download is never started.
 
+#: A stand-in highlighter. The markup given stands for the file's first line
+#: and the rest of the file follows verbatim, so the answer has exactly as many
+#: lines as the file — which is what a real highlighter returns, and what the
+#: page checks before it paints anything.
 STUB = """hljsAsked = Promise.resolve({
   getLanguage: () => true,
-  highlight: (text, how) => ({ value: %s }),
+  highlight: (text, how) => ({
+    value: (%s) + text.slice(text.indexOf("\\n")),
+  }),
 });"""
 
+def open_file(page, name="code.py"):
+    """Open a file on the Files tab and wait for its rows.
+
+    Waiting for what the page has drawn, rather than for a length of time, is
+    why this is one helper and not four lines in every test.
+    """
+    show_tab(page, "files")
+    page.click(f".filelist button:has-text('{name}')")
+    page.wait_for_selector(".filebody .code .dline")
+
+
 def open_code(page, stub, name="code.py"):
-    """Put a stand-in highlighter in place, then open a file that is not
-    Markdown."""
+    """The same, with a stand-in highlighter in place first."""
     show_tab(page, "files")
     page.evaluate(STUB % stub)
-    page.click(f".filelist button:has-text('{name}')")
-    page.wait_for_timeout(400)
+    open_file(page, name)
 
 # --- the review: milestone 7 stage 1 -----------------------------------------
 
@@ -193,6 +208,19 @@ def open_diff(play, where):
 # --- the review: milestone 7 stage 2 -----------------------------------------
 
 
+def comment_on_line(page, at, note):
+    """Write a comment on the row at `at`, waiting for each step.
+
+    Every test that hand-rolled this skipped a wait, and the one that did was
+    the one test that failed under a full parallel run.
+    """
+    page.locator(".dline").nth(at).locator(".plus").click(force=True)
+    page.wait_for_selector(".commentbox textarea")
+    page.fill(".commentbox textarea", note)
+    page.click(".commentbox .verb")
+    page.wait_for_selector(".comment")
+
+
 def comment_on_first_line(page, note):
     page.locator(".dline .plus").first.click(force=True)
     page.wait_for_selector(".commentbox textarea")
@@ -202,3 +230,13 @@ def comment_on_first_line(page, note):
 
 def base_of(in_pane):
     return in_pane[1]
+
+
+def code_text(page, under=".filebody .code"):
+    """What a file body says, without the gutter or the `+` beside each line.
+
+    The body is rows now, so its `inner_text` carries the line numbers and the
+    comment buttons too. Only `.dtext` is the file.
+    """
+    return "\n".join(page.eval_on_selector_all(
+        under + " .dline .dtext", "els => els.map((e) => e.textContent)"))
