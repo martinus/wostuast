@@ -265,7 +265,7 @@ session.
 | Verb | Command | Notes |
 | --- | --- | --- |
 | jump | `tmux select-window -t <pane>` then `tmux select-pane -t <pane>` | Then run `$WOSTUAST_FOCUS` if set (a user command that raises the terminal window, e.g. a KWin script). |
-| send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. |
+| send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. Text with a newline in it is wrapped in the bracketed paste markers first, because a newline typed into a terminal *is* Enter: measured against a real shell, a two-line message ran its first line and left the second on the prompt. One line is sent as it always was, so a program that does not understand the markers never sees them. |
 | peek | `tmux capture-pane -p -e -t <pane>` | A small hand-written converter turns the escape codes into runs of text, each with its colours. It makes no HTML: the page builds one node per run and sets its text with `textContent`, because a pane holds whatever an agent ran. Poll once per second while the Peek tab is visible, never otherwise. |
 
 If `pane` is empty, hide the verbs for that session and show "not in tmux".
@@ -353,12 +353,17 @@ answer what the agent just did, and that is the question this tool exists to
 answer. What the reader opens or closes wins over that, so the tree never
 fights the hand on it.
 
-Typing replaces the tree with a flat list of matches, best first. The letters
-have to turn up in the path in that order but not next to each other, a run
-of letters counts for far more than the same letters scattered, the start of
-a path segment and the file's own name count extra, and the letters that
-matched are picked out. A long path in the flat list is cut at the front, not
-the end: the end is the part you were looking for.
+Typing filters the tree; it does not replace it. A branch that holds no match
+folds away and one that leads to a match opens up, so where a file sits is
+still there to read — a flat list of matches throws that away, and where it
+sits is half of what you know about it. Inside one directory the best match
+leads; the directories keep their own order, because that is what a tree is.
+
+The letters have to turn up in the path in that order but not next to each
+other, a run of letters counts for far more than the same letters scattered,
+the start of a path segment and the file's own name count extra. The letters
+that matched are picked out on the row that owns them: a letter found in a
+directory is marked on that directory, not on the file below it.
 
 **Only what is on screen is built.** Every row is one height, so where you
 are in the list is arithmetic rather than a measurement. The list builds the
@@ -370,7 +375,11 @@ readable without scrolling to the end of ten thousand rows.
 
 **Reading a file.** Markdown renders as Markdown. Everything else is
 monospace text with syntax highlighting, set on the page itself — no box, no
-border, no second background. The border made a shell script look like a
+border, no second background — and numbered down a gutter beside it. The
+numbers sit in their own element: they are not the file, so copying the code
+does not take them, and the highlighter can rewrite everything to their right
+without touching them. A diff numbers both sides the same way, working the
+lines out from each hunk's `@@` header rather than sending them. The border made a shell script look like a
 quotation inside a document that was not there, while a Markdown file, which
 has no border, looked right.
 

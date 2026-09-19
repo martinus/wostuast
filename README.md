@@ -179,9 +179,17 @@ Press `Enter`, or the button beside the session name. Set `WOSTUAST_FOCUS` to a
 command that raises your terminal window and jump runs that too; which command
 does that is your window manager's business, not this program's.
 
-**Send** types a line into the pane and presses Enter. Press `s` to get to the
-box. The box is cleared only once the daemon says the text went in: you typed
-it at a terminal you cannot see, so losing it is not on. Empty text is refused,
+**Send** types into the pane and presses Enter. Press `s` to get to the box.
+`Enter` sends; `Shift`+`Enter` writes another line, and the box grows as you
+fill it. A long line wraps rather than running off the side.
+
+A message of several lines arrives as one message, not one per line. A newline
+typed into a terminal *is* Enter, so wostuast wraps a multi-line message in the
+bracketed paste markers, the same thing your terminal does when you paste. One
+line is sent exactly as a single keystroke would be.
+
+The box is cleared only once the daemon says the text went in: you typed it at
+a terminal you cannot see, so losing it is not on. Empty text is refused,
 because a bare Enter into an agent's prompt is a keystroke nobody asked for.
 So is a session that has ended.
 
@@ -207,8 +215,9 @@ left out whole, because walking it would cost more than any answer inside it.
 An ignored file that sits among tracked files — a generated header — is listed
 like any other.
 
-Type in the box above the list to find one, the way an editor's file picker
-does: the letters have to turn up in the name in that order, but not next to
+Type in the box above the list to filter the tree — the branches that hold no
+match fold away, and the ones that lead to one open up. It is a file picker,
+not a filter on the names: the letters have to turn up in the name in that order, but not next to
 each other, so `tsfi` finds `tests/test_files.py`. The best match sorts to the
 top and the letters that matched are picked out. Press `/` to get to the box,
 `Esc` to clear it. Every name in the repository is searched, however many
@@ -230,7 +239,8 @@ Only the rows you can see are built, so scrolling through ten thousand
 matches costs what ten would.
 
 A Markdown file is rendered; anything else is shown as code, with syntax
-highlighting and no box around it. A binary file is named, not shown. The open
+highlighting, line numbers down a gutter beside it, and no box around it. The
+numbers are not part of the file, so copying the code does not take them. A binary file is named, not shown. The open
 file is read again within a couple of seconds of the agent changing it, and you
 keep your place in it.
 
@@ -258,7 +268,9 @@ sets each one as text, because a pane holds whatever an agent happened to run.
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file
 list on the left says how much each one moved; clicking a name jumps to it. A
 file with more than 500 changed lines starts closed, so a large diff still
-opens at once. git has no diff for an untracked file, so picking one shows it
+opens at once. Each line carries the number it has on each side — a removed
+line has none on the new side and an added one has none on the old side — and
+those numbers are not copied with the diff either. git has no diff for an untracked file, so picking one shows it
 as a single added block: every line in it is new.
 
 The same box does all three. It sits above the list on Files and Diff, and at

@@ -200,3 +200,26 @@ def test_a_capture_that_changes_colour_for_ever_is_cut(ws):
 
 def test_nothing_captured_is_no_runs(ws):
     assert ws.ansi_runs("") == []
+
+
+def test_one_line_is_sent_exactly_as_it_always_was(ws, asked):
+    """A program that does not understand bracketed paste never sees it."""
+    ws.tmux_send("%7", "run the tests", runner=asked)
+    assert asked.seen[0] == ["tmux", "send-keys", "-t", "%7", "-l", "--",
+                             "run the tests"]
+
+
+def test_more_than_one_line_arrives_as_a_paste(ws, asked):
+    """A newline typed into a terminal is Enter. Measured against a real
+    shell: `echo one\\necho two` ran the first line and left the second on the
+    prompt. The bracketed paste markers say this arrived as a paste."""
+    ws.tmux_send("%7", "first line\nsecond line", runner=asked)
+    assert asked.seen[0] == [
+        "tmux", "send-keys", "-t", "%7", "-l", "--",
+        ws.PASTE_START + "first line\nsecond line" + ws.PASTE_END]
+    assert asked.seen[1] == ["tmux", "send-keys", "-t", "%7", "Enter"]
+
+
+def test_a_carriage_return_counts_as_a_line_too(ws, asked):
+    ws.tmux_send("%7", "first\r\nsecond", runner=asked)
+    assert asked.seen[0][-1].startswith(ws.PASTE_START)

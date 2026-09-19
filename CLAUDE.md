@@ -74,6 +74,11 @@ settings.
   when they are called rather than taking it as a default, so a test of the
   route above them can put a fake tmux in its place — the only way to test
   them without a terminal to type into.
+- **A newline sent to a terminal is Enter.** `tmux_send` wraps text that has
+  one in the bracketed paste markers, so a message of several lines arrives as
+  a paste and waits for the reader's own Enter. Without them a real shell ran
+  the first line and left the second on the prompt. One line is sent as it
+  always was: a program that does not understand the markers never sees them.
 - **Every POST carries a token, and the page never builds HTML from a pane.**
   A cross-origin `fetch` may send a plain POST to a loopback port with no
   questions asked, and the effect here is `tmux send-keys` into a live
@@ -155,6 +160,16 @@ settings.
   and how often to ask again — so a new tab is one entry, not six edits. The
   daemon pushes the transcript and nothing else: it does not know which tab a
   browser is on, and keeping it that way is why `Hub` stays small.
+- **There is one find box, and it must leave before its parent is cleared.**
+  It lives where it is used, which on a split tab is inside the content box, so
+  a tab that empties that box destroys it along with every listener on it — and
+  then `$("find")` is null and `showTab` throws before it reaches `load`, which
+  is a page broken until a reload. `draw()` takes it home whenever
+  `box.dataset.tab` says another tab owns the box, which is exactly when a tab
+  is about to rebuild, and `split()` takes it back. Asking the DOM rather than
+  a flag means a new tab cannot forget; moving it on a same-tab redraw would
+  blur the box mid-word. This has caused two outages, and
+  `test_every_way_from_one_tab_to_another_works` is what watches for a third.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once and `fresh()` decides what changed, both reading the DOM
   rather than a field in `state`. One key over the whole tab meant an agent

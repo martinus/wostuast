@@ -1337,6 +1337,11 @@ DIFF_MAX_BYTES = 2 * 1024 * 1024
 #: request thread, never in the tick, so waiting here holds up nothing else.
 DIFF_TIMEOUT = 8.0
 
+#: What a terminal puts around a paste. Inside these a program knows the text
+#: arrived all at once and does not act on its newlines. See `tmux_send`.
+PASTE_START = "\x1b[200~"
+PASTE_END = "\x1b[201~"
+
 #: The header a POST carries its token in. A cross-origin request cannot add a
 #: header of its own without asking us first, and we never say yes — so a page
 #: that has not read ours cannot even reach the code that checks it.
@@ -2478,11 +2483,22 @@ def tmux_send(pane: str, text: str,
     of our own would arrive as characters. `--` stops tmux reading a leading
     dash as an option of its own. Empty text is refused, because a bare Enter
     into an agent's prompt is a keystroke nobody asked for.
+
+    A newline typed into a terminal *is* Enter, so a message of two lines
+    would submit its first line and leave the second sitting on the prompt —
+    measured against a real shell, which ran it. Text with a newline in it is
+    therefore wrapped in the bracketed paste markers, which say "this arrived
+    as a paste, do not act on it yet"; every program that accepts a multi-line
+    prompt understands them. One line is sent exactly as it always was, so a
+    program that does not understand the markers never sees them.
     """
     if not pane or not text.strip():
         return False
     runner = runner or run
-    if runner(["tmux", "send-keys", "-t", pane, "-l", "--", text]) is None:
+    body = text
+    if "\n" in text or "\r" in text:
+        body = PASTE_START + text + PASTE_END
+    if runner(["tmux", "send-keys", "-t", pane, "-l", "--", body]) is None:
         return False
     return runner(["tmux", "send-keys", "-t", pane, "Enter"]) is not None
 
@@ -3623,16 +3639,21 @@ body.dragging { cursor: col-resize; user-select: none; }
 .verb:hover { border-color: var(--needs); color: var(--needs); }
 .verb:active { background: var(--chosen); }
 .sendbar {
-  flex-shrink: 0; display: flex; gap: 8px; align-items: center;
+  flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
 }
 /* `display` here would otherwise beat the browser's own rule for `hidden`,
    and the box would never go away. */
 .sendbar[hidden] { display: none; }
 .say {
-  flex-grow: 1; height: 28px; padding: 0 10px; border-radius: 5px;
+  flex-grow: 1; padding: 6px 10px; border-radius: 5px;
   border: 1px solid var(--edge); background: var(--bg); color: var(--ink);
-  font-family: var(--mono); font-size: 13px; min-width: 0;
+  font-family: var(--mono); font-size: 13px; line-height: 1.5; min-width: 0;
+  /* It grows with what is typed, up to a point, and then it scrolls. A long
+     line wraps rather than running off the side, because a prompt you cannot
+     see the start of is worse than two lines. */
+  resize: none; overflow-y: auto; max-height: 40vh; white-space: pre-wrap;
+  word-wrap: break-word;
 }
 .say:focus { outline: none; border-color: var(--needs); }
 .say::placeholder { color: var(--ink-faint); }
@@ -3839,13 +3860,21 @@ body:not(.show-thinking) .thinking { display: none; }
 }
 .filelist .lit { color: var(--needs-warm); font-weight: 600; }
 .filelist button.chosen .lit { color: var(--needs); }
-.filebody pre.plain {
-  /* No box. A file that is not Markdown is the whole page here, not a
-     quotation inside a document that does not exist, and the border made a
-     shell script look like one. */
-  margin: 0; padding: 0; color: var(--code-ink); font-family: var(--mono);
-  font-size: 12.5px; line-height: 1.6; white-space: pre; overflow-x: auto;
+/* No box. A file that is not Markdown is the whole page here, not a quotation
+   inside a document that does not exist, and the border made a shell script
+   look like one. The gutter beside it shares this ramp, because the two only
+   stay level while they agree on it. */
+.filebody pre.plain, .code pre.nums {
+  margin: 0; padding: 0; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.6; white-space: pre;
 }
+.filebody pre.plain { color: var(--code-ink); overflow-x: auto;
+  flex-grow: 1; min-width: 0; }
+.code { display: flex; gap: 14px; align-items: flex-start; }
+.code pre.nums { flex-shrink: 0; text-align: right; }
+/* Which line this was. Numbers are not the content, here or in a diff, so
+   they are faint and they are not copied with it. */
+.code pre.nums, .dline .ln { color: var(--ink-faint); user-select: none; }
 /* Our colours, not the highlighter's: its stylesheets are not fetched. */
 .hljs-comment, .hljs-quote { color: var(--syn-com); font-style: italic; }
 .hljs-keyword, .hljs-literal, .hljs-selector-tag,
@@ -3901,7 +3930,7 @@ body:not(.show-thinking) .thinking { display: none; }
   border-top: 1px solid var(--edge); white-space: pre; overflow-x: auto;
 }
 .dlines { padding: 5px 0; overflow-x: auto; color: var(--code-ink); }
-.dline { padding: 0 20px; white-space: pre; min-width: max-content; }
+.dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
 .dline.context { color: var(--ink-mute); }
 .dline.added { background: var(--add-bg); color: var(--add-ink); }
 .dline.removed { background: var(--cut-bg); color: var(--cut-ink); }
@@ -3979,8 +4008,9 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       </div>
       <div class="content" id="content"></div>
       <form class="sendbar" id="sendbar" hidden>
-        <input class="say" id="say" type="text" autocomplete="off"
-               placeholder="type into the terminal  s">
+        <textarea class="say" id="say" rows="1" autocomplete="off"
+                  spellcheck="false"
+                  placeholder="type into the terminal  ·  s  ·  shift+enter for a new line"></textarea>
         <button class="verb" type="submit">send</button>
       </form>
     </div>
@@ -4027,6 +4057,7 @@ const state = {
   filesFailed: false,   // git did not answer; "no files" would lie
   filesTag: "",         // the daemon's name for the listing we hold
   loose: null,          // an untracked file picked on the Diff tab
+  goTo: false,          // and whether the pane still has to move to it
   looseText: null,      // null while it is being read
   looseBinary: false,
   file: null,           // the file it shows
@@ -4335,8 +4366,14 @@ function drawHeader() {
   // the verbs are not there to be pressed. A session that has ended can still
   // be jumped to — its pane may hold what it left behind — but not typed at.
   $("jump").hidden = !s.pane;
+  const was = $("sendbar").hidden;
   $("sendbar").hidden = !s.pane || state.tab !== "transcript"
     || s.state === "ended" || s.state === "dead";
+  // Only when it appears. `drawHeader` runs on every push from the daemon,
+  // which is about once a second while an agent works, and `fitSay` reads a
+  // layout it has just made dirty. What is in the box cannot change without
+  // the reader typing, and that has its own listener.
+  if (was && !$("sendbar").hidden) fitSay();
 }
 
 // --- the tab icon, drawn here so it follows the colours ---------------------
@@ -4890,15 +4927,25 @@ function buildTree(names) {
   return dirs;
 }
 
+// Every directory a path sits under, innermost first. Two walks wanted the
+// same index arithmetic, and the two awkward parts of it — the `> 0`, which
+// keeps the root out, and stepping back from `at - 1` — are worth having once.
+function* ancestors(path) {
+  let at = path.lastIndexOf("/");
+  while (at > 0) {
+    yield path.slice(0, at);
+    at = path.lastIndexOf("/", at - 1);
+  }
+}
+
 // The directories holding something the agent touched, so a closed one can
 // still say there is a change inside it.
 function dirsWithChanges(changed) {
   const marked = new Set();
   for (const path of changed.keys()) {
-    let at = path.lastIndexOf("/");
-    while (at > 0) {
-      marked.add(path.slice(0, at));
-      at = path.lastIndexOf("/", at - 1);
+    for (const above of ancestors(path)) {
+      if (marked.has(above)) break;   // and so is everything above it
+      marked.add(above);
     }
   }
   return marked;
@@ -4934,48 +4981,82 @@ function dirFiles(files) {
 
 // The rows a tree shows, in the order they are drawn. Only what is open is
 // walked, so a closed repository costs its top level and no more.
-function treeRows(dirs, open, rows = [], path = "", depth = 0) {
-  const one = dirs.get(path);
-  if (!one) return rows;
-  const from = path ? path.length + 1 : 0;
-  for (const child of one.dirs) {
-    const wide = open.has(child);
-    rows.push({ path: child, name: child.slice(from), depth, dir: true,
-                open: wide });
-    if (wide) treeRows(dirs, open, rows, child, depth + 1);
-  }
-  // Only a directory holding something named or changed needs its files put
-  // in order; everywhere else they are already in the order they arrived, and
-  // `state.marked` says which those are. It halves a fully opened tree.
-  const files = (path && !state.marked.has(path)) ? one.files
-                                                  : dirFiles(one.files);
-  for (const file of files) {
-    rows.push({ path: file, name: file.slice(from), depth });
-  }
+//
+// `only` is what typing leaves: the matching files bucketed by the directory
+// that holds them, and the letters that matched. Without it every file shows
+// and the tiers decide the order.
+//
+// A row carries where its name starts and the letters found in the whole
+// path, not the name and the letters in it. Fifty thousand rows are built to
+// draw eighty, so the work of cutting one up belongs where it is drawn.
+function treeRows(dirs, open, only = null) {
+  const rows = [];
+  const walk = (path, depth) => {
+    const one = dirs.get(path);
+    if (!one) return;
+    const from = path ? path.length + 1 : 0;
+    for (const child of one.dirs) {
+      if (only && !only.keep.has(child)) continue;
+      const wide = only ? true : open.has(child);
+      rows.push({ path: child, from, depth, dir: true, open: wide,
+                  hit: only ? only.keep.get(child) : null });
+      if (wide) walk(child, depth + 1);
+    }
+    // Only a directory holding something named or changed needs its files put
+    // in order; everywhere else they are already in the order they arrived,
+    // and `state.marked` says which those are. It halves a fully opened tree.
+    const files = only ? (only.inside.get(path) || [])
+      : (path && !state.marked.has(path)) ? one.files : dirFiles(one.files);
+    for (const file of files) {
+      rows.push({ path: file, from, depth,
+                  hit: only ? only.marks.get(file) : null });
+    }
+  };
+  walk("", 0);
   return rows;
 }
 
-// What the left column shows: a flat list of matches while you type, and the
-// tree otherwise.
-function listRows() {
-  if (state.find) {
-    // `pick` already made one object per match, and on a broad query that is
-    // tens of thousands. A second array of the same size, to add two fields
-    // eighty of which are ever drawn, is the row shape's problem to avoid:
-    // a flat row has no depth and its name is its path.
-    return pick(state.names);
+// The tree with everything that does not match taken out of it. A flat list
+// of matches loses where a file sits, and where it sits is half of what you
+// know about it.
+//
+// `pick` hands the matches over best first, so putting each one in its
+// directory's bucket as it arrives leaves every bucket in that order: the
+// best match leads its directory without anything being sorted again. The
+// directories keep their own order, because that is what a tree is.
+function matching() {
+  const marks = new Map();
+  const inside = new Map();      // directory to its matching files, best first
+  const keep = new Map();        // and to the letters of the best beneath it
+  for (const hit of pick(state.names)) {
+    marks.set(hit.path, hit.at);
+    const cut = hit.path.lastIndexOf("/");
+    const home = cut < 0 ? "" : hit.path.slice(0, cut);
+    const held = inside.get(home);
+    if (held) held.push(hit.path); else inside.set(home, [hit.path]);
+    for (const above of ancestors(hit.path)) {
+      // Once a directory is known, so is every directory above it: the hit
+      // that put it there walked the same way to the root.
+      if (keep.has(above)) break;
+      keep.set(above, hit.at);
+    }
   }
-  return treeRows(state.tree, openDirs());
+  return { keep, marks, inside };
 }
 
-// The files to show, best match first.
+// What the left column shows. Typing filters the tree; it does not replace it.
+function listRows() {
+  const only = state.find ? matching() : null;
+  return treeRows(state.tree, only ? null : openDirs(), only);
+}
+
+// The files a query finds, best match first. It is only ever called with one.
 //
 // It runs over every name the worktree holds, not over a slice of them. The
 // first version searched the first five thousand of 52,799, so typing
 // `libcorrelation` found 16 files and missed more than a thousand — a wrong
 // answer that looked exactly like a right one.
 function pick(names) {
-  if (!state.find) return names.map((path) => ({ path, at: [] }));
   const found = [];
   for (const path of names) {
     const got = fuzzy(path, state.find);
@@ -5037,10 +5118,21 @@ function drawRow(list, row) {
                      (open ? " open" : ""));
   button.type = "button";
   button.title = row.path;
-  // A match from the find box has no depth and shows its whole path.
-  button.style.paddingLeft = (14 + (row.depth || 0) * 13) + "px";
+  button.style.paddingLeft = (14 + row.depth * 13) + "px";   // the tree's step
   if (dir) put(button, "span", "caret", open ? "\u25be" : "\u25b8");
-  putName(button, row.name || row.path, row.at || []);
+  // A row shows one segment of a path. The letters that matched were found
+  // in the whole of it, so a letter found in a directory is picked out on
+  // that directory's own row and nowhere else. Cutting the name and the
+  // letters up happens here, for the eighty rows that are drawn, not for the
+  // fifty thousand that are built.
+  const name = row.path.slice(row.from);
+  const at = [];
+  for (const where of row.hit || []) {
+    if (where >= row.from && where - row.from < name.length) {
+      at.push(where - row.from);
+    }
+  }
+  putName(button, name, at);
   button.addEventListener("click", () => {
     if (!dir) { chooseFile(row.path); return; }
     state.dirs.set(row.path, !open);
@@ -5052,8 +5144,9 @@ function drawRow(list, row) {
 // files, never the rows: a tree row can be a directory or a heading.
 function noteList(note, found) {
   note.replaceChildren();
-  const hits = state.find ? found.length
-                          : found.reduce((n, row) => n + (row.dir ? 0 : 1), 0);
+  // Rows are not files: typing leaves a tree, and a tree has directories in
+  // it. Counting rows made one match in a big repository read "5 of 52799".
+  const hits = found.reduce((n, row) => n + (row.dir ? 0 : 1), 0);
   if (state.filesFailed) {
     // git failing and a worktree holding nothing look the same and mean
     // opposite things, so the strip says which one this is.
@@ -5127,9 +5220,16 @@ function drawFiles(box) {
   } else if (MARKDOWN.test(state.file)) {
     markdown(pane, state.fileText);
   } else {
+    // A gutter of its own, beside the code rather than inside it. Numbers in
+    // the same element would be copied with the code, and they would have to
+    // survive the highlighter rewriting everything between them.
+    const both = put(pane, "div", "code");
+    const lines = state.fileText.replace(/\n$/, "").split("\n");
+    put(both, "pre", "nums",
+        lines.map((one, at) => at + 1).join("\n"));
     // The text goes up first and the colour arrives after, so a CDN that is
     // slow or gone costs the reader nothing but paint.
-    const code = put(pane, "pre", "plain", state.fileText);
+    const code = put(both, "pre", "plain", state.fileText);
     code.dataset.path = state.file;
     paint(code, state.file, state.fileText);
   }
@@ -5199,8 +5299,9 @@ function drawDiff(box) {
       button.addEventListener("click", () => chooseUntracked(name));
     }
   }
+  let picked = null;
   if (state.loose) {
-    drawLooseFile(pane, state.loose);
+    picked = drawLooseFile(pane, state.loose);
   } else if (loose.length) {
     put(pane, "div", "note", loose.length + " untracked file" +
         (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
@@ -5218,7 +5319,22 @@ function drawDiff(box) {
   if (report.cut) {
     put(pane, "div", "note", "This diff is long, so the rest is left out.");
   }
-  if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
+  // Picking a file moves the pane to it; anything else leaves the reader
+  // where they were. Restoring the old place whatever happened is what made a
+  // click on an untracked name look like it had done nothing: the block was
+  // built below the fold and the pane scrolled straight back up.
+  //
+  // `chooseUntracked` is the only thing that picks, so it is the only thing
+  // that says to go, and it stays said until the file has arrived — the block
+  // is drawn twice, and the second draw is what the reader ends up looking
+  // at. Working that out again here from two other fields was a string of
+  // state algebra explaining itself.
+  if (state.goTo && picked) {
+    if (state.looseText !== null) state.goTo = false;
+    requestAnimationFrame(() => picked.scrollIntoView({ block: "start" }));
+  } else if (place) {
+    requestAnimationFrame(() => { pane.scrollTop = place; });
+  }
   note.replaceChildren();
   countNote(note, shown + loose.length);
   drawDiffCount();
@@ -5248,8 +5364,14 @@ function drawLooseFile(pane, path) {
     put(body, "div", "note", "This file is empty.");
     return node;
   }
-  const rows = put(body, "div", "dlines");
-  for (const line of lines) put(rows, "div", "dline added", "+" + line);
+  // One hunk, every line added, which is what the file is. It goes through
+  // the one place that knows the shape of a diff row, so it is numbered and
+  // lined up with every other block rather than being a third way to draw a
+  // line that quietly drifts from the other two.
+  fillDiffFile(body, { hunks: [{
+    header: "@@ -0,0 +1," + lines.length + " @@",
+    lines: lines.map((text) => ({ kind: "added", text })),
+  }] });
   return node;
 }
 
@@ -5258,6 +5380,7 @@ async function chooseUntracked(path) {
   state.loose = path;
   state.looseText = null;
   state.looseBinary = false;
+  state.goTo = true;            // until the block is on screen with the file
   state.diffAt += 1;            // the body key has to move for the redraw
   draw();
   const want = state.chosen;
@@ -5300,13 +5423,34 @@ function drawDiffFile(pane, one) {
   return node;
 }
 
+// Where a hunk starts on each side. `@@ -12,7 +14,9 @@` says line 12 of the
+// old file and line 14 of the new one. The numbers are worked out here rather
+// than sent: they follow from the header, and a diff is already the biggest
+// thing on the wire.
+const HUNK_AT = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
 function fillDiffFile(body, one) {
   const sign = { added: "+", removed: "\u2212", context: " " };
   for (const hunk of one.hunks) {
     put(body, "div", "hunk", hunk.header);
     const lines = put(body, "div", "dlines");
+    const found = HUNK_AT.exec(hunk.header);
+    let old = found ? Number(found[1]) : 0;
+    let now = found ? Number(found[2]) : 0;
     for (const line of hunk.lines) {
-      put(lines, "div", "dline " + line.kind, sign[line.kind] + line.text);
+      const row = put(lines, "div", "dline " + line.kind);
+      // Both numbers in one span, lined up with spaces. The row is already
+      // `white-space: pre` in a monospace face, so they stay in column
+      // without a flex box and three elements around every line — a diff of
+      // twelve thousand lines is the difference between 24,000 nodes and
+      // 84,000. A removed line has no number on the new side and an added one
+      // has none on the old side, so that side is left blank.
+      put(row, "span", "ln",
+          (line.kind === "added" ? "" : String(old)).padStart(5) +
+          (line.kind === "removed" ? "" : String(now)).padStart(6) + "  ");
+      put(row, "span", "dtext", sign[line.kind] + line.text);
+      if (line.kind !== "added") old += 1;
+      if (line.kind !== "removed") now += 1;
     }
   }
 }
@@ -5374,10 +5518,13 @@ async function loadPeek() {
 
 // One entry per tab: how to draw it, how to fetch what it draws, and how often
 // to ask again while it is on screen (0 means it is pushed, not polled).
+// `splits` says the tab builds the two columns, which is the same as saying
+// it keeps the find box inside the content box. Every other tab gives it back
+// before it empties that box.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0 },
-  files: { draw: drawFiles, load: loadFiles, poll: 2000 },
-  diff: { draw: drawDiff, load: loadDiff, poll: 5000 },
+  files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true },
+  diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true },
   peek: { draw: drawPeek, load: loadPeek, poll: 1000 },
 };
 
@@ -5387,10 +5534,20 @@ const TAB_KEYS = ["transcript", "files", "diff", "peek"];
 
 function draw() {
   const box = $("content");
-  box.className = "content" + (state.tab === "transcript" ? "" : " split");
-  // A tab that has no file list gives the box back before anything is
-  // cleared; `split` takes it again for the tabs that do.
-  if (state.tab === "transcript" || !current()) homeFind($("findhome"));
+  box.className = "content" + (TABS[state.tab].splits ? " split" : "");
+  // There is one find box and it lives wherever it is used, which on a split
+  // tab is inside this content box. Any tab that rebuilds the box empties it,
+  // so the box has to be taken home first or it is destroyed — and with it
+  // every listener on it, and the next `$("find")` throws. That threw inside
+  // `showTab` before it reached `load`, so the tab never loaded and every
+  // switch after it threw too: broken until a reload.
+  //
+  // The box is in danger exactly when a tab is about to rebuild, and every
+  // tab rebuilds on the same condition: the box says another tab owns it.
+  // Asking the DOM means a new tab cannot forget to say so, and it does not
+  // move on a redraw of the same tab, which would blur the box mid-word.
+  // `split` takes it back for the tabs that keep it.
+  if (!current() || box.dataset.tab !== state.tab) homeFind($("findhome"));
   if (!current()) {
     box.replaceChildren();
     box.dataset.tab = "";       // nothing is built, so the next tab rebuilds
@@ -5447,6 +5604,7 @@ function choose(id) {
   state.loose = null;
   state.looseText = null;
   state.looseBinary = false;
+  state.goTo = false;
   state.peek = [];
   state.peekRaw = "";
   state.peekWhy = "";
@@ -5695,7 +5853,10 @@ async function sendTyped() {
   if (!state.chosen || !text.trim()) return;
   const answer = await tell(state.chosen, "send", { text });
   said(answer);
-  if (answer && answer.done) box.value = "";
+  if (answer && answer.done) {
+    box.value = "";
+    fitSay();                  // back to one line, whatever it had grown to
+  }
 }
 
 $("jump").addEventListener("click", jumpToPane);
@@ -5703,9 +5864,31 @@ $("sendbar").addEventListener("submit", (press) => {
   press.preventDefault();
   sendTyped();
 });
+
+// The box is one line until it needs more, and then it is as tall as what is
+// in it — up to the height the stylesheet allows, after which it scrolls.
+// Height has to go back to nothing first, or a box that has grown can never
+// shrink again: scrollHeight would only ever report the height it already has.
+function fitSay() {
+  const box = $("say");
+  if ($("sendbar").hidden) return;   // a box nobody can see measures nothing
+  box.style.height = "auto";
+  box.style.height = box.scrollHeight + "px";
+}
+
+$("say").addEventListener("input", fitSay);
 $("say").addEventListener("keydown", (press) => {
-  if (press.key !== "Escape") return;
-  $("say").blur();
+  if (press.key === "Escape") {
+    $("say").blur();
+    return;
+  }
+  // Enter sends. Shift and Enter is how you write a second line, which is
+  // what every chat box does and what a prompt with a plan in it needs.
+  if (press.key === "Enter" && !press.shiftKey && !press.ctrlKey
+      && !press.altKey && !press.metaKey) {
+    press.preventDefault();
+    sendTyped();
+  }
 });
 drawBell();
 $("find").addEventListener("input", (typed) => {
