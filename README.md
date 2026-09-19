@@ -120,6 +120,23 @@ moved every row each time an agent started or finished a tool call, so the list
 kept shifting under you. Which agent needs you is said by the colour, by the
 counts under the list, and on the page by the `n` key.
 
+### Keys
+
+The page is worked from the keyboard. `?` shows this list without leaving it.
+
+| Key | Does |
+| --- | --- |
+| `j` `k` | move down and up the session list |
+| `n` | jump to the next session that needs you |
+| `f` | filter the session list |
+| `/` | find: text in the transcript, a file on the other tabs |
+| `1` – `4` | Transcript, Files, Diff, Peek |
+| `Enter` | jump to that agent's tmux pane |
+| `s` | type into its terminal |
+| `t` | show or hide the agent's thinking |
+| `c` | colours: auto, light, dark |
+| `Esc` | clear a box, or close the help |
+
 ### Files
 
 | Path | Holds |
@@ -303,11 +320,14 @@ counts what it kept. `Esc` clears it.
 
 ## Status
 
-Milestones 1 to 5 of [`PLAN.md`](PLAN.md) are done: wostuast records your
+All six milestones of [`PLAN.md`](PLAN.md) are done. wostuast records your
 sessions, lists them in the terminal, and serves a live page with the
 transcript, the worktree's files and its diff, and it can jump to a pane, type
-into it and show you what it holds. Milestone 6 is what is left: the light
-theme's last corners, motion, empty states and the screenshots.
+into it and show you what it holds.
+
+There are no screenshots here. A screenshot of this page is a screenshot of
+somebody's agents, and made-up ones would show a tool nobody is using. Run
+`wostuast serve --open` instead: it takes one command and shows you your own.
 
 `PLAN.md` is the complete brief. [`CLAUDE.md`](CLAUDE.md) says how to work in
 this repository.

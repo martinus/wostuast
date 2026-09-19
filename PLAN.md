@@ -685,17 +685,22 @@ Commit at the end of each milestone. Each one leaves a working tool.
 5. **Act.** jump, send, Peek, attention (title, favicon, notification).
    The first two are the only things this program does that a terminal can
    feel, which is why every `POST` carries the token of section 4.4.1.
-6. **Shine.** Light theme, motion, empty states, keyboard help, README with
-   two screenshots and one short GIF, `docs/` in the same plain style as this
-   file.
+6. **Shine.** Light theme, motion, empty states, keyboard help, README.
+
+   No screenshots and no GIF. A screenshot of this page is a screenshot of
+   somebody's agents; made-up ones would show a tool nobody is using, and a
+   GIF would need a recorder this program does not have and must not grow.
+   The README says to run `serve --open`, which takes one command and shows
+   the reader their own. `docs/` holds the two mockups that the page was
+   built against, and nothing that needs prose.
 
 ## 10. README
 
 Write it in the style of the gra README: a one-line tagline, "a minute with
 wostuast" (six commands), how it works in one diagram, install, commands,
 then a reference section. Plain language, short sentences, no marketing
-words. The first screenshot is the Transcript tab with one session in
-`needs_you`, one `working`, one `done`.
+words. The reference section lists the keys, so the page can be worked
+without opening it first.
 
 ## 11. Working agreement
 

@@ -241,4 +241,5 @@ tool behind.
    correct, fast, room, read. `PLAN.md` section 9 lists what is in each one.
 5. **Act** — done. jump, send, Peek. Attention (title, icon, notifications)
    arrived early, in milestone 2, because it was asked for.
-6. **Shine** — next. Light theme, motion, empty states, README.
+6. **Shine** — done. Light theme, motion, empty states, keyboard help,
+   README. No screenshots: `PLAN.md` section 9 says why.
