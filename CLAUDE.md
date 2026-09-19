@@ -44,7 +44,7 @@ Page: asking the daemon · dragging an edge · the two fetched scripts · colour
 **the sidebar** · tab icon · notifications · **the transcript** · painting code ·
 **the Files tab** · finding a file · the tree · a file too long to draw whole ·
 **the Diff tab** · **the review** ·
-keeping a review · has the line moved? · the tabs · talking to the
+keeping a review · **the Review tab** · the tabs · talking to the
 daemon · keys.
 
 ## Before you write anything new
@@ -333,16 +333,22 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **A comment is anchored to what it is about** — path, side, line — never to the
   node it was drawn on. The Diff tab is rebuilt from `state.diff` whenever the
   agent saves anything.
+- **A comment is a place in a file, not a place in a diff.** There is no
+  "gone" or "moved": the page used to work those out and send them as though
+  the reader had written them, so a note on a file the agent never touched
+  went out saying "this line is no longer in the diff". The message tells the
+  agent to search for the quoted line instead.
+- **The Review tab is the only place a review is sent from**, and the message
+  stands above the send button, not editable. `drawReview` is the tab,
+  `reviewText` is the message, `blankReview` is an empty one.
+- **Every tab's `load` must draw.** A tab switch goes through `load`, not
+  `draw`. The Review tab fetches nothing, so its loader looked like it could
+  be empty — and then switching to it left the page showing the tab before.
 - **The diff does not rebuild while a comment box is open.** It would take what
   is being typed with it, and move the code the comment is about.
 - **The draft lives in the browser.** A review is yours until you submit it, and
   the daemon serves every browser the same page. `recallReview` checks the shape
   of what comes back: storage is not a place to trust blindly.
-- **A comment remembers which tab wrote it.** Only one written on the diff may
-  later be told "this line is no longer in the diff". Every comment used to
-  start "gone" and only a file in the diff redeemed it, so a note on any of the
-  fifty thousand files the agent never touched carried that sentence — into the
-  message sent to the agent, as the reader's own words.
 - **The preview cannot be skipped**, and it is not editable. A quoted line is
   text an agent wrote, about to be pasted into a terminal. One text, one place it
   comes from.

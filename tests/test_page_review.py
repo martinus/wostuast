@@ -37,8 +37,8 @@ def test_a_diff_line_can_be_commented_on(repo_page):
             page.wait_for_selector(".comment")
             assert "use a signed type here" in page.locator(".comment").inner_text()
             # It is written down, not held in the node it was drawn on.
-            assert page.evaluate("state.review.length") == 1
-            assert page.evaluate("state.review[0].anchor").count("\n") == 2
+            assert page.evaluate("state.review.comments.length") == 1
+            assert page.evaluate("state.review.comments[0].anchor").count("\n") == 2
         finally:
             browser.close()
 
@@ -71,7 +71,7 @@ def test_a_whole_file_can_be_commented_on(repo_page):
             page.fill(".commentbox textarea", "keep the heading order")
             page.click(".commentbox .verb")
             page.wait_for_selector(".onFile .comment")
-            assert page.evaluate("state.review[0].anchor").endswith("\nfile\n0")
+            assert page.evaluate("state.review.comments[0].anchor").endswith("\nfile\n0")
         finally:
             browser.close()
 
@@ -123,14 +123,14 @@ def test_a_comment_can_be_edited_and_emptied_away(repo_page):
             assert page.input_value(".commentbox textarea") == "first thought"
             page.fill(".commentbox textarea", "second thought")
             page.click(".commentbox .verb")
-            page.wait_for_function("state.review[0].note === 'second thought'")
+            page.wait_for_function("state.review.comments[0].note === 'second thought'")
 
             # Clearing the box and saving is how a comment goes away, so there
             # is no second thing to find and press.
             page.click(".comment .link")
             page.fill(".commentbox textarea", "   ")
             page.click(".commentbox .verb")
-            page.wait_for_function("state.review.length === 0")
+            page.wait_for_function("state.review.comments.length === 0")
             assert page.locator(".comment").count() == 0
         finally:
             browser.close()
@@ -149,7 +149,7 @@ def test_cancel_leaves_the_comment_as_it_was(repo_page):
             page.click(".commentbox .link")         # cancel
             page.wait_for_selector(".comment")
             assert "kept" in page.locator(".comment").inner_text()
-            assert page.evaluate("state.review.length") == 1
+            assert page.evaluate("state.review.comments.length") == 1
         finally:
             browser.close()
 
@@ -163,10 +163,10 @@ def test_the_review_belongs_to_the_session_it_is_about(repo_page):
             # skipped both waits — it predates the helper — and it was the one
             # test that failed under a full parallel run.
             comment_on_first_line(page, "about this session")
-            page.wait_for_function("state.review.length === 1")
+            page.wait_for_function("state.review.comments.length === 1")
             page.evaluate("choose('someone-else')")
             seen = page.evaluate(
-                """() => ({n: state.review.length, chosen: state.chosen})""")
+                """() => ({n: state.review.comments.length, chosen: state.chosen})""")
             assert seen == {"n": 0, "chosen": "someone-else"}
         finally:
             browser.close()
@@ -191,27 +191,32 @@ def test_nothing_is_sent_yet(repo_page):
             browser.close()
 
 
-def test_there_is_no_submit_until_there_is_a_comment(repo_page):
+def test_the_review_tab_says_how_many_are_waiting(repo_page):
+    """The submit button used to live on the Diff tab, so "is there a review"
+    was answered by whether it was there. The tab's own badge answers it now,
+    from wherever you are."""
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            assert page.locator(".verb.submit").count() == 0
+            assert page.locator("#reviewcount").is_hidden()
             comment_on_first_line(page, "one thing")
-            page.wait_for_selector(".verb.submit")
-            assert "1" in page.locator(".verb.submit").inner_text()
+            page.wait_for_selector("#reviewcount:not([hidden])")
+            assert page.locator("#reviewcount").inner_text() == "1"
+            # And it is not on the Diff tab any more.
+            assert page.locator(".diffbody .verb.submit").count() == 0
         finally:
             browser.close()
 
 
-def test_the_preview_is_the_message_itself(repo_page):
+def test_the_message_is_on_the_tab_and_is_what_would_be_sent(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
             comment_on_first_line(page, "use a signed type here")
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            shown = page.locator("#reviewtext").inner_text()
-            assert shown.startswith("Review: 1 comment on 1 file.")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .reviewtext")
+            shown = page.locator(".reviewbody .reviewtext").inner_text()
+            assert shown.startswith("# Task: ")
             assert "use a signed type here" in shown
             assert "\n> " in shown, "the line it is about is quoted"
             # What is shown is what would be sent, byte for byte.
@@ -220,18 +225,21 @@ def test_the_preview_is_the_message_itself(repo_page):
             browser.close()
 
 
-def test_the_overall_note_goes_into_the_message_as_you_type(repo_page):
+def test_the_task_and_the_note_go_into_the_message_as_you_type(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
             comment_on_first_line(page, "a line note")
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            page.fill("#overall", "mostly good, two things")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .reviewtext")
+            page.fill(".about .field:nth-of-type(1) textarea", "cleanup")
+            page.fill(".about .field:nth-of-type(2) textarea",
+                      "mostly good, two things")
             page.wait_for_function(
-                "document.getElementById('reviewtext')"
+                "document.querySelector('.reviewbody .reviewtext')"
                 ".textContent.includes('mostly good, two things')")
-            shown = page.locator("#reviewtext").inner_text()
+            shown = page.locator(".reviewbody .reviewtext").inner_text()
+            assert shown.startswith("# Task: cleanup")
             # The note comes before the comments, as its own paragraph.
             assert shown.index("mostly good") < shown.index("a line note")
         finally:
@@ -244,18 +252,18 @@ def test_the_message_is_ordered_by_file_and_line(repo_page):
         try:
             # Written out of order on purpose: line 9, then the file, then 2.
             page.evaluate("""() => {
-              state.review = [
+              state.review.comments = [
                 {anchor: "b.py\\nnew\\n9", quoted: "nine", note: "at nine"},
                 {anchor: "b.py\\nfile\\n0", quoted: "", note: "about the file"},
                 {anchor: "a.py\\nnew\\n2", quoted: "two", note: "at two"},
               ];
             }""")
             shown = page.evaluate("reviewText()")
-            assert shown.startswith("Review: 3 comments on 2 files.")
             assert (shown.index("at two") < shown.index("about the file")
                     < shown.index("at nine"))
-            assert "a.py:2" in shown and "b.py:9" in shown
-            assert "b.py\nabout the file" in shown, "a file comment has no line"
+            assert "## a.py:2" in shown and "## b.py:9" in shown
+            assert "## b.py\n\nabout the file" in shown, \
+                "a file comment has no line"
         finally:
             browser.close()
 
@@ -276,34 +284,31 @@ def test_submitting_sends_it_and_empties_the_review(repo_page):
                 return real(url, opts);
               };
             }""")
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            page.click("#reviewsend")
+            show_tab(page, "review")
+            page.click(".reviewbody .verb.submit")
             page.wait_for_function("window.__sent.length === 1")
             assert "change this please" in page.evaluate("window.__sent[0]")
             # It went, so it is gone from here: no sending the same twice.
-            page.wait_for_function("state.review.length === 0")
-            assert page.locator(".verb.submit").count() == 0
-            assert page.evaluate("document.getElementById('review').open") is False
+            page.wait_for_function("state.review.comments.length === 0")
+            assert page.locator("#reviewcount").is_hidden()
         finally:
             browser.close()
 
 
-def test_cancel_keeps_the_review(repo_page):
+def test_leaving_the_tab_keeps_what_was_typed(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
             comment_on_first_line(page, "still here")
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            page.fill("#overall", "typed and kept")
-            page.click("#reviewstop")
-            page.wait_for_function(
-                "document.getElementById('review').open === false")
-            assert page.evaluate("state.review.length") == 1
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            assert page.input_value("#overall") == "typed and kept"
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .reviewtext")
+            page.fill(".about .field:nth-of-type(2) textarea", "typed and kept")
+            show_tab(page, "diff")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .reviewtext")
+            assert page.evaluate("state.review.comments.length") == 1
+            assert page.input_value(
+                ".about .field:nth-of-type(2) textarea") == "typed and kept"
         finally:
             browser.close()
 
@@ -325,28 +330,23 @@ def test_a_session_without_a_pane_cannot_be_sent_to(ws, served, repo):
         browser, page = open_diff(play, (repo, base))
         try:
             comment_on_first_line(page, "nowhere to go")
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            assert page.locator("#reviewsend").is_disabled()
-            assert "not running in tmux" in page.locator("#reviewwhy").inner_text()
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .verb.submit")
+            assert page.locator(".reviewbody .verb.submit").is_disabled()
+            assert "not running in tmux" in page.locator(
+                ".reviewbody .why").inner_text()
         finally:
             browser.close()
 
 
-def test_r_opens_the_review_and_escape_closes_it(repo_page):
+def test_r_goes_to_the_review(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
             page.press("body", "r")
-            page.wait_for_timeout(100)
-            assert page.evaluate("document.getElementById('review').open") is False, \
-                "there is nothing to submit yet"
-            comment_on_first_line(page, "something")
-            page.press("body", "r")
-            page.wait_for_selector("#review[open]")
-            page.press("body", "Escape")
-            page.wait_for_function(
-                "document.getElementById('review').open === false")
+            page.wait_for_function("state.tab === 'review'")
+            # Nothing written yet, and the tab says so rather than being empty.
+            assert "No review yet" in page.locator(".reviewbody .empty").inner_text()
         finally:
             browser.close()
 
@@ -367,8 +367,8 @@ def test_an_untracked_file_anchors_its_comments_to_itself(repo_page):
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "about the notes")
             page.click(".commentbox .verb")
-            page.wait_for_function("state.review.length === 1")
-            assert page.evaluate("state.review[0].anchor").startswith("NOTES.md\n")
+            page.wait_for_function("state.review.comments.length === 1")
+            assert page.evaluate("state.review.comments[0].anchor").startswith("NOTES.md\n")
             assert "NOTES.md:" in page.evaluate("reviewText()")
         finally:
             browser.close()
@@ -398,21 +398,19 @@ def test_a_review_survives_a_reload(repo_page):
             page.wait_for_selector(".comment")
             assert "still here after F5" in page.locator(".comment").inner_text()
 
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            page.fill("#overall", "and so is this")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .reviewtext")
+            page.fill(".about .field:nth-of-type(2) textarea", "and so is this")
             page.wait_for_function(
-                "document.getElementById('reviewtext')"
+                "document.querySelector('.reviewbody .reviewtext')"
                 ".textContent.includes('and so is this')")
-            page.click("#reviewstop")
 
             page.reload(wait_until="domcontentloaded")
             page.wait_for_selector(".row")
-            show_tab(page, "diff")
-            page.wait_for_selector(".comment")
-            page.click(".verb.submit")
-            page.wait_for_selector("#review[open]")
-            assert page.input_value("#overall") == "and so is this"
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .reviewtext")
+            assert page.input_value(
+                ".about .field:nth-of-type(2) textarea") == "and so is this"
         finally:
             browser.close()
 
@@ -430,7 +428,7 @@ def test_a_review_that_went_is_not_kept(repo_page):
             page.click(".comment .link")
             page.fill(".commentbox textarea", "")
             page.click(".commentbox .verb")
-            page.wait_for_function("state.review.length === 0")
+            page.wait_for_function("state.review.comments.length === 0")
             assert page.evaluate(
                 "Object.keys(localStorage)"
                 ".filter((k) => k.startsWith('wostuast-review-')).length") == 0
@@ -446,7 +444,7 @@ def test_storage_that_is_not_a_review_is_left_out(repo_page):
         try:
             page.evaluate("""() => {
               localStorage.setItem("wostuast-review-" + state.chosen, JSON.stringify(
-                {overall: 7, comments: [
+                {task: "fine", overall: 7, comments: [
                   {anchor: "a.py\\nnew\\n1", quoted: "x", note: "a real one"},
                   {note: "no anchor"},
                   "not even an object",
@@ -454,59 +452,11 @@ def test_storage_that_is_not_a_review_is_left_out(repo_page):
                 ]}));
               recallReview(state.chosen);
             }""")
-            assert page.evaluate("state.review.length") == 1
-            assert page.evaluate("state.review[0].note") == "a real one"
-            assert page.evaluate("state.overall") == ""
-        finally:
-            browser.close()
-
-
-def test_a_comment_whose_line_changed_says_so(repo_page):
-    """The agent keeps working while you read. Moving the comment to whatever
-    is at that line number now would point it at different code; dropping it
-    would lose the work. It says so instead, and keeps the line it quoted."""
-    with sync_playwright() as play:
-        browser, page = open_diff(play, repo_page)
-        try:
-            comment_on_first_line(page, "about the old line")
-            assert page.locator(".comment.stale").count() == 0
-            # The same line number, different text: the agent edited it.
-            page.evaluate("""() => {
-              for (const section of state.diff.sections) {
-                for (const file of section.files) {
-                  for (const hunk of file.hunks) {
-                    for (const line of hunk.lines) line.text = "something else";
-                  }
-                }
-              }
-              state.diffAt += 1;
-              redrawCode();
-            }""")
-            page.wait_for_selector(".comment.stale")
-            shown = page.locator(".comment.stale").inner_text()
-            assert "the line has changed" in shown
-            assert "about the old line" in shown, "the note is kept"
-            assert "the line has changed" in page.evaluate("reviewText()")
-        finally:
-            browser.close()
-
-
-def test_a_comment_with_nowhere_left_to_sit_is_still_shown(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_diff(play, repo_page)
-        try:
-            comment_on_first_line(page, "the file went away")
-            page.evaluate("""() => {
-              for (const section of state.diff.sections) section.files = [];
-              state.diff.untracked = [];
-              state.diffAt += 1;
-              redrawCode();
-            }""")
-            page.wait_for_selector(".diffhead.gone")
-            assert page.locator(".comment.stale").count() == 1
-            assert "the file went away" in page.locator(".comment").inner_text()
-            assert "no longer in the diff" in page.evaluate("reviewText()")
-            assert page.evaluate("state.review.length") == 1, "nothing is dropped"
+            assert page.evaluate("state.review.comments.length") == 1
+            assert page.evaluate("state.review.task") == "fine"
+            assert page.evaluate("state.review.comments[0].note") == "a real one"
+            assert page.evaluate("state.review.overall") == "", \
+                "a number is not a note"
         finally:
             browser.close()
 
@@ -552,7 +502,7 @@ def test_any_line_of_any_file_can_be_commented_on(repo_page):
             assert page.locator(".filebody .code .dline").count() >= 2
             comment_on_line(page, 1, "the second line, from the file")
             # Anchored to the line, on the side a diff comment would use.
-            anchor = page.evaluate("state.review[0].anchor")
+            anchor = page.evaluate("state.review.comments[0].anchor")
             assert anchor.startswith("code.py\n")
             assert anchor.endswith("\nnew\n2")
         finally:
@@ -565,7 +515,7 @@ def test_a_comment_made_on_the_diff_shows_in_the_file(repo_page):
         browser, page = open_diff(play, repo_page)
         try:
             page.evaluate(
-                "([one]) => { state.review = [one]; }",
+                "([one]) => { state.review.comments = [one]; }",
                 [{"anchor": "code.py\nnew\n2", "quoted": "print(2)",
                   "note": "written on the diff tab"}])
             open_file(page)
@@ -605,40 +555,6 @@ def test_the_whole_file_is_highlighted_then_cut_into_lines(repo_page):
             browser.close()
 
 
-def test_a_comment_on_a_file_the_diff_never_saw_is_not_called_gone(repo_page):
-    """Now that any file can be commented on, most comments are on files the
-    agent never touched. Everything started as "gone" and only files in the
-    diff were redeemed, so those comments were drawn as "this line is no
-    longer in the diff" — and that sentence was sent to the agent, who would
-    read it as the reader's own words.
-
-    A comment says where it was written, and only one written on the diff can
-    later be told it left the diff."""
-    with sync_playwright() as play:
-        browser, page = open_diff(play, repo_page)
-        try:
-            page.evaluate(
-                "([one]) => { state.review = [one]; state.diffAt += 1;"
-                " redrawCode(); }",
-                [{"anchor": "docs/untouched.md\nnew\n7", "quoted": "a line",
-                  "note": "about a file nobody changed"}])
-            page.wait_for_timeout(300)
-            assert page.evaluate(
-                "state.marks.get('docs/untouched.md\\nnew\\n7')") is None
-            assert page.locator(".diffhead.gone").count() == 0
-            assert "no longer in the diff" not in page.evaluate("reviewText()")
-            # A comment on a file the diff does cover is still judged.
-            page.evaluate(
-                "([one]) => { state.review.push(one); state.diffAt += 1;"
-                " redrawCode(); }",
-                [{"anchor": "code.py\nnew\n99", "quoted": "gone for good",
-                  "note": "on a line that is not there", "diff": True}])
-            page.wait_for_selector(".diffhead.gone")
-            assert "no longer in the diff" in page.evaluate("reviewText()")
-        finally:
-            browser.close()
-
-
 # --- reviewing a file too long to draw whole ---------------------------------
 
 
@@ -671,8 +587,8 @@ def test_a_line_of_a_long_file_is_numbered_from_the_file_not_the_window(long_pag
             page.fill(".commentbox textarea", "about line three thousand")
             page.click(".commentbox .verb")
             page.wait_for_selector(".comment")
-            assert page.evaluate("state.review[0].anchor") == "long.py\nnew\n3000"
-            assert page.evaluate("state.review[0].quoted") == "line2999 = 2999"
+            assert page.evaluate("state.review.comments[0].anchor") == "long.py\nnew\n3000"
+            assert page.evaluate("state.review.comments[0].quoted") == "line2999 = 2999"
         finally:
             browser.close()
 
@@ -721,3 +637,108 @@ def test_the_window_stands_still_while_a_comment_is_written(long_page):
         finally:
             browser.close()
 
+
+
+# --- the Review tab ----------------------------------------------------------
+
+
+def test_the_review_tab_shows_every_comment_in_one_place(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "the first thing")
+            page.evaluate("""([one]) => { state.review.comments.push(one);
+              keepReview(); }""",
+              [{"anchor": "other.py\nnew\n7", "quoted": "a line",
+                "note": "the second thing"}])
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .spot")
+            shown = page.locator(".reviewbody").inner_text()
+            assert "the first thing" in shown and "the second thing" in shown
+            assert "other.py:7" in shown
+            # And the left column lists them, the way the other tabs do.
+            assert page.locator(".side button").count() == 2
+        finally:
+            browser.close()
+
+
+def test_a_comment_can_be_deleted_from_the_review_tab(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "goes away")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .spot")
+            page.click(".reviewbody .comment .link:text('delete')")
+            page.wait_for_function("state.review.comments.length === 0")
+            assert "No review yet" in page.locator(".reviewbody .empty").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_whole_review_is_deleted_only_on_the_second_press(repo_page):
+    """There is no undo, and a review is half an hour of someone's reading."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "careful now")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .spot")
+            page.click(".reviewbody .link:text('delete this review')")
+            page.wait_for_selector(".reviewbody .link:text('really delete it?')")
+            assert page.evaluate("state.review.comments.length") == 1
+            page.click(".reviewbody .link:text('really delete it?')")
+            page.wait_for_function("state.review.comments.length === 0")
+            assert page.evaluate(
+                "Object.keys(localStorage)"
+                ".filter((k) => k.startsWith('wostuast-review-')).length") == 0
+        finally:
+            browser.close()
+
+
+def test_a_comment_leads_back_to_the_file_it_is_about(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "about this")
+            path = page.evaluate("state.review.comments[0].anchor.split('\\n')[0]")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .spot .crumb")
+            page.click(".reviewbody .spot .crumb")
+            page.wait_for_function("state.tab === 'files'")
+            assert page.evaluate("state.files.path") == path
+        finally:
+            browser.close()
+
+
+def test_the_message_is_a_task_with_one_section_per_place(repo_page):
+    """The shape the agent gets: a heading it can read at a glance, what to do,
+    what to hand back, then `path:line` with the line quoted under it."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate("""([one]) => {
+              state.review.task = "cleanup";
+              state.review.overall = "tidy these up";
+              state.review.comments = [one];
+            }""", [{"anchor": "a.py\nnew\n4", "quoted": "x = 1",
+                    "note": "use a better name"}])
+            shown = page.evaluate("reviewText()")
+            assert shown.startswith("# Task: cleanup\n\ntidy these up\n\n")
+            assert "write one short entry per location" in shown
+            assert "search for the quoted line" in shown
+            assert "## a.py:4\n\n> x = 1\n\nuse a better name\n" in shown
+            # Nothing about the diff: a comment is a place in a file.
+            assert "no longer in the diff" not in shown
+        finally:
+            browser.close()
+
+
+def test_a_review_without_a_task_name_still_has_a_heading(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "unnamed")
+            assert page.evaluate("reviewText()").startswith("# Task: review\n")
+        finally:
+            browser.close()

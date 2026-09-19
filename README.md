@@ -139,7 +139,7 @@ The page is worked from the keyboard. `?` shows this list without leaving it.
 | `j` `k` | move down and up the session list |
 | `n` | jump to the next session that needs you |
 | `f` | filter the session list |
-| `r` | submit the review you have written on the diff |
+| `r` | the review you have written |
 | `/` | find: text in the transcript, a file on the other tabs |
 | `1` – `3` | Transcript, Files, Diff |
 | `Enter` | jump to that agent's tmux pane |
@@ -332,22 +332,27 @@ A comment belongs to a line, not to a tab: one left on line 42 of the diff is
 there on line 42 of the file, and the other way round. So you can review a
 change through its diff, or read a whole file and comment anywhere in it.
 
-The comments collect into a review. "Submit review" under the file list — it
-appears with the first comment and counts them — opens a preview of the exact
-message the agent will be sent, with one box for a note about the review as a
-whole. Send it and it arrives in that agent's prompt as one paste. Cancel
-keeps everything. `r` opens the preview from the keyboard.
+The comments collect into a review, and the **Review** tab is where you read
+it back. It holds a name for the task, a box for what to do, one block per
+place with the line quoted under it, and the message itself at the bottom with
+the send button below that. Each block leads back to the file it is about, each
+comment can be edited or deleted, and the whole review can be thrown away in
+two presses. The tab counts what is waiting, so a review you left is never out
+of sight. `r` goes there.
 
 Some of that message is text the agent wrote, and it is about to be pasted
-into your terminal, which is why the preview cannot be skipped. Control
-characters are stripped on the way out, because an escape byte is invisible in
-a preview and a paste ends at one.
+into your terminal, which is why the message stands above the send button and
+cannot be edited there. Control characters are stripped on the way out,
+because an escape byte is invisible on a screen and a paste ends at one.
+
+The message reads as a task rather than a list of remarks: a heading, what to
+do, what to hand back, and then `path:line` with the quoted line under it. The
+line number is a hint and the message says so — the file moves while you are
+reading — so the agent is told to search for the quoted line when the number
+no longer fits.
 
 A review is kept in your browser until you send it, so a reload does not lose
-it. The agent keeps working while you read, so a comment whose line has since
-changed says so and keeps the line it was written against, and one whose line
-has gone is shown under the diff rather than dropped. Both are still sent, and
-the message says which is which.
+it.
 
 The same box does all three. It sits above the list on Files and Diff, and at
 the right of the tab strip for the transcript, where it searches for the text
