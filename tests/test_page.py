@@ -2390,3 +2390,103 @@ def test_r_opens_the_review_and_escape_closes_it(repo_page):
                 "document.getElementById('review').open === false")
         finally:
             browser.close()
+
+
+# --- history: the sessions nobody can talk to any more ------------------------
+
+
+@pytest.fixture
+def past_at(ws, page_at, tmp_path):
+    """The one-session page, with two finished sessions beside it."""
+    daemon, url = page_at
+    for name, reason in (("acorn", "clear"), ("beetroot", "logout")):
+        where = tmp_path.parent / name
+        where.mkdir(exist_ok=True)
+        ws.append_event(conftest.event("SessionStart", sid=name, cwd=str(where),
+                                       pane="%9", pid=2, ts=time.time()))
+        ws.append_event(conftest.event("SessionEnd", sid=name, cwd=str(where),
+                                       reason=reason, ts=time.time()))
+    daemon.store.refresh()
+    return daemon, url
+
+
+def test_finished_sessions_are_folded_away_under_history(past_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            assert page.locator(".row").count() == 1, "only the live one is listed"
+            assert "2" in page.locator(".histhead").inner_text()
+            # It is the last thing in the list, under the live sessions.
+            assert page.evaluate(
+                "document.getElementById('rows').lastElementChild"
+                ".classList.contains('histhead')")
+            # And they are still counted: the fold is not a filter.
+            assert "2 ended" in page.locator("#counts").inner_text()
+            assert page.locator("#where").inner_text() == "3 sessions"
+        finally:
+            browser.close()
+
+
+def test_history_opens_and_is_remembered(past_at):
+    with sync_playwright() as play:
+        browser = fresh_context(play)
+        try:
+            page = browser.new_page()
+            page.goto(past_at[1], wait_until="domcontentloaded")
+            page.wait_for_selector(".histhead")
+            page.click(".histhead")
+            page.wait_for_function("document.querySelectorAll('.row').length === 3")
+            # The bar moves above the rows it opened.
+            assert page.evaluate(
+                "[...document.getElementById('rows').children]"
+                ".findIndex((n) => n.classList.contains('histhead'))") == 1
+
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(".histhead")
+            page.wait_for_function("document.querySelectorAll('.row').length === 3")
+        finally:
+            browser.close()
+
+
+def test_a_finished_row_is_grey(past_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.click(".histhead")
+            page.wait_for_selector(".row.ended")
+            colours = page.evaluate("""() => {
+              const live = document.querySelector(".row:not(.ended) .name");
+              const past = document.querySelector(".row.ended .name");
+              return [getComputedStyle(live).color, getComputedStyle(past).color];
+            }""")
+            assert colours[0] != colours[1], "a finished session looks live"
+        finally:
+            browser.close()
+
+
+def test_the_filter_searches_the_history_too(past_at):
+    """A search that cannot see half the sessions gives a wrong answer that
+    looks like a right one."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            page.fill("#pick", "acorn")
+            page.wait_for_function("document.querySelectorAll('.row').length === 1")
+            assert "acorn" in page.locator(".row .name").inner_text()
+        finally:
+            browser.close()
+
+
+def test_j_and_k_do_not_walk_into_a_folded_history(past_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            for _ in range(5):
+                page.press("body", "j")
+            assert page.locator(".row.chosen").count() == 1
+            assert page.evaluate("state.chosen") == "s1"
+        finally:
+            browser.close()

@@ -447,3 +447,23 @@ def test_a_denied_permission_sends_no_event_at_all(ws):
     )
     assert session.state == "needs_you"
     assert session.attention_since == 1012.0
+
+
+def test_a_session_with_no_pid_goes_quiet_rather_than_living_for_ever(ws):
+    """`agent_pid` returns 0 where there is no /proc to walk — on macOS, for
+    every session. Such a session cannot be checked, so it stayed in the list
+    as though it were running until the log forgot it, a week later."""
+    session = ws.Session(session_id="s", state="working", cwd="/a/b", last_ts=1000.0)
+    ws.mark_dead(session, alive=lambda pid: True, now=1000.0 + ws.QUIET_MAX - 1)
+    assert session.state == "working"
+    ws.mark_dead(session, alive=lambda pid: True, now=1000.0 + ws.QUIET_MAX + 1)
+    assert session.state == "dead"
+    assert session.end_reason == "no sign of it"
+
+
+def test_a_session_we_can_check_is_not_buried_for_being_quiet(ws):
+    """An agent left waiting overnight has a pid, and the pid is the answer."""
+    session = ws.Session(session_id="s", state="needs_you", cwd="/a/b",
+                         pid=4242, last_ts=1000.0)
+    ws.mark_dead(session, alive=lambda pid: True, now=1000.0 + ws.QUIET_MAX * 3)
+    assert session.state == "needs_you"

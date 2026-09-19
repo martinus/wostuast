@@ -115,7 +115,17 @@ and `status`.
 | `ended` | The session ended. |
 | `killed` | The process is gone, without an end event. |
 
-Rows are sorted by name, with ended and killed ones last. Sorting by state
+A session whose process wostuast cannot check — there is no `/proc` to look in,
+which on macOS means every session — is taken for killed once it has been quiet
+for twelve hours. One that can be checked is never buried for being quiet: an
+agent waiting for you overnight is still there.
+
+Ended and killed sessions fold away under a **history** bar that carries their
+count; click it to open them, and that browser remembers. They are grey, to
+read as over. They are still counted above the list, the filter still finds
+them, and the one you are reading never disappears from the list.
+
+The rest are sorted by name. Sorting by state
 moved every row each time an agent started or finished a tool call, so the list
 kept shifting under you. Which agent needs you is said by the colour, by the
 counts under the list, and on the page by the `n` key.

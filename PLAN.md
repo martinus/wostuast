@@ -170,6 +170,7 @@ One session per `session_id`. Derive state from events, in this order:
 | `PreCompact` | unchanged | Show a small "compacted" marker in the transcript |
 | `SessionEnd` | `ended` | Row goes to the bottom, dimmed |
 | pid gone (`kill -0` fails), checked every 5 s | `dead` | Same look as `ended`, label "killed" |
+| no pid, and quiet for 12 h | `dead` | `agent_pid` returns 0 where there is no `/proc` to walk, which on macOS is every session. One that cannot be checked is taken for gone once it has been quiet long enough. An agent left waiting overnight has a pid, and the pid is the answer for it. |
 
 `needs_you` clears on the next `UserPromptSubmit` or `PostToolUse` for that
 session. Show how long it has been waiting.
@@ -541,6 +542,17 @@ first, and it is the one thing about a session that cannot change. A name
 arrives from the status line a second after the session starts, and `/rename`
 changes it later, so a list ordered by name jumps under the reader for the
 very reason this order exists.
+
+`ended` and `dead` go under a **history** bar, which carries their count and
+folds them away; folded is the default, and the choice is kept in that
+browser. A week of finished sessions above the two you are working with is a
+list you stop reading. They are grey through and through, rather than keeping
+the colour of the state they stopped in, which read as though something were
+still going on there. Two things always open the history: a filter with
+anything typed in it, because a search that sees half the sessions gives a
+wrong answer that looks like a right one, and the session you are reading,
+which is never missing from the list it is chosen in. The counts in the top
+bar still count them: the fold is not a filter.
 
 Above the rows is a filter box. It matches the same way the Files tab does, on
 scattered letters, over the worktree, the session's name and the branch, so

@@ -108,6 +108,12 @@ settings.
   has sent a `PermissionRequest`: from then on it is the same news twelve
   seconds late, and honouring it raised the alarm again for a question you had
   already answered. Those two together were "needs you never clears".
+- **The fold is not a filter.** `ended` and `dead` sessions fold away under the
+  history bar, but they are still counted in the top bar, the filter still
+  searches them, and the one you are reading is never missing from the list it
+  is chosen in. `shownSessions` is what the filter leaves and is what the
+  counts are about; `listedSessions` is what is on screen, and `j`/`k` walk
+  that, because a key must not move to a row that is not there.
 - **The sidebar sorts by name.** Sorting by state moved every row each time an
   agent started or finished a tool call, so the list shifted under the reader.
   The colour, the counts and the `n` key answer "who needs me" without it.
