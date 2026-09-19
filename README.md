@@ -190,9 +190,20 @@ top and the letters that matched are picked out. Press `/` to get to the box,
 `Esc` to clear it. Every name in the repository is searched, however many
 there are.
 
-Before you type, the order is `PLAN.md`, `CLAUDE.md` and `README.md`, then
-whatever the agent has changed with the newest first, then the rest by name.
-A changed file carries a dot.
+Before you type it is a tree. In each directory the order is `PLAN.md`,
+`CLAUDE.md` and `README.md` first, then whatever the agent has changed with
+the newest first, then the rest by name. A changed file carries a dot, and so
+does every directory above it, so a closed branch still says there is
+something new inside. A directory holding a change opens itself; if you close
+it, it stays closed. The strip above the list says how many files there are,
+or how many matched what you typed.
+
+The list is quick on a large repository because it does very little. wostuast
+asks git once and shares the answer for a few seconds, and the browser keeps
+the names and asks only whether they have moved — in a repository of 52,201
+files that is 1.7 MB the first time and 200 bytes on every check after it.
+Only the rows you can see are built, so scrolling through ten thousand
+matches costs what ten would.
 
 A Markdown file is rendered; anything else is shown as code, with syntax
 highlighting and no box around it. A binary file is named, not shown. The open
@@ -210,6 +221,10 @@ than someone else's code.
 Both fall back. Without `marked` the transcript is its own Markdown source as
 text, which is what Markdown is for. Without `highlight.js` the code is the
 same code without the colour. Nothing goes blank.
+
+Both column edges can be dragged — the one beside the sessions and the one
+beside the file list. Double-click an edge to put it back. Your browser
+remembers where you left them.
 
 **Diff** shows the change in two halves: what the branch has committed against
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -53,24 +54,32 @@ def test_the_named_files_come_first(ws, seeded):
     assert paths[:3] == ["PLAN.md", "CLAUDE.md", "README.md"]
 
 
-def test_a_changed_file_comes_before_an_untouched_one(ws, seeded):
-    """The question this tool exists to answer is what the agent just did, so
-    what it touched sorts above the rest of the repository."""
+def test_the_order_sent_does_not_move_when_a_file_changes(ws, seeded):
+    """The page holds these names between polls and asks for them again only
+    when the tag has moved. An order that also depended on what had changed
+    would move every time an agent saved anything, and the whole list would
+    come down the wire again. Where a changed file sits in the list the reader
+    sees is the page's business; tests/test_page.py holds that."""
     (seeded / "a-first-by-name.txt").write_text("quiet\n")
     git(seeded, "add", "."), git(seeded, "commit", "-qm", "quiet")
+    before = [one.path for one in ws.worktree_files(str(seeded)).files]
+
     (seeded / "notes.md").write_text("# notes\n\ntouched\n")
-    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
-    assert paths[0] == "README.md"          # pinned, so it still wins
-    assert paths[1] == "notes.md"           # changed
-    assert "a-first-by-name.txt" in paths[2:]
+    after = ws.worktree_files(str(seeded))
+    assert [one.path for one in after.files] == before
+    assert ws.listing_tag("\0".join(one.path for one in after.files)) == \
+        ws.listing_tag("\0".join(before))
+    # It is still marked, and its time is still read, so the page can lift it.
+    touched = [one for one in after.files if one.path == "notes.md"][0]
+    assert touched.changed is True
+    assert touched.mtime > 0
 
 
-def test_the_newest_change_leads_the_changed_files(ws, seeded):
-    (seeded / "notes.md").write_text("# notes\n\nfirst\n")
-    (seeded / "code.py").write_text("print(2)\n")
-    os.utime(seeded / "code.py", (2_000_000_000, 2_000_000_000))
+def test_the_rest_are_sent_in_name_order(ws, seeded):
+    (seeded / "a-first-by-name.txt").write_text("quiet\n")
     paths = [one.path for one in ws.worktree_files(str(seeded)).files]
-    assert paths[:3] == ["README.md", "code.py", "notes.md"]   # pinned, then newest
+    assert paths[0] == "README.md"                 # pinned, so it still wins
+    assert paths[1:] == sorted(paths[1:])
 
 
 def test_a_changed_file_says_so(ws, seeded):
@@ -586,3 +595,74 @@ def test_a_repository_without_commits_does_not_raise(ws, tmp_path):
     (root / "a.md").write_text("# a\n")
     report = ws.worktree_diff(str(root))
     assert report.untracked == ["a.md"]
+
+
+# --- the listings the daemon holds ------------------------------------------
+
+
+def test_one_listing_is_shared_rather_than_read_again(ws, seeded):
+    """Asking git costs a third of a second over fifty thousand files, and the
+    tab asks again every couple of seconds."""
+    asked = []
+
+    def count(args, **rest):
+        asked.append(args)
+        return ws.run(args, **rest)
+
+    files = ws.Files()
+    first = files.of(str(seeded), runner=count)
+    assert first.tree.files
+    listings = len([one for one in asked if "ls-files" in one])
+    assert listings == 3           # tracked, untracked, ignored
+
+    again = files.of(str(seeded), runner=count)
+    assert again is first
+    assert len([one for one in asked if "ls-files" in one]) == listings
+
+
+def test_a_stale_listing_is_handed_over_and_read_again_behind(ws, seeded):
+    """Only a worktree nobody has asked about yet makes anyone wait."""
+    files = ws.Files()
+    first = files.of(str(seeded))
+    root = ws.worktree_root(str(seeded))
+    files.held[root].read_at -= ws.LIST_FRESH + 1
+
+    (seeded / "later.md").write_text("later\n")
+    stale = files.of(str(seeded))
+    assert stale is first          # the old answer, handed over at once
+    for _ in range(60):
+        time.sleep(0.1)
+        if files.held[root] is not first:
+            break
+    names = [one.path for one in files.held[root].tree.files]
+    assert "later.md" in names, "it was not read again behind"
+
+
+def test_the_tag_follows_the_names_and_not_the_changes(ws, seeded):
+    files = ws.Files()
+    first = files.of(str(seeded))
+    root = ws.worktree_root(str(seeded))
+
+    # Changing a file that is already listed leaves the names alone.
+    (seeded / "notes.md").write_text("# notes\n\nedited\n")
+    files.held[root].read_at -= ws.LIST_FRESH + 1
+    with files.gate(root):
+        touched = files.read(root, ws.run)
+    assert touched.tag == first.tag
+    assert "notes.md" in [one.path for one in touched.tree.files if one.changed]
+
+    # Adding one moves it.
+    (seeded / "brand-new.md").write_text("new\n")
+    with files.gate(root):
+        added = files.read(root, ws.run)
+    assert added.tag != first.tag
+
+
+def test_a_listing_nobody_asks_about_is_dropped(ws, seeded):
+    files = ws.Files()
+    files.of(str(seeded))
+    assert files.held
+    files.forget(older_than=1000.0)      # nothing is that old yet
+    assert files.held
+    files.forget(older_than=0.0)
+    assert not files.held

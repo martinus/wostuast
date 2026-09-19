@@ -310,13 +310,24 @@ thousand, because the thousand were never sent. A search that can only see
 part of the list is not a search. Either the browser holds every name or the
 tab says plainly that it does not.
 
-**The daemon keeps the list; it is sent once.** Listing a large repository
-costs git real time, so the daemon lists it at most every few seconds and
-keeps the answer. The names go to the browser as one newline-joined string
-with a tag. The browser asks with the tag it already has, and an unchanged
-listing answers with that tag and the changed files alone. Typing then costs
-nothing at all, and a poll costs a few hundred bytes instead of a few hundred
-kilobytes.
+**The daemon keeps the list; it is sent once.** Listing 52,201 files costs
+git 324 ms, so the daemon keeps the answer and shares it. A stale one is
+handed over at once and read again behind it, so only a worktree nobody has
+asked about yet makes anyone wait. Asking again then costs 3 ms.
+
+The names go to the browser as one NUL-separated string with a tag. The
+browser asks with the tag it already holds, and a listing that has not moved
+answers with that tag and the changed files alone: **1733 KB on the first
+ask, 0.2 KB on every poll after it**.
+
+**The order the names are sent in depends only on which files exist.** It is
+the pinned names, then the rest by name: one sort and three names lifted. It cannot depend on what has
+changed, or it would move every time an agent saved anything — every few
+seconds — and the whole list would come down the wire again each time, which
+is the saving gone. The page gets the changed names and their times, which is
+tens of entries, and lifts them into the three tiers below itself. Measured:
+after an agent edits a tracked file, the tag does not move and the poll is
+still 0.2 KB.
 
 **git failing must never read as an empty worktree.** The listing ran under
 the same two second timeout as every other git call. Two seconds is not
@@ -327,12 +338,20 @@ made it look random. The listing gets the timeout a large repository needs,
 and a timeout says it timed out. This is the same bug as a failed diff
 reading as "nothing changed".
 
-**A tree, until you type.** With nothing typed the left column is a directory
-tree: directories collapsed, the path to the open file expanded, `PLAN.md`,
-`CLAUDE.md` and `README.md` at the top, a changed file marked with a dot and
-the directories above it marked too. A tree is how you read an unfamiliar
-repository, and it also cures the long names: the indent carries the
-directory, so a row only has to show the last part.
+**A tree, until you type.** The left column is a directory tree, which is how
+you read a repository you do not know. The indent carries the directory, so a
+row only shows the last part of the name, which is the cure for the long ones.
+
+The three tiers live **inside** the tree, not in a section above it, so no
+file is ever listed twice: in each directory the named files come first,
+then whatever changed with the newest first, then the rest by name. A changed
+file carries a dot and so does every directory above it, so a closed branch
+still says there is something new inside.
+
+A directory holding a change opens itself, because a closed tree cannot
+answer what the agent just did, and that is the question this tool exists to
+answer. What the reader opens or closes wins over that, so the tree never
+fights the hand on it.
 
 Typing replaces the tree with a flat list of matches, best first. The letters
 have to turn up in the path in that order but not next to each other, a run
@@ -341,10 +360,13 @@ a path segment and the file's own name count extra, and the letters that
 matched are picked out. A long path in the flat list is cut at the front, not
 the end: the end is the part you were looking for.
 
-**Only what is on screen is built.** Rows are one height, so the list builds
-the rows in view and a little either side and moves that window as it
-scrolls. Ten thousand matches then cost the same as ten, and no answer has to
-be cut to keep the page quick.
+**Only what is on screen is built.** Every row is one height, so where you
+are in the list is arithmetic rather than a measurement. The list builds the
+rows in view and a little either side, and two spacers stand in for the rest
+and hold the scrollbar where it belongs. Ten thousand matches then cost the
+same as ten, and no answer has to be cut to keep the page quick. How many
+matched, or why none did, goes in a strip above the list, where it is
+readable without scrolling to the end of ten thousand rows.
 
 **Reading a file.** Markdown renders as Markdown. Everything else is
 monospace text with syntax highlighting, set on the page itself — no box, no
@@ -394,8 +416,9 @@ styles; use them as the visual target, not as code to copy.
 
 Two column edges can be dragged: between the sidebar and the body, and
 between a tab's file column and what it shows. Path names are long, and no
-width chosen here is the right one for every repository. Each width is
-remembered, and a double-click on the edge puts it back.
+width chosen here is the right one for every repository. The width goes into
+a CSS variable, so a column that is rebuilt keeps it, and into this browser's
+storage, so a reload does too. A double-click on the edge puts it back.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -610,9 +633,9 @@ Commit at the end of each milestone. Each one leaves a working tool.
       repository of any size, and typing never waits for the network.
    3. **Room.** Drag the sidebar edge and the file column edge. File names in
       a condensed face. No border around a file that is not Markdown.
-   4. **Read.** A directory tree instead of a flat list. Syntax
-      highlighting. Your words told apart from Claude's. The worktree name in
-      front on the sidebar row.
+   4. **Read.** A directory tree instead of a flat list, with the tiers
+      inside it. Syntax highlighting. Your words told apart from Claude's.
+      The worktree name in front on the sidebar row.
 
 5. **Act.** jump, send, Peek, attention (title, favicon, notification).
 6. **Shine.** Light theme, motion, empty states, keyboard help, README with
@@ -660,13 +683,19 @@ words. The first screenshot is the Transcript tab with one session in
 | The status line writes one file per session, not events | It runs on every redraw. An append would flood the log with nothing new. |
 | `install` never overwrites an existing status line | The status line is the user's own. wostuast prints the line to add instead. |
 | The browser holds every name, or says it does not | A search over the first five thousand of 52,799 names found 16 files and missed a thousand. A partial search gives a wrong answer and looks like a right one. |
-| The listing is sent once, with a tag | Names change rarely; which files changed moves every few seconds. Sending them together made every poll cost the whole repository. |
+| The listing is sent once, with a tag | Names change rarely; which files changed moves every few seconds. Sending them together made every poll cost the whole repository: 1733 KB against the 0.2 KB it costs now. |
+| The order sent is not the order read | An order that depended on what had changed would move whenever an agent saved anything, and the tag with it, and the whole list would come down the wire again. The page holds the names and lifts the few that moved. |
+| A stale listing is served, then read again behind | Waiting on git while an answer sits in hand helps nobody. Only a worktree nobody has asked about yet makes anyone wait, and that is once. |
 | The listing gets its own timeout | Two seconds fits `git status` in a small worktree and nothing else. A shared timeout is a shared limit, and the tabs do not share a size. |
 | A git failure never renders as an empty answer | "No files" and "git did not answer" look the same and mean opposite things. This was already true of the diff; the listing had the same hole. |
 | An ignored directory is one entry | `node_modules` holds more files than the repository does. Naming it and reading it when opened costs nothing; walking it costs everything. An ignored file outside one is listed like any other, because that is the ignored file people look for. |
 | A tree by default, a flat list while typing | A tree is how you read a repository you do not know, and its indent carries the directory, so a row shows only the last part. A match list has no tree to sit in. |
 | Only the rows on screen are built | Ten thousand buttons cost ten thousand buttons. A window over a fixed row height costs the same for ten matches and ten thousand, so no answer has to be cut to stay quick. |
 | Column widths belong to the reader | Paths are long, screens differ, and the alternative to a drag handle is a config option, which this file prefers to delete. |
+| The tiers live inside the tree | A section above the tree would list the changed files twice, which in a small repository is most of the list twice. Ordering each directory's own files says the same thing and says it once. |
+| A directory with a change opens itself | A closed tree cannot answer what the agent just did. What the reader opens or closes wins, so it never fights the hand on it. |
+| Your words carry a rail and a tint | Both turns were grey blocks told apart by one small word in a narrow column, which is not enough to find where you last spoke in a long transcript. |
+| The worktree leads the sidebar row | It is the one fact you cannot read anywhere else on the page. The name Claude Code writes from the first prompt is often long and often vague, and it pushed the worktree off the end. |
 | Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
 | Nothing is vendored | `marked` and `highlight.js` are 157 KB against a 175 KB program. Carrying them would nearly double the file the install one-liner curls, and the page already fetches its fonts. |
 | Both are pinned by hash | Any script on this page can type into your terminal through `/send`. `integrity` means a CDN that has been tampered with gets you the fallback rather than other code. |

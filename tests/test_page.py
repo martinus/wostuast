@@ -178,7 +178,12 @@ def test_the_page_draws_the_session(page_at):
         browser, page = open_page(play, page_at)
         try:
             assert page.locator(".row").count() == 1
-            assert "A session" in page.locator(".row .name").inner_text()
+            # The worktree leads the row; what Claude Code called the session
+            # goes under it, because the name is often long and often vague
+            # and it used to push the worktree off the end.
+            place = page.locator(".row .name").inner_text()
+            assert place and "A session" not in place
+            assert "A session" in page.locator(".row .called").inner_text()
             assert page.title() == "wostuast"
             assert "Opus 5" in page.locator("#facts").inner_text()
             assert page.locator(".turn").count() >= 2
@@ -557,12 +562,17 @@ def repo_page(ws, served, repo):
     return repo, base
 
 
-@pytest.fixture
-def big_page(ws, served, tmp_path):
-    """A session in a repository with more files than the old list would send."""
+@pytest.fixture(scope="session")
+def big_repo(tmp_path_factory):
+    """A repository with more files than the old list would send.
+
+    Built once for the whole run: writing 5200 files and committing them costs
+    about two seconds, and several tests want it. Every one of them only reads,
+    so there is nothing to keep apart.
+    """
     from conftest import git_in as git
 
-    root = tmp_path / "big"
+    root = tmp_path_factory.mktemp("big")
     (root / "native" / "shared" / "libcorrelation" / "src").mkdir(parents=True)
     git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.email", "t@example.com")
@@ -573,12 +583,17 @@ def big_page(ws, served, tmp_path):
         "// deep\n")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "first")
+    return root
 
+
+@pytest.fixture
+def big_page(ws, served, big_repo):
+    """A session standing in that repository."""
     daemon, base = served
-    ws.append_event(conftest.event("SessionStart", cwd=str(root), ts=time.time(),
-                                   pane="%7", pid=1))
+    ws.append_event(conftest.event("SessionStart", cwd=str(big_repo),
+                                   ts=time.time(), pane="%7", pid=1))
     daemon.store.refresh()
-    return root, base
+    return big_repo, base
 
 
 def show_tab(page, name):
@@ -672,7 +687,7 @@ def test_a_name_that_matches_nothing_says_so(repo_page):
             page.fill("#find", "zzqq")
             page.wait_for_timeout(400)
             assert page.locator(".filelist button").count() == 0
-            assert "no name matches" in page.locator(".filelist").inner_text()
+            assert "no name matches" in page.locator(".listnote").inner_text()
         finally:
             browser.close()
 
@@ -1181,5 +1196,190 @@ def test_marked_is_pinned_too(page_at):
             assert tag.get_attribute("src").startswith("https://")
             assert tag.get_attribute("integrity").startswith("sha384-")
             assert tag.get_attribute("crossorigin") == "anonymous"
+        finally:
+            browser.close()
+
+
+def test_only_the_rows_on_screen_are_built(big_page):
+    """Every row is one height, so two spacers can stand in for the rest. Ten
+    thousand matches then cost the same as ten."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            # 5201 files, and a screenful of rows.
+            assert "5201" in page.locator(".listnote").inner_text()
+            built = page.locator(".filelist button").count()
+            assert 0 < built <= 120, built
+
+            # The scrollbar still runs the whole length of the list.
+            reach = page.eval_on_selector(".filelist", "el => el.scrollHeight")
+            assert reach > 5000 * 20, reach
+
+            first = page.eval_on_selector(
+                ".filelist button", "el => el.title")
+            page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
+            page.wait_for_timeout(250)
+            moved = page.eval_on_selector(".filelist button", "el => el.title")
+            assert moved != first, "the window did not follow the scrollbar"
+            assert page.locator(".filelist button").count() <= 120
+        finally:
+            browser.close()
+
+
+def test_a_name_is_still_found_after_scrolling(big_page):
+    """The window is where you are in the list, not what the list holds."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
+            page.wait_for_timeout(250)
+            page.fill("#find", "libcorrelation")
+            page.wait_for_timeout(400)
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names == ["native/shared/libcorrelation/src/Action.h"]
+        finally:
+            browser.close()
+
+
+def test_the_reader_sees_the_named_files_then_what_changed(repo_page):
+    """The daemon sends the names in an order that depends only on which files
+    exist, so that the list the page holds stays good while an agent works.
+    The three tiers the reader sees are built here, from the changed names and
+    their times."""
+    root, _ = repo_page
+    # Untracked counts as changed, so this one is not quiet: it is the newest
+    # change. `code.py` is committed and untouched, and that is the quiet one.
+    (root / "a-first-by-name.txt").write_text("new\n")
+    os.utime(root / "a-first-by-name.txt", (2_000_000_000, 2_000_000_000))
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.touched")
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names[0] == "README.md"              # pinned
+            assert names[1] == "a-first-by-name.txt"    # the newest change
+            assert names[2] == "NOTES.md"               # the older change
+            assert names[3] == "code.py"                # quiet, so last
+        finally:
+            browser.close()
+
+
+def test_the_newest_change_leads_the_ones_that_changed(repo_page):
+    root, _ = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.touched")
+            (root / "code.py").write_text("print(3)\n")
+            os.utime(root / "code.py", (2_000_000_000, 2_000_000_000))
+            page.wait_for_selector(
+                ".filelist button.touched:has-text('code.py')", timeout=15000)
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names[0] == "README.md"           # pinned, so it still wins
+            assert names[1] == "code.py", names[:4]  # the newest change
+        finally:
+            browser.close()
+
+
+# --- the tree ---------------------------------------------------------------
+
+
+def test_the_list_is_a_tree_that_opens_and_closes(big_page):
+    """A closed repository costs its top level and no more."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            shut = page.locator(".filelist button.dir:has-text('native')")
+            assert shut.count() == 1
+            # 5201 files, and only a window of rows exists.
+            assert page.locator(".filelist button").count() <= 100
+            # Nothing inside the closed directory has been built at all.
+            assert page.locator(".filelist button[title^='native/']").count() == 0
+
+            page.click(".filelist button.dir:has-text('native')")
+            page.wait_for_selector(".filelist button.dir.open")
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.textContent)")
+            assert "shared" in " ".join(names), names
+
+            page.click(".filelist button.dir.open")
+            page.wait_for_timeout(200)
+            assert page.locator(".filelist button.dir.open").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_directory_holding_a_change_opens_itself(repo_page):
+    """A closed tree cannot say what the agent just did, and that is the
+    question this tool exists to answer."""
+    root, _ = repo_page
+    (root / "deep").mkdir()
+    (root / "deep" / "quiet.txt").write_text("nothing\n")
+    from conftest import git_in as git
+    git(root, "add", "deep"), git(root, "commit", "-qm", "deep")
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("the agent wrote this\n")
+
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            opened = page.eval_on_selector_all(
+                ".filelist button.dir.open", "els => els.map(e => e.title)")
+            assert opened == ["src"], opened
+            # and the file inside it is on screen, marked
+            assert page.locator(
+                ".filelist button.touched:has-text('touched.txt')").count() == 1
+            # the directory that holds nothing new stays shut, but says so
+            shut = page.locator(".filelist button.dir:has-text('deep')")
+            assert "open" not in (shut.get_attribute("class") or "")
+        finally:
+            browser.close()
+
+
+def test_a_closed_directory_still_says_a_change_is_inside(repo_page):
+    root, _ = repo_page
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("the agent wrote this\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            page.click(".filelist button.dir.open")          # close it by hand
+            page.wait_for_timeout(250)
+            shut = page.locator(".filelist button.dir:has-text('src')")
+            assert "touched" in (shut.get_attribute("class") or "")
+            assert "open" not in (shut.get_attribute("class") or "")
+        finally:
+            browser.close()
+
+
+def test_closing_a_directory_by_hand_beats_opening_it_for_you(repo_page):
+    """The tree never fights the hand on it."""
+    root, _ = repo_page
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("one\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            page.click(".filelist button.dir.open")
+            page.wait_for_timeout(250)
+            # another change lands in the same directory
+            (root / "src" / "second.txt").write_text("two\n")
+            page.wait_for_timeout(3000)       # two polls
+            assert page.locator(".filelist button.dir.open").count() == 0, \
+                "it re-opened a directory the reader had closed"
         finally:
             browser.close()
