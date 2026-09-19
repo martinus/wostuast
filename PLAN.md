@@ -430,6 +430,30 @@ block. That is what the file is: an addition nobody has staged.
 Syntax highlighting applies to diff lines as well, under the added and
 removed tints. Large diffs: collapse files over 500 lines, expand on click.
 
+### 4.8.1 What language is this?
+
+Three questions, most certain first, and the order matters.
+
+1. **The name.** `Makefile` and `Dockerfile` whole; otherwise the suffix.
+2. **The first line.** A script with no suffix says what it is in its shebang,
+   and `wostuast` itself is one. `#!/usr/bin/env -S python3 -u` and
+   `#!/usr/bin/python3.12` both resolve; an interpreter we do not know answers
+   nothing.
+3. **`file`, on the daemon.** Only when the first two came up empty, so it
+   costs a subprocess when such a file is opened and never otherwise. It is the
+   third and last command this program runs, after git and tmux, and a machine
+   without it simply gets no answer.
+
+`file` earns its place on one case the others cannot reach: source with no
+suffix *and* no shebang — a Python module called `helper`. But its answers are
+taken from a list, not trusted wholesale. **`text/x-c` is not on that list**:
+libmagic uses it for anything C-shaped and calls Rust and Go C source, measured
+on real files. A file with no suffix that is really C is rare; painting Rust as
+C is a confident lie, and no paint beats a wrong one.
+
+Nothing guesses from content beyond that list. `hljs.highlightAuto` would paint
+more files and mislabel them with the same confidence.
+
 ### 4.9 Review
 
 The Diff tab reads. A review is the reply, written where the code is.

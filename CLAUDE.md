@@ -199,11 +199,14 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   often the only event a session ever sends — resume one and leave it and
   nothing follows until you type. `mark_idle` settles it to `done` after
   `STARTING_MAX`, and an idle notification says the same sooner.
-- **A file with no suffix says what it is on its first line.** `languageOf`
-  takes the text as well as the path and reads the shebang when the name gives
-  nothing — `wostuast` itself is a Python program with no suffix, and so is
-  most of what lives in a bin directory. An interpreter it does not know paints
-  nothing, as before; it never guesses from the content.
+- **What language is this? Three questions, most certain first** (PLAN 4.8.1):
+  the name, then the shebang, then `file` on the daemon — asked only when the
+  first two came up empty, so a suffix never pays for a subprocess. `file` is
+  the third and last command this program runs, after git and tmux.
+  Its answers come from `BY_MIME`, a list, not wholesale. **`text/x-c` is not
+  on that list**: libmagic uses it for anything C-shaped and calls Rust and Go
+  C source, measured. No paint beats a wrong one, and nothing here guesses from
+  content beyond that list.
 - **A fill must not depend on how tall a row turns out to be.** The chosen row
   used `box-shadow: inset 0 0 0 40px`, which fills inward from each edge, so a
   row with a name, a branch and a reason on it had an untinted stripe down its

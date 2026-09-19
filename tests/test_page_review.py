@@ -154,9 +154,11 @@ def test_the_review_belongs_to_the_session_it_is_about(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .plus").first.click(force=True)
-            page.fill(".commentbox textarea", "about this session")
-            page.click(".commentbox .verb")
+            # Through the shared helper, which waits for the box to open and
+            # for the comment to land. This test hand-rolled the sequence and
+            # skipped both waits — it predates the helper — and it was the one
+            # test that failed under a full parallel run.
+            comment_on_first_line(page, "about this session")
             page.wait_for_function("state.review.length === 1")
             page.evaluate("choose('someone-else')")
             assert page.evaluate("state.review.length") == 0

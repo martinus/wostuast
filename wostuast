@@ -1487,6 +1487,9 @@ class FileText:
     text: str = ""
     mtime: float = 0.0
     binary: bool = False
+    # What `file` made of it, when the name and the first line said nothing.
+    # The page decides what to do with it; see `languageOf`.
+    language: str = ""
 
 
 def in_order(names: set[str]) -> list[str]:
@@ -1815,6 +1818,44 @@ def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) ->
     return wanted in (out or "").split("\0")
 
 
+#: What `file --mime-type` answers, and the highlighter's name for it.
+#:
+#: `text/x-c` is not here on purpose. libmagic uses it for anything C-shaped,
+#: and it calls Rust and Go C source — measured, both of them. A file with no
+#: suffix that is really C is rare; painting Rust as C is a confident lie, and
+#: no paint beats a wrong one. The rest were checked against real files.
+BY_MIME = {
+    "text/x-script.python": "python",
+    "text/x-python": "python",
+    "text/x-shellscript": "bash",
+    "text/x-perl": "perl",
+    "text/x-ruby": "ruby",
+    "text/x-php": "php",
+    "text/x-lua": "lua",
+    "text/x-awk": "awk",
+    "text/x-c++": "cpp",
+    "text/x-java": "java",
+    "application/json": "json",
+    "text/xml": "xml",
+    "application/xml": "xml",
+}
+
+
+def sniff_language(path: Path, runner: Callable[..., str | None] = run) -> str:
+    """What `file` makes of a file whose name gives nothing away.
+
+    Only asked when the name and the shebang both came up empty, so it costs a
+    subprocess once, when a file is opened. `file` is the third and last
+    command this program runs, after git and tmux, and a machine without it
+    simply gets no answer — the page paints nothing, which is what it did
+    before this existed.
+    """
+    answer = runner(["file", "-b", "--mime-type", "--", str(path)])
+    if not answer:
+        return ""
+    return BY_MIME.get(answer.strip().lower(), "")
+
+
 def read_worktree_file(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run
 ) -> FileText | None:
@@ -1848,6 +1889,8 @@ def read_worktree_file(
     found.text = raw[:FILE_MAX_BYTES].decode("utf-8", "replace")
     if len(raw) > FILE_MAX_BYTES:
         found.text += "\n\n… the rest of this file is not shown.\n"
+    if not Path(wanted).suffix:
+        found.language = sniff_language(target, runner)
     return found
 
 
@@ -4324,6 +4367,7 @@ const state = {
   file: null,           // the file it shows
   fileText: "",
   fileBinary: false,
+  fileLang: "",         // what `file` made of it, when the name said nothing
   fileMtime: 0,         // which version of that text is loaded
   peek: [],             // the pane, as runs that each look the same
   peekRaw: "",          // the last answer, to tell a still pane from a new one
@@ -4994,7 +5038,10 @@ function fromShebang(text) {
   return null;
 }
 
-function languageOf(path, text) {
+// Three questions, most certain first: the name, the first line, then what
+// `file` made of the content back on the daemon. The order matters — `file`
+// calls Rust and Go "C source", so anything that actually knows must win.
+function languageOf(path, text, sniffed) {
   const base = path.slice(path.lastIndexOf("/") + 1);
   if (BY_NAME[base]) return BY_NAME[base];
   const dot = base.lastIndexOf(".");
@@ -5002,8 +5049,7 @@ function languageOf(path, text) {
     const suffix = base.slice(dot + 1).toLowerCase();
     return BY_SUFFIX[suffix] || suffix;
   }
-  // No suffix, or a dotfile we do not know. Ask the file itself.
-  return fromShebang(text);
+  return fromShebang(text) || sniffed || null;
 }
 
 // Only text and the highlighter's own spans survive. The page does not trust
@@ -5034,11 +5080,11 @@ function paintedInto(holder, marked_up) {
 
 // The text is on the page before this returns, so a slow or missing CDN shows
 // the file at once and paints it a moment later, or never.
-async function paint(node, path, text) {
+async function paint(node, path, text, sniffed) {
   const want = node.dataset.path;
   const lib = await hljsReady();
   if (!lib || !node.isConnected || node.dataset.path !== want) return;
-  const language = languageOf(path, text);
+  const language = languageOf(path, text, sniffed);
   if (!language || !lib.getLanguage(language)) return;
   try {
     const done = lib.highlight(text, { language, ignoreIllegals: true });
@@ -5645,7 +5691,7 @@ function drawFiles(box) {
     // slow or gone costs the reader nothing but paint.
     const code = put(both, "pre", "plain", state.fileText);
     code.dataset.path = state.file;
-    paint(code, state.file, state.fileText);
+    paint(code, state.file, state.fileText, state.fileLang);
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
@@ -5655,6 +5701,7 @@ function forgetFile(path) {
   state.file = path;
   state.fileText = "";
   state.fileBinary = false;
+  state.fileLang = "";
   state.fileMtime = 0;
 }
 
@@ -6436,6 +6483,7 @@ async function loadFiles() {
     if (body.mtime !== state.fileMtime) {
       state.fileText = body.text || body.missing || "";
       state.fileBinary = !!body.binary;
+      state.fileLang = body.language || "";
       state.fileMtime = body.mtime || 0;
     }
   }
