@@ -490,6 +490,81 @@ def test_a_row_shows_its_state_in_more_than_a_dot(page_at):
             browser.close()
 
 
+@pytest.fixture
+def pair_at(ws, page_at, tmp_path):
+    """The same daemon with a second session beside the first, so that a filter
+    has something to choose between. Two real sessions, not two made up in the
+    page: the daemon pushes the list whenever anything changes, and a made-up
+    one is gone the moment it does."""
+    daemon, url = page_at
+    other = tmp_path.parent / "warmhare"
+    other.mkdir(exist_ok=True)
+    ws.append_event({"session_id": "s2", "hook_event_name": "SessionStart",
+                     "cwd": str(other), "pane": "%9", "pid": 2, "ts": time.time()})
+    daemon.store.refresh()
+    return daemon, url
+
+
+def two_rows(page):
+    page.wait_for_function("document.querySelectorAll('.row').length === 2")
+
+
+def test_the_sidebar_filter_narrows_the_list(pair_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, pair_at)
+        try:
+            two_rows(page)
+            counted = page.locator("#counts").inner_text()
+            page.fill("#pick", "wmhr")          # scattered letters, as in Files
+            page.wait_for_function("document.querySelectorAll('.row').length === 1")
+            assert "warmhare" in page.locator(".row .name").inner_text()
+            assert "1 of 2 sessions" in page.locator("#where").inner_text()
+            # The counts are the answer to "who needs me". A filter in the box
+            # must not hide an agent that is waiting.
+            assert page.locator("#counts").inner_text() == counted
+        finally:
+            browser.close()
+
+
+def test_a_filter_that_matches_nothing_says_so(pair_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, pair_at)
+        try:
+            two_rows(page)
+            page.fill("#pick", "nowhereatall")
+            page.wait_for_selector(".rows .nohits")
+            assert page.locator(".row").count() == 0
+        finally:
+            browser.close()
+
+
+def test_escape_empties_the_session_filter(pair_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, pair_at)
+        try:
+            two_rows(page)
+            page.fill("#pick", "wmhr")
+            page.wait_for_function("document.querySelectorAll('.row').length === 1")
+            page.press("#pick", "Escape")
+            two_rows(page)
+            assert page.input_value("#pick") == ""
+        finally:
+            browser.close()
+
+
+def test_f_puts_the_cursor_in_the_session_filter(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.press("body", "f")
+            assert page.evaluate("document.activeElement.id") == "pick"
+            # And typing in it commands nothing: the tab must not change.
+            page.press("#pick", "2")
+            assert page.evaluate("state.tab") == "transcript"
+        finally:
+            browser.close()
+
+
 def test_the_chosen_row_is_still_obvious(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)

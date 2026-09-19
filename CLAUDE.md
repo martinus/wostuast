@@ -94,6 +94,16 @@ settings.
   `cmd_hook` does not just add noise: it answers a permission prompt for the
   user. Logging goes to the log file. Tests assert the silence for that event
   by name; never weaken them.
+- **Amber means one thing: the agent cannot go on until you answer.** An idle
+  `Notification` is not that — `Stop` already said the turn was over, and
+  nothing you do clears an idle prompt, so a row that went amber on it stayed
+  amber for ever. And a permission `Notification` is dropped once the session
+  has sent a `PermissionRequest`: from then on it is the same news twelve
+  seconds late, and honouring it raised the alarm again for a question you had
+  already answered. Those two together were "needs you never clears".
+- **The sidebar sorts by name.** Sorting by state moved every row each time an
+  agent started or finished a tool call, so the list shifted under the reader.
+  The colour, the counts and the `n` key answer "who needs me" without it.
 - **Folding an event twice must change nothing.** Handlers assign and never
   accumulate, and `Store.apply` drops an event older than the session has
   already seen. A rotation makes the daemon read the archive again, so old

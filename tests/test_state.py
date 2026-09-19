@@ -71,14 +71,33 @@ def test_permission_notification_needs_you(ws):
     assert session.reason == "permission: Bash cmake --build build"
 
 
-def test_idle_notification_needs_you(ws):
+def test_idle_notification_does_not_need_you(ws):
+    """The agent finished and sits at its prompt. `Stop` already said that, and
+    nothing you do clears an idle prompt, so a row that went amber here stayed
+    amber for ever. Amber is for an agent that cannot go on without you."""
     session = fold(
         ws,
-        event("Notification", notification_type="idle_prompt",
+        event("UserPromptSubmit", prompt="x", ts=1000.0),
+        event("Stop", ts=1001.0),
+        event("Notification", notification_type="idle_prompt", ts=1061.0,
+              message="Claude is waiting for your input"),
+    )
+    assert session.state == "done"
+    assert session.attention_since == 0.0
+    assert session.reason == "waiting for input"
+
+
+def test_an_idle_notification_never_hides_an_open_dialog(ws):
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("Notification", notification_type="idle_prompt", ts=1060.0,
               message="Claude is waiting for your input"),
     )
     assert session.state == "needs_you"
-    assert session.reason == "waiting for input"
+    assert session.reason == "permission: Bash ls ~"
+    assert session.attention_since == 1000.0
 
 
 def test_notification_without_a_type_is_read_from_the_message(ws):
@@ -203,19 +222,23 @@ def test_old_sessions_are_dropped(ws, recorded_events):
     assert ws.build_sessions(recorded_events, now=later, alive=lambda pid: True) == []
 
 
-def test_sort_puts_the_longest_wait_first(ws):
-    def make(state, **kw):
-        return ws.Session(session_id=kw.pop("sid"), state=state, cwd="/a/b", **kw)
+def test_sort_is_by_name_with_the_gone_ones_last(ws):
+    def make(state, sid, where, **kw):
+        return ws.Session(session_id=sid, state=state, cwd="/a/" + where, **kw)
 
     rows = [
-        make("done", sid="d", last_ts=50.0),
-        make("needs_you", sid="n2", attention_since=20.0),
-        make("working", sid="w", last_ts=60.0),
-        make("ended", sid="e", last_ts=70.0),
-        make("needs_you", sid="n1", attention_since=10.0),
-        make("starting", sid="s", last_ts=80.0),
+        make("done", "d", "Pear", last_ts=50.0),
+        make("needs_you", "n2", "fig", attention_since=20.0),
+        make("working", "w", "apple", last_ts=60.0),
+        make("ended", "e", "acorn", last_ts=70.0),
+        make("needs_you", "n1", "plum", attention_since=10.0),
+        make("dead", "x", "aloe", last_ts=80.0),
+        make("starting", "s", "beet", last_ts=80.0),
     ]
-    assert [s.session_id for s in ws.sort_sessions(rows)] == ["n1", "n2", "w", "d", "s", "e"]
+    order = [s.session_id for s in ws.sort_sessions(rows)]
+    # apple, beet, fig, Pear, plum — case does not split the list — then the
+    # ended and the dead, by name among themselves.
+    assert order == ["w", "s", "n2", "d", "n1", "e", "x"]
 
 
 # --- finding the agent's own process ----------------------------------------
@@ -324,6 +347,24 @@ def test_the_late_notification_does_not_undo_it(ws):
     )
     assert session.state == "needs_you"
     assert session.reason == "permission: Bash ls ~"
+
+
+def test_the_late_notification_cannot_raise_it_again(ws):
+    """The bug that made "needs you" look like it never cleared. You approve,
+    the tool runs, the row goes green — and the notification for the question
+    you already answered lands twelve seconds later and turns it amber again,
+    with nothing left to come that would clear it."""
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls ~"},
+              ts=1000.0),
+        event("PostToolUse", tool_name="Bash", tool_input={"command": "ls ~"}, ts=1004.0),
+        event("Notification", notification_type="permission_prompt",
+              message="Claude needs your permission", ts=1012.0),
+    )
+    assert session.state == "working"
+    assert session.attention_since == 0.0
+    assert session.reason == ""
 
 
 def test_approving_clears_it(ws):

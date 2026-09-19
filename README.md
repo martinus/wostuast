@@ -26,8 +26,8 @@ wostuast uninstall   # remove the hooks; keep the event log
 ```
 STATE      SESSION                                   BRANCH          CHANGES  PANE  AGE    LAST
 needs you  Add substring search · oans/warmhare      feature/search  ↑2 ●5    %7    38 s   permission: Bash cmake --build build -j
-working    Speed up the table render · oans          main            ●1       %9    4 s    Edit src/table.cpp
 done       Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓     %11   4 min  stopped
+working    Speed up the table render · oans          main            ●1       %9    4 s    Edit src/table.cpp
 
 1 needs you · 1 working · 1 done
 ```
@@ -115,8 +115,10 @@ and `status`.
 | `ended` | The session ended. |
 | `killed` | The process is gone, without an end event. |
 
-`needs you` rows come first, the longest wait on top. Ended and killed rows go
-to the bottom.
+Rows are sorted by name, with ended and killed ones last. Sorting by state
+moved every row each time an agent started or finished a tool call, so the list
+kept shifting under you. Which agent needs you is said by the colour, by the
+counts under the list, and on the page by the `n` key.
 
 ### Files
 
@@ -168,7 +170,8 @@ header, so a request for `http://your-server:7331/` is refused even if it
 somehow arrives. The page shows a session list
 on the left and the selected session's transcript on the right, and it updates
 itself as the agents work: there is no reload button because there is nothing
-to reload.
+to reload. A box above the session list filters it: type any letters from the
+worktree, the session's name or the branch, and `f` puts the cursor there.
 
 ### Acting on a session
 

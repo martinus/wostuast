@@ -75,7 +75,13 @@ late. Measured against a real session: the row still read `working` three
 seconds after the dialog was up. A tool whose first job is "who needs me?"
 cannot be twelve seconds behind, so wostuast listens for both.
 
-Nothing fires when you answer the dialog. Saying No sends no hook at all, so
+Nothing fires when you answer the dialog. Saying Yes is only visible once the
+tool finishes and `PostToolUse` arrives, so an approved `cmake --build` leaves
+the row amber for as long as the build runs. That is a gap wostuast cannot
+close from events, and it must not be papered over with a guess; Peek shows
+what the pane is really doing.
+
+Saying No sends no hook at all, so
 wostuast cannot see a denial: the session keeps `needs_you`, which is still
 true, because the agent is now waiting for you to say what to do instead. Only
 the reason on the row is older than it looks. Do not invent an event that does
@@ -157,8 +163,8 @@ One session per `session_id`. Derive state from events, in this order:
 | `PreToolUse` / `PostToolUse` | `working` | Store `last_tool` (name + short summary) |
 | `PermissionRequest` | `needs_you` | At once, as the dialog appears |
 | `PostToolUseFailure` | `working` | The tool ran and failed, was interrupted, or timed out |
-| `Notification`, permission | `needs_you` | The same thing, up to 12 s later |
-| `Notification`, idle | `needs_you` | `reason = "waiting for input"` |
+| `Notification`, permission | `needs_you` | The same thing, up to 12 s later. Dropped once the session has sent a `PermissionRequest` |
+| `Notification`, idle | unchanged | `reason = "waiting for input"` |
 | `Stop` | `done` | Agent finished its turn |
 | `SubagentStop` | unchanged | Only update `last_event` |
 | `PreCompact` | unchanged | Show a small "compacted" marker in the transcript |
@@ -168,9 +174,20 @@ One session per `session_id`. Derive state from events, in this order:
 `needs_you` clears on the next `UserPromptSubmit` or `PostToolUse` for that
 session. Show how long it has been waiting.
 
-A `Notification` means `needs_you` when its `notification_type` is
-`permission_prompt`, `idle_prompt` or `elicitation_dialog`. `auth_success` does
-not. Older Claude Code versions send no type; read the message instead.
+`needs_you` means one thing: the agent cannot go on until you answer. A
+`Notification` means it when its `notification_type` is `permission_prompt` or
+`elicitation_dialog`. `auth_success` does not, and neither does `idle_prompt`:
+that one says the turn is over and the agent sits at its prompt, which `Stop`
+already said. Nothing you do clears an idle prompt, so a row that went amber on
+it stayed amber for the rest of the day. It sets the reason and leaves the
+state alone. Older Claude Code versions send no type; read the message instead.
+
+A permission `Notification` is dropped once the session has sent a
+`PermissionRequest`, because from then on it is only ever the same news twelve
+seconds late: either the dialog is still up and the row already says so, or it
+was answered while the notification was on its way, and honouring it would
+raise the alarm again for a question that is gone. That was the bug behind
+"needs you never clears".
 
 The label of a session is its `session_name` when the status line gave one,
 else `repo/dirname`.
@@ -442,8 +459,16 @@ storage, so a reload does too. A double-click on the edge puts it back.
 └──────────────┴───────────────────────────────────────────────┘
 ```
 
-Sidebar rows, top to bottom: `needs_you` first (oldest wait first), then
-`working`, `done`, `starting`, then `ended`/`dead` dimmed. Each row:
+Sidebar rows are sorted by name, with `ended` and `dead` last and dimmed.
+Sorting by state moved every row each time an agent started or finished a tool
+call, so the list kept shifting under the reader. Which agent needs you is said
+by the amber tint, by the counts in the top bar and by the `n` key, none of
+which need the order.
+
+Above the rows is a filter box. It matches the same way the Files tab does, on
+scattered letters, over the worktree, the session's name and the branch, so
+`ofd` finds `oans/fastduck`. The counts in the top bar stay about every
+session: "who needs me" must not change because you typed in a box. Each row:
 
 - line 1: state dot, `repo/dirname` in bright monospace, state word
 - line 2: the session's own name, smaller and muted, when the status line
@@ -531,8 +556,8 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
 ### 5.4 Keyboard
 
 `j`/`k` move, `Enter` jump to tmux, `1`–`4` tabs, `s` focus send box,
-`Esc` leave send box, `n` next needs-you, `t` toggle thinking, `?` shows
-this list. No key does anything while the send box has focus except `Esc`
+`Esc` leave send box, `n` next needs-you, `f` filter the session list,
+`t` toggle thinking, `?` shows this list. No key does anything while the send box has focus except `Esc`
 and `Enter`.
 
 ### 5.5 Empty and error states
