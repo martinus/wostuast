@@ -164,12 +164,13 @@ One session per `session_id`. Derive state from events, in this order:
 | `PermissionRequest` | `needs_you` | At once, as the dialog appears |
 | `PostToolUseFailure` | `working` | The tool ran and failed, was interrupted, or timed out |
 | `Notification`, permission | `needs_you` | The same thing, up to 12 s later. Dropped once the session has sent a `PermissionRequest` |
-| `Notification`, idle | unchanged | `reason = "waiting for input"` |
+| `Notification`, idle | `done` from `starting`, else unchanged | `reason = "waiting for input"`. It is sitting at its prompt, so it is not starting; it is not blocked either, so it is not amber. |
 | `Stop` | `done` | Agent finished its turn |
 | `SubagentStop` | unchanged | Only update `last_event` |
 | `PreCompact` | unchanged | Show a small "compacted" marker in the transcript |
 | `SessionEnd` | `ended` | Row goes to the bottom, dimmed |
-| pid gone (`kill -0` fails), checked every 5 s | `dead` | Same look as `ended`, label "killed" |
+| pid gone, checked every 5 s | `dead` | `kill -0` and the process still looking like the agent. A pid alone is not an identity: the numbers wrap, and a session that ended in the morning had its pid taken by something else by the evening, so the row said "done" all day for an agent that was gone. |
+| `starting` for longer than 5 minutes | `done` | `SessionStart` is often the only event a session ever sends. Resume one and leave it and nothing follows until you type, so the row read "starting" a day later. |
 | no pid, and quiet for 12 h | `dead` | `agent_pid` returns 0 where there is no `/proc` to walk, which on macOS is every session. One that cannot be checked is taken for gone once it has been quiet long enough. An agent left waiting overnight has a pid, and the pid is the answer for it. |
 
 `needs_you` clears on the next `UserPromptSubmit` or `PostToolUse` for that

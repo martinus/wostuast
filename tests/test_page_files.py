@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
@@ -643,5 +644,61 @@ def test_markdown_has_no_line_numbers(repo_page):
             show_tab(page, "files")
             page.wait_for_selector(".filebody .prose")
             assert page.locator(".filebody .nums").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_script_with_no_suffix_is_painted_from_its_shebang(ws, served, repo):
+    """`wostuast` itself is a Python program with no suffix, and so is most of
+    what lives in a bin directory. The name said nothing, so nothing painted."""
+    git = conftest.git_in
+    (repo / "runme").write_text("#!/usr/bin/env python3\nimport os\n"
+                                "def go():\n    return os.getcwd()\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "a script")
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(repo), ts=time.time(),
+                                   pane="%7", pid=1))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, (repo, base))
+        try:
+            show_tab(page, "files")
+            # A stand-in highlighter that records what it was asked for.
+            page.evaluate("""hljsAsked = Promise.resolve({
+              getLanguage: () => true,
+              highlight: (text, how) => {
+                window.__lang = how.language;
+                return { value: "painted" };
+              },
+            });""")
+            page.click(".filelist button:has-text('runme')")
+            page.wait_for_function("window.__lang !== undefined")
+            assert page.evaluate("window.__lang") == "python"
+        finally:
+            browser.close()
+
+
+def test_the_shebang_is_read_without_a_browser(page_at):
+    """The cases, in one place, because a shebang has more shapes than a
+    suffix does."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            asked = page.evaluate("""() => ({
+              plain: languageOf("bin/runme", "#!/bin/sh\\necho hi"),
+              env: languageOf("bin/runme", "#!/usr/bin/env python3\\nimport os"),
+              versioned: languageOf("x", "#!/usr/bin/python3.12\\nimport os"),
+              dashS: languageOf("x", "#!/usr/bin/env -S python3 -u\\nimport os"),
+              unknown: languageOf("x", "#!/usr/bin/env frobnicate\\nwhat"),
+              none: languageOf("x", "just some text\\n"),
+              empty: languageOf("x", ""),
+              suffixWins: languageOf("a.rs", "#!/bin/sh\\n"),
+            })""")
+            assert asked == {
+                "plain": "bash", "env": "python", "versioned": "python",
+                "dashS": "python", "unknown": None, "none": None,
+                "empty": None, "suffixWins": "rust",
+            }
         finally:
             browser.close()

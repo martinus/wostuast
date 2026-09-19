@@ -270,7 +270,8 @@ Only the rows you can see are built, so scrolling through ten thousand
 matches costs what ten would.
 
 A Markdown file is rendered; anything else is shown as code, with syntax
-highlighting, line numbers down a gutter beside it, and no box around it. The
+highlighting — a file with no suffix is read from its shebang, so a Python
+script called `deploy` is painted like one — line numbers down a gutter beside it, and no box around it. The
 numbers are not part of the file, so copying the code does not take them. A binary file is named, not shown. The open
 file is read again within a couple of seconds of the agent changing it, and you
 keep your place in it.

@@ -118,6 +118,11 @@ STATE_COLORS = {
 #: A session nobody can talk to any more. These go to the history.
 GONE_STATES = frozenset({"ended", "dead"})
 
+#: How long a session may say "starting" before it is simply idle. The word is
+#: for the first moments; a session resumed yesterday and not typed into since
+#: is up and waiting at its prompt, which is what "done" means here.
+STARTING_MAX = 300.0
+
 #: How long a session whose process we cannot check may stay quiet before it
 #: is taken for gone. `agent_pid` returns 0 where there is no /proc to walk —
 #: on macOS, for every session — and without this such a session stayed in the
@@ -652,6 +657,7 @@ class Store:
             self.liveness_checked = moment
             for session in sessions:
                 mark_dead(session, alive, moment)
+                mark_idle(session, moment)
         for session in sessions:
             self.reload_status(session)
         return sessions
@@ -835,6 +841,11 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
         # Older Claude Code versions send no type. Read the message instead.
         kind = "idle_prompt" if "waiting for your input" in message else "permission_prompt"
     if kind == "idle_prompt":
+        # It is sitting at its prompt, so it is not starting any more. Nothing
+        # else says so: a session resumed and not typed into sends no other
+        # event, and stayed on "starting" for as long as it was open.
+        if session.state == "starting":
+            session.state = "done"
         # An open dialog is the better reason, and it outranks this one.
         if session.state != "needs_you":
             session.reason = "waiting for input"
@@ -972,7 +983,17 @@ def agent_pid() -> int:
 
 
 def pid_alive(pid: int) -> bool:
-    """True when the process still exists."""
+    """True when that agent is still running.
+
+    A pid on its own is not an identity. The numbers wrap, and a session that
+    ended in the morning had its pid taken by something else by the evening, so
+    `kill -0` said yes and the row sat there all day saying "done" for an agent
+    that was gone. The process has to still look like the one we recorded.
+
+    This only runs for a session that has a pid, and `agent_pid` returns one
+    only where it could read /proc — so `looks_like_claude` can be trusted to
+    answer here rather than to be silent.
+    """
     if pid <= 0:
         return False
     try:
@@ -980,10 +1001,23 @@ def pid_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        return False          # not ours, so not the agent we recorded
     except OSError:
         return False
-    return True
+    return looks_like_claude(pid)
+
+
+def mark_idle(session: Session, now: float) -> None:
+    """A session that has been starting for five minutes is not starting.
+
+    `SessionStart` is often the only event a session ever sends: resume one and
+    leave it, and nothing follows until you type. The row then read "starting"
+    a day later, and with several of them the word was most of the list. An
+    idle notification says the same thing sooner, when Claude Code sends one.
+    """
+    if session.state == "starting" and session.last_ts and (
+            now - session.last_ts > STARTING_MAX):
+        session.state = "done"
 
 
 def mark_dead(
@@ -3642,10 +3676,16 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row.starting { border-left-color: var(--starting); background: var(--starting-soft); }
 .row:hover { border-color: var(--edge-bright); border-left-width: 4px; }
 /* The tint says what the session is doing, so the selection has to say
-   something else: a ring and a brighter face. */
+   something else: a ring and a brighter face.
+   The face is a gradient layer rather than an inset shadow. A shadow fills
+   inward from each edge by its spread, so `inset 0 0 0 40px` left a stripe of
+   untinted row down the middle of anything taller than 80 px — and a row with
+   a name, a branch and a reason on it is taller than that. A background layer
+   covers whatever height the row turns out to be, and it sits over the state's
+   own colour rather than replacing it. */
 .row.chosen {
   outline: 1px solid var(--ink-faint); outline-offset: -1px;
-  box-shadow: inset 0 0 0 40px var(--tint);
+  background-image: linear-gradient(var(--tint), var(--tint));
 }
 .row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
@@ -4928,13 +4968,42 @@ function hljsReady() {
   return hljsAsked;
 }
 
-function languageOf(path) {
+// What a script says it is on its first line. `wostuast` itself is a Python
+// program with no suffix, and so is most of what lives in a bin directory.
+const BY_INTERPRETER = {
+  python: "python", node: "javascript", bun: "javascript", deno: "typescript",
+  sh: "bash", bash: "bash", zsh: "bash", dash: "bash", ksh: "bash",
+  fish: "bash", perl: "perl", ruby: "ruby", php: "php", lua: "lua",
+  Rscript: "r", awk: "awk", gawk: "awk", pwsh: "powershell", tclsh: "tcl",
+};
+
+function fromShebang(text) {
+  const first = String(text || "").slice(0, 300).split("\n", 1)[0];
+  if (!first.startsWith("#!")) return null;
+  // The first word that names a program. `#!/usr/bin/env -S python3 -u` has
+  // three words before its options, and only the third one is an interpreter.
+  for (const word of first.slice(2).trim().split(/\s+/)) {
+    if (word.startsWith("-")) continue;
+    const name = word.slice(word.lastIndexOf("/") + 1);
+    if (name === "env") continue;
+    // `python3`, `python3.12`, `perl5` — the version is not part of the name.
+    const known = BY_INTERPRETER[name] || BY_INTERPRETER[name.replace(/[\d.]+$/, "")];
+    if (known) return known;
+    return null;                   // it named something, and we do not know it
+  }
+  return null;
+}
+
+function languageOf(path, text) {
   const base = path.slice(path.lastIndexOf("/") + 1);
   if (BY_NAME[base]) return BY_NAME[base];
   const dot = base.lastIndexOf(".");
-  if (dot < 1) return null;              // no suffix, or a dotfile we do not know
-  const suffix = base.slice(dot + 1).toLowerCase();
-  return BY_SUFFIX[suffix] || suffix;
+  if (dot > 0) {
+    const suffix = base.slice(dot + 1).toLowerCase();
+    return BY_SUFFIX[suffix] || suffix;
+  }
+  // No suffix, or a dotfile we do not know. Ask the file itself.
+  return fromShebang(text);
 }
 
 // Only text and the highlighter's own spans survive. The page does not trust
@@ -4969,7 +5038,7 @@ async function paint(node, path, text) {
   const want = node.dataset.path;
   const lib = await hljsReady();
   if (!lib || !node.isConnected || node.dataset.path !== want) return;
-  const language = languageOf(path);
+  const language = languageOf(path, text);
   if (!language || !lib.getLanguage(language)) return;
   try {
     const done = lib.highlight(text, { language, ignoreIllegals: true });
