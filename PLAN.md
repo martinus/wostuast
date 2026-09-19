@@ -427,9 +427,9 @@ it does not track, but every line in it is new, so selecting one reads the
 file through the same route the Files tab uses and shows it as one added
 block. That is what the file is: an addition nobody has staged.
 
-Large diffs: collapse files over 500 lines, expand on click. Diff lines are
-not painted; only a file being read is. The marker is its own span, so the
-same could be done here, but it has not been.
+Large diffs: collapse files over 500 lines, expand on click (`BIG_LINES`, and
+see 4.8.3). Diff lines are not painted; only a file being read is. The marker
+is its own span, so the same could be done here, but it has not been.
 
 ### 4.8.0 One renderer for a line
 
@@ -499,6 +499,26 @@ looking for the colour and the find and not find them.
 A line with a comment under it is taller than a row, and a row's height is how
 the window knows where it is. There are never many, so their heights are kept
 one at a time: measured once the block has been drawn, guessed until then.
+
+### 4.8.3 Two limits, one question
+
+`BIG_LINES` and `CODE_WHOLE` both answer "this is more DOM than anyone asked
+for". They answer it differently, and that is on purpose.
+
+| | where | above the limit |
+| --- | --- | --- |
+| `BIG_LINES` = 500 | Diff tab | the file starts closed, and opens on a click |
+| `CODE_WHOLE` = 2,000 | Files tab | the file is drawn a screenful at a time, and not coloured |
+
+The Files tab windows **one file**, and its rows are a grid of one height that
+the scrollbar can be read against. The Diff tab stacks **many files** in one
+pane, each one collapsible and each a different height, so there is no grid to
+read. Collapsing is the right answer where the reader is scanning many files
+rather than reading one.
+
+Neither limit should quietly become the other. A diff of one very long file
+still builds every row when it is opened; if that turns up in real use it is
+its own change, not a merge of these two.
 
 ### 4.9 Review
 
