@@ -330,8 +330,8 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 
 ### The review
 
-- **A comment is anchored to what it is about** — path, side, line — never to the
-  node it was drawn on. The Diff tab is rebuilt from `state.diff` whenever the
+- **A comment is anchored to what it is about** — the path and the line, with
+  nought for the whole file — never to the node it was drawn on. The Diff tab is rebuilt from `state.diff` whenever the
   agent saves anything.
 - **A comment is a place in a file, not a place in a diff.** There is no
   "gone" or "moved": the page used to work those out and send them as though
@@ -341,9 +341,13 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The Review tab is the only place a review is sent from**, and the message
   stands above the send button, not editable. `drawReview` is the tab,
   `reviewText` is the message, `blankReview` is an empty one.
-- **Every tab's `load` must draw.** A tab switch goes through `load`, not
-  `draw`. The Review tab fetches nothing, so its loader looked like it could
-  be empty — and then switching to it left the page showing the tab before.
+- **A removed diff line gets no `+`.** It has no line in the file as it is, so
+  there is nowhere for the comment to be drawn and nowhere to put it back. The
+  anchor used to carry a side for this, and a comment on a removed line could
+  not be shown on the Files tab at all — but was still sent.
+- **A tab that fetches nothing says `load: null`**, and the shared `load()`
+  draws for it. A tab switch goes through `load`, not `draw`, so an empty
+  loader left the page showing the tab before.
 - **The diff does not rebuild while a comment box is open.** It would take what
   is being typed with it, and move the code the comment is about.
 - **The draft lives in the browser.** A review is yours until you submit it, and

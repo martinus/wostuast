@@ -38,7 +38,8 @@ def test_a_diff_line_can_be_commented_on(repo_page):
             assert "use a signed type here" in page.locator(".comment").inner_text()
             # It is written down, not held in the node it was drawn on.
             assert page.evaluate("state.review.comments.length") == 1
-            assert page.evaluate("state.review.comments[0].anchor").count("\n") == 2
+            # path and line, and nothing else: a comment is a place in a file.
+            assert page.evaluate("state.review.comments[0].anchor").count("\n") == 1
         finally:
             browser.close()
 
@@ -71,7 +72,7 @@ def test_a_whole_file_can_be_commented_on(repo_page):
             page.fill(".commentbox textarea", "keep the heading order")
             page.click(".commentbox .verb")
             page.wait_for_selector(".onFile .comment")
-            assert page.evaluate("state.review.comments[0].anchor").endswith("\nfile\n0")
+            assert page.evaluate("state.review.comments[0].anchor").endswith("\n0")
         finally:
             browser.close()
 
@@ -253,9 +254,9 @@ def test_the_message_is_ordered_by_file_and_line(repo_page):
             # Written out of order on purpose: line 9, then the file, then 2.
             page.evaluate("""() => {
               state.review.comments = [
-                {anchor: "b.py\\nnew\\n9", quoted: "nine", note: "at nine"},
-                {anchor: "b.py\\nfile\\n0", quoted: "", note: "about the file"},
-                {anchor: "a.py\\nnew\\n2", quoted: "two", note: "at two"},
+                {anchor: "b.py\\n9", quoted: "nine", note: "at nine"},
+                {anchor: "b.py\\n0", quoted: "", note: "about the file"},
+                {anchor: "a.py\\n2", quoted: "two", note: "at two"},
               ];
             }""")
             shown = page.evaluate("reviewText()")
@@ -445,7 +446,8 @@ def test_storage_that_is_not_a_review_is_left_out(repo_page):
             page.evaluate("""() => {
               localStorage.setItem("wostuast-review-" + state.chosen, JSON.stringify(
                 {task: "fine", overall: 7, comments: [
-                  {anchor: "a.py\\nnew\\n1", quoted: "x", note: "a real one"},
+                  {anchor: "a.py\\n1", quoted: "x", note: "a real one"},
+                  {anchor: "a.py\\nnew\\n1", note: "an older anchor shape"},
                   {note: "no anchor"},
                   "not even an object",
                   null,
@@ -504,7 +506,7 @@ def test_any_line_of_any_file_can_be_commented_on(repo_page):
             # Anchored to the line, on the side a diff comment would use.
             anchor = page.evaluate("state.review.comments[0].anchor")
             assert anchor.startswith("code.py\n")
-            assert anchor.endswith("\nnew\n2")
+            assert anchor.endswith("\n2")
         finally:
             browser.close()
 
@@ -516,7 +518,7 @@ def test_a_comment_made_on_the_diff_shows_in_the_file(repo_page):
         try:
             page.evaluate(
                 "([one]) => { state.review.comments = [one]; }",
-                [{"anchor": "code.py\nnew\n2", "quoted": "print(2)",
+                [{"anchor": "code.py\n2", "quoted": "print(2)",
                   "note": "written on the diff tab"}])
             open_file(page)
             page.wait_for_selector(".filebody .comment")
@@ -587,7 +589,7 @@ def test_a_line_of_a_long_file_is_numbered_from_the_file_not_the_window(long_pag
             page.fill(".commentbox textarea", "about line three thousand")
             page.click(".commentbox .verb")
             page.wait_for_selector(".comment")
-            assert page.evaluate("state.review.comments[0].anchor") == "long.py\nnew\n3000"
+            assert page.evaluate("state.review.comments[0].anchor") == "long.py\n3000"
             assert page.evaluate("state.review.comments[0].quoted") == "line2999 = 2999"
         finally:
             browser.close()
@@ -649,7 +651,7 @@ def test_the_review_tab_shows_every_comment_in_one_place(repo_page):
             comment_on_first_line(page, "the first thing")
             page.evaluate("""([one]) => { state.review.comments.push(one);
               keepReview(); }""",
-              [{"anchor": "other.py\nnew\n7", "quoted": "a line",
+              [{"anchor": "other.py\n7", "quoted": "a line",
                 "note": "the second thing"}])
             show_tab(page, "review")
             page.wait_for_selector(".reviewbody .spot")
@@ -721,7 +723,7 @@ def test_the_message_is_a_task_with_one_section_per_place(repo_page):
               state.review.task = "cleanup";
               state.review.overall = "tidy these up";
               state.review.comments = [one];
-            }""", [{"anchor": "a.py\nnew\n4", "quoted": "x = 1",
+            }""", [{"anchor": "a.py\n4", "quoted": "x = 1",
                     "note": "use a better name"}])
             shown = page.evaluate("reviewText()")
             assert shown.startswith("# Task: cleanup\n\ntidy these up\n\n")
@@ -740,5 +742,50 @@ def test_a_review_without_a_task_name_still_has_a_heading(repo_page):
         try:
             comment_on_first_line(page, "unnamed")
             assert page.evaluate("reviewText()").startswith("# Task: review\n")
+        finally:
+            browser.close()
+
+
+def test_a_removed_line_is_not_offered_a_comment(repo_page):
+    """A comment is a place in the file as it is now, and a removed line has
+    no such place. It used to anchor to the old side — which the Files tab,
+    where every line is a line of the file as it is, could never draw. Once
+    the diff moved past it the comment was on no page at all, and was still
+    sent."""
+    root, _ = repo_page
+    root.joinpath("code.py").write_text("print(2)\n")   # the line went away
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.wait_for_selector(".dline.removed")
+            assert page.locator(".dline.removed .plus").count() == 0
+            assert page.locator(".dline.added .plus").count() > 0
+            # And every anchor the page can make is a line of the file as it is.
+            assert page.evaluate(
+                "[...document.querySelectorAll('.dline .plus')].length > 0")
+        finally:
+            browser.close()
+
+
+def test_two_places_in_one_file_cannot_collide(repo_page):
+    """`path:40` meant either side of the diff, so a comment on the old line 40
+    and one on the new line 40 both printed as `## path:40`."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            anchors = page.evaluate("""() => {
+              const seen = new Set();
+              for (const row of document.querySelectorAll(".dline")) {
+                const plus = row.querySelector(".plus");
+                if (plus) seen.add(plus.title);
+              }
+              return [...seen];
+            }""")
+            assert anchors, "there is something to comment on"
+            # One anchor per drawn line, and each is `path\nline`.
+            made = page.evaluate("anchorOf('a.py', 40)")
+            assert made == "a.py\n40" and made.count("\n") == 1
+            assert page.evaluate("placeOf('a.py\\n40')") == "a.py:40"
+            assert page.evaluate("placeOf('a.py\\n0')") == "a.py"
         finally:
             browser.close()

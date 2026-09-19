@@ -555,6 +555,14 @@ words went into the message as though the reader had written them — a note on
 a file the agent had never touched was sent saying "this line is no longer in
 the diff". A file is what a comment is about, and that is all it needs.
 
+**An anchor is the path and the line, and nothing else.** Line numbers start
+at one, so nought is the file itself. It used to carry a side as well, `old`
+or `new`, and that had a consequence worth writing down: a comment on a
+*removed* line was a place in the old file, which the Files tab — where every
+line is a line of the file as it is — could never draw, and which vanished
+from the page entirely once the diff moved past it. It was still sent. A
+removed line has no place in the file as it is, so it is not offered a `+`.
+
 **The drafts live in the browser, not in the daemon.** A review is yours until
 you send it, and the daemon serves the same page to every browser, so a draft
 it held would be a draft everyone could read. `localStorage`, keyed by
