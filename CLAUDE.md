@@ -19,7 +19,7 @@ Nothing else writes to a terminal. Nothing owns the agent process.
 
 | Path | What it holds |
 | --- | --- |
-| `wostuast` | The whole program. 6600 lines. Python to `PAGE = r"""`, then HTML/CSS/JS. |
+| `wostuast` | The whole program. ~7000 lines. Python to `PAGE = r"""`, then HTML/CSS/JS. |
 | `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
 | `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
@@ -155,7 +155,7 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `allowed()` wants three things to agree: Host, an Origin that is ours when
   there is one, and the token printed into the page.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 is not enough —
-  a site can point its own name at 127.0.0.1. `Handler.ours()` checks Host.
+  a site can point its own name at 127.0.0.1. `Serving.ours()` checks Host.
 - **The page never trusts what an agent wrote.** Markdown goes into an inert
   `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
   events use `textContent`. Assigning `innerHTML` first fires `onerror` before
@@ -329,6 +329,13 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 
 ### The daemon and the page
 
+- **Every route lives in `Serving`**, a module-level class that subclasses
+  nothing. `make_server` mixes it with `BaseHTTPRequestHandler` and puts the
+  daemon on that subclass, so a route reads `self.daemon`. The `http.server`
+  import stays inside `make_server`: 10.8 ms for a bare interpreter against
+  49.5 ms for one that has imported it, and **the hook pays for every import
+  on every tool call**. `test_the_hook_does_not_import_what_it_does_not_need`
+  fails if that slips.
 - **Never write to the terminal** except through the three tmux verbs.
   `tmux_jump`, `tmux_send`, `tmux_peek` look `run` up when called rather than
   taking it as a default, so a test can put a fake tmux in its place.
