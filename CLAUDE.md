@@ -190,6 +190,25 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **Folding an event twice must change nothing.** Handlers assign, never
   accumulate; `Store.apply` drops an event older than the session has seen. A
   log rotation really does deliver old events after new ones.
+- **A pid is not an identity.** The numbers wrap. `pid_alive` asks `kill -0`
+  *and* `looks_like_claude`, because a session that ended in the morning had
+  its pid taken by something else by the evening and the row said "done" all
+  day for an agent that was gone. Safe to read /proc there: a session only has
+  a pid where `agent_pid` could read /proc in the first place.
+- **"starting" is the first few minutes, not the first day.** `SessionStart` is
+  often the only event a session ever sends — resume one and leave it and
+  nothing follows until you type. `mark_idle` settles it to `done` after
+  `STARTING_MAX`, and an idle notification says the same sooner.
+- **A file with no suffix says what it is on its first line.** `languageOf`
+  takes the text as well as the path and reads the shebang when the name gives
+  nothing — `wostuast` itself is a Python program with no suffix, and so is
+  most of what lives in a bin directory. An interpreter it does not know paints
+  nothing, as before; it never guesses from the content.
+- **A fill must not depend on how tall a row turns out to be.** The chosen row
+  used `box-shadow: inset 0 0 0 40px`, which fills inward from each edge, so a
+  row with a name, a branch and a reason on it had an untinted stripe down its
+  middle. A `linear-gradient` background layer covers any height and sits over
+  the state's own colour instead of replacing it.
 - **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
   is no `/proc` — on macOS, always. Such a session is taken for gone after
   `QUIET_MAX`. One with a pid is never buried for being quiet.

@@ -467,3 +467,54 @@ def test_a_session_we_can_check_is_not_buried_for_being_quiet(ws):
                          pid=4242, last_ts=1000.0)
     ws.mark_dead(session, alive=lambda pid: True, now=1000.0 + ws.QUIET_MAX * 3)
     assert session.state == "needs_you"
+
+
+def test_a_session_stops_saying_starting_once_it_is_just_idle(ws):
+    """`SessionStart` is often the only event a session ever sends: resume one
+    and leave it, and nothing follows until you type. Six of nine rows read
+    "starting" a day later, which made the word and the counts useless."""
+    session = ws.Session(session_id="s", state="starting", cwd="/a/b", last_ts=1000.0)
+    ws.mark_idle(session, 1000.0 + ws.STARTING_MAX - 1)
+    assert session.state == "starting"
+    ws.mark_idle(session, 1000.0 + ws.STARTING_MAX + 1)
+    assert session.state == "done"
+
+
+def test_marking_idle_leaves_every_other_state_alone(ws):
+    for state in ("working", "needs_you", "done", "ended", "dead"):
+        session = ws.Session(session_id="s", state=state, cwd="/a/b", last_ts=1000.0)
+        ws.mark_idle(session, 1000.0 + ws.STARTING_MAX * 10)
+        assert session.state == state
+
+
+def test_an_idle_prompt_says_a_starting_session_is_up(ws):
+    """Sooner than the clock does, when Claude Code sends one."""
+    session = fold(
+        ws,
+        event("SessionStart", source="resume", ts=1000.0),
+        event("Notification", notification_type="idle_prompt", ts=1060.0,
+              message="Claude is waiting for your input"),
+    )
+    assert session.state == "done"
+    assert session.reason == "waiting for input"
+
+
+def test_a_pid_that_belongs_to_something_else_now_is_not_alive(ws, monkeypatch):
+    """The numbers wrap. A session that ended in the morning had its pid taken
+    by something else by the evening, so `kill -0` said yes and the row sat
+    there all day saying "done" for an agent that was gone."""
+    monkeypatch.setattr(ws.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(ws, "looks_like_claude", lambda pid: False)
+    assert ws.pid_alive(4242) is False
+    monkeypatch.setattr(ws, "looks_like_claude", lambda pid: True)
+    assert ws.pid_alive(4242) is True
+
+
+def test_a_session_whose_pid_was_reused_goes_to_the_history(ws, monkeypatch):
+    monkeypatch.setattr(ws.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(ws, "looks_like_claude", lambda pid: False)
+    session = ws.Session(session_id="s", state="done", cwd="/a/b", pid=4242,
+                         last_ts=1000.0)
+    ws.mark_dead(session, now=1000.0)
+    assert session.state == "dead"
+    assert session.end_reason == "process gone"

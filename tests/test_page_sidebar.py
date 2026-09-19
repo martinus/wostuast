@@ -268,3 +268,31 @@ def test_j_and_k_do_not_walk_into_a_folded_history(past_at):
             assert page.evaluate("state.chosen") == "s1"
         finally:
             browser.close()
+
+
+def test_the_chosen_row_is_tinted_all_the_way_down(page_at):
+    """It was an inset shadow with a 40 px spread, which fills inward from each
+    edge and leaves a stripe of untinted row down the middle of anything taller
+    than 80 px. A row carrying a name, a branch and a reason is taller than
+    that, so the selected session had a brighter band through its centre.
+
+    A fill must not depend on how tall the row turns out to be.
+    """
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            row = page.locator(".row.chosen")
+            assert row.count() == 1
+            seen = page.evaluate("""() => {
+              const node = document.querySelector(".row.chosen");
+              const style = getComputedStyle(node);
+              return {shadow: style.boxShadow,
+                      image: style.backgroundImage,
+                      height: node.getBoundingClientRect().height};
+            }""")
+            assert seen["shadow"] == "none", "a shadow cannot fill an unknown height"
+            assert "gradient" in seen["image"], "the chosen row has lost its tint"
+            # And the row really is taller than the old spread covered.
+            assert seen["height"] > 40
+        finally:
+            browser.close()
