@@ -58,6 +58,7 @@ This list exists because each entry was re-implemented once already.
 | "has this changed since I drew it?" | `fresh(box, which, key)` — do not hand-roll a `dataset` compare |
 | make an element | `put(parent, tag, cls, text)` |
 | scattered-letter match | `fuzzy(text, query)` → `{score, at}` or null |
+| the items in a list whose path matches the find box | `hits(items, pathOf)` — keeps the caller's order; `pick(names)` is the same sorted best-first |
 | walk a diff's lines with their numbers | `walkHunks(one, onHunk, onLine)` |
 | the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]` |
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
@@ -78,6 +79,12 @@ never hand-write the dict. `browser.py` has `open_page`, `show_tab`, `open_diff`
 and a `:root` block is the only place a colour may be a number —
 `test_every_colour_outside_the_palette_is_named` fails the build otherwise.
 Derive a tint or a ring with `color-mix`, never by copying an rgb triple.
+
+Three page functions are about matching and they are easy to confuse:
+`matches` asks whether a transcript block matches, `matching` filters the file
+tree, `hits` filters any list by path. Adding a fourth word for the idea is how
+one of them gets shadowed — that happened, and the browser tests caught it as
+fifty failures.
 
 Before adding a CSS rule, grep for the selector. `.turn` already carried a slide
 animation for four milestones while a second one was added on top of it;

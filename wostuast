@@ -5634,12 +5634,12 @@ function matching() {
   const inside = new Map();      // directory to its matching files, best first
   const keep = new Map();        // and to the letters of the best beneath it
   for (const hit of pick(state.names)) {
-    marks.set(hit.path, hit.at);
-    const cut = hit.path.lastIndexOf("/");
-    const home = cut < 0 ? "" : hit.path.slice(0, cut);
+    marks.set(hit.one, hit.at);
+    const cut = hit.one.lastIndexOf("/");
+    const home = cut < 0 ? "" : hit.one.slice(0, cut);
     const held = inside.get(home);
-    if (held) held.push(hit.path); else inside.set(home, [hit.path]);
-    for (const above of ancestors(hit.path)) {
+    if (held) held.push(hit.one); else inside.set(home, [hit.one]);
+    for (const above of ancestors(hit.one)) {
       // Once a directory is known, so is every directory above it: the hit
       // that put it there walked the same way to the root.
       if (keep.has(above)) break;
@@ -5655,6 +5655,28 @@ function listRows() {
   return treeRows(state.tree, only ? null : openDirs(), only);
 }
 
+// Everything whose path matches what is typed, in the order it came, each one
+// with where the letters landed. `pathOf` says how to get a path out of an
+// item, because a file list holds names and a diff holds files. Named `hits`
+// because `matches` is the transcript's and `matching` is the tree's, and a
+// third word for the same idea in one scope is how one of them gets shadowed.
+//
+// Every list on screen goes through here, so `findPath` is called in one place
+// and the lists cannot come to disagree about what a query means. They did:
+// two of them threw the matched letters away and called `findPath` a second
+// time, per row, to get them back.
+//
+// The order is the caller's. A diff's order is git's and must not be
+// shuffled; a file list wants the best match first, which is what `pick` adds.
+function hits(items, pathOf) {
+  const found = [];
+  for (const one of items) {
+    const hit = findPath(pathOf(one), state.find);
+    if (hit) found.push({ one, at: hit.at, score: hit.score });
+  }
+  return found;
+}
+
 // The files a query finds, best match first. It is only ever called with one.
 //
 // It runs over every name the worktree holds, not over a slice of them. The
@@ -5662,11 +5684,7 @@ function listRows() {
 // `libcorrelation` found 16 files and missed more than a thousand — a wrong
 // answer that looked exactly like a right one.
 function pick(names) {
-  const found = [];
-  for (const path of names) {
-    const got = findPath(path, state.find);
-    if (got) found.push({ path, at: got.at, score: got.score });
-  }
+  const found = hits(names, (name) => name);
   found.sort((a, b) => b.score - a.score);
   return found;
 }
@@ -6016,11 +6034,7 @@ function drawDiff(box) {
   }
   let shown = 0;
   for (const section of report.sections) {
-    const files = [];
-    for (const one of (section.files || [])) {
-      const hit = findPath(one.path, state.find);
-      if (hit) files.push({ one, at: hit.at });
-    }
+    const files = hits(section.files || [], (file) => file.path);
     if (!files.length) continue;
     shown += files.length;
     put(list, "div", "head", section.title);
@@ -6036,14 +6050,10 @@ function drawDiff(box) {
                               () => node.scrollIntoView({ block: "start" }));
     }
   }
-  const loose = [];
-  for (const name of (report.untracked || [])) {
-    const hit = findPath(name, state.find);
-    if (hit) loose.push({ name, at: hit.at });
-  }
+  const loose = hits(report.untracked || [], (name) => name);
   if (loose.length) {
     put(list, "div", "head", "untracked");
-    for (const { name, at } of loose) {
+    for (const { one: name, at } of loose) {
       const button = put(list, "button", state.loose === name ? "chosen" : "");
       button.type = "button";
       button.title = name;
