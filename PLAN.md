@@ -508,9 +508,11 @@ describes. Everything else is hand-written.
 
 ### 5.1 Layout
 
-Follow `docs/mockups/transcript-tab.html` and `docs/mockups/diff-tab.html`.
-Open them in a browser before you start. They are static HTML with inline
-styles; use them as the visual target, not as code to copy.
+The page itself is the visual target. It was built against two static mockups,
+which were right for milestone 2 and four milestones out of date by the time
+milestone 7 landed — a target nobody updates stops being a target and becomes
+a wrong answer that looks authoritative. They are deleted. Section 5.2 holds
+the design in words, which is the form that has kept up.
 
 Two column edges can be dragged: between the sidebar and the body, and
 between a tab's file column and what it shows. Path names are long, and no
@@ -792,8 +794,7 @@ Commit at the end of each milestone. Each one leaves a working tool.
    somebody's agents; made-up ones would show a tool nobody is using, and a
    GIF would need a recorder this program does not have and must not grow.
    The README says to run `serve --open`, which takes one command and shows
-   the reader their own. `docs/` holds the two mockups that the page was
-   built against, and nothing that needs prose.
+   the reader their own.
 
 7. **Review.** Reply to a diff from the page, the way a pull request is
    reviewed, with the agent in the place of the author. Section 4.9 is the
@@ -848,7 +849,7 @@ without opening it first.
 
 ## 11. Working agreement
 
-- Read this file first. Then open the two mockups.
+- Read this file first. Then run `serve --open` and look at the page.
 - Ask before adding any dependency, any file besides `wostuast` and
   `tests/`, or any tmux command beyond the three in 4.5.
 - Prefer deleting a feature over adding a config option.

@@ -1,288 +1,315 @@
 # CLAUDE.md
 
-`wostuast` shows what your coding agents are doing. It watches Claude Code
-sessions and serves one web page.
+Only an agent reads this file. It is the map, the reuse index, and the scars.
+No greeting, no prose you can skip.
 
-**Read `PLAN.md` first. It is the complete brief.** This file only says where
-things are and how to work here. When the two disagree, `PLAN.md` wins.
+`PLAN.md` is the brief and wins when the two disagree. Read it first. This file
+says where things are, what already exists, and which mistakes have already
+been made here.
+
+## The program in five lines
+
+Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
+`wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
+SSE. The page shows a session list and four tabs: Transcript, Files, Diff, Peek.
+Three things go back to the terminal, all through tmux: jump, send, peek.
+Nothing else writes to a terminal. Nothing owns the agent process.
 
 ## Layout
 
 | Path | What it holds |
 | --- | --- |
-| `wostuast` | The whole program. One executable Python file. |
-| `tests/` | pytest tests and recorded fixtures. |
-| `tests/fixtures/README.md` | The Claude Code hook and status line payload fields. |
-| `docs/mockups/` | The visual target for the page. Open them in a browser. |
-| `PLAN.md` | The brief: goals, non-goals, design, milestones. |
-| `README.md` | What a user reads. Keep it in step with the commands. |
+| `wostuast` | The whole program. 6600 lines. Python to `PAGE = r"""`, then HTML/CSS/JS. |
+| `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
+| `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. |
+| `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
+| `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
+| `tests/fixtures/README.md` | The hook and status line payload fields. |
+| `PLAN.md` | Goals, non-goals, design, milestones. |
+| `README.md` | What a user reads. Keep in step with the commands. |
+| `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, plus one job with a browser. Both run `pytest -q`; neither names a test file, and it should stay that way — naming one broke the browser job the moment a file was renamed. |
 
-## Run it
+### Finding code in `wostuast`
+
+Every section starts `# --- name: one line ---` (Python) or `// --- name ---`
+(page). `grep -n "^# --- \|^// --- " wostuast` prints the whole map in one go.
+Do that before grepping for a symbol.
+
+Python: constants · log · event log · following files · **session model
+(PLAN 4.3)** · transcript · git facts · **files and diffs** · status ·
+settings.json · output helpers · ansi · **tmux verbs** · **the daemon** ·
+commands · command line · the page.
+
+Page: asking the daemon · dragging an edge · the two fetched scripts · colours ·
+**the sidebar** · tab icon · notifications · **the transcript** · painting code ·
+**the Files tab** · finding a file · the tree · **the Diff tab** · **the review** ·
+keeping a review · has the line moved? · **the Peek tab** · talking to the
+daemon · keys.
+
+## Before you write anything new
+
+This list exists because each entry was re-implemented once already.
+
+**Page helpers**
+
+| Want | Call |
+| --- | --- |
+| "has this changed since I drew it?" | `fresh(box, which, key)` — do not hand-roll a `dataset` compare |
+| make an element | `put(parent, tag, cls, text)` |
+| scattered-letter match | `fuzzy(text, query)` → `{score, at}` or null |
+| walk a diff's lines with their numbers | `walkHunks(one, onHunk, onLine)` |
+| the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]` |
+| a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
+| "3 min ago" | `ago(when)` |
+| which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
+
+**Python helpers**: `path_label`, `clip`, `run` (subprocess with a timeout),
+`private_dir`/`private_file`, `safe_transcript`, `worktree_root`, `is_listed`,
+`inside`, `ansi_runs`, `GONE_STATES`, `STATE_WORDS`.
+
+**Test helpers**: `conftest.event(name, sid=..., **extra)` builds a hook event —
+never hand-write the dict. `browser.py` has `open_page`, `show_tab`, `open_diff`,
+`comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`.
+
+**CSS**: `.verb` (button), `.link` (small text button), `.find`/`.findslot`,
+`.empty`, `.nohits`, `.note`, `.dot`, `.comment`. **Every colour is a variable**
+and a `:root` block is the only place a colour may be a number —
+`test_every_colour_outside_the_palette_is_named` fails the build otherwise.
+Derive a tint or a ring with `color-mix`, never by copying an rgb triple.
+
+Before adding a CSS rule, grep for the selector. `.turn` already carried a slide
+animation for four milestones while a second one was added on top of it;
+`.row .dot` already had its transition.
+
+## How to work here
 
 ```
-pytest -q                      # run before every commit (about 2 minutes)
-pytest tests/test_page.py -q   # the page, in a real browser (skipped without one)
-./wostuast doctor              # check the setup
-./wostuast ls                  # list the sessions
+pytest -q                          # ~3 min. Before every commit.
+pytest tests/test_page_review.py -q # the subject you are changing. Do this first.
+pytest tests/test_state.py -q      # no browser, <1 s
+./wostuast doctor / ls / serve
 ```
 
-Test against a throwaway home, never your own:
+Throwaway home, never your own:
 
 ```
 export HOME=/tmp/try WOSTUAST_STATE=/tmp/try/state CLAUDE_CONFIG_DIR=/tmp/try/claude
-./wostuast install && ./wostuast ls
 ```
 
-`WOSTUAST_STATE` and `CLAUDE_CONFIG_DIR` exist so tests get their own
-directories. They are test seams, not user settings. Do not document them as
-settings.
+`WOSTUAST_STATE` and `CLAUDE_CONFIG_DIR` are test seams, not user settings. Do
+not document them as settings.
 
-## Rules
+**Editing one 6600-line file.** Anchor on a unique string and assert you hit it
+exactly once; a sloppy replace in a file this size fails silently. A small
+Python script with `assert s.count(old) == 1` before every `replace` is the
+reliable shape when making several edits at once.
 
-- **One file, at the root.** All of the program lives in `wostuast`. The page,
-  the CSS and the JavaScript become string constants at the end of it. Do not
-  move it into `src/` or split it: the install one-liner curls that exact path,
-  and a split would need a build step, which `PLAN.md` rules out.
-- **Standard library only.** Python 3.10 or newer. No pip install.
-- **No JavaScript library is vendored.** `marked` and `highlight.js` are
-  fetched, through the one `fetchScript` function, and each carries the hash
-  of its exact bytes. Any script on this page can `POST` to `/send`, which
-  types into the user's terminal, so the hash is not optional and neither is
-  `crossorigin`, which is what lets the browser check it. Each library must
-  degrade to something readable: without `marked` the transcript is its own
-  source as text, and without `highlight.js` code has no colour. Tests hold
-  both fallbacks, and `tests/fixtures/marked.min.js` is what the page tests
-  serve, so no test needs a network.
-- **The page never trusts what an agent wrote.** Markdown is parsed into an
-  inert `<template>`, scrubbed to an allowlist, and only then inserted. Values
-  from events are set with `textContent`. Assigning to `innerHTML` first would
-  fire an `onerror` before any scrub could run; that was a real bug, and
-  `tests/test_page.py` is what keeps it fixed.
-- **The `__main__` guard stays at the very end**, after `PAGE`. It used to sit
-  before it, so running as a script started the daemon and `PAGE` was never
-  assigned. Importing the module hid it.
-- **Ask first** before adding a dependency, a file besides `wostuast` and
+**Prove a test earns its place.** Write the test, then revert the fix and watch
+it fail. A test written here passed with its fix removed — another line was
+saving the state it asserted — and it would have guarded nothing for ever.
+
+**Playwright.** A hover-only control (`.plus`) needs `click(force=True)`. Wait
+for what the page has drawn, never for a number of seconds; `wait_for_timeout`
+is right only when proving something did **not** happen. Ask one question when a
+redraw could land between two: `wait_for_function("...length === 1")`, not
+`wait_for_selector` then `.count()`.
+
+## Rules, each one a bug that already happened
+
+### Shape
+
+- **One file, at the root.** The install one-liner curls that exact path, and a
+  split needs a build step, which `PLAN.md` rules out. Page, CSS and JS are
+  string constants at the end of it.
+- **Standard library only.** Python 3.10+. No pip install.
+- **The `__main__` guard stays last**, after `PAGE`. Before it, running as a
+  script started the daemon and `PAGE` was never assigned.
+- **Ask first** before adding a dependency, a file outside `wostuast` and
   `tests/`, or a tmux command beyond jump, send and peek.
 - **Prefer deleting a feature over adding a config option.**
-- **The hook must never block Claude Code.** `cmd_hook` wraps everything in
-  try/except, runs under a deadline (`give_up_after`), and always exits 0. Keep
-  all three. The deadline covers every wait at once, including a stdin that
-  never closes and a file lock stalled on a network filesystem.
-- **Never write to the terminal** except through the three tmux verbs. wostuast
-  reads; the user types. `tmux_jump`, `tmux_send` and `tmux_peek` are the only
-  commands it runs, and only the first two write anything. They look `run` up
-  when they are called rather than taking it as a default, so a test of the
-  route above them can put a fake tmux in its place — the only way to test
-  them without a terminal to type into.
-- **Nothing below a space reaches a terminal.** `tmux_send` strips the control
-  characters, keeping tab and newline, and it is the one place that can: every
-  route to a terminal goes through it. A bracketed paste ends at
-  `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote, so a file holding
-  those bytes would close the paste early and leave the rest arriving as
-  keystrokes — with any newline among them as Enter. A person reading the
-  preview cannot catch this; an escape byte is invisible.
-- **A newline sent to a terminal is Enter.** `tmux_send` wraps text that has
-  one in the bracketed paste markers, so a message of several lines arrives as
-  a paste and waits for the reader's own Enter. Without them a real shell ran
-  the first line and left the second on the prompt. One line is sent as it
-  always was: a program that does not understand the markers never sees them.
-- **Every POST carries a token, and the page never builds HTML from a pane.**
-  A cross-origin `fetch` may send a plain POST to a loopback port with no
-  questions asked, and the effect here is `tmux send-keys` into a live
-  terminal. So `allowed()` wants three things to agree: the Host, an Origin
-  that is ours when there is one, and the token the daemon made at start and
-  printed into the page. `ansi_runs` hands the page stretches of text with
-  their colours, never markup, and the page sets each one with `textContent`:
-  a pane holds whatever an agent ran.
-- **Never approve a permission prompt.** The user approves in the terminal.
-  The hook prints nothing, and that silence is the mechanism: Claude Code reads
-  a hook's stdout as its answer. We register `PermissionRequest`, which takes a
-  decision to allow or deny straight from stdout, so one `print()` in
-  `cmd_hook` does not just add noise: it answers a permission prompt for the
-  user. Logging goes to the log file. Tests assert the silence for that event
-  by name; never weaken them.
-- **Amber means one thing: the agent cannot go on until you answer.** An idle
-  `Notification` is not that — `Stop` already said the turn was over, and
-  nothing you do clears an idle prompt, so a row that went amber on it stayed
-  amber for ever. And a permission `Notification` is dropped once the session
-  has sent a `PermissionRequest`: from then on it is the same news twelve
-  seconds late, and honouring it raised the alarm again for a question you had
-  already answered. Those two together were "needs you never clears".
-- **The fold is not a filter.** `ended` and `dead` sessions fold away under the
-  history bar, but they are still counted in the top bar, the filter still
-  searches them, and the one you are reading is never missing from the list it
-  is chosen in. `shownSessions` is what the filter leaves and is what the
-  counts are about; `listedSessions` is what is on screen, and `j`/`k` walk
-  that, because a key must not move to a row that is not there.
-- **The sidebar sorts by name.** Sorting by state moved every row each time an
-  agent started or finished a tool call, so the list shifted under the reader.
-  The colour, the counts and the `n` key answer "who needs me" without it.
-- **Folding an event twice must change nothing.** Handlers assign and never
-  accumulate, and `Store.apply` drops an event older than the session has
-  already seen. A rotation makes the daemon read the archive again, so old
-  events really do arrive after new ones.
-- **A path out of the event log is input, not fact.** `transcript_path` goes
-  through `safe_transcript`, which opens nothing outside the Claude config
-  directory. `cwd` is used for git and for shortening paths, never to open a
-  file the page asked for.
-- **A path out of the page is input too.** `read_worktree_file` opens a file
-  only when `is_listed` says git offers that exact name, and only when
-  `inside` says the resolved path is still in the worktree. The first rules
-  out `..` and an absolute path; the second rules out a tracked symbolic link
-  that points elsewhere. Keep all three parts of the first one — the
-  `:(literal)` prefix, the `--`, and comparing the answer to what was asked
-  for. An ignored file is asked about the same way, `--others --ignored`,
-  with all three parts again. Do not replace either check with a pattern that
-  tries to spot a bad path.
-- **Work from the worktree root, not from the agent's directory.** git
-  reports a diff with root-relative paths whatever directory it ran in, so a
-  session standing in a subdirectory gets a file list that does not agree
-  with its own diff. `worktree_root` is the one place that answers this.
-- **Inside a hunk, the first character of a line is the only thing that
-  matters.** Removing `-- a comment` writes `--- a comment`. Read as a header
-  it renamed the file and swallowed the rest of the hunk. Only `diff --git`
-  and `@@` may start something new, because content always carries its own
-  marker in front.
-- **The Files tab lists every file, and only stats the changed ones.** A
-  repository holds tens of thousands of files and tens of changed ones. The
-  modification time is read to sort those few and to know when to read the
-  open file again; asking the disk about all of them, every poll, is the
-  mistake to avoid.
-- **The daemon holds one listing per worktree, and the page holds the names.**
-  `Files` keeps the answer for `LIST_FRESH` seconds and hands a stale one over
-  at once while it is read again behind, so only a worktree nobody has asked
-  about yet makes anyone wait. The names go with a tag; the browser sends the
-  tag back and a listing that has not moved answers without them. That is
-  1733 KB against 0.2 KB on a poll, so **the order the names are sent in must
-  depend only on which files exist** — `in_order` is pinned-then-name for
-  exactly that reason. Put a changed tier back into it and the tag moves every
-  time an agent saves, and the saving is gone. The order the reader sees is
-  the page's, and `dirFiles` is the only place that decides it.
-- **The Files tab is a tree, and the tiers live inside it.** `dirFiles` orders
-  each directory's own files — named, then changed newest first, then the rest
-  — rather than listing them again in a section above the tree, which in a
-  small repository is most of the list twice. `openDirs` opens a directory
-  holding a change, because a closed tree cannot say what the agent just did,
-  and `state.dirs` — one map of what the reader opened or closed by hand —
-  wins over it, so the tree never fights the hand on it.
-- **The page searches every name, or it says it cannot.** Sending the first
-  five thousand of 52,799 names made `libcorrelation` find 16 files and miss
-  a thousand. A search that sees part of the list gives a wrong answer that
-  looks like a right one.
-- **A git call that fails must not render as an empty answer.** The listing
-  ran under the 2 s timeout every other git call uses, and a large repository
-  timed out, and nothing came back, and nothing drew as "this worktree holds
-  no file that git knows about". "No files" and "git did not answer" look the
-  same and mean opposite things. The diff already had this fixed; the listing
-  did not.
-- **The daemon answers on localhost only.** Binding to 127.0.0.1 and sending no
-  CORS header is not enough: a site can point its own name at 127.0.0.1 and the
-  browser will then let it read us. `Handler.ours()` checks the Host header.
-- **The Files and Diff tabs poll from the browser, and only while on screen.**
-  `TABS` in the page holds one entry per tab — how to draw it, how to load it,
-  and how often to ask again — so a new tab is one entry, not six edits. The
-  daemon pushes the transcript and nothing else: it does not know which tab a
-  browser is on, and keeping it that way is why `Hub` stays small.
-- **There is one find box, and it must leave before its parent is cleared.**
-  It lives where it is used, which on a split tab is inside the content box, so
-  a tab that empties that box destroys it along with every listener on it — and
-  then `$("find")` is null and `showTab` throws before it reaches `load`, which
-  is a page broken until a reload. `draw()` takes it home whenever
-  `box.dataset.tab` says another tab owns the box, which is exactly when a tab
-  is about to rebuild, and `split()` takes it back. Asking the DOM rather than
-  a flag means a new tab cannot forget; moving it on a same-tab redraw would
-  blur the box mid-word. This has caused two outages, and
-  `test_every_way_from_one_tab_to_another_works` is what watches for a third.
-- **A split tab keeps its two columns and redraws one at a time.** `split()`
-  builds them once and `fresh()` decides what changed, both reading the DOM
-  rather than a field in `state`. One key over the whole tab meant an agent
-  saving any Markdown re-rendered the file you were reading, every two
-  seconds, and lost your place in it.
-- **One lock around the transcript readers.** The tick thread and request
-  threads both read them; two `read_new` calls at once move the byte offset
-  twice, which looks like a shrinking file and re-reads everything.
-- **The state directory is private.** `0700` for directories, `0600` for files,
-  via `private_dir` and `private_file`. The log holds every prompt and every
-  command an agent ran.
-- **Keep the raw payload.** Do not strip fields from a hook event. A new field
+- **No module-level mutable state.** The daemon owns a `Store` and a `Hub`. One
+  thread writes the Store; readers take `rows`, replaced whole, so no lock.
+- **Keep the raw payload.** Never strip fields from a hook event: a new field
   from a newer Claude Code must not break an older wostuast.
-- **The sidebar keeps its rows and fills them in again.** Rebuilding the list
-  threw away the one thing the motion is for: a dot can only fade into its new
-  colour if it is the same dot, and the needs-you ring can only finish a cycle
-  if its row outlives the change that started it. `newRow` builds every part
-  once, empty; `fillRow` reaches them by position; and a row is moved only when
-  its place actually changed, because `appendChild` on a row already in place
-  is a remove and an insert, and a node that leaves the document is a node
-  that may lose its animation. A transcript block slides in only where a block
-  arrives, in `patchTranscript`. That animation sat on `.turn` for a long
-  time, so the whole history slid every time the tab was rebuilt.
-- **A draft review is the one thing the page keeps, and it keeps it in the
-  browser.** A review is yours until you submit it, and the daemon serves the
-  same page to every browser, so a draft it held would be a draft everyone
-  could read. `keepReview` runs on every change and `recallReview` checks the
-  shape of what comes back: storage is not a place to trust blindly. Reviews
-  for sessions the daemon no longer lists are swept once per page.
-- **A review comment is anchored to what it is about, never to the node it
-  was drawn on.** `anchorOf` writes down the path, the side and the line
-  number, because the Diff tab is rebuilt from `state.diff` every time the
-  agent saves anything and no node survives that. For the same reason the
-  diff does not rebuild while a comment box is open: it would take what is
-  being typed with it, and would move the code the comment is about while it
-  is being written.
-- **The counts are about every session; only the list is filtered.**
-  `drawCounts` runs before the guard that asks whether the shown rows changed,
-  because a session the filter hides can still go amber, and that has to reach
-  the counts, the title, the icon and the notification. Behind the guard it
-  reached none of them.
-- **Every colour on the page is a variable, and a `:root` block is the only
-  place a colour may be a number.** A colour written into a rule is right in
-  one theme and wrong in the other: the search hit was near-black on amber,
-  which in the light theme is near-black on dark brown, and nobody saw it
-  until someone searched. `test_every_colour_outside_the_palette_is_named` is
-  the rule that catches the next one, and
-  `test_a_search_hit_can_be_read_in_both_themes` puts a number on that one:
-  4.5:1 in both themes. A tint or a ring is derived from its colour with
-  `color-mix`, never by copying the same rgb triple out again, or it is left
-  behind at the old hue the day the colour moves.
-- **The page tests share one browser and wait for things, not for seconds.**
-  Starting Playwright costs 0.43 s and launching Chromium 0.15 s, so doing
-  both per test spent half a minute on nothing; each test gets its own
-  context instead, which costs 0.03 s and shares no storage. `open_page` and
-  `show_tab` wait for what the page has drawn. A `wait_for_timeout` is only
-  right when the test has to prove something did **not** happen.
 
-## Style
+### Safety — the page can type into a terminal
 
-- Plain language in code comments, `--help` text and docs: short sentences,
-  one idea per sentence, active voice. Same as `PLAN.md`.
-- Type hints everywhere. `dataclass` for the models.
-- Every section of `wostuast` starts with a `# --- name: one line ---` comment.
-- No module-level mutable state. The daemon owns a `Store` for what the agents
-  are doing and a `Hub` for the browsers listening. One thread writes the
-  Store; readers take `rows`, which is replaced whole, so there is no lock.
-- Git and tmux run through `subprocess` with a short timeout, and an error
-  there never crashes anything.
+- **Never approve a permission prompt.** Claude Code reads a hook's stdout as
+  its answer, and we register `PermissionRequest`. One `print()` in `cmd_hook`
+  answers a permission dialog for the user. Logging goes to the log file. Tests
+  assert the silence by event name; never weaken them.
+- **The hook must never block Claude Code.** try/except around everything,
+  `give_up_after` deadline, always exit 0. Keep all three. The deadline covers
+  every wait at once, including a stdin that never closes.
+- **Every POST carries a token.** A cross-origin `fetch` may POST to a loopback
+  port unasked, and the effect here is `tmux send-keys` into a live terminal.
+  `allowed()` wants three things to agree: Host, an Origin that is ours when
+  there is one, and the token printed into the page.
+- **The daemon answers on localhost only.** Binding to 127.0.0.1 is not enough —
+  a site can point its own name at 127.0.0.1. `Handler.ours()` checks Host.
+- **The page never trusts what an agent wrote.** Markdown goes into an inert
+  `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
+  events use `textContent`. Assigning `innerHTML` first fires `onerror` before
+  any scrub runs — that was real.
+- **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
+  of text with colours, never markup.
+- **Nothing below a space reaches a terminal.** `tmux_send` strips control
+  characters, keeping tab and newline. A bracketed paste ends at `ESC [ 2 0 1 ~`,
+  and a review quotes lines an agent wrote, so those bytes would end the paste
+  and leave the rest arriving as keystrokes — with any newline as Enter. A
+  person reading the preview cannot catch this; an escape byte is invisible.
+- **A newline sent to a terminal is Enter.** Text with one is wrapped in the
+  bracketed paste markers. Without them a real shell ran the first line.
+- **A path out of the event log is input, not fact.** `transcript_path` goes
+  through `safe_transcript`. `cwd` is used for git and for labels, never to open
+  a file the page asked for.
+- **A path out of the page is input too.** `read_worktree_file` opens a file only
+  when `is_listed` says git offers that exact name and `inside` says the resolved
+  path is still in the worktree. Keep all three parts of the first check — the
+  `:(literal)` prefix, the `--`, and comparing the answer to what was asked for.
+  Ignored files are asked the same way. Never swap either check for a pattern
+  that tries to spot a bad path.
+- **The state directory is private.** `0700` dirs, `0600` files. The log holds
+  every prompt and every command an agent ran.
+
+### State
+
+- **Amber means one thing: the agent cannot go on until you answer.** An idle
+  `Notification` is not that — `Stop` already said the turn was over, and nothing
+  you do clears an idle prompt, so a row that went amber on it stayed amber for
+  ever. A permission `Notification` is dropped once the session has sent a
+  `PermissionRequest`: after that it is the same news twelve seconds late, and
+  honouring it raised the alarm again for a question already answered.
+- **Folding an event twice must change nothing.** Handlers assign, never
+  accumulate; `Store.apply` drops an event older than the session has seen. A
+  log rotation really does deliver old events after new ones.
+- **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
+  is no `/proc` — on macOS, always. Such a session is taken for gone after
+  `QUIET_MAX`. One with a pid is never buried for being quiet.
+
+### The sidebar
+
+- **It sorts by worktree.** Sorting by state moved every row on every tool call.
+  Sorting by `label` is no better: the name arrives from the status line a second
+  after the session starts and `/rename` changes it later.
+- **The fold is not a filter.** Finished sessions fold under the history bar, but
+  they are still counted, the filter still searches them, and the chosen one is
+  never missing from the list it is chosen in.
+- **The counts are about every session.** `drawCounts` runs *before* the guard
+  that asks whether the shown rows changed — behind it, a session the filter
+  hides could go amber and reach the title, icon and notification: none of them.
+- **Rows are kept and filled in again, never rebuilt.** A dot can only fade if it
+  is the same dot, and the needs-you ring can only finish a cycle if its row
+  outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
+  them by position; a row moves only when its place changed, because
+  `appendChild` on an attached node is a remove and an insert.
+
+### The worktree tabs
+
+- **Work from the worktree root, not the agent's directory.** git reports
+  root-relative paths whatever directory it ran in. `worktree_root` answers this.
+- **Inside a hunk, the first character of a line is the only thing that matters.**
+  Removing `-- a comment` writes `--- a comment`; read as a header it renamed the
+  file and swallowed the hunk. Only `diff --git` and `@@` may start something new.
+- **List every file, stat only the changed ones.** Tens of thousands of files,
+  tens of changed ones. Asking the disk about all of them every poll is the
+  mistake.
+- **One listing per worktree, and the page holds the names.** `Files` keeps it
+  for `LIST_FRESH` and serves a stale one while re-reading behind. Names go with
+  a tag; a listing that has not moved answers without them — 1733 KB against
+  0.2 KB. So **the order the names are sent in must depend only on which files
+  exist**: `in_order` is pinned-then-name. Put a changed tier back into it and
+  the tag moves on every save. The reader's order is the page's, in `dirFiles`.
+- **The tree holds the tiers.** `dirFiles` orders each directory's own files —
+  named, changed newest first, then the rest. `openDirs` opens a directory
+  holding a change; `state.dirs` (what the reader opened by hand) wins over it.
+- **Search every name, or say you cannot.** Sending the first 5000 of 52,799 made
+  a search find 16 files and miss a thousand: a wrong answer that looks right.
+- **A git call that failed must not render as an empty answer.** "No files" and
+  "git did not answer" look the same and mean opposite things.
+- **A split tab keeps its two columns and redraws one at a time.** `split()`
+  builds them once, `fresh()` decides what changed, both reading the DOM. One key
+  over the whole tab re-rendered the file you were reading every two seconds.
+- **`.listnote` is one clipped line.** Anything with height goes in the `sidefoot`
+  slot. A button put in the count strip could not be clicked at all.
+- **`drawLooseFile` builds a synthetic file object.** Everything `fillDiffFile`
+  reads must be in it. `path` was missing, so every untracked file's comments
+  anchored to `undefined`.
+
+### The review
+
+- **A comment is anchored to what it is about** — path, side, line — never to the
+  node it was drawn on. The Diff tab is rebuilt from `state.diff` whenever the
+  agent saves anything.
+- **The diff does not rebuild while a comment box is open.** It would take what
+  is being typed with it, and move the code the comment is about.
+- **The draft lives in the browser.** A review is yours until you submit it, and
+  the daemon serves every browser the same page. `recallReview` checks the shape
+  of what comes back: storage is not a place to trust blindly.
+- **The preview cannot be skipped**, and it is not editable. A quoted line is
+  text an agent wrote, about to be pasted into a terminal. One text, one place it
+  comes from.
+
+### The daemon and the page
+
+- **Never write to the terminal** except through the three tmux verbs.
+  `tmux_jump`, `tmux_send`, `tmux_peek` look `run` up when called rather than
+  taking it as a default, so a test can put a fake tmux in its place.
+- **The Files and Diff tabs poll from the browser, and only while on screen.**
+  `TABS` holds one entry per tab — draw, load, interval — so a new tab is one
+  entry, not six edits. The daemon pushes the transcript and nothing else; it
+  does not know which tab a browser is on, and that is why `Hub` stays small.
+- **One lock around the transcript readers.** Two `read_new` calls at once move
+  the byte offset twice, which looks like a shrinking file.
+- **There is one find box, and it must leave before its parent is cleared.** On a
+  split tab it lives inside the content box, so a tab that empties that box
+  destroys it and `$("find")` is null — `showTab` then throws before `load` and
+  the page is broken until a reload. `draw()` takes it home when
+  `box.dataset.tab` says another tab owns the box; `split()` takes it back. Two
+  outages; `test_every_way_from_one_tab_to_another_works` watches for a third.
+- **No JavaScript library is vendored.** `marked` and `highlight.js` are fetched
+  through the one `fetchScript`, each pinned by the hash of its bytes, with
+  `crossorigin` so the browser checks it. Any script on this page can POST to
+  `/send`. Each must degrade: without `marked` the transcript is its own source
+  as text, without `highlight.js` code has no colour. Tests hold both fallbacks,
+  and `tests/fixtures/marked.min.js` is what the page tests serve, so no test
+  needs a network.
+- **Motion** (PLAN 5.2): a dot fades on a state change, a *new* transcript block
+  slides in 4 px, the needs-you ring pulses. Nothing else moves. "New" means
+  arriving in `patchTranscript` — never a redraw. One `prefers-reduced-motion`
+  block turns all of it off.
+
+### Style
+
+- Plain language in comments, `--help` and docs: short sentences, one idea each,
+  active voice.
+- Type hints everywhere. `dataclass` for models.
+- Git and tmux go through `subprocess` with a short timeout, and an error there
+  never crashes anything.
+- A comment says *why*, especially why the obvious simpler thing is wrong. The
+  long comments here are load-bearing; do not tidy them away.
 
 ## Do not guess payload fields
 
-The hook and status line field names are written down in
-`tests/fixtures/README.md`. When you need a field that is not there, record a
-real payload and add it to `tests/fixtures/`. Do not invent a name.
+Hook and status line field names are in `tests/fixtures/README.md`. Need one
+that is not there? Record a real payload and add it to `tests/fixtures/`. Do not
+invent a name.
 
 ## Milestones
 
-From `PLAN.md` section 9. Commit at the end of each one, and leave a working
-tool behind.
+`PLAN.md` section 9. Commit at the end of each, leave a working tool behind.
 
 1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
-2. **Watch** — done. `serve`, the sidebar and the Transcript tab, live over SSE.
+2. **Watch** — done. `serve`, sidebar, Transcript tab, live over SSE.
 3. **Read** — done. Files tab and Diff tab.
-4. **Fit** — done. The two worktree tabs, on a real repository. Four stages:
-   correct, fast, room, read. `PLAN.md` section 9 lists what is in each one.
-5. **Act** — done. jump, send, Peek. Attention (title, icon, notifications)
-   arrived early, in milestone 2, because it was asked for.
-6. **Shine** — done. Light theme, motion, empty states, keyboard help,
-   README. No screenshots: `PLAN.md` section 9 says why.
-7. **Review** — done. Stages: mark, send, keep. Comment on a diff line or a file, then
-   submit the whole review to the agent as one message. `PLAN.md` section 4.9
-   is the spec; three stages: mark, send, keep.
+4. **Fit** — done. Both worktree tabs on a real repository: correct, fast, room, read.
+5. **Act** — done. jump, send, Peek. Attention arrived early, in milestone 2.
+6. **Shine** — done. Light theme, motion, empty states, keyboard help, README.
+   No screenshots; `PLAN.md` section 9 says why.
+7. **Review** — done. Comment on a diff line or a file, submit the whole review
+   to the agent as one message. `PLAN.md` 4.9 is the spec. Stages: mark, send, keep.
+
+Nothing is planned past 7. Candidates, not committed: collision watch (two
+agents editing the same file in different worktrees — the daemon already caches
+a changed-file map per worktree), and something over the event log, which is a
+local history of every prompt and tool call nobody is reading yet.
