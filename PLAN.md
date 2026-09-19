@@ -428,6 +428,77 @@ block. That is what the file is: an addition nobody has staged.
 Syntax highlighting applies to diff lines as well, under the added and
 removed tints. Large diffs: collapse files over 500 lines, expand on click.
 
+### 4.9 Review
+
+The Diff tab reads. A review is the reply, written where the code is.
+
+You read the diff, leave a comment on a line or on a whole file, read on,
+leave another, and press Submit when the review is finished. wostuast turns
+the comments into one message and sends it to the agent through the send verb.
+That is the GitHub review loop with the agent in the place of the author, and
+without the trip back to the terminal to retype from memory what you just
+read.
+
+**A comment is one note on one place.** A line of the diff, or a file. A line
+comment quotes its line; a file comment does not. Every comment can be edited
+and deleted until the review is submitted. There is no comment on a range of
+lines in this milestone: one line, or the whole file.
+
+**The drafts live in the browser, not in the daemon.** A review is yours until
+you submit it, and the daemon serves the same page to every browser, so a
+draft it held would be a draft everyone could read. `localStorage`, keyed by
+session, survives a reload — which a review written over ten minutes needs —
+and costs the daemon nothing. The daemon learns a review exists at the moment
+it is sent, and not before.
+
+**An anchor is the path, the side, the line number and the text of that
+line.** The agent keeps working while you read, so the diff can move under a
+half-written review. A comment whose line no longer holds the text it was
+written against is marked stale, still shows the line it quoted, and is still
+sent. Nothing is silently dropped, and nothing is silently moved onto the
+wrong line.
+
+**The preview is the message, and it is where the review is approved.** Submit
+opens a panel holding the exact text the agent will receive. The only thing
+you can type into it is the overall note, which is the review's comment on
+itself; a line comment is edited where the line is, so there is one text and
+one place it comes from. Cancel goes back with everything kept. The message is
+plain, and reads as well in a terminal as on the page:
+
+```
+Review: 4 comments on 3 files.
+
+<the overall note, when there is one>
+
+src/table.cpp:112
+> const auto n = rows.size();
+This underflows when rows is empty. Use a signed type.
+
+src/table.cpp:180
+> for (auto& r : rows) {
+Can this take a span instead?
+
+docs/PLAN.md
+Keep the heading order.
+```
+
+**A person reads every byte before it goes.** A quoted line is text an agent
+wrote, and it is about to be pasted into a terminal. The preview is where that
+is caught, which is why Submit is the only way a review leaves the page and
+why the preview cannot be skipped. It is the same rule as "never approve a
+permission prompt": the person decides.
+
+**Nothing new writes to the terminal.** Submit calls the send verb with the
+composed text. That text has newlines in it, so it travels as a bracketed
+paste and waits for the reader's own Enter, exactly as a typed message does,
+and the POST carries the token like every other one. A session with no pane
+can be reviewed but not submitted: Submit is disabled and says "not in tmux",
+the way the other verbs already do.
+
+**The review never leaves this machine.** No GitHub API, no pull request, no
+posting anywhere. It goes to the agent standing in that worktree. That is the
+whole of it.
+
 ## 5. The page
 
 One HTML page, embedded in the Python file as a string. Vanilla JavaScript.
@@ -568,7 +639,7 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
 
 `j`/`k` move, `Enter` jump to tmux, `1`–`4` tabs, `s` focus send box,
 `Esc` leave send box, `n` next needs-you, `f` filter the session list,
-`t` toggle thinking, `?` shows this list. No key does anything while the send box has focus except `Esc`
+`r` open the review, `t` toggle thinking, `?` shows this list. No key does anything while the send box has focus except `Esc`
 and `Enter`.
 
 ### 5.5 Empty and error states
@@ -579,6 +650,9 @@ and `Enter`.
 - Transcript file missing: "transcript not found at <path>".
 - Daemon stopped: the page shows a thin red bar "connection lost" and
   reconnects the SSE stream every 3 s.
+- Review with no comments: no Submit button. The button appears with the
+  first comment and carries the count, so "is there a review waiting" is
+  answered by whether the button is there.
 
 ## 6. Command line
 
@@ -694,6 +768,20 @@ Commit at the end of each milestone. Each one leaves a working tool.
    the reader their own. `docs/` holds the two mockups that the page was
    built against, and nothing that needs prose.
 
+7. **Review.** Reply to a diff from the page, the way a pull request is
+   reviewed, with the agent in the place of the author. Section 4.9 is the
+   spec. Three stages, each one leaving a working tool.
+
+   1. **Mark.** A comment on a line, and a comment on a file. Drawn where it
+      belongs, edited and deleted in place. Nothing is sent yet, so this stage
+      can be judged on its own: is commenting while reading pleasant enough
+      that you would do it?
+   2. **Send.** The preview, the overall note, Submit, and the send itself. A
+      review reaches the agent. This is the milestone's point, and the first
+      stage that changes anything outside the browser.
+   3. **Keep.** Drafts survive a reload. A comment whose line has moved says
+      so rather than pointing at whatever is there now.
+
 ## 10. README
 
 Write it in the style of the gra README: a one-line tagline, "a minute with
@@ -730,6 +818,10 @@ without opening it first.
 | One find box, moved to where it is used | Above the list on a tab that has one, in the tab strip for the transcript. Two boxes would be two values to keep in step, and `/` would have to guess which one it meant. |
 | An untracked file opens as one added block | `git diff` shows nothing for it, so it was named and left unclickable — the one thing on the tab you could not open. Every line in it is new, and the file route already reads it. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |
+| A review is composed in the page and sent as one message | The alternative is what the tool replaced: read here, switch to the terminal, retype from memory. One message also reaches the agent as one thought, rather than as four interruptions. |
+| Draft comments live in `localStorage` | A review is yours until you submit it, and the daemon serves every browser the same page. Keeping drafts there would show them to everyone and would make the daemon hold state it has no other reason to hold. |
+| The preview cannot be skipped | A quoted line is text an agent wrote, about to be pasted into a terminal. The preview is where a person reads it. Same rule as the permission prompt: the person decides. |
+| A comment whose line moved is marked, not dropped | The agent keeps working while you read. Dropping the comment loses your work; moving it to the same line number points it at different code. Saying so does neither. |
 | No gra dependency | Works for any worktree layout; a `repo/dir` label is all gra would add. |
 | Session name and context come from the status line | Hooks do not carry them. The status line payload has `session_name` and `used_percentage`, and costs one small file. |
 | The status line writes one file per session, not events | It runs on every redraw. An append would flood the log with nothing new. |

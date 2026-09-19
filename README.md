@@ -320,10 +320,14 @@ counts what it kept. `Esc` clears it.
 
 ## Status
 
-All six milestones of [`PLAN.md`](PLAN.md) are done. wostuast records your
+Milestones 1 to 6 of [`PLAN.md`](PLAN.md) are done. wostuast records your
 sessions, lists them in the terminal, and serves a live page with the
 transcript, the worktree's files and its diff, and it can jump to a pane, type
 into it and show you what it holds.
+
+Milestone 7 is next: review a diff from the page the way you review a pull
+request — a comment on a line, a comment on a file, then one Submit that sends
+the whole review to the agent.
 
 There are no screenshots here. A screenshot of this page is a screenshot of
 somebody's agents, and made-up ones would show a tool nobody is using. Run
