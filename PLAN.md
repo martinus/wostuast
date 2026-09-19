@@ -474,6 +474,32 @@ C is a confident lie, and no paint beats a wrong one.
 Nothing guesses from content beyond that list. `hljs.highlightAuto` would paint
 more files and mislabel them with the same confidence.
 
+### 4.8.2 A file too long to draw whole
+
+Measured on a file of 76,000 short lines: 306,000 nodes and about a second to
+build them, and cutting the highlighter's answer into lines another second and
+a quarter on top. All of it is paid again every time the agent saves the file
+being read, which is every few seconds while it is being worked on.
+
+Above 2,000 lines only the rows on screen are built. Two spacers stand in for
+the rows above and below, so the scrollbar is still the length of the whole
+file. A redraw costs 5 ms rather than 1,200, and the count of nodes drops from
+306,000 to about 650.
+
+Such a file is not painted at all. The highlighter has to be given the whole
+file to be right about a block comment or a long string, and cutting that
+answer into 76,000 line fragments costs more than the rows did.
+
+Below 2,000 lines nothing here runs. An ordinary file is drawn whole, so the
+browser's own find still sees all of it and a copy is the whole file. That is
+worth keeping, and it is why this starts at a length rather than always. The
+page says which of the two a file got, because the reader would otherwise go
+looking for the colour and the find and not find them.
+
+A line with a comment under it is taller than a row, and a row's height is how
+the window knows where it is. There are never many, so their heights are kept
+one at a time: measured once the block has been drawn, guessed until then.
+
 ### 4.9 Review
 
 The Diff tab reads. A review is the reply, written where the code is.

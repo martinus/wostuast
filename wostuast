@@ -4129,8 +4129,12 @@ body:not(.show-thinking) .thinking { display: none; }
    space padding no longer lining up. A component carries its own typography. */
 .dlines {
   padding: 5px 0; overflow-x: auto; color: var(--code-ink);
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  font-family: var(--mono); font-size: 12.5px; line-height: 21px;
 }
+/* A windowed file's rows are a grid the scrollbar is read against, so the row
+   height is a whole number of pixels (`CODE_H`) and nothing pads the block
+   they sit in. See `fillCode`. */
+.code.windowed .dlines { padding: 0; }
 .dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
 .dline { position: relative; }
 .dline.context { color: var(--ink-mute); }
@@ -5360,7 +5364,10 @@ function split(box, tab, bodyClass) {
     // far the list scrolls. The count strip above it is one clipped line.
     put(side, "div", "sidefoot");
     dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
-    put(box, "div", bodyClass);
+    const body = put(box, "div", bodyClass);
+    // A file too long to draw whole is drawn a window at a time, and the
+    // window follows the scrollbar — the only thing that moves it.
+    if (windowed) body.addEventListener("scroll", () => fillCode(body));
   }
   const side = box.firstChild;
   homeFind(side.firstChild);
@@ -5747,6 +5754,118 @@ function countNote(note, many) {
   put(note, "span", null, many + (many === 1 ? " file" : " files"));
 }
 
+// --- a file too long to draw whole ------------------------------------------
+//
+// Measured on a file of 76,000 short lines: 306,000 nodes and about a second
+// to build them, and the colouring another second and a quarter on top. That
+// is paid again every time the agent saves the file you are reading. Above
+// CODE_WHOLE lines only the rows on screen are built, which is a screenful of
+// work whatever the file's length, and the file is not coloured: the
+// highlighter has to be given the whole file to be right about it, and cutting
+// its answer into 76,000 line fragments costs more than the rows did.
+//
+// Below CODE_WHOLE nothing here runs. An ordinary file is drawn whole, so the
+// browser's own find still sees all of it and a copy is the whole file. That
+// is worth keeping, and it is why this starts at a length rather than always.
+const CODE_WHOLE = 2000;
+const CODE_H = 21;          // one row, exactly. `.dlines` sets the same number
+const CODE_SHOWN = 160;     // a tall screenful, and some either side
+
+// A line with a comment under it is taller than a row, and a row's height is
+// how the window knows where it is. There are never many, so they are kept one
+// by one: measured once the block has been drawn, and guessed until then. A
+// guess only moves the scrollbar a little, and it is replaced the first time
+// the block is on screen.
+const CODE_GUESS = 5 * CODE_H;
+
+// The lines of this file that carry a comment, or a half-written one, with how
+// tall each one makes its row. In line order, because both readers below walk
+// them from the top.
+function tallLines(code) {
+  const anchors = new Set(state.review.map((one) => one.anchor));
+  if (state.writing !== null) anchors.add(state.writing);
+  const tall = [];
+  for (const anchor of anchors) {
+    const [path, side, line] = anchor.split("\n");
+    if (path !== code.path || side === "file") continue;
+    const at = Number(line) - 1;                  // lines are counted from one
+    tall.push([at, code.tall.get(at) || CODE_GUESS]);
+  }
+  return tall.sort((one, two) => one[0] - two[0]);
+}
+
+// How tall the first `n` lines are together.
+function heightOf(tall, n) {
+  let px = n * CODE_H;
+  for (const [line, extra] of tall) {
+    if (line >= n) break;
+    px += extra;
+  }
+  return px;
+}
+
+// Which line stands `y` pixels down. The plain rows are arithmetic; only the
+// few that carry a comment have to be counted one at a time.
+function lineAt(tall, y) {
+  let line = 0;
+  let top = 0;
+  for (const [where, extra] of tall) {
+    const step = (where - line + 1) * CODE_H + extra;
+    if (top + step > y) break;
+    top += step;
+    line = where + 1;
+  }
+  return line + Math.max(0, Math.floor((y - top) / CODE_H));
+}
+
+// One window of rows, built where the scrollbar stands. The two gaps stand in
+// for the rows above and below it, so the scrollbar is the length of the whole
+// file even though the file is not there.
+function fillCode(pane, at = pane.scrollTop) {
+  const code = pane.querySelector(".code.windowed");
+  if (!code) return;                   // a short file, or another tab's body
+  // The window stands still while a comment is being written, for the reason
+  // the diff stands still: moving it would throw away what is being typed. A
+  // window that has not been drawn yet is drawn all the same — that is the
+  // redraw the box itself asked for, the same trick `holdingText` plays.
+  if (state.writing !== null && code.dataset.first) return;
+  const all = code.lines;
+  const tall = tallLines(code);
+  // Where the code starts inside the pane, so that how far the reader has
+  // scrolled can be read as a line number. The path and the note sit above it.
+  const from = code.offsetTop - pane.offsetTop;
+  const first = Math.min(
+    Math.max(0, lineAt(tall, at - from) - 8),
+    Math.max(0, all.length - 1));
+  const last = Math.min(all.length, first + CODE_SHOWN);
+  if (code.dataset.first === String(first) &&
+      code.dataset.last === String(last)) return;
+  code.dataset.first = String(first);
+  code.dataset.last = String(last);
+  // A long line is read by scrolling sideways, and the rows are rebuilt under
+  // the reader every time the window moves. Their box is new each time, so how
+  // far along it stood has to be carried over by hand.
+  const along = code.querySelector(".dlines");
+  const sideways = along ? along.scrollLeft : 0;
+  code.replaceChildren();
+  put(code, "div", "gap").style.height = heightOf(tall, first) + "px";
+  fillDiffFile(code, asLines(code.path, all.slice(first, last), first + 1));
+  put(code, "div", "gap").style.height =
+    (heightOf(tall, all.length) - heightOf(tall, last)) + "px";
+  if (sideways) code.querySelector(".dlines").scrollLeft = sideways;
+  measureTall(code, tall, first, last);
+}
+
+// What a comment block actually came out as, kept for the next window. The
+// blocks are drawn in line order, so they line up with the lines that have
+// one; if they do not, nothing is measured rather than something guessed at.
+function measureTall(code, tall, first, last) {
+  const blocks = code.querySelectorAll(".onLine");
+  const shown = tall.filter(([line]) => line >= first && line < last);
+  if (blocks.length !== shown.length) return;
+  shown.forEach(([line], at) => code.tall.set(line, blocks[at].offsetHeight));
+}
+
 function drawFiles(box) {
   const [list, pane, note] = split(box, "files", "filebody");
 
@@ -5779,11 +5898,16 @@ function drawFiles(box) {
     noteList(note, found);
   }
 
-  const same = (box.dataset.bodyKey || "").split("\n")[0] === String(state.file);
+  // Which file the pane is showing, asked of the pane itself. It used to be
+  // read out of the redraw key, which `redrawCode` clears — so opening a
+  // comment box made the open file look like a different one and threw the
+  // reader back to the top of it.
+  const same = pane.dataset.file === String(state.file);
   if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.file + "\n" + state.fileMtime)) return;
   const place = same ? pane.scrollTop : 0;   // the same file, read again
   pane.replaceChildren();
+  pane.dataset.file = String(state.file);
   if (!state.file) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, state.filesFailed
@@ -5803,13 +5927,33 @@ function drawFiles(box) {
     // One row per line, through the same renderer the diff uses, so a file
     // gets the numbers, the `+` and the comments the diff already had — and a
     // comment on line 42 lands on the same anchor whichever tab wrote it.
-    const code = put(pane, "div", "code");
-    code.dataset.path = state.file;
+    //
     // The rows and the highlighter are given the very same text, so the two
     // can never disagree about how many lines there are.
     const body = state.fileText.replace(/\n$/, "");
-    fillDiffFile(code, asLines(state.file, body));
-    paintLines(code, state.file, body, state.fileLang);
+    const rows = linesOf(body);
+    const windowed = rows.length > CODE_WHOLE;
+    if (windowed) {
+      // Said plainly, because both of these are things the reader would
+      // otherwise go looking for and not find.
+      put(pane, "div", "note", rows.length + " lines. Only the ones on screen"
+          + " are drawn, so this file has no colour and your browser's own"
+          + " find will not see the rest of it.");
+    }
+    const code = put(pane, "div", "code" + (windowed ? " windowed" : ""));
+    code.dataset.path = state.file;
+    if (windowed) {
+      code.lines = rows;
+      code.path = state.file;
+      code.tall = new Map();
+      // Where the reader will be once `place` is put back, not where an
+      // emptied pane says they are: the rows have to be there before the
+      // scrollbar can reach them.
+      fillCode(pane, place);
+    } else {
+      fillDiffFile(code, asLines(state.file, rows));
+      paintLines(code, state.file, body, state.fileLang);
+    }
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
@@ -6045,11 +6189,12 @@ function walkHunks(one, onHunk, onLine) {
   for (const hunk of one.hunks || []) {
     const where = onHunk ? onHunk(hunk) : null;
     // A file read as lines carries no `@@` header, and its first line is line
-    // one. A diff hunk whose header will not parse is no better off starting
-    // at zero than at one.
+    // one — unless only a slice of it is being drawn, and then the slice says
+    // which line it starts at. A diff hunk whose header will not parse is no
+    // better off starting at zero than at one.
     const found = HUNK_AT.exec(hunk.header);
-    let old = found ? Number(found[1]) : 1;
-    let now = found ? Number(found[2]) : 1;
+    let old = found ? Number(found[1]) : (hunk.from || 1);
+    let now = found ? Number(found[2]) : (hunk.from || 1);
     for (const line of hunk.lines) {
       onLine(line, old, now, where);
       if (line.kind !== "added") old += 1;
@@ -6094,10 +6239,16 @@ function fillDiffFile(body, one) {
   });
 }
 
-// One file as lines, in the shape `fillDiffFile` wants.
-function asLines(path, text) {
-  const lines = text === "" ? [] : text.split("\n");
-  return { path, hunks: [{ header: "",
+// The lines of a file. An empty file has none, where splitting a string that
+// is empty gives one empty line.
+function linesOf(text) {
+  return text === "" ? [] : text.split("\n");
+}
+
+// A file, or a slice of one, in the shape `fillDiffFile` wants. `from` is the
+// number of the first line, which is 1 unless only part of the file is drawn.
+function asLines(path, lines, from = 1) {
+  return { path, hunks: [{ header: "", from,
     lines: lines.map((one) => ({ kind: "plain", text: one })) }] };
 }
 

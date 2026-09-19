@@ -317,6 +317,26 @@ def big_page(ws, served, big_repo):
     daemon.store.refresh()
     return big_repo, base
 
+
+#: How many lines `long.py` has. Well over `CODE_WHOLE`, so the Files tab
+#: windows it, and not so many that writing it costs anything.
+LONG_LINES = 6000
+
+
+@pytest.fixture
+def long_page(ws, served, repo):
+    """A session in a repository holding one file too long to draw whole."""
+    (repo / "long.py").write_text(
+        "".join(f"line{n} = {n}\n" for n in range(LONG_LINES)))
+    (repo / "short.py").write_text("print(1)\n")
+    git_in(repo, "add", ".")
+    git_in(repo, "commit", "-qm", "long")
+    daemon, base = served
+    ws.append_event(event("SessionStart", cwd=str(repo), ts=time.time(),
+                          pane="%7", pid=1))
+    daemon.store.refresh()
+    return repo, base
+
 # --- the three tmux verbs ---------------------------------------------------
 
 

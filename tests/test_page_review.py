@@ -637,3 +637,87 @@ def test_a_comment_on_a_file_the_diff_never_saw_is_not_called_gone(repo_page):
             assert "no longer in the diff" in page.evaluate("reviewText()")
         finally:
             browser.close()
+
+
+# --- reviewing a file too long to draw whole ---------------------------------
+
+
+def scroll_to(page, line):
+    """Put the window over `line`, and wait for it to arrive."""
+    page.evaluate("(n) => { document.querySelector('.filebody')"
+                  ".scrollTop = n * 21; }", line)
+    page.wait_for_function(
+        "(n) => [...document.querySelectorAll('.filebody .code .dline .ln')]"
+        ".some((e) => e.textContent.trim() === String(n))", arg=line)
+
+
+def row_for(page, line):
+    """The row drawn for that line number. `long.py` says its own number on
+    every line, so the row is found by what it says."""
+    return page.locator(".filebody .code .dline").filter(
+        has_text=f"line{line - 1} = {line - 1}").first
+
+
+def test_a_line_of_a_long_file_is_numbered_from_the_file_not_the_window(long_page):
+    """Only a slice of the file is drawn, and a slice that thought it started
+    at line one would anchor every comment in it to the wrong place."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            scroll_to(page, 3000)
+            row_for(page, 3000).locator(".plus").click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "about line three thousand")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            assert page.evaluate("state.review[0].anchor") == "long.py\nnew\n3000"
+            assert page.evaluate("state.review[0].quoted") == "line2999 = 2999"
+        finally:
+            browser.close()
+
+
+def test_a_comment_in_a_long_file_survives_the_file_being_read_again(long_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            scroll_to(page, 3000)
+            row_for(page, 3000).locator(".plus").click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "still here")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            page.evaluate("state.fileMtime += 1; draw()")
+            page.wait_for_selector(".comment")
+            assert "still here" in page.locator(".comment").inner_text()
+            # And the file is still as long as it was: a taller row is counted
+            # rather than ignored, so the last line is still reachable.
+            page.evaluate("() => { const p = document.querySelector('.filebody');"
+                          " p.scrollTop = p.scrollHeight; }")
+            page.wait_for_function(
+                "(n) => [...document.querySelectorAll('.filebody .code .dline .ln')]"
+                ".some((e) => e.textContent.trim() === String(n))",
+                arg=conftest.LONG_LINES)
+        finally:
+            browser.close()
+
+
+def test_the_window_stands_still_while_a_comment_is_written(long_page):
+    """Moving it would throw away what is being typed, which is the rule the
+    diff already keeps."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            scroll_to(page, 3000)
+            row_for(page, 3000).locator(".plus").click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "half a thought")
+            page.evaluate("() => { document.querySelector('.filebody')"
+                          ".scrollTop = 200 * 21; }")
+            page.wait_for_timeout(300)      # proving it did not move
+            assert page.input_value(".commentbox textarea") == "half a thought"
+        finally:
+            browser.close()
+

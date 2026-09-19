@@ -42,7 +42,8 @@ commands · command line · the page.
 
 Page: asking the daemon · dragging an edge · the two fetched scripts · colours ·
 **the sidebar** · tab icon · notifications · **the transcript** · painting code ·
-**the Files tab** · finding a file · the tree · **the Diff tab** · **the review** ·
+**the Files tab** · finding a file · the tree · a file too long to draw whole ·
+**the Diff tab** · **the review** ·
 keeping a review · has the line moved? · **the Peek tab** · talking to the
 daemon · keys.
 
@@ -62,6 +63,7 @@ This list exists because each entry was re-implemented once already.
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
 | "3 min ago" | `ago(when)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
+| a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
 
 **Python helpers**: `path_label`, `clip`, `run` (subprocess with a timeout),
 `private_dir`/`private_file`, `safe_transcript`, `worktree_root`, `is_listed`,
@@ -199,6 +201,24 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   often the only event a session ever sends — resume one and leave it and
   nothing follows until you type. `mark_idle` settles it to `done` after
   `STARTING_MAX`, and an idle notification says the same sooner.
+- **A file over `CODE_WHOLE` lines is drawn a window at a time, and not
+  painted.** Measured: 76,000 short lines is 306,000 nodes and about a second
+  to build, plus another second and a quarter to cut the highlighter's answer
+  into lines — repaid on every save of the file being read. `fillCode` builds
+  the rows on screen between two spacers; a redraw costs 5 ms. **Below that
+  length nothing changes**, so an ordinary file keeps the browser's own find
+  and a copy of the whole thing, and the page says which of the two you got.
+- **`CODE_H` is the row height in pixels and `.dlines` must set the same
+  number.** A grid the scrollbar is read against cannot be `line-height: 1.65`.
+  `.code.windowed .dlines` drops its padding for the same reason.
+- **A slice of a file says which line it starts at.** `asLines(path, lines,
+  from)` and `hunk.from`, which `walkHunks` reads when there is no `@@`
+  header. A slice that thought it started at line one would anchor every
+  comment in it to the wrong place.
+- **Which file the pane holds is asked of the pane** (`pane.dataset.file`),
+  never of the redraw key: `redrawCode` clears that key, so opening a comment
+  box made the open file look like a new one — and in a windowed file that put
+  the window back at the top, where the comment box it had just opened was not.
 - **One renderer for a line, in `fillDiffFile`.** The Files tab, the Diff tab
   and an untracked file all go through it; a file being read is a hunk of
   `plain` lines. That is what makes a review work in both tabs — line 42 has
