@@ -299,6 +299,15 @@ Only two tmux commands exist in the code. Each takes the pane id from the
 session. There were three: `capture-pane`, which fed the Peek tab, went
 with it.
 
+A session can also be **named from the page**, which is not a tmux verb: it
+writes a file of ours and touches no terminal. Claude Code names a session from
+its first prompt and `/rename` changes that, but the name it hands the status
+line is the one the session started with — measured: a status file that changes
+does reach the row on the next pass, so the name simply does not change until
+the session is started again. A name set on the page is kept in
+`~/.local/state/wostuast/names.json` and wins over the one Claude Code sent.
+It arrives as a POST and is checked like every other one.
+
 | Verb | Command | Notes |
 | --- | --- | --- |
 | jump | `tmux select-window -t <pane>` then `tmux select-pane -t <pane>` | Then run `$WOSTUAST_FOCUS` if set (a user command that raises the terminal window, e.g. a KWin script). |

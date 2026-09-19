@@ -376,6 +376,13 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   49.5 ms for one that has imported it, and **the hook pays for every import
   on every tool call**. `test_the_hook_does_not_import_what_it_does_not_need`
   fails if that slips.
+- **`name` is a POST that writes no terminal.** It keeps a name in
+  `names.json` and wins over the one the status line sent, because Claude Code
+  hands the status line the name the session started with and `/rename` does
+  not change it. `Store.rename` replaces the whole map rather than editing it,
+  the trick `rows` plays: the HTTP thread writes, the fold thread reads. It
+  pushes nothing — the rows are built from the names every pass, so the next
+  one differs and goes out on its own.
 - **Never write to the terminal** except through the two tmux verbs.
   `tmux_jump` and `tmux_send` look `run` up when called rather than
   taking it as a default, so a test can put a fake tmux in its place.
