@@ -97,11 +97,14 @@ SESSION_MAX_AGE = 7 * 24 * 3600
 RUN_TIMEOUT = 2.0
 
 #: Every state, in the order the sidebar shows them: the word and the colour.
+#: Four things a session can be, and that is the whole list. "starting" was a
+#: fifth, and it was the first few minutes of a session that had said nothing
+#: else — which is the same as being ready, told in a way that went stale. A
+#: session that starts is a session waiting at its prompt.
 STATE_WORDS = {
     "needs_you": "needs you",
     "working": "working",
-    "done": "done",
-    "starting": "starting",
+    "done": "ready",
     "ended": "ended",
     "dead": "killed",
 }
@@ -110,18 +113,12 @@ STATE_COLORS = {
     "needs_you": "\033[33m",
     "working": "\033[32m",
     "done": "\033[34m",
-    "starting": "\033[36m",
     "ended": "\033[90m",
     "dead": "\033[90m",
 }
 
 #: A session nobody can talk to any more. These go to the history.
 GONE_STATES = frozenset({"ended", "dead"})
-
-#: How long a session may say "starting" before it is simply idle. The word is
-#: for the first moments; a session resumed yesterday and not typed into since
-#: is up and waiting at its prompt, which is what "done" means here.
-STARTING_MAX = 300.0
 
 #: How long a session whose process we cannot check may stay quiet before it
 #: is taken for gone. `agent_pid` returns 0 where there is no /proc to walk —
@@ -451,7 +448,7 @@ class Session:
     pane: str = ""
     pid: int = 0
     transcript_path: str = ""
-    state: str = "starting"
+    state: str = "done"
     last_ts: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
@@ -648,7 +645,6 @@ class Store:
             self.liveness_checked = moment
             for session in sessions:
                 mark_dead(session, alive, moment)
-                mark_idle(session, moment)
         for session in sessions:
             self.reload_status(session)
         return sessions
@@ -747,7 +743,11 @@ def _clear_attention(session: Session) -> None:
 
 
 def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> None:
-    session.state = "starting"
+    # A session that has just started is waiting at its prompt, which is what
+    # "ready" means. It used to say "starting" and settle to this after five
+    # minutes — a word that was true for a moment and wrong for a day, because
+    # `SessionStart` is often the only event a session ever sends.
+    session.state = "done"
     session.end_reason = ""
     source = str(event.get("source") or "")
     session.last_event = f"started ({source})" if source else "started"
@@ -832,11 +832,6 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
         # Older Claude Code versions send no type. Read the message instead.
         kind = "idle_prompt" if "waiting for your input" in message else "permission_prompt"
     if kind == "idle_prompt":
-        # It is sitting at its prompt, so it is not starting any more. Nothing
-        # else says so: a session resumed and not typed into sends no other
-        # event, and stayed on "starting" for as long as it was open.
-        if session.state == "starting":
-            session.state = "done"
         # An open dialog is the better reason, and it outranks this one.
         if session.state != "needs_you":
             session.reason = "waiting for input"
@@ -996,19 +991,6 @@ def pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return looks_like_claude(pid)
-
-
-def mark_idle(session: Session, now: float) -> None:
-    """A session that has been starting for five minutes is not starting.
-
-    `SessionStart` is often the only event a session ever sends: resume one and
-    leave it, and nothing follows until you type. The row then read "starting"
-    a day later, and with several of them the word was most of the list. An
-    idle notification says the same thing sooner, when Claude Code sends one.
-    """
-    if session.state == "starting" and session.last_ts and (
-            now - session.last_ts > STARTING_MAX):
-        session.state = "done"
 
 
 def mark_dead(
@@ -3424,9 +3406,9 @@ PAGE = r"""<!doctype html>
   --ink: #d6d8e0; --ink-bright: #f3f4f8; --ink-soft: #a3a7b6;
   --ink-mute: #8b8f9e; --ink-faint: #6f7385;
   --needs: #e0a642; --needs-warm: #f0c068; --working: #6bbf8a; --done: #5b9bd5;
-  --starting: #5bb0b5; --gone: #6f7385;
-  --needs-soft: rgba(224,166,66,.13); --working-soft: rgba(107,191,138,.10);
-  --done-soft: rgba(91,155,213,.10); --starting-soft: rgba(91,176,181,.09);
+  --gone: #6f7385;
+  --needs-soft: rgba(224,166,66,.28); --working-soft: rgba(107,191,138,.18);
+  --done-soft: rgba(91,155,213,.16);
   --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
   /* Your words. Not a state colour: nothing on this page means "you" except
@@ -3467,9 +3449,9 @@ PAGE = r"""<!doctype html>
   --ink: #2f3138; --ink-bright: #14151a; --ink-soft: #4c4f58;
   --ink-mute: #6a6d76; --ink-faint: #8b8e96;
   --needs: #a86c10; --needs-warm: #8a5709; --working: #2f7f52;
-  --done: #2a6ea8; --starting: #1d6f74; --gone: #8b8e96;
-  --needs-soft: rgba(168,108,16,.13); --working-soft: rgba(47,127,82,.10);
-  --done-soft: rgba(42,110,168,.10); --starting-soft: rgba(29,111,116,.09);
+  --done: #2a6ea8; --gone: #8b8e96;
+  --needs-soft: rgba(168,108,16,.22); --working-soft: rgba(47,127,82,.14);
+  --done-soft: rgba(42,110,168,.13);
   --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
   --mine: #3c5a8c; --mine-soft: rgba(60,90,140,.09);
@@ -3513,7 +3495,6 @@ body {
 .dot.needs_you { background: var(--needs); }
 .dot.working { background: var(--working); }
 .dot.done { background: var(--done); }
-.dot.starting { background: var(--starting); }
 .dot.ended, .dot.dead { border: 1px solid var(--edge-bright); }
 
 /* body */
@@ -3545,7 +3526,6 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row.needs_you { border-left-color: var(--needs); background: var(--needs-soft); }
 .row.working { border-left-color: var(--working); background: var(--working-soft); }
 .row.done { border-left-color: var(--done); background: var(--done-soft); }
-.row.starting { border-left-color: var(--starting); background: var(--starting-soft); }
 .row:hover { border-color: var(--edge-bright); border-left-width: 4px; }
 /* The tint says what the session is doing, so the selection has to say
    something else: a ring and a brighter face.
@@ -3578,7 +3558,6 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row.needs_you .word { color: var(--needs); }
 .row.working .word { color: var(--working); }
 .row.done .word { color: var(--done); }
-.row.starting .word { color: var(--starting); }
 .row.ended .word, .row.dead .word { color: var(--ink-faint); }
 /* History. A finished session is grey through and through: it kept the colour
    of the state it stopped in, which read as though something were still going
@@ -3590,14 +3569,21 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row.ended .dirty, .row.dead .dirty,
 .row.ended .clean, .row.dead .clean,
 .row.ended .called, .row.dead .called { color: var(--gone); }
-.histhead {
+/* The line above each group of rows. The history one folds and so is a
+   button; the other three only name what is under them. */
+.histhead, .band {
   display: block; width: 100%; margin: 10px 0 6px; padding: 5px 12px;
   border: none; border-top: 1px solid var(--edge); border-radius: 0;
-  background: none; cursor: pointer; text-align: left;
+  background: none; text-align: left;
   font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
   letter-spacing: .06em; text-transform: uppercase;
 }
+.histhead { cursor: pointer; }
 .histhead:hover { color: var(--ink-soft); }
+/* The one group that is about you says so in its own colour. */
+.band.needs { color: var(--needs); }
+/* The first head has nothing above it to be separated from. */
+.rows > :first-child.band, .rows > :first-child.histhead { border-top: none; margin-top: 0; }
 .row .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
   padding-left: 17px; min-width: 0;
@@ -3655,7 +3641,6 @@ body.dragging { cursor: col-resize; user-select: none; }
 .session-head .word.needs_you { color: var(--needs); }
 .session-head .word.working { color: var(--working); }
 .session-head .word.done { color: var(--done); }
-.session-head .word.starting { color: var(--starting); }
 /* The two things this page can do to a terminal. They look like buttons and
    nothing else on the page does, because everything else only reads. */
 .verb {
@@ -4385,6 +4370,27 @@ function isGone(s) {
   return s.state === "ended" || s.state === "dead";
 }
 
+// The four groups the list is drawn in, most urgent first, and what each one
+// is called above its rows.
+//
+// This means a row moves when a session changes state, which an older rule
+// here forbade — sorting by state made the list churn for nothing. It is not
+// for nothing now: a row arriving under "needs you" is the one thing this
+// tool exists to tell you, and it only happens when a turn ends, begins, or
+// stops on a question. Inside a group the daemon's order stands, which is by
+// worktree, so nothing shuffles while a session works.
+const BANDS = [
+  ["needs", "needs you", (s) => s.state === "needs_you"],
+  ["ready", "ready", (s) => s.state === "done"],
+  ["working", "working", (s) => s.state === "working"],
+  ["history", "history", isGone],
+];
+
+function bandOf(s) {
+  for (const band of BANDS) if (band[2](s)) return band[0];
+  return "ready";                    // a state nobody here knows is not urgent
+}
+
 // The rows the filter box leaves. A session is matched on everything the row
 // shows: the worktree, the name Claude Code gave it, and the branch. `fuzzy`
 // is the same matcher the Files tab uses, so "ofd" finds "oans/fastduck".
@@ -4495,28 +4501,32 @@ function drawSessions() {
     if (box.children[at] !== node) box.insertBefore(node, box.children[at] || null);
     at += 1;
   };
+  // One head per group that has anything under it, in the order of `BANDS`.
+  // The heads are made fresh each time: they carry only a count, so there is
+  // no animation in them to preserve, unlike a row.
   let barPlaced = !past.length;
-  for (const s of listed) {
-    if (!barPlaced && isGone(s)) {
+  for (const [name, title] of BANDS) {
+    const mine = listed.filter((s) => bandOf(s) === name);
+    if (name === "history") {
+      if (!past.length) continue;
       bar = bar || historyBar();
       bar.textContent = (state.history ? "\u25be" : "\u25b8") +
         " history \u00b7 " + past.length;
       place(bar);
       barPlaced = true;
+    } else if (mine.length) {
+      const head = put(document.createDocumentFragment(), "div", "band " + name,
+                       title + " \u00b7 " + mine.length);
+      place(head);
     }
-    const row = had.get(s.id) || newRow(s.id);
-    had.delete(s.id);
-    fillRow(row, s);
-    place(row);
+    for (const s of mine) {
+      const row = had.get(s.id) || newRow(s.id);
+      had.delete(s.id);
+      fillRow(row, s);
+      place(row);
+    }
   }
-  // A folded history has no row to put the bar in front of, so it goes last.
-  if (!barPlaced) {
-    bar = bar || historyBar();
-    bar.textContent = "\u25b8 history \u00b7 " + past.length;
-    place(bar);
-  } else if (bar && !past.length) {
-    bar.remove();
-  }
+  if (!barPlaced && bar) bar.remove();
   for (const gone of had.values()) gone.remove();
   if (!listed.length && state.sessions.length && !past.length) {
     put(box, "div", "nohits", "no session matches");

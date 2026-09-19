@@ -30,7 +30,7 @@ def fold(ws, *events):
 
 def test_session_start_records_the_facts(ws):
     session = fold(ws, event("SessionStart", source="startup"))
-    assert session.state == "starting"
+    assert session.state == "done"
     assert session.cwd == "/w/repo/dir"
     assert session.transcript_path == "/t.jsonl"
     assert session.pane == "%1"
@@ -246,7 +246,7 @@ def test_sort_is_by_name_with_the_gone_ones_last(ws):
         make("ended", "e", "acorn", last_ts=70.0),
         make("needs_you", "n1", "plum", attention_since=10.0),
         make("dead", "x", "aloe", last_ts=80.0),
-        make("starting", "s", "beet", last_ts=80.0),
+        make("done", "s", "beet", last_ts=80.0),
     ]
     order = [s.session_id for s in ws.sort_sessions(rows)]
     # apple, beet, fig, Pear, plum — case does not split the list — then the
@@ -469,26 +469,8 @@ def test_a_session_we_can_check_is_not_buried_for_being_quiet(ws):
     assert session.state == "needs_you"
 
 
-def test_a_session_stops_saying_starting_once_it_is_just_idle(ws):
-    """`SessionStart` is often the only event a session ever sends: resume one
-    and leave it, and nothing follows until you type. Six of nine rows read
-    "starting" a day later, which made the word and the counts useless."""
-    session = ws.Session(session_id="s", state="starting", cwd="/a/b", last_ts=1000.0)
-    ws.mark_idle(session, 1000.0 + ws.STARTING_MAX - 1)
-    assert session.state == "starting"
-    ws.mark_idle(session, 1000.0 + ws.STARTING_MAX + 1)
-    assert session.state == "done"
-
-
-def test_marking_idle_leaves_every_other_state_alone(ws):
-    for state in ("working", "needs_you", "done", "ended", "dead"):
-        session = ws.Session(session_id="s", state=state, cwd="/a/b", last_ts=1000.0)
-        ws.mark_idle(session, 1000.0 + ws.STARTING_MAX * 10)
-        assert session.state == state
-
-
-def test_an_idle_prompt_says_a_starting_session_is_up(ws):
-    """Sooner than the clock does, when Claude Code sends one."""
+def test_an_idle_prompt_says_why_a_session_is_quiet(ws):
+    """It is already ready; this says what it is waiting for."""
     session = fold(
         ws,
         event("SessionStart", source="resume", ts=1000.0),

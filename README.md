@@ -106,12 +106,14 @@ and `status`.
 
 ### Session states
 
+The list is grouped by these, most urgent first, and each group says how many
+are in it. The finished ones fold away under "history".
+
 | State | Means |
 | --- | --- |
 | `needs you` | The agent waits for a permission or for your input. |
+| `ready` | The agent is at its prompt. It finished its turn, or it has just started, and it will take what you type. |
 | `working` | The agent is running a tool or thinking. |
-| `done` | The agent finished its turn. |
-| `starting` | The session just started. |
 | `ended` | The session ended. |
 | `killed` | The process is gone, without an end event. |
 
