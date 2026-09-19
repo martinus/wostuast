@@ -48,5 +48,10 @@ jobs:
           python -m pip install --upgrade pip pytest playwright
           python -m playwright install --with-deps chromium
 
-      - name: Run the page tests
-        run: pytest tests/test_page.py -q
+      # The whole suite, not just the page files. Naming them here meant the
+      # job broke silently the moment one was renamed, which is exactly what
+      # happened. It also means the rest of the suite gets one run in an
+      # environment where playwright is installed, which is a different import
+      # path from the matrix jobs above.
+      - name: Run the tests, this time with a browser
+        run: pytest -q
