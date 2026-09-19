@@ -1015,3 +1015,72 @@ def test_a_file_that_is_not_a_document_has_no_switch(repo_page):
             assert page.locator(".filebody .where .link").count() == 0
         finally:
             browser.close()
+
+
+# --- finding where a file sits ------------------------------------------------
+
+
+def test_a_part_of_the_path_opens_the_tree_to_it(repo_page):
+    """A path in the header is the only place some files are ever named, and
+    scrolling fifty thousand rows to find where one sits is not something
+    anyone does twice."""
+    root, _ = repo_page
+    deep = root / "native" / "shared" / "libcorrelation" / "doc"
+    deep.mkdir(parents=True)
+    (deep / "SAMPLING.md").write_text("# sampling\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "deep")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "SAMPLING")
+            page.wait_for_selector(".filelist button:has-text('SAMPLING.md')")
+            page.click(".filelist button:has-text('SAMPLING.md')")
+            page.wait_for_function(
+                "document.querySelector('.filebody .where').textContent"
+                ".includes('SAMPLING.md')")
+
+            # Every part of it is its own way in.
+            parts = page.eval_on_selector_all(
+                ".filebody .crumb", "els => els.map((e) => e.textContent)")
+            assert parts == ["native", "shared", "libcorrelation", "doc",
+                             "SAMPLING.md"]
+
+            page.click(".filebody .crumb:has-text('libcorrelation')")
+            page.wait_for_function(
+                "[...document.querySelectorAll('.filelist button .name')]"
+                ".some((e) => e.textContent === 'libcorrelation')")
+            # And the filter is gone, because it was hiding the rest of the tree.
+            assert page.input_value("#find") == ""
+            shown = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map((e) => e.textContent)")
+            assert "doc" in shown, shown
+        finally:
+            browser.close()
+
+
+def test_the_whole_path_is_still_one_string_to_copy(repo_page):
+    """Each part is clickable, so each part is its own element. The separators
+    are text nodes and nothing is a block, or a copy would come back with the
+    parts on lines of their own."""
+    root, _ = repo_page
+    deep = root / "a" / "b"
+    deep.mkdir(parents=True)
+    (deep / "c.py").write_text("print(1)\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "deep")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "c.py")
+            page.wait_for_selector(".filelist button:has-text('c.py')")
+            page.click(".filelist button:has-text('c.py')")
+            page.wait_for_function(
+                "document.querySelector('.filebody .crumbs')"
+                ".textContent === 'a/b/c.py'")
+            assert page.eval_on_selector(
+                ".filebody .crumbs", "el => el.innerText") == "a/b/c.py"
+        finally:
+            browser.close()

@@ -3901,6 +3901,11 @@ body:not(.show-thinking) .thinking { display: none; }
   display: flex; align-items: baseline; gap: 14px;
 }
 .filebody .where .link { margin-top: 0; flex-shrink: 0; }
+/* One piece of the path. Text nodes separate them, so the whole line is still
+   one string to select and copy. */
+.crumbs { min-width: 0; word-break: break-all; }
+.crumb { cursor: pointer; }
+.crumb:hover { color: var(--needs); text-decoration: underline; }
 .diffbody { flex-grow: 1; overflow-y: auto; min-width: 0; }
 .diffhead {
   position: sticky; top: 0; z-index: 1; padding: 9px 20px;
@@ -5709,6 +5714,7 @@ function drawFiles(box) {
     fillList(list);
     noteList(note, found);
   }
+  goToInList(list);
 
   // Which file the pane is showing, asked of the pane itself. It used to be
   // read out of the redraw key, which `redrawCode` clears — so opening a
@@ -5731,7 +5737,7 @@ function drawFiles(box) {
       : "This worktree holds no file that git knows about.");
     return;
   }
-  const where = put(pane, "div", "where", state.files.path);
+  const where = putWhere(pane, state.files.path);
   const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
   if (isDoc) putAsText(where);
   if (state.files.binary) {
@@ -5798,7 +5804,58 @@ function blankFiles() {
     // across files, because a reader who wants to review one document
     // usually wants to review the next one too.
     asText: false,
+    goTo: null,         // a path the list has been asked to move to
   };
+}
+
+// The path of the open file, one clickable piece per part of it, and still
+// one string to select and copy: the separators are text nodes and nothing in
+// here is a block, so a selection across the whole line yields the path.
+//
+// Clicking a part is how you find where a file sits. `libcorrelation` is a
+// directory somewhere in fifty thousand rows, and scrolling to it by hand is
+// not something anyone does twice.
+function putWhere(pane, path) {
+  const where = put(pane, "div", "where");
+  const crumbs = put(where, "span", "crumbs");
+  let sofar = "";
+  for (const part of path.split("/")) {
+    if (sofar) crumbs.appendChild(document.createTextNode("/"));
+    sofar = sofar ? sofar + "/" + part : part;
+    const upto = sofar;
+    const piece = put(crumbs, "span", "crumb", part);
+    piece.title = "show " + upto + " in the list";
+    piece.addEventListener("click", () => revealInTree(upto));
+  }
+  return where;
+}
+
+// Open the tree down to a path, and ask the list to move to it. A filter hides
+// most of the tree, and revealing something the filter has taken out would
+// show nothing at all, so the box is cleared first.
+function revealInTree(path) {
+  for (const above of ancestors(path)) state.files.dirs.set(above, true);
+  state.files.dirs.set(path, true);   // a directory opens itself; a file has
+                                      // no entry, and setting one is harmless
+  state.files.goTo = path;
+  if (state.find) {
+    $("find").value = "";
+    state.find = "";
+  }
+  draw();
+}
+
+// Put the window over the row that was asked for. It runs after the rows are
+// built, because which row a path is depends on which directories stand open.
+function goToInList(list) {
+  const want = state.files.goTo;
+  if (!want || !list.found) return;
+  state.files.goTo = null;
+  const at = list.found.findIndex((row) => row.path === want);
+  if (at < 0) return;                 // the filter or a closed tree hid it
+  // Three rows of air above it, so it does not sit against the top edge.
+  list.scrollTop = Math.max(0, (at - 3) * ROW_H);
+  fillList(list);
 }
 
 // Read this document as Markdown, or as the lines it is written in. A
