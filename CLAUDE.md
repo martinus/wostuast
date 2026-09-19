@@ -283,6 +283,6 @@ tool behind.
    arrived early, in milestone 2, because it was asked for.
 6. **Shine** — done. Light theme, motion, empty states, keyboard help,
    README. No screenshots: `PLAN.md` section 9 says why.
-7. **Review** — done. Stages: mark, send, keep. Comment on a diff line or a file, then
-   submit the whole review to the agent as one message. `PLAN.md` section 4.9
-   is the spec; three stages: mark, send, keep.
+7. **Review** — done. Comment on a diff line or a file, then submit the whole
+   review to the agent as one message. `PLAN.md` section 4.9 is the spec;
+   three stages: mark, send, keep.
