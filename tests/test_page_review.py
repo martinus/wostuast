@@ -789,3 +789,73 @@ def test_two_places_in_one_file_cannot_collide(repo_page):
             assert page.evaluate("placeOf('a.py\\n0')") == "a.py"
         finally:
             browser.close()
+
+
+def test_a_comment_leads_to_its_line_in_a_long_file(long_page):
+    """The heading says `path:3000`. Landing at the top of a 6,000-line file
+    is telling the reader where to go and then not going there."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.evaluate("""([one]) => { state.review.comments = [one];
+              keepReview(); }""",
+              [{"anchor": "long.py\n3000", "quoted": "line2999 = 2999",
+                "note": "about this"}])
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .spot .crumb")
+            page.click(".reviewbody .spot .crumb")
+            page.wait_for_function("state.tab === 'files'")
+            page.wait_for_function(
+                "[...document.querySelectorAll('.filebody .code .dline .dtext')]"
+                ".some((e) => e.textContent === 'line2999 = 2999')")
+        finally:
+            browser.close()
+
+
+def test_a_comment_leads_to_its_line_in_a_file_drawn_whole(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            root = repo_page[0]
+            root.joinpath("code.py").write_text(
+                "".join(f"x{n} = {n}\n" for n in range(400)))
+            open_file(page, "code.py")
+            page.wait_for_function(
+                "document.querySelectorAll('.filebody .code .dline').length > 300")
+            page.evaluate("""([one]) => { state.review.comments = [one];
+              keepReview(); }""",
+              [{"anchor": "code.py\n350", "quoted": "x349 = 349",
+                "note": "about this"}])
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .spot .crumb")
+            page.click(".reviewbody .spot .crumb")
+            page.wait_for_function("state.tab === 'files'")
+            page.wait_for_selector(".filebody .code .dline")
+            page.wait_for_function(
+                "document.querySelector('.filebody').scrollTop > 200")
+        finally:
+            browser.close()
+
+
+def test_a_comment_on_a_document_opens_it_as_lines(repo_page):
+    """A rendered document has no line 4 to go to, so being asked for one is
+    being asked for the lines it is written in."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filebody .prose")
+            page.evaluate("""([one]) => { state.review.comments = [one];
+              keepReview(); }""",
+              [{"anchor": "README.md\n3", "quoted": "first line",
+                "note": "about this"}])
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .spot .crumb")
+            page.click(".reviewbody .spot .crumb")
+            page.wait_for_function("state.tab === 'files'")
+            page.wait_for_selector(".filebody .code .dline")
+            assert page.locator(".filebody .prose").count() == 0
+            assert page.evaluate("state.files.asText") is True
+        finally:
+            browser.close()

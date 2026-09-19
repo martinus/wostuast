@@ -344,6 +344,10 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   the reader had written them, so a note on a file the agent never touched
   went out saying "this line is no longer in the diff". The message tells the
   agent to search for the quoted line instead.
+- **A goTo is a place, not a path.** `state.files.goTo` moves the list to a
+  file and `state.files.goToLine` moves the body to a line in it. A windowed
+  file is arithmetic (`lineTop`), a file drawn whole scrolls to the row, and a
+  document is switched to its lines — it has no line 4 to go to otherwise.
 - **The Review tab is the only place a review is sent from**, and the message
   stands above the send button, not editable. `drawReview` is the tab,
   `reviewText` is the message, `blankReview` is an empty one.
