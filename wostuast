@@ -5339,16 +5339,26 @@ const PINNED = ["PLAN.md", "CLAUDE.md", "README.md"];
 // The score decides the order. A run of letters counts for much more than the
 // same letters scattered, the start of a path segment or a word counts extra,
 // and so does the file's own name over the directories above it.
-function fuzzy(text, query) {
+// `slack` is how many letters of the query may simply not be there. It is for
+// file names, where one wrong character should not hide the file you meant. It
+// is not for the session filter: that haystack is a short line of text, and
+// forgiving a letter there matches half the list.
+function fuzzy(text, query, slack = 0) {
   const lower = text.toLowerCase();
   const at = [];
   let score = 0;
   let from = 0;
   let run = 0;
+  let missed = 0;
   const base = lower.lastIndexOf("/") + 1;
   for (const want of query) {
     const found = lower.indexOf(want, from);
-    if (found < 0) return null;
+    if (found < 0) {
+      if (++missed > slack) return null;
+      score -= 120;              // far more than any bonus below can give back
+      run = 0;
+      continue;
+    }
     run = (found === from && at.length) ? run + 1 : 0;
     score += 10 + run * 14;
     const before = found ? lower[found - 1] : "/";
@@ -5358,7 +5368,44 @@ function fuzzy(text, query) {
     at.push(found);
     from = found + 1;
   }
-  return { score: score - lower.length / 50, at };
+  return { score: score - lower.length / 50, at, missed };
+}
+
+// What a path is matched against: the name, unless you typed a slash.
+//
+// Matching the whole path let the letters of "MetricsBuilder" land across four
+// directory names and a filename — 71 characters apart, in
+// `.../odin/agent/metrics/jmx/MBeanSubscriptionBuilder.java` — while the file
+// actually wanted did not come back at all. Scattered over a long path, a
+// subsequence means nothing. Scattered over a name, it means what you meant.
+// A slash in the query says you are thinking about where the file is, and then
+// the whole path is fair game.
+//: How far apart the letters of a query may sit when it matches a directory
+//: rather than a name. 71 characters for a 14-letter query was the nonsense;
+//: `libcorrelation` sitting whole inside one directory name is the point.
+const TIGHT = 2.5;
+
+function findPath(path, query) {
+  // "MetricsBuilder" has an `s` that `MetricBuilder.h` does not, and hiding
+  // the file you meant over one character is worse than showing it a little
+  // lower down. A short query gets no such forgiveness: there is nothing left
+  // of "cfg" once a letter goes.
+  const slack = query.length >= 5 ? 1 : 0;
+  if (query.includes("/")) return fuzzy(path, query, slack);
+  const cut = path.lastIndexOf("/") + 1;
+  const named = fuzzy(path.slice(cut), query, slack);
+  if (named) {
+    // The name is what you were looking for, so it outranks any directory.
+    return { score: named.score + 200, missed: named.missed,
+             at: named.at.map((where) => where + cut) };
+  }
+  // Not in the name, so a directory may be what you meant — `libcorrelation`
+  // names a folder, not a file. Only when the letters sit close together,
+  // though: spread across four directory names they mean nothing.
+  const wide = fuzzy(path, query, slack);
+  if (!wide || !wide.at.length) return null;
+  const span = wide.at[wide.at.length - 1] - wide.at[0] + 1;
+  return span <= query.length * TIGHT ? wide : null;
 }
 
 // --- the tree ---------------------------------------------------------------
@@ -5519,7 +5566,7 @@ function listRows() {
 function pick(names) {
   const found = [];
   for (const path of names) {
-    const got = fuzzy(path, state.find);
+    const got = findPath(path, state.find);
     if (got) found.push({ path, at: got.at, score: got.score });
   }
   found.sort((a, b) => b.score - a.score);
@@ -5739,7 +5786,8 @@ function drawDiff(box) {
   }
   let shown = 0;
   for (const section of report.sections) {
-    const files = (section.files || []).filter((one) => fuzzy(one.path, state.find));
+    const files = (section.files || []).filter(
+      (one) => findPath(one.path, state.find));
     if (!files.length) continue;
     shown += files.length;
     put(list, "div", "head", section.title);
@@ -5749,20 +5797,21 @@ function drawDiff(box) {
       const button = put(list, "button");
       button.type = "button";
       button.title = one.path;
-      putName(button, one.path, (fuzzy(one.path, state.find) || {}).at || []);
+      putName(button, one.path, (findPath(one.path, state.find) || {}).at || []);
       putCounts(put(button, "span", "counts"), one);
       button.addEventListener("click",
                               () => node.scrollIntoView({ block: "start" }));
     }
   }
-  const loose = (report.untracked || []).filter((name) => fuzzy(name, state.find));
+  const loose = (report.untracked || []).filter(
+    (name) => findPath(name, state.find));
   if (loose.length) {
     put(list, "div", "head", "untracked");
     for (const name of loose) {
       const button = put(list, "button", state.loose === name ? "chosen" : "");
       button.type = "button";
       button.title = name;
-      putName(button, name, (fuzzy(name, state.find) || {}).at || []);
+      putName(button, name, (findPath(name, state.find) || {}).at || []);
       button.addEventListener("click", () => chooseUntracked(name));
     }
   }

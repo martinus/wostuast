@@ -702,3 +702,56 @@ def test_the_shebang_is_read_without_a_browser(page_at):
             }
         finally:
             browser.close()
+
+
+def test_the_find_box_searches_the_name_not_the_whole_path(page_at):
+    """Reported from a real repository. Searching "MetricsBuilder" returned
+    `.../odin/agent/metrics/jmx/MBeanSubscriptionBuilder.java` — the letters
+    scattered over 71 characters of path, across four directory names — and
+    did not return `.../mintv2/MetricBuilder.h`, which is what was meant, over
+    one `s` that is not in it.
+
+    Scattered over a long path a subsequence means nothing. Scattered over a
+    name it means what you meant. A directory can still be searched, but only
+    when its letters sit together, and a slash says you meant the path.
+    """
+    junk = ("java-odin/introspection/src/main/java/com/dynatrace/odin/agent"
+            "/metrics/jmx/MBeanSubscriptionBuilder.java")
+    good = "native/shared/libmintv2/src/main/public/mintv2/MetricBuilder.h"
+    deep = "native/shared/libcorrelation/src/Action.h"
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            got = page.evaluate(
+                """([junk, good, deep]) => ({
+                     junk: !!findPath(junk, "metricsbuilder"),
+                     good: !!findPath(good, "metricsbuilder"),
+                     exact: !!findPath(good, "metricbuilder"),
+                     byDirectory: !!findPath(deep, "libcorrelation"),
+                     wrongDirectory: !!findPath(good, "libcorrelation"),
+                     withSlash: !!findPath(good, "mintv2/metric"),
+                     nothingTyped: !!findPath(good, ""),
+                     shortQueryIsStrict: !!findPath(good, "xyz"),
+                   })""", [junk, good, deep])
+            assert got == {
+                "junk": False, "good": True, "exact": True,
+                "byDirectory": True, "wrongDirectory": False,
+                "withSlash": True, "nothingTyped": True,
+                "shortQueryIsStrict": False,
+            }
+        finally:
+            browser.close()
+
+
+def test_a_name_match_outranks_a_directory_match(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            better = page.evaluate("""() => {
+              const byName = findPath("src/thing/parser.c", "parser");
+              const byDir = findPath("src/parser/thing.c", "parser");
+              return byName.score > byDir.score;
+            }""")
+            assert better, "a directory outranked the file you named"
+        finally:
+            browser.close()

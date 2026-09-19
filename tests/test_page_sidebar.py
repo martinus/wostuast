@@ -296,3 +296,23 @@ def test_the_chosen_row_is_tinted_all_the_way_down(page_at):
             assert seen["height"] > 40
         finally:
             browser.close()
+
+
+def test_the_session_filter_forgives_nothing(past_at):
+    """The file matcher forgives one missing letter, because a file name is
+    long and one wrong character should not hide it. The session haystack is a
+    short line of text, and forgiving a letter there matched half the list —
+    "acorn" found a session whose worktree merely contained a, c, o and r."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            strict = page.evaluate("""() => ({
+              exact: !!fuzzy("repo/acorn", "acorn"),
+              oneLetterShort: !!fuzzy("repo/acor", "acorn"),
+              scattered: !!fuzzy("repo/a-c-o-r", "acorn"),
+            })""")
+            assert strict == {"exact": True, "oneLetterShort": False,
+                              "scattered": False}
+        finally:
+            browser.close()
