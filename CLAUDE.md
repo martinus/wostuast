@@ -216,6 +216,12 @@ settings.
   that may lose its animation. A transcript block slides in only where a block
   arrives, in `patchTranscript`. That animation sat on `.turn` for a long
   time, so the whole history slid every time the tab was rebuilt.
+- **A draft review is the one thing the page keeps, and it keeps it in the
+  browser.** A review is yours until you submit it, and the daemon serves the
+  same page to every browser, so a draft it held would be a draft everyone
+  could read. `keepReview` runs on every change and `recallReview` checks the
+  shape of what comes back: storage is not a place to trust blindly. Reviews
+  for sessions the daemon no longer lists are swept once per page.
 - **A review comment is anchored to what it is about, never to the node it
   was drawn on.** `anchorOf` writes down the path, the side and the line
   number, because the Diff tab is rebuilt from `state.diff` every time the
@@ -277,6 +283,6 @@ tool behind.
    arrived early, in milestone 2, because it was asked for.
 6. **Shine** — done. Light theme, motion, empty states, keyboard help,
    README. No screenshots: `PLAN.md` section 9 says why.
-7. **Review** — stages 1 (Mark) and 2 (Send) done. Comment on a diff line or a file, then
+7. **Review** — done. Stages: mark, send, keep. Comment on a diff line or a file, then
    submit the whole review to the agent as one message. `PLAN.md` section 4.9
    is the spec; three stages: mark, send, keep.

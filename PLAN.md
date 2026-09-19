@@ -825,6 +825,19 @@ Commit at the end of each milestone. Each one leaves a working tool.
    3. **Keep.** Drafts survive a reload. A comment whose line has moved says
       so rather than pointing at whatever is there now.
 
+      What comes back out of a browser's storage is checked before it is
+      drawn: a comment of the wrong shape is left out. A review for a session
+      the daemon no longer lists is swept up once, when the first list
+      arrives, because storage outlives any one page.
+
+      Three answers, not two. A comment is **here**, or **moved** — its line
+      is there but no longer says what the comment was written against — or
+      **gone**, its line no longer in the diff at all. A gone comment is
+      drawn under the diff rather than dropped, with the line it quoted, and
+      it is still sent. A comment nobody could check is not marked, and an
+      unmarked comment counts as here: the Diff tab may not have been opened
+      at all, and silence beats a guess.
+
 ## 10. README
 
 Write it in the style of the gra README: a one-line tagline, "a minute with

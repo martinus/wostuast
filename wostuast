@@ -4073,6 +4073,20 @@ body:not(.show-thinking) .thinking { display: none; }
   font-family: var(--sans); font-size: 13px; color: var(--ink);
 }
 .comment .note { white-space: pre-wrap; line-height: 1.5; }
+/* A comment whose line has moved, or has gone. It keeps the line it was
+   written against, because that is what says what it was about. */
+.comment.stale { border-left-color: var(--hot); }
+.comment .was { margin-bottom: 4px; font-size: 11px; color: var(--hot); }
+.comment .quoted {
+  margin-bottom: 6px; padding: 3px 8px; border-radius: 4px;
+  background: var(--code); color: var(--ink-faint);
+  font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
+}
+.diffhead.gone { color: var(--hot); }
+.onFile > .where {
+  margin: 6px 20px 0; font-family: var(--mono); font-size: 12px;
+  color: var(--ink-mute);
+}
 .link {
   margin-top: 6px; padding: 0; border: none; background: none; cursor: pointer;
   color: var(--ink-faint); font-family: var(--mono); font-size: 11px;
@@ -4282,6 +4296,8 @@ const state = {
   review: [],
   writing: null,        // the anchor of the comment box that is open, if any
   overall: "",          // the review's note about itself, shown in the preview
+  marks: new Map(),     // per comment: here, moved, or gone
+  pruned: false,        // whether the stored reviews have been swept once
   diffRaw: "",          // the last answer, as it arrived, to compare against
   diffAt: 0,            // bumped when that answer changes, so keys stay short
   poll: 0,
@@ -4562,6 +4578,7 @@ function drawSessions() {
   // moment a session is first chosen, and the new stream opens with a full
   // push of its own, so every page load drew the whole sidebar twice.
   const shown = shownSessions();
+  pruneReviews(state.sessions);
   drawCounts(shown);
   const listed = listedSessions();
   const past = shown.filter(isGone);
@@ -5598,6 +5615,7 @@ function drawDiff(box) {
   pane.replaceChildren();
 
   const report = state.diff || { sections: [], untracked: [] };
+  state.marks = resolveReview(report);
   // A file the agent has since committed is no longer untracked, so the pick
   // goes with it rather than pointing at a section that no longer names it.
   if (state.loose && !(report.untracked || []).includes(state.loose)) {
@@ -5667,6 +5685,17 @@ function drawDiff(box) {
     requestAnimationFrame(() => picked.scrollIntoView({ block: "start" }));
   } else if (place) {
     requestAnimationFrame(() => { pane.scrollTop = place; });
+  }
+  const orphans = state.review.filter(
+    (one) => state.marks.get(one.anchor) === "gone");
+  if (orphans.length) {
+    put(pane, "div", "diffhead gone", "comments with nowhere left to sit");
+    for (const one of orphans) {
+      const [path, side, line] = one.anchor.split("\n");
+      const block = put(pane, "div", "onFile");
+      put(block, "div", "where", side === "file" ? path : path + ":" + line);
+      putComment(block, one);
+    }
   }
   note.replaceChildren();
   countNote(note, shown + loose.length);
@@ -5769,15 +5798,31 @@ function drawDiffFile(pane, one) {
 // thing on the wire.
 const HUNK_AT = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
-function fillDiffFile(body, one) {
-  const sign = { added: "+", removed: "\u2212", context: " " };
-  for (const hunk of one.hunks) {
-    put(body, "div", "hunk", hunk.header);
-    const lines = put(body, "div", "dlines");
+// Every line of a file's diff with the numbers it carries on each side. A
+// removed line has none on the new side and an added one has none on the old
+// side. Two callers walk this — the drawing, and the check for whether a
+// comment's line is still where it was — and a second copy of the arithmetic
+// is a second copy that can drift.
+function walkHunks(one, onHunk, onLine) {
+  for (const hunk of one.hunks || []) {
+    const where = onHunk ? onHunk(hunk) : null;
     const found = HUNK_AT.exec(hunk.header);
     let old = found ? Number(found[1]) : 0;
     let now = found ? Number(found[2]) : 0;
     for (const line of hunk.lines) {
+      onLine(line, old, now, where);
+      if (line.kind !== "added") old += 1;
+      if (line.kind !== "removed") now += 1;
+    }
+  }
+}
+
+function fillDiffFile(body, one) {
+  const sign = { added: "+", removed: "\u2212", context: " " };
+  walkHunks(one, (hunk) => {
+    put(body, "div", "hunk", hunk.header);
+    return put(body, "div", "dlines");
+  }, (line, old, now, lines) => {
       const row = put(lines, "div", "dline " + line.kind);
       // Both numbers in one span, lined up with spaces. The row is already
       // `white-space: pre` in a monospace face, so they stay in column
@@ -5795,10 +5840,7 @@ function fillDiffFile(body, one) {
       } else {
         putReview(row, anchor, line.text, "plus");
       }
-      if (line.kind !== "added") old += 1;
-      if (line.kind !== "removed") now += 1;
-    }
-  }
+  });
 }
 
 // --- the review ---------------------------------------------------------------
@@ -5823,6 +5865,93 @@ function commentAt(anchor) {
   return state.review.find((one) => one.anchor === anchor) || null;
 }
 
+// --- keeping a review ---------------------------------------------------------
+//
+// In this browser, and nowhere else. A review is yours until you submit it,
+// and the daemon serves the same page to every browser, so a draft it held
+// would be a draft everyone could read. A review written over ten minutes has
+// to survive a reload; nothing else here does, and nothing else here needs to.
+
+const REVIEW_KEY = "wostuast-review-";
+
+function keepReview() {
+  if (!state.chosen) return;
+  try {
+    if (!state.review.length && !state.overall) {
+      localStorage.removeItem(REVIEW_KEY + state.chosen);
+      return;
+    }
+    localStorage.setItem(REVIEW_KEY + state.chosen, JSON.stringify(
+      { overall: state.overall, comments: state.review }));
+  } catch (error) { }      // a private window, or the quota; the page goes on
+}
+
+function recallReview(id) {
+  state.review = [];
+  state.overall = "";
+  let held = null;
+  try { held = JSON.parse(localStorage.getItem(REVIEW_KEY + id) || "null"); }
+  catch (error) { return; }
+  if (!held || !Array.isArray(held.comments)) return;
+  // What comes back was written by this page, but a browser's storage is not
+  // a place to trust blindly: anything of the wrong shape is left out rather
+  // than drawn.
+  state.review = held.comments.filter(
+    (one) => one && typeof one.anchor === "string" && typeof one.note === "string");
+  state.overall = typeof held.overall === "string" ? held.overall : "";
+}
+
+// A review for a session the daemon no longer lists is a review nobody can
+// send. Done once, when the first list arrives, because storage is per browser
+// and the sessions outlive any one page.
+function pruneReviews(sessions) {
+  if (state.pruned || !sessions.length) return;
+  state.pruned = true;
+  const live = new Set(sessions.map((one) => one.id));
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(REVIEW_KEY) && !live.has(key.slice(REVIEW_KEY.length))) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch (error) { }
+}
+
+// --- has the line moved? ------------------------------------------------------
+
+// The agent keeps working while you read, so the diff can move under a
+// half-written review. Every comment comes back "here", "moved" — the line is
+// there but no longer says what the comment was written against — or "gone".
+// A comment nobody could check is not marked at all, and an unmarked comment
+// is treated as "here": claiming otherwise would be a guess.
+function resolveReview(report) {
+  const marks = new Map();
+  if (!state.review.length) return marks;
+  for (const one of state.review) marks.set(one.anchor, "gone");
+  const untracked = new Set(report.untracked || []);
+  for (const path of untracked) {
+    // Only its name is known unless it is the one being read, so a comment on
+    // it cannot be checked — and a file that is still listed is still there.
+    for (const one of state.review) {
+      if (one.anchor.split("\n")[0] === path) marks.set(one.anchor, "here");
+    }
+  }
+  for (const section of (report.sections || [])) {
+    for (const file of (section.files || [])) {
+      const whole = anchorOf(file.path, "file", 0);
+      if (marks.has(whole)) marks.set(whole, "here");
+      walkHunks(file, null, (line, old, now) => {
+        const anchor = lineAnchor(file.path, line, old, now);
+        if (!marks.has(anchor)) return;
+        const had = commentAt(anchor);
+        marks.set(anchor,
+                  had && had.quoted && had.quoted !== line.text ? "moved" : "here");
+      });
+    }
+  }
+  return marks;
+}
+
 // The note the reader typed. An empty one deletes the comment, which is what
 // clearing the box and saving means; there is no separate delete to remember.
 function writeComment(anchor, quoted, note) {
@@ -5836,6 +5965,7 @@ function writeComment(anchor, quoted, note) {
     state.review.push({ anchor: anchor, quoted: quoted, note: text });
   }
   state.writing = null;
+  keepReview();
   redrawDiff();
 }
 
@@ -5849,8 +5979,18 @@ function redrawDiff() {
 }
 
 // One comment, under the line or the file it is about.
+const MARK_WORDS = {
+  moved: "the line has changed since this was written",
+  gone: "this line is no longer in the diff",
+};
+
 function putComment(parent, one) {
-  const node = put(parent, "div", "comment");
+  const mark = state.marks.get(one.anchor);
+  const node = put(parent, "div", "comment" + (MARK_WORDS[mark] ? " stale" : ""));
+  if (MARK_WORDS[mark]) {
+    put(node, "div", "was", MARK_WORDS[mark]);
+    if (one.quoted) put(node, "div", "quoted", one.quoted);
+  }
   put(node, "div", "note", one.note);
   const edit = put(node, "button", "link", "edit");
   edit.type = "button";
@@ -5925,7 +6065,9 @@ function reviewText() {
   if (state.overall.trim()) parts.push(state.overall.trim());
   for (const one of comments) {
     const [path, side, line] = one.anchor.split("\n");
-    const head = side === "file" ? path : path + ":" + line;
+    const mark = MARK_WORDS[state.marks.get(one.anchor)];
+    const head = (side === "file" ? path : path + ":" + line)
+      + (mark ? "  (" + mark + ")" : "");
     parts.push(one.quoted ? head + "\n> " + one.quoted + "\n" + one.note
                           : head + "\n" + one.note);
   }
@@ -5961,6 +6103,7 @@ async function submitReview() {
   $("review").close();
   state.review = [];
   state.overall = "";
+  keepReview();
   redrawDiff();
   // Claude Code queues what arrives mid-turn, so a review sent to a working
   // agent is not lost — it is read when the turn ends. Say so, because from
@@ -6135,9 +6278,9 @@ function choose(id) {
   state.peekWhy = "";
   state.peekAt += 1;
   state.diff = null;
-  state.review = [];
+  recallReview(id);
   state.writing = null;
-  state.overall = "";
+  state.marks = new Map();
   state.diffRaw = "";
   state.diffAt += 1;
   drawDiffCount();          // the last session's counts are not this one's
@@ -6382,6 +6525,7 @@ $("reviewstop").addEventListener("click", () => $("review").close());
 $("overall").addEventListener("input", (typed) => {
   state.overall = typed.target.value;
   $("reviewtext").textContent = reviewText();
+  keepReview();
 });
 $("bell").addEventListener("click", () => { toggleNotifications(); });
 

@@ -320,6 +320,12 @@ into your terminal, which is why the preview cannot be skipped. Control
 characters are stripped on the way out, because an escape byte is invisible in
 a preview and a paste ends at one.
 
+A review is kept in your browser until you send it, so a reload does not lose
+it. The agent keeps working while you read, so a comment whose line has since
+changed says so and keeps the line it was written against, and one whose line
+has gone is shown under the diff rather than dropped. Both are still sent, and
+the message says which is which.
+
 The same box does all three. It sits above the list on Files and Diff, and at
 the right of the tab strip for the transcript, where it searches for the text
 you typed rather than matching scattered letters.
@@ -352,9 +358,8 @@ sessions, lists them in the terminal, and serves a live page with the
 transcript, the worktree's files and its diff, and it can jump to a pane, type
 into it and show you what it holds.
 
-Milestone 7 is under way: review a diff from the page the way you review a
-pull request. Comments and the send are in; what is left is keeping a draft
-across a reload, and saying so when a comment's line has moved.
+Milestone 7 is done too: review a diff from the page the way you review a pull
+request, and send the whole review to the agent in one go.
 
 There are no screenshots here. A screenshot of this page is a screenshot of
 somebody's agents, and made-up ones would show a tool nobody is using. Run
