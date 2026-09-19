@@ -337,9 +337,9 @@ change through its diff, or read a whole file and comment anywhere in it.
 The comments collect into a review, and the **Review** tab is where you read
 it back. It holds a name for the task, a box for what to do, one block per
 place with the line quoted under it, and the message itself at the bottom with
-the send button below that. Each block leads back to the file it is about, each
-comment can be edited or deleted, and the whole review can be thrown away in
-two presses. The tab counts what is waiting, so a review you left is never out
+the send button below that. Each block leads back to the file it is about and to
+the line in it, each comment can be edited or deleted, and the whole review
+can be thrown away in two presses. The tab counts what is waiting, so a review you left is never out
 of sight. `r` goes there.
 
 Some of that message is text the agent wrote, and it is about to be pasted

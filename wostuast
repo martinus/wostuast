@@ -5737,7 +5737,11 @@ function drawFiles(box) {
   if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.files.path + "\n" + state.files.mtime
                            + "\n" + state.files.asText)) return;
-  const place = same ? pane.scrollTop : 0;   // the same file, read again
+  // Where the reader will be. A line that was asked for wins over the place
+  // they were in: they asked to be somewhere else.
+  const wanted = state.files.goToLine;
+  state.files.goToLine = 0;
+  const place = (same && !wanted) ? pane.scrollTop : 0;
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
   if (!state.files.path) {
@@ -5783,13 +5787,35 @@ function drawFiles(box) {
       // Where the reader will be once `place` is put back, not where an
       // emptied pane says they are: the rows have to be there before the
       // scrollbar can reach them.
-      fillCode(pane, place);
+      fillCode(pane, wanted ? lineTop(pane, code, wanted) : place);
     } else {
       fillDiffFile(code, asLines(state.files.path, rows));
       paintLines(code, state.files.path, body, state.files.lang);
     }
   }
-  if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
+  if (wanted) requestAnimationFrame(() => showLine(pane, wanted));
+  else if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
+}
+
+// How far down the pane a line stands. Only a windowed file can answer before
+// it is drawn, because only there is a row's height a fixed number.
+function lineTop(pane, code, line) {
+  const from = code.offsetTop - pane.offsetTop;
+  return Math.max(0, from + (line - 1) * CODE_H - CODE_H * 3);
+}
+
+// Put a line on screen, whichever way the file is drawn. A windowed file is
+// arithmetic; a file drawn whole has the row itself to scroll to.
+function showLine(pane, line) {
+  const code = pane.querySelector(".code");
+  if (!code) return;
+  if (code.classList.contains("windowed")) {
+    pane.scrollTop = lineTop(pane, code, line);
+    fillCode(pane);
+    return;
+  }
+  const row = code.querySelectorAll(".dline")[line - 1];
+  if (row) row.scrollIntoView({ block: "center" });
 }
 
 
@@ -5818,6 +5844,7 @@ function blankFiles() {
     // usually wants to review the next one too.
     asText: false,
     goTo: null,         // a path the list has been asked to move to
+    goToLine: 0,        // and the line in it the body should show, if any
   };
 }
 
@@ -5846,11 +5873,15 @@ function putWhere(pane, path) {
 // Open the tree down to a path, and ask the list to move to it. A filter hides
 // most of the tree, and revealing something the filter has taken out would
 // show nothing at all, so the box is cleared first.
-function revealInTree(path) {
+function revealInTree(path, line = 0) {
   for (const above of ancestors(path)) state.files.dirs.set(above, true);
   state.files.dirs.set(path, true);   // a directory opens itself; a file has
                                       // no entry, and setting one is harmless
   state.files.goTo = path;
+  state.files.goToLine = line;
+  // A document has no line to go to, so being asked for one is being asked
+  // for the lines it is written in.
+  if (line && MARKDOWN.test(path)) state.files.asText = true;
   if (state.find) {
     $("find").value = "";
     state.find = "";
@@ -6435,7 +6466,7 @@ function drawReview(box) {
     const go = put(head, "button", "crumb", where);
     go.type = "button";
     go.title = "open " + path;
-    go.addEventListener("click", () => goToComment(path));
+    go.addEventListener("click", () => goToComment(one.anchor));
     // The same dispatch every other place uses: the box if it is being
     // written, the comment if it is not. A comment always exists here, so the
     // `+` branch cannot be reached.
@@ -6537,12 +6568,15 @@ function reviewKey() {
 }
 
 // Open the file a comment is about, on the tab that shows whole files.
-function goToComment(path) {
+function goToComment(anchor) {
+  const [path, line] = anchor.split("\n");
   chooseFile(path);
   // Not just `goTo`: the file may sit under a closed directory or behind a
   // filter, and then the list has nothing to move to. `revealInTree` opens
-  // the way and clears the box.
-  revealInTree(path);
+  // the way, clears the box, and takes the line the comment is about — the
+  // heading says `path:112`, so landing at the top of the file was telling
+  // the reader where to go and then not going there.
+  revealInTree(path, Number(line));
   showTab("files");
 }
 
