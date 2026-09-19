@@ -89,50 +89,6 @@ def test_the_send_box_belongs_to_the_transcript(in_pane):
             browser.close()
 
 
-def test_peek_shows_the_pane_in_its_colours(in_pane):
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            show_tab(page, "peek")
-            page.wait_for_selector(".peek b")
-            assert page.locator(".peek").inner_text().startswith("all good")
-            green = page.eval_on_selector(".peek b", "el => el.style.color")
-            assert "--ansi-2" in green
-            assert "waiting" in page.locator(".peek").inner_text()
-        finally:
-            browser.close()
-
-
-def test_peek_never_reads_what_a_terminal_printed_as_markup(ws, in_pane,
-                                                            monkeypatch):
-    """A pane can hold anything an agent ran. Every run is set with
-    textContent, so it is shown, never obeyed."""
-    monkeypatch.setattr(ws, "run", lambda args, **rest:
-                        "<img src=x onerror=\"window.pwned=1\">"
-                        "<script>window.pwned=1</script>done")
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            show_tab(page, "peek")
-            page.wait_for_timeout(600)
-            assert page.evaluate("window.pwned") is None
-            assert page.locator(".peek img, .peek script").count() == 0
-            assert "onerror" in page.locator(".peek").inner_text()
-        finally:
-            browser.close()
-
-
-def test_peek_says_so_when_there_is_no_pane(no_pane):
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, no_pane[1]))
-        try:
-            show_tab(page, "peek")
-            page.wait_for_timeout(500)
-            assert "not in tmux" in page.locator(".peek").inner_text()
-        finally:
-            browser.close()
-
-
 # --- the send box -----------------------------------------------------------
 
 

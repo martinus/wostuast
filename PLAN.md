@@ -17,7 +17,7 @@ worktree. The terminal is a good place to type and a bad place to read.
 what happens from Claude Code hooks, which append one JSON line per event to
 a log file. A small Python daemon tails that log and serves one web page.
 The page has a sidebar (one row per session, with state) and four tabs for the
-selected session: Transcript, Files, Diff, Peek. Three actions go back to the
+selected session: Transcript, Files, Diff. Two actions go back to the
 terminal, all through tmux: jump to the window, send text to the agent, and
 capture the screen. Nothing else writes to the terminal.
 
@@ -36,7 +36,10 @@ capture the screen. Nothing else writes to the terminal.
 Do not build these. If a feature needs one of them, leave the feature out.
 
 - Do not spawn, own, or wrap the agent process. tmux owns the PTY.
-- Do not embed a terminal emulator (no xterm.js). "Peek" is a static capture.
+- Do not embed a terminal emulator (no xterm.js). The terminal is where the
+  agent lives; this page is a window onto what it did, not a second one.
+  A Peek tab showed a still capture of the pane for two milestones and was
+  removed: the tmux window it copied was always one keystroke away.
 - Do not approve permission prompts from the browser. The user approves in
   the terminal.
 - Do not implement agent-to-agent messaging, teams, orchestration, cost
@@ -58,7 +61,7 @@ Do not build these. If a feature needs one of them, leave the feature out.
                                                           │
                           browser ◀──SSE/HTTP── wostuast serve ◀──tail──┘
                              │                       │
-                             └──jump / send / peek───┴──▶ tmux (by pane id)
+                             └──jump / send────────┴──▶ tmux (by pane id)
 ```
 
 ### 4.1 Events
@@ -78,14 +81,14 @@ cannot be twelve seconds behind, so wostuast listens for both.
 Nothing fires when you answer the dialog. Saying Yes is only visible once the
 tool finishes and `PostToolUse` arrives, so an approved `cmake --build` leaves
 the row amber for as long as the build runs. That is a gap wostuast cannot
-close from events, and it must not be papered over with a guess; Peek shows
+close from events, and it must not be papered over with a guess; the pane shows
 what the pane is really doing.
 
 Saying No sends no hook at all, so
 wostuast cannot see a denial: the session keeps `needs_you`, which is still
 true, because the agent is now waiting for you to say what to do instead. Only
 the reason on the row is older than it looks. Do not invent an event that does
-not exist; the Peek tab in milestone 5 is what settles "waiting for what".
+not exist; the pane itself is what settles "waiting for what".
 
 `PermissionRequest` can decide a permission: Claude Code reads a decision out
 of the hook's stdout. wostuast prints nothing, which means no decision, and the
@@ -228,7 +231,6 @@ crash the daemon.
     it is binary. The path must be a name git itself offers, and must stay
     inside the worktree.
   - `GET /api/session/<id>/diff` → parsed diff as JSON.
-  - `GET /api/session/<id>/peek` → captured pane text.
   - `POST /api/session/<id>/jump`, `POST /api/session/<id>/send`
     (body: `{"text": "…"}`).
 - Watch files with polling. Do not add inotify dependencies. Polling is fine
@@ -278,14 +280,14 @@ terminal, so the page is not an ordinary local page.
 
 ### 4.5 The tmux verbs
 
-Only three tmux commands exist in the code. Each takes the pane id from the
-session.
+Only two tmux commands exist in the code. Each takes the pane id from the
+session. There were three: `capture-pane`, which fed the Peek tab, went
+with it.
 
 | Verb | Command | Notes |
 | --- | --- | --- |
 | jump | `tmux select-window -t <pane>` then `tmux select-pane -t <pane>` | Then run `$WOSTUAST_FOCUS` if set (a user command that raises the terminal window, e.g. a KWin script). |
 | send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. Control characters are stripped, keeping tab and newline: a paste ends at `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote. Text with a newline in it is wrapped in the bracketed paste markers, because a newline typed into a terminal *is* Enter: measured against a real shell, a two-line message ran its first line and left the second on the prompt. One line is sent as it always was, so a program that does not understand the markers never sees them. |
-| peek | `tmux capture-pane -p -e -t <pane>` | A small hand-written converter turns the escape codes into runs of text, each with its colours. It makes no HTML: the page builds one node per run and sets its text with `textContent`, because a pane holds whatever an agent ran. Poll once per second while the Peek tab is visible, never otherwise. |
 
 If `pane` is empty, hide the verbs for that session and show "not in tmux".
 
@@ -616,7 +618,7 @@ storage, so a reload does too. A double-click on the edge puts it back.
 │ top bar: name · counts · "1 needs you · 1 working"            │
 ├──────────────┬───────────────────────────────────────────────┤
 │ sessions     │ session header: label · branch · pane · state  │
-│ (rows)       │ tabs: 1 Transcript  2 Files  3 Diff  4 Peek    │
+│ (rows)       │ tabs: 1 Transcript  2 Files  3 Diff           │
 │              │                                               │
 │              │ tab content                                   │
 │              │                                               │
@@ -876,7 +878,8 @@ Commit at the end of each milestone. Each one leaves a working tool.
       inside it. Syntax highlighting. Your words told apart from Claude's.
       The worktree name in front on the sidebar row.
 
-5. **Act.** jump, send, Peek, attention (title, favicon, notification).
+5. **Act.** jump, send, attention (title, favicon, notification). A Peek tab
+   was part of this and has since been removed.
    The first two are the only things this program does that a terminal can
    feel, which is why every `POST` carries the token of section 4.4.1.
 6. **Shine.** Light theme, motion, empty states, keyboard help, README.

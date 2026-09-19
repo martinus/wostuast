@@ -71,7 +71,7 @@ MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
 # child" is already true while the file columns are still standing in it. It
 # has to have stopped being split as well.
 DRAWN = {"transcript": "#content:not(.split) > *", "files": ".filebody > *",
-         "diff": ".diffbody > *", "peek": ".peek"}
+         "diff": ".diffbody > *"}
 
 HOSTILE = (
     "Read from a README:\n\n"
