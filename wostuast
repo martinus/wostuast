@@ -2839,302 +2839,321 @@ def clip_lines(text: str, limit: int) -> str:
     return "\n".join(lines[:limit]) + f"\n… {rest} more line{'s' if rest > 1 else ''}"
 
 
+class Serving:
+    """Every route the daemon answers, and none of the HTTP plumbing.
+
+    It subclasses nothing, so it lives out here at one indent rather than
+    three hundred lines deep inside `make_server`. The plumbing is mixed in
+    there, where `http.server` is imported: a bare interpreter starts in
+    10.8 ms and one that has imported `http.server` in 49.5 ms, and the hook
+    pays for every import on every tool call. Deferring that import is what
+    matters; nesting the routes was only how it was first written.
+
+    `make_server` puts the daemon on the subclass it builds, so each server
+    has its own.
+    """
+
+    daemon: Daemon           # set on the subclass, in `make_server`
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        pass  # the access log goes nowhere; our own log has what matters
+
+    def reply(self, code: int, body: bytes, kind: str) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        # No Access-Control-Allow-Origin, ever. Another site may send a
+        # request here, but without this header it cannot read the answer.
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def reply_json(self, data: Any, code: int = 200) -> None:
+        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        self.reply(code, body, "application/json; charset=utf-8")
+
+    def ours(self) -> bool:
+        """True when this request really is for the loopback address.
+
+        Binding to 127.0.0.1 keeps other machines out, and sending no
+        Access-Control-Allow-Origin keeps another site from reading the
+        answer. Neither stops a site pointing its own name at 127.0.0.1:
+        the browser then treats us as that site's own origin and lets it
+        read everything. The Host header is what gives that away.
+        """
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+        return host in ("localhost", "127.0.0.1", "::1", "")
+
+    def allowed(self) -> bool:
+        """Whether a POST may act on the terminal.
+
+        Two things beyond the Host header. The Origin, which a browser
+        sets on a cross-origin POST and which has to be ours when it is
+        there at all. And the token this daemon made at start and printed
+        into the page, in a header of its own. A cross-origin `fetch` may
+        send a plain POST with no questions asked, and the effect here is
+        `tmux send-keys` into a live terminal, so neither check is spare.
+        """
+        import hmac
+        from urllib.parse import urlparse
+
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            if urlparse(origin).hostname not in ("localhost", "127.0.0.1",
+                                                 "::1"):
+                return False
+        sent = self.headers.get(TOKEN_HEADER) or ""
+        return hmac.compare_digest(sent, self.daemon.token)
+
+    def asked(self) -> dict[str, Any]:
+        """The JSON a POST carried, or an empty one.
+
+        It is read before anything is checked, because a body left in the
+        socket makes the next request on that connection nonsense.
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > POST_MAX:
+            return {}
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def do_POST(self) -> None:  # noqa: N802 - the name http.server requires
+        from urllib.parse import urlparse
+
+        body = self.asked()
+        if not self.ours():
+            self.reply_json({"error": "wostuast answers on localhost only"},
+                            403)
+            return
+        if not self.allowed():
+            self.reply_json({"error": "that did not come from this page"},
+                            403)
+            return
+        parts = urlparse(self.path).path.strip("/").split("/")
+        try:
+            if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
+                verb = POST_VERBS.get(parts[3])
+                if verb is None:
+                    self.reply_json({"error": "no such thing"}, 404)
+                else:
+                    verb(self, parts[2], body)
+            else:
+                self.reply_json({"error": "no such thing"}, 404)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as error:
+            log(f"request {self.path} failed: {error!r}")
+            try:
+                self.reply_json({"error": "something went wrong"}, 500)
+            except OSError:
+                pass
+
+    def in_tmux(self, session_id: str) -> Session | None:
+        """The session, when it is one the verbs can reach at all."""
+        session = self.known(session_id)
+        if session is None:
+            return None
+        if not session.pane:
+            self.reply_json({"id": session_id,
+                             "error": "this session is not in tmux"}, 409)
+            return None
+        return session
+
+    def jump(self, session_id: str, body: dict[str, Any]) -> None:
+        session = self.in_tmux(session_id)
+        if session is None:
+            return
+        self.reply_json({"id": session_id,
+                         "done": tmux_jump(session.pane)})
+
+    def send(self, session_id: str, body: dict[str, Any]) -> None:
+        session = self.in_tmux(session_id)
+        if session is None:
+            return
+        text = body.get("text")
+        text = text if isinstance(text, str) else ""
+        if not text.strip():
+            self.reply_json({"id": session_id,
+                             "error": "there is nothing to send"}, 400)
+            return
+        if len(text) > SEND_MAX:
+            self.reply_json({"id": session_id,
+                             "error": f"that is more than {SEND_MAX}"
+                                      " characters"}, 400)
+            return
+        if session.state in GONE_STATES:
+            self.reply_json({"id": session_id,
+                             "error": "this session is over"}, 409)
+            return
+        self.reply_json({"id": session_id,
+                         "done": tmux_send(session.pane, text)})
+
+    def peek(self, session_id: str, query: dict[str, list[str]]) -> None:
+        session = self.known(session_id)
+        if session is None:
+            return
+        if not session.pane:
+            self.reply_json({"id": session_id, "runs": [],
+                             "missing": "This session is not in tmux, so"
+                                        " there is no pane to look at."})
+            return
+        text = tmux_peek(session.pane)
+        if text is None:
+            self.reply_json({"id": session_id, "runs": [],
+                             "missing": "tmux did not answer. The pane may"
+                                        " be gone."})
+            return
+        self.reply_json({"id": session_id,
+                         "runs": [asdict(one) for one in ansi_runs(text)]})
+
+    def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
+        from urllib.parse import parse_qs, urlparse
+
+        if not self.ours():
+            self.reply_json({"error": "wostuast answers on localhost only"}, 403)
+            return
+        url = urlparse(self.path)
+        path = url.path
+        query = parse_qs(url.query)
+        parts = path.strip("/").split("/")
+        try:
+            if path == "/":
+                page = PAGE.replace(TOKEN_MARK, self.daemon.token)
+                self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
+            elif path == "/api/sessions":
+                self.reply_json(self.daemon.sessions_payload())
+            elif path == "/api/events":
+                self.stream(query.get("watch", [""])[0])
+            elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
+                verb = GET_VERBS.get(parts[3])
+                if verb is None:
+                    self.reply_json({"error": "no such thing"}, 404)
+                else:
+                    verb(self, parts[2], query)
+            else:
+                self.reply_json({"error": "no such thing"}, 404)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as error:
+            log(f"request {self.path} failed: {error!r}")
+            try:
+                self.reply_json({"error": "something went wrong"}, 500)
+            except OSError:
+                pass
+
+    def known(self, session_id: str) -> Session | None:
+        """The session, or None with a 404 already sent."""
+        session = self.daemon.session(session_id)
+        if session is None:
+            self.reply_json({"error": "no such session"}, 404)
+        return session
+
+    def transcript(self, session_id: str, query: dict[str, list[str]]) -> None:
+        blocks = self.daemon.read_transcript(session_id)
+        if blocks is None:
+            self.reply_json({"id": session_id, "blocks": [],
+                             "missing": "no transcript for this session"})
+            return
+        self.reply_json({"id": session_id, "blocks": blocks_json(blocks)})
+
+    def files(self, session_id: str, query: dict[str, list[str]]) -> None:
+        session = self.known(session_id)
+        if session is None:
+            return
+        held = self.daemon.files.of(session.cwd)
+        tree = held.tree
+        body = {
+            "id": session_id, "root": tree.root, "total": tree.total,
+            "cut": tree.cut, "failed": tree.failed, "tag": held.tag,
+            # Name to modification time, for the few files that moved. The
+            # page needs the time to put the newest change first.
+            "changed": held.changed,
+        }
+        # The browser sends back the tag it already holds. Names change
+        # when a file is added or removed, which is rare; which files have
+        # changed moves every few seconds. So a poll costs a few hundred
+        # bytes instead of the 1.7 MB that fifty thousand names weigh.
+        if not held.tag or query.get("have", [""])[0] != held.tag:
+            body["names"] = held.names
+        self.reply_json(body)
+
+    def file(self, session_id: str, query: dict[str, list[str]]) -> None:
+        session = self.known(session_id)
+        if session is None:
+            return
+        wanted = query.get("path", [""])[0]
+        found = read_worktree_file(session.cwd, wanted)
+        if found is None:
+            self.reply_json({"id": session_id, "path": wanted,
+                             "missing": "that file is not in this worktree"}, 404)
+            return
+        self.reply_json(dict(asdict(found), id=session_id, path=wanted))
+
+    def diff(self, session_id: str, query: dict[str, list[str]]) -> None:
+        session = self.known(session_id)
+        if session is None:
+            return
+        self.reply_json(dict(asdict(worktree_diff(session.cwd)), id=session_id))
+
+    def stream(self, watching: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        client = self.daemon.hub.add(watching)
+        try:
+            first = json.dumps(self.daemon.sessions_payload(), default=str)
+            self.wfile.write(f"event: sessions\ndata: {first}\n\n".encode("utf-8"))
+            self.wfile.flush()
+            while not self.daemon.stopping.is_set():
+                try:
+                    message = client.queue.get(timeout=15.0)
+                except client.empty:
+                    message = ": still here\n\n"  # a comment keeps it open
+                self.wfile.write(message.encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            self.daemon.hub.drop(client)
+
+
+# The verbs a session route can end in.
+GET_VERBS: dict[str, Any] = {
+    "transcript": Serving.transcript,
+    "files": Serving.files,
+    "file": Serving.file,
+    "diff": Serving.diff,
+    "peek": Serving.peek,
+}
+
+# These two write to a terminal, so they are the reason every POST carries
+# a token. There will never be a third without PLAN.md section 4.5 saying
+# so.
+POST_VERBS: dict[str, Any] = {
+    "jump": Serving.jump,
+    "send": Serving.send,
+}
+
+
 def make_server(daemon: Daemon, port: int) -> Any:
-    """Build the HTTP server. The imports are here, not at the top of the file,
-    because the hook runs on every tool call and must not pay for them."""
-    import queue
+    """Build the HTTP server. Every route is in `Serving`; what is here is the
+    plumbing, and the import that must stay late."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(Serving, BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = f"wostuast/{VERSION}"
+        daemon = None        # this server's own, set right below
 
-        def log_message(self, fmt: str, *args: Any) -> None:
-            pass  # the access log goes nowhere; our own log has what matters
-
-        def reply(self, code: int, body: bytes, kind: str) -> None:
-            self.send_response(code)
-            self.send_header("Content-Type", kind)
-            self.send_header("Content-Length", str(len(body)))
-            # No Access-Control-Allow-Origin, ever. Another site may send a
-            # request here, but without this header it cannot read the answer.
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def reply_json(self, data: Any, code: int = 200) -> None:
-            body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
-            self.reply(code, body, "application/json; charset=utf-8")
-
-        def ours(self) -> bool:
-            """True when this request really is for the loopback address.
-
-            Binding to 127.0.0.1 keeps other machines out, and sending no
-            Access-Control-Allow-Origin keeps another site from reading the
-            answer. Neither stops a site pointing its own name at 127.0.0.1:
-            the browser then treats us as that site's own origin and lets it
-            read everything. The Host header is what gives that away.
-            """
-            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-            return host in ("localhost", "127.0.0.1", "::1", "")
-
-        def allowed(self) -> bool:
-            """Whether a POST may act on the terminal.
-
-            Two things beyond the Host header. The Origin, which a browser
-            sets on a cross-origin POST and which has to be ours when it is
-            there at all. And the token this daemon made at start and printed
-            into the page, in a header of its own. A cross-origin `fetch` may
-            send a plain POST with no questions asked, and the effect here is
-            `tmux send-keys` into a live terminal, so neither check is spare.
-            """
-            import hmac
-            from urllib.parse import urlparse
-
-            origin = (self.headers.get("Origin") or "").strip()
-            if origin:
-                if urlparse(origin).hostname not in ("localhost", "127.0.0.1",
-                                                     "::1"):
-                    return False
-            sent = self.headers.get(TOKEN_HEADER) or ""
-            return hmac.compare_digest(sent, daemon.token)
-
-        def asked(self) -> dict[str, Any]:
-            """The JSON a POST carried, or an empty one.
-
-            It is read before anything is checked, because a body left in the
-            socket makes the next request on that connection nonsense.
-            """
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                length = 0
-            if length <= 0 or length > POST_MAX:
-                return {}
-            try:
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                return {}
-            return body if isinstance(body, dict) else {}
-
-        def do_POST(self) -> None:  # noqa: N802 - the name http.server requires
-            from urllib.parse import urlparse
-
-            body = self.asked()
-            if not self.ours():
-                self.reply_json({"error": "wostuast answers on localhost only"},
-                                403)
-                return
-            if not self.allowed():
-                self.reply_json({"error": "that did not come from this page"},
-                                403)
-                return
-            parts = urlparse(self.path).path.strip("/").split("/")
-            try:
-                if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-                    verb = POST_VERBS.get(parts[3])
-                    if verb is None:
-                        self.reply_json({"error": "no such thing"}, 404)
-                    else:
-                        verb(self, parts[2], body)
-                else:
-                    self.reply_json({"error": "no such thing"}, 404)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            except Exception as error:
-                log(f"request {self.path} failed: {error!r}")
-                try:
-                    self.reply_json({"error": "something went wrong"}, 500)
-                except OSError:
-                    pass
-
-        def in_tmux(self, session_id: str) -> Session | None:
-            """The session, when it is one the verbs can reach at all."""
-            session = self.known(session_id)
-            if session is None:
-                return None
-            if not session.pane:
-                self.reply_json({"id": session_id,
-                                 "error": "this session is not in tmux"}, 409)
-                return None
-            return session
-
-        def jump(self, session_id: str, body: dict[str, Any]) -> None:
-            session = self.in_tmux(session_id)
-            if session is None:
-                return
-            self.reply_json({"id": session_id,
-                             "done": tmux_jump(session.pane)})
-
-        def send(self, session_id: str, body: dict[str, Any]) -> None:
-            session = self.in_tmux(session_id)
-            if session is None:
-                return
-            text = body.get("text")
-            text = text if isinstance(text, str) else ""
-            if not text.strip():
-                self.reply_json({"id": session_id,
-                                 "error": "there is nothing to send"}, 400)
-                return
-            if len(text) > SEND_MAX:
-                self.reply_json({"id": session_id,
-                                 "error": f"that is more than {SEND_MAX}"
-                                          " characters"}, 400)
-                return
-            if session.state in GONE_STATES:
-                self.reply_json({"id": session_id,
-                                 "error": "this session is over"}, 409)
-                return
-            self.reply_json({"id": session_id,
-                             "done": tmux_send(session.pane, text)})
-
-        def peek(self, session_id: str, query: dict[str, list[str]]) -> None:
-            session = self.known(session_id)
-            if session is None:
-                return
-            if not session.pane:
-                self.reply_json({"id": session_id, "runs": [],
-                                 "missing": "This session is not in tmux, so"
-                                            " there is no pane to look at."})
-                return
-            text = tmux_peek(session.pane)
-            if text is None:
-                self.reply_json({"id": session_id, "runs": [],
-                                 "missing": "tmux did not answer. The pane may"
-                                            " be gone."})
-                return
-            self.reply_json({"id": session_id,
-                             "runs": [asdict(one) for one in ansi_runs(text)]})
-
-        def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
-            from urllib.parse import parse_qs, urlparse
-
-            if not self.ours():
-                self.reply_json({"error": "wostuast answers on localhost only"}, 403)
-                return
-            url = urlparse(self.path)
-            path = url.path
-            query = parse_qs(url.query)
-            parts = path.strip("/").split("/")
-            try:
-                if path == "/":
-                    page = PAGE.replace(TOKEN_MARK, daemon.token)
-                    self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
-                elif path == "/api/sessions":
-                    self.reply_json(daemon.sessions_payload())
-                elif path == "/api/events":
-                    self.stream(query.get("watch", [""])[0])
-                elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-                    verb = GET_VERBS.get(parts[3])
-                    if verb is None:
-                        self.reply_json({"error": "no such thing"}, 404)
-                    else:
-                        verb(self, parts[2], query)
-                else:
-                    self.reply_json({"error": "no such thing"}, 404)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            except Exception as error:
-                log(f"request {self.path} failed: {error!r}")
-                try:
-                    self.reply_json({"error": "something went wrong"}, 500)
-                except OSError:
-                    pass
-
-        def known(self, session_id: str) -> Session | None:
-            """The session, or None with a 404 already sent."""
-            session = daemon.session(session_id)
-            if session is None:
-                self.reply_json({"error": "no such session"}, 404)
-            return session
-
-        def transcript(self, session_id: str, query: dict[str, list[str]]) -> None:
-            blocks = daemon.read_transcript(session_id)
-            if blocks is None:
-                self.reply_json({"id": session_id, "blocks": [],
-                                 "missing": "no transcript for this session"})
-                return
-            self.reply_json({"id": session_id, "blocks": blocks_json(blocks)})
-
-        def files(self, session_id: str, query: dict[str, list[str]]) -> None:
-            session = self.known(session_id)
-            if session is None:
-                return
-            held = daemon.files.of(session.cwd)
-            tree = held.tree
-            body = {
-                "id": session_id, "root": tree.root, "total": tree.total,
-                "cut": tree.cut, "failed": tree.failed, "tag": held.tag,
-                # Name to modification time, for the few files that moved. The
-                # page needs the time to put the newest change first.
-                "changed": held.changed,
-            }
-            # The browser sends back the tag it already holds. Names change
-            # when a file is added or removed, which is rare; which files have
-            # changed moves every few seconds. So a poll costs a few hundred
-            # bytes instead of the 1.7 MB that fifty thousand names weigh.
-            if not held.tag or query.get("have", [""])[0] != held.tag:
-                body["names"] = held.names
-            self.reply_json(body)
-
-        def file(self, session_id: str, query: dict[str, list[str]]) -> None:
-            session = self.known(session_id)
-            if session is None:
-                return
-            wanted = query.get("path", [""])[0]
-            found = read_worktree_file(session.cwd, wanted)
-            if found is None:
-                self.reply_json({"id": session_id, "path": wanted,
-                                 "missing": "that file is not in this worktree"}, 404)
-                return
-            self.reply_json(dict(asdict(found), id=session_id, path=wanted))
-
-        def diff(self, session_id: str, query: dict[str, list[str]]) -> None:
-            session = self.known(session_id)
-            if session is None:
-                return
-            self.reply_json(dict(asdict(worktree_diff(session.cwd)), id=session_id))
-
-        def stream(self, watching: str) -> None:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Connection", "keep-alive")
-            self.end_headers()
-            client = daemon.hub.add(watching)
-            try:
-                first = json.dumps(daemon.sessions_payload(), default=str)
-                self.wfile.write(f"event: sessions\ndata: {first}\n\n".encode("utf-8"))
-                self.wfile.flush()
-                while not daemon.stopping.is_set():
-                    try:
-                        message = client.queue.get(timeout=15.0)
-                    except queue.Empty:
-                        message = ": still here\n\n"  # a comment keeps it open
-                    self.wfile.write(message.encode("utf-8"))
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                pass
-            finally:
-                daemon.hub.drop(client)
-
-    # The verbs a session route can end in.
-    GET_VERBS: dict[str, Any] = {
-        "transcript": Handler.transcript,
-        "files": Handler.files,
-        "file": Handler.file,
-        "diff": Handler.diff,
-        "peek": Handler.peek,
-    }
-
-    # These two write to a terminal, so they are the reason every POST carries
-    # a token. There will never be a third without PLAN.md section 4.5 saying
-    # so.
-    POST_VERBS: dict[str, Any] = {
-        "jump": Handler.jump,
-        "send": Handler.send,
-    }
-
+    Handler.daemon = daemon
     server = ThreadingHTTPServer((BIND_HOST, port), Handler)
     server.daemon_threads = True
     return server
