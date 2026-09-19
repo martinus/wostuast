@@ -3893,10 +3893,14 @@ body:not(.show-thinking) .thinking { display: none; }
 .plus { color: var(--working); }
 .minus { color: var(--cut-ink); }
 .filebody { flex-grow: 1; overflow-y: auto; padding: 20px 26px; min-width: 0; }
+/* The path of the open file, and beside it the switch between a rendered
+   document and the lines it is written in. */
 .filebody .where {
   margin-bottom: 14px; font-family: var(--narrow); font-size: 12px;
   letter-spacing: .04em; color: var(--ink-faint);
+  display: flex; align-items: baseline; gap: 14px;
 }
+.filebody .where .link { margin-top: 0; flex-shrink: 0; }
 .diffbody { flex-grow: 1; overflow-y: auto; min-width: 0; }
 .diffhead {
   position: sticky; top: 0; z-index: 1; padding: 9px 20px;
@@ -5712,7 +5716,8 @@ function drawFiles(box) {
   // reader back to the top of it.
   const same = pane.dataset.file === String(state.files.path);
   if (holdingText(box)) return;
-  if (!fresh(box, "bodyKey", state.files.path + "\n" + state.files.mtime)) return;
+  if (!fresh(box, "bodyKey", state.files.path + "\n" + state.files.mtime
+                           + "\n" + state.files.asText)) return;
   const place = same ? pane.scrollTop : 0;   // the same file, read again
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
@@ -5726,10 +5731,12 @@ function drawFiles(box) {
       : "This worktree holds no file that git knows about.");
     return;
   }
-  put(pane, "div", "where", state.files.path);
+  const where = put(pane, "div", "where", state.files.path);
+  const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
+  if (isDoc) putAsText(where);
   if (state.files.binary) {
     put(pane, "div", "note", "Binary file. There is nothing to show.");
-  } else if (MARKDOWN.test(state.files.path)) {
+  } else if (isDoc && !state.files.asText) {
     markdown(pane, state.files.text);
   } else {
     // One row per line, through the same renderer the diff uses, so a file
@@ -5786,7 +5793,28 @@ function blankFiles() {
     binary: false,
     lang: "",           // what `file` made of it, when the name said nothing
     mtime: 0,           // which version of that text is loaded
+    // Markdown reads as Markdown, which has no lines to comment on. This
+    // turns it back into the rows every other file gets. It is remembered
+    // across files, because a reader who wants to review one document
+    // usually wants to review the next one too.
+    asText: false,
   };
+}
+
+// Read this document as Markdown, or as the lines it is written in. A
+// rendered document has no line to hang a comment on: the paragraph you want
+// to remark on came from a line that is no longer there. This gives it back.
+function putAsText(where) {
+  const verb = put(where, "button", "link",
+                   state.files.asText ? "read as Markdown" : "read as text");
+  verb.type = "button";
+  verb.title = state.files.asText
+    ? "render this document"
+    : "show the lines, so they can be commented on";
+  verb.addEventListener("click", () => {
+    state.files.asText = !state.files.asText;
+    redrawCode();
+  });
 }
 
 function forgetFile(path) {

@@ -274,6 +274,11 @@ files that is 1.7 MB the first time and 200 bytes on every check after it.
 Only the rows you can see are built, so scrolling through ten thousand
 matches costs what ten would.
 
+A Markdown file is rendered, and a switch beside its path reads it as the
+lines it is written in instead — a rendered document has no line to comment
+on, because the paragraph you want to remark on came from a line that is no
+longer there. The switch stays on as you move between documents.
+
 A Markdown file is rendered; anything else is shown as code, with syntax
 highlighting — a file with no suffix is read from its shebang, and failing that
 from what `file` makes of it, so a Python script called `deploy` is painted like

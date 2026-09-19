@@ -959,3 +959,59 @@ def test_scrolling_sideways_survives_the_window_moving(long_page):
                 ".filebody .dlines", "el => el.scrollLeft") == along
         finally:
             browser.close()
+
+
+# --- a document, or the lines it is written in -------------------------------
+
+
+def test_markdown_can_be_read_as_the_lines_it_is_written_in(repo_page):
+    """A rendered document has no line to hang a comment on: the paragraph you
+    want to remark on came from a line that is no longer there."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filebody .prose")   # README.md is first
+            assert page.locator(".filebody .prose").count() == 1
+            assert page.locator(".filebody .code .dline").count() == 0
+
+            page.click(".filebody .where .link")
+            page.wait_for_selector(".filebody .code .dline")
+            assert page.locator(".filebody .prose").count() == 0
+            assert "# The readme" in code_text(page)
+            # And every line now carries the `+` that a comment hangs on.
+            assert page.locator(".filebody .code .dline .plus").count() > 0
+
+            page.click(".filebody .where .link")
+            page.wait_for_selector(".filebody .prose")
+        finally:
+            browser.close()
+
+
+def test_reading_as_text_holds_across_files(repo_page):
+    """Someone reviewing one document usually wants to review the next."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filebody .prose")
+            page.click(".filebody .where .link")
+            page.wait_for_selector(".filebody .code .dline")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_function(
+                "document.querySelector('.filebody .where').textContent"
+                ".includes('NOTES.md')")
+            assert page.locator(".filebody .prose").count() == 0
+            assert page.locator(".filebody .code .dline").count() > 0
+        finally:
+            browser.close()
+
+
+def test_a_file_that_is_not_a_document_has_no_switch(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page, "code.py")
+            assert page.locator(".filebody .where .link").count() == 0
+        finally:
+            browser.close()
