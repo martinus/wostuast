@@ -940,9 +940,13 @@ def test_an_untracked_file_opens_as_one_added_block(repo_page):
             block = page.locator(".dfile:has(.what:text-is('untracked'))")
             assert block.count() == 1
             assert block.locator(".path").inner_text() == "NOTES.md"
-            first = block.locator(".dline.added").first.inner_text()
+            first = block.locator(".dline.added .dtext").first.inner_text()
             assert first == "+# Notes"
             assert block.locator(".dline.removed").count() == 0
+            # It is numbered and lined up like every other block. Nothing was
+            # removed, so the old side's column stays empty all the way down.
+            assert numbers(page, ".dfile:has(.what:text-is('untracked'))"
+                           )[:3] == [["", "1"], ["", "2"], ["", "3"]]
         finally:
             browser.close()
 
@@ -1563,13 +1567,6 @@ def test_peek_says_so_when_there_is_no_pane(no_pane):
 
 # --- moving between tabs ----------------------------------------------------
 
-# What each tab has put on screen once it has an answer. The find box is not
-# in here on purpose: it moves between the tab strip and the file column, and
-# whether it survives that is what the test below is about.
-SHOWS = {"transcript": "#content:not(.split) > *", "files": ".filelist button",
-         "diff": ".dfile, .diffbody .note, .diffbody .empty", "peek": ".peek"}
-
-
 def test_every_way_from_one_tab_to_another_works(repo_page):
     """There is one find box and it lives inside the content box on a split
     tab. A tab that empties that box without giving it back destroys it, and
@@ -1577,7 +1574,7 @@ def test_every_way_from_one_tab_to_another_works(repo_page):
     so the tab never loads, and every switch after it throws as well. The page
     stayed broken until a reload. Peek did exactly this.
     """
-    names = list(SHOWS)
+    names = list(DRAWN)
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
@@ -1589,7 +1586,7 @@ def test_every_way_from_one_tab_to_another_works(repo_page):
                         continue
                     show_tab(page, one)
                     show_tab(page, other)
-                    assert page.locator(SHOWS[other]).count() > 0, \
+                    assert page.locator(DRAWN[other]).count() > 0, \
                         f"{one} to {other} drew nothing"
                     assert not blew_up, blew_up
             # and the find box is still there, still working
@@ -1614,7 +1611,7 @@ def test_switching_tabs_faster_than_they_load_still_lands(repo_page):
                          "transcript", "diff", "peek", "files"]:
                 page.click(f".tab[data-tab='{name}']")
                 page.wait_for_timeout(110)      # quicker than a human, on purpose
-            page.wait_for_selector(SHOWS["files"], timeout=15000)
+            page.wait_for_selector(DRAWN["files"], timeout=15000)
             assert page.evaluate("$('content').dataset.tab") == "files"
             assert not blew_up, blew_up
         finally:
@@ -1672,6 +1669,19 @@ def test_clearing_the_box_puts_the_whole_tree_back(big_page):
 # --- line numbers -----------------------------------------------------------
 
 
+def numbers(page, under):
+    """The two line numbers of every row under a selector.
+
+    They share one element, lined up with spaces: a diff row is monospace and
+    already `white-space: pre`, so a flex box and an element per column would
+    be three more nodes a line for nothing.
+    """
+    return page.eval_on_selector_all(
+        under + " .dline .ln",
+        """els => els.map((e) => [e.textContent.slice(0, 5).trim(),
+                                  e.textContent.slice(5, 11).trim()])""")
+
+
 def test_a_file_is_numbered_beside_the_code_not_inside_it(repo_page):
     """The numbers are not the file, so copying the code does not take them,
     and the highlighter can rewrite everything to their right."""
@@ -1720,8 +1730,9 @@ def test_a_diff_line_carries_the_number_it_had_on_each_side(repo_page):
             page.wait_for_selector(".dline")
             rows = page.eval_on_selector_all(".dfile .dline", """els => els.map(
               (e) => [e.className.replace("dline ", ""),
-                      e.children[0].textContent, e.children[1].textContent,
-                      e.children[2].textContent])""")
+                      e.children[0].textContent.slice(0, 5).trim(),
+                      e.children[0].textContent.slice(5, 11).trim(),
+                      e.children[1].textContent])""")
             assert rows, "no diff lines at all"
             for kind, old, now, text in rows:
                 if kind == "added":
@@ -1840,8 +1851,7 @@ def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
         browser, page = open_page(play, (None, base))
         try:
             one = page.eval_on_selector("#say", "el => el.clientHeight")
-            page.fill("#say", "word " * 120)
-            page.dispatch_event("#say", "input")
+            page.fill("#say", "word " * 120)      # `fill` fires `input` itself
             page.wait_for_timeout(300)
             assert page.eval_on_selector("#say", "el => el.clientHeight") > one
             assert page.eval_on_selector(

@@ -216,10 +216,10 @@ def test_more_than_one_line_arrives_as_a_paste(ws, asked):
     ws.tmux_send("%7", "first line\nsecond line", runner=asked)
     assert asked.seen[0] == [
         "tmux", "send-keys", "-t", "%7", "-l", "--",
-        "\x1b[200~first line\nsecond line\x1b[201~"]
+        ws.PASTE_START + "first line\nsecond line" + ws.PASTE_END]
     assert asked.seen[1] == ["tmux", "send-keys", "-t", "%7", "Enter"]
 
 
 def test_a_carriage_return_counts_as_a_line_too(ws, asked):
     ws.tmux_send("%7", "first\r\nsecond", runner=asked)
-    assert asked.seen[0][-1].startswith("\x1b[200~")
+    assert asked.seen[0][-1].startswith(ws.PASTE_START)
