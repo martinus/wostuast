@@ -1,0 +1,12 @@
+[1m[32m✓ 14 passed[0m in [33m0.31s
+[31mFAILED[39m tests/test_x.py::test_y
+[38;5;208m256-colour[39m [38;2;100;149;237mtruecolor
+[1;4m[39munderlined bold[0m plain
+[7minverse[0m
+
+
+
+
+
+
+

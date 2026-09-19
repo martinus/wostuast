@@ -477,3 +477,182 @@ def test_a_new_file_moves_the_tag(repo_session):
             break
     assert again["tag"] != first["tag"]
     assert "fresh.txt" in again["names"].split("\0")
+
+
+# --- the tmux verbs over HTTP -----------------------------------------------
+
+# Every POST here types into a terminal, which is why PLAN.md section 4.4.1
+# gives them a token and an Origin check. These tests are that rule.
+
+
+def post(url, body=None, token=None, origin=None, timeout=5):
+    """A POST, with whatever headers the test wants to get wrong."""
+    raw = json.dumps(body or {}).encode()
+    ask = urllib.request.Request(url, data=raw, method="POST")
+    ask.add_header("Content-Type", "application/json")
+    if token is not None:
+        ask.add_header("X-Wostuast-Token", token)
+    if origin is not None:
+        ask.add_header("Origin", origin)
+    try:
+        with urllib.request.urlopen(ask, timeout=timeout) as answer:
+            return answer.status, json.loads(answer.read())
+    except urllib.error.HTTPError as refused:
+        return refused.status, json.loads(refused.read())
+
+
+@pytest.fixture
+def in_tmux(ws, served, monkeypatch):
+    """A session in a pane, with tmux replaced by a runner that records."""
+    seen = []
+
+    def runner(args, **rest):
+        seen.append(list(args))
+        return ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="%7", pid=1))
+    daemon.store.refresh()
+    return daemon, base, seen
+
+
+def test_a_post_without_the_token_does_nothing(in_tmux):
+    """Any site can send this daemon a POST. Only a page that has read the
+    token can send one that acts."""
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send", {"text": "rm -rf /"})
+    assert status == 403
+    assert seen == [], "it typed into the terminal without the token"
+
+    status, body = post(f"{base}/api/session/s1/jump", token="not-the-token")
+    assert status == 403
+    assert seen == []
+
+
+def test_a_post_from_another_site_does_nothing(in_tmux):
+    """Even holding the token, an Origin that is not ours is refused."""
+    daemon, base, seen = in_tmux
+    status, _ = post(f"{base}/api/session/s1/send", {"text": "hello"},
+                     token=daemon.token, origin="https://evil.example")
+    assert status == 403
+    assert seen == []
+
+
+def test_a_post_from_this_page_acts(in_tmux):
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send", {"text": "run the tests"},
+                        token=daemon.token, origin="http://127.0.0.1:1234")
+    assert status == 200
+    assert body["done"] is True
+    assert seen == [
+        ["tmux", "send-keys", "-t", "%7", "-l", "--", "run the tests"],
+        ["tmux", "send-keys", "-t", "%7", "Enter"],
+    ]
+
+
+def test_jump_picks_the_window_and_the_pane(in_tmux):
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/jump", token=daemon.token)
+    assert status == 200 and body["done"] is True
+    assert seen[0] == ["tmux", "select-window", "-t", "%7"]
+
+
+def test_the_token_is_in_the_page_and_is_not_the_mark(served):
+    daemon, base = served
+    with urllib.request.urlopen(f"{base}/", timeout=5) as answer:
+        page = answer.read().decode()
+    assert daemon.token in page
+    assert ws_token_mark() not in page
+
+
+def ws_token_mark():
+    return "__WOSTUAST_" + "TOKEN__"
+
+
+def test_two_daemons_do_not_share_a_token(ws):
+    assert ws.Daemon().token != ws.Daemon().token
+    assert len(ws.Daemon().token) >= 32
+
+
+def test_sending_nothing_is_refused(in_tmux):
+    daemon, base, seen = in_tmux
+    for nothing in ("", "   ", "\n"):
+        status, body = post(f"{base}/api/session/s1/send", {"text": nothing},
+                            token=daemon.token)
+        assert status == 400, nothing
+    assert seen == []
+
+
+def test_sending_more_than_fits_is_refused_not_cut(in_tmux):
+    """What arrives in the terminal must be what the user wrote, or nothing."""
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send",
+                        {"text": "x" * 99999}, token=daemon.token)
+    assert status == 400
+    assert seen == []
+
+
+def test_a_session_that_is_over_is_not_sent_to(in_tmux):
+    daemon, base, seen = in_tmux
+    ws_append_end(daemon)
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello"},
+                        token=daemon.token)
+    assert status == 409
+    assert seen == []
+
+
+def ws_append_end(daemon):
+    import conftest as c
+    c.wostuast.append_event(event("SessionEnd"))
+    daemon.store.refresh()
+
+
+def test_a_session_outside_tmux_has_no_verbs(ws, served, monkeypatch):
+    seen = []
+    monkeypatch.setattr(ws, "run", lambda args, **rest: seen.append(list(args)))
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="", pid=1))
+    daemon.store.refresh()
+    status, body = post(f"{base}/api/session/s1/jump", token=daemon.token)
+    assert status == 409
+    assert "not in tmux" in body["error"]
+    assert seen == []
+
+
+# --- peek -------------------------------------------------------------------
+
+
+def test_peek_hands_over_the_pane_as_styled_runs(ws, served, monkeypatch):
+    """The page builds one node per run with textContent, so nothing a
+    terminal printed is ever read as markup."""
+    monkeypatch.setattr(ws, "run", lambda args, **rest:
+                        "\x1b[1;32mpassed\x1b[0m plain")
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="%7", pid=1))
+    daemon.store.refresh()
+    status, body = get(f"{base}/api/session/s1/peek")
+    assert status == 200
+    assert [(one["text"], one["fg"], one["bold"]) for one in body["runs"]] == [
+        ("passed", "var(--ansi-2)", True),
+        (" plain", "", False),
+    ]
+
+
+def test_peek_says_so_when_there_is_no_pane(ws, served):
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="", pid=1))
+    daemon.store.refresh()
+    status, body = get(f"{base}/api/session/s1/peek")
+    assert status == 200 and body["runs"] == []
+    assert "not in tmux" in body["missing"]
+
+
+def test_peek_says_so_when_tmux_does_not_answer(ws, served, monkeypatch):
+    monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="%7", pid=1))
+    daemon.store.refresh()
+    status, body = get(f"{base}/api/session/s1/peek")
+    assert status == 200 and body["runs"] == []
+    assert "did not answer" in body["missing"]

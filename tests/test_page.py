@@ -132,7 +132,7 @@ MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
 # child" is already true while the file columns are still standing in it. It
 # has to have stopped being split as well.
 DRAWN = {"transcript": "#content:not(.split) > *", "files": ".filebody > *",
-         "diff": ".diffbody > *"}
+         "diff": ".diffbody > *", "peek": ".peek"}
 
 
 def fresh_context(play, scheme="dark", with_marked=True):
@@ -285,13 +285,14 @@ def test_expanding_a_tool_result_leaves_the_rest_alone(page_at):
             browser.close()
 
 
-def test_a_tab_that_is_not_built_yet_does_nothing(page_at):
-    """Peek is milestone 4. Its key must leave the page exactly as it was."""
+def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
+    """`showTab` only takes a name TABS knows, so a fifth key changes nothing.
+    Peek answered to `4` from milestone 5; there is no `5`."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             turns = page.locator(".turn").count()
-            page.keyboard.press("4")
+            page.keyboard.press("5")
             page.wait_for_timeout(200)
             assert page.locator(".tab[data-tab='transcript']").get_attribute(
                 "aria-selected") == "true"
@@ -1004,13 +1005,12 @@ def test_a_long_file_starts_closed_and_opens_on_click(repo_page):
             browser.close()
 
 
-def test_the_tabs_are_no_longer_disabled(page_at):
+def test_every_tab_is_built(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            for name in ("files", "diff"):
+            for name in ("transcript", "files", "diff", "peek"):
                 assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
-            assert page.locator(".tab[data-tab='peek']").is_disabled()
         finally:
             browser.close()
 
@@ -1381,5 +1381,172 @@ def test_closing_a_directory_by_hand_beats_opening_it_for_you(repo_page):
             page.wait_for_timeout(3000)       # two polls
             assert page.locator(".filelist button.dir.open").count() == 0, \
                 "it re-opened a directory the reader had closed"
+        finally:
+            browser.close()
+
+
+# --- the three tmux verbs ---------------------------------------------------
+
+
+@pytest.fixture
+def in_pane(ws, served, tmp_path, monkeypatch, transcript_file):
+    """A session in a pane, with tmux replaced by a runner that records.
+
+    The recording lives on the daemon so a test can read what the page asked
+    the terminal to do.
+    """
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    seen = []
+
+    def runner(args, **rest):
+        seen.append(list(args))
+        if "capture-pane" in args:
+            return "\x1b[1;32mall good\x1b[0m\nwaiting"
+        return ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    transcript = transcript_file("s1", [
+        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
+         "message": {"role": "user", "content": "Do the thing."}},
+    ])
+    daemon, base = served
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": str(tmp_path), "pane": "%7", "pid": 1,
+                     "ts": time.time(), "transcript_path": str(transcript)})
+    daemon.store.refresh()
+    return daemon, base, seen
+
+
+def test_jump_puts_the_cursor_in_the_pane(in_pane):
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.click("#jump")
+            page.wait_for_timeout(400)
+            assert ["tmux", "select-window", "-t", "%7"] in seen
+            assert ["tmux", "select-pane", "-t", "%7"] in seen
+        finally:
+            browser.close()
+
+
+def test_the_send_box_types_into_the_terminal(in_pane):
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.fill("#say", "run the tests")
+            page.press("#say", "Enter")
+            page.wait_for_timeout(500)
+            assert ["tmux", "send-keys", "-t", "%7", "-l", "--",
+                    "run the tests"] in seen
+            assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+            # cleared only once the daemon said it went in
+            assert page.input_value("#say") == ""
+        finally:
+            browser.close()
+
+
+def test_the_send_box_keeps_the_text_when_it_did_not_go_in(ws, in_pane,
+                                                           monkeypatch):
+    """They typed it at a terminal they cannot see. Losing it is not on."""
+    daemon, base, seen = in_pane
+    monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.fill("#say", "please work")
+            page.press("#say", "Enter")
+            page.wait_for_timeout(500)
+            assert page.input_value("#say") == "please work"
+        finally:
+            browser.close()
+
+
+@pytest.fixture
+def no_pane(ws, served, tmp_path, monkeypatch):
+    """A session that is not running under tmux at all."""
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    daemon, base = served
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": str(tmp_path), "pane": "", "pid": 1,
+                     "ts": time.time()})
+    daemon.store.refresh()
+    return daemon, base
+
+
+def test_the_verbs_are_not_there_without_a_pane(no_pane):
+    """Nothing to jump to, nothing to type into."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, no_pane[1]))
+        try:
+            assert page.locator("#jump").is_hidden()
+            assert page.locator("#sendbar").is_hidden()
+            assert "not in tmux" in page.locator("#facts").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_send_box_belongs_to_the_transcript(in_pane):
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            assert page.locator("#sendbar").is_visible()
+            show_tab(page, "files")
+            assert page.locator("#sendbar").is_hidden()
+            show_tab(page, "transcript")
+            assert page.locator("#sendbar").is_visible()
+        finally:
+            browser.close()
+
+
+def base_of(in_pane):
+    return in_pane[1]
+
+
+def test_peek_shows_the_pane_in_its_colours(in_pane):
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            show_tab(page, "peek")
+            page.wait_for_selector(".peek b")
+            assert page.locator(".peek").inner_text().startswith("all good")
+            green = page.eval_on_selector(".peek b", "el => el.style.color")
+            assert "--ansi-2" in green
+            assert "waiting" in page.locator(".peek").inner_text()
+        finally:
+            browser.close()
+
+
+def test_peek_never_reads_what_a_terminal_printed_as_markup(ws, in_pane,
+                                                            monkeypatch):
+    """A pane can hold anything an agent ran. Every run is set with
+    textContent, so it is shown, never obeyed."""
+    monkeypatch.setattr(ws, "run", lambda args, **rest:
+                        "<img src=x onerror=\"window.pwned=1\">"
+                        "<script>window.pwned=1</script>done")
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            show_tab(page, "peek")
+            page.wait_for_timeout(600)
+            assert page.evaluate("window.pwned") is None
+            assert page.locator(".peek img, .peek script").count() == 0
+            assert "onerror" in page.locator(".peek").inner_text()
+        finally:
+            browser.close()
+
+
+def test_peek_says_so_when_there_is_no_pane(no_pane):
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, no_pane[1]))
+        try:
+            show_tab(page, "peek")
+            page.wait_for_timeout(500)
+            assert "not in tmux" in page.locator(".peek").inner_text()
         finally:
             browser.close()

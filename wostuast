@@ -17,7 +17,7 @@ import re
 import sys
 import time
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Sequence
 
@@ -1337,6 +1337,21 @@ DIFF_MAX_BYTES = 2 * 1024 * 1024
 #: request thread, never in the tick, so waiting here holds up nothing else.
 DIFF_TIMEOUT = 8.0
 
+#: The header a POST carries its token in. A cross-origin request cannot add a
+#: header of its own without asking us first, and we never say yes — so a page
+#: that has not read ours cannot even reach the code that checks it.
+TOKEN_HEADER = "X-Wostuast-Token"
+
+#: Where the token goes into the page, replaced as the page is served.
+TOKEN_MARK = "__WOSTUAST_TOKEN__"
+
+#: The most a POST body may be.
+POST_MAX = 64 * 1024
+
+#: The most text one `send` may type. Longer is refused rather than cut: what
+#: arrives in the terminal must be what the user wrote, or nothing.
+SEND_MAX = 4000
+
 #: How many untracked files the Diff tab names. git diff shows none of them,
 #: so the tab says they are there rather than leaving a hole.
 UNTRACKED_SHOWN = 50
@@ -2274,6 +2289,216 @@ def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
     return "\n".join(lines)
 
 
+# --- ansi: what tmux captured, as runs the page can style --------------------
+
+#: An escape sequence, of any of the shapes a terminal emits. Only the colour
+#: ones mean anything here; the rest are dropped rather than shown, because a
+#: cursor movement printed as text is worse than a cursor movement lost.
+ESCAPE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
+
+#: Control characters a pane capture should not carry into the page. A newline
+#: and a tab are content; the rest are not.
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+#: How many runs one capture may become. A pane that changes colour every
+#: character is a pane nobody is reading, and the page would build a node per
+#: character to show it.
+PEEK_RUNS = 4000
+
+
+@dataclass
+class Run:
+    """One stretch of pane text that looks the same all the way through."""
+
+    text: str = ""
+    fg: str = ""            # a CSS colour, or "" for whatever the page uses
+    bg: str = ""
+    bold: bool = False
+    dim: bool = False
+    italic: bool = False
+    under: bool = False
+
+
+def ansi_colour(number: int) -> str:
+    """One of the 256 colours a terminal can name, as CSS.
+
+    The first sixteen are the terminal's own palette, so they are named rather
+    than fixed: the page gives them values and they follow the theme. The rest
+    are a cube and a grey ramp, whose values are the same everywhere.
+    """
+    if number < 16:
+        return f"var(--ansi-{number})"
+    if number < 232:
+        rung = [0, 95, 135, 175, 215, 255]
+        left = number - 16
+        return "#%02x%02x%02x" % (rung[left // 36], rung[left // 6 % 6],
+                                  rung[left % 6])
+    grey = 8 + (number - 232) * 10
+    return "#%02x%02x%02x" % (grey, grey, grey)
+
+
+def read_sgr(codes: list[int], style: Run) -> Run:
+    """Fold one `m` sequence into the style that follows it.
+
+    An unknown code is skipped and the rest of the sequence still counts:
+    terminals do the same, and dropping the lot would lose a colour because
+    of a neighbour we do not handle.
+    """
+    at = 0
+    while at < len(codes):
+        code = codes[at]
+        at += 1
+        if code == 0:
+            style = Run()
+        elif code == 1:
+            style.bold = True
+        elif code == 2:
+            style.dim = True
+        elif code == 3:
+            style.italic = True
+        elif code == 4:
+            style.under = True
+        elif code == 7:
+            style.fg, style.bg = style.bg or "var(--peek-bg)", style.fg or "var(--peek-ink)"
+        elif code == 22:
+            style.bold = style.dim = False
+        elif code == 23:
+            style.italic = False
+        elif code == 24:
+            style.under = False
+        elif 30 <= code <= 37:
+            style.fg = ansi_colour(code - 30)
+        elif 90 <= code <= 97:
+            style.fg = ansi_colour(code - 90 + 8)
+        elif code == 39:
+            style.fg = ""
+        elif 40 <= code <= 47:
+            style.bg = ansi_colour(code - 40)
+        elif 100 <= code <= 107:
+            style.bg = ansi_colour(code - 100 + 8)
+        elif code == 49:
+            style.bg = ""
+        elif code in (38, 48):
+            # 38;5;n is one of 256; 38;2;r;g;b is exact. Anything else after
+            # them is not a colour we know, so the whole sequence stops here:
+            # its remaining numbers are that colour's arguments, not codes.
+            kind = codes[at] if at < len(codes) else -1
+            if kind == 5 and at + 1 < len(codes):
+                shade = ansi_colour(max(0, min(255, codes[at + 1])))
+                at += 2
+            elif kind == 2 and at + 3 < len(codes):
+                red, green, blue = (max(0, min(255, one))
+                                    for one in codes[at + 1:at + 4])
+                shade = "#%02x%02x%02x" % (red, green, blue)
+                at += 4
+            else:
+                break
+            if code == 38:
+                style.fg = shade
+            else:
+                style.bg = shade
+    return style
+
+
+def ansi_runs(text: str, limit: int = PEEK_RUNS) -> list[Run]:
+    """A pane capture, split into stretches that each look the same.
+
+    The page builds one node per run and sets its text with textContent, so
+    nothing a terminal printed is ever read as markup. Turning this into HTML
+    here and letting the page insert it would be the one thing this program
+    does not do.
+    """
+    runs: list[Run] = []
+    style = Run()
+
+    def keep(piece: str) -> None:
+        piece = CONTROL.sub("", piece.replace("\r\n", "\n"))
+        if not piece or len(runs) >= limit:
+            return
+        if runs and same_style(runs[-1], style):
+            runs[-1].text += piece
+        else:
+            runs.append(replace(style, text=piece))
+
+    at = 0
+    for found in ESCAPE.finditer(text):
+        keep(text[at:found.start()])
+        at = found.end()
+        body = found.group(0)
+        if body.startswith("\x1b[") and body.endswith("m"):
+            numbers = []
+            for part in body[2:-1].split(";"):
+                numbers.append(int(part) if part.isdigit() else 0)
+            style = read_sgr(numbers or [0], style)
+    keep(text[at:])
+    return runs
+
+
+def same_style(run: Run, style: Run) -> bool:
+    """Whether a run can simply take more text."""
+    return (run.fg == style.fg and run.bg == style.bg
+            and run.bold == style.bold and run.dim == style.dim
+            and run.italic == style.italic and run.under == style.under)
+
+
+# --- tmux: the three verbs, and nothing else ---------------------------------
+
+# wostuast reads; the user types. These three are the only commands it runs,
+# and only jump and send write anything at all. See PLAN.md section 4.5.
+#
+# `runner` is looked up when the verb is called, not when it is defined. A
+# default of `run` is bound once, at import, and then no test of the route
+# above these can put a fake tmux in its place — which is the only way to
+# test the verbs without a terminal to type into.
+
+
+def tmux_jump(pane: str, runner: Callable[..., str | None] | None = None,
+              focus: str | None = None) -> bool:
+    """Put the cursor in that pane: its window first, then the pane itself."""
+    if not pane:
+        return False
+    runner = runner or run
+    moved = runner(["tmux", "select-window", "-t", pane]) is not None
+    runner(["tmux", "select-pane", "-t", pane])
+    # Raising the terminal window is the window manager's job and every desk
+    # does it differently, so the command is the user's own to set. It is
+    # their environment, run the way they would write it.
+    wanted = os.environ.get("WOSTUAST_FOCUS", "") if focus is None else focus
+    if wanted:
+        runner(["sh", "-c", wanted])
+    return moved
+
+
+def tmux_send(pane: str, text: str,
+              runner: Callable[..., str | None] | None = None) -> bool:
+    """Type text into a pane, then press Enter.
+
+    `-l` sends the text literally, so nothing here escapes anything: an escape
+    of our own would arrive as characters. `--` stops tmux reading a leading
+    dash as an option of its own. Empty text is refused, because a bare Enter
+    into an agent's prompt is a keystroke nobody asked for.
+    """
+    if not pane or not text.strip():
+        return False
+    runner = runner or run
+    if runner(["tmux", "send-keys", "-t", pane, "-l", "--", text]) is None:
+        return False
+    return runner(["tmux", "send-keys", "-t", pane, "Enter"]) is not None
+
+
+def tmux_peek(pane: str,
+              runner: Callable[..., str | None] | None = None) -> str | None:
+    """What the pane shows right now, escape codes and all.
+
+    `-p` prints it instead of putting it in a buffer, and `-e` keeps the
+    colours. Without `-e` a test run reads as a wall of grey.
+    """
+    if not pane:
+        return None
+    return (runner or run)(["tmux", "capture-pane", "-p", "-e", "-t", pane])
+
+
 # --- the daemon: one page, a little JSON, and a stream of changes ------------
 
 
@@ -2343,9 +2568,15 @@ class Daemon:
     def __init__(self) -> None:
         import threading
 
+        import secrets
+
         self.store = Store()
         self.hub = Hub()
         self.files = Files()
+        # Any site can send this daemon a POST; only a page that has read this
+        # token can send one that acts. It is made here and printed into the
+        # page, and it lives as long as the daemon does. See PLAN.md 4.4.1.
+        self.token = secrets.token_urlsafe(32)
         self.transcripts: dict[str, Transcript] = {}
         self.lock = threading.Lock()
         self.stopping = threading.Event()
@@ -2477,6 +2708,134 @@ def make_server(daemon: Daemon, port: int) -> Any:
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
             return host in ("localhost", "127.0.0.1", "::1", "")
 
+        def allowed(self) -> bool:
+            """Whether a POST may act on the terminal.
+
+            Two things beyond the Host header. The Origin, which a browser
+            sets on a cross-origin POST and which has to be ours when it is
+            there at all. And the token this daemon made at start and printed
+            into the page, in a header of its own. A cross-origin `fetch` may
+            send a plain POST with no questions asked, and the effect here is
+            `tmux send-keys` into a live terminal, so neither check is spare.
+            """
+            import hmac
+            from urllib.parse import urlparse
+
+            origin = (self.headers.get("Origin") or "").strip()
+            if origin:
+                if urlparse(origin).hostname not in ("localhost", "127.0.0.1",
+                                                     "::1"):
+                    return False
+            sent = self.headers.get(TOKEN_HEADER) or ""
+            return hmac.compare_digest(sent, daemon.token)
+
+        def asked(self) -> dict[str, Any]:
+            """The JSON a POST carried, or an empty one.
+
+            It is read before anything is checked, because a body left in the
+            socket makes the next request on that connection nonsense.
+            """
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if length <= 0 or length > POST_MAX:
+                return {}
+            try:
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                return {}
+            return body if isinstance(body, dict) else {}
+
+        def do_POST(self) -> None:  # noqa: N802 - the name http.server requires
+            from urllib.parse import urlparse
+
+            body = self.asked()
+            if not self.ours():
+                self.reply_json({"error": "wostuast answers on localhost only"},
+                                403)
+                return
+            if not self.allowed():
+                self.reply_json({"error": "that did not come from this page"},
+                                403)
+                return
+            parts = urlparse(self.path).path.strip("/").split("/")
+            try:
+                if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
+                    verb = POST_VERBS.get(parts[3])
+                    if verb is None:
+                        self.reply_json({"error": "no such thing"}, 404)
+                    else:
+                        verb(self, parts[2], body)
+                else:
+                    self.reply_json({"error": "no such thing"}, 404)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception as error:
+                log(f"request {self.path} failed: {error!r}")
+                try:
+                    self.reply_json({"error": "something went wrong"}, 500)
+                except OSError:
+                    pass
+
+        def in_tmux(self, session_id: str) -> Session | None:
+            """The session, when it is one the verbs can reach at all."""
+            session = self.known(session_id)
+            if session is None:
+                return None
+            if not session.pane:
+                self.reply_json({"id": session_id,
+                                 "error": "this session is not in tmux"}, 409)
+                return None
+            return session
+
+        def jump(self, session_id: str, body: dict[str, Any]) -> None:
+            session = self.in_tmux(session_id)
+            if session is None:
+                return
+            self.reply_json({"id": session_id,
+                             "done": tmux_jump(session.pane)})
+
+        def send(self, session_id: str, body: dict[str, Any]) -> None:
+            session = self.in_tmux(session_id)
+            if session is None:
+                return
+            text = body.get("text")
+            text = text if isinstance(text, str) else ""
+            if not text.strip():
+                self.reply_json({"id": session_id,
+                                 "error": "there is nothing to send"}, 400)
+                return
+            if len(text) > SEND_MAX:
+                self.reply_json({"id": session_id,
+                                 "error": f"that is more than {SEND_MAX}"
+                                          " characters"}, 400)
+                return
+            if session.state in ("ended", "dead"):
+                self.reply_json({"id": session_id,
+                                 "error": "this session is over"}, 409)
+                return
+            self.reply_json({"id": session_id,
+                             "done": tmux_send(session.pane, text)})
+
+        def peek(self, session_id: str, query: dict[str, list[str]]) -> None:
+            session = self.known(session_id)
+            if session is None:
+                return
+            if not session.pane:
+                self.reply_json({"id": session_id, "runs": [],
+                                 "missing": "This session is not in tmux, so"
+                                            " there is no pane to look at."})
+                return
+            text = tmux_peek(session.pane)
+            if text is None:
+                self.reply_json({"id": session_id, "runs": [],
+                                 "missing": "tmux did not answer. The pane may"
+                                            " be gone."})
+                return
+            self.reply_json({"id": session_id,
+                             "runs": [asdict(one) for one in ansi_runs(text)]})
+
         def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
             from urllib.parse import parse_qs, urlparse
 
@@ -2489,7 +2848,8 @@ def make_server(daemon: Daemon, port: int) -> Any:
             parts = path.strip("/").split("/")
             try:
                 if path == "/":
-                    self.reply(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
+                    page = PAGE.replace(TOKEN_MARK, daemon.token)
+                    self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
                 elif path == "/api/sessions":
                     self.reply_json(daemon.sessions_payload())
                 elif path == "/api/events":
@@ -2588,13 +2948,21 @@ def make_server(daemon: Daemon, port: int) -> Any:
             finally:
                 daemon.hub.drop(client)
 
-    # The verbs a session route can end in. Milestone 5 adds peek here, and
-    # nothing else about the dispatch changes.
+    # The verbs a session route can end in.
     GET_VERBS: dict[str, Any] = {
         "transcript": Handler.transcript,
         "files": Handler.files,
         "file": Handler.file,
         "diff": Handler.diff,
+        "peek": Handler.peek,
+    }
+
+    # These two write to a terminal, so they are the reason every POST carries
+    # a token. There will never be a third without PLAN.md section 4.5 saying
+    # so.
+    POST_VERBS: dict[str, Any] = {
+        "jump": Handler.jump,
+        "send": Handler.send,
     }
 
     server = ThreadingHTTPServer((BIND_HOST, port), Handler)
@@ -3244,6 +3612,54 @@ body.dragging { cursor: col-resize; user-select: none; }
 .session-head .word.working { color: var(--working); }
 .session-head .word.done { color: var(--done); }
 .session-head .word.starting { color: var(--starting); }
+/* The two things this page can do to a terminal. They look like buttons and
+   nothing else on the page does, because everything else only reads. */
+.verb {
+  flex-shrink: 0; height: 26px; padding: 0 12px; border-radius: 5px;
+  border: 1px solid var(--edge-bright); background: var(--raised);
+  color: var(--ink-bright); font-family: var(--mono); font-size: 12px;
+  cursor: pointer;
+}
+.verb:hover { border-color: var(--needs); color: var(--needs); }
+.verb:active { background: var(--chosen); }
+.sendbar {
+  flex-shrink: 0; display: flex; gap: 8px; align-items: center;
+  padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
+}
+/* `display` here would otherwise beat the browser's own rule for `hidden`,
+   and the box would never go away. */
+.sendbar[hidden] { display: none; }
+.say {
+  flex-grow: 1; height: 28px; padding: 0 10px; border-radius: 5px;
+  border: 1px solid var(--edge); background: var(--bg); color: var(--ink);
+  font-family: var(--mono); font-size: 13px; min-width: 0;
+}
+.say:focus { outline: none; border-color: var(--needs); }
+.say::placeholder { color: var(--ink-faint); }
+
+/* peek: what the pane shows, in the colours it showed it */
+:root {
+  --ansi-0: #3a3d4a; --ansi-1: #e08a7a; --ansi-2: #8fcf9f; --ansi-3: #e0be6a;
+  --ansi-4: #7fb3e0; --ansi-5: #c6a2d8; --ansi-6: #7fc9cf; --ansi-7: #c9ccd8;
+  --ansi-8: #6f7385; --ansi-9: #f0a08a; --ansi-10: #9fe0b8; --ansi-11: #f0d080;
+  --ansi-12: #9fc8f0; --ansi-13: #d8b8e8; --ansi-14: #9fdfe4; --ansi-15: #f3f4f8;
+  --peek-bg: #0f1014; --peek-ink: #c9ccd8;
+}
+:root[data-theme="light"] {
+  --ansi-0: #2f3138; --ansi-1: #a33a28; --ansi-2: #2f7f52; --ansi-3: #8a5709;
+  --ansi-4: #2a6ea8; --ansi-5: #7a3f8f; --ansi-6: #1d6f74; --ansi-7: #4c4f58;
+  --ansi-8: #8b8e96; --ansi-9: #8c3a1f; --ansi-10: #1e5c39; --ansi-11: #6b4508;
+  --ansi-12: #205684; --ansi-13: #5f3070; --ansi-14: #17595d; --ansi-15: #14151a;
+  --peek-bg: #eceae3; --peek-ink: #33363d;
+}
+.peek {
+  margin: 0; padding: 16px 20px; background: var(--peek-bg);
+  color: var(--peek-ink); font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+  border-radius: 6px; min-height: 100%;
+}
+.peek b { font-weight: 600; }
+.peek .dim { opacity: .6; }
 .ctx { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .ctx .bar {
   width: 54px; height: 6px; border-radius: 3px; background: var(--raised);
@@ -3546,13 +3962,15 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       <div class="session-head">
         <div class="title" id="title">no session</div>
         <div class="facts" id="facts"></div>
+        <button class="verb" id="jump" type="button" hidden
+                title="put the cursor in that pane  ⏎">jump</button>
       </div>
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" aria-selected="true" data-tab="transcript">1 Transcript</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="files">2 Files</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="diff">3 Diff<span
           class="badge" id="diffcount" hidden></span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="peek" disabled>4 Peek</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="peek">4 Peek</button>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
                  autocomplete="off" spellcheck="false">
@@ -3560,6 +3978,11 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <div class="live" id="live"></div>
       </div>
       <div class="content" id="content"></div>
+      <form class="sendbar" id="sendbar" hidden>
+        <input class="say" id="say" type="text" autocomplete="off"
+               placeholder="type into the terminal  s">
+        <button class="verb" type="submit">send</button>
+      </form>
     </div>
   </div>
 </div>
@@ -3570,7 +3993,9 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 4</dt><dd>transcript, files, diff (peek is still to come)</dd>
+    <dt>1 – 4</dt><dd>transcript, files, diff, peek</dd>
+    <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
+    <dt>s</dt><dd>type into its terminal</dd>
     <dt>t</dt><dd>show or hide thinking</dd>
     <dt>c</dt><dd>colours: auto, light, dark</dd>
     <dt>?</dt><dd>this list</dd>
@@ -3608,6 +4033,10 @@ const state = {
   fileText: "",
   fileBinary: false,
   fileMtime: 0,         // which version of that text is loaded
+  peek: [],             // the pane, as runs that each look the same
+  peekRaw: "",          // the last answer, to tell a still pane from a new one
+  peekAt: 0,
+  peekWhy: "",          // why there is nothing to show, when there is nothing
   diff: null,
   diffRaw: "",          // the last answer, as it arrived, to compare against
   diffAt: 0,            // bumped when that answer changes, so keys stay short
@@ -3615,6 +4044,42 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+// --- asking the daemon to do something --------------------------------------
+
+// Everything else on this page reads. These two write, into a live terminal,
+// so the daemon wants proof the request came from a page it served: a token it
+// made at start and printed here. Any site can POST to a loopback port, but a
+// header of its own is not something a cross-origin request may add without
+// asking first, and the daemon never says yes.
+const TOKEN = "__WOSTUAST_TOKEN__";
+
+async function tell(id, verb, body) {
+  try {
+    const answer = await fetch("/api/session/" + encodeURIComponent(id) + "/"
+                               + verb, {
+      method: "POST",
+      headers: { "Content-Type": "application/json",
+                 "X-Wostuast-Token": TOKEN },
+      body: JSON.stringify(body || {}),
+    });
+    return await answer.json();
+  } catch (error) {
+    return { error: "the daemon did not answer" };   // it went away; say so
+  }
+}
+
+// What came back, on the one line the page keeps for saying things.
+function said(answer) {
+  const box = $("live");
+  box.textContent = (answer && answer.error) || "";
+  if (!box.textContent) return;
+  setTimeout(() => {
+    if (box.textContent === (answer.error || "")) {
+      box.textContent = state.find ? box.textContent : (state.live || "");
+    }
+  }, 4000);
+}
 
 // --- dragging a column edge -------------------------------------------------
 
@@ -3866,6 +4331,12 @@ function drawHeader() {
     put(ctx, "span", null, pct + "% ctx");
   }
   put(box, "span", "word " + s.state, "· " + s.state_word);
+  // Without a pane there is nothing to jump to and nothing to type into, so
+  // the verbs are not there to be pressed. A session that has ended can still
+  // be jumped to — its pane may hold what it left behind — but not typed at.
+  $("jump").hidden = !s.pane;
+  $("sendbar").hidden = !s.pane || state.tab !== "transcript"
+    || s.state === "ended" || s.state === "dead";
 }
 
 // --- the tab icon, drawn here so it follows the colours ---------------------
@@ -4851,13 +5322,63 @@ function drawDiffCount() {
   badge.textContent = "+" + added + " \u2212" + removed;
 }
 
+// --- the Peek tab -----------------------------------------------------------
+
+// A still picture of the pane, not a terminal. PLAN.md rules out embedding
+// one: tmux owns the PTY and this page reads. The daemon hands over runs of
+// text that each look the same all the way through, and every one of them is
+// set with textContent, so nothing a terminal printed is read as markup.
+function drawPeek(box) {
+  if (box.dataset.tab !== "peek") {
+    box.replaceChildren();
+    box.dataset.tab = "peek";
+    box.dataset.bodyKey = "";
+    put(box, "pre", "peek");
+  }
+  const pane = box.firstChild;
+  const runs = state.peek || [];
+  if (!fresh(box, "bodyKey", state.peekAt + "\n" + (state.peekWhy || ""))) return;
+  const stick = nearBottom(box);
+  pane.replaceChildren();
+  if (state.peekWhy) {
+    put(pane, "span", null, state.peekWhy);
+  } else if (!runs.length) {
+    put(pane, "span", null, "This pane is empty.");
+  }
+  for (const one of runs) {
+    const node = put(pane, one.bold ? "b" : "span", one.dim ? "dim" : null,
+                     one.text);
+    if (one.fg) node.style.color = one.fg;
+    if (one.bg) node.style.background = one.bg;
+    if (one.italic) node.style.fontStyle = "italic";
+    if (one.under) node.style.textDecoration = "underline";
+  }
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+
+async function loadPeek() {
+  const want = state.chosen;
+  const body = await ask(want, "peek");
+  if (!body || state.chosen !== want) return;
+  // The text as it arrived is the comparison: a pane that has not changed
+  // must not be rebuilt, or a reader loses their place in it every second.
+  const now = JSON.stringify(body.runs || []);
+  if (now !== state.peekRaw) {
+    state.peekRaw = now;
+    state.peek = body.runs || [];
+    state.peekAt += 1;
+  }
+  state.peekWhy = body.missing || "";
+  draw();
+}
+
 // One entry per tab: how to draw it, how to fetch what it draws, and how often
 // to ask again while it is on screen (0 means it is pushed, not polled).
-// Milestone 5 adds peek as one more entry, and nothing else changes.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0 },
   files: { draw: drawFiles, load: loadFiles, poll: 2000 },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000 },
+  peek: { draw: drawPeek, load: loadPeek, poll: 1000 },
 };
 
 // Which tab each number key picks. A key for a tab that is not built yet does
@@ -4884,6 +5405,7 @@ function draw() {
 function showTab(name) {
   if (!TABS[name]) return;
   state.tab = name;
+  drawHeader();               // the send box belongs to the transcript only
   for (const button of document.querySelectorAll(".tab")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
@@ -4925,6 +5447,10 @@ function choose(id) {
   state.loose = null;
   state.looseText = null;
   state.looseBinary = false;
+  state.peek = [];
+  state.peekRaw = "";
+  state.peekWhy = "";
+  state.peekAt += 1;
   state.diff = null;
   state.diffRaw = "";
   state.diffAt += 1;
@@ -5124,6 +5650,11 @@ document.addEventListener("keydown", (press) => {
   if (tag === "input" || tag === "textarea") return;   // typing, not commanding
   switch (press.key) {
     case "/": $("find").focus(); break;
+    case "Enter": jumpToPane(); break;
+    case "s":
+      if ($("sendbar").hidden) return;
+      $("say").focus();
+      break;
     case "j": move(1); break;
     case "k": move(-1); break;
     case "n": nextNeedsYou(); break;
@@ -5149,6 +5680,33 @@ for (const button of document.querySelectorAll(".tab")) {
 }
 $("theme").addEventListener("click", nextTheme);
 $("bell").addEventListener("click", () => { toggleNotifications(); });
+
+async function jumpToPane() {
+  if (!state.chosen) return;
+  said(await tell(state.chosen, "jump"));
+}
+
+// The box is cleared only once the daemon says the text went in. Clearing it
+// first and then failing loses what the user typed, and they typed it at a
+// terminal they cannot see.
+async function sendTyped() {
+  const box = $("say");
+  const text = box.value;
+  if (!state.chosen || !text.trim()) return;
+  const answer = await tell(state.chosen, "send", { text });
+  said(answer);
+  if (answer && answer.done) box.value = "";
+}
+
+$("jump").addEventListener("click", jumpToPane);
+$("sendbar").addEventListener("submit", (press) => {
+  press.preventDefault();
+  sendTyped();
+});
+$("say").addEventListener("keydown", (press) => {
+  if (press.key !== "Escape") return;
+  $("say").blur();
+});
 drawBell();
 $("find").addEventListener("input", (typed) => {
   state.find = typed.target.value.trim().toLowerCase();
