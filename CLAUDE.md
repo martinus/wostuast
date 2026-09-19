@@ -275,6 +275,19 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   them by position; a row moves only when its place changed, because
   `appendChild` on an attached node is a remove and an insert.
 
+### Tab state
+
+- **A tab's state lives under its own name**, `state.files` so far, and one
+  `blankFiles()` builds an empty one. Choosing a session is then
+  `state.files = blankFiles()` rather than eleven assignments that could
+  forget the twelfth. **A new tab gets the same shape from the start**: the
+  flat bag this came out of grew fifteen names in one scope for the Files tab
+  alone, and nothing said which tab owned any of them.
+- The shared chrome — `sessions`, `chosen`, `tab`, `find`, `pick`, `history`,
+  `skew`, `open`, `stream` — stays flat. It belongs to no tab.
+- The Diff tab's own fields are still flat. They move when something touches
+  them anyway, not as churn of their own.
+
 ### The worktree tabs
 
 - **Work from the worktree root, not the agent's directory.** git reports

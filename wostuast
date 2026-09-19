@@ -4155,25 +4155,15 @@ const state = {
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
-  names: [],            // every path in the worktree, in the order sent
-  known: new Set(),     // the same paths, for asking whether one is still there
-  tree: new Map(),      // every directory, with what it holds
-  marked: new Set(),    // the directories holding something that changed
-  dirs: new Map(),      // the ones the reader opened or closed by hand
-  changed: new Map(),   // the ones git says the agent touched, and when
-  filesTotal: 0,        // how many the worktree holds
-  filesCut: false,      // more than the daemon will send
-  filesFailed: false,   // git did not answer; "no files" would lie
-  filesTag: "",         // the daemon's name for the listing we hold
+  // Everything the Files tab holds, and nothing another tab reads. A tab's
+  // state arrives and leaves with the tab: the flat bag this came out of meant
+  // fifteen more names in one scope every time a tab was added, and nothing
+  // said which tab owned any of them. See `blankFiles`.
+  files: null,          // set below, because it is built in one place
   loose: null,          // an untracked file picked on the Diff tab
   goTo: false,          // and whether the pane still has to move to it
   looseText: null,      // null while it is being read
   looseBinary: false,
-  file: null,           // the file it shows
-  fileText: "",
-  fileBinary: false,
-  fileLang: "",         // what `file` made of it, when the name said nothing
-  fileMtime: 0,         // which version of that text is loaded
   diff: null,
   // The review being written: one entry per comment, in the order they were
   // made. Milestone 7 stage 1 keeps them here and nowhere else — they last as
@@ -4187,6 +4177,8 @@ const state = {
   diffAt: 0,            // bumped when that answer changes, so keys stay short
   poll: 0,
 };
+
+state.files = blankFiles();
 
 const $ = (id) => document.getElementById(id);
 
@@ -5340,8 +5332,8 @@ function dirsWithChanges(changed) {
 // the question this tool exists to answer. What the reader opens or closes
 // wins over that, so the tree never fights the hand on it.
 function openDirs() {
-  const open = new Set(state.marked);
-  for (const [path, wanted] of state.dirs) {
+  const open = new Set(state.files.marked);
+  for (const [path, wanted] of state.files.dirs) {
     if (wanted) open.add(path); else open.delete(path);
   }
   return open;
@@ -5355,10 +5347,10 @@ function dirFiles(files) {
   if (!files.length) return files;
   const named = files.filter((path) => PINNED.includes(path));
   const moved = files.filter((path) => !PINNED.includes(path) &&
-                                       state.changed.has(path));
+                                       state.files.changed.has(path));
   if (!named.length && !moved.length) return files;
   named.sort((a, b) => PINNED.indexOf(a) - PINNED.indexOf(b));
-  moved.sort((a, b) => state.changed.get(b) - state.changed.get(a));
+  moved.sort((a, b) => state.files.changed.get(b) - state.files.changed.get(a));
   const lifted = new Set([...named, ...moved]);
   return named.concat(moved, files.filter((path) => !lifted.has(path)));
 }
@@ -5388,9 +5380,9 @@ function treeRows(dirs, open, only = null) {
     }
     // Only a directory holding something named or changed needs its files put
     // in order; everywhere else they are already in the order they arrived,
-    // and `state.marked` says which those are. It halves a fully opened tree.
+    // and `state.files.marked` says which those are. It halves a fully opened tree.
     const files = only ? (only.inside.get(path) || [])
-      : (path && !state.marked.has(path)) ? one.files : dirFiles(one.files);
+      : (path && !state.files.marked.has(path)) ? one.files : dirFiles(one.files);
     for (const file of files) {
       rows.push({ path: file, from, depth,
                   hit: only ? only.marks.get(file) : null });
@@ -5412,7 +5404,7 @@ function matching() {
   const marks = new Map();
   const inside = new Map();      // directory to its matching files, best first
   const keep = new Map();        // and to the letters of the best beneath it
-  for (const hit of pick(state.names)) {
+  for (const hit of pick(state.files.names)) {
     marks.set(hit.one, hit.at);
     const cut = hit.one.lastIndexOf("/");
     const home = cut < 0 ? "" : hit.one.slice(0, cut);
@@ -5431,7 +5423,7 @@ function matching() {
 // What the left column shows. Typing filters the tree; it does not replace it.
 function listRows() {
   const only = state.find ? matching() : null;
-  return treeRows(state.tree, only ? null : openDirs(), only);
+  return treeRows(state.files.tree, only ? null : openDirs(), only);
 }
 
 // Everything whose path matches what is typed, in the order it came, each one
@@ -5514,9 +5506,9 @@ function drawRow(list, row) {
   const open = !!row.open;
   const button = put(list, "button",
                      (dir ? "dir" : "") +
-                     (!dir && state.file === row.path ? " chosen" : "") +
-                     ((dir ? state.marked.has(row.path)
-                           : state.changed.has(row.path)) ? " touched" : "") +
+                     (!dir && state.files.path === row.path ? " chosen" : "") +
+                     ((dir ? state.files.marked.has(row.path)
+                           : state.files.changed.has(row.path)) ? " touched" : "") +
                      (open ? " open" : ""));
   button.type = "button";
   button.title = row.path;
@@ -5537,7 +5529,7 @@ function drawRow(list, row) {
   putName(button, name, at);
   button.addEventListener("click", () => {
     if (!dir) { chooseFile(row.path); return; }
-    state.dirs.set(row.path, !open);
+    state.files.dirs.set(row.path, !open);
     draw();
   });
 }
@@ -5549,19 +5541,19 @@ function noteList(note, found) {
   // Rows are not files: typing leaves a tree, and a tree has directories in
   // it. Counting rows made one match in a big repository read "5 of 52799".
   const hits = found.reduce((n, row) => n + (row.dir ? 0 : 1), 0);
-  if (state.filesFailed) {
+  if (state.files.failed) {
     // git failing and a worktree holding nothing look the same and mean
     // opposite things, so the strip says which one this is.
     put(note, "span", null, "git did not answer");
   } else if (state.find && !hits) {
     put(note, "span", null, "no name matches");
   } else if (state.find) {
-    put(note, "span", null, hits + " of " + state.filesTotal);
-  } else if (state.filesCut) {
-    put(note, "span", null, state.filesTotal + " files, more than one list"
+    put(note, "span", null, hits + " of " + state.files.total);
+  } else if (state.files.cut) {
+    put(note, "span", null, state.files.total + " files, more than one list"
         + " can answer for");
   } else {
-    countNote(note, state.filesTotal);
+    countNote(note, state.files.total);
   }
 }
 
@@ -5694,8 +5686,8 @@ function drawFiles(box) {
   // in here its dot never appeared — the whole reason this key exists. The
   // mtimes stay out: folding those in re-rendered the open document.
   if (fresh(box, "listKey", JSON.stringify(
-      [state.find, state.file, state.filesFailed, state.filesTag,
-       [...state.changed.keys()].sort(), [...state.dirs]]))) {
+      [state.find, state.files.path, state.files.failed, state.files.tag,
+       [...state.files.changed.keys()].sort(), [...state.files.dirs]]))) {
     // Built here and not before: with a query typed this is a pass over every
     // name in the repository, and a poll that changes nothing wants none of
     // it.
@@ -5704,7 +5696,7 @@ function drawFiles(box) {
     // A different set of names starts at the top: the best match is the first
     // row, and that is the row you meant. A file being touched, or another
     // one being opened, is not a different set and does not move you.
-    const asked = state.find + "\n" + state.filesTag;
+    const asked = state.find + "\n" + state.files.tag;
     if (list.dataset.asked !== asked) {
       list.dataset.asked = asked;
       list.scrollTop = 0;
@@ -5718,27 +5710,27 @@ function drawFiles(box) {
   // read out of the redraw key, which `redrawCode` clears — so opening a
   // comment box made the open file look like a different one and threw the
   // reader back to the top of it.
-  const same = pane.dataset.file === String(state.file);
+  const same = pane.dataset.file === String(state.files.path);
   if (holdingText(box)) return;
-  if (!fresh(box, "bodyKey", state.file + "\n" + state.fileMtime)) return;
+  if (!fresh(box, "bodyKey", state.files.path + "\n" + state.files.mtime)) return;
   const place = same ? pane.scrollTop : 0;   // the same file, read again
   pane.replaceChildren();
-  pane.dataset.file = String(state.file);
-  if (!state.file) {
+  pane.dataset.file = String(state.files.path);
+  if (!state.files.path) {
     const empty = put(pane, "div", "empty");
-    put(empty, "p", null, state.filesFailed
+    put(empty, "p", null, state.files.failed
       ? "git did not answer, so there is no list yet. It is tried again in a"
         + " few seconds."
-      : state.names.length
+      : state.files.names.length
       ? "Pick a file on the left, or type to find one."
       : "This worktree holds no file that git knows about.");
     return;
   }
-  put(pane, "div", "where", state.file);
-  if (state.fileBinary) {
+  put(pane, "div", "where", state.files.path);
+  if (state.files.binary) {
     put(pane, "div", "note", "Binary file. There is nothing to show.");
-  } else if (MARKDOWN.test(state.file)) {
-    markdown(pane, state.fileText);
+  } else if (MARKDOWN.test(state.files.path)) {
+    markdown(pane, state.files.text);
   } else {
     // One row per line, through the same renderer the diff uses, so a file
     // gets the numbers, the `+` and the comments the diff already had — and a
@@ -5746,7 +5738,7 @@ function drawFiles(box) {
     //
     // The rows and the highlighter are given the very same text, so the two
     // can never disagree about how many lines there are.
-    const body = state.fileText.replace(/\n$/, "");
+    const body = state.files.text.replace(/\n$/, "");
     const rows = linesOf(body);
     const windowed = rows.length > CODE_WHOLE;
     if (windowed) {
@@ -5757,34 +5749,56 @@ function drawFiles(box) {
           + " find will not see the rest of it.");
     }
     const code = put(pane, "div", "code" + (windowed ? " windowed" : ""));
-    code.dataset.path = state.file;
+    code.dataset.path = state.files.path;
     if (windowed) {
       code.lines = rows;
-      code.path = state.file;
+      code.path = state.files.path;
       code.tall = new Map();
       // Where the reader will be once `place` is put back, not where an
       // emptied pane says they are: the rows have to be there before the
       // scrollbar can reach them.
       fillCode(pane, place);
     } else {
-      fillDiffFile(code, asLines(state.file, rows));
-      paintLines(code, state.file, body, state.fileLang);
+      fillDiffFile(code, asLines(state.files.path, rows));
+      paintLines(code, state.files.path, body, state.files.lang);
     }
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
 
 
+// An empty Files tab. One place, so that choosing a session, choosing a file
+// and starting up cannot drift apart about what "nothing is open" means.
+function blankFiles() {
+  return {
+    names: [],          // every path in the worktree, in the order sent
+    known: new Set(),   // the same paths, for asking whether one is still there
+    tree: new Map(),    // every directory, with what it holds
+    marked: new Set(),  // the directories holding something that changed
+    dirs: new Map(),    // the ones the reader opened or closed by hand
+    changed: new Map(), // the ones git says the agent touched, and when
+    total: 0,           // how many the worktree holds
+    cut: false,         // more than the daemon will send
+    failed: false,      // git did not answer; "no files" would lie
+    tag: "",            // the daemon's name for the listing we hold
+    path: null,         // the file it shows
+    text: "",
+    binary: false,
+    lang: "",           // what `file` made of it, when the name said nothing
+    mtime: 0,           // which version of that text is loaded
+  };
+}
+
 function forgetFile(path) {
-  state.file = path;
-  state.fileText = "";
-  state.fileBinary = false;
-  state.fileLang = "";
-  state.fileMtime = 0;
+  state.files.path = path;
+  state.files.text = "";
+  state.files.binary = false;
+  state.files.lang = "";
+  state.files.mtime = 0;
 }
 
 function chooseFile(path) {
-  if (state.file === path) return;
+  if (state.files.path === path) return;
   forgetFile(path);
   load();
 }
@@ -6430,17 +6444,7 @@ function choose(id) {
   state.blocks = [];
   state.nodes = [];
   state.open.clear();
-  forgetFile(null);
-  state.names = [];
-  state.known = new Set();
-  state.tree = new Map();
-  state.marked = new Set();
-  state.dirs = new Map();
-  state.changed = new Map();
-  state.filesTotal = 0;
-  state.filesCut = false;
-  state.filesFailed = false;
-  state.filesTag = "";
+  state.files = blankFiles();   // a different worktree holds different files
   state.loose = null;
   state.looseText = null;
   state.looseBinary = false;
@@ -6503,44 +6507,44 @@ async function loadFiles() {
   // carries them only when they have moved, so asking often is nearly free
   // and the changed-file dot turns up in about two seconds instead of six.
   const body = await ask(want, "files",
-                         "?have=" + encodeURIComponent(state.filesTag));
+                         "?have=" + encodeURIComponent(state.files.tag));
   if (!body || state.chosen !== want) return;
-  state.filesTag = body.tag || "";
-  state.changed = new Map(Object.entries(body.changed || {}));
-  state.filesTotal = body.total || 0;
-  state.filesCut = !!body.cut;
-  state.filesFailed = !!body.failed;
+  state.files.tag = body.tag || "";
+  state.files.changed = new Map(Object.entries(body.changed || {}));
+  state.files.total = body.total || 0;
+  state.files.cut = !!body.cut;
+  state.files.failed = !!body.failed;
   // No `names` means the tag we sent still stands, so the ones we hold do too.
   // NUL separates them: it is the only character a file name cannot hold, and
   // an empty listing splits to one empty string rather than to none.
   if (body.names !== undefined) {
-    state.names = body.names ? body.names.split("\0") : [];
-    state.tree = buildTree(state.names);
-    state.known = new Set(state.names);   // built once, asked every poll
+    state.files.names = body.names ? body.names.split("\0") : [];
+    state.files.tree = buildTree(state.files.names);
+    state.files.known = new Set(state.files.names);   // built once, asked every poll
   }
-  state.marked = dirsWithChanges(state.changed);
-  if (!state.known.has(state.file)) {
+  state.files.marked = dirsWithChanges(state.files.changed);
+  if (!state.files.known.has(state.files.path)) {
     // The first file the reader will see, from the one place that decides
     // what that order is. It runs when the open file has gone, not per poll.
     const first = listRows().find((row) => !row.dir);
     forgetFile(first ? first.path : null);
   }
 
-  if (state.file) {
+  if (state.files.path) {
     // The file is asked for by name, and the name can change while the answer
     // is on its way: pick another file quickly and the first one's text landed
     // under the second one's name, so the tab showed one file's content
     // labelled as another. The session is not the only thing that can move.
-    const wanted = state.file;
+    const wanted = state.files.path;
     const body = await ask(want, "file", "?path=" + encodeURIComponent(wanted));
-    if (!body || state.chosen !== want || state.file !== wanted) return;
+    if (!body || state.chosen !== want || state.files.path !== wanted) return;
     // Only a file whose mtime moved is drawn again, so the tab keeps your
     // place in a file the agent has not touched.
-    if (body.mtime !== state.fileMtime) {
-      state.fileText = body.text || body.missing || "";
-      state.fileBinary = !!body.binary;
-      state.fileLang = body.language || "";
-      state.fileMtime = body.mtime || 0;
+    if (body.mtime !== state.files.mtime) {
+      state.files.text = body.text || body.missing || "";
+      state.files.binary = !!body.binary;
+      state.files.lang = body.language || "";
+      state.files.mtime = body.mtime || 0;
     }
   }
   draw();

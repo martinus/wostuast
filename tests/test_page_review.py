@@ -688,7 +688,7 @@ def test_a_comment_in_a_long_file_survives_the_file_being_read_again(long_page):
             page.fill(".commentbox textarea", "still here")
             page.click(".commentbox .verb")
             page.wait_for_selector(".comment")
-            page.evaluate("state.fileMtime += 1; draw()")
+            page.evaluate("state.files.mtime += 1; draw()")
             page.wait_for_selector(".comment")
             assert "still here" in page.locator(".comment").inner_text()
             # And the file is still as long as it was: a taller row is counted
