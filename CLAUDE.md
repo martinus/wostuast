@@ -74,6 +74,13 @@ settings.
   when they are called rather than taking it as a default, so a test of the
   route above them can put a fake tmux in its place — the only way to test
   them without a terminal to type into.
+- **Nothing below a space reaches a terminal.** `tmux_send` strips the control
+  characters, keeping tab and newline, and it is the one place that can: every
+  route to a terminal goes through it. A bracketed paste ends at
+  `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote, so a file holding
+  those bytes would close the paste early and leave the rest arriving as
+  keystrokes — with any newline among them as Enter. A person reading the
+  preview cannot catch this; an escape byte is invisible.
 - **A newline sent to a terminal is Enter.** `tmux_send` wraps text that has
   one in the bracketed paste markers, so a message of several lines arrives as
   a paste and waits for the reader's own Enter. Without them a real shell ran
@@ -101,6 +108,12 @@ settings.
   has sent a `PermissionRequest`: from then on it is the same news twelve
   seconds late, and honouring it raised the alarm again for a question you had
   already answered. Those two together were "needs you never clears".
+- **The fold is not a filter.** `ended` and `dead` sessions fold away under the
+  history bar, but they are still counted in the top bar, the filter still
+  searches them, and the one you are reading is never missing from the list it
+  is chosen in. `shownSessions` is what the filter leaves and is what the
+  counts are about; `listedSessions` is what is on screen, and `j`/`k` walk
+  that, because a key must not move to a row that is not there.
 - **The sidebar sorts by name.** Sorting by state moved every row each time an
   agent started or finished a tool call, so the list shifted under the reader.
   The colour, the counts and the `n` key answer "who needs me" without it.
@@ -203,6 +216,13 @@ settings.
   that may lose its animation. A transcript block slides in only where a block
   arrives, in `patchTranscript`. That animation sat on `.turn` for a long
   time, so the whole history slid every time the tab was rebuilt.
+- **A review comment is anchored to what it is about, never to the node it
+  was drawn on.** `anchorOf` writes down the path, the side and the line
+  number, because the Diff tab is rebuilt from `state.diff` every time the
+  agent saves anything and no node survives that. For the same reason the
+  diff does not rebuild while a comment box is open: it would take what is
+  being typed with it, and would move the code the comment is about while it
+  is being written.
 - **The counts are about every session; only the list is filtered.**
   `drawCounts` runs before the guard that asks whether the shown rows changed,
   because a session the filter hides can still go amber, and that has to reach
@@ -257,6 +277,6 @@ tool behind.
    arrived early, in milestone 2, because it was asked for.
 6. **Shine** — done. Light theme, motion, empty states, keyboard help,
    README. No screenshots: `PLAN.md` section 9 says why.
-7. **Review** — next. Comment on a diff line or a file, then submit the whole
-   review to the agent as one message. `PLAN.md` section 4.9 is the spec;
-   three stages: mark, send, keep.
+7. **Review** — stages 1 (Mark) and 2 (Send) done. Comment on a diff line or a file, then
+   submit the whole review to the agent as one message. `PLAN.md` section 4.9
+   is the spec; three stages: mark, send, keep.

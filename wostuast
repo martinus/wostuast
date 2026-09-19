@@ -115,8 +115,15 @@ STATE_COLORS = {
     "dead": "\033[90m",
 }
 
-#: A session nobody can talk to any more. These sink to the bottom.
+#: A session nobody can talk to any more. These go to the history.
 GONE_STATES = frozenset({"ended", "dead"})
+
+#: How long a session whose process we cannot check may stay quiet before it
+#: is taken for gone. `agent_pid` returns 0 where there is no /proc to walk —
+#: on macOS, for every session — and without this such a session stayed in the
+#: list as though it were still running, for a week. Long enough that an agent
+#: left waiting overnight is not buried; that one has a pid, and is checked.
+QUIET_MAX = 12 * 3600
 
 
 def state_dir() -> Path:
@@ -644,7 +651,7 @@ class Store:
         if moment - self.liveness_checked >= LIVENESS_INTERVAL:
             self.liveness_checked = moment
             for session in sessions:
-                mark_dead(session, alive)
+                mark_dead(session, alive, moment)
         for session in sessions:
             self.reload_status(session)
         return sessions
@@ -979,19 +986,33 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def mark_dead(session: Session, alive: Callable[[int], bool] | None = None) -> None:
+def mark_dead(
+    session: Session, alive: Callable[[int], bool] | None = None,
+    now: float | None = None,
+) -> None:
     """A session whose process is gone is dead, even without a SessionEnd.
 
     `alive` defaults to None, not to pid_alive, so that tests can replace the
     module's pid_alive. A default bound at import would not see the change.
+
+    A session with no pid cannot be checked at all, so it is taken for gone
+    once it has been quiet for QUIET_MAX. Without that it stayed in the list
+    as though it were running until the log forgot it, a week later.
     """
     check = alive or pid_alive
     if session.state == "ended":
         return
-    if session.pid and not check(session.pid):
+    if session.pid:
+        if not check(session.pid):
+            session.state = "dead"
+            if not session.end_reason:
+                session.end_reason = "process gone"
+        return
+    moment = time.time() if now is None else now
+    if session.last_ts and moment - session.last_ts > QUIET_MAX:
         session.state = "dead"
         if not session.end_reason:
-            session.end_reason = "process gone"
+            session.end_reason = "no sign of it"
 
 
 def build_sessions(
@@ -1381,6 +1402,10 @@ DIFF_TIMEOUT = 8.0
 #: arrived all at once and does not act on its newlines. See `tmux_send`.
 PASTE_START = "\x1b[200~"
 PASTE_END = "\x1b[201~"
+
+#: Everything below a space except tab and newline, and the delete character.
+#: `tmux_send` takes these out of anything on its way to a terminal.
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 #: The header a POST carries its token in. A cross-origin request cannot add a
 #: header of its own without asking us first, and we never say yes — so a page
@@ -2531,12 +2556,21 @@ def tmux_send(pane: str, text: str,
     as a paste, do not act on it yet"; every program that accepts a multi-line
     prompt understands them. One line is sent exactly as it always was, so a
     program that does not understand the markers never sees them.
+
+    Control characters are taken out first, and this is the one place that has
+    to happen. A paste ends at `ESC [ 2 0 1 ~`, so text carrying those bytes
+    would close the paste early and everything after it would arrive as
+    keystrokes — with a newline among them, as Enter. The page composes a
+    review out of lines an agent wrote, so that text is not only what a person
+    typed, and an escape byte is invisible in a preview. Tab and newline stay;
+    they are what a pasted message is made of.
     """
+    text = CONTROL_CHARS.sub("", text)
     if not pane or not text.strip():
         return False
     runner = runner or run
     body = text
-    if "\n" in text or "\r" in text:
+    if "\n" in text:
         body = PASTE_START + text + PASTE_END
     if runner(["tmux", "send-keys", "-t", pane, "-l", "--", body]) is None:
         return False
@@ -3634,7 +3668,24 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row.done .word { color: var(--done); }
 .row.starting .word { color: var(--starting); }
 .row.ended .word, .row.dead .word { color: var(--ink-faint); }
-.row.ended, .row.dead { opacity: .62; }
+/* History. A finished session is grey through and through: it kept the colour
+   of the state it stopped in, which read as though something were still going
+   on there. */
+.row.ended, .row.dead { opacity: .72; }
+.row.ended .name, .row.dead .name { color: var(--ink-mute); font-weight: 500; }
+.row.ended .branch, .row.dead .branch,
+.row.ended .said, .row.dead .said { color: var(--ink-faint); }
+.row.ended .dirty, .row.dead .dirty,
+.row.ended .clean, .row.dead .clean,
+.row.ended .called, .row.dead .called { color: var(--gone); }
+.histhead {
+  display: block; width: 100%; margin: 10px 0 6px; padding: 5px 12px;
+  border: none; border-top: 1px solid var(--edge); border-radius: 0;
+  background: none; cursor: pointer; text-align: left;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.histhead:hover { color: var(--ink-soft); }
 .row .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
   padding-left: 17px; min-width: 0;
@@ -3999,7 +4050,42 @@ body:not(.show-thinking) .thinking { display: none; }
 }
 .dlines { padding: 5px 0; overflow-x: auto; color: var(--code-ink); }
 .dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
+.dline { position: relative; }
 .dline.context { color: var(--ink-mute); }
+
+/* The review. The `+` sits over the first characters of the gutter and shows
+   on hover, the way a pull request does it. `user-select: none` keeps it out
+   of a copied diff, like the line numbers beside it. */
+.plus {
+  position: absolute; left: 2px; top: 0; width: 18px; height: 18px;
+  padding: 0; border: none; border-radius: 4px; cursor: pointer;
+  background: var(--needs); color: var(--bg); font: inherit; font-size: 12px;
+  line-height: 18px; opacity: 0; user-select: none; transition: opacity .1s ease;
+}
+.dline:hover .plus, .plus:focus { opacity: 1; }
+.onFile .plus, .onLine .plus { position: static; opacity: 1; margin: 6px 0 6px 20px; }
+/* Sticky, so a comment stays where it can be read when a wide diff is
+   scrolled sideways. `pre` is the diff's business, not the note's. */
+.onLine, .onFile { position: sticky; left: 0; white-space: normal; max-width: 680px; }
+.comment {
+  margin: 6px 20px; padding: 9px 12px; border-radius: 6px;
+  background: var(--raised); border-left: 3px solid var(--mine);
+  font-family: var(--sans); font-size: 13px; color: var(--ink);
+}
+.comment .note { white-space: pre-wrap; line-height: 1.5; }
+.link {
+  margin-top: 6px; padding: 0; border: none; background: none; cursor: pointer;
+  color: var(--ink-faint); font-family: var(--mono); font-size: 11px;
+}
+.link:hover { color: var(--needs); }
+.commentbox { margin: 6px 20px; max-width: 680px; }
+.commentbox textarea {
+  width: 100%; padding: 9px 12px; border-radius: 6px; resize: vertical;
+  border: 1px solid var(--edge-bright); background: var(--raised);
+  color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5;
+}
+.commentbox textarea:focus { outline: none; border-color: var(--needs); }
+.commentbox .buttons { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
 .dline.added { background: var(--add-bg); color: var(--add-ink); }
 .dline.removed { background: var(--cut-bg); color: var(--cut-ink); }
 .note {
@@ -4030,6 +4116,36 @@ dialog.help {
 }
 dialog.help::backdrop { background: var(--veil); }
 dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
+dialog.review { width: min(760px, 92vw); }
+dialog.review .overall {
+  display: block; margin-bottom: 6px; font-size: 12px; color: var(--ink-mute);
+}
+dialog.review textarea {
+  width: 100%; padding: 8px 10px; border-radius: 6px; resize: vertical;
+  border: 1px solid var(--edge-bright); background: var(--raised);
+  color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5;
+}
+dialog.review textarea:focus { outline: none; border-color: var(--needs); }
+.reviewsays { margin: 14px 0 6px; font-size: 12px; color: var(--ink-mute); }
+/* The message itself, not a description of it. It cannot be edited here: a
+   comment is edited where the comment is, so there is one text and one place
+   it comes from. */
+.reviewtext {
+  margin: 0; padding: 12px 14px; max-height: 46vh; overflow: auto;
+  border-radius: 6px; background: var(--code); color: var(--code-ink);
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+dialog.review .buttons {
+  display: flex; gap: 14px; align-items: center; margin-top: 14px;
+}
+dialog.review .why { color: var(--ink-faint); font-size: 12px; }
+.sidefoot:empty { display: none; }
+.sidefoot {
+  flex-shrink: 0; padding: 8px 10px; border-top: 1px solid var(--edge);
+}
+.verb.submit { width: 100%; height: 30px; }
+.verb:disabled { opacity: .5; cursor: default; border-color: var(--edge); }
 dialog.help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
 dialog.help dt { color: var(--needs); }
 dialog.help dd { margin: 0; color: var(--ink-mute); }
@@ -4089,12 +4205,28 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   </div>
 </div>
 
+<dialog class="help review" id="review">
+  <h2>Submit review</h2>
+  <label class="overall" for="overall">A note about the review as a whole</label>
+  <textarea id="overall" rows="2" spellcheck="false"
+            placeholder="optional — the rest is edited where each comment is"></textarea>
+  <p class="reviewsays">This is what the agent will be sent. Some of it is text
+    the agent wrote, and it is about to be pasted into your terminal.</p>
+  <pre class="reviewtext" id="reviewtext"></pre>
+  <div class="buttons">
+    <button class="verb" type="button" id="reviewsend">send to the agent</button>
+    <button class="link" type="button" id="reviewstop">cancel</button>
+    <span class="why" id="reviewwhy"></span>
+  </div>
+</dialog>
+
 <dialog class="help" id="help">
   <h2>Keys</h2>
   <dl>
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>f</dt><dd>filter the session list</dd>
+    <dt>r</dt><dd>submit the review you have written on the diff</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 4</dt><dd>transcript, files, diff, peek</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
@@ -4117,6 +4249,7 @@ const state = {
   blocks: [],
   find: "",
   pick: "",             // what the sidebar filter box holds
+  history: false,       // whether the finished sessions are unfolded
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
@@ -4143,6 +4276,12 @@ const state = {
   peekAt: 0,
   peekWhy: "",          // why there is nothing to show, when there is nothing
   diff: null,
+  // The review being written: one entry per comment, in the order they were
+  // made. Milestone 7 stage 1 keeps them here and nowhere else — they last as
+  // long as the page does, and nothing is sent. See PLAN.md section 4.9.
+  review: [],
+  writing: null,        // the anchor of the comment box that is open, if any
+  overall: "",          // the review's note about itself, shown in the preview
   diffRaw: "",          // the last answer, as it arrived, to compare against
   diffAt: 0,            // bumped when that answer changes, so keys stay short
   poll: 0,
@@ -4335,13 +4474,32 @@ function clock(when) {
 
 const ages = [];
 
+// A session nobody can talk to any more. The daemon sorts these to the end;
+// the page folds them away under "history".
+function isGone(s) {
+  return s.state === "ended" || s.state === "dead";
+}
+
 // The rows the filter box leaves. A session is matched on everything the row
 // shows: the worktree, the name Claude Code gave it, and the branch. `fuzzy`
 // is the same matcher the Files tab uses, so "ofd" finds "oans/fastduck".
+// The counts and the "N of M" line are about this: the filter is what they
+// are narrowed by, not the fold.
 function shownSessions() {
   if (!state.pick) return state.sessions;
   return state.sessions.filter((s) => fuzzy(
     [s.place, s.name, s.branch].filter(Boolean).join(" "), state.pick));
+}
+
+// What is actually in the list. `j` and `k` walk this, because a key must not
+// move to a row that is not on screen. Typing in the filter box opens the
+// history: a search that cannot see half the sessions gives a wrong answer
+// that looks like a right one. So does the session you are reading, which is
+// never hidden from the list it is chosen in.
+function listedSessions() {
+  const shown = shownSessions();
+  if (state.history || state.pick) return shown;
+  return shown.filter((s) => !isGone(s) || s.id === state.chosen);
 }
 
 // One empty row, built once and then only filled in. Every row has the same
@@ -4382,6 +4540,22 @@ function fillRow(row, s) {
   ages.push([three.children[1], s.since]);
 }
 
+// The line between what is running and what is over. It carries the count and
+// folds the history away, because a week of finished sessions above the two
+// you are working with is a list you stop reading.
+function historyBar(many) {
+  const bar = document.createElement("button");
+  bar.type = "button";
+  bar.className = "histhead";
+  bar.addEventListener("click", () => {
+    state.history = !state.history;
+    try { localStorage.setItem("wostuast-history", state.history ? "open" : "shut"); }
+    catch (error) { }
+    drawSessions();
+  });
+  return bar;
+}
+
 function drawSessions() {
   const box = $("rows");
   // Only when they would come out different. The stream re-subscribes the
@@ -4389,30 +4563,56 @@ function drawSessions() {
   // push of its own, so every page load drew the whole sidebar twice.
   const shown = shownSessions();
   drawCounts(shown);
-  if (!fresh(box, "drawn", JSON.stringify([shown, state.chosen]))) return;
+  const listed = listedSessions();
+  const past = shown.filter(isGone);
+  if (!fresh(box, "drawn",
+             JSON.stringify([listed, state.chosen, past.length, state.history]))) {
+    return;
+  }
   // A row that is still there is kept and filled in again. A dot can only
   // fade into its new colour if it is the same dot, and the needs-you ring
   // can only finish a cycle if its row outlives the change that started it —
   // and a state change is exactly when both of those used to be thrown away.
-  // Anything that is not a row goes first — the "no session matches" line is
-  // the only one — because the loop below places rows by position, and a
-  // stray node would shift every one of them.
+  // The bar is kept for the same reason; anything else that is not a row goes
+  // first, because the loop below places things by position and a stray node
+  // would shift every one of them.
   const had = new Map();
+  let bar = null;
   for (const node of Array.from(box.children)) {
     if (node.dataset.id) had.set(node.dataset.id, node);
+    else if (node.classList.contains("histhead")) bar = node;
     else node.remove();
   }
   ages.length = 0;
   let at = 0;
-  for (const s of shown) {
+  const place = (node) => {
+    if (box.children[at] !== node) box.insertBefore(node, box.children[at] || null);
+    at += 1;
+  };
+  let barPlaced = !past.length;
+  for (const s of listed) {
+    if (!barPlaced && isGone(s)) {
+      bar = bar || historyBar();
+      bar.textContent = (state.history ? "\u25be" : "\u25b8") +
+        " history \u00b7 " + past.length;
+      place(bar);
+      barPlaced = true;
+    }
     const row = had.get(s.id) || newRow(s.id);
     had.delete(s.id);
     fillRow(row, s);
-    if (box.children[at] !== row) box.insertBefore(row, box.children[at] || null);
-    at += 1;
+    place(row);
+  }
+  // A folded history has no row to put the bar in front of, so it goes last.
+  if (!barPlaced) {
+    bar = bar || historyBar();
+    bar.textContent = "\u25b8 history \u00b7 " + past.length;
+    place(bar);
+  } else if (bar && !past.length) {
+    bar.remove();
   }
   for (const gone of had.values()) gone.remove();
-  if (!shown.length && state.sessions.length) {
+  if (!listed.length && state.sessions.length && !past.length) {
     put(box, "div", "nohits", "no session matches");
   }
 }
@@ -4964,12 +5164,17 @@ function split(box, tab, bodyClass) {
     const windowed = tab === "files";
     const list = put(side, "div", "filelist" + (windowed ? " fixed" : ""));
     if (windowed) list.addEventListener("scroll", () => fillList(list));
+    // Under the list and pinned there, for what must stay in reach however
+    // far the list scrolls. The count strip above it is one clipped line.
+    put(side, "div", "sidefoot");
     dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
     put(box, "div", bodyClass);
   }
   const side = box.firstChild;
   homeFind(side.firstChild);
-  return [side.lastChild, box.lastChild, side.children[1]];
+  // By position, so that adding a part above does not silently renumber the
+  // rest: findslot, count, list, foot.
+  return [side.children[2], box.lastChild, side.children[1], side.children[3]];
 }
 
 function fresh(box, which, key) {
@@ -5381,7 +5586,12 @@ function chooseFile(path) {
 let BIG_LINES = 500;
 
 function drawDiff(box) {
-  const [list, pane, note] = split(box, "diff", "diffbody");
+  const [list, pane, note, foot] = split(box, "diff", "diffbody");
+  // A comment box holds what the reader is typing, and the diff is rebuilt
+  // whenever the agent saves anything. Rebuilding under an open box would take
+  // the text with it, and would move the code the comment is about while it is
+  // being written. The box closes, and then the diff catches up.
+  if (state.writing !== null && box.dataset.bodyKey) return;
   if (!fresh(box, "bodyKey", state.diffAt + "\n" + state.find)) return;
   const place = pane.scrollTop;
   list.replaceChildren();
@@ -5460,6 +5670,8 @@ function drawDiff(box) {
   }
   note.replaceChildren();
   countNote(note, shown + loose.length);
+  foot.replaceChildren();
+  drawReviewButton(foot);
   drawDiffCount();
 }
 
@@ -5491,10 +5703,14 @@ function drawLooseFile(pane, path) {
   // the one place that knows the shape of a diff row, so it is numbered and
   // lined up with every other block rather than being a third way to draw a
   // line that quietly drifts from the other two.
-  fillDiffFile(body, { hunks: [{
+  // The path goes in it too: a review comment is anchored by the file it is
+  // about, and without one every untracked file shared the anchor `undefined`
+  // — a comment on line 3 of this one turned up on line 3 of the next.
+  fillDiffFile(body, { path: path, hunks: [{
     header: "@@ -0,0 +1," + lines.length + " @@",
     lines: lines.map((text) => ({ kind: "added", text })),
   }] });
+  putReview(put(node, "div", "onFile"), anchorOf(path, "file", 0), "", "plus");
   return node;
 }
 
@@ -5524,6 +5740,7 @@ function drawDiffFile(pane, one) {
     ? one.old_path + " \u2192 " + one.path : one.path);
   putCounts(head, one);
   const body = put(node, "div", "dbody");
+  putReview(put(node, "div", "onFile"), anchorOf(one.path, "file", 0), "", "plus");
   if (one.binary) {
     put(body, "div", "note", "Binary file. There is nothing to show.");
     return node;
@@ -5572,10 +5789,195 @@ function fillDiffFile(body, one) {
           (line.kind === "added" ? "" : String(old)).padStart(5) +
           (line.kind === "removed" ? "" : String(now)).padStart(6) + "  ");
       put(row, "span", "dtext", sign[line.kind] + line.text);
+      const anchor = lineAnchor(one.path, line, old, now);
+      if (commentAt(anchor) || state.writing === anchor) {
+        putReview(put(lines, "div", "onLine"), anchor, line.text, "plus");
+      } else {
+        putReview(row, anchor, line.text, "plus");
+      }
       if (line.kind !== "added") old += 1;
       if (line.kind !== "removed") now += 1;
     }
   }
+}
+
+// --- the review ---------------------------------------------------------------
+//
+// A comment is one note on one place: a line of the diff, or a file. The place
+// is written down rather than pointed at, because the diff is rebuilt whenever
+// the agent saves anything and a node does not survive that. See PLAN.md 4.9.
+
+// What a comment is anchored to, as one string, so that finding it again is a
+// lookup rather than a search with four fields in it. A removed line has a
+// number only on the old side, an added line only on the new side.
+function anchorOf(path, side, line) {
+  return path + "\n" + side + "\n" + line;
+}
+
+function lineAnchor(path, line, old_, now) {
+  return line.kind === "removed"
+    ? anchorOf(path, "old", old_) : anchorOf(path, "new", now);
+}
+
+function commentAt(anchor) {
+  return state.review.find((one) => one.anchor === anchor) || null;
+}
+
+// The note the reader typed. An empty one deletes the comment, which is what
+// clearing the box and saving means; there is no separate delete to remember.
+function writeComment(anchor, quoted, note) {
+  const text = note.trim();
+  const had = commentAt(anchor);
+  if (!text) {
+    if (had) state.review.splice(state.review.indexOf(had), 1);
+  } else if (had) {
+    had.note = text;
+  } else {
+    state.review.push({ anchor: anchor, quoted: quoted, note: text });
+  }
+  state.writing = null;
+  redrawDiff();
+}
+
+// The diff is rebuilt from `state.diff`, which the poll replaces every couple
+// of seconds. `fresh` holds the rebuild to when that answer changes, so a
+// comment added or removed has to say so itself.
+function redrawDiff() {
+  const box = $("content");
+  box.dataset.bodyKey = "";
+  draw();
+}
+
+// One comment, under the line or the file it is about.
+function putComment(parent, one) {
+  const node = put(parent, "div", "comment");
+  put(node, "div", "note", one.note);
+  const edit = put(node, "button", "link", "edit");
+  edit.type = "button";
+  edit.addEventListener("click", () => {
+    state.writing = one.anchor;
+    redrawDiff();
+  });
+  return node;
+}
+
+// The box. Save keeps what is in it, Cancel leaves the comment as it was, and
+// an empty save removes it.
+function putCommentBox(parent, anchor, quoted) {
+  const form = put(parent, "div", "commentbox");
+  const area = put(form, "textarea");
+  area.value = (commentAt(anchor) || {}).note || "";
+  area.placeholder = "what should the agent change here?";
+  area.rows = 3;
+  const row = put(form, "div", "buttons");
+  const save = put(row, "button", "verb", "save");
+  save.type = "button";
+  save.addEventListener("click", () => writeComment(anchor, quoted, area.value));
+  const stop = put(row, "button", "link", "cancel");
+  stop.type = "button";
+  stop.addEventListener("click", () => { state.writing = null; redrawDiff(); });
+  area.addEventListener("keydown", (press) => {
+    if (press.key === "Escape") { state.writing = null; redrawDiff(); }
+  });
+  requestAnimationFrame(() => { area.focus(); area.select(); });
+  return form;
+}
+
+// The button that opens the box, and the comment or box that is already there.
+// One function, because a line and a file header want exactly the same three
+// things and differ only in where they hang them.
+function putReview(parent, anchor, quoted, cls) {
+  const seen = commentAt(anchor);
+  if (state.writing === anchor) return putCommentBox(parent, anchor, quoted);
+  if (seen) return putComment(parent, seen);
+  const add = put(parent, "button", cls, "+");
+  add.type = "button";
+  add.title = "comment here";
+  add.addEventListener("click", () => {
+    state.writing = anchor;
+    redrawDiff();
+  });
+  return add;
+}
+
+// The comments in the order they will be read: by file, and inside a file the
+// note about the whole thing first, then the lines from the top down. The
+// order they were written in is the order the reader wandered through the
+// diff, which is nobody else's order.
+function reviewInOrder() {
+  return state.review.slice().sort((one, two) => {
+    const [pathA, sideA, lineA] = one.anchor.split("\n");
+    const [pathB, sideB, lineB] = two.anchor.split("\n");
+    if (pathA !== pathB) return pathA < pathB ? -1 : 1;
+    if ((sideA === "file") !== (sideB === "file")) return sideA === "file" ? -1 : 1;
+    return Number(lineA) - Number(lineB);
+  });
+}
+
+// The message the agent gets. Plain, and it reads as well in a terminal as it
+// does here, because that is where it lands.
+function reviewText() {
+  const comments = reviewInOrder();
+  const files = new Set(comments.map((one) => one.anchor.split("\n")[0]));
+  const say = (n, word) => n + " " + word + (n === 1 ? "" : "s");
+  const parts = ["Review: " + say(comments.length, "comment") + " on "
+                 + say(files.size, "file") + "."];
+  if (state.overall.trim()) parts.push(state.overall.trim());
+  for (const one of comments) {
+    const [path, side, line] = one.anchor.split("\n");
+    const head = side === "file" ? path : path + ":" + line;
+    parts.push(one.quoted ? head + "\n> " + one.quoted + "\n" + one.note
+                          : head + "\n" + one.note);
+  }
+  return parts.join("\n\n") + "\n";
+}
+
+// Submit opens this. It shows the message itself rather than a description of
+// it, because this is the moment a person reads what is about to be pasted
+// into their terminal — and part of it was written by an agent.
+function showReview() {
+  if (!state.review.length) return;
+  const box = $("review");
+  const body = $("reviewtext");
+  const note = $("overall");
+  note.value = state.overall;
+  body.textContent = reviewText();
+  const session = current();
+  const send = $("reviewsend");
+  send.disabled = !(session && session.pane);
+  $("reviewwhy").textContent = send.disabled
+    ? "this session is not running in tmux, so there is nowhere to send it" : "";
+  if (!box.open) box.showModal();
+}
+
+async function submitReview() {
+  const id = state.chosen;
+  const answer = await tell(id, "send", { text: reviewText() });
+  if (!answer || answer.error) {
+    $("reviewwhy").textContent = (answer && answer.error) || "it was not sent";
+    return;
+  }
+  const session = current();
+  $("review").close();
+  state.review = [];
+  state.overall = "";
+  redrawDiff();
+  // Claude Code queues what arrives mid-turn, so a review sent to a working
+  // agent is not lost — it is read when the turn ends. Say so, because from
+  // here it looks like nothing happened.
+  said({ error: session && session.state === "working"
+    ? "review sent; the agent is working, so it reads this when the turn ends"
+    : "review sent" });
+}
+
+// It appears with the first comment and carries the count, so "is there a
+// review waiting" is answered by whether the button is there at all.
+function drawReviewButton(side) {
+  if (!state.review.length) return;
+  const button = put(side, "button", "verb submit",
+                     "submit review · " + state.review.length);
+  button.type = "button";
+  button.addEventListener("click", showReview);
 }
 
 function drawDiffCount() {
@@ -5733,6 +6135,9 @@ function choose(id) {
   state.peekWhy = "";
   state.peekAt += 1;
   state.diff = null;
+  state.review = [];
+  state.writing = null;
+  state.overall = "";
   state.diffRaw = "";
   state.diffAt += 1;
   drawDiffCount();          // the last session's counts are not this one's
@@ -5908,7 +6313,7 @@ function resubscribe() {
 // --- keys --------------------------------------------------------------------
 
 function move(step) {
-  const shown = shownSessions();
+  const shown = listedSessions();
   if (!shown.length) return;
   const at = shown.findIndex((s) => s.id === state.chosen);
   const next = Math.min(shown.length - 1, Math.max(0, at + step));
@@ -5928,13 +6333,19 @@ function nextNeedsYou() {
 
 document.addEventListener("keydown", (press) => {
   const help = $("help");
-  if (press.key === "Escape") { if (help.open) help.close(); return; }
+  if (press.key === "Escape") {
+    for (const box of document.querySelectorAll("dialog")) {
+      if (box.open) box.close();
+    }
+    return;
+  }
   if (press.metaKey || press.ctrlKey || press.altKey) return;
   const tag = (press.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea") return;   // typing, not commanding
   switch (press.key) {
     case "/": $("find").focus(); break;
     case "f": $("pick").focus(); break;
+    case "r": showReview(); break;
     case "Enter": jumpToPane(); break;
     case "s":
       if ($("sendbar").hidden) return;
@@ -5964,6 +6375,14 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
+$("reviewsend").addEventListener("click", submitReview);
+$("reviewstop").addEventListener("click", () => $("review").close());
+// The one thing in the preview you can type into. It goes into the message as
+// you write, so what is shown is always what would be sent.
+$("overall").addEventListener("input", (typed) => {
+  state.overall = typed.target.value;
+  $("reviewtext").textContent = reviewText();
+});
 $("bell").addEventListener("click", () => { toggleNotifications(); });
 
 async function jumpToPane() {
@@ -6018,6 +6437,11 @@ $("say").addEventListener("keydown", (press) => {
   }
 });
 drawBell();
+// Which way the history was left, in this browser. A folded history is the
+// useful default: a week of finished sessions above the two you are working
+// with is a list you stop reading.
+try { state.history = localStorage.getItem("wostuast-history") === "open"; }
+catch (error) { }
 $("find").addEventListener("input", (typed) => {
   state.find = typed.target.value.trim().toLowerCase();
   draw();

@@ -2046,3 +2046,470 @@ def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
             ), "it ran off the side instead of wrapping"
         finally:
             browser.close()
+
+
+# --- the review: milestone 7 stage 1 -----------------------------------------
+
+
+def open_diff(play, where):
+    """The Diff tab of a real repository, drawn."""
+    browser, page = open_page(play, where)
+    show_tab(page, "diff")
+    page.wait_for_selector(".dline")
+    return browser, page
+
+
+def test_a_diff_line_can_be_commented_on(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            assert page.locator(".comment").count() == 0
+            page.locator(".dline .plus").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "use a signed type here")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            assert "use a signed type here" in page.locator(".comment").inner_text()
+            # It is written down, not held in the node it was drawn on.
+            assert page.evaluate("state.review.length") == 1
+            assert page.evaluate("state.review[0].anchor").count("\n") == 2
+        finally:
+            browser.close()
+
+
+def test_the_plus_shows_when_you_are_on_the_line(repo_page):
+    """It sits over the gutter and stays out of the way until you want it, the
+    way a pull request does it — so "can you see it" is the whole feature."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            shown = ("() => getComputedStyle("
+                     "document.querySelector('.dline .plus')).opacity")
+            assert page.evaluate(shown) == "0"
+            page.locator(".dline").first.hover()
+            page.wait_for_function(shown + " === '1'")
+            # And it is not part of the diff you copy, like the numbers by it.
+            assert page.evaluate("() => getComputedStyle("
+                                 "document.querySelector('.dline .plus'))"
+                                 ".userSelect") == "none"
+        finally:
+            browser.close()
+
+
+def test_a_whole_file_can_be_commented_on(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".onFile .plus").first.click()
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "keep the heading order")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".onFile .comment")
+            assert page.evaluate("state.review[0].anchor").endswith("\nfile\n0")
+        finally:
+            browser.close()
+
+
+def test_a_comment_survives_the_diff_being_read_again(repo_page):
+    """The poll replaces the whole answer every couple of seconds. A comment
+    is anchored to the line, not to the node the line was drawn on."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "look again")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            page.evaluate("state.diffAt += 1; draw()")
+            assert page.locator(".comment").count() == 1
+            assert "look again" in page.locator(".comment").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_open_box_is_not_swept_away_by_the_poll(repo_page):
+    """An agent saving a file rebuilds the diff. Doing that under an open box
+    would take what is being typed with it, and would move the code the
+    comment is about while it is being written."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "half a thought")
+            page.evaluate("state.diffAt += 1; draw()")
+            assert page.input_value(".commentbox textarea") == "half a thought"
+        finally:
+            browser.close()
+
+
+def test_a_comment_can_be_edited_and_emptied_away(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "first thought")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+
+            page.click(".comment .link")            # edit
+            page.wait_for_selector(".commentbox textarea")
+            assert page.input_value(".commentbox textarea") == "first thought"
+            page.fill(".commentbox textarea", "second thought")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review[0].note === 'second thought'")
+
+            # Clearing the box and saving is how a comment goes away, so there
+            # is no second thing to find and press.
+            page.click(".comment .link")
+            page.fill(".commentbox textarea", "   ")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review.length === 0")
+            assert page.locator(".comment").count() == 0
+        finally:
+            browser.close()
+
+
+def test_cancel_leaves_the_comment_as_it_was(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "kept")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            page.click(".comment .link")
+            page.fill(".commentbox textarea", "thrown away")
+            page.click(".commentbox .link")         # cancel
+            page.wait_for_selector(".comment")
+            assert "kept" in page.locator(".comment").inner_text()
+            assert page.evaluate("state.review.length") == 1
+        finally:
+            browser.close()
+
+
+def test_the_review_belongs_to_the_session_it_is_about(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "about this session")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review.length === 1")
+            page.evaluate("choose('someone-else')")
+            assert page.evaluate("state.review.length") == 0
+        finally:
+            browser.close()
+
+
+def test_nothing_is_sent_yet(repo_page):
+    """Stage 1 of milestone 7 draws and keeps a review. Sending it is stage 2,
+    and until then nothing here may reach the terminal."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate("window.__posts = []; const real = window.fetch;"
+                          " window.fetch = (u, o) => { window.__posts.push(String(u));"
+                          " return real(u, o); };")
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "do not send me")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            sent = page.evaluate("window.__posts.filter((u) => u.includes('/send'))")
+            assert sent == []
+        finally:
+            browser.close()
+
+
+# --- the review: milestone 7 stage 2 -----------------------------------------
+
+
+def comment_on_first_line(page, note):
+    page.locator(".dline .plus").first.click(force=True)
+    page.wait_for_selector(".commentbox textarea")
+    page.fill(".commentbox textarea", note)
+    page.click(".commentbox .verb")
+    page.wait_for_selector(".comment")
+
+
+def test_there_is_no_submit_until_there_is_a_comment(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            assert page.locator(".verb.submit").count() == 0
+            comment_on_first_line(page, "one thing")
+            page.wait_for_selector(".verb.submit")
+            assert "1" in page.locator(".verb.submit").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_preview_is_the_message_itself(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "use a signed type here")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            shown = page.locator("#reviewtext").inner_text()
+            assert shown.startswith("Review: 1 comment on 1 file.")
+            assert "use a signed type here" in shown
+            assert "\n> " in shown, "the line it is about is quoted"
+            # What is shown is what would be sent, byte for byte.
+            assert shown.rstrip("\n") == page.evaluate("reviewText()").rstrip("\n")
+        finally:
+            browser.close()
+
+
+def test_the_overall_note_goes_into_the_message_as_you_type(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "a line note")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            page.fill("#overall", "mostly good, two things")
+            page.wait_for_function(
+                "document.getElementById('reviewtext')"
+                ".textContent.includes('mostly good, two things')")
+            shown = page.locator("#reviewtext").inner_text()
+            # The note comes before the comments, as its own paragraph.
+            assert shown.index("mostly good") < shown.index("a line note")
+        finally:
+            browser.close()
+
+
+def test_the_message_is_ordered_by_file_and_line(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            # Written out of order on purpose: line 9, then the file, then 2.
+            page.evaluate("""() => {
+              state.review = [
+                {anchor: "b.py\\nnew\\n9", quoted: "nine", note: "at nine"},
+                {anchor: "b.py\\nfile\\n0", quoted: "", note: "about the file"},
+                {anchor: "a.py\\nnew\\n2", quoted: "two", note: "at two"},
+              ];
+            }""")
+            shown = page.evaluate("reviewText()")
+            assert shown.startswith("Review: 3 comments on 2 files.")
+            assert (shown.index("at two") < shown.index("about the file")
+                    < shown.index("at nine"))
+            assert "a.py:2" in shown and "b.py:9" in shown
+            assert "b.py\nabout the file" in shown, "a file comment has no line"
+        finally:
+            browser.close()
+
+
+def test_submitting_sends_it_and_empties_the_review(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "change this please")
+            page.evaluate("""() => {
+              window.__sent = [];
+              const real = window.fetch;
+              window.fetch = (url, opts) => {
+                if (String(url).endsWith("/send")) {
+                  window.__sent.push(JSON.parse(opts.body).text);
+                  return Promise.resolve(new Response('{"done": true}'));
+                }
+                return real(url, opts);
+              };
+            }""")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            page.click("#reviewsend")
+            page.wait_for_function("window.__sent.length === 1")
+            assert "change this please" in page.evaluate("window.__sent[0]")
+            # It went, so it is gone from here: no sending the same twice.
+            page.wait_for_function("state.review.length === 0")
+            assert page.locator(".verb.submit").count() == 0
+            assert page.evaluate("document.getElementById('review').open") is False
+        finally:
+            browser.close()
+
+
+def test_cancel_keeps_the_review(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "still here")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            page.fill("#overall", "typed and kept")
+            page.click("#reviewstop")
+            page.wait_for_function(
+                "document.getElementById('review').open === false")
+            assert page.evaluate("state.review.length") == 1
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            assert page.input_value("#overall") == "typed and kept"
+        finally:
+            browser.close()
+
+
+def test_a_session_without_a_pane_cannot_be_sent_to(ws, served, repo):
+    """The same rule the other verbs already follow: it can be written, it
+    just has nowhere to go."""
+    from conftest import git_in as git
+
+    (repo / "code.py").write_text("print(1)\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "seed")
+    (repo / "code.py").write_text("print(1)\nprint(2)\n")
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(repo), pane="",
+                                   ts=time.time(), pid=1))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_diff(play, (repo, base))
+        try:
+            comment_on_first_line(page, "nowhere to go")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            assert page.locator("#reviewsend").is_disabled()
+            assert "not running in tmux" in page.locator("#reviewwhy").inner_text()
+        finally:
+            browser.close()
+
+
+def test_r_opens_the_review_and_escape_closes_it(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.press("body", "r")
+            page.wait_for_timeout(100)
+            assert page.evaluate("document.getElementById('review').open") is False, \
+                "there is nothing to submit yet"
+            comment_on_first_line(page, "something")
+            page.press("body", "r")
+            page.wait_for_selector("#review[open]")
+            page.press("body", "Escape")
+            page.wait_for_function(
+                "document.getElementById('review').open === false")
+        finally:
+            browser.close()
+
+
+# --- history: the sessions nobody can talk to any more ------------------------
+
+
+@pytest.fixture
+def past_at(ws, page_at, tmp_path):
+    """The one-session page, with two finished sessions beside it."""
+    daemon, url = page_at
+    for name, reason in (("acorn", "clear"), ("beetroot", "logout")):
+        where = tmp_path.parent / name
+        where.mkdir(exist_ok=True)
+        ws.append_event(conftest.event("SessionStart", sid=name, cwd=str(where),
+                                       pane="%9", pid=2, ts=time.time()))
+        ws.append_event(conftest.event("SessionEnd", sid=name, cwd=str(where),
+                                       reason=reason, ts=time.time()))
+    daemon.store.refresh()
+    return daemon, url
+
+
+def test_finished_sessions_are_folded_away_under_history(past_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            assert page.locator(".row").count() == 1, "only the live one is listed"
+            assert "2" in page.locator(".histhead").inner_text()
+            # It is the last thing in the list, under the live sessions.
+            assert page.evaluate(
+                "document.getElementById('rows').lastElementChild"
+                ".classList.contains('histhead')")
+            # And they are still counted: the fold is not a filter.
+            assert "2 ended" in page.locator("#counts").inner_text()
+            assert page.locator("#where").inner_text() == "3 sessions"
+        finally:
+            browser.close()
+
+
+def test_history_opens_and_is_remembered(past_at):
+    with sync_playwright() as play:
+        browser = fresh_context(play)
+        try:
+            page = browser.new_page()
+            page.goto(past_at[1], wait_until="domcontentloaded")
+            page.wait_for_selector(".histhead")
+            page.click(".histhead")
+            page.wait_for_function("document.querySelectorAll('.row').length === 3")
+            # The bar moves above the rows it opened.
+            assert page.evaluate(
+                "[...document.getElementById('rows').children]"
+                ".findIndex((n) => n.classList.contains('histhead'))") == 1
+
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(".histhead")
+            page.wait_for_function("document.querySelectorAll('.row').length === 3")
+        finally:
+            browser.close()
+
+
+def test_a_finished_row_is_grey(past_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.click(".histhead")
+            page.wait_for_selector(".row.ended")
+            colours = page.evaluate("""() => {
+              const live = document.querySelector(".row:not(.ended) .name");
+              const past = document.querySelector(".row.ended .name");
+              return [getComputedStyle(live).color, getComputedStyle(past).color];
+            }""")
+            assert colours[0] != colours[1], "a finished session looks live"
+        finally:
+            browser.close()
+
+
+def test_the_filter_searches_the_history_too(past_at):
+    """A search that cannot see half the sessions gives a wrong answer that
+    looks like a right one."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            page.fill("#pick", "acorn")
+            page.wait_for_function("document.querySelectorAll('.row').length === 1")
+            assert "acorn" in page.locator(".row .name").inner_text()
+        finally:
+            browser.close()
+
+
+def test_j_and_k_do_not_walk_into_a_folded_history(past_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            for _ in range(5):
+                page.press("body", "j")
+            assert page.locator(".row.chosen").count() == 1
+            assert page.evaluate("state.chosen") == "s1"
+        finally:
+            browser.close()
+
+
+def test_an_untracked_file_anchors_its_comments_to_itself(repo_page):
+    """git has no diff for an untracked file, so it is drawn from a synthetic
+    one. That object carried no path, so every untracked file's comments were
+    anchored to `undefined` — and a comment on line 3 of one turned up on line
+    3 of every other."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.click(".side button[title='NOTES.md']")
+            page.wait_for_selector(".dfile .what:text('untracked')")
+            page.wait_for_selector(".dline")
+            page.locator(".dfile:has(.what:text('untracked')) .dline .plus").first.click(
+                force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "about the notes")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review.length === 1")
+            assert page.evaluate("state.review[0].anchor").startswith("NOTES.md\n")
+            assert "NOTES.md:" in page.evaluate("reviewText()")
+        finally:
+            browser.close()

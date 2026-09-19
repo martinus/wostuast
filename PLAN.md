@@ -170,6 +170,7 @@ One session per `session_id`. Derive state from events, in this order:
 | `PreCompact` | unchanged | Show a small "compacted" marker in the transcript |
 | `SessionEnd` | `ended` | Row goes to the bottom, dimmed |
 | pid gone (`kill -0` fails), checked every 5 s | `dead` | Same look as `ended`, label "killed" |
+| no pid, and quiet for 12 h | `dead` | `agent_pid` returns 0 where there is no `/proc` to walk, which on macOS is every session. One that cannot be checked is taken for gone once it has been quiet long enough. An agent left waiting overnight has a pid, and the pid is the answer for it. |
 
 `needs_you` clears on the next `UserPromptSubmit` or `PostToolUse` for that
 session. Show how long it has been waiting.
@@ -282,7 +283,7 @@ session.
 | Verb | Command | Notes |
 | --- | --- | --- |
 | jump | `tmux select-window -t <pane>` then `tmux select-pane -t <pane>` | Then run `$WOSTUAST_FOCUS` if set (a user command that raises the terminal window, e.g. a KWin script). |
-| send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. Text with a newline in it is wrapped in the bracketed paste markers first, because a newline typed into a terminal *is* Enter: measured against a real shell, a two-line message ran its first line and left the second on the prompt. One line is sent as it always was, so a program that does not understand the markers never sees them. |
+| send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. Control characters are stripped, keeping tab and newline: a paste ends at `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote. Text with a newline in it is wrapped in the bracketed paste markers, because a newline typed into a terminal *is* Enter: measured against a real shell, a two-line message ran its first line and left the second on the prompt. One line is sent as it always was, so a program that does not understand the markers never sees them. |
 | peek | `tmux capture-pane -p -e -t <pane>` | A small hand-written converter turns the escape codes into runs of text, each with its colours. It makes no HTML: the page builds one node per run and sets its text with `textContent`, because a pane holds whatever an agent ran. Poll once per second while the Peek tab is visible, never otherwise. |
 
 If `pane` is empty, hide the verbs for that session and show "not in tmux".
@@ -542,6 +543,17 @@ arrives from the status line a second after the session starts, and `/rename`
 changes it later, so a list ordered by name jumps under the reader for the
 very reason this order exists.
 
+`ended` and `dead` go under a **history** bar, which carries their count and
+folds them away; folded is the default, and the choice is kept in that
+browser. A week of finished sessions above the two you are working with is a
+list you stop reading. They are grey through and through, rather than keeping
+the colour of the state they stopped in, which read as though something were
+still going on there. Two things always open the history: a filter with
+anything typed in it, because a search that sees half the sessions gives a
+wrong answer that looks like a right one, and the session you are reading,
+which is never missing from the list it is chosen in. The counts in the top
+bar still count them: the fold is not a filter.
+
 Above the rows is a filter box. It matches the same way the Files tab does, on
 scattered letters, over the worktree, the session's name and the branch, so
 `ofd` finds `oans/fastduck`. The counts in the top bar stay about every
@@ -791,9 +803,25 @@ Commit at the end of each milestone. Each one leaves a working tool.
       belongs, edited and deleted in place. Nothing is sent yet, so this stage
       can be judged on its own: is commenting while reading pleasant enough
       that you would do it?
+
+      Two things this stage settles. A comment is anchored by what it is
+      about — path, side, line — and never by the node it was drawn on,
+      because the diff is rebuilt from scratch every time the agent saves
+      anything. And the diff does not rebuild while a comment box is open:
+      that would take what is being typed with it, and would move the code
+      the comment is about while it is being written. Clearing the box and
+      saving is how a comment goes away, so there is no delete to find.
    2. **Send.** The preview, the overall note, Submit, and the send itself. A
       review reaches the agent. This is the milestone's point, and the first
       stage that changes anything outside the browser.
+
+      It is also where the control characters go. A bracketed paste ends at
+      `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote, so a file
+      holding those bytes would close the paste early and leave the rest
+      arriving as keystrokes — with any newline among them as Enter. An
+      escape byte is invisible in a preview, so a person reading the message
+      cannot be the thing that catches it. `tmux_send` strips them, which is
+      the one place every route to a terminal passes through.
    3. **Keep.** Drafts survive a reload. A comment whose line has moved says
       so rather than pointing at whatever is there now.
 

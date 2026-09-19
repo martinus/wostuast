@@ -223,3 +223,26 @@ def test_more_than_one_line_arrives_as_a_paste(ws, asked):
 def test_a_carriage_return_counts_as_a_line_too(ws, asked):
     ws.tmux_send("%7", "first\r\nsecond", runner=asked)
     assert asked.seen[0][-1].startswith(ws.PASTE_START)
+
+
+def test_a_control_character_cannot_end_the_paste_early(ws):
+    """A paste ends at ESC [ 2 0 1 ~. Text carrying those bytes would close it
+    and leave the rest arriving as keystrokes, with any newline among them as
+    Enter. The review is composed from lines an agent wrote, and an escape
+    byte is invisible in a preview, so this is taken out at the verb.
+    """
+    said = []
+    ws.tmux_send("%1", "look here\n\x1b[201~rm -rf ~\nand here",
+                 runner=lambda cmd: said.append(cmd) or "")
+    body = said[0][-1]
+    assert "\x1b[201~rm" not in body
+    assert body.startswith(ws.PASTE_START) and body.endswith(ws.PASTE_END)
+    assert body.count(ws.PASTE_END) == 1
+    assert "rm -rf ~" in body           # still shown, just no longer a paste end
+
+
+def test_a_line_of_only_control_characters_is_not_sent(ws):
+    said = []
+    assert ws.tmux_send("%1", "\x1b\x07\x00",
+                        runner=lambda cmd: said.append(cmd) or "") is False
+    assert said == []
