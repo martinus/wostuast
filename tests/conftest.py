@@ -7,6 +7,8 @@ import importlib.util
 import json
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -163,3 +165,202 @@ def transcript_file(ws, tmp_path):
         return path
 
     return make
+
+
+# --- the page tests: one browser, and the daemons they drive ------------------
+#
+# These live here so every page test file gets them. The helpers they are used
+# with are in `browser.py`; only the fixtures have to be here.
+
+from browser import HOSTILE, _shared  # noqa: E402
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _close_the_browser():
+    yield
+    if _shared:
+        play, browser = _shared
+        browser.close()
+        play.stop()
+        _shared.clear()
+
+
+@pytest.fixture
+def page_at(ws, tmp_path, monkeypatch, transcript_file):
+    """A daemon with one session whose transcript holds hostile Markdown."""
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+
+    transcript = transcript_file("s1", [
+        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
+         "message": {"role": "user", "content": "Do the thing."}},
+        {"type": "assistant", "timestamp": "2026-09-18T14:03:00.000Z",
+         "message": {"role": "assistant",
+                     "content": [{"type": "text", "text": HOSTILE}]}},
+        {"type": "assistant", "timestamp": "2026-09-18T14:04:00.000Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "t1", "name": "Bash",
+              "input": {"command": "pytest -q"}}]}},
+        {"type": "user", "timestamp": "2026-09-18T14:04:05.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t1",
+              "content": "14 passed in 0.31s\nall good"}]}},
+    ])
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": str(tmp_path), "pane": "%7", "pid": 1,
+                     "ts": time.time(), "transcript_path": str(transcript)})
+    ws.write_status("s1", ws.Status(ts=1.0, name="A session", model="Opus 5",
+                                    context_pct=41.0))
+
+    daemon = ws.Daemon()
+    server = ws.make_server(daemon, 0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    daemon.store.refresh()
+    try:
+        yield daemon, f"http://127.0.0.1:{port}/"
+    finally:
+        daemon.stopping.set()
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+def pair_at(ws, page_at, tmp_path):
+    """The same daemon with a second session beside the first, so that a filter
+    has something to choose between. Two real sessions, not two made up in the
+    page: the daemon pushes the list whenever anything changes, and a made-up
+    one is gone the moment it does."""
+    daemon, url = page_at
+    other = tmp_path.parent / "warmhare"
+    other.mkdir(exist_ok=True)
+    ws.append_event(event("SessionStart", sid="s2", cwd=str(other),
+                                   pane="%9", pid=2, ts=time.time()))
+    daemon.store.refresh()
+    return daemon, url
+
+# --- history: the sessions nobody can talk to any more ------------------------
+
+
+
+@pytest.fixture
+def past_at(ws, page_at, tmp_path):
+    """The one-session page, with two finished sessions beside it."""
+    daemon, url = page_at
+    for name, reason in (("acorn", "clear"), ("beetroot", "logout")):
+        where = tmp_path.parent / name
+        where.mkdir(exist_ok=True)
+        ws.append_event(event("SessionStart", sid=name, cwd=str(where),
+                                       pane="%9", pid=2, ts=time.time()))
+        ws.append_event(event("SessionEnd", sid=name, cwd=str(where),
+                                       reason=reason, ts=time.time()))
+    daemon.store.refresh()
+    return daemon, url
+
+# --- the Files tab and the Diff tab ------------------------------------------
+
+
+
+@pytest.fixture
+def repo_page(ws, served, repo):
+    """A session in a real repository: one committed change, one not."""
+    git = git_in
+
+    (repo / "README.md").write_text("# The readme\n\nfirst line\n")
+    (repo / "code.py").write_text("print(1)\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "seed")
+    git(repo, "checkout", "-qb", "side")
+    (repo / "code.py").write_text("print(1)\nprint(2)\n")
+    git(repo, "commit", "-qam", "second")
+    (repo / "README.md").write_text("# The readme\n\nfirst line\nsecond line\n")
+    (repo / "NOTES.md").write_text("# Notes\n\n" + HOSTILE)
+
+    daemon, base = served
+    ws.append_event(event("SessionStart", cwd=str(repo), ts=time.time(),
+                                   pane="%7", pid=1))
+    daemon.store.refresh()
+    return repo, base
+
+
+@pytest.fixture(scope="session")
+def big_repo(tmp_path_factory):
+    """A repository with more files than the old list would send.
+
+    Built once for the whole run: writing 5200 files and committing them costs
+    about two seconds, and several tests want it. Every one of them only reads,
+    so there is nothing to keep apart.
+    """
+    git = git_in
+
+    root = tmp_path_factory.mktemp("big")
+    (root / "native" / "shared" / "libcorrelation" / "src").mkdir(parents=True)
+    git(root, "init", "-q", "-b", "main")
+    git(root, "config", "user.email", "t@example.com")
+    git(root, "config", "user.name", "T")
+    for index in range(5200):
+        (root / f"f{index:05d}.txt").write_text("x")
+    (root / "native" / "shared" / "libcorrelation" / "src" / "Action.h").write_text(
+        "// deep\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "first")
+    return root
+
+
+@pytest.fixture
+def big_page(ws, served, big_repo):
+    """A session standing in that repository."""
+    daemon, base = served
+    ws.append_event(event("SessionStart", cwd=str(big_repo),
+                                   ts=time.time(), pane="%7", pid=1))
+    daemon.store.refresh()
+    return big_repo, base
+
+# --- the three tmux verbs ---------------------------------------------------
+
+
+
+@pytest.fixture
+def in_pane(ws, served, tmp_path, monkeypatch, transcript_file):
+    """A session in a pane, with tmux replaced by a runner that records.
+
+    The recording lives on the daemon so a test can read what the page asked
+    the terminal to do.
+    """
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    seen = []
+
+    def runner(args, **rest):
+        seen.append(list(args))
+        if "capture-pane" in args:
+            return "\x1b[1;32mall good\x1b[0m\nwaiting"
+        return ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    transcript = transcript_file("s1", [
+        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
+         "message": {"role": "user", "content": "Do the thing."}},
+    ])
+    daemon, base = served
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": str(tmp_path), "pane": "%7", "pid": 1,
+                     "ts": time.time(), "transcript_path": str(transcript)})
+    daemon.store.refresh()
+    return daemon, base, seen
+
+
+@pytest.fixture
+def no_pane(ws, served, tmp_path, monkeypatch):
+    """A session that is not running under tmux at all."""
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    daemon, base = served
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": str(tmp_path), "pane": "", "pid": 1,
+                     "ts": time.time()})
+    daemon.store.refresh()
+    return daemon, base

@@ -1,0 +1,647 @@
+"""The Files tab: the tree, the window, and syntax highlighting.
+
+See tests/browser.py for the shared browser and the helpers."""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+import conftest
+from browser import (
+    skip_without_browser,
+    sync_playwright,
+    open_page,
+    show_tab,
+    numbers,
+    open_code,
+)
+
+pytestmark = skip_without_browser
+
+def test_the_files_tab_lists_every_file(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "README.md"          # pinned
+            assert set(names) == {"README.md", "NOTES.md", "code.py"}
+            assert "The readme" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(700)
+            assert page.locator(".filebody .prose").count() == 0
+            assert "print(1)" in page.locator(".filebody pre.plain").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_changed_file_is_marked(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            touched = page.eval_on_selector_all(
+                ".filelist button.touched .name", "els => els.map(e => e.textContent)")
+            assert sorted(touched) == ["NOTES.md", "README.md"]
+        finally:
+            browser.close()
+
+
+def test_typing_finds_a_file_by_scattered_letters(repo_page):
+    """A file picker, not a filter: `nsmd` has to find NOTES.md the way it does
+    in an editor. The letters must turn up in that order, but not together,
+    and the ones that matched are picked out."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "nsmd")
+            page.wait_for_timeout(400)
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names == ["NOTES.md"]
+            lit = page.eval_on_selector_all(
+                ".filelist .lit", "els => els.map(e => e.textContent).join('')")
+            assert lit.lower() == "nsmd"
+            # The letters have to be in order; these are the same four, not.
+            page.fill("#find", "dmsn")
+            page.wait_for_timeout(400)
+            assert page.locator(".filelist button").count() == 0
+        finally:
+            browser.close()
+
+
+def test_the_best_match_comes_first(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "py")
+            page.wait_for_timeout(400)
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "code.py"
+        finally:
+            browser.close()
+
+
+def test_a_name_that_matches_nothing_says_so(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "zzqq")
+            page.wait_for_timeout(400)
+            assert page.locator(".filelist button").count() == 0
+            assert "no name matches" in page.locator(".listnote").inner_text()
+        finally:
+            browser.close()
+
+
+def test_another_file_is_shown_when_it_is_picked(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            assert "Notes" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_hostile_file_cannot_run_either(repo_page):
+    """The Files tab renders a file the agent may never have looked at, so the
+    scrub matters here at least as much as in the transcript."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_timeout(700)
+            assert page.evaluate("window.PWNED ?? null") is None
+            assert page.locator(".filebody img").count() == 0
+            assert page.locator(".filebody script").count() == 0
+            assert "onerror" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
+    root, _ = repo_page
+    long_file = "# The readme\n\n" + "\n\n".join(f"line {n}" for n in range(400))
+    (root / "README.md").write_text(long_file)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.eval_on_selector(".filebody", "el => el.scrollTop = 900")
+            (root / "README.md").write_text(long_file + "\n\nand one more\n")
+            # Wait for the new line to arrive, not for a poll to have passed.
+            page.wait_for_function(
+                "document.querySelector('.filebody .prose').innerText"
+                ".includes('and one more')", timeout=15000)
+            where = page.eval_on_selector(".filebody", "el => el.scrollTop")
+            assert where > 500, "the reader was thrown back to the top"
+        finally:
+            browser.close()
+
+
+def test_touching_another_file_leaves_the_open_one_alone(repo_page):
+    """The sidebar and the document are redrawn apart. One key over both meant
+    that an agent saving any Markdown re-rendered the file you were reading,
+    every two seconds, and threw away where you were in it."""
+    root, _ = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate(
+                "window.__doc = document.querySelector('.filebody .prose')")
+            (root / "NOTES.md").write_text("# Notes\n\ntouched again\n")
+            page.wait_for_timeout(3000)       # two polls
+            assert page.evaluate("window.__doc.isConnected"), \
+                "the open document was rebuilt for another file's change"
+        finally:
+            browser.close()
+
+
+def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
+    """The marker is part of what the list was drawn from. Left out of the
+    key, it only ever appeared when the sort order happened to move too."""
+    git = conftest.git_in
+
+    root, _ = repo_page
+    # A pinned file sits in the same place whether it has changed or not, so
+    # the marker is the only thing that can say it did. A file that moves up
+    # the list when it changes hides the bug.
+    (root / "CLAUDE.md").write_text("# claude\n")
+    git(root, "add", "CLAUDE.md")
+    git(root, "commit", "-qm", "claude")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button")
+            where = ".filelist button.touched:has-text('CLAUDE.md')"
+            assert page.locator(where).count() == 0
+            assert page.eval_on_selector_all(
+                ".filelist button .name",
+                "els => els.map(e => e.textContent)")[0] == "CLAUDE.md"
+            (root / "CLAUDE.md").write_text("# claude\n\nedited\n")
+            # Wait for the dot, not for long enough that it must have come.
+            page.wait_for_selector(where, timeout=15000)
+            names = page.eval_on_selector_all(
+                ".filelist button .name", "els => els.map(e => e.textContent)")
+            assert names[0] == "CLAUDE.md", "it should not have moved"
+        finally:
+            browser.close()
+
+
+def test_a_worktree_without_markdown_says_so(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            show_tab(page, "files")
+            assert "no file that git knows about" in \
+                page.locator(".filebody").inner_text()
+        finally:
+            browser.close()
+
+
+def test_git_failing_does_not_read_as_an_empty_worktree(repo_page):
+    """"No files" and "git did not answer" look the same and mean opposite
+    things. A two second timeout over fifty thousand files drew the first."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate("state.names = []; state.file = null;"
+                          " state.filesFailed = true; draw()")
+            page.wait_for_timeout(200)
+            said = page.locator(".filebody .empty").inner_text()
+            assert "git did not answer" in said
+            assert "holds no file" not in said
+        finally:
+            browser.close()
+
+
+def test_a_directory_that_is_not_a_repository_says_so(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            show_tab(page, "diff")
+            assert "no branch to compare" in page.locator(".diffbody").inner_text()
+            assert page.locator("#diffcount").is_hidden()
+        finally:
+            browser.close()
+
+
+def test_typing_finds_a_file_past_the_first_five_thousand(big_page):
+    """The listing stopped at 5000 names sorted by name, so everything under
+    `native/` was cut before the matcher saw it. In a 52,799 file repository
+    `libcorrelation` found 16 files and missed more than a thousand."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "libcorrelation")
+            page.wait_for_timeout(600)
+            # Typing filters the tree; it does not replace it. The one match
+            # is there with the directories that lead to it, and nothing else.
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names == ["native", "native/shared",
+                             "native/shared/libcorrelation",
+                             "native/shared/libcorrelation/src",
+                             "native/shared/libcorrelation/src/Action.h"]
+            files = page.eval_on_selector_all(
+                ".filelist button:not(.dir)", "els => els.map(e => e.title)")
+            assert files == ["native/shared/libcorrelation/src/Action.h"]
+        finally:
+            browser.close()
+
+
+def test_code_is_painted(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
+            assert page.locator(".filebody pre.plain .hljs-keyword").inner_text() == "print"
+            assert page.locator(".filebody pre.plain").inner_text() == "print(1)"
+        finally:
+            browser.close()
+
+
+def test_the_page_does_not_trust_the_highlighter_either(repo_page):
+    """Its output goes through the same inert template the Markdown does. A
+    span dressed as our own chrome, an attribute, and an element that is not a
+    span all come out as text."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
+                            " + '<img src=x onerror=\"window.pwned=1\">'"
+                            " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
+            body = page.locator(".filebody pre.plain")
+            assert page.evaluate("window.pwned") is None
+            assert body.locator("img").count() == 0
+            assert body.locator(".row").count() == 0
+            assert body.locator("[onclick]").count() == 0
+            assert body.locator("#n").count() == 0
+            # the text survives, only the dressing is gone
+            assert body.locator(".hljs-string").inner_text() == "b"
+            assert body.inner_text() == "ab"
+        finally:
+            browser.close()
+
+
+def test_a_sublanguage_class_survives(repo_page):
+    """hljs writes `hljs-title function_` as one span with two classes."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
+            assert page.locator(".filebody pre.plain .hljs-title.function_").count() == 1
+        finally:
+            browser.close()
+
+
+def test_no_highlighter_still_shows_the_file(repo_page):
+    """Offline, blocked, or bytes that do not match the hash: the code is
+    still code, just unpainted."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate("hljsAsked = Promise.resolve(null);")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            assert page.locator(".filebody pre.plain").inner_text().strip() == (
+                "print(1)\nprint(2)")
+            assert page.locator(".filebody pre.plain span").count() == 0
+        finally:
+            browser.close()
+
+
+def test_the_highlighter_is_pinned_and_asked_for_late(repo_page):
+    """Any script on this page can POST to /send, which types into a terminal,
+    so a script from someone else's server carries the hash of its bytes. And
+    a session that only reads transcripts reaches the network never."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            asked = "document.querySelectorAll('script[src*=highlight]').length"
+            assert page.evaluate(asked) == 0      # the transcript asks for nothing
+            show_tab(page, "files")
+            assert page.evaluate(asked) == 0      # nor does a Markdown file
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            tag = page.locator("script[src*='highlight']")
+            assert tag.count() == 1
+            assert tag.get_attribute("src").startswith("https://")
+            assert tag.get_attribute("integrity").startswith("sha384-")
+            assert tag.get_attribute("crossorigin") == "anonymous"
+        finally:
+            browser.close()
+
+
+def test_a_file_that_is_not_markdown_has_no_box(repo_page):
+    """A shell script is the whole page here, not a quotation inside a
+    document that does not exist."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_timeout(400)
+            look = page.eval_on_selector(".filebody pre.plain", """el => {
+              const seen = getComputedStyle(el);
+              return [seen.borderTopWidth, seen.backgroundColor];
+            }""")
+            assert look[0] == "0px"
+            assert look[1] in ("rgba(0, 0, 0, 0)", "transparent")
+        finally:
+            browser.close()
+
+
+def test_only_the_rows_on_screen_are_built(big_page):
+    """Every row is one height, so two spacers can stand in for the rest. Ten
+    thousand matches then cost the same as ten."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            # 5201 files, and a screenful of rows.
+            assert "5201" in page.locator(".listnote").inner_text()
+            built = page.locator(".filelist button").count()
+            assert 0 < built <= 120, built
+
+            # The scrollbar still runs the whole length of the list.
+            reach = page.eval_on_selector(".filelist", "el => el.scrollHeight")
+            assert reach > 5000 * 20, reach
+
+            first = page.eval_on_selector(
+                ".filelist button", "el => el.title")
+            page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
+            page.wait_for_timeout(250)
+            moved = page.eval_on_selector(".filelist button", "el => el.title")
+            assert moved != first, "the window did not follow the scrollbar"
+            assert page.locator(".filelist button").count() <= 120
+        finally:
+            browser.close()
+
+
+def test_a_name_is_still_found_after_scrolling(big_page):
+    """The window is where you are in the list, not what the list holds."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
+            page.wait_for_timeout(250)
+            page.fill("#find", "libcorrelation")
+            page.wait_for_timeout(400)
+            files = page.eval_on_selector_all(
+                ".filelist button:not(.dir)", "els => els.map(e => e.title)")
+            assert files == ["native/shared/libcorrelation/src/Action.h"]
+        finally:
+            browser.close()
+
+
+def test_the_reader_sees_the_named_files_then_what_changed(repo_page):
+    """The daemon sends the names in an order that depends only on which files
+    exist, so that the list the page holds stays good while an agent works.
+    The three tiers the reader sees are built here, from the changed names and
+    their times."""
+    root, _ = repo_page
+    # Untracked counts as changed, so this one is not quiet: it is the newest
+    # change. `code.py` is committed and untouched, and that is the quiet one.
+    (root / "a-first-by-name.txt").write_text("new\n")
+    os.utime(root / "a-first-by-name.txt", (2_000_000_000, 2_000_000_000))
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.touched")
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names[0] == "README.md"              # pinned
+            assert names[1] == "a-first-by-name.txt"    # the newest change
+            assert names[2] == "NOTES.md"               # the older change
+            assert names[3] == "code.py"                # quiet, so last
+        finally:
+            browser.close()
+
+
+def test_the_newest_change_leads_the_ones_that_changed(repo_page):
+    root, _ = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.touched")
+            (root / "code.py").write_text("print(3)\n")
+            os.utime(root / "code.py", (2_000_000_000, 2_000_000_000))
+            page.wait_for_selector(
+                ".filelist button.touched:has-text('code.py')", timeout=15000)
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.title)")
+            assert names[0] == "README.md"           # pinned, so it still wins
+            assert names[1] == "code.py", names[:4]  # the newest change
+        finally:
+            browser.close()
+
+
+# --- the tree ---------------------------------------------------------------
+
+
+def test_the_list_is_a_tree_that_opens_and_closes(big_page):
+    """A closed repository costs its top level and no more."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            shut = page.locator(".filelist button.dir:has-text('native')")
+            assert shut.count() == 1
+            # 5201 files, and only a window of rows exists.
+            assert page.locator(".filelist button").count() <= 100
+            # Nothing inside the closed directory has been built at all.
+            assert page.locator(".filelist button[title^='native/']").count() == 0
+
+            page.click(".filelist button.dir:has-text('native')")
+            page.wait_for_selector(".filelist button.dir.open")
+            names = page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.textContent)")
+            assert "shared" in " ".join(names), names
+
+            page.click(".filelist button.dir.open")
+            page.wait_for_timeout(200)
+            assert page.locator(".filelist button.dir.open").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_directory_holding_a_change_opens_itself(repo_page):
+    """A closed tree cannot say what the agent just did, and that is the
+    question this tool exists to answer."""
+    root, _ = repo_page
+    (root / "deep").mkdir()
+    (root / "deep" / "quiet.txt").write_text("nothing\n")
+    git = conftest.git_in
+    git(root, "add", "deep"), git(root, "commit", "-qm", "deep")
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("the agent wrote this\n")
+
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            opened = page.eval_on_selector_all(
+                ".filelist button.dir.open", "els => els.map(e => e.title)")
+            assert opened == ["src"], opened
+            # and the file inside it is on screen, marked
+            assert page.locator(
+                ".filelist button.touched:has-text('touched.txt')").count() == 1
+            # the directory that holds nothing new stays shut, but says so
+            shut = page.locator(".filelist button.dir:has-text('deep')")
+            assert "open" not in (shut.get_attribute("class") or "")
+        finally:
+            browser.close()
+
+
+def test_a_closed_directory_still_says_a_change_is_inside(repo_page):
+    root, _ = repo_page
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("the agent wrote this\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            page.click(".filelist button.dir.open")          # close it by hand
+            page.wait_for_timeout(250)
+            shut = page.locator(".filelist button.dir:has-text('src')")
+            assert "touched" in (shut.get_attribute("class") or "")
+            assert "open" not in (shut.get_attribute("class") or "")
+        finally:
+            browser.close()
+
+
+def test_closing_a_directory_by_hand_beats_opening_it_for_you(repo_page):
+    """The tree never fights the hand on it."""
+    root, _ = repo_page
+    (root / "src").mkdir()
+    (root / "src" / "touched.txt").write_text("one\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button.dir.open")
+            page.click(".filelist button.dir.open")
+            page.wait_for_timeout(250)
+            # another change lands in the same directory
+            (root / "src" / "second.txt").write_text("two\n")
+            page.wait_for_timeout(3000)       # two polls
+            assert page.locator(".filelist button.dir.open").count() == 0, \
+                "it re-opened a directory the reader had closed"
+        finally:
+            browser.close()
+
+
+def test_typing_filters_the_tree_rather_than_flattening_it(big_page):
+    """Where a file sits is half of what you know about it, and a flat list of
+    matches throws that away."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "Action")
+            page.wait_for_timeout(600)
+            rows = page.eval_on_selector_all(".filelist button", """els => els.map(
+              (e) => [e.title, e.className.includes("dir"),
+                      parseInt(e.style.paddingLeft)])""")
+            # the directories that lead to it are there, and they step in
+            assert [one[0] for one in rows if one[1]] == [
+                "native", "native/shared", "native/shared/libcorrelation",
+                "native/shared/libcorrelation/src"]
+            assert [one[2] for one in rows] == [14, 27, 40, 53, 66]
+            # a row shows its own name, not the whole path
+            assert page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.textContent)"
+            )[-1] == "Action.h"
+            # The letters that matched are picked out on the rows that own
+            # them, wherever in the path they fell. `action` finds its `a` in
+            # `native`, so that is where it is shown.
+            lit = page.eval_on_selector_all(
+                ".filelist .lit", "els => els.map(e => e.textContent).join('')")
+            assert lit.lower() == "action"
+        finally:
+            browser.close()
+
+
+def test_clearing_the_box_puts_the_whole_tree_back(big_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "Action")
+            page.wait_for_timeout(500)
+            assert page.locator(".filelist button:not(.dir)").count() == 1
+            page.fill("#find", "")
+            page.wait_for_timeout(500)
+            assert page.locator(".filelist button:not(.dir)").count() > 50
+            # closed again, as it was
+            assert page.locator(".filelist button.dir.open").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_file_is_numbered_beside_the_code_not_inside_it(repo_page):
+    """The numbers are not the file, so copying the code does not take them,
+    and the highlighter can rewrite everything to their right."""
+    root, _ = repo_page
+    (root / "code.py").write_text("one\ntwo\nthree\nfour\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_selector(".filebody .code .nums")
+            assert page.locator(".filebody .nums").inner_text() == "1\n2\n3\n4"
+            assert page.locator(".filebody pre.plain .ln").count() == 0
+            # both columns share a line height, so they stay level
+            look = page.eval_on_selector_all(
+                ".filebody .code pre",
+                "els => els.map(e => getComputedStyle(e).lineHeight)")
+            assert look[0] == look[1]
+            assert page.eval_on_selector(
+                ".filebody .nums", "el => getComputedStyle(el).userSelect"
+            ) == "none"
+        finally:
+            browser.close()
+
+
+def test_markdown_has_no_line_numbers(repo_page):
+    """It is prose, not code."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filebody .prose")
+            assert page.locator(".filebody .nums").count() == 0
+        finally:
+            browser.close()
