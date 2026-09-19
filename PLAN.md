@@ -433,6 +433,13 @@ Large diffs: collapse files over 500 lines, expand on click (`BIG_LINES`, and
 see 4.8.3). Diff lines are not painted; only a file being read is. The marker
 is its own span, so the same could be done here, but it has not been.
 
+**A document can be read as its own source.** Markdown renders, which leaves
+no line to hang a comment on: the paragraph you want to remark on came from a
+line that is no longer on the page. A switch beside the path gives the lines
+back, and then a document is reviewed like any other file. It holds across
+files, because a reader who wants to review one document usually wants the
+next one too, and it is forgotten with the worktree.
+
 ### 4.8.0 One renderer for a line
 
 The Files tab and the Diff tab draw a line through `fillDiffFile`, and an
