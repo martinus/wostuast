@@ -161,7 +161,7 @@ ssh -N -L 7331:127.0.0.1:7331 you@your-server
 Leave that running and open `http://127.0.0.1:7331` on your own computer. The
 traffic is carried by SSH, and the server exposes nothing new.
 
-This is on purpose, not an oversight. From milestone 5 the page can type into
+This is on purpose, not an oversight. The page can type into
 your tmux pane, and a port on the network that can type into a shell is not
 something to leave one firewall rule away. wostuast also checks the `Host`
 header, so a request for `http://your-server:7331/` is refused even if it
@@ -170,8 +170,32 @@ on the left and the selected session's transcript on the right, and it updates
 itself as the agents work: there is no reload button because there is nothing
 to reload.
 
-It sends no request back that changes anything, so nothing on that page can act
-on your behalf. Jump, send and peek arrive in milestone 5.
+### Acting on a session
+
+The page reads. Three things are the exception, and all three go through tmux:
+
+**Jump** puts the cursor in that agent's pane — its window first, then the pane.
+Press `Enter`, or the button beside the session name. Set `WOSTUAST_FOCUS` to a
+command that raises your terminal window and jump runs that too; which command
+does that is your window manager's business, not this program's.
+
+**Send** types a line into the pane and presses Enter. Press `s` to get to the
+box. The box is cleared only once the daemon says the text went in: you typed
+it at a terminal you cannot see, so losing it is not on. Empty text is refused,
+because a bare Enter into an agent's prompt is a keystroke nobody asked for.
+So is a session that has ended.
+
+**Peek** is the fourth tab: a still picture of the pane, in the colours it is
+showing, refreshed once a second while you are looking at it. It is not a
+terminal and cannot become one — tmux owns the keyboard.
+
+Both of the first two write to a live terminal, so the daemon will only do them
+for a page it served itself. It makes a token when it starts, prints it into
+the page, and refuses any `POST` that does not carry it back in a header of its
+own. Another site can send this port a request; it cannot send one that acts.
+
+A session that is not running under tmux has no pane, so it has none of these:
+the buttons are not there, and the header says `not in tmux`.
 
 ### The tabs
 
@@ -226,6 +250,10 @@ Both column edges can be dragged — the one beside the sessions and the one
 beside the file list. Double-click an edge to put it back. Your browser
 remembers where you left them.
 
+**Peek** is what the pane shows right now. wostuast never turns it into markup:
+the daemon hands the page stretches of text with their colours and the page
+sets each one as text, because a pane holds whatever an agent happened to run.
+
 **Diff** shows the change in two halves: what the branch has committed against
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file
 list on the left says how much each one moved; clicking a name jumps to it. A
@@ -260,10 +288,11 @@ counts what it kept. `Esc` clears it.
 
 ## Status
 
-Milestones 1 to 3 of [`PLAN.md`](PLAN.md) are done: wostuast records your
+Milestones 1 to 5 of [`PLAN.md`](PLAN.md) are done: wostuast records your
 sessions, lists them in the terminal, and serves a live page with the
-transcript, the worktree's files and its diff. Milestone 4 makes those two
-tabs fit a large repository. Jump, send and peek come in milestone 5.
+transcript, the worktree's files and its diff, and it can jump to a pane, type
+into it and show you what it holds. Milestone 6 is what is left: the light
+theme's last corners, motion, empty states and the screenshots.
 
 `PLAN.md` is the complete brief. [`CLAUDE.md`](CLAUDE.md) says how to work in
 this repository.

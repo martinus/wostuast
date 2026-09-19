@@ -69,7 +69,19 @@ settings.
   all three. The deadline covers every wait at once, including a stdin that
   never closes and a file lock stalled on a network filesystem.
 - **Never write to the terminal** except through the three tmux verbs. wostuast
-  reads; the user types.
+  reads; the user types. `tmux_jump`, `tmux_send` and `tmux_peek` are the only
+  commands it runs, and only the first two write anything. They look `run` up
+  when they are called rather than taking it as a default, so a test of the
+  route above them can put a fake tmux in its place — the only way to test
+  them without a terminal to type into.
+- **Every POST carries a token, and the page never builds HTML from a pane.**
+  A cross-origin `fetch` may send a plain POST to a loopback port with no
+  questions asked, and the effect here is `tmux send-keys` into a live
+  terminal. So `allowed()` wants three things to agree: the Host, an Origin
+  that is ours when there is one, and the token the daemon made at start and
+  printed into the page. `ansi_runs` hands the page stretches of text with
+  their colours, never markup, and the page sets each one with `textContent`:
+  a pane holds whatever an agent ran.
 - **Never approve a permission prompt.** The user approves in the terminal.
   The hook prints nothing, and that silence is the mechanism: Claude Code reads
   a hook's stdout as its answer. We register `PermissionRequest`, which takes a
@@ -191,6 +203,6 @@ tool behind.
 3. **Read** — done. Files tab and Diff tab.
 4. **Fit** — done. The two worktree tabs, on a real repository. Four stages:
    correct, fast, room, read. `PLAN.md` section 9 lists what is in each one.
-5. **Act** — next. jump, send, Peek. Attention (title, icon, notifications)
+5. **Act** — done. jump, send, Peek. Attention (title, icon, notifications)
    arrived early, in milestone 2, because it was asked for.
-6. **Shine** — light theme, motion, empty states, README.
+6. **Shine** — next. Light theme, motion, empty states, README.

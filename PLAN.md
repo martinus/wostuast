@@ -266,7 +266,7 @@ session.
 | --- | --- | --- |
 | jump | `tmux select-window -t <pane>` then `tmux select-pane -t <pane>` | Then run `$WOSTUAST_FOCUS` if set (a user command that raises the terminal window, e.g. a KWin script). |
 | send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. |
-| peek | `tmux capture-pane -p -e -t <pane>` | Convert ANSI colors to HTML spans with a small hand-written converter. Poll once per second while the Peek tab is visible, never otherwise. |
+| peek | `tmux capture-pane -p -e -t <pane>` | A small hand-written converter turns the escape codes into runs of text, each with its colours. It makes no HTML: the page builds one node per run and sets its text with `textContent`, because a pane holds whatever an agent ran. Poll once per second while the Peek tab is visible, never otherwise. |
 
 If `pane` is empty, hide the verbs for that session and show "not in tmux".
 
@@ -638,6 +638,8 @@ Commit at the end of each milestone. Each one leaves a working tool.
       The worktree name in front on the sidebar row.
 
 5. **Act.** jump, send, Peek, attention (title, favicon, notification).
+   The first two are the only things this program does that a terminal can
+   feel, which is why every `POST` carries the token of section 4.4.1.
 6. **Shine.** Light theme, motion, empty states, keyboard help, README with
    two screenshots and one short GIF, `docs/` in the same plain style as this
    file.
