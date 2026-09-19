@@ -2046,3 +2046,176 @@ def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
             ), "it ran off the side instead of wrapping"
         finally:
             browser.close()
+
+
+# --- the review: milestone 7 stage 1 -----------------------------------------
+
+
+def open_diff(play, where):
+    """The Diff tab of a real repository, drawn."""
+    browser, page = open_page(play, where)
+    show_tab(page, "diff")
+    page.wait_for_selector(".dline")
+    return browser, page
+
+
+def test_a_diff_line_can_be_commented_on(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            assert page.locator(".comment").count() == 0
+            page.locator(".dline .plus").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "use a signed type here")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            assert "use a signed type here" in page.locator(".comment").inner_text()
+            # It is written down, not held in the node it was drawn on.
+            assert page.evaluate("state.review.length") == 1
+            assert page.evaluate("state.review[0].anchor").count("\n") == 2
+        finally:
+            browser.close()
+
+
+def test_the_plus_shows_when_you_are_on_the_line(repo_page):
+    """It sits over the gutter and stays out of the way until you want it, the
+    way a pull request does it — so "can you see it" is the whole feature."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            shown = ("() => getComputedStyle("
+                     "document.querySelector('.dline .plus')).opacity")
+            assert page.evaluate(shown) == "0"
+            page.locator(".dline").first.hover()
+            page.wait_for_function(shown + " === '1'")
+            # And it is not part of the diff you copy, like the numbers by it.
+            assert page.evaluate("() => getComputedStyle("
+                                 "document.querySelector('.dline .plus'))"
+                                 ".userSelect") == "none"
+        finally:
+            browser.close()
+
+
+def test_a_whole_file_can_be_commented_on(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".onFile .plus").first.click()
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "keep the heading order")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".onFile .comment")
+            assert page.evaluate("state.review[0].anchor").endswith("\nfile\n0")
+        finally:
+            browser.close()
+
+
+def test_a_comment_survives_the_diff_being_read_again(repo_page):
+    """The poll replaces the whole answer every couple of seconds. A comment
+    is anchored to the line, not to the node the line was drawn on."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "look again")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            page.evaluate("state.diffAt += 1; draw()")
+            assert page.locator(".comment").count() == 1
+            assert "look again" in page.locator(".comment").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_open_box_is_not_swept_away_by_the_poll(repo_page):
+    """An agent saving a file rebuilds the diff. Doing that under an open box
+    would take what is being typed with it, and would move the code the
+    comment is about while it is being written."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "half a thought")
+            page.evaluate("state.diffAt += 1; draw()")
+            assert page.input_value(".commentbox textarea") == "half a thought"
+        finally:
+            browser.close()
+
+
+def test_a_comment_can_be_edited_and_emptied_away(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "first thought")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+
+            page.click(".comment .link")            # edit
+            page.wait_for_selector(".commentbox textarea")
+            assert page.input_value(".commentbox textarea") == "first thought"
+            page.fill(".commentbox textarea", "second thought")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review[0].note === 'second thought'")
+
+            # Clearing the box and saving is how a comment goes away, so there
+            # is no second thing to find and press.
+            page.click(".comment .link")
+            page.fill(".commentbox textarea", "   ")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review.length === 0")
+            assert page.locator(".comment").count() == 0
+        finally:
+            browser.close()
+
+
+def test_cancel_leaves_the_comment_as_it_was(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "kept")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            page.click(".comment .link")
+            page.fill(".commentbox textarea", "thrown away")
+            page.click(".commentbox .link")         # cancel
+            page.wait_for_selector(".comment")
+            assert "kept" in page.locator(".comment").inner_text()
+            assert page.evaluate("state.review.length") == 1
+        finally:
+            browser.close()
+
+
+def test_the_review_belongs_to_the_session_it_is_about(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "about this session")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review.length === 1")
+            page.evaluate("choose('someone-else')")
+            assert page.evaluate("state.review.length") == 0
+        finally:
+            browser.close()
+
+
+def test_nothing_is_sent_yet(repo_page):
+    """Stage 1 of milestone 7 draws and keeps a review. Sending it is stage 2,
+    and until then nothing here may reach the terminal."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate("window.__posts = []; const real = window.fetch;"
+                          " window.fetch = (u, o) => { window.__posts.push(String(u));"
+                          " return real(u, o); };")
+            page.locator(".dline .plus").first.click(force=True)
+            page.fill(".commentbox textarea", "do not send me")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            sent = page.evaluate("window.__posts.filter((u) => u.includes('/send'))")
+            assert sent == []
+        finally:
+            browser.close()

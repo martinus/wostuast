@@ -203,6 +203,13 @@ settings.
   that may lose its animation. A transcript block slides in only where a block
   arrives, in `patchTranscript`. That animation sat on `.turn` for a long
   time, so the whole history slid every time the tab was rebuilt.
+- **A review comment is anchored to what it is about, never to the node it
+  was drawn on.** `anchorOf` writes down the path, the side and the line
+  number, because the Diff tab is rebuilt from `state.diff` every time the
+  agent saves anything and no node survives that. For the same reason the
+  diff does not rebuild while a comment box is open: it would take what is
+  being typed with it, and would move the code the comment is about while it
+  is being written.
 - **The counts are about every session; only the list is filtered.**
   `drawCounts` runs before the guard that asks whether the shown rows changed,
   because a session the filter hides can still go amber, and that has to reach
@@ -257,6 +264,6 @@ tool behind.
    arrived early, in milestone 2, because it was asked for.
 6. **Shine** — done. Light theme, motion, empty states, keyboard help,
    README. No screenshots: `PLAN.md` section 9 says why.
-7. **Review** — next. Comment on a diff line or a file, then submit the whole
-   review to the agent as one message. `PLAN.md` section 4.9 is the spec;
-   three stages: mark, send, keep.
+7. **Review** — stage 1 (Mark) done. Comment on a diff line or a file, then
+   submit the whole review to the agent as one message. `PLAN.md` section 4.9
+   is the spec; three stages: mark, send, keep.

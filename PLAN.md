@@ -791,6 +791,14 @@ Commit at the end of each milestone. Each one leaves a working tool.
       belongs, edited and deleted in place. Nothing is sent yet, so this stage
       can be judged on its own: is commenting while reading pleasant enough
       that you would do it?
+
+      Two things this stage settles. A comment is anchored by what it is
+      about — path, side, line — and never by the node it was drawn on,
+      because the diff is rebuilt from scratch every time the agent saves
+      anything. And the diff does not rebuild while a comment box is open:
+      that would take what is being typed with it, and would move the code
+      the comment is about while it is being written. Clearing the box and
+      saving is how a comment goes away, so there is no delete to find.
    2. **Send.** The preview, the overall note, Submit, and the send itself. A
       review reaches the agent. This is the milestone's point, and the first
       stage that changes anything outside the browser.
