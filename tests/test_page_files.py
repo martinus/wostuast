@@ -814,3 +814,148 @@ def test_a_row_of_code_is_monospace_in_both_tabs(repo_page):
             assert faces["files"] == faces["diff"], faces
         finally:
             browser.close()
+
+
+# --- a file too long to draw whole -------------------------------------------
+
+
+def long_rows(page):
+    """The line numbers the window is showing, first and last."""
+    return page.eval_on_selector_all(
+        ".filebody .code .dline .ln",
+        "els => [els[0].textContent.trim(), els[els.length - 1].textContent.trim()]")
+
+
+def test_a_long_file_draws_only_the_rows_on_screen(long_page):
+    """A file of 76,000 short lines was 306,000 nodes and about a second to
+    build, and the colouring another second and a quarter on top — all of it
+    paid again every time the agent saved the file being read."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            drawn = page.locator(".filebody .code .dline").count()
+            assert 0 < drawn < 300, drawn
+            # The scrollbar is still the length of the whole file, so the
+            # reader cannot tell the rest is missing except by looking.
+            tall = page.eval_on_selector(".filebody", "el => el.scrollHeight")
+            assert tall > conftest.LONG_LINES * 20
+        finally:
+            browser.close()
+
+
+def test_a_long_file_is_redrawn_in_a_few_milliseconds(long_page):
+    """The redraw is what the agent's next save costs the reader."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            spent = page.evaluate("""() => {
+              const box = document.getElementById("content");
+              let worst = 0;
+              for (let i = 0; i < 3; i += 1) {
+                box.dataset.bodyKey = "";
+                const at = performance.now();
+                draw();
+                worst = Math.max(worst, performance.now() - at);
+              }
+              return worst;
+            }""")
+            assert spent < 150, spent
+        finally:
+            browser.close()
+
+
+def test_scrolling_a_long_file_brings_the_right_lines(long_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            assert long_rows(page)[0] == "1"
+            # Halfway down, by the same arithmetic the page uses.
+            page.evaluate("() => { document.querySelector('.filebody')"
+                          ".scrollTop = 3000 * 21; }")
+            page.wait_for_function(
+                "document.querySelector('.filebody .code .dline .ln')"
+                ".textContent.trim() !== '1'")
+            first, last = long_rows(page)
+            assert 2985 <= int(first) <= 3001, first
+            assert int(last) > int(first)
+            assert f"line{int(first) - 1} = {int(first) - 1}" in code_text(page)
+        finally:
+            browser.close()
+
+
+def test_the_last_line_of_a_long_file_can_be_reached(long_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.evaluate("() => { const p = document.querySelector('.filebody');"
+                          " p.scrollTop = p.scrollHeight; }")
+            page.wait_for_function(
+                "(n) => [...document.querySelectorAll('.filebody .code .dline .ln')]"
+                ".some((e) => e.textContent.trim() === String(n))",
+                arg=conftest.LONG_LINES)
+            assert f"line{conftest.LONG_LINES - 1} =" in code_text(page)
+        finally:
+            browser.close()
+
+
+def test_a_long_file_says_what_is_different_about_it(long_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            said = page.locator(".filebody .note").inner_text()
+            assert str(conftest.LONG_LINES) in said
+            assert "no colour" in said and "find" in said
+        finally:
+            browser.close()
+
+
+def test_a_short_file_is_still_drawn_whole(long_page):
+    """The window starts at a length. Below it nothing changes, so the
+    browser's own find still sees the file and a copy is the whole of it."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "short.py")
+            assert page.locator(".filebody .code .dline").count() == 1
+            assert page.locator(".filebody .note").count() == 0
+            assert page.locator(".code.windowed").count() == 0
+        finally:
+            browser.close()
+
+
+def test_scrolling_sideways_survives_the_window_moving(long_page):
+    """The rows are in a new box every time the window moves, so how far along
+    a long line the reader had scrolled has to be carried over."""
+    root, _ = long_page
+    # Wide enough to scroll sideways, and short enough that the whole file
+    # stays under the half megabyte the daemon will send.
+    root.joinpath("long.py").write_text(
+        "".join(f"line{n} = {n}  # {'wide ' * 20}\n"
+                for n in range(conftest.LONG_LINES)))
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.wait_for_selector(".code.windowed")
+            page.wait_for_function(
+                "document.querySelector('.filebody .dlines').scrollWidth >"
+                " document.querySelector('.filebody .dlines').clientWidth")
+            # As far right as this window goes, whatever that turns out to be.
+            along = page.eval_on_selector(
+                ".filebody .dlines",
+                "el => { el.scrollLeft = 4000; return el.scrollLeft; }")
+            assert along > 0
+            page.evaluate("() => { document.querySelector('.filebody')"
+                          ".scrollTop = 900 * 21; }")
+            page.wait_for_function(
+                "document.querySelector('.filebody .code .dline .ln')"
+                ".textContent.trim() !== '1'")
+            assert page.eval_on_selector(
+                ".filebody .dlines", "el => el.scrollLeft") == along
+        finally:
+            browser.close()

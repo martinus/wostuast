@@ -286,6 +286,12 @@ numbers are not part of the file, so copying the code does not take them. A bina
 file is read again within a couple of seconds of the agent changing it, and you
 keep your place in it.
 
+A file over two thousand lines long is drawn a screenful at a time, and the
+page says so at the top of it. Building the whole of a very long file took
+about a second, and again on every save. Such a file is not coloured, and your
+browser's own find sees only the part on screen; a shorter file is drawn whole
+and keeps both.
+
 The page fetches two scripts and nothing else: `marked`, which renders the
 Markdown, and `highlight.js`, which paints the code. Neither is inside
 `wostuast` — together they are 157 KB against a 175 KB program, and the install
