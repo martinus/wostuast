@@ -1889,7 +1889,10 @@ def read_worktree_file(
     found.text = raw[:FILE_MAX_BYTES].decode("utf-8", "replace")
     if len(raw) > FILE_MAX_BYTES:
         found.text += "\n\n… the rest of this file is not shown.\n"
-    if not Path(wanted).suffix:
+    # Only when nothing cheaper can answer. A shebang is the page's to read,
+    # and it is the common shape for a file with no suffix, so asking `file`
+    # about one is a subprocess for an answer already in hand.
+    if not Path(wanted).suffix and not raw.startswith(b"#!"):
         found.language = sniff_language(target, runner)
     return found
 
@@ -4065,12 +4068,10 @@ body:not(.show-thinking) .thinking { display: none; }
 /* No box. A file that is not Markdown is the whole page here, not a quotation
    inside a document that does not exist, and the border made a shell script
    look like one. It is drawn as diff rows, so it shares their ramp too. */
-.code { color: var(--code-ink); font-size: 12.5px; }
+.code { color: var(--code-ink); }
 /* Which line this was. Numbers are not the content, here or in a diff, so
    they are faint and they are not copied with it. */
 .dline .ln { color: var(--ink-faint); user-select: none; }
-.dline.plain { color: var(--code-ink); }
-.dline .sign { user-select: auto; }
 /* Our colours, not the highlighter's: its stylesheets are not fetched. */
 .hljs-comment, .hljs-quote { color: var(--syn-com); font-style: italic; }
 .hljs-keyword, .hljs-literal, .hljs-selector-tag,
@@ -4093,10 +4094,7 @@ body:not(.show-thinking) .thinking { display: none; }
   margin-bottom: 14px; font-family: var(--narrow); font-size: 12px;
   letter-spacing: .04em; color: var(--ink-faint);
 }
-.diffbody {
-  flex-grow: 1; overflow-y: auto; min-width: 0;
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
-}
+.diffbody { flex-grow: 1; overflow-y: auto; min-width: 0; }
 .diffhead {
   position: sticky; top: 0; z-index: 1; padding: 9px 20px;
   background: var(--panel); border-bottom: 1px solid var(--edge);
@@ -4125,7 +4123,14 @@ body:not(.show-thinking) .thinking { display: none; }
   padding: 6px 20px; background: var(--panel); color: var(--ink-mute);
   border-top: 1px solid var(--edge); white-space: pre; overflow-x: auto;
 }
-.dlines { padding: 5px 0; overflow-x: auto; color: var(--code-ink); }
+/* What makes a row a row of code. It belongs here and not on a tab's own
+   container: it used to sit on `.diffbody`, so the moment the Files tab drew
+   the same rows they came out in the proportional face, with the gutter's
+   space padding no longer lining up. A component carries its own typography. */
+.dlines {
+  padding: 5px 0; overflow-x: auto; color: var(--code-ink);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+}
 .dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
 .dline { position: relative; }
 .dline.context { color: var(--ink-mute); }
@@ -5072,8 +5077,6 @@ function paintedInto(holder, marked_up) {
   return holder.content;
 }
 
-// The text is on the page before this returns, so a slow or missing CDN shows
-// the file at once and paints it a moment later, or never.
 // The highlighted file, cut into one fragment per line.
 //
 // The highlighter is given the whole file, because a block comment or a
@@ -5150,21 +5153,6 @@ async function paintLines(box, path, text, sniffed) {
   // lines than the file has would otherwise put the colour on the wrong ones.
   if (rows.length !== lines.length) return;
   rows.forEach((row, at) => row.replaceChildren(lines[at]));
-}
-
-async function paint(node, path, text, sniffed) {
-  const want = node.dataset.path;
-  const lib = await hljsReady();
-  if (!lib || !node.isConnected || node.dataset.path !== want) return;
-  const language = languageOf(path, text, sniffed);
-  if (!language || !lib.getLanguage(language)) return;
-  try {
-    const done = lib.highlight(text, { language, ignoreIllegals: true });
-    node.replaceChildren(paintedInto(document.createElement("template"),
-                                     done.value));
-  } catch (error) {
-    // A language that throws leaves the plain text that is already there.
-  }
 }
 
 // One node per block, kept so that a change redraws that block and no other.
@@ -5381,6 +5369,15 @@ function split(box, tab, bodyClass) {
   return [side.children[2], box.lastChild, side.children[1], side.children[3]];
 }
 
+// Is the reader writing a comment in what this box holds? Both row tabs are
+// rebuilt from an answer the poll replaces every couple of seconds, and a
+// rebuild under an open box would take the text with it and move the code the
+// comment is about. `redrawCode` clears `bodyKey`, which is how the box's own
+// open and close get through this.
+function holdingText(box) {
+  return state.writing !== null && box.dataset.bodyKey;
+}
+
 function fresh(box, which, key) {
   if (box.dataset[which] === key) return false;
   box.dataset[which] = key;
@@ -5440,7 +5437,7 @@ function fuzzy(text, query, slack = 0) {
     at.push(found);
     from = found + 1;
   }
-  return { score: score - lower.length / 50, at, missed };
+  return { score: score - lower.length / 50, at };
 }
 
 // What a path is matched against: the name, unless you typed a slash.
@@ -5468,14 +5465,17 @@ function findPath(path, query) {
   const named = fuzzy(path.slice(cut), query, slack);
   if (named) {
     // The name is what you were looking for, so it outranks any directory.
-    return { score: named.score + 200, missed: named.missed,
+    return { score: named.score + 200,
              at: named.at.map((where) => where + cut) };
   }
   // Not in the name, so a directory may be what you meant — `libcorrelation`
-  // names a folder, not a file. Only when the letters sit close together,
-  // though: spread across four directory names they mean nothing.
-  const wide = fuzzy(path, query, slack);
-  if (!wide || !wide.at.length) return null;
+  // names a folder, not a file. Only the directories are searched: the name
+  // has just been rejected, and scanning it again for every one of fifty
+  // thousand paths was most of a keystroke. Only when the letters sit close
+  // together, too: spread across four directory names they mean nothing.
+  if (!cut) return null;                 // nothing but a name to search
+  const wide = fuzzy(path.slice(0, cut), query, slack);
+  if (!wide) return null;
   const span = wide.at[wide.at.length - 1] - wide.at[0] + 1;
   return span <= query.length * TIGHT ? wide : null;
 }
@@ -5780,10 +5780,7 @@ function drawFiles(box) {
   }
 
   const same = (box.dataset.bodyKey || "").split("\n")[0] === String(state.file);
-  // A comment box holds what the reader is typing, and the file is read again
-  // whenever the agent saves. Rebuilding under an open box would take the text
-  // with it. The box closes, and then the file catches up.
-  if (state.writing !== null && box.dataset.bodyKey) return;
+  if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.file + "\n" + state.fileMtime)) return;
   const place = same ? pane.scrollTop : 0;   // the same file, read again
   pane.replaceChildren();
@@ -5841,11 +5838,7 @@ let BIG_LINES = 500;
 
 function drawDiff(box) {
   const [list, pane, note, foot] = split(box, "diff", "diffbody");
-  // A comment box holds what the reader is typing, and the diff is rebuilt
-  // whenever the agent saves anything. Rebuilding under an open box would take
-  // the text with it, and would move the code the comment is about while it is
-  // being written. The box closes, and then the diff catches up.
-  if (state.writing !== null && box.dataset.bodyKey) return;
+  if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.diffAt + "\n" + state.find)) return;
   const place = pane.scrollTop;
   list.replaceChildren();
@@ -5860,32 +5853,38 @@ function drawDiff(box) {
   }
   let shown = 0;
   for (const section of report.sections) {
-    const files = (section.files || []).filter(
-      (one) => findPath(one.path, state.find));
+    const files = [];
+    for (const one of (section.files || [])) {
+      const hit = findPath(one.path, state.find);
+      if (hit) files.push({ one, at: hit.at });
+    }
     if (!files.length) continue;
     shown += files.length;
     put(list, "div", "head", section.title);
     put(pane, "div", "diffhead " + section.name, section.title);
-    for (const one of files) {
+    for (const { one, at } of files) {
       const node = drawDiffFile(pane, one);
       const button = put(list, "button");
       button.type = "button";
       button.title = one.path;
-      putName(button, one.path, (findPath(one.path, state.find) || {}).at || []);
+      putName(button, one.path, at);
       putCounts(put(button, "span", "counts"), one);
       button.addEventListener("click",
                               () => node.scrollIntoView({ block: "start" }));
     }
   }
-  const loose = (report.untracked || []).filter(
-    (name) => findPath(name, state.find));
+  const loose = [];
+  for (const name of (report.untracked || [])) {
+    const hit = findPath(name, state.find);
+    if (hit) loose.push({ name, at: hit.at });
+  }
   if (loose.length) {
     put(list, "div", "head", "untracked");
-    for (const name of loose) {
+    for (const { name, at } of loose) {
       const button = put(list, "button", state.loose === name ? "chosen" : "");
       button.type = "button";
       button.title = name;
-      putName(button, name, (findPath(name, state.find) || {}).at || []);
+      putName(button, name, at);
       button.addEventListener("click", () => chooseUntracked(name));
     }
   }
@@ -6064,7 +6063,7 @@ function walkHunks(one, onHunk, onLine) {
 // tab draws through here for it, so a file gets the numbers, the `+` and the
 // comments the diff already had, and a comment on line 42 lands on the same
 // anchor whichever tab it was written in.
-const SIGN = { added: "+", removed: "\u2212", context: " ", plain: "" };
+const SIGN = { added: "+", removed: "\u2212", context: " " };
 
 function fillDiffFile(body, one) {
   walkHunks(one, (hunk) => {
@@ -6186,9 +6185,15 @@ function pruneReviews(sessions) {
 function resolveReview(report) {
   const marks = new Map();
   if (!state.review.length) return marks;
-  for (const one of state.review) marks.set(one.anchor, "gone");
-  const untracked = new Set(report.untracked || []);
-  for (const path of untracked) {
+  // Only a comment written on a diff line can be "no longer in the diff". Now
+  // that a comment can be written on any line of any file, most of them are on
+  // files the agent never touched: nothing here has looked at those, and
+  // saying the line left the diff would be a sentence the reader never wrote.
+  // So a comment starts "gone" only if it was written against the diff.
+  for (const one of state.review) {
+    if (one.diff) marks.set(one.anchor, "gone");
+  }
+  for (const path of (report.untracked || [])) {
     // Only its name is known unless it is the one being read, so a comment on
     // it cannot be checked — and a file that is still listed is still there.
     for (const one of state.review) {
@@ -6221,7 +6226,9 @@ function writeComment(anchor, quoted, note) {
   } else if (had) {
     had.note = text;
   } else {
-    state.review.push({ anchor: anchor, quoted: quoted, note: text });
+    // Where it was written decides what can later be said about it.
+    state.review.push({ anchor: anchor, quoted: quoted, note: text,
+                        diff: state.tab === "diff" });
   }
   state.writing = null;
   keepReview();
@@ -6619,9 +6626,13 @@ async function loadFiles() {
   }
 
   if (state.file) {
-    const body = await ask(want, "file",
-                           "?path=" + encodeURIComponent(state.file));
-    if (!body || state.chosen !== want) return;
+    // The file is asked for by name, and the name can change while the answer
+    // is on its way: pick another file quickly and the first one's text landed
+    // under the second one's name, so the tab showed one file's content
+    // labelled as another. The session is not the only thing that can move.
+    const wanted = state.file;
+    const body = await ask(want, "file", "?path=" + encodeURIComponent(wanted));
+    if (!body || state.chosen !== want || state.file !== wanted) return;
     // Only a file whose mtime moved is drawn again, so the tab keeps your
     // place in a file the agent has not touched.
     if (body.mtime !== state.fileMtime) {

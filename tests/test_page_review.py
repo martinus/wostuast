@@ -10,6 +10,8 @@ import pytest
 
 import conftest
 from browser import (
+    comment_on_line,
+    open_file,
     open_page,
     code_text,
     skip_without_browser,
@@ -164,10 +166,8 @@ def test_the_review_belongs_to_the_session_it_is_about(repo_page):
             page.wait_for_function("state.review.length === 1")
             page.evaluate("choose('someone-else')")
             seen = page.evaluate(
-                """() => ({n: state.review.length, chosen: state.chosen,
-                           keys: Object.keys(localStorage)
-                             .filter((k) => k.startsWith("wostuast-review-"))})""")
-            assert seen["n"] == 0, seen
+                """() => ({n: state.review.length, chosen: state.chosen})""")
+            assert seen == {"n": 0, "chosen": "someone-else"}
         finally:
             browser.close()
 
@@ -535,7 +535,7 @@ def test_a_review_for_a_session_that_is_gone_is_swept_up(repo_page):
 
 #: One highlighter span that opens on line 2 and closes on line 4, as a real
 #: one returns for a triple-quoted string. The point of painting the file whole.
-QUOTE = chr(39) * 3
+QUOTE = "'''"
 PAINTED = ("a = 1\n"
            '<span class="hljs-string">' + QUOTE + "\n"
            "still inside\n"
@@ -543,27 +543,14 @@ PAINTED = ("a = 1\n"
            "b = 2")
 
 
-def open_file(play, where, name="code.py"):
-    """The Files tab with a file open, drawn as rows."""
-    browser, page = open_page(play, where)
-    show_tab(page, "files")
-    page.click(f".filelist button:has-text('{name}')")
-    page.wait_for_selector(".filebody .code .dline")
-    return browser, page
-
-
 def test_any_line_of_any_file_can_be_commented_on(repo_page):
     """Not only a line that happens to be in the diff."""
     with sync_playwright() as play:
-        browser, page = open_file(play, repo_page)
+        browser, page = open_page(play, repo_page)
         try:
-            rows = page.locator(".filebody .code .dline")
-            assert rows.count() >= 2
-            rows.nth(1).locator(".plus").click(force=True)
-            page.wait_for_selector(".commentbox textarea")
-            page.fill(".commentbox textarea", "the second line, from the file")
-            page.click(".commentbox .verb")
-            page.wait_for_selector(".filebody .comment")
+            open_file(page)
+            assert page.locator(".filebody .code .dline").count() >= 2
+            comment_on_line(page, 1, "the second line, from the file")
             # Anchored to the line, on the side a diff comment would use.
             anchor = page.evaluate("state.review[0].anchor")
             assert anchor.startswith("code.py\n")
@@ -575,16 +562,13 @@ def test_any_line_of_any_file_can_be_commented_on(repo_page):
 def test_a_comment_made_on_the_diff_shows_in_the_file(repo_page):
     """One anchor, so the two tabs are two views of the same review."""
     with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
+        browser, page = open_diff(play, repo_page)
         try:
-            show_tab(page, "diff")
-            page.wait_for_selector(".dline")
             page.evaluate(
                 "([one]) => { state.review = [one]; }",
                 [{"anchor": "code.py\nnew\n2", "quoted": "print(2)",
                   "note": "written on the diff tab"}])
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('code.py')")
+            open_file(page)
             page.wait_for_selector(".filebody .comment")
             assert "written on the diff tab" in page.locator(
                 ".filebody .comment").inner_text()
@@ -608,7 +592,7 @@ def test_the_whole_file_is_highlighted_then_cut_into_lines(repo_page):
                 "([value]) => { hljsAsked = Promise.resolve("
                 "{ getLanguage: () => true, highlight: () => ({ value }) }); }",
                 [PAINTED])
-            page.click(".filelist button:has-text('code.py')")
+            open_file(page)
             page.wait_for_selector(".filebody .code .hljs-string")
             # One span per line it covers, not one span swallowing the rows.
             spans = page.eval_on_selector_all(
@@ -617,5 +601,39 @@ def test_the_whole_file_is_highlighted_then_cut_into_lines(repo_page):
             assert spans == [QUOTE, "still inside", QUOTE]
             assert code_text(page) == (
                 "a = 1\n" + QUOTE + "\nstill inside\n" + QUOTE + "\nb = 2")
+        finally:
+            browser.close()
+
+
+def test_a_comment_on_a_file_the_diff_never_saw_is_not_called_gone(repo_page):
+    """Now that any file can be commented on, most comments are on files the
+    agent never touched. Everything started as "gone" and only files in the
+    diff were redeemed, so those comments were drawn as "this line is no
+    longer in the diff" — and that sentence was sent to the agent, who would
+    read it as the reader's own words.
+
+    A comment says where it was written, and only one written on the diff can
+    later be told it left the diff."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate(
+                "([one]) => { state.review = [one]; state.diffAt += 1;"
+                " redrawCode(); }",
+                [{"anchor": "docs/untouched.md\nnew\n7", "quoted": "a line",
+                  "note": "about a file nobody changed"}])
+            page.wait_for_timeout(300)
+            assert page.evaluate(
+                "state.marks.get('docs/untouched.md\\nnew\\n7')") is None
+            assert page.locator(".diffhead.gone").count() == 0
+            assert "no longer in the diff" not in page.evaluate("reviewText()")
+            # A comment on a file the diff does cover is still judged.
+            page.evaluate(
+                "([one]) => { state.review.push(one); state.diffAt += 1;"
+                " redrawCode(); }",
+                [{"anchor": "code.py\nnew\n99", "quoted": "gone for good",
+                  "note": "on a line that is not there", "diff": True}])
+            page.wait_for_selector(".diffhead.gone")
+            assert "no longer in the diff" in page.evaluate("reviewText()")
         finally:
             browser.close()

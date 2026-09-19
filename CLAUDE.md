@@ -294,6 +294,11 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The draft lives in the browser.** A review is yours until you submit it, and
   the daemon serves every browser the same page. `recallReview` checks the shape
   of what comes back: storage is not a place to trust blindly.
+- **A comment remembers which tab wrote it.** Only one written on the diff may
+  later be told "this line is no longer in the diff". Every comment used to
+  start "gone" and only a file in the diff redeemed it, so a note on any of the
+  fifty thousand files the agent never touched carried that sentence — into the
+  message sent to the agent, as the reader's own words.
 - **The preview cannot be skipped**, and it is not editable. A quoted line is
   text an agent wrote, about to be pasted into a terminal. One text, one place it
   comes from.

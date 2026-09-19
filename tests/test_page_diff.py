@@ -48,7 +48,8 @@ def test_the_diff_colours_what_changed(repo_page):
                 ".dline.added .sign", "els => els.map(e => e.textContent)")
             assert marks and all(mark == "+" for mark in marks)
             assert len(marks) == len(added)
-            # It is still copied with the diff, unlike the numbers.
+            # Nothing makes it unselectable, so it is copied with the diff.
+            # The numbers are the other way round, and tested as such.
             assert page.eval_on_selector(
                 ".dline.added .sign", "el => getComputedStyle(el).userSelect"
             ) != "none"

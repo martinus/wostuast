@@ -722,3 +722,21 @@ def test_a_machine_without_file_simply_gets_no_answer(ws):
     assert ws.sniff_language(nowhere, runner=lambda cmd: "") == ""
     assert ws.sniff_language(
         nowhere, runner=lambda cmd: "application/x-unknown-thing") == ""
+
+
+def test_a_shebang_is_not_worth_a_subprocess(ws, repo):
+    """The page reads a shebang itself, and a shebang is the common shape for
+    a file with no suffix. Asking `file` about one forks for an answer already
+    in hand — and the open file is re-read on every poll."""
+    (repo / "runme").write_text("#!/usr/bin/env python3\nimport os\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "a script")
+    asked = []
+
+    def watched(cmd, **rest):
+        asked.append(cmd)
+        return ws.run(cmd, **rest)
+
+    found = ws.read_worktree_file(str(repo), "runme", runner=watched)
+    assert found is not None and found.language == ""
+    assert not any(cmd[0] == "file" for cmd in asked), "a shebang paid for a fork"

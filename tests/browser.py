@@ -178,13 +178,22 @@ STUB = """hljsAsked = Promise.resolve({
   }),
 });"""
 
+def open_file(page, name="code.py"):
+    """Open a file on the Files tab and wait for its rows.
+
+    Waiting for what the page has drawn, rather than for a length of time, is
+    why this is one helper and not four lines in every test.
+    """
+    show_tab(page, "files")
+    page.click(f".filelist button:has-text('{name}')")
+    page.wait_for_selector(".filebody .code .dline")
+
+
 def open_code(page, stub, name="code.py"):
-    """Put a stand-in highlighter in place, then open a file that is not
-    Markdown."""
+    """The same, with a stand-in highlighter in place first."""
     show_tab(page, "files")
     page.evaluate(STUB % stub)
-    page.click(f".filelist button:has-text('{name}')")
-    page.wait_for_timeout(400)
+    open_file(page, name)
 
 # --- the review: milestone 7 stage 1 -----------------------------------------
 
@@ -197,6 +206,19 @@ def open_diff(play, where):
     return browser, page
 
 # --- the review: milestone 7 stage 2 -----------------------------------------
+
+
+def comment_on_line(page, at, note):
+    """Write a comment on the row at `at`, waiting for each step.
+
+    Every test that hand-rolled this skipped a wait, and the one that did was
+    the one test that failed under a full parallel run.
+    """
+    page.locator(".dline").nth(at).locator(".plus").click(force=True)
+    page.wait_for_selector(".commentbox textarea")
+    page.fill(".commentbox textarea", note)
+    page.click(".commentbox .verb")
+    page.wait_for_selector(".comment")
 
 
 def comment_on_first_line(page, note):

@@ -11,6 +11,7 @@ import pytest
 
 import conftest
 from browser import (
+    open_file,
     code_text,
     skip_without_browser,
     sync_playwright,
@@ -629,9 +630,7 @@ def test_a_file_is_numbered_beside_the_code_not_inside_it(repo_page):
             assert got == ["1", "2", "3", "4"]
             # The number is beside the line, not part of it, so copying the
             # code does not take it.
-            assert page.eval_on_selector_all(
-                ".filebody .code .dline .dtext",
-                "els => els.map(e => e.textContent)") == ["one", "two", "three", "four"]
+            assert code_text(page) == "one\ntwo\nthree\nfour"
             assert page.eval_on_selector(
                 ".filebody .code .ln", "el => getComputedStyle(el).userSelect"
             ) == "none"
@@ -646,7 +645,8 @@ def test_markdown_has_no_line_numbers(repo_page):
         try:
             show_tab(page, "files")
             page.wait_for_selector(".filebody .prose")
-            assert page.locator(".filebody .nums").count() == 0
+            # Rows are what carry numbers now, and prose has none of them.
+            assert page.locator(".filebody .dline").count() == 0
         finally:
             browser.close()
 
@@ -735,26 +735,82 @@ def test_the_find_box_searches_the_name_not_the_whole_path(page_at):
                      withSlash: !!findPath(good, "mintv2/metric"),
                      nothingTyped: !!findPath(good, ""),
                      shortQueryIsStrict: !!findPath(good, "xyz"),
+                     nameBeatsDirectory:
+                       findPath("src/thing/parser.c", "parser").score >
+                       findPath("src/parser/thing.c", "parser").score,
                    })""", [junk, good, deep])
             assert got == {
                 "junk": False, "good": True, "exact": True,
                 "byDirectory": True, "wrongDirectory": False,
                 "withSlash": True, "nothingTyped": True,
-                "shortQueryIsStrict": False,
+                "shortQueryIsStrict": False, "nameBeatsDirectory": True,
             }
         finally:
             browser.close()
 
 
-def test_a_name_match_outranks_a_directory_match(page_at):
+
+
+def test_a_slow_answer_cannot_land_under_another_file(repo_page):
+    """The file is asked for by name, and the name can change while the answer
+    is on its way. Only the session was checked when it came back, so picking
+    another file quickly left the first one's text under the second one's
+    name: the tab showed one file's content labelled as another.
+
+    Found by a test that stopped sleeping for 400 ms and started waiting for
+    what the page had drawn.
+    """
     with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
+        browser, page = open_page(play, repo_page)
         try:
-            better = page.evaluate("""() => {
-              const byName = findPath("src/thing/parser.c", "parser");
-              const byDir = findPath("src/parser/thing.c", "parser");
-              return byName.score > byDir.score;
+            show_tab(page, "files")
+            # Hold the next answer for a file, so the switch happens under it.
+            page.evaluate("""() => {
+              window.__release = null;
+              const real = window.fetch;
+              window.fetch = (url, opts) => {
+                if (String(url).includes("/file?path=")) {
+                  window.fetch = real;      // only the one
+                  return new Promise((go) => {
+                    window.__release = () => go(real(url, opts));
+                  });
+                }
+                return real(url, opts);
+              };
             }""")
-            assert better, "a directory outranked the file you named"
+            # A block body, so Playwright is not handed the promise this test
+            # is holding open — awaiting it would hang the call.
+            page.evaluate("() => { forgetFile('README.md'); loadFiles(); }")
+            page.wait_for_function("window.__release !== null")
+            # Another file is picked while the first answer is still in flight.
+            page.evaluate("forgetFile('code.py');")
+            page.evaluate("window.__release();")
+            page.wait_for_timeout(400)
+            assert page.evaluate("state.file") == "code.py"
+            assert "readme" not in page.evaluate("state.fileText").lower(), (
+                "one file's text landed under another file's name")
+        finally:
+            browser.close()
+
+
+def test_a_row_of_code_is_monospace_in_both_tabs(repo_page):
+    """The mono face, size and line height sat on the Diff tab's container, so
+    when the Files tab drew the same rows they came out in the proportional
+    body face and the gutter's space padding stopped lining up. A row carries
+    its own typography."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            faces = {}
+            show_tab(page, "files")
+            open_file(page)
+            faces["files"] = page.eval_on_selector(
+                ".filebody .code .dline", "el => getComputedStyle(el).fontFamily")
+            show_tab(page, "diff")
+            page.wait_for_selector(".diffbody .dline")
+            faces["diff"] = page.eval_on_selector(
+                ".diffbody .dline", "el => getComputedStyle(el).fontFamily")
+            assert "Mono" in faces["files"], faces
+            assert faces["files"] == faces["diff"], faces
         finally:
             browser.close()
