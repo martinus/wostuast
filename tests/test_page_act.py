@@ -153,3 +153,67 @@ def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
             ), "it ran off the side instead of wrapping"
         finally:
             browser.close()
+
+
+# --- naming a session from the page -------------------------------------------
+
+
+def test_a_session_can_be_renamed_from_the_page(in_pane):
+    """`/rename` in the terminal does not reach here: the name Claude Code
+    hands the status line is the one the session started with. A name set here
+    is ours and wins."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            page.click("#title")
+            page.wait_for_selector("#rename:not([hidden])")
+            page.fill("#rename", "the parser")
+            page.press("#rename", "Enter")
+            page.wait_for_function(
+                "document.getElementById('title').textContent"
+                ".startsWith('the parser')")
+            assert page.locator("#rename").is_hidden()
+            # And it is on the row as well, not only in the header. The row
+            # puts the worktree in `.name` and the session's own name in
+            # `.called`, which is the one a rename changes.
+            page.wait_for_function(
+                "document.querySelector('.row .called').textContent"
+                ".includes('the parser')")
+        finally:
+            browser.close()
+
+
+def test_escape_leaves_the_name_as_it_was(in_pane):
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            was = page.locator("#title").inner_text()
+            page.click("#title")
+            page.wait_for_selector("#rename:not([hidden])")
+            page.fill("#rename", "not this")
+            page.press("#rename", "Escape")
+            page.wait_for_selector("#rename", state="hidden")
+            page.wait_for_timeout(300)      # proving it did not go
+            assert page.locator("#title").inner_text() == was
+        finally:
+            browser.close()
+
+
+def test_an_empty_name_gives_the_session_its_place_back(in_pane):
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            page.click("#title")
+            page.fill("#rename", "for a moment")
+            page.press("#rename", "Enter")
+            page.wait_for_function(
+                "document.getElementById('title').textContent"
+                ".startsWith('for a moment')")
+            page.click("#title")
+            page.fill("#rename", "")
+            page.press("#rename", "Enter")
+            page.wait_for_function(
+                "!document.getElementById('title').textContent"
+                ".includes('for a moment')")
+        finally:
+            browser.close()

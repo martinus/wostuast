@@ -665,3 +665,48 @@ def test_the_palette_check_would_notice(ws):
     assert COLOUR.search("a { color: #e0a642; }")
     assert COLOUR.search("a { color: rgba(0,0,0,.5); }")
     assert not COLOUR.search("#bell { margin-left: 14px; }")
+
+
+# --- naming a session --------------------------------------------------------
+
+
+def test_a_session_can_be_named_over_http(ws, served):
+    daemon, base = served
+    ws.append_event(event("SessionStart", sid="s1", cwd="/w/one", pane="%7", pid=1))
+    daemon.store.refresh()
+    status, body = post(f"{base}/api/session/s1/name", {"name": "the parser"},
+                        token=daemon.token)
+    assert status == 200 and body["name"] == "the parser"
+    daemon.store.refresh()
+    assert daemon.store.rows[0]["name"] == "the parser"
+    assert daemon.store.rows[0]["mine"] is True
+    assert daemon.store.rows[0]["label"].startswith("the parser")
+
+
+def test_naming_a_session_that_is_not_there_is_a_404(ws, served):
+    daemon, base = served
+    status, _ = post(f"{base}/api/session/nope/name", {"name": "x"},
+                     token=daemon.token)
+    assert status == 404
+
+
+def test_a_name_needs_the_token_like_every_other_post(ws, served):
+    """It writes no terminal, but it arrives the same way and is checked the
+    same way: another site must not be able to rename what it can reach."""
+    daemon, base = served
+    ws.append_event(event("SessionStart", sid="s1", cwd="/w/one", pane="%7", pid=1))
+    daemon.store.refresh()
+    status, _ = post(f"{base}/api/session/s1/name", {"name": "theirs"}, token="wrong")
+    assert status == 403
+    assert ws.read_names() == {}
+
+
+def test_a_session_with_no_pane_can_still_be_named(ws, served):
+    """Unlike the tmux verbs: naming touches no terminal, and naming a session
+    that has ended is the point of naming one at all."""
+    daemon, base = served
+    ws.append_event(event("SessionStart", sid="s1", cwd="/w/one", pane="", pid=1))
+    daemon.store.refresh()
+    status, body = post(f"{base}/api/session/s1/name", {"name": "over"},
+                        token=daemon.token)
+    assert status == 200 and body["name"] == "over"

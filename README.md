@@ -234,6 +234,13 @@ own. Another site can send this port a request; it cannot send one that acts.
 A session that is not running under tmux has no pane, so it has none of these:
 the buttons are not there, and the header says `not in tmux`.
 
+**Naming.** Click the name at the top to change it; Enter keeps it, Escape
+leaves it alone, and an empty name gives the session its worktree back. Claude
+Code names a session from its first prompt, and `/rename` in the terminal does
+not reach this page — the name it hands the status line is the one the session
+started with. A name you set here is kept in your state directory and wins. A
+session with no pane, or one that has ended, can still be named.
+
 ### The tabs
 
 **Transcript** is what the agent said and did, as it happens.

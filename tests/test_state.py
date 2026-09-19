@@ -500,3 +500,59 @@ def test_a_session_whose_pid_was_reused_goes_to_the_history(ws, monkeypatch):
     ws.mark_dead(session, now=1000.0)
     assert session.state == "dead"
     assert session.end_reason == "process gone"
+
+
+# --- a name the reader gave ---------------------------------------------------
+
+
+def test_a_name_set_here_wins_over_the_one_claude_code_sent(ws):
+    session = ws.Session(session_id="s", cwd="/a/b",
+                         status=ws.Status(name="from-claude"))
+    assert session.label.startswith("from-claude")
+    session.mine = "mine"
+    assert session.label.startswith("mine")
+
+
+def test_renaming_keeps_it_and_taking_it_away_forgets_it(ws):
+    store = ws.Store()
+    assert store.rename("s", "  a  long   name  ") == "a long name"
+    assert ws.read_names() == {"s": "a long name"}
+    # A fresh store reads what the last one wrote: this is the half that
+    # survives a restart of the daemon.
+    assert ws.Store().names == {"s": "a long name"}
+    assert store.rename("s", "   ") == ""
+    assert ws.read_names() == {}
+
+
+def test_a_name_is_clipped_rather_than_refused(ws):
+    store = ws.Store()
+    given = store.rename("s", "x" * (ws.NAME_MAX + 50))
+    assert len(given) == ws.NAME_MAX
+
+
+def test_names_that_are_not_names_are_left_out(ws):
+    """The file is ours, but it is on disk and a browser is not the only thing
+    that can write there."""
+    ws.write_atomic(ws.names_path(), '{"good": "keep", "bad": 7, "empty": " "}')
+    assert ws.read_names() == {"good": "keep"}
+    ws.write_atomic(ws.names_path(), "[1, 2]")
+    assert ws.read_names() == {}
+
+
+def test_a_new_name_from_the_status_line_reaches_the_row(ws):
+    """Our own path is live: a status file that changes is read again on the
+    next pass. A rename in the terminal does not show because the name Claude
+    Code hands the status line is the one the session started with, not
+    because anything here holds on to the old one."""
+    import time as clock
+
+    ws.append_event(event("SessionStart", sid="s1", cwd="/w/one",
+                          ts=clock.time(), pane="%7", pid=1))
+    store = ws.Store()
+    ws.write_status("s1", ws.Status(ts=clock.time(), name="first"))
+    store.refresh()
+    assert store.rows[0]["name"] == "first"
+    clock.sleep(0.02)                      # a different mtime, not a new file
+    ws.write_status("s1", ws.Status(ts=clock.time(), name="second"))
+    store.refresh()
+    assert store.rows[0]["name"] == "second"

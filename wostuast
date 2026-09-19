@@ -178,6 +178,17 @@ def status_path(session_id: str) -> Path:
     return status_dir() / f"{safe_name(session_id)}.json"
 
 
+def names_path() -> Path:
+    """The names the reader gave sessions, all of them in one file.
+
+    Claude Code titles a session from its first prompt and `/rename` changes
+    that, but the name it hands the status line is the one the session started
+    with, so a rename in the terminal does not reach here until the session is
+    started again. A name set on the page is kept by us and wins.
+    """
+    return state_dir() / "names.json"
+
+
 def log_path() -> Path:
     return state_dir() / "wostuast.log"
 
@@ -464,6 +475,10 @@ class Session:
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
+    #: A name the reader gave this session on the page. It wins over the one
+    #: Claude Code sent, which is the name the session started with.
+    mine: str = ""
+
     @property
     def label(self) -> str:
         """What to call this session: its name, and where it is standing.
@@ -475,9 +490,10 @@ class Session:
         its place.
         """
         place = path_label(self.cwd, self.git.repo)
-        if not self.status.name:
+        name = self.mine or self.status.name
+        if not name:
             return place
-        return f"{clip(self.status.name, 40)} · {place}"
+        return f"{clip(name, 40)} · {place}"
 
     @property
     def since(self) -> float:
@@ -552,6 +568,11 @@ class Store:
         self.git_wanted: set[str] = set()
         self.status_seen: dict[str, float] = {}
         self.liveness_checked = 0.0
+        # The names the reader gave. Written by whichever thread took the
+        # rename and read by the one that folds, so it is replaced whole
+        # rather than edited — the same trick `rows` plays, for the same
+        # reason: no lock, and a reader never sees half a change.
+        self.names: dict[str, str] = read_names()
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -647,6 +668,7 @@ class Store:
                 mark_dead(session, alive, moment)
         for session in sessions:
             self.reload_status(session)
+            session.mine = self.names.get(session.session_id, "")
         return sessions
 
     def reload_git(self, sessions: Sequence[Session], moment: float) -> None:
@@ -672,6 +694,25 @@ class Store:
         for session in sessions:
             if session.cwd in facts:
                 session.git = facts[session.cwd]
+
+    def rename(self, session_id: str, name: str) -> str:
+        """Give a session a name, or take the name away when it is empty.
+
+        Returns what the name now is. The map is replaced rather than edited
+        so that the thread folding events never reads a half-written one.
+        """
+        clean = " ".join(name.split())[:NAME_MAX]
+        names = dict(self.names)
+        if clean:
+            names[session_id] = clean
+        else:
+            names.pop(session_id, None)
+        write_names(names)
+        self.names = names
+        session = self.sessions.get(session_id)
+        if session is not None:
+            session.mine = clean
+        return clean
 
     def reload_status(self, session: Session) -> None:
         """Read the status file again, but only when it has been written."""
@@ -728,7 +769,10 @@ def row(session: Session) -> dict[str, Any]:
         "last_tool": session.last_tool,
         "last_prompt": session.last_prompt,
         "since": round(session.since, 3),
-        "name": session.status.name,
+        "name": session.mine or session.status.name,
+        # Whether that name is one the reader set here. The page shows the
+        # box with it in, rather than making them type it again to change it.
+        "mine": bool(session.mine),
         "model": session.status.model,
         "context_pct": session.status.context_pct,
         "end_reason": session.end_reason,
@@ -2107,6 +2151,33 @@ def write_status(session_id: str, status: Status) -> None:
     write_atomic(status_path(session_id), json.dumps(asdict(status)), private=True)
 
 
+#: How long a name may be. Longer than `label` shows, so nothing is lost by
+#: being clipped on screen, and short enough that the file cannot be used as a
+#: place to keep something else.
+NAME_MAX = 120
+
+
+def read_names() -> dict[str, str]:
+    """Every name the reader has given, or an empty map."""
+    try:
+        payload = json.loads(names_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): str(value)[:NAME_MAX]
+        for key, value in payload.items()
+        if isinstance(key, str) and isinstance(value, str) and value.strip()
+    }
+
+
+def write_names(names: dict[str, str]) -> None:
+    """Keep them. The file is ours and nobody else reads it, so it is one map
+    rather than a file per session: there is no hook writing it in parallel."""
+    write_atomic(names_path(), json.dumps(names), private=True)
+
+
 def read_status(session_id: str) -> Status:
     """Read the status file of a session. A missing file gives an empty status."""
     try:
@@ -2780,6 +2851,24 @@ class Serving:
         self.reply_json({"id": session_id,
                          "done": tmux_jump(session.pane)})
 
+    def name(self, session_id: str, body: dict[str, Any]) -> None:
+        """Name a session, or take its name away with an empty one.
+
+        It writes no terminal, so it needs no pane: a session that has ended
+        can still be named, which is the point of naming one at all.
+        """
+        session = self.known(session_id)
+        if session is None:
+            return
+        asked = body.get("name")
+        given = self.daemon.store.rename(
+            session_id, asked if isinstance(asked, str) else "")
+        # Nothing is pushed from here. A rename is not an event, but the rows
+        # are built from the names on every pass, so the next one differs and
+        # goes out on its own. The answer carries the name so the page can
+        # show it without waiting for that.
+        self.reply_json({"id": session_id, "name": given, "done": True})
+
     def send(self, session_id: str, body: dict[str, Any]) -> None:
         session = self.in_tmux(session_id)
         if session is None:
@@ -2923,12 +3012,14 @@ GET_VERBS: dict[str, Any] = {
     "diff": Serving.diff,
 }
 
-# These two write to a terminal, so they are the reason every POST carries
-# a token. There will never be a third without PLAN.md section 4.5 saying
-# so.
+# Two of these write to a terminal, and they are the reason every POST carries
+# a token. There will never be a third tmux verb without PLAN.md section 4.5
+# saying so. `name` is not one: it writes a file of ours and touches no
+# terminal, but it arrives the same way and is checked the same way.
 POST_VERBS: dict[str, Any] = {
     "jump": Serving.jump,
     "send": Serving.send,
+    "name": Serving.name,
 }
 
 
@@ -3627,11 +3718,15 @@ body.dragging { cursor: col-resize; user-select: none; }
   height: 56px; flex-shrink: 0; display: flex; align-items: center; gap: 16px;
   padding: 0 24px; border-bottom: 1px solid var(--edge); min-width: 0;
 }
+/* The name of the open session, and the button that renames it. */
 .session-head .title {
   font-family: var(--mono); font-size: 16px; font-weight: 600;
   color: var(--ink-bright); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis;
+  border: none; background: none; padding: 0; text-align: left; cursor: pointer;
 }
+.session-head .title:hover { color: var(--needs); }
+.session-head .title:disabled { cursor: default; color: var(--ink-bright); }
 .session-head .facts {
   display: flex; align-items: center; gap: 10px; min-width: 0;
   font-family: var(--mono); font-size: 13px; color: var(--ink-mute);
@@ -4055,6 +4150,12 @@ dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
   font-family: var(--mono); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;
 }
+.rename {
+  width: min(460px, 60vw); padding: 4px 8px; border-radius: 5px;
+  border: 1px solid var(--needs); background: var(--raised); color: var(--ink);
+  font-family: var(--sans); font-size: 13px;
+}
+.rename:focus { outline: none; }
 .sidefoot:empty { display: none; }
 .sidefoot {
   flex-shrink: 0; padding: 8px 10px; border-top: 1px solid var(--edge);
@@ -4092,7 +4193,11 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <div class="grip" id="grip"></div>
     <div class="main">
       <div class="session-head">
-        <div class="title" id="title">no session</div>
+        <button class="title" id="title" type="button"
+                title="rename this session">no session</button>
+        <input class="rename" id="rename" type="text" hidden
+               autocomplete="off" spellcheck="false"
+               placeholder="a name for this session  ·  enter to keep, escape to leave">
         <div class="facts" id="facts"></div>
         <button class="verb" id="jump" type="button" hidden
                 title="put the cursor in that pane  ⏎">jump</button>
@@ -4204,6 +4309,46 @@ async function tell(id, verb, body) {
 }
 
 // What came back, on the one line the page keeps for saying things.
+// Naming a session. Claude Code names one from its first prompt and
+// `/rename` changes that, but the name it hands the status line is the one the
+// session started with — so a rename in the terminal does not reach this page
+// until the session is started again. A name set here is ours and wins.
+function openRename() {
+  const s = current();
+  if (!s) return;
+  const box = $("rename");
+  // What is already there, when it is a name someone chose. A name Claude
+  // Code wrote is a starting point too, so it goes in as well.
+  box.value = s.name || "";
+  box.hidden = false;
+  $("title").hidden = true;
+  box.focus();
+  box.select();
+}
+
+function closeRename() {
+  $("rename").hidden = true;
+  $("title").hidden = false;
+}
+
+async function keepRename() {
+  const id = state.chosen;
+  const asked = $("rename").value;
+  closeRename();
+  if (!id) return;
+  const answer = await tell(id, "name", { name: asked });
+  if (answer && answer.error) { said(answer); return; }
+  // The rows are rebuilt from the names on the daemon's next pass, which is a
+  // second away. This is so the header does not sit on the old one until then.
+  const s = current();
+  if (s) {
+    s.name = (answer && answer.name) || "";
+    s.label = s.name ? s.name + " \u00b7 " + s.place : s.place;
+  }
+  drawHeader();
+  drawSessions();
+}
+
 function said(answer) {
   const box = $("live");
   box.textContent = (answer && answer.error) || "";
@@ -4580,7 +4725,12 @@ function current() {
 
 function drawHeader() {
   const s = current();
-  $("title").textContent = s ? (s.label || s.id.slice(0, 8)) : "no session";
+  const title = $("title");
+  title.textContent = s ? (s.label || s.id.slice(0, 8)) : "no session";
+  title.disabled = !s;
+  // The box is only in the way while it is open, and a redraw arrives every
+  // second or so — closing it here would take the name being typed with it.
+  if (!s && !$("rename").hidden) closeRename();
   const box = $("facts");
   box.replaceChildren();
   if (!s) return;
@@ -6945,6 +7095,12 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
+$("title").addEventListener("click", openRename);
+$("rename").addEventListener("keydown", (press) => {
+  if (press.key === "Enter") { press.preventDefault(); keepRename(); }
+  else if (press.key === "Escape") { press.preventDefault(); closeRename(); }
+});
+$("rename").addEventListener("blur", closeRename);
 $("bell").addEventListener("click", () => { toggleNotifications(); });
 
 async function jumpToPane() {
