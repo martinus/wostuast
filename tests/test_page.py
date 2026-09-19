@@ -2490,3 +2490,26 @@ def test_j_and_k_do_not_walk_into_a_folded_history(past_at):
             assert page.evaluate("state.chosen") == "s1"
         finally:
             browser.close()
+
+
+def test_an_untracked_file_anchors_its_comments_to_itself(repo_page):
+    """git has no diff for an untracked file, so it is drawn from a synthetic
+    one. That object carried no path, so every untracked file's comments were
+    anchored to `undefined` — and a comment on line 3 of one turned up on line
+    3 of every other."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.click(".side button[title='NOTES.md']")
+            page.wait_for_selector(".dfile .what:text('untracked')")
+            page.wait_for_selector(".dline")
+            page.locator(".dfile:has(.what:text('untracked')) .dline .plus").first.click(
+                force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "about the notes")
+            page.click(".commentbox .verb")
+            page.wait_for_function("state.review.length === 1")
+            assert page.evaluate("state.review[0].anchor").startswith("NOTES.md\n")
+            assert "NOTES.md:" in page.evaluate("reviewText()")
+        finally:
+            browser.close()

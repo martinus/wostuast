@@ -5703,10 +5703,14 @@ function drawLooseFile(pane, path) {
   // the one place that knows the shape of a diff row, so it is numbered and
   // lined up with every other block rather than being a third way to draw a
   // line that quietly drifts from the other two.
-  fillDiffFile(body, { hunks: [{
+  // The path goes in it too: a review comment is anchored by the file it is
+  // about, and without one every untracked file shared the anchor `undefined`
+  // — a comment on line 3 of this one turned up on line 3 of the next.
+  fillDiffFile(body, { path: path, hunks: [{
     header: "@@ -0,0 +1," + lines.length + " @@",
     lines: lines.map((text) => ({ kind: "added", text })),
   }] });
+  putReview(put(node, "div", "onFile"), anchorOf(path, "file", 0), "", "plus");
   return node;
 }
 
