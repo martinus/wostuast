@@ -274,6 +274,10 @@ files that is 1.7 MB the first time and 200 bytes on every check after it.
 Only the rows you can see are built, so scrolling through ten thousand
 matches costs what ten would.
 
+Above the file is its path, and every part of it can be clicked: a click on
+`libcorrelation` opens the tree down to that directory and puts the list on
+it. The path is still one string, so you can select and copy the whole of it.
+
 A Markdown file is rendered, and a switch beside its path reads it as the
 lines it is written in instead — a rendered document has no line to comment
 on, because the paragraph you want to remark on came from a line that is no

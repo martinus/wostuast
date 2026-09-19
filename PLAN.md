@@ -433,6 +433,13 @@ Large diffs: collapse files over 500 lines, expand on click (`BIG_LINES`, and
 see 4.8.3). Diff lines are not painted; only a file being read is. The marker
 is its own span, so the same could be done here, but it has not been.
 
+**The path above a file is a way back into the tree.** Each part of it is
+clickable, and a click opens the tree to that directory and moves the list to
+it — fifty thousand rows is not something anyone scrolls to find where one
+file sits. A filter is cleared first, because revealing something the filter
+has taken out would show nothing. The parts are inline spans with text-node
+separators, so the whole line is still one string to select and copy.
+
 **A document can be read as its own source.** Markdown renders, which leaves
 no line to hang a comment on: the paragraph you want to remark on came from a
 line that is no longer on the page. A switch beside the path gives the lines
