@@ -248,9 +248,18 @@ like any other.
 
 Type in the box above the list to filter the tree — the branches that hold no
 match fold away, and the ones that lead to one open up. It is a file picker,
-not a filter on the names: the letters have to turn up in the name in that order, but not next to
-each other, so `tsfi` finds `tests/test_files.py`. The best match sorts to the
-top and the letters that matched are picked out. Press `/` to get to the box,
+not a filter on the names: the letters have to turn up in the name in that
+order, but not next to each other, so `mbldr` finds `MetricBuilder.h`. One
+letter of a longer query may be missing altogether, so `MetricsBuilder` finds
+`MetricBuilder.h` too.
+
+The name is what is searched. Spread across a long path the letters of a query
+mean nothing — they will land in four directories at once and match a file you
+have never heard of. A directory is found the same way when its own letters sit
+together, so `libcorrelation` finds what is under it, and typing a slash
+searches the whole path, so `tests/tsfi` finds `tests/test_files.py`.
+
+The best match sorts to the top and the letters that matched are picked out. Press `/` to get to the box,
 `Esc` to clear it. Every name in the repository is searched, however many
 there are.
 

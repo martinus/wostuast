@@ -252,6 +252,14 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The tree holds the tiers.** `dirFiles` orders each directory's own files —
   named, changed newest first, then the rest. `openDirs` opens a directory
   holding a change; `state.dirs` (what the reader opened by hand) wins over it.
+- **A file is found by its name; the path is the fallback, and it must be
+  tight.** `findPath` matches the basename first, then the whole path only when
+  the matched letters span no more than `TIGHT` times the query length.
+  Matching the whole path outright let "MetricsBuilder" land across 71
+  characters and four directory names while missing the file meant. A slash in
+  the query means you meant the path. `findPath` also forgives one letter of a
+  five-plus query; `fuzzy` forgives none by default, because the session filter
+  runs through it and a short haystack cannot afford it.
 - **Search every name, or say you cannot.** Sending the first 5000 of 52,799 made
   a search find 16 files and miss a thousand: a wrong answer that looks right.
 - **A git call that failed must not render as an empty answer.** "No files" and
