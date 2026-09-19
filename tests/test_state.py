@@ -71,6 +71,19 @@ def test_permission_notification_needs_you(ws):
     assert session.reason == "permission: Bash cmake --build build"
 
 
+def test_the_sort_ignores_the_name_claude_code_gave_a_session(ws):
+    """The row shows the worktree, so the list is ordered by the worktree. A
+    session's name arrives from the status line a second after it starts, and
+    `/rename` changes it later, so a list ordered by name jumps under the
+    reader for the same reason a list ordered by state did."""
+    zed = ws.Session(session_id="z", state="working", cwd="/a/apple")
+    zed.status = ws.Status(ts=1.0, name="Zebra work")
+    ann = ws.Session(session_id="a", state="working", cwd="/a/pear")
+    ann.status = ws.Status(ts=1.0, name="Ant work")
+    assert zed.label.startswith("Zebra") and ann.label.startswith("Ant")
+    assert [one.session_id for one in ws.sort_sessions([ann, zed])] == ["z", "a"]
+
+
 def test_idle_notification_does_not_need_you(ws):
     """The agent finished and sits at its prompt. `Stop` already said that, and
     nothing you do clears an idle prompt, so a row that went amber here stayed

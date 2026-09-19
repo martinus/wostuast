@@ -197,13 +197,27 @@ settings.
   threw away the one thing the motion is for: a dot can only fade into its new
   colour if it is the same dot, and the needs-you ring can only finish a cycle
   if its row outlives the change that started it. `newRow` builds every part
-  once, empty; `fillRow` reaches them by position. A transcript block slides in
-  only where a block arrives, in `patchTranscript`, never on a redraw.
-- **Every colour on the page is a variable.** A hard-coded one is right in one
-  theme and wrong in the other, and the ones that are easy to forget are the
-  ring, the row tint, the warnings and the search hit. The hit was near-black
-  on amber, which in the light theme is near-black on dark brown. A test puts
-  a number on it: 4.5:1 in both themes.
+  once, empty; `fillRow` reaches them by position; and a row is moved only when
+  its place actually changed, because `appendChild` on a row already in place
+  is a remove and an insert, and a node that leaves the document is a node
+  that may lose its animation. A transcript block slides in only where a block
+  arrives, in `patchTranscript`. That animation sat on `.turn` for a long
+  time, so the whole history slid every time the tab was rebuilt.
+- **The counts are about every session; only the list is filtered.**
+  `drawCounts` runs before the guard that asks whether the shown rows changed,
+  because a session the filter hides can still go amber, and that has to reach
+  the counts, the title, the icon and the notification. Behind the guard it
+  reached none of them.
+- **Every colour on the page is a variable, and a `:root` block is the only
+  place a colour may be a number.** A colour written into a rule is right in
+  one theme and wrong in the other: the search hit was near-black on amber,
+  which in the light theme is near-black on dark brown, and nobody saw it
+  until someone searched. `test_every_colour_outside_the_palette_is_named` is
+  the rule that catches the next one, and
+  `test_a_search_hit_can_be_read_in_both_themes` puts a number on that one:
+  4.5:1 in both themes. A tint or a ring is derived from its colour with
+  `color-mix`, never by copying the same rgb triple out again, or it is left
+  behind at the old hue the day the colour moves.
 - **The page tests share one browser and wait for things, not for seconds.**
   Starting Playwright costs 0.43 s and launching Chromium 0.15 s, so doing
   both per test spent half a minute on nothing; each test gets its own

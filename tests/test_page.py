@@ -322,6 +322,9 @@ def test_only_a_block_that_has_just_arrived_slides_in(page_at):
             # whether it is there and asking how many there are.
             page.wait_for_function(
                 "document.querySelectorAll('.fresh').length === 1")
+            moving = ("() => getComputedStyle(document.querySelector('.turn'))"
+                      ".animationName")
+            assert page.evaluate(moving) == "none", "the whole history animates"
             # Drawing it again is not arriving again.
             page.evaluate("draw()")
             assert page.locator(".fresh").count() == 0
@@ -356,9 +359,9 @@ def test_a_row_keeps_its_dot_when_the_state_changes(page_at, ws):
         try:
             page.evaluate("window.__dot = document.querySelector('.row .dot')")
             assert "starting" in page.evaluate("window.__dot.className")
-            ws.append_event({"session_id": "s1", "hook_event_name": "PermissionRequest",
-                             "tool_name": "Bash", "tool_input": {"command": "ls ~"},
-                             "pane": "%7", "pid": 1, "ts": time.time()})
+            ws.append_event(conftest.event(
+                "PermissionRequest", tool_name="Bash",
+                tool_input={"command": "ls ~"}, ts=time.time()))
             daemon.tick()            # fold it, and tell the page
             page.wait_for_function("window.__dot.className.includes('needs_you')")
             assert page.evaluate("window.__dot.isConnected"), "the row was rebuilt"
@@ -598,8 +601,8 @@ def pair_at(ws, page_at, tmp_path):
     daemon, url = page_at
     other = tmp_path.parent / "warmhare"
     other.mkdir(exist_ok=True)
-    ws.append_event({"session_id": "s2", "hook_event_name": "SessionStart",
-                     "cwd": str(other), "pane": "%9", "pid": 2, "ts": time.time()})
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(other),
+                                   pane="%9", pid=2, ts=time.time()))
     daemon.store.refresh()
     return daemon, url
 
@@ -609,11 +612,13 @@ def two_rows(page):
 
 
 def test_the_sidebar_filter_narrows_the_list(pair_at):
+    """One story on one page: type letters, type nonsense, press Escape."""
     with sync_playwright() as play:
         browser, page = open_page(play, pair_at)
         try:
             two_rows(page)
             counted = page.locator("#counts").inner_text()
+
             page.fill("#pick", "wmhr")          # scattered letters, as in Files
             page.wait_for_function("document.querySelectorAll('.row').length === 1")
             assert "warmhare" in page.locator(".row .name").inner_text()
@@ -621,32 +626,40 @@ def test_the_sidebar_filter_narrows_the_list(pair_at):
             # The counts are the answer to "who needs me". A filter in the box
             # must not hide an agent that is waiting.
             assert page.locator("#counts").inner_text() == counted
-        finally:
-            browser.close()
 
-
-def test_a_filter_that_matches_nothing_says_so(pair_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, pair_at)
-        try:
-            two_rows(page)
             page.fill("#pick", "nowhereatall")
             page.wait_for_selector(".rows .nohits")
             assert page.locator(".row").count() == 0
+
+            page.press("#pick", "Escape")
+            two_rows(page)
+            assert page.input_value("#pick") == ""
         finally:
             browser.close()
 
 
-def test_escape_empties_the_session_filter(pair_at):
+def test_a_hidden_session_still_counts(pair_at, ws):
+    """The counts, the title and the icon are about every session. They used to
+    be drawn after the guard that asks whether the shown rows had changed, so
+    with anything typed in the filter, a session you could not see going amber
+    changed nothing anywhere on the page."""
+    daemon, path = pair_at
     with sync_playwright() as play:
-        browser, page = open_page(play, pair_at)
+        browser, page = open_page(play, path)
         try:
             two_rows(page)
-            page.fill("#pick", "wmhr")
+            page.fill("#pick", "wmhr")         # hides s1, keeps warmhare
             page.wait_for_function("document.querySelectorAll('.row').length === 1")
-            page.press("#pick", "Escape")
-            two_rows(page)
-            assert page.input_value("#pick") == ""
+            assert "needs you" not in page.locator("#counts").inner_text()
+
+            ws.append_event(conftest.event(
+                "PermissionRequest", sid="s1", tool_name="Bash",
+                tool_input={"command": "ls ~"}, ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                "document.getElementById('counts').innerText.includes('needs you')")
+            assert page.locator(".row").count() == 1, "the filter stopped working"
+            assert page.title().startswith("(1)")
         finally:
             browser.close()
 

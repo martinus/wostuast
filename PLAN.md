@@ -530,16 +530,24 @@ storage, so a reload does too. A double-click on the edge puts it back.
 └──────────────┴───────────────────────────────────────────────┘
 ```
 
-Sidebar rows are sorted by name, with `ended` and `dead` last and dimmed.
+Sidebar rows are sorted by worktree, with `ended` and `dead` last and dimmed.
 Sorting by state moved every row each time an agent started or finished a tool
 call, so the list kept shifting under the reader. Which agent needs you is said
 by the amber tint, by the counts in the top bar and by the `n` key, none of
 which need the order.
 
+By the worktree, not by the session's name: the worktree is what the row shows
+first, and it is the one thing about a session that cannot change. A name
+arrives from the status line a second after the session starts, and `/rename`
+changes it later, so a list ordered by name jumps under the reader for the
+very reason this order exists.
+
 Above the rows is a filter box. It matches the same way the Files tab does, on
 scattered letters, over the worktree, the session's name and the branch, so
 `ofd` finds `oans/fastduck`. The counts in the top bar stay about every
-session: "who needs me" must not change because you typed in a box. Each row:
+session: "who needs me" must not change because you typed in a box, so they
+are drawn before the check that asks whether the shown rows moved — behind it,
+a session the filter hides could go amber and reach nothing. Each row:
 
 - line 1: state dot, `repo/dirname` in bright monospace, state word
 - line 2: the session's own name, smaller and muted, when the status line
@@ -615,7 +623,11 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
   sidebar keeps its rows and fills them in again rather than building them
   afresh, and a block slides in only where a block arrives — never on a
   redraw, or the tab would shiver each time an agent ran a tool. One
-  `prefers-reduced-motion` block turns off all three at once.
+  `prefers-reduced-motion` block turns off all three at once. "Never on a
+  redraw" is the part that is easy to get wrong: the slide sat on `.turn`
+  itself for a long time, so the whole history slid every time the transcript
+  was rebuilt, and moving a row with `appendChild` takes it out of the
+  document and back, which can cancel the animation on it.
 - Light theme: `prefers-color-scheme: light` gets an equivalent palette on
   `#f6f5f1`. Do it with CSS variables from the start so it is one block. Every
   colour is a variable, including the ones that are easy to forget: the ring
@@ -624,7 +636,10 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
   last one is why: the hit sat on the amber with near-black text, and the
   light theme's amber is a dark brown, so a hit could not be read at all.
   A search hit has to reach 4.5:1 against its background in both themes, and
-  a test says so in numbers rather than by eye.
+  a test says so in numbers rather than by eye. A second test reads the
+  stylesheet and fails on any colour written outside a `:root` block, which is
+  the rule that catches the next one. A tint or a ring is derived from its
+  colour with `color-mix`, so it cannot be left behind at the old hue.
 
 ### 5.3 Attention
 
