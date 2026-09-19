@@ -129,6 +129,7 @@ The page is worked from the keyboard. `?` shows this list without leaving it.
 | `j` `k` | move down and up the session list |
 | `n` | jump to the next session that needs you |
 | `f` | filter the session list |
+| `r` | submit the review you have written on the diff |
 | `/` | find: text in the transcript, a file on the other tabs |
 | `1` – `4` | Transcript, Files, Diff, Peek |
 | `Enter` | jump to that agent's tmux pane |
@@ -293,6 +294,22 @@ line has none on the new side and an added one has none on the old side — and
 those numbers are not copied with the diff either. git has no diff for an untracked file, so picking one shows it
 as a single added block: every line in it is new.
 
+**Reviewing a diff.** Hover a diff line and a `+` appears in the gutter.
+Click it, write what you want changed, and save. A file takes a comment of its
+own at the end of its diff, for what is about the file rather than a line.
+Clearing a comment and saving is how it goes away.
+
+The comments collect into a review. "Submit review" under the file list — it
+appears with the first comment and counts them — opens a preview of the exact
+message the agent will be sent, with one box for a note about the review as a
+whole. Send it and it arrives in that agent's prompt as one paste. Cancel
+keeps everything. `r` opens the preview from the keyboard.
+
+Some of that message is text the agent wrote, and it is about to be pasted
+into your terminal, which is why the preview cannot be skipped. Control
+characters are stripped on the way out, because an escape byte is invisible in
+a preview and a paste ends at one.
+
 The same box does all three. It sits above the list on Files and Diff, and at
 the right of the tab strip for the transcript, where it searches for the text
 you typed rather than matching scattered letters.
@@ -325,9 +342,9 @@ sessions, lists them in the terminal, and serves a live page with the
 transcript, the worktree's files and its diff, and it can jump to a pane, type
 into it and show you what it holds.
 
-Milestone 7 is next: review a diff from the page the way you review a pull
-request — a comment on a line, a comment on a file, then one Submit that sends
-the whole review to the agent.
+Milestone 7 is under way: review a diff from the page the way you review a
+pull request. Comments and the send are in; what is left is keeping a draft
+across a reload, and saying so when a comment's line has moved.
 
 There are no screenshots here. A screenshot of this page is a screenshot of
 somebody's agents, and made-up ones would show a tool nobody is using. Run

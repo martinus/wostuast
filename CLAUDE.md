@@ -74,6 +74,13 @@ settings.
   when they are called rather than taking it as a default, so a test of the
   route above them can put a fake tmux in its place — the only way to test
   them without a terminal to type into.
+- **Nothing below a space reaches a terminal.** `tmux_send` strips the control
+  characters, keeping tab and newline, and it is the one place that can: every
+  route to a terminal goes through it. A bracketed paste ends at
+  `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote, so a file holding
+  those bytes would close the paste early and leave the rest arriving as
+  keystrokes — with any newline among them as Enter. A person reading the
+  preview cannot catch this; an escape byte is invisible.
 - **A newline sent to a terminal is Enter.** `tmux_send` wraps text that has
   one in the bracketed paste markers, so a message of several lines arrives as
   a paste and waits for the reader's own Enter. Without them a real shell ran
@@ -264,6 +271,6 @@ tool behind.
    arrived early, in milestone 2, because it was asked for.
 6. **Shine** — done. Light theme, motion, empty states, keyboard help,
    README. No screenshots: `PLAN.md` section 9 says why.
-7. **Review** — stage 1 (Mark) done. Comment on a diff line or a file, then
+7. **Review** — stages 1 (Mark) and 2 (Send) done. Comment on a diff line or a file, then
    submit the whole review to the agent as one message. `PLAN.md` section 4.9
    is the spec; three stages: mark, send, keep.

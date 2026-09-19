@@ -2219,3 +2219,174 @@ def test_nothing_is_sent_yet(repo_page):
             assert sent == []
         finally:
             browser.close()
+
+
+# --- the review: milestone 7 stage 2 -----------------------------------------
+
+
+def comment_on_first_line(page, note):
+    page.locator(".dline .plus").first.click(force=True)
+    page.wait_for_selector(".commentbox textarea")
+    page.fill(".commentbox textarea", note)
+    page.click(".commentbox .verb")
+    page.wait_for_selector(".comment")
+
+
+def test_there_is_no_submit_until_there_is_a_comment(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            assert page.locator(".verb.submit").count() == 0
+            comment_on_first_line(page, "one thing")
+            page.wait_for_selector(".verb.submit")
+            assert "1" in page.locator(".verb.submit").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_preview_is_the_message_itself(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "use a signed type here")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            shown = page.locator("#reviewtext").inner_text()
+            assert shown.startswith("Review: 1 comment on 1 file.")
+            assert "use a signed type here" in shown
+            assert "\n> " in shown, "the line it is about is quoted"
+            # What is shown is what would be sent, byte for byte.
+            assert shown.rstrip("\n") == page.evaluate("reviewText()").rstrip("\n")
+        finally:
+            browser.close()
+
+
+def test_the_overall_note_goes_into_the_message_as_you_type(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "a line note")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            page.fill("#overall", "mostly good, two things")
+            page.wait_for_function(
+                "document.getElementById('reviewtext')"
+                ".textContent.includes('mostly good, two things')")
+            shown = page.locator("#reviewtext").inner_text()
+            # The note comes before the comments, as its own paragraph.
+            assert shown.index("mostly good") < shown.index("a line note")
+        finally:
+            browser.close()
+
+
+def test_the_message_is_ordered_by_file_and_line(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            # Written out of order on purpose: line 9, then the file, then 2.
+            page.evaluate("""() => {
+              state.review = [
+                {anchor: "b.py\\nnew\\n9", quoted: "nine", note: "at nine"},
+                {anchor: "b.py\\nfile\\n0", quoted: "", note: "about the file"},
+                {anchor: "a.py\\nnew\\n2", quoted: "two", note: "at two"},
+              ];
+            }""")
+            shown = page.evaluate("reviewText()")
+            assert shown.startswith("Review: 3 comments on 2 files.")
+            assert (shown.index("at two") < shown.index("about the file")
+                    < shown.index("at nine"))
+            assert "a.py:2" in shown and "b.py:9" in shown
+            assert "b.py\nabout the file" in shown, "a file comment has no line"
+        finally:
+            browser.close()
+
+
+def test_submitting_sends_it_and_empties_the_review(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "change this please")
+            page.evaluate("""() => {
+              window.__sent = [];
+              const real = window.fetch;
+              window.fetch = (url, opts) => {
+                if (String(url).endsWith("/send")) {
+                  window.__sent.push(JSON.parse(opts.body).text);
+                  return Promise.resolve(new Response('{"done": true}'));
+                }
+                return real(url, opts);
+              };
+            }""")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            page.click("#reviewsend")
+            page.wait_for_function("window.__sent.length === 1")
+            assert "change this please" in page.evaluate("window.__sent[0]")
+            # It went, so it is gone from here: no sending the same twice.
+            page.wait_for_function("state.review.length === 0")
+            assert page.locator(".verb.submit").count() == 0
+            assert page.evaluate("document.getElementById('review').open") is False
+        finally:
+            browser.close()
+
+
+def test_cancel_keeps_the_review(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "still here")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            page.fill("#overall", "typed and kept")
+            page.click("#reviewstop")
+            page.wait_for_function(
+                "document.getElementById('review').open === false")
+            assert page.evaluate("state.review.length") == 1
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            assert page.input_value("#overall") == "typed and kept"
+        finally:
+            browser.close()
+
+
+def test_a_session_without_a_pane_cannot_be_sent_to(ws, served, repo):
+    """The same rule the other verbs already follow: it can be written, it
+    just has nowhere to go."""
+    from conftest import git_in as git
+
+    (repo / "code.py").write_text("print(1)\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "seed")
+    (repo / "code.py").write_text("print(1)\nprint(2)\n")
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(repo), pane="",
+                                   ts=time.time(), pid=1))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_diff(play, (repo, base))
+        try:
+            comment_on_first_line(page, "nowhere to go")
+            page.click(".verb.submit")
+            page.wait_for_selector("#review[open]")
+            assert page.locator("#reviewsend").is_disabled()
+            assert "not running in tmux" in page.locator("#reviewwhy").inner_text()
+        finally:
+            browser.close()
+
+
+def test_r_opens_the_review_and_escape_closes_it(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.press("body", "r")
+            page.wait_for_timeout(100)
+            assert page.evaluate("document.getElementById('review').open") is False, \
+                "there is nothing to submit yet"
+            comment_on_first_line(page, "something")
+            page.press("body", "r")
+            page.wait_for_selector("#review[open]")
+            page.press("body", "Escape")
+            page.wait_for_function(
+                "document.getElementById('review').open === false")
+        finally:
+            browser.close()

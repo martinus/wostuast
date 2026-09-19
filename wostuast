@@ -1382,6 +1382,10 @@ DIFF_TIMEOUT = 8.0
 PASTE_START = "\x1b[200~"
 PASTE_END = "\x1b[201~"
 
+#: Everything below a space except tab and newline, and the delete character.
+#: `tmux_send` takes these out of anything on its way to a terminal.
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
 #: The header a POST carries its token in. A cross-origin request cannot add a
 #: header of its own without asking us first, and we never say yes — so a page
 #: that has not read ours cannot even reach the code that checks it.
@@ -2531,12 +2535,21 @@ def tmux_send(pane: str, text: str,
     as a paste, do not act on it yet"; every program that accepts a multi-line
     prompt understands them. One line is sent exactly as it always was, so a
     program that does not understand the markers never sees them.
+
+    Control characters are taken out first, and this is the one place that has
+    to happen. A paste ends at `ESC [ 2 0 1 ~`, so text carrying those bytes
+    would close the paste early and everything after it would arrive as
+    keystrokes — with a newline among them, as Enter. The page composes a
+    review out of lines an agent wrote, so that text is not only what a person
+    typed, and an escape byte is invisible in a preview. Tab and newline stay;
+    they are what a pasted message is made of.
     """
+    text = CONTROL_CHARS.sub("", text)
     if not pane or not text.strip():
         return False
     runner = runner or run
     body = text
-    if "\n" in text or "\r" in text:
+    if "\n" in text:
         body = PASTE_START + text + PASTE_END
     if runner(["tmux", "send-keys", "-t", pane, "-l", "--", body]) is None:
         return False
@@ -4065,6 +4078,36 @@ dialog.help {
 }
 dialog.help::backdrop { background: var(--veil); }
 dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
+dialog.review { width: min(760px, 92vw); }
+dialog.review .overall {
+  display: block; margin-bottom: 6px; font-size: 12px; color: var(--ink-mute);
+}
+dialog.review textarea {
+  width: 100%; padding: 8px 10px; border-radius: 6px; resize: vertical;
+  border: 1px solid var(--edge-bright); background: var(--raised);
+  color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5;
+}
+dialog.review textarea:focus { outline: none; border-color: var(--needs); }
+.reviewsays { margin: 14px 0 6px; font-size: 12px; color: var(--ink-mute); }
+/* The message itself, not a description of it. It cannot be edited here: a
+   comment is edited where the comment is, so there is one text and one place
+   it comes from. */
+.reviewtext {
+  margin: 0; padding: 12px 14px; max-height: 46vh; overflow: auto;
+  border-radius: 6px; background: var(--code); color: var(--code-ink);
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+dialog.review .buttons {
+  display: flex; gap: 14px; align-items: center; margin-top: 14px;
+}
+dialog.review .why { color: var(--ink-faint); font-size: 12px; }
+.sidefoot:empty { display: none; }
+.sidefoot {
+  flex-shrink: 0; padding: 8px 10px; border-top: 1px solid var(--edge);
+}
+.verb.submit { width: 100%; height: 30px; }
+.verb:disabled { opacity: .5; cursor: default; border-color: var(--edge); }
 dialog.help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
 dialog.help dt { color: var(--needs); }
 dialog.help dd { margin: 0; color: var(--ink-mute); }
@@ -4124,12 +4167,28 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   </div>
 </div>
 
+<dialog class="help review" id="review">
+  <h2>Submit review</h2>
+  <label class="overall" for="overall">A note about the review as a whole</label>
+  <textarea id="overall" rows="2" spellcheck="false"
+            placeholder="optional — the rest is edited where each comment is"></textarea>
+  <p class="reviewsays">This is what the agent will be sent. Some of it is text
+    the agent wrote, and it is about to be pasted into your terminal.</p>
+  <pre class="reviewtext" id="reviewtext"></pre>
+  <div class="buttons">
+    <button class="verb" type="button" id="reviewsend">send to the agent</button>
+    <button class="link" type="button" id="reviewstop">cancel</button>
+    <span class="why" id="reviewwhy"></span>
+  </div>
+</dialog>
+
 <dialog class="help" id="help">
   <h2>Keys</h2>
   <dl>
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>f</dt><dd>filter the session list</dd>
+    <dt>r</dt><dd>submit the review you have written on the diff</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 4</dt><dd>transcript, files, diff, peek</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
@@ -4183,6 +4242,7 @@ const state = {
   // long as the page does, and nothing is sent. See PLAN.md section 4.9.
   review: [],
   writing: null,        // the anchor of the comment box that is open, if any
+  overall: "",          // the review's note about itself, shown in the preview
   diffRaw: "",          // the last answer, as it arrived, to compare against
   diffAt: 0,            // bumped when that answer changes, so keys stay short
   poll: 0,
@@ -5004,12 +5064,17 @@ function split(box, tab, bodyClass) {
     const windowed = tab === "files";
     const list = put(side, "div", "filelist" + (windowed ? " fixed" : ""));
     if (windowed) list.addEventListener("scroll", () => fillList(list));
+    // Under the list and pinned there, for what must stay in reach however
+    // far the list scrolls. The count strip above it is one clipped line.
+    put(side, "div", "sidefoot");
     dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
     put(box, "div", bodyClass);
   }
   const side = box.firstChild;
   homeFind(side.firstChild);
-  return [side.lastChild, box.lastChild, side.children[1]];
+  // By position, so that adding a part above does not silently renumber the
+  // rest: findslot, count, list, foot.
+  return [side.children[2], box.lastChild, side.children[1], side.children[3]];
 }
 
 function fresh(box, which, key) {
@@ -5421,7 +5486,7 @@ function chooseFile(path) {
 let BIG_LINES = 500;
 
 function drawDiff(box) {
-  const [list, pane, note] = split(box, "diff", "diffbody");
+  const [list, pane, note, foot] = split(box, "diff", "diffbody");
   // A comment box holds what the reader is typing, and the diff is rebuilt
   // whenever the agent saves anything. Rebuilding under an open box would take
   // the text with it, and would move the code the comment is about while it is
@@ -5505,6 +5570,8 @@ function drawDiff(box) {
   }
   note.replaceChildren();
   countNote(note, shown + loose.length);
+  foot.replaceChildren();
+  drawReviewButton(foot);
   drawDiffCount();
 }
 
@@ -5729,6 +5796,86 @@ function putReview(parent, anchor, quoted, cls) {
   return add;
 }
 
+// The comments in the order they will be read: by file, and inside a file the
+// note about the whole thing first, then the lines from the top down. The
+// order they were written in is the order the reader wandered through the
+// diff, which is nobody else's order.
+function reviewInOrder() {
+  return state.review.slice().sort((one, two) => {
+    const [pathA, sideA, lineA] = one.anchor.split("\n");
+    const [pathB, sideB, lineB] = two.anchor.split("\n");
+    if (pathA !== pathB) return pathA < pathB ? -1 : 1;
+    if ((sideA === "file") !== (sideB === "file")) return sideA === "file" ? -1 : 1;
+    return Number(lineA) - Number(lineB);
+  });
+}
+
+// The message the agent gets. Plain, and it reads as well in a terminal as it
+// does here, because that is where it lands.
+function reviewText() {
+  const comments = reviewInOrder();
+  const files = new Set(comments.map((one) => one.anchor.split("\n")[0]));
+  const say = (n, word) => n + " " + word + (n === 1 ? "" : "s");
+  const parts = ["Review: " + say(comments.length, "comment") + " on "
+                 + say(files.size, "file") + "."];
+  if (state.overall.trim()) parts.push(state.overall.trim());
+  for (const one of comments) {
+    const [path, side, line] = one.anchor.split("\n");
+    const head = side === "file" ? path : path + ":" + line;
+    parts.push(one.quoted ? head + "\n> " + one.quoted + "\n" + one.note
+                          : head + "\n" + one.note);
+  }
+  return parts.join("\n\n") + "\n";
+}
+
+// Submit opens this. It shows the message itself rather than a description of
+// it, because this is the moment a person reads what is about to be pasted
+// into their terminal — and part of it was written by an agent.
+function showReview() {
+  if (!state.review.length) return;
+  const box = $("review");
+  const body = $("reviewtext");
+  const note = $("overall");
+  note.value = state.overall;
+  body.textContent = reviewText();
+  const session = current();
+  const send = $("reviewsend");
+  send.disabled = !(session && session.pane);
+  $("reviewwhy").textContent = send.disabled
+    ? "this session is not running in tmux, so there is nowhere to send it" : "";
+  if (!box.open) box.showModal();
+}
+
+async function submitReview() {
+  const id = state.chosen;
+  const answer = await tell(id, "send", { text: reviewText() });
+  if (!answer || answer.error) {
+    $("reviewwhy").textContent = (answer && answer.error) || "it was not sent";
+    return;
+  }
+  const session = current();
+  $("review").close();
+  state.review = [];
+  state.overall = "";
+  redrawDiff();
+  // Claude Code queues what arrives mid-turn, so a review sent to a working
+  // agent is not lost — it is read when the turn ends. Say so, because from
+  // here it looks like nothing happened.
+  said({ error: session && session.state === "working"
+    ? "review sent; the agent is working, so it reads this when the turn ends"
+    : "review sent" });
+}
+
+// It appears with the first comment and carries the count, so "is there a
+// review waiting" is answered by whether the button is there at all.
+function drawReviewButton(side) {
+  if (!state.review.length) return;
+  const button = put(side, "button", "verb submit",
+                     "submit review · " + state.review.length);
+  button.type = "button";
+  button.addEventListener("click", showReview);
+}
+
 function drawDiffCount() {
   const badge = $("diffcount");
   let added = 0;
@@ -5886,6 +6033,7 @@ function choose(id) {
   state.diff = null;
   state.review = [];
   state.writing = null;
+  state.overall = "";
   state.diffRaw = "";
   state.diffAt += 1;
   drawDiffCount();          // the last session's counts are not this one's
@@ -6081,13 +6229,19 @@ function nextNeedsYou() {
 
 document.addEventListener("keydown", (press) => {
   const help = $("help");
-  if (press.key === "Escape") { if (help.open) help.close(); return; }
+  if (press.key === "Escape") {
+    for (const box of document.querySelectorAll("dialog")) {
+      if (box.open) box.close();
+    }
+    return;
+  }
   if (press.metaKey || press.ctrlKey || press.altKey) return;
   const tag = (press.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea") return;   // typing, not commanding
   switch (press.key) {
     case "/": $("find").focus(); break;
     case "f": $("pick").focus(); break;
+    case "r": showReview(); break;
     case "Enter": jumpToPane(); break;
     case "s":
       if ($("sendbar").hidden) return;
@@ -6117,6 +6271,14 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
+$("reviewsend").addEventListener("click", submitReview);
+$("reviewstop").addEventListener("click", () => $("review").close());
+// The one thing in the preview you can type into. It goes into the message as
+// you write, so what is shown is always what would be sent.
+$("overall").addEventListener("input", (typed) => {
+  state.overall = typed.target.value;
+  $("reviewtext").textContent = reviewText();
+});
 $("bell").addEventListener("click", () => { toggleNotifications(); });
 
 async function jumpToPane() {

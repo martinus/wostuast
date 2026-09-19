@@ -282,7 +282,7 @@ session.
 | Verb | Command | Notes |
 | --- | --- | --- |
 | jump | `tmux select-window -t <pane>` then `tmux select-pane -t <pane>` | Then run `$WOSTUAST_FOCUS` if set (a user command that raises the terminal window, e.g. a KWin script). |
-| send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. Text with a newline in it is wrapped in the bracketed paste markers first, because a newline typed into a terminal *is* Enter: measured against a real shell, a two-line message ran its first line and left the second on the prompt. One line is sent as it always was, so a program that does not understand the markers never sees them. |
+| send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. Control characters are stripped, keeping tab and newline: a paste ends at `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote. Text with a newline in it is wrapped in the bracketed paste markers, because a newline typed into a terminal *is* Enter: measured against a real shell, a two-line message ran its first line and left the second on the prompt. One line is sent as it always was, so a program that does not understand the markers never sees them. |
 | peek | `tmux capture-pane -p -e -t <pane>` | A small hand-written converter turns the escape codes into runs of text, each with its colours. It makes no HTML: the page builds one node per run and sets its text with `textContent`, because a pane holds whatever an agent ran. Poll once per second while the Peek tab is visible, never otherwise. |
 
 If `pane` is empty, hide the verbs for that session and show "not in tmux".
@@ -802,6 +802,14 @@ Commit at the end of each milestone. Each one leaves a working tool.
    2. **Send.** The preview, the overall note, Submit, and the send itself. A
       review reaches the agent. This is the milestone's point, and the first
       stage that changes anything outside the browser.
+
+      It is also where the control characters go. A bracketed paste ends at
+      `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote, so a file
+      holding those bytes would close the paste early and leave the rest
+      arriving as keystrokes — with any newline among them as Enter. An
+      escape byte is invisible in a preview, so a person reading the message
+      cannot be the thing that catches it. `tmux_send` strips them, which is
+      the one place every route to a terminal passes through.
    3. **Keep.** Drafts survive a reload. A comment whose line has moved says
       so rather than pointing at whatever is there now.
 
