@@ -231,8 +231,8 @@ def test_git_failing_does_not_read_as_an_empty_worktree(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "files")
-            page.evaluate("state.names = []; state.file = null;"
-                          " state.filesFailed = true; draw()")
+            page.evaluate("state.files.names = []; state.files.path = null;"
+                          " state.files.failed = true; draw()")
             page.wait_for_timeout(200)
             said = page.locator(".filebody .empty").inner_text()
             assert "git did not answer" in said
@@ -786,8 +786,8 @@ def test_a_slow_answer_cannot_land_under_another_file(repo_page):
             page.evaluate("forgetFile('code.py');")
             page.evaluate("window.__release();")
             page.wait_for_timeout(400)
-            assert page.evaluate("state.file") == "code.py"
-            assert "readme" not in page.evaluate("state.fileText").lower(), (
+            assert page.evaluate("state.files.path") == "code.py"
+            assert "readme" not in page.evaluate("state.files.text").lower(), (
                 "one file's text landed under another file's name")
         finally:
             browser.close()
