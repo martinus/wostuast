@@ -893,8 +893,9 @@ def test_the_diff_colours_what_changed(repo_page):
         try:
             show_tab(page, "diff")
             assert page.locator(".dline.added").count() >= 2
+            # The numbers come first in the row; `.dtext` is the line itself.
             added = page.eval_on_selector_all(
-                ".dline.added", "els => els.map(e => e.textContent)")
+                ".dline.added .dtext", "els => els.map(e => e.textContent)")
             assert any("second line" in line for line in added)
             assert all(line.startswith("+") for line in added)
         finally:
@@ -1036,9 +1037,17 @@ def test_typing_finds_a_file_past_the_first_five_thousand(big_page):
             show_tab(page, "files")
             page.fill("#find", "libcorrelation")
             page.wait_for_timeout(600)
+            # Typing filters the tree; it does not replace it. The one match
+            # is there with the directories that lead to it, and nothing else.
             names = page.eval_on_selector_all(
                 ".filelist button", "els => els.map(e => e.title)")
-            assert names == ["native/shared/libcorrelation/src/Action.h"]
+            assert names == ["native", "native/shared",
+                             "native/shared/libcorrelation",
+                             "native/shared/libcorrelation/src",
+                             "native/shared/libcorrelation/src/Action.h"]
+            files = page.eval_on_selector_all(
+                ".filelist button:not(.dir)", "els => els.map(e => e.title)")
+            assert files == ["native/shared/libcorrelation/src/Action.h"]
         finally:
             browser.close()
 
@@ -1069,8 +1078,8 @@ def test_code_is_painted(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
-            assert page.locator(".filebody pre .hljs-keyword").inner_text() == "print"
-            assert page.locator(".filebody pre").inner_text() == "print(1)"
+            assert page.locator(".filebody pre.plain .hljs-keyword").inner_text() == "print"
+            assert page.locator(".filebody pre.plain").inner_text() == "print(1)"
         finally:
             browser.close()
 
@@ -1085,7 +1094,7 @@ def test_the_page_does_not_trust_the_highlighter_either(repo_page):
             open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
                             " + '<img src=x onerror=\"window.pwned=1\">'"
                             " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
-            body = page.locator(".filebody pre")
+            body = page.locator(".filebody pre.plain")
             assert page.evaluate("window.pwned") is None
             assert body.locator("img").count() == 0
             assert body.locator(".row").count() == 0
@@ -1104,7 +1113,7 @@ def test_a_sublanguage_class_survives(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
-            assert page.locator(".filebody pre .hljs-title.function_").count() == 1
+            assert page.locator(".filebody pre.plain .hljs-title.function_").count() == 1
         finally:
             browser.close()
 
@@ -1119,9 +1128,9 @@ def test_no_highlighter_still_shows_the_file(repo_page):
             page.evaluate("hljsAsked = Promise.resolve(null);")
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(400)
-            assert page.locator(".filebody pre").inner_text().strip() == (
+            assert page.locator(".filebody pre.plain").inner_text().strip() == (
                 "print(1)\nprint(2)")
-            assert page.locator(".filebody pre span").count() == 0
+            assert page.locator(".filebody pre.plain span").count() == 0
         finally:
             browser.close()
 
@@ -1157,7 +1166,7 @@ def test_a_file_that_is_not_markdown_has_no_box(repo_page):
             show_tab(page, "files")
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(400)
-            look = page.eval_on_selector(".filebody pre", """el => {
+            look = page.eval_on_selector(".filebody pre.plain", """el => {
               const seen = getComputedStyle(el);
               return [seen.borderTopWidth, seen.backgroundColor];
             }""")
@@ -1237,9 +1246,9 @@ def test_a_name_is_still_found_after_scrolling(big_page):
             page.wait_for_timeout(250)
             page.fill("#find", "libcorrelation")
             page.wait_for_timeout(400)
-            names = page.eval_on_selector_all(
-                ".filelist button", "els => els.map(e => e.title)")
-            assert names == ["native/shared/libcorrelation/src/Action.h"]
+            files = page.eval_on_selector_all(
+                ".filelist button:not(.dir)", "els => els.map(e => e.title)")
+            assert files == ["native/shared/libcorrelation/src/Action.h"]
         finally:
             browser.close()
 
@@ -1548,5 +1557,295 @@ def test_peek_says_so_when_there_is_no_pane(no_pane):
             show_tab(page, "peek")
             page.wait_for_timeout(500)
             assert "not in tmux" in page.locator(".peek").inner_text()
+        finally:
+            browser.close()
+
+
+# --- moving between tabs ----------------------------------------------------
+
+# What each tab has put on screen once it has an answer. The find box is not
+# in here on purpose: it moves between the tab strip and the file column, and
+# whether it survives that is what the test below is about.
+SHOWS = {"transcript": "#content:not(.split) > *", "files": ".filelist button",
+         "diff": ".dfile, .diffbody .note, .diffbody .empty", "peek": ".peek"}
+
+
+def test_every_way_from_one_tab_to_another_works(repo_page):
+    """There is one find box and it lives inside the content box on a split
+    tab. A tab that empties that box without giving it back destroys it, and
+    then `showTab` throws on the next `$("find")` — before it reaches `load`,
+    so the tab never loads, and every switch after it throws as well. The page
+    stayed broken until a reload. Peek did exactly this.
+    """
+    names = list(SHOWS)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            blew_up = []
+            page.on("pageerror", lambda error: blew_up.append(str(error)))
+            for one in names:
+                for other in names:
+                    if one == other:
+                        continue
+                    show_tab(page, one)
+                    show_tab(page, other)
+                    assert page.locator(SHOWS[other]).count() > 0, \
+                        f"{one} to {other} drew nothing"
+                    assert not blew_up, blew_up
+            # and the find box is still there, still working
+            show_tab(page, "files")
+            page.fill("#find", "code")
+            page.wait_for_timeout(400)
+            assert page.locator(".filelist button").count() == 1
+            assert not blew_up, blew_up
+        finally:
+            browser.close()
+
+
+def test_switching_tabs_faster_than_they_load_still_lands(repo_page):
+    """Each tab asks the daemon and draws when the answer comes. Clicking
+    through them faster than that must still leave the last one drawn."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            blew_up = []
+            page.on("pageerror", lambda error: blew_up.append(str(error)))
+            for name in ["files", "diff", "peek", "transcript", "peek", "files",
+                         "transcript", "diff", "peek", "files"]:
+                page.click(f".tab[data-tab='{name}']")
+                page.wait_for_timeout(110)      # quicker than a human, on purpose
+            page.wait_for_selector(SHOWS["files"], timeout=15000)
+            assert page.evaluate("$('content').dataset.tab") == "files"
+            assert not blew_up, blew_up
+        finally:
+            browser.close()
+
+
+def test_typing_filters_the_tree_rather_than_flattening_it(big_page):
+    """Where a file sits is half of what you know about it, and a flat list of
+    matches throws that away."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "Action")
+            page.wait_for_timeout(600)
+            rows = page.eval_on_selector_all(".filelist button", """els => els.map(
+              (e) => [e.title, e.className.includes("dir"),
+                      parseInt(e.style.paddingLeft)])""")
+            # the directories that lead to it are there, and they step in
+            assert [one[0] for one in rows if one[1]] == [
+                "native", "native/shared", "native/shared/libcorrelation",
+                "native/shared/libcorrelation/src"]
+            assert [one[2] for one in rows] == [14, 27, 40, 53, 66]
+            # a row shows its own name, not the whole path
+            assert page.eval_on_selector_all(
+                ".filelist button", "els => els.map(e => e.textContent)"
+            )[-1] == "Action.h"
+            # The letters that matched are picked out on the rows that own
+            # them, wherever in the path they fell. `action` finds its `a` in
+            # `native`, so that is where it is shown.
+            lit = page.eval_on_selector_all(
+                ".filelist .lit", "els => els.map(e => e.textContent).join('')")
+            assert lit.lower() == "action"
+        finally:
+            browser.close()
+
+
+def test_clearing_the_box_puts_the_whole_tree_back(big_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "Action")
+            page.wait_for_timeout(500)
+            assert page.locator(".filelist button:not(.dir)").count() == 1
+            page.fill("#find", "")
+            page.wait_for_timeout(500)
+            assert page.locator(".filelist button:not(.dir)").count() > 50
+            # closed again, as it was
+            assert page.locator(".filelist button.dir.open").count() == 0
+        finally:
+            browser.close()
+
+
+# --- line numbers -----------------------------------------------------------
+
+
+def test_a_file_is_numbered_beside_the_code_not_inside_it(repo_page):
+    """The numbers are not the file, so copying the code does not take them,
+    and the highlighter can rewrite everything to their right."""
+    root, _ = repo_page
+    (root / "code.py").write_text("one\ntwo\nthree\nfour\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_selector(".filebody .code .nums")
+            assert page.locator(".filebody .nums").inner_text() == "1\n2\n3\n4"
+            assert page.locator(".filebody pre.plain .ln").count() == 0
+            # both columns share a line height, so they stay level
+            look = page.eval_on_selector_all(
+                ".filebody .code pre",
+                "els => els.map(e => getComputedStyle(e).lineHeight)")
+            assert look[0] == look[1]
+            assert page.eval_on_selector(
+                ".filebody .nums", "el => getComputedStyle(el).userSelect"
+            ) == "none"
+        finally:
+            browser.close()
+
+
+def test_markdown_has_no_line_numbers(repo_page):
+    """It is prose, not code."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filebody .prose")
+            assert page.locator(".filebody .nums").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_diff_line_carries_the_number_it_had_on_each_side(repo_page):
+    """`@@ -12,7 +14,9 @@` says where the hunk starts on each side, and the
+    rest follows from which lines are there. A removed line has no number on
+    the new side and an added one has none on the old side."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            rows = page.eval_on_selector_all(".dfile .dline", """els => els.map(
+              (e) => [e.className.replace("dline ", ""),
+                      e.children[0].textContent, e.children[1].textContent,
+                      e.children[2].textContent])""")
+            assert rows, "no diff lines at all"
+            for kind, old, now, text in rows:
+                if kind == "added":
+                    assert old == "" and now != "", (kind, old, now)
+                elif kind == "removed":
+                    assert now == "" and old != "", (kind, old, now)
+                else:
+                    assert old != "" and now != "", (kind, old, now)
+            # a context line before an added one keeps its own number
+            context = [one for one in rows if one[0] == "context"]
+            assert context and context[0][1] == context[0][2]
+        finally:
+            browser.close()
+
+
+def test_diff_numbers_are_not_copied_with_the_diff(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline .ln")
+            assert page.eval_on_selector(
+                ".dline .ln", "el => getComputedStyle(el).userSelect") == "none"
+        finally:
+            browser.close()
+
+
+def test_picking_an_untracked_file_moves_the_pane_to_it(repo_page):
+    """It is built below everything else, and the pane used to scroll straight
+    back to where the reader was, so the click looked like it did nothing."""
+    root, _ = repo_page
+    # A diff long enough that the pane scrolls at all: the untracked block is
+    # built after every hunk, so without the jump it is far below the fold.
+    (root / "README.md").write_text(
+        "# The readme\n\n" + "".join(f"line {n}\n" for n in range(300)))
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            assert page.eval_on_selector(
+                ".diffbody", "el => el.scrollHeight > el.clientHeight + 400"
+            ), "the pane does not scroll, so this proves nothing"
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_selector(".dfile .what:text-is('untracked')")
+            page.wait_for_timeout(600)
+            where = page.eval_on_selector_all(
+                ".diffbody, .dfile:has(.what:text-is('untracked'))", """els => {
+                  const pane = els[0].getBoundingClientRect();
+                  const block = els[1].getBoundingClientRect();
+                  return { above: block.top - pane.top, tall: pane.height,
+                           went: els[0].scrollTop };
+                }""")
+            # The pane moved, and the block is on screen rather than far below
+            # it. The block is the last thing in the pane, so it can only come
+            # as far up as the end of the scroll allows.
+            assert where["went"] > 0, "the pane did not move at all"
+            assert 0 <= where["above"] < where["tall"], where
+        finally:
+            browser.close()
+
+
+# --- the send box -----------------------------------------------------------
+
+
+def test_shift_and_enter_writes_a_second_line(in_pane):
+    """Enter sends, which is what every chat box does. A prompt with a plan in
+    it needs a way to write the second line."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.click("#say")
+            page.keyboard.type("first line")
+            page.keyboard.press("Shift+Enter")
+            page.keyboard.type("second line")
+            page.wait_for_timeout(300)
+            assert page.input_value("#say") == "first line\nsecond line"
+            assert seen == [], "shift and enter sent it"
+
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(500)
+            assert seen[0][-1] == ("\x1b[200~first line\nsecond line\x1b[201~")
+            assert page.input_value("#say") == ""
+        finally:
+            browser.close()
+
+
+def test_the_box_grows_with_what_is_in_it_and_shrinks_back(in_pane):
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            one = page.eval_on_selector("#say", "el => el.clientHeight")
+            page.click("#say")
+            for _ in range(4):
+                page.keyboard.type("a line")
+                page.keyboard.press("Shift+Enter")
+            page.wait_for_timeout(300)
+            many = page.eval_on_selector("#say", "el => el.clientHeight")
+            assert many > one + 30, (one, many)
+            # it does not grow for ever
+            assert many < page.evaluate("window.innerHeight") / 2 + 40
+
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(500)
+            assert page.eval_on_selector("#say", "el => el.clientHeight") == one
+        finally:
+            browser.close()
+
+
+def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
+    """A prompt whose start you cannot see is worse than two lines."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            one = page.eval_on_selector("#say", "el => el.clientHeight")
+            page.fill("#say", "word " * 120)
+            page.dispatch_event("#say", "input")
+            page.wait_for_timeout(300)
+            assert page.eval_on_selector("#say", "el => el.clientHeight") > one
+            assert page.eval_on_selector(
+                "#say", "el => el.scrollWidth <= el.clientWidth + 1"
+            ), "it ran off the side instead of wrapping"
         finally:
             browser.close()

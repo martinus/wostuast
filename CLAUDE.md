@@ -74,6 +74,11 @@ settings.
   when they are called rather than taking it as a default, so a test of the
   route above them can put a fake tmux in its place — the only way to test
   them without a terminal to type into.
+- **A newline sent to a terminal is Enter.** `tmux_send` wraps text that has
+  one in the bracketed paste markers, so a message of several lines arrives as
+  a paste and waits for the reader's own Enter. Without them a real shell ran
+  the first line and left the second on the prompt. One line is sent as it
+  always was: a program that does not understand the markers never sees them.
 - **Every POST carries a token, and the page never builds HTML from a pane.**
   A cross-origin `fetch` may send a plain POST to a loopback port with no
   questions asked, and the effect here is `tmux send-keys` into a live
