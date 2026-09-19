@@ -540,9 +540,20 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
   icons except a few inline stroke SVGs, no emoji anywhere.
 - Motion: a row that changes state fades its dot (200 ms). A new transcript
   block slides in 4 px (150 ms). The needs-you ring pulses slowly (2 s).
-  Nothing else moves.
+  Nothing else moves. All three need the node to outlive the change, so the
+  sidebar keeps its rows and fills them in again rather than building them
+  afresh, and a block slides in only where a block arrives — never on a
+  redraw, or the tab would shiver each time an agent ran a tool. One
+  `prefers-reduced-motion` block turns off all three at once.
 - Light theme: `prefers-color-scheme: light` gets an equivalent palette on
-  `#f6f5f1`. Do it with CSS variables from the start so it is one block.
+  `#f6f5f1`. Do it with CSS variables from the start so it is one block. Every
+  colour is a variable, including the ones that are easy to forget: the ring
+  around the needs-you dot, the tint on the chosen row, the warning colour of
+  a full context window and of a dropped connection, and the search hit. That
+  last one is why: the hit sat on the amber with near-black text, and the
+  light theme's amber is a dark brown, so a hit could not be read at all.
+  A search hit has to reach 4.5:1 against its background in both themes, and
+  a test says so in numbers rather than by eye.
 
 ### 5.3 Attention
 

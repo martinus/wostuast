@@ -251,6 +251,84 @@ def test_both_themes_are_readable(page_at):
         assert seen["dark"][1] != seen["light"][1], "code would be unreadable"
 
 
+def rgb(text):
+    """The three numbers out of a computed `rgb(r, g, b)` or `rgba(...)`."""
+    parts = text[text.index("(") + 1:text.index(")")].replace("/", " ").split(",")
+    return [float(one.strip().rstrip("%")) for one in parts[:3]]
+
+
+def contrast(front, back):
+    """WCAG 2.1 contrast, so that "is this readable" is a number, not a look."""
+    def light(colour):
+        channels = []
+        for value in rgb(colour):
+            part = value / 255
+            channels.append(part / 12.92 if part <= 0.03928
+                            else ((part + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    one, two = light(front), light(back)
+    high, low = max(one, two), min(one, two)
+    return (high + 0.05) / (low + 0.05)
+
+
+def test_a_search_hit_can_be_read_in_both_themes(page_at):
+    """The mark sat on the amber with near-black text. In the light theme the
+    amber is a dark brown, so near-black on it could not be read at all."""
+    with sync_playwright() as play:
+        for scheme in ("dark", "light"):
+            browser, page = open_page(play, page_at, scheme)
+            try:
+                page.locator("#find").fill("pytest")
+                page.wait_for_selector("mark")
+                seen = page.evaluate(
+                    "() => { const s = getComputedStyle(document.querySelector('mark'));"
+                    " return [s.color, s.backgroundColor]; }")
+                assert contrast(*seen) >= 4.5, f"{scheme}: {seen} is {contrast(*seen):.1f}:1"
+            finally:
+                browser.close()
+
+
+def test_less_motion_stops_everything_moving(page_at):
+    """One switch, so a reader who asked their system for less motion does not
+    have to be told about each thing on this page that moves."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            # In seconds, whatever unit the browser reports them in.
+            moving = ("() => getComputedStyle(document.querySelector('.row'))"
+                      ".transitionDuration.split(', ').map((one) => parseFloat(one))")
+            assert max(page.evaluate(moving)) > 0.05
+            page.emulate_media(reduced_motion="reduce")
+            assert max(page.evaluate(moving)) < 0.01
+        finally:
+            browser.close()
+
+
+def test_only_a_block_that_has_just_arrived_slides_in(page_at):
+    """A transcript is rebuilt whenever anything about it changes. Animating
+    every block on every rebuild would make the tab shiver each time an agent
+    ran a tool, so the slide is for a block nobody has seen before."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            assert page.locator(".fresh").count() == 0, "the history slid in too"
+            blocks = daemon.read_transcript("s1")
+            one = dict(blocks[-1].__dict__)
+            one.update(seq=len(blocks), kind="text", text="and one more thing")
+            daemon.hub.send("transcript", {"id": "s1", "blocks": [one]},
+                            session_id="s1")
+            # In one question, so that a redraw cannot land between asking
+            # whether it is there and asking how many there are.
+            page.wait_for_function(
+                "document.querySelectorAll('.fresh').length === 1")
+            # Drawing it again is not arriving again.
+            page.evaluate("draw()")
+            assert page.locator(".fresh").count() == 0
+        finally:
+            browser.close()
+
+
 def test_a_row_is_not_rebuilt_every_second(page_at):
     """The ages advance once a second. Rebuilding the rows to do it restarted
     the needs-you pulse before it could finish a cycle, and threw away the
@@ -263,6 +341,27 @@ def test_a_row_is_not_rebuilt_every_second(page_at):
             page.wait_for_timeout(2400)
             assert page.evaluate("window.__dot.isConnected"), "the row was rebuilt"
             assert page.locator(".row .age").first.inner_text() != first
+        finally:
+            browser.close()
+
+
+def test_a_row_keeps_its_dot_when_the_state_changes(page_at, ws):
+    """PLAN.md section 5.2: a row that changes state fades its dot. A fade
+    needs the same dot on both sides of the change, and the sidebar used to be
+    rebuilt whole, so the one change the fade is for was the one that threw it
+    away."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.evaluate("window.__dot = document.querySelector('.row .dot')")
+            assert "starting" in page.evaluate("window.__dot.className")
+            ws.append_event({"session_id": "s1", "hook_event_name": "PermissionRequest",
+                             "tool_name": "Bash", "tool_input": {"command": "ls ~"},
+                             "pane": "%7", "pid": 1, "ts": time.time()})
+            daemon.tick()            # fold it, and tell the page
+            page.wait_for_function("window.__dot.className.includes('needs_you')")
+            assert page.evaluate("window.__dot.isConnected"), "the row was rebuilt"
         finally:
             browser.close()
 

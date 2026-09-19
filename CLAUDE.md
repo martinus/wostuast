@@ -193,6 +193,17 @@ settings.
   command an agent ran.
 - **Keep the raw payload.** Do not strip fields from a hook event. A new field
   from a newer Claude Code must not break an older wostuast.
+- **The sidebar keeps its rows and fills them in again.** Rebuilding the list
+  threw away the one thing the motion is for: a dot can only fade into its new
+  colour if it is the same dot, and the needs-you ring can only finish a cycle
+  if its row outlives the change that started it. `newRow` builds every part
+  once, empty; `fillRow` reaches them by position. A transcript block slides in
+  only where a block arrives, in `patchTranscript`, never on a redraw.
+- **Every colour on the page is a variable.** A hard-coded one is right in one
+  theme and wrong in the other, and the ones that are easy to forget are the
+  ring, the row tint, the warnings and the search hit. The hit was near-black
+  on amber, which in the light theme is near-black on dark brown. A test puts
+  a number on it: 4.5:1 in both themes.
 - **The page tests share one browser and wait for things, not for seconds.**
   Starting Playwright costs 0.43 s and launching Chromium 0.15 s, so doing
   both per test spent half a minute on nothing; each test gets its own

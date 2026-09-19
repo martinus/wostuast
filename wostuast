@@ -3485,6 +3485,14 @@ PAGE = r"""<!doctype html>
      this, and amber is spoken for. */
   --mine: #8aa4d0; --mine-soft: rgba(138,164,208,.10);
   --code: #0f1014; --code-ink: #c9ccd8;
+  /* A context window nearly full, and a connection that dropped. Both are
+     warnings, and neither is a state, so neither may wear the amber. */
+  --hot: #d97757; --hot-soft: rgba(217,119,87,.16);
+  /* The ring around a needs-you dot, near and far through its pulse, and the
+     tint that lifts the chosen row off the panel. */
+  --ring-near: rgba(224,166,66,.25); --ring-far: rgba(224,166,66,.10);
+  --mark: var(--needs);
+  --tint: rgba(255,255,255,.045);
   /* Syntax colours. Amber is not among them: it is the one warm colour on
      this page and it means "an agent needs you". */
   --syn-key: #9a8cf0; --syn-str: #8fcf9f; --syn-num: #5bb0b5;
@@ -3510,6 +3518,12 @@ PAGE = r"""<!doctype html>
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
   --mine: #3c5a8c; --mine-soft: rgba(60,90,140,.09);
   --code: #eceae3; --code-ink: #33363d;
+  --hot: #b2452a; --hot-soft: rgba(178,74,42,.14);
+  /* White on the light theme's amber is 4.0:1, which is under the 4.5 a
+     search hit has to reach. The mark gets the darker of the two ambers. */
+  --mark: #7a4d07;
+  --ring-near: rgba(168,108,16,.22); --ring-far: rgba(168,108,16,.09);
+  --tint: rgba(0,0,0,.05);
   --syn-key: #5b3fb0; --syn-str: #26694a; --syn-num: #1d6f74;
   --syn-com: #8b8e96; --syn-fn: #2a6ea8; --syn-meta: #6a6d76;
   --syn-attr: #7a3f8f;
@@ -3541,7 +3555,8 @@ body {
 .theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
 .theme:disabled { opacity: .5; cursor: default; }
 #bell { margin-left: 14px; }
-.dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%; }
+.dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%;
+  transition: background .2s ease; }
 .dot.needs_you { background: var(--needs); }
 .dot.working { background: var(--working); }
 .dot.done { background: var(--done); }
@@ -3583,10 +3598,7 @@ body.dragging { cursor: col-resize; user-select: none; }
    something else: a ring and a brighter face. */
 .row.chosen {
   outline: 1px solid var(--ink-faint); outline-offset: -1px;
-  box-shadow: inset 0 0 0 40px rgba(255,255,255,.045);
-}
-:root[data-theme="light"] .row.chosen {
-  box-shadow: inset 0 0 0 40px rgba(0,0,0,.05);
+  box-shadow: inset 0 0 0 40px var(--tint);
 }
 .row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
@@ -3627,12 +3639,26 @@ body.dragging { cursor: col-resize; user-select: none; }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
 .row .dot { transition: background .2s ease, border-color .2s ease; }
-.row.needs_you .dot { box-shadow: 0 0 0 3px rgba(224,166,66,.25); animation: ring 2s ease-in-out infinite; }
+.row.needs_you .dot { box-shadow: 0 0 0 3px var(--ring-near); animation: ring 2s ease-in-out infinite; }
 @keyframes ring {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(224,166,66,.25); }
-  50% { box-shadow: 0 0 0 5px rgba(224,166,66,.10); }
+  0%, 100% { box-shadow: 0 0 0 3px var(--ring-near); }
+  50% { box-shadow: 0 0 0 5px var(--ring-far); }
 }
-@media (prefers-reduced-motion: reduce) { .row.needs_you .dot { animation: none; } }
+.fresh { animation: arrive .15s ease-out; }
+@keyframes arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* One switch for everything that moves. A reader whose system asks for less
+   motion gets a page that only changes colour. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
 .hints {
   flex-shrink: 0; padding: 12px 16px; border-top: 1px solid var(--edge);
   font-family: var(--mono); font-size: 11px; color: var(--ink-faint); line-height: 1.8;
@@ -3720,7 +3746,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 .ctx .fill { display: block; height: 100%; background: var(--working); }
 .ctx.warm .fill { background: var(--needs); }
-.ctx.hot .fill { background: #d97757; }
+.ctx.hot .fill { background: var(--hot); }
 .tabs {
   height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
   padding: 0 24px; border-bottom: 1px solid var(--edge);
@@ -3744,7 +3770,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .find::placeholder { color: var(--ink-faint); }
 .live { margin-left: 12px; display: inline-flex; align-items: center;
   color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
-mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 1px; }
+mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0 1px; }
 .nohits { color: var(--ink-mute); padding: 4px 0; }
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 24px; min-height: 0; }
 
@@ -3982,7 +4008,7 @@ body:not(.show-thinking) .thinking { display: none; }
 .empty h2 { font-size: 16px; color: var(--ink-bright); margin: 0 0 10px; }
 
 .lost {
-  display: none; padding: 6px 16px; background: rgba(217,119,87,.16);
+  display: none; padding: 6px 16px; background: var(--hot-soft);
   color: var(--cut-ink); font-family: var(--mono); font-size: 12px;
   border-bottom: 1px solid var(--edge);
 }
@@ -4308,46 +4334,72 @@ function shownSessions() {
     [s.place, s.name, s.branch, s.repo].filter(Boolean).join(" "), state.pick));
 }
 
+// One empty row, built once and then only filled in. Every row has the same
+// parts whether or not it has anything to put in them, so `fillRow` can reach
+// them by position and nothing has to be created again later.
+function newRow(id) {
+  const row = document.createElement("div");
+  row.dataset.id = id;
+  row.addEventListener("click", () => choose(id));
+  const one = put(row, "div", "line1");
+  put(one, "span", "dot");
+  put(one, "span", "name");
+  put(one, "span", "word");
+  put(row, "div", "called");
+  put(row, "div", "line2");
+  const three = put(row, "div", "line3");
+  put(three, "span", "said");
+  put(three, "span", "age");
+  return row;
+}
+
+function fillRow(row, s) {
+  const [one, called, two, three] = row.children;
+  row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
+  one.children[0].className = "dot " + s.state;
+  one.children[1].textContent = s.place || s.label || s.id.slice(0, 8);
+  one.children[2].textContent = s.state_word;
+  called.textContent = s.name || "";
+  called.hidden = !s.name;
+  two.replaceChildren();
+  if (s.branch) put(two, "span", "branch", s.branch);
+  if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
+  if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
+  if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
+  else if (s.branch) put(two, "span", "clean", "✓ clean");
+  three.children[0].textContent = s.reason || s.last_event || "";
+  three.children[1].textContent = ago(s.since);
+  ages.push([three.children[1], s.since]);
+}
+
 function drawSessions() {
   const box = $("rows");
   // Only when they would come out different. The stream re-subscribes the
   // moment a session is first chosen, and the new stream opens with a full
-  // push of its own, so every page load built the whole sidebar twice — and
-  // the second build threw away the first one's dot transition and restarted
-  // the needs-you pulse before it could finish a cycle.
+  // push of its own, so every page load drew the whole sidebar twice.
   const shown = shownSessions();
   const drawn = JSON.stringify([shown, state.chosen]);
   if (box.dataset.drawn === drawn) return;
   box.dataset.drawn = drawn;
-  box.replaceChildren();
+  // A row that is still there is kept and filled in again. A dot can only
+  // fade into its new colour if it is the same dot, and the needs-you ring
+  // can only finish a cycle if its row outlives the change that started it —
+  // and a state change is exactly when both of those used to be thrown away.
+  const had = new Map();
+  for (const node of Array.from(box.children)) {
+    if (node.dataset.id) had.set(node.dataset.id, node);
+    else node.remove();
+  }
   ages.length = 0;
+  for (const s of shown) {
+    const row = had.get(s.id) || newRow(s.id);
+    had.delete(s.id);
+    fillRow(row, s);
+    box.appendChild(row);          // and this is what puts it back in order
+  }
+  for (const gone of had.values()) gone.remove();
   if (!shown.length && state.sessions.length) {
     put(box, "div", "nohits", "no session matches");
-  }
-  for (const s of shown) {
-    const row = put(box, "div", "row " + s.state);
-    row.dataset.id = s.id;
-    if (s.id === state.chosen) row.classList.add("chosen");
-    row.addEventListener("click", () => choose(s.id));
-
-    const one = put(row, "div", "line1");
-    put(one, "span", "dot " + s.state);
-    put(one, "span", "name", s.place || s.label || s.id.slice(0, 8));
-    put(one, "span", "word", s.state_word);
-
-    if (s.name) put(row, "div", "called", s.name);
-
-    const two = put(row, "div", "line2");
-    if (s.branch) put(two, "span", "branch", s.branch);
-    if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
-    if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
-    if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
-    else if (s.branch) put(two, "span", "clean", "✓ clean");
-
-    const said = s.reason || s.last_event || "";
-    const line = put(row, "div", "line3");
-    if (said) put(line, "span", "said", said);
-    ages.push([put(line, "span", "age", ago(s.since)), s.since]);
   }
   drawCounts();
 }
@@ -4827,7 +4879,11 @@ function patchTranscript(indexes) {
     if (index < state.nodes.length) {
       redrawBlock(index);
     } else {
+      // Arriving, rather than being drawn again. This is the only place a
+      // block is new: a full redraw builds the whole history, and a history
+      // that slid in block by block would be a page having a fit.
       const node = blockNode(state.blocks[index], index);
+      node.classList.add("fresh");
       state.nodes[index] = node;
       box.appendChild(node);
     }
