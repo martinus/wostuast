@@ -19,13 +19,13 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
-    """`showTab` only takes a name TABS knows, so a fifth key changes nothing.
-    Peek answered to `4` from milestone 5; there is no `5`."""
+    """`showTab` only takes a name TABS knows, so a key past the last tab
+    changes nothing. There were four tabs once; there is no `4` now."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             turns = page.locator(".turn").count()
-            page.keyboard.press("5")
+            page.keyboard.press("4")
             page.wait_for_timeout(200)
             assert page.locator(".tab[data-tab='transcript']").get_attribute(
                 "aria-selected") == "true"
@@ -122,7 +122,7 @@ def test_every_tab_is_built(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            for name in ("transcript", "files", "diff", "peek"):
+            for name in ("transcript", "files", "diff"):
                 assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
         finally:
             browser.close()
@@ -135,7 +135,8 @@ def test_every_way_from_one_tab_to_another_works(repo_page):
     tab. A tab that empties that box without giving it back destroys it, and
     then `showTab` throws on the next `$("find")` — before it reaches `load`,
     so the tab never loads, and every switch after it throws as well. The page
-    stayed broken until a reload. Peek did exactly this.
+    stayed broken until a reload. The Peek tab did exactly this before it
+    was removed, and this test is what it left behind.
     """
     names = list(DRAWN)
     with sync_playwright() as play:
@@ -170,8 +171,8 @@ def test_switching_tabs_faster_than_they_load_still_lands(repo_page):
         try:
             blew_up = []
             page.on("pageerror", lambda error: blew_up.append(str(error)))
-            for name in ["files", "diff", "peek", "transcript", "peek", "files",
-                         "transcript", "diff", "peek", "files"]:
+            for name in ["files", "diff", "transcript", "files", "diff",
+                         "transcript", "diff", "files"]:
                 page.click(f".tab[data-tab='{name}']")
                 page.wait_for_timeout(110)      # quicker than a human, on purpose
             page.wait_for_selector(DRAWN["files"], timeout=15000)

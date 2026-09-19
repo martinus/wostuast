@@ -11,8 +11,8 @@ been made here.
 
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
 `wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
-SSE. The page shows a session list and four tabs: Transcript, Files, Diff, Peek.
-Three things go back to the terminal, all through tmux: jump, send, peek.
+SSE. The page shows a session list and three tabs: Transcript, Files, Diff.
+Two things go back to the terminal, both through tmux: jump and send.
 Nothing else writes to a terminal. Nothing owns the agent process.
 
 ## Layout
@@ -44,7 +44,7 @@ Page: asking the daemon · dragging an edge · the two fetched scripts · colour
 **the sidebar** · tab icon · notifications · **the transcript** · painting code ·
 **the Files tab** · finding a file · the tree · a file too long to draw whole ·
 **the Diff tab** · **the review** ·
-keeping a review · has the line moved? · **the Peek tab** · talking to the
+keeping a review · has the line moved? · the tabs · talking to the
 daemon · keys.
 
 ## Before you write anything new
@@ -141,7 +141,7 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The `__main__` guard stays last**, after `PAGE`. Before it, running as a
   script started the daemon and `PAGE` was never assigned.
 - **Ask first** before adding a dependency, a file outside `wostuast` and
-  `tests/`, or a tmux command beyond jump, send and peek.
+  `tests/`, or a tmux command beyond jump and send.
 - **Prefer deleting a feature over adding a config option.**
 - **No module-level mutable state.** The daemon owns a `Store` and a `Hub`. One
   thread writes the Store; readers take `rows`, replaced whole, so no lock.
@@ -343,8 +343,8 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   49.5 ms for one that has imported it, and **the hook pays for every import
   on every tool call**. `test_the_hook_does_not_import_what_it_does_not_need`
   fails if that slips.
-- **Never write to the terminal** except through the three tmux verbs.
-  `tmux_jump`, `tmux_send`, `tmux_peek` look `run` up when called rather than
+- **Never write to the terminal** except through the two tmux verbs.
+  `tmux_jump` and `tmux_send` look `run` up when called rather than
   taking it as a default, so a test can put a fake tmux in its place.
 - **The Files and Diff tabs poll from the browser, and only while on screen.**
   `TABS` holds one entry per tab — draw, load, interval — so a new tab is one
@@ -394,7 +394,8 @@ invent a name.
 2. **Watch** — done. `serve`, sidebar, Transcript tab, live over SSE.
 3. **Read** — done. Files tab and Diff tab.
 4. **Fit** — done. Both worktree tabs on a real repository: correct, fast, room, read.
-5. **Act** — done. jump, send, Peek. Attention arrived early, in milestone 2.
+5. **Act** — done. jump, send. Attention arrived early, in milestone 2.
+   Peek was part of this and was removed once it had earned nothing.
 6. **Shine** — done. Light theme, motion, empty states, keyboard help, README.
    No screenshots; `PLAN.md` section 9 says why.
 7. **Review** — done. Comment on a diff line or a file, submit the whole review

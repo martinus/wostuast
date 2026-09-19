@@ -143,7 +143,8 @@ def test_a_command_that_fails_returns_none(ws):
 
 
 def test_run_keeps_blank_lines(ws):
-    """peek renders a terminal screen, where blank lines carry meaning."""
+    """A command's output is handed back as it came. A file being read is a
+    screen of text where a blank line carries meaning."""
     import sys
 
     assert ws.run([sys.executable, "-c", r"print('\n\na\n\n')"]) == "\n\na\n\n\n"

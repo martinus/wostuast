@@ -621,44 +621,6 @@ def test_a_session_outside_tmux_has_no_verbs(ws, served, monkeypatch):
     assert seen == []
 
 
-# --- peek -------------------------------------------------------------------
-
-
-def test_peek_hands_over_the_pane_as_styled_runs(ws, served, monkeypatch):
-    """The page builds one node per run with textContent, so nothing a
-    terminal printed is ever read as markup."""
-    monkeypatch.setattr(ws, "run", lambda args, **rest:
-                        "\x1b[1;32mpassed\x1b[0m plain")
-    daemon, base = served
-    ws.append_event(event("SessionStart", pane="%7", pid=1))
-    daemon.store.refresh()
-    status, body = get(f"{base}/api/session/s1/peek")
-    assert status == 200
-    assert [(one["text"], one["fg"], one["bold"]) for one in body["runs"]] == [
-        ("passed", "var(--ansi-2)", True),
-        (" plain", "", False),
-    ]
-
-
-def test_peek_says_so_when_there_is_no_pane(ws, served):
-    daemon, base = served
-    ws.append_event(event("SessionStart", pane="", pid=1))
-    daemon.store.refresh()
-    status, body = get(f"{base}/api/session/s1/peek")
-    assert status == 200 and body["runs"] == []
-    assert "not in tmux" in body["missing"]
-
-
-def test_peek_says_so_when_tmux_does_not_answer(ws, served, monkeypatch):
-    monkeypatch.setattr(ws, "run", lambda args, **rest: None)
-    daemon, base = served
-    ws.append_event(event("SessionStart", pane="%7", pid=1))
-    daemon.store.refresh()
-    status, body = get(f"{base}/api/session/s1/peek")
-    assert status == 200 and body["runs"] == []
-    assert "did not answer" in body["missing"]
-
-
 # --- the palette -------------------------------------------------------------
 
 #: A colour written out rather than named. `#bell` and the like do not match:

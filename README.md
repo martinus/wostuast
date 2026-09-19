@@ -43,7 +43,7 @@ agent is standing. A session with no name is just its worktree.
                                                           │
                           browser ◀──SSE/HTTP── wostuast serve ◀──tail──┘
                              │                       │
-                             └──jump / send / peek───┴──▶ tmux (by pane id)
+                             └──jump / send────────┴──▶ tmux (by pane id)
 ```
 
 Claude Code calls a hook on every event. The hook appends one JSON line to a
@@ -85,7 +85,7 @@ rm ~/.local/bin/wostuast
 `~/.local/state/wostuast/` yourself if you want it gone.
 
 Python 3.10 or newer. No other dependency. tmux is optional: without it you
-still see every session, but jump, send and peek stay hidden.
+still see every session, but jump and send stay hidden.
 
 ## Commands
 
@@ -141,7 +141,7 @@ The page is worked from the keyboard. `?` shows this list without leaving it.
 | `f` | filter the session list |
 | `r` | submit the review you have written on the diff |
 | `/` | find: text in the transcript, a file on the other tabs |
-| `1` – `4` | Transcript, Files, Diff, Peek |
+| `1` – `3` | Transcript, Files, Diff |
 | `Enter` | jump to that agent's tmux pane |
 | `s` | type into its terminal |
 | `t` | show or hide the agent's thinking |
@@ -224,11 +224,7 @@ a terminal you cannot see, so losing it is not on. Empty text is refused,
 because a bare Enter into an agent's prompt is a keystroke nobody asked for.
 So is a session that has ended.
 
-**Peek** is the fourth tab: a still picture of the pane, in the colours it is
-showing, refreshed once a second while you are looking at it. It is not a
-terminal and cannot become one — tmux owns the keyboard.
-
-Both of the first two write to a live terminal, so the daemon will only do them
+Both of these write to a live terminal, so the daemon will only do them
 for a page it served itself. It makes a token when it starts, prints it into
 the page, and refuses any `POST` that does not carry it back in a header of its
 own. Another site can send this port a request; it cannot send one that acts.
@@ -307,10 +303,6 @@ same code without the colour. Nothing goes blank.
 Both column edges can be dragged — the one beside the sessions and the one
 beside the file list. Double-click an edge to put it back. Your browser
 remembers where you left them.
-
-**Peek** is what the pane shows right now. wostuast never turns it into markup:
-the daemon hands the page stretches of text with their colours and the page
-sets each one as text, because a pane holds whatever an agent happened to run.
 
 **Diff** shows the change in two halves: what the branch has committed against
 `origin/HEAD` (or `main`, or `master`), and what is not committed yet. A file

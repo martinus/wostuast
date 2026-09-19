@@ -390,15 +390,6 @@ class Tail:
         return [line for line in head.split(b"\n") if line.strip()]
 
 
-def stat_key(path: Path) -> tuple[int, int]:
-    """Which file this name points at right now, or (0, 0) if there is none."""
-    try:
-        info = path.stat()
-    except OSError:
-        return (0, 0)
-    return (info.st_dev, info.st_ino)
-
-
 class EventFollower:
     """Follows the event log, both files of it.
 
@@ -2439,159 +2430,6 @@ def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
     return "\n".join(lines)
 
 
-# --- ansi: what tmux captured, as runs the page can style --------------------
-
-#: An escape sequence, of any of the shapes a terminal emits. Only the colour
-#: ones mean anything here; the rest are dropped rather than shown, because a
-#: cursor movement printed as text is worse than a cursor movement lost.
-ESCAPE = re.compile(
-    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
-
-#: Control characters a pane capture should not carry into the page. A newline
-#: and a tab are content; the rest are not.
-CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
-
-#: How many runs one capture may become. A pane that changes colour every
-#: character is a pane nobody is reading, and the page would build a node per
-#: character to show it.
-PEEK_RUNS = 4000
-
-
-@dataclass
-class Run:
-    """One stretch of pane text that looks the same all the way through."""
-
-    text: str = ""
-    fg: str = ""            # a CSS colour, or "" for whatever the page uses
-    bg: str = ""
-    bold: bool = False
-    dim: bool = False
-    italic: bool = False
-    under: bool = False
-
-
-def ansi_colour(number: int) -> str:
-    """One of the 256 colours a terminal can name, as CSS.
-
-    The first sixteen are the terminal's own palette, so they are named rather
-    than fixed: the page gives them values and they follow the theme. The rest
-    are a cube and a grey ramp, whose values are the same everywhere.
-    """
-    if number < 16:
-        return f"var(--ansi-{number})"
-    if number < 232:
-        rung = [0, 95, 135, 175, 215, 255]
-        left = number - 16
-        return "#%02x%02x%02x" % (rung[left // 36], rung[left // 6 % 6],
-                                  rung[left % 6])
-    grey = 8 + (number - 232) * 10
-    return "#%02x%02x%02x" % (grey, grey, grey)
-
-
-def read_sgr(codes: list[int], style: Run) -> Run:
-    """Fold one `m` sequence into the style that follows it.
-
-    An unknown code is skipped and the rest of the sequence still counts:
-    terminals do the same, and dropping the lot would lose a colour because
-    of a neighbour we do not handle.
-    """
-    at = 0
-    while at < len(codes):
-        code = codes[at]
-        at += 1
-        if code == 0:
-            style = Run()
-        elif code == 1:
-            style.bold = True
-        elif code == 2:
-            style.dim = True
-        elif code == 3:
-            style.italic = True
-        elif code == 4:
-            style.under = True
-        elif code == 7:
-            style.fg, style.bg = style.bg or "var(--peek-bg)", style.fg or "var(--peek-ink)"
-        elif code == 22:
-            style.bold = style.dim = False
-        elif code == 23:
-            style.italic = False
-        elif code == 24:
-            style.under = False
-        elif 30 <= code <= 37:
-            style.fg = ansi_colour(code - 30)
-        elif 90 <= code <= 97:
-            style.fg = ansi_colour(code - 90 + 8)
-        elif code == 39:
-            style.fg = ""
-        elif 40 <= code <= 47:
-            style.bg = ansi_colour(code - 40)
-        elif 100 <= code <= 107:
-            style.bg = ansi_colour(code - 100 + 8)
-        elif code == 49:
-            style.bg = ""
-        elif code in (38, 48):
-            # 38;5;n is one of 256; 38;2;r;g;b is exact. Anything else after
-            # them is not a colour we know, so the whole sequence stops here:
-            # its remaining numbers are that colour's arguments, not codes.
-            kind = codes[at] if at < len(codes) else -1
-            if kind == 5 and at + 1 < len(codes):
-                shade = ansi_colour(max(0, min(255, codes[at + 1])))
-                at += 2
-            elif kind == 2 and at + 3 < len(codes):
-                red, green, blue = (max(0, min(255, one))
-                                    for one in codes[at + 1:at + 4])
-                shade = "#%02x%02x%02x" % (red, green, blue)
-                at += 4
-            else:
-                break
-            if code == 38:
-                style.fg = shade
-            else:
-                style.bg = shade
-    return style
-
-
-def ansi_runs(text: str, limit: int = PEEK_RUNS) -> list[Run]:
-    """A pane capture, split into stretches that each look the same.
-
-    The page builds one node per run and sets its text with textContent, so
-    nothing a terminal printed is ever read as markup. Turning this into HTML
-    here and letting the page insert it would be the one thing this program
-    does not do.
-    """
-    runs: list[Run] = []
-    style = Run()
-
-    def keep(piece: str) -> None:
-        piece = CONTROL.sub("", piece.replace("\r\n", "\n"))
-        if not piece or len(runs) >= limit:
-            return
-        if runs and same_style(runs[-1], style):
-            runs[-1].text += piece
-        else:
-            runs.append(replace(style, text=piece))
-
-    at = 0
-    for found in ESCAPE.finditer(text):
-        keep(text[at:found.start()])
-        at = found.end()
-        body = found.group(0)
-        if body.startswith("\x1b[") and body.endswith("m"):
-            numbers = []
-            for part in body[2:-1].split(";"):
-                numbers.append(int(part) if part.isdigit() else 0)
-            style = read_sgr(numbers or [0], style)
-    keep(text[at:])
-    return runs
-
-
-def same_style(run: Run, style: Run) -> bool:
-    """Whether a run can simply take more text."""
-    return (run.fg == style.fg and run.bg == style.bg
-            and run.bold == style.bold and run.dim == style.dim
-            and run.italic == style.italic and run.under == style.under)
-
-
 # --- tmux: the three verbs, and nothing else ---------------------------------
 
 # wostuast reads; the user types. These three are the only commands it runs,
@@ -2655,18 +2493,6 @@ def tmux_send(pane: str, text: str,
     if runner(["tmux", "send-keys", "-t", pane, "-l", "--", body]) is None:
         return False
     return runner(["tmux", "send-keys", "-t", pane, "Enter"]) is not None
-
-
-def tmux_peek(pane: str,
-              runner: Callable[..., str | None] | None = None) -> str | None:
-    """What the pane shows right now, escape codes and all.
-
-    `-p` prints it instead of putting it in a buffer, and `-e` keeps the
-    colours. Without `-e` a test run reads as a wall of grey.
-    """
-    if not pane:
-        return None
-    return (runner or run)(["tmux", "capture-pane", "-p", "-e", "-t", pane])
 
 
 # --- the daemon: one page, a little JSON, and a stream of changes ------------
@@ -2994,24 +2820,6 @@ class Serving:
         self.reply_json({"id": session_id,
                          "done": tmux_send(session.pane, text)})
 
-    def peek(self, session_id: str, query: dict[str, list[str]]) -> None:
-        session = self.known(session_id)
-        if session is None:
-            return
-        if not session.pane:
-            self.reply_json({"id": session_id, "runs": [],
-                             "missing": "This session is not in tmux, so"
-                                        " there is no pane to look at."})
-            return
-        text = tmux_peek(session.pane)
-        if text is None:
-            self.reply_json({"id": session_id, "runs": [],
-                             "missing": "tmux did not answer. The pane may"
-                                        " be gone."})
-            return
-        self.reply_json({"id": session_id,
-                         "runs": [asdict(one) for one in ansi_runs(text)]})
-
     def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
         from urllib.parse import parse_qs, urlparse
 
@@ -3131,7 +2939,6 @@ GET_VERBS: dict[str, Any] = {
     "files": Serving.files,
     "file": Serving.file,
     "diff": Serving.diff,
-    "peek": Serving.peek,
 }
 
 # These two write to a terminal, so they are the reason every POST carries
@@ -3387,7 +3194,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
            fatal=False)
 
     report(which_tmux(), "tmux found",
-           "tmux not found; jump, send and peek stay hidden", fatal=False)
+           "tmux not found; jump and send stay hidden", fatal=False)
     report(install_path().exists(), f"installed at {install_path()}",
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
 
@@ -3879,29 +3686,6 @@ body.dragging { cursor: col-resize; user-select: none; }
 .say:focus { outline: none; border-color: var(--needs); }
 .say::placeholder { color: var(--ink-faint); }
 
-/* peek: what the pane shows, in the colours it showed it */
-:root {
-  --ansi-0: #3a3d4a; --ansi-1: #e08a7a; --ansi-2: #8fcf9f; --ansi-3: #e0be6a;
-  --ansi-4: #7fb3e0; --ansi-5: #c6a2d8; --ansi-6: #7fc9cf; --ansi-7: #c9ccd8;
-  --ansi-8: #6f7385; --ansi-9: #f0a08a; --ansi-10: #9fe0b8; --ansi-11: #f0d080;
-  --ansi-12: #9fc8f0; --ansi-13: #d8b8e8; --ansi-14: #9fdfe4; --ansi-15: #f3f4f8;
-  --peek-bg: #0f1014; --peek-ink: #c9ccd8;
-}
-:root[data-theme="light"] {
-  --ansi-0: #2f3138; --ansi-1: #a33a28; --ansi-2: #2f7f52; --ansi-3: #8a5709;
-  --ansi-4: #2a6ea8; --ansi-5: #7a3f8f; --ansi-6: #1d6f74; --ansi-7: #4c4f58;
-  --ansi-8: #8b8e96; --ansi-9: #8c3a1f; --ansi-10: #1e5c39; --ansi-11: #6b4508;
-  --ansi-12: #205684; --ansi-13: #5f3070; --ansi-14: #17595d; --ansi-15: #14151a;
-  --peek-bg: #eceae3; --peek-ink: #33363d;
-}
-.peek {
-  margin: 0; padding: 16px 20px; background: var(--peek-bg);
-  color: var(--peek-ink); font-family: var(--mono); font-size: 12.5px;
-  line-height: 1.45; white-space: pre-wrap; word-break: break-word;
-  border-radius: 6px; min-height: 100%;
-}
-.peek b { font-weight: 600; }
-.peek .dim { opacity: .6; }
 .ctx { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .ctx .bar {
   width: 54px; height: 6px; border-radius: 3px; background: var(--raised);
@@ -4306,7 +4090,6 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button class="tab" role="tab" aria-selected="false" data-tab="files">2 Files</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="diff">3 Diff<span
           class="badge" id="diffcount" hidden></span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="peek">4 Peek</button>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
                  autocomplete="off" spellcheck="false">
@@ -4347,7 +4130,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>f</dt><dd>filter the session list</dd>
     <dt>r</dt><dd>submit the review you have written on the diff</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 4</dt><dd>transcript, files, diff, peek</dd>
+    <dt>1 – 3</dt><dd>transcript, files, diff</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>type into its terminal</dd>
     <dt>t</dt><dd>show or hide thinking</dd>
@@ -4391,10 +4174,6 @@ const state = {
   fileBinary: false,
   fileLang: "",         // what `file` made of it, when the name said nothing
   fileMtime: 0,         // which version of that text is loaded
-  peek: [],             // the pane, as runs that each look the same
-  peekRaw: "",          // the last answer, to tell a still pane from a new one
-  peekAt: 0,
-  peekWhy: "",          // why there is nothing to show, when there is nothing
   diff: null,
   // The review being written: one entry per comment, in the order they were
   // made. Milestone 7 stage 1 keeps them here and nowhere else — they last as
@@ -6581,71 +6360,17 @@ function drawDiffCount() {
   badge.textContent = "+" + added + " \u2212" + removed;
 }
 
-// --- the Peek tab -----------------------------------------------------------
+// --- the tabs ---------------------------------------------------------------
 
-// A still picture of the pane, not a terminal. PLAN.md rules out embedding
-// one: tmux owns the PTY and this page reads. The daemon hands over runs of
-// text that each look the same all the way through, and every one of them is
-// set with textContent, so nothing a terminal printed is read as markup.
-function drawPeek(box) {
-  if (box.dataset.tab !== "peek") {
-    box.replaceChildren();
-    box.dataset.tab = "peek";
-    box.dataset.bodyKey = "";
-    put(box, "pre", "peek");
-  }
-  const pane = box.firstChild;
-  const runs = state.peek || [];
-  if (!fresh(box, "bodyKey", state.peekAt + "\n" + (state.peekWhy || ""))) return;
-  const stick = nearBottom(box);
-  pane.replaceChildren();
-  if (state.peekWhy) {
-    put(pane, "span", null, state.peekWhy);
-  } else if (!runs.length) {
-    put(pane, "span", null, "This pane is empty.");
-  }
-  for (const one of runs) {
-    const node = put(pane, one.bold ? "b" : "span", one.dim ? "dim" : null,
-                     one.text);
-    if (one.fg) node.style.color = one.fg;
-    if (one.bg) node.style.background = one.bg;
-    if (one.italic) node.style.fontStyle = "italic";
-    if (one.under) node.style.textDecoration = "underline";
-  }
-  if (stick) box.scrollTop = box.scrollHeight;
-}
-
-async function loadPeek() {
-  const want = state.chosen;
-  const body = await ask(want, "peek");
-  if (!body || state.chosen !== want) return;
-  // The text as it arrived is the comparison: a pane that has not changed
-  // must not be rebuilt, or a reader loses their place in it every second.
-  const now = JSON.stringify(body.runs || []);
-  if (now !== state.peekRaw) {
-    state.peekRaw = now;
-    state.peek = body.runs || [];
-    state.peekAt += 1;
-  }
-  state.peekWhy = body.missing || "";
-  draw();
-}
-
-// One entry per tab: how to draw it, how to fetch what it draws, and how often
-// to ask again while it is on screen (0 means it is pushed, not polled).
-// `splits` says the tab builds the two columns, which is the same as saying
-// it keeps the find box inside the content box. Every other tab gives it back
-// before it empties that box.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0 },
   files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true },
-  peek: { draw: drawPeek, load: loadPeek, poll: 1000 },
 };
 
 // Which tab each number key picks. A key for a tab that is not built yet does
 // nothing, because showTab only accepts a name TABS knows.
-const TAB_KEYS = ["transcript", "files", "diff", "peek"];
+const TAB_KEYS = ["transcript", "files", "diff"];
 
 function draw() {
   const box = $("content");
@@ -6720,10 +6445,6 @@ function choose(id) {
   state.looseText = null;
   state.looseBinary = false;
   state.goTo = false;
-  state.peek = [];
-  state.peekRaw = "";
-  state.peekWhy = "";
-  state.peekAt += 1;
   state.diff = null;
   recallReview(id);
   state.writing = null;
@@ -6858,7 +6579,6 @@ function mergeBlocks(blocks) {
 }
 
 function streamUrl() {
-  // Milestone 5 adds the tab here, so peek polls only while it is on screen.
   return "/api/events" +
     (state.chosen ? "?watch=" + encodeURIComponent(state.chosen) : "");
 }
