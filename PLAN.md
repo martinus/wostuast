@@ -161,23 +161,38 @@ One session per `session_id`. Derive state from events, in this order:
 
 | Event | New state | Notes |
 | --- | --- | --- |
-| `SessionStart` | `starting` | Record `cwd`, `transcript_path`, `pane`, `pid` |
+| `SessionStart` | `done` | It is waiting at its prompt, which is what ready means. Record `cwd`, `transcript_path`, `pane`, `pid` |
 | `UserPromptSubmit` | `working` | Store the prompt as `last_prompt` |
 | `PreToolUse` / `PostToolUse` | `working` | Store `last_tool` (name + short summary) |
 | `PermissionRequest` | `needs_you` | At once, as the dialog appears |
 | `PostToolUseFailure` | `working` | The tool ran and failed, was interrupted, or timed out |
 | `Notification`, permission | `needs_you` | The same thing, up to 12 s later. Dropped once the session has sent a `PermissionRequest` |
-| `Notification`, idle | `done` from `starting`, else unchanged | `reason = "waiting for input"`. It is sitting at its prompt, so it is not starting; it is not blocked either, so it is not amber. |
+| `Notification`, idle | unchanged | `reason = "waiting for input"`. It says what the session is waiting for; it is not blocked, so it is not amber. |
 | `Stop` | `done` | Agent finished its turn |
 | `SubagentStop` | unchanged | Only update `last_event` |
 | `PreCompact` | unchanged | Show a small "compacted" marker in the transcript |
 | `SessionEnd` | `ended` | Row goes to the bottom, dimmed |
 | pid gone, checked every 5 s | `dead` | `kill -0` and the process still looking like the agent. A pid alone is not an identity: the numbers wrap, and a session that ended in the morning had its pid taken by something else by the evening, so the row said "done" all day for an agent that was gone. |
-| `starting` for longer than 5 minutes | `done` | `SessionStart` is often the only event a session ever sends. Resume one and leave it and nothing follows until you type, so the row read "starting" a day later. |
 | no pid, and quiet for 12 h | `dead` | `agent_pid` returns 0 where there is no `/proc` to walk, which on macOS is every session. One that cannot be checked is taken for gone once it has been quiet long enough. An agent left waiting overnight has a pid, and the pid is the answer for it. |
 
 `needs_you` clears on the next `UserPromptSubmit` or `PostToolUse` for that
 session. Show how long it has been waiting.
+
+**Four states, and that is the whole list.** There was a fifth, `starting`,
+for the first few minutes of a session. It was the same thing as being ready,
+told in a way that went stale: `SessionStart` is often the only event a
+session ever sends, so a session resumed and left alone read "starting" a day
+later, and with several of them the word was most of the list. The word for
+`done` is "ready", because that is what it means to the reader — the agent is
+at its prompt and will take what you type.
+
+**The list is grouped by state, most urgent first**: needs you, ready,
+working, history. Each group carries its own heading and count, and the
+history one folds. Inside a group the order is the daemon's, which is by
+worktree, so nothing shuffles while a session works. A row moves between
+groups when a turn begins, ends, or stops on a question — and that movement
+is the point: the question this tool answers is "who needs me", and the answer
+should be a group at the top of the list rather than a colour to be found.
 
 `needs_you` means one thing: the agent cannot go on until you answer. A
 `Notification` means it when its `notification_type` is `permission_prompt` or

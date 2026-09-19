@@ -45,7 +45,7 @@ def test_a_row_keeps_its_dot_when_the_state_changes(page_at, ws):
         browser, page = open_page(play, path)
         try:
             page.evaluate("window.__dot = document.querySelector('.row .dot')")
-            assert "starting" in page.evaluate("window.__dot.className")
+            assert "done" in page.evaluate("window.__dot.className")
             ws.append_event(conftest.event(
                 "PermissionRequest", tool_name="Bash",
                 tool_input={"command": "ls ~"}, ts=time.time()))
@@ -215,10 +215,17 @@ def test_history_opens_and_is_remembered(past_at):
             page.wait_for_selector(".histhead")
             page.click(".histhead")
             page.wait_for_function("document.querySelectorAll('.row').length === 3")
-            # The bar moves above the rows it opened.
-            assert page.evaluate(
-                "[...document.getElementById('rows').children]"
-                ".findIndex((n) => n.classList.contains('histhead'))") == 1
+            # The bar stands above the rows it opened, and below the live
+            # ones. Not at a fixed index: each group of live rows has a head
+            # of its own now.
+            assert page.evaluate("""() => {
+              const kids = [...document.getElementById("rows").children];
+              const bar = kids.findIndex((n) => n.classList.contains("histhead"));
+              const gone = kids.findIndex((n) => n.classList.contains("ended"));
+              const live = kids.findIndex(
+                (n) => n.classList.contains("row") && !n.classList.contains("ended"));
+              return live < bar && bar < gone;
+            }""")
 
             page.reload(wait_until="domcontentloaded")
             page.wait_for_selector(".histhead")
@@ -316,3 +323,61 @@ def test_the_session_filter_forgives_nothing(past_at):
                               "scattered": False}
         finally:
             browser.close()
+
+
+# --- the four groups ----------------------------------------------------------
+
+
+def bands(page):
+    """The section heads on screen, in order, with their counts."""
+    return page.eval_on_selector_all(
+        ".rows .band, .rows .histhead", "els => els.map((e) => e.textContent)")
+
+
+def test_the_list_is_grouped_by_what_each_session_needs(past_at, ws):
+    """Most urgent first. "who needs me" is the question this tool exists to
+    answer, so the answer is a group with its own heading, not a colour you
+    have to find in a list."""
+    daemon, path = past_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_selector(".rows .band")
+            # One live session, ready, and two finished ones folded away.
+            assert bands(page) == ["ready · 1", "▸ history · 2"]
+
+            ws.append_event(conftest.event(
+                "PermissionRequest", tool_name="Bash",
+                tool_input={"command": "ls ~"}, ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                "[...document.querySelectorAll('.rows .band')]"
+                ".some((e) => e.textContent.startsWith('needs you'))")
+            # It moved out of "ready" and into "needs you", which is the whole
+            # point of the grouping.
+            assert bands(page) == ["needs you · 1", "▸ history · 2"]
+        finally:
+            browser.close()
+
+
+def test_a_group_with_nothing_in_it_has_no_heading(page_at):
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.wait_for_selector(".rows .band")
+            assert bands(page) == ["ready · 1"]
+        finally:
+            browser.close()
+
+
+def test_a_session_that_has_just_started_is_ready(ws, served):
+    """It is waiting at its prompt, which is what ready means. It used to say
+    "starting" and settle after five minutes — a word that was true for a
+    moment and wrong for a day, because SessionStart is often the only event a
+    session ever sends."""
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd="/w/one",
+                                   ts=time.time(), pane="%7", pid=1))
+    daemon.store.refresh()
+    assert daemon.store.rows[0]["state"] == "done"
+    assert daemon.store.rows[0]["state_word"] == "ready"

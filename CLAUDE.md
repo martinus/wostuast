@@ -204,10 +204,6 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   its pid taken by something else by the evening and the row said "done" all
   day for an agent that was gone. Safe to read /proc there: a session only has
   a pid where `agent_pid` could read /proc in the first place.
-- **"starting" is the first few minutes, not the first day.** `SessionStart` is
-  often the only event a session ever sends — resume one and leave it and
-  nothing follows until you type. `mark_idle` settles it to `done` after
-  `STARTING_MAX`, and an idle notification says the same sooner.
 - **A file over `CODE_WHOLE` lines is drawn a window at a time, and not
   painted.** Measured: 76,000 short lines is 306,000 nodes and about a second
   to build, plus another second and a quarter to cut the highlighter's answer
@@ -260,9 +256,19 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 
 ### The sidebar
 
-- **It sorts by worktree.** Sorting by state moved every row on every tool call.
-  Sorting by `label` is no better: the name arrives from the status line a second
-  after the session starts and `/rename` changes it later.
+- **It is grouped by state, and sorted by worktree inside a group.** The four
+  groups are `BANDS`, most urgent first: needs you, ready, working, history.
+  This supersedes the old rule that the list must never sort by state — that
+  was written when sorting by state churned the list for nothing. A row
+  arriving under "needs you" is the one thing this tool exists to say, and it
+  only moves when a turn begins, ends, or stops on a question. **Inside a
+  group the daemon's order stands**, which is by worktree: sorting by `label`
+  is still wrong, because the name arrives from the status line a second after
+  the session starts and `/rename` changes it later.
+- **There are four states, not five.** "starting" is gone: it was the first
+  few minutes of a session that had said nothing else, which is the same as
+  being ready, told in a way that went stale. `SessionStart` sets `done`, and
+  `mark_idle` and `STARTING_MAX` went with it. The word for `done` is "ready".
 - **The fold is not a filter.** Finished sessions fold under the history bar, but
   they are still counted, the filter still searches them, and the chosen one is
   never missing from the list it is chosen in.

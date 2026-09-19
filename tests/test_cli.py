@@ -61,7 +61,7 @@ def test_ls_prints_one_row_per_session(ws, written_events, capsys):
     assert "warmhare" in out
     assert "calmpuma" in out
     assert "%7" in out
-    assert "1 done · 1 ended" in out
+    assert "1 ready · 1 ended" in out
 
 
 def test_ls_shows_the_name_from_the_status_file(ws, written_events, recorded_status, capsys):

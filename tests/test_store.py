@@ -18,7 +18,7 @@ def test_it_folds_only_what_is_new(ws, store):
     ws.append_event(event("SessionStart"))
     store.refresh(now=1000.0, alive=lambda p: True)
     assert len(store.rows) == 1
-    assert store.rows[0]["state"] == "starting"
+    assert store.rows[0]["state"] == "done"
 
     ws.append_event(event("UserPromptSubmit", prompt="go", ts=1001.0))
     assert store.refresh(now=1001.0, alive=lambda p: True) is True
@@ -51,7 +51,7 @@ def test_rows_are_replaced_whole_not_edited(ws, store):
     ws.append_event(event("Stop", ts=1002.0))
     store.refresh(now=1002.0, alive=lambda p: True)
     assert held is not store.rows
-    assert held[0]["state"] == "starting"     # the old list is untouched
+    assert held[0]["state"] == "done"     # the old list is untouched
 
 
 def test_git_runs_once_and_then_waits(ws, monkeypatch):
