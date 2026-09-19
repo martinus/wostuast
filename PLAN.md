@@ -538,70 +538,88 @@ its own change, not a merge of these two.
 
 ### 4.9 Review
 
-The Diff tab reads. A review is the reply, written where the code is.
+A review is a reply, written where the code is. You read a file or a diff,
+leave a comment on a line, read on, leave another, and send the whole thing to
+the agent as one message through the send verb. That is the GitHub review loop
+with the agent in the place of the author, and without the trip back to the
+terminal to retype from memory what you just read.
 
-You read the diff, leave a comment on a line or on a whole file, read on,
-leave another, and press Submit when the review is finished. wostuast turns
-the comments into one message and sends it to the agent through the send verb.
-That is the GitHub review loop with the agent in the place of the author, and
-without the trip back to the terminal to retype from memory what you just
-read.
+**A comment is one note on one place: a path and a line.** Not a place in a
+diff — a place in a file. It is written from whichever tab you are on, it is
+the same comment either way, and it is shown wherever that line is drawn.
+There is no comment on a range of lines: one line, or the whole file.
 
-**A comment is one note on one place.** A line of the diff, or a file. A line
-comment quotes its line; a file comment does not. Every comment can be edited
-and deleted until the review is submitted. There is no comment on a range of
-lines in this milestone: one line, or the whole file.
+The diff used to be part of a comment's identity, and the page worked out for
+each one whether its line was still "here", had "moved" or was "gone". Those
+words went into the message as though the reader had written them — a note on
+a file the agent had never touched was sent saying "this line is no longer in
+the diff". A file is what a comment is about, and that is all it needs.
+
+**An anchor is the path and the line, and nothing else.** Line numbers start
+at one, so nought is the file itself. It used to carry a side as well, `old`
+or `new`, and that had a consequence worth writing down: a comment on a
+*removed* line was a place in the old file, which the Files tab — where every
+line is a line of the file as it is — could never draw, and which vanished
+from the page entirely once the diff moved past it. It was still sent. A
+removed line has no place in the file as it is, so it is not offered a `+`.
 
 **The drafts live in the browser, not in the daemon.** A review is yours until
-you submit it, and the daemon serves the same page to every browser, so a
-draft it held would be a draft everyone could read. `localStorage`, keyed by
+you send it, and the daemon serves the same page to every browser, so a draft
+it held would be a draft everyone could read. `localStorage`, keyed by
 session, survives a reload — which a review written over ten minutes needs —
 and costs the daemon nothing. The daemon learns a review exists at the moment
 it is sent, and not before.
 
-**An anchor is the path, the side, the line number and the text of that
-line.** The agent keeps working while you read, so the diff can move under a
-half-written review. A comment whose line no longer holds the text it was
-written against is marked stale, still shows the line it quoted, and is still
-sent. Nothing is silently dropped, and nothing is silently moved onto the
-wrong line.
+**The Review tab is where it is read back and sent from.** Every comment in
+one place: the task it is for, what to do, one block per place, and the
+message itself at the bottom with the send button under it. Each block leads
+back to the file it is about. Each comment can be edited or deleted, and the
+whole review can be thrown away in two presses, because there is no undo.
 
-**The preview is the message, and it is where the review is approved.** Submit
-opens a panel holding the exact text the agent will receive. The only thing
-you can type into it is the overall note, which is the review's comment on
-itself; a line comment is edited where the line is, so there is one text and
-one place it comes from. Cancel goes back with everything kept. The message is
-plain, and reads as well in a terminal as on the page:
+The count on the tab is how "is there a review waiting" is answered. Before
+the tab existed, the answer was a submit button on the Diff tab, which meant a
+review written across three files had no home until it was already being sent.
+
+**The message is a task, not a list of remarks.** The heading is what the
+agent reads first, so it is asked for rather than guessed at. The line number
+is a hint and the message says so: the file moves while a review is being
+written, so the quoted line is what is really being pointed at.
 
 ```
-Review: 4 comments on 3 files.
+# Task: cleanup
 
-<the overall note, when there is one>
+Tidy these up. Keep the behaviour exactly as it is.
 
-src/table.cpp:112
+When you are done, write one short entry per location: what you did, or what
+you found.
+
+Locations are given as `path:line`, followed by the quoted source line. If the
+line number does not match anymore, search for the quoted line. If a comment is
+not clear, ask me before you change anything.
+
+## src/table.cpp:112
+
 > const auto n = rows.size();
+
 This underflows when rows is empty. Use a signed type.
 
-src/table.cpp:180
-> for (auto& r : rows) {
-Can this take a span instead?
+## docs/PLAN.md
 
-docs/PLAN.md
 Keep the heading order.
 ```
 
 **A person reads every byte before it goes.** A quoted line is text an agent
-wrote, and it is about to be pasted into a terminal. The preview is where that
-is caught, which is why Submit is the only way a review leaves the page and
-why the preview cannot be skipped. It is the same rule as "never approve a
-permission prompt": the person decides.
+wrote, and it is about to be pasted into a terminal. The message stands on the
+tab, above the send button and not editable, so reading it is the step before
+sending rather than a panel that can be waved past. It is the same rule as
+"never approve a permission prompt": the person decides.
 
-**Nothing new writes to the terminal.** Submit calls the send verb with the
+**Nothing new writes to the terminal.** Send calls the send verb with the
 composed text. That text has newlines in it, so it travels as a bracketed
 paste and waits for the reader's own Enter, exactly as a typed message does,
 and the POST carries the token like every other one. A session with no pane
-can be reviewed but not submitted: Submit is disabled and says "not in tmux",
-the way the other verbs already do.
+can be reviewed but not sent to: the button is disabled and says "not in
+tmux", the way the other verbs already do.
 
 **The review never leaves this machine.** No GitHub API, no pull request, no
 posting anywhere. It goes to the agent standing in that worktree. That is the

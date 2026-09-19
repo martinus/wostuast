@@ -3892,13 +3892,23 @@ body:not(.show-thinking) .thinking { display: none; }
 .hljs-deletion { color: var(--cut-ink); }
 .plus { color: var(--working); }
 .minus { color: var(--cut-ink); }
-.filebody { flex-grow: 1; overflow-y: auto; padding: 20px 26px; min-width: 0; }
+/* What a tab's body is: the column that scrolls. The diff sets its own
+   padding, because its rows run to the edge. */
+.filebody, .diffbody, .reviewbody {
+  flex-grow: 1; overflow-y: auto; min-width: 0;
+}
+.filebody { padding: 20px 26px; }
+.reviewbody { padding: 16px 20px; }
+/* The small label look: the path above a file, and the names of the two
+   boxes at the top of a review. */
+.filebody .where, .fieldname {
+  font-family: var(--narrow); font-size: 12px; letter-spacing: .04em;
+  color: var(--ink-faint);
+}
 /* The path of the open file, and beside it the switch between a rendered
    document and the lines it is written in. */
 .filebody .where {
-  margin-bottom: 14px; font-family: var(--narrow); font-size: 12px;
-  letter-spacing: .04em; color: var(--ink-faint);
-  display: flex; align-items: baseline; gap: 14px;
+  margin-bottom: 14px; display: flex; align-items: baseline; gap: 14px;
 }
 .filebody .where .link { margin-top: 0; flex-shrink: 0; }
 /* One piece of the path. Text nodes separate them, so the whole line is still
@@ -3906,7 +3916,6 @@ body:not(.show-thinking) .thinking { display: none; }
 .crumbs { min-width: 0; word-break: break-all; }
 .crumb { cursor: pointer; }
 .crumb:hover { color: var(--needs); text-decoration: underline; }
-.diffbody { flex-grow: 1; overflow-y: auto; min-width: 0; }
 .diffhead {
   position: sticky; top: 0; z-index: 1; padding: 9px 20px;
   background: var(--panel); border-bottom: 1px solid var(--edge);
@@ -3971,16 +3980,28 @@ body:not(.show-thinking) .thinking { display: none; }
   font-family: var(--sans); font-size: 13px; color: var(--ink);
 }
 .comment .note { white-space: pre-wrap; line-height: 1.5; }
-/* A comment whose line has moved, or has gone. It keeps the line it was
-   written against, because that is what says what it was about. */
-.comment.stale { border-left-color: var(--hot); }
-.comment .was { margin-bottom: 4px; font-size: 11px; color: var(--hot); }
+/* The Review tab: the two boxes at the top, one block per place, and the
+   message itself at the bottom. */
+.about { margin-bottom: 20px; }
+.field { display: block; margin-bottom: 12px; }
+.fieldname { display: block; margin-bottom: 4px; }
+.spot {
+  margin-bottom: 18px; padding: 10px 12px; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--edge);
+}
+/* The heading over the message, in the same voice as a diff's section head. */
+.sofar {
+  margin: 4px 0 8px; font-family: var(--narrow); font-size: 12px;
+  letter-spacing: .04em; color: var(--ink-faint);
+}
+.spot .where { margin-bottom: 4px; }
+.reviewbody .buttons { flex-wrap: wrap; margin: 14px 0 8px; }
+.reviewbody .why { font-size: 11px; color: var(--ink-faint); }
 .comment .quoted {
   margin-bottom: 6px; padding: 3px 8px; border-radius: 4px;
   background: var(--code); color: var(--ink-faint);
   font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
 }
-.diffhead.gone { color: var(--hot); }
 .onFile > .where {
   margin: 6px 20px 0; font-family: var(--mono); font-size: 12px;
   color: var(--ink-mute);
@@ -3991,13 +4012,19 @@ body:not(.show-thinking) .thinking { display: none; }
 }
 .link:hover { color: var(--needs); }
 .commentbox { margin: 6px 20px; max-width: 680px; }
-.commentbox textarea {
+/* Every box you type a review into looks the same: the one under a line, and
+   the two at the top of the Review tab. */
+.commentbox textarea, .field textarea {
   width: 100%; padding: 9px 12px; border-radius: 6px; resize: vertical;
   border: 1px solid var(--edge-bright); background: var(--raised);
   color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5;
 }
-.commentbox textarea:focus { outline: none; border-color: var(--needs); }
-.commentbox .buttons { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
+.commentbox textarea:focus, .field textarea:focus {
+  outline: none; border-color: var(--needs);
+}
+.commentbox .buttons, .reviewbody .buttons {
+  display: flex; gap: 12px; align-items: center; margin-top: 6px;
+}
 .dline.added { background: var(--add-bg); color: var(--add-ink); }
 .dline.removed { background: var(--cut-bg); color: var(--cut-ink); }
 .note {
@@ -4028,35 +4055,26 @@ dialog.help {
 }
 dialog.help::backdrop { background: var(--veil); }
 dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
-dialog.review { width: min(760px, 92vw); }
-dialog.review .overall {
-  display: block; margin-bottom: 6px; font-size: 12px; color: var(--ink-mute);
-}
-dialog.review textarea {
+.field textarea {
   width: 100%; padding: 8px 10px; border-radius: 6px; resize: vertical;
   border: 1px solid var(--edge-bright); background: var(--raised);
   color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5;
 }
-dialog.review textarea:focus { outline: none; border-color: var(--needs); }
-.reviewsays { margin: 14px 0 6px; font-size: 12px; color: var(--ink-mute); }
+.field textarea:focus { outline: none; border-color: var(--needs); }
 /* The message itself, not a description of it. It cannot be edited here: a
    comment is edited where the comment is, so there is one text and one place
    it comes from. */
 .reviewtext {
-  margin: 0; padding: 12px 14px; max-height: 46vh; overflow: auto;
+  margin: 0; padding: 12px 14px; overflow: auto;
   border-radius: 6px; background: var(--code); color: var(--code-ink);
   font-family: var(--mono); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;
 }
-dialog.review .buttons {
-  display: flex; gap: 14px; align-items: center; margin-top: 14px;
-}
-dialog.review .why { color: var(--ink-faint); font-size: 12px; }
 .sidefoot:empty { display: none; }
 .sidefoot {
   flex-shrink: 0; padding: 8px 10px; border-top: 1px solid var(--edge);
 }
-.verb.submit { width: 100%; height: 30px; }
+.verb.submit { width: auto; height: 30px; padding: 0 16px; }
 .verb:disabled { opacity: .5; cursor: default; border-color: var(--edge); }
 dialog.help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
 dialog.help dt { color: var(--needs); }
@@ -4099,6 +4117,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button class="tab" role="tab" aria-selected="false" data-tab="files">2 Files</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="diff">3 Diff<span
           class="badge" id="diffcount" hidden></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="review">4 Review<span
+          class="badge" id="reviewcount" hidden></span></button>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
                  autocomplete="off" spellcheck="false">
@@ -4116,30 +4136,15 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   </div>
 </div>
 
-<dialog class="help review" id="review">
-  <h2>Submit review</h2>
-  <label class="overall" for="overall">A note about the review as a whole</label>
-  <textarea id="overall" rows="2" spellcheck="false"
-            placeholder="optional — the rest is edited where each comment is"></textarea>
-  <p class="reviewsays">This is what the agent will be sent. Some of it is text
-    the agent wrote, and it is about to be pasted into your terminal.</p>
-  <pre class="reviewtext" id="reviewtext"></pre>
-  <div class="buttons">
-    <button class="verb" type="button" id="reviewsend">send to the agent</button>
-    <button class="link" type="button" id="reviewstop">cancel</button>
-    <span class="why" id="reviewwhy"></span>
-  </div>
-</dialog>
-
 <dialog class="help" id="help">
   <h2>Keys</h2>
   <dl>
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>f</dt><dd>filter the session list</dd>
-    <dt>r</dt><dd>submit the review you have written on the diff</dd>
+    <dt>r</dt><dd>the review you have written</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 3</dt><dd>transcript, files, diff</dd>
+    <dt>1 – 4</dt><dd>transcript, files, diff, review</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>type into its terminal</dd>
     <dt>t</dt><dd>show or hide thinking</dd>
@@ -4174,13 +4179,10 @@ const state = {
   looseText: null,      // null while it is being read
   looseBinary: false,
   diff: null,
-  // The review being written: one entry per comment, in the order they were
-  // made. Milestone 7 stage 1 keeps them here and nowhere else — they last as
-  // long as the page does, and nothing is sent. See PLAN.md section 4.9.
-  review: [],
+  // The review being written. It lives in this browser and nowhere else
+  // until it is sent. See PLAN.md section 4.9 and `blankReview`.
+  review: null,         // set below, because it is built in one place
   writing: null,        // the anchor of the comment box that is open, if any
-  overall: "",          // the review's note about itself, shown in the preview
-  marks: new Map(),     // per comment: here, moved, or gone
   pruned: false,        // whether the stored reviews have been swept once
   diffRaw: "",          // the last answer, as it arrived, to compare against
   diffAt: 0,            // bumped when that answer changes, so keys stay short
@@ -4188,6 +4190,7 @@ const state = {
 };
 
 state.files = blankFiles();
+state.review = blankReview();
 
 const $ = (id) => document.getElementById(id);
 
@@ -5599,12 +5602,12 @@ const CODE_GUESS = 5 * CODE_H;
 // tall each one makes its row. In line order, because both readers below walk
 // them from the top.
 function tallLines(code) {
-  const anchors = new Set(state.review.map((one) => one.anchor));
+  const anchors = new Set(state.review.comments.map((one) => one.anchor));
   if (state.writing !== null) anchors.add(state.writing);
   const tall = [];
   for (const anchor of anchors) {
-    const [path, side, line] = anchor.split("\n");
-    if (path !== code.path || side === "file") continue;
+    const [path, line] = anchor.split("\n");
+    if (path !== code.path || line === "0") continue;
     const at = Number(line) - 1;                  // lines are counted from one
     tall.push([at, code.tall.get(at) || CODE_GUESS]);
   }
@@ -5904,7 +5907,6 @@ function drawDiff(box) {
   pane.replaceChildren();
 
   const report = state.diff || { sections: [], untracked: [] };
-  state.marks = resolveReview(report);
   // A file the agent has since committed is no longer untracked, so the pick
   // goes with it rather than pointing at a section that no longer names it.
   if (state.loose && !(report.untracked || []).includes(state.loose)) {
@@ -5975,21 +5977,8 @@ function drawDiff(box) {
   } else if (place) {
     requestAnimationFrame(() => { pane.scrollTop = place; });
   }
-  const orphans = state.review.filter(
-    (one) => state.marks.get(one.anchor) === "gone");
-  if (orphans.length) {
-    put(pane, "div", "diffhead gone", "comments with nowhere left to sit");
-    for (const one of orphans) {
-      const [path, side, line] = one.anchor.split("\n");
-      const block = put(pane, "div", "onFile");
-      put(block, "div", "where", side === "file" ? path : path + ":" + line);
-      putComment(block, one);
-    }
-  }
   note.replaceChildren();
   countNote(note, shown + loose.length);
-  foot.replaceChildren();
-  drawReviewButton(foot);
   drawDiffCount();
 }
 
@@ -6028,7 +6017,7 @@ function drawLooseFile(pane, path) {
     header: "@@ -0,0 +1," + lines.length + " @@",
     lines: lines.map((text) => ({ kind: "added", text })),
   }] });
-  putReview(put(node, "div", "onFile"), anchorOf(path, "file", 0), "", "plus");
+  putReview(put(node, "div", "onFile"), anchorOf(path, 0), "", "plus");
   return node;
 }
 
@@ -6058,7 +6047,7 @@ function drawDiffFile(pane, one) {
     ? one.old_path + " \u2192 " + one.path : one.path);
   putCounts(head, one);
   const body = put(node, "div", "dbody");
-  putReview(put(node, "div", "onFile"), anchorOf(one.path, "file", 0), "", "plus");
+  putReview(put(node, "div", "onFile"), anchorOf(one.path, 0), "", "plus");
   if (one.binary) {
     put(body, "div", "note", "Binary file. There is nothing to show.");
     return node;
@@ -6137,7 +6126,8 @@ function fillDiffFile(body, one) {
       // line, which is what the highlighter is given and what it paints.
       if (SIGN[line.kind]) put(row, "span", "sign", SIGN[line.kind]);
       put(row, "span", "dtext", line.text);
-      const anchor = lineAnchor(one.path, line, old, now);
+      const anchor = lineAnchor(one.path, line, now);
+      if (anchor === null) return;      // a line that is no longer in the file
       if (commentAt(anchor) || state.writing === anchor) {
         putReview(put(lines, "div", "onLine"), anchor, line.text, "plus");
       } else {
@@ -6168,17 +6158,30 @@ function asLines(path, lines, from = 1) {
 // What a comment is anchored to, as one string, so that finding it again is a
 // lookup rather than a search with four fields in it. A removed line has a
 // number only on the old side, an added line only on the new side.
-function anchorOf(path, side, line) {
-  return path + "\n" + side + "\n" + line;
+function anchorOf(path, line) {
+  return path + "\n" + line;
 }
 
-function lineAnchor(path, line, old_, now) {
-  return line.kind === "removed"
-    ? anchorOf(path, "old", old_) : anchorOf(path, "new", now);
+// The place a line of a drawn file or diff is: its number in the file as it is
+// now. Line numbers start at one, so nought is the file itself.
+//
+// A removed line has no number in the file as it is now, and so has no place
+// to be. It used to anchor to the old side, which meant the comment could not
+// be drawn on the Files tab at all — every line there is a line of the file as
+// it is — and once the diff moved past it, nowhere else either. It was still
+// sent. A removed line is not offered a `+` now.
+function lineAnchor(path, line, now) {
+  return line.kind === "removed" ? null : anchorOf(path, now);
+}
+
+// How a place reads: `path:112`, or just the path when it is the whole file.
+function placeOf(anchor) {
+  const [path, line] = anchor.split("\n");
+  return line === "0" ? path : path + ":" + line;
 }
 
 function commentAt(anchor) {
-  return state.review.find((one) => one.anchor === anchor) || null;
+  return state.review.comments.find((one) => one.anchor === anchor) || null;
 }
 
 // --- keeping a review ---------------------------------------------------------
@@ -6191,20 +6194,19 @@ function commentAt(anchor) {
 const REVIEW_KEY = "wostuast-review-";
 
 function keepReview() {
+  drawReviewCount();          // every change to a review comes through here
   if (!state.chosen) return;
   try {
-    if (!state.review.length && !state.overall) {
+    if (!anyReview()) {
       localStorage.removeItem(REVIEW_KEY + state.chosen);
       return;
     }
-    localStorage.setItem(REVIEW_KEY + state.chosen, JSON.stringify(
-      { overall: state.overall, comments: state.review }));
+    localStorage.setItem(REVIEW_KEY + state.chosen, JSON.stringify(state.review));
   } catch (error) { }      // a private window, or the quota; the page goes on
 }
 
 function recallReview(id) {
-  state.review = [];
-  state.overall = "";
+  state.review = blankReview();
   let held = null;
   try { held = JSON.parse(localStorage.getItem(REVIEW_KEY + id) || "null"); }
   catch (error) { return; }
@@ -6212,9 +6214,16 @@ function recallReview(id) {
   // What comes back was written by this page, but a browser's storage is not
   // a place to trust blindly: anything of the wrong shape is left out rather
   // than drawn.
-  state.review = held.comments.filter(
-    (one) => one && typeof one.anchor === "string" && typeof one.note === "string");
-  state.overall = typeof held.overall === "string" ? held.overall : "";
+  state.review.comments = held.comments.filter(
+    (one) => one && typeof one.note === "string"
+             && typeof one.anchor === "string"
+             // `path \n line`, and nothing else. An anchor of another shape is
+             // a draft from an older page, and drawing it would put a comment
+             // on a line nobody chose.
+             && /^[^\n]+\n\d+$/.test(one.anchor));
+  for (const field of ["task", "overall"]) {
+    if (typeof held[field] === "string") state.review[field] = held[field];
+  }
 }
 
 // A review for a session the daemon no longer lists is a review nobody can
@@ -6233,45 +6242,21 @@ function pruneReviews(sessions) {
   } catch (error) { }
 }
 
-// --- has the line moved? ------------------------------------------------------
+// An empty review. One place, so that starting one, throwing one away and
+// choosing another session cannot drift apart about what "nothing" means.
+function blankReview() {
+  return {
+    task: "",           // a short name for the whole thing: "cleanup"
+    overall: "",        // what to do at each location, and with the result
+    comments: [],       // one per place, in the order they were made
+  };
+}
 
-// The agent keeps working while you read, so the diff can move under a
-// half-written review. Every comment comes back "here", "moved" — the line is
-// there but no longer says what the comment was written against — or "gone".
-// A comment nobody could check is not marked at all, and an unmarked comment
-// is treated as "here": claiming otherwise would be a guess.
-function resolveReview(report) {
-  const marks = new Map();
-  if (!state.review.length) return marks;
-  // Only a comment written on a diff line can be "no longer in the diff". Now
-  // that a comment can be written on any line of any file, most of them are on
-  // files the agent never touched: nothing here has looked at those, and
-  // saying the line left the diff would be a sentence the reader never wrote.
-  // So a comment starts "gone" only if it was written against the diff.
-  for (const one of state.review) {
-    if (one.diff) marks.set(one.anchor, "gone");
-  }
-  for (const path of (report.untracked || [])) {
-    // Only its name is known unless it is the one being read, so a comment on
-    // it cannot be checked — and a file that is still listed is still there.
-    for (const one of state.review) {
-      if (one.anchor.split("\n")[0] === path) marks.set(one.anchor, "here");
-    }
-  }
-  for (const section of (report.sections || [])) {
-    for (const file of (section.files || [])) {
-      const whole = anchorOf(file.path, "file", 0);
-      if (marks.has(whole)) marks.set(whole, "here");
-      walkHunks(file, null, (line, old, now) => {
-        const anchor = lineAnchor(file.path, line, old, now);
-        if (!marks.has(anchor)) return;
-        const had = commentAt(anchor);
-        marks.set(anchor,
-                  had && had.quoted && had.quoted !== line.text ? "moved" : "here");
-      });
-    }
-  }
-  return marks;
+// Is there anything here at all? A review with a task name and no comments is
+// still a review someone started, and throwing it away silently would lose it.
+function anyReview() {
+  return !!(state.review.comments.length || state.review.task.trim()
+            || state.review.overall.trim());
 }
 
 // The note the reader typed. An empty one deletes the comment, which is what
@@ -6280,13 +6265,12 @@ function writeComment(anchor, quoted, note) {
   const text = note.trim();
   const had = commentAt(anchor);
   if (!text) {
-    if (had) state.review.splice(state.review.indexOf(had), 1);
+    const at = state.review.comments.indexOf(had);
+    if (had) state.review.comments.splice(at, 1);
   } else if (had) {
     had.note = text;
   } else {
-    // Where it was written decides what can later be said about it.
-    state.review.push({ anchor: anchor, quoted: quoted, note: text,
-                        diff: state.tab === "diff" });
+    state.review.comments.push({ anchor, quoted, note: text });
   }
   state.writing = null;
   keepReview();
@@ -6304,18 +6288,8 @@ function redrawCode() {
 }
 
 // One comment, under the line or the file it is about.
-const MARK_WORDS = {
-  moved: "the line has changed since this was written",
-  gone: "this line is no longer in the diff",
-};
-
 function putComment(parent, one) {
-  const mark = state.marks.get(one.anchor);
-  const node = put(parent, "div", "comment" + (MARK_WORDS[mark] ? " stale" : ""));
-  if (MARK_WORDS[mark]) {
-    put(node, "div", "was", MARK_WORDS[mark]);
-    if (one.quoted) put(node, "div", "quoted", one.quoted);
-  }
+  const node = put(parent, "div", "comment");
   put(node, "div", "note", one.note);
   const edit = put(node, "button", "link", "edit");
   edit.type = "button";
@@ -6370,64 +6344,208 @@ function putReview(parent, anchor, quoted, cls) {
 // order they were written in is the order the reader wandered through the
 // diff, which is nobody else's order.
 function reviewInOrder() {
-  return state.review.slice().sort((one, two) => {
-    const [pathA, sideA, lineA] = one.anchor.split("\n");
-    const [pathB, sideB, lineB] = two.anchor.split("\n");
+  return state.review.comments.slice().sort((one, two) => {
+    const [pathA, lineA] = one.anchor.split("\n");
+    const [pathB, lineB] = two.anchor.split("\n");
     if (pathA !== pathB) return pathA < pathB ? -1 : 1;
-    if ((sideA === "file") !== (sideB === "file")) return sideA === "file" ? -1 : 1;
-    return Number(lineA) - Number(lineB);
+    return Number(lineA) - Number(lineB);   // nought is the file, so it leads
   });
 }
 
-// The message the agent gets. Plain, and it reads as well in a terminal as it
-// does here, because that is where it lands.
-function reviewText() {
-  const comments = reviewInOrder();
-  const files = new Set(comments.map((one) => one.anchor.split("\n")[0]));
-  const say = (n, word) => n + " " + word + (n === 1 ? "" : "s");
-  const parts = ["Review: " + say(comments.length, "comment") + " on "
-                 + say(files.size, "file") + "."];
-  if (state.overall.trim()) parts.push(state.overall.trim());
+// The message the agent gets. It is a task, not a list of remarks: a heading
+// it can read at a glance, what to do, what to hand back, and then one section
+// per place with the line quoted under it.
+//
+// The line number is a hint and says so. The file moves while the review is
+// being written, so the quoted line is the thing that is really being pointed
+// at, and the agent is told to search for it when the number no longer fits.
+// That replaces the marks this used to carry — "gone", "moved" — which said
+// what the diff thought and were sent as if the reader had written them.
+const REVIEW_HOW = [
+  "When you are done, write one short entry per location: what you did, or"
+  + " what you found.",
+  "Locations are given as `path:line`, followed by the quoted source line. If"
+  + " the line number does not match anymore, search for the quoted line. If a"
+  + " comment is not clear, ask me before you change anything.",
+];
+
+function reviewText(comments = reviewInOrder()) {
+  const task = state.review.task.trim();
+  const parts = ["# Task: " + (task || "review")];
+  if (state.review.overall.trim()) parts.push(state.review.overall.trim());
+  parts.push(...REVIEW_HOW);
   for (const one of comments) {
-    const [path, side, line] = one.anchor.split("\n");
-    const mark = MARK_WORDS[state.marks.get(one.anchor)];
-    const head = (side === "file" ? path : path + ":" + line)
-      + (mark ? "  (" + mark + ")" : "");
-    parts.push(one.quoted ? head + "\n> " + one.quoted + "\n" + one.note
-                          : head + "\n" + one.note);
+    parts.push("## " + placeOf(one.anchor));
+    if (one.quoted) parts.push("> " + one.quoted);
+    parts.push(one.note);
   }
   return parts.join("\n\n") + "\n";
 }
 
-// Submit opens this. It shows the message itself rather than a description of
-// it, because this is the moment a person reads what is about to be pasted
-// into their terminal — and part of it was written by an agent.
-function showReview() {
-  if (!state.review.length) return;
-  const box = $("review");
-  const body = $("reviewtext");
-  const note = $("overall");
-  note.value = state.overall;
-  body.textContent = reviewText();
+// --- the Review tab ---------------------------------------------------------
+//
+// Every comment in one place, which is where a review is read back and where
+// it is sent from. The Diff tab used to carry a submit button and a modal;
+// a review written across three files and two tabs had no home until it was
+// already being sent.
+
+function drawReview(box) {
+  const [list, pane, note, foot] = split(box, "review", "reviewbody");
+  if (holdingText(box)) return;
+  if (!fresh(box, "bodyKey", reviewKey())) return;
+  list.replaceChildren();
+  pane.replaceChildren();
+
+  const found = hits(reviewInOrder(), (one) => one.anchor.split("\n")[0]);
+  const comments = found.map((hit) => hit.one);
+  if (!anyReview()) {
+    const empty = put(pane, "div", "empty");
+    put(empty, "p", null, "No review yet. Press the + beside any line of any"
+        + " file, on this tab's neighbours, and it turns up here.");
+    note.replaceChildren();
+    foot.replaceChildren();
+    return;
+  }
+
+  // What the whole thing is for. The task name becomes the heading the agent
+  // reads first, so it is asked for separately rather than guessed at.
+  const about = put(pane, "div", "about");
+  const boxes = [
+    putField(about, "task", "Task", state.review.task,
+             "a short name: cleanup, security analysis", 1),
+    putField(about, "overall", "What to do", state.review.overall,
+             "what to do at each location, and what to do with the result", 3),
+  ];
+
+  for (const { one, at } of found) {
+    const path = one.anchor.split("\n")[0];
+    const where = placeOf(one.anchor);
+    const node = put(pane, "div", "spot");
+    const head = put(node, "div", "where");
+    const go = put(head, "button", "crumb", where);
+    go.type = "button";
+    go.title = "open " + path;
+    go.addEventListener("click", () => goToComment(path));
+    // The same dispatch every other place uses: the box if it is being
+    // written, the comment if it is not. A comment always exists here, so the
+    // `+` branch cannot be reached.
+    const shown = putReview(node, one.anchor, one.quoted, "");
+    if (state.writing !== one.anchor) {
+      if (one.quoted) put(shown, "div", "quoted", one.quoted);
+      const drop = put(shown, "button", "link", "delete");
+      drop.type = "button";
+      drop.addEventListener("click", () => writeComment(one.anchor, one.quoted, ""));
+    }
+    const button = put(list, "button");
+    button.type = "button";
+    button.title = path;
+    putName(button, where, at);
+    button.addEventListener("click",
+                            () => node.scrollIntoView({ block: "start" }));
+  }
+
+  // The message itself, not a description of it. This is where a person reads
+  // what is about to be pasted into their terminal, and part of it is text an
+  // agent wrote, so send comes under it rather than beside it: read, then
+  // send, in that order down the page. It cannot be edited here — one text,
+  // and one place it comes from.
+  put(pane, "div", "sofar", "what the agent will be sent");
+  const preview = put(pane, "pre", "reviewtext", reviewText(comments));
+  putSubmit(put(pane, "div", "buttons"));
+
+  // The boxes are wired once the preview exists, so each keystroke writes to
+  // the node this draw made rather than going looking for it.
+  for (const area of boxes) {
+    area.addEventListener("input", () => {
+      state.review[area.dataset.which] = area.value;
+      keepReview();
+      preview.textContent = reviewText();
+    });
+  }
+
+  note.replaceChildren();
+  put(note, "span", null, comments.length
+      + (comments.length === 1 ? " comment" : " comments"));
+}
+
+// One of the two boxes at the top. They are the only editable things on the
+// tab, so they share their shape.
+function putField(parent, which, label, value, hint, rows) {
+  const wrap = put(parent, "label", "field");
+  put(wrap, "span", "fieldname", label);
+  const area = put(wrap, "textarea");
+  area.value = value;
+  area.placeholder = hint;
+  area.rows = rows;
+  area.spellcheck = false;
+  area.dataset.which = which;
+  return area;
+}
+
+function putSubmit(foot) {
   const session = current();
-  const send = $("reviewsend");
-  send.disabled = !(session && session.pane);
-  $("reviewwhy").textContent = send.disabled
-    ? "this session is not running in tmux, so there is nowhere to send it" : "";
-  if (!box.open) box.showModal();
+  const send = put(foot, "button", "verb submit", "send to the agent");
+  send.type = "button";
+  send.disabled = !(session && session.pane) || !state.review.comments.length;
+  send.addEventListener("click", submitReview);
+  if (!state.review.comments.length) {
+    put(foot, "div", "why", "nothing to send yet");
+  } else if (send.disabled) {
+    put(foot, "div", "why", "this session is not running in tmux, so there is"
+        + " nowhere to send it");
+  }
+  // Starting over. Two presses, because there is no undo and a review is
+  // half an hour of someone's reading. The first press only relabels the
+  // button, in place: redrawing the whole tab to change one word would take
+  // the reader's cursor and their place on the page with it.
+  let armed = false;
+  const drop = put(foot, "button", "link", "delete this review");
+  drop.type = "button";
+  drop.addEventListener("click", () => {
+    if (!armed) {
+      armed = true;
+      drop.textContent = "really delete it?";
+      return;
+    }
+    state.review = blankReview();
+    state.writing = null;
+    keepReview();
+    redrawCode();
+  });
+}
+
+// What this tab is drawn from — and only what can change *without* going
+// through `redrawCode`, which clears the key itself. That is the session, and
+// whether it still has a pane for the send button to be sent to.
+//
+// The two boxes are deliberately not in here. Keying on whether they held
+// text meant the first character typed into an empty one flipped the key, so
+// the next unrelated `draw()` — the find box has two — rebuilt the pane and
+// took the box being typed in with it.
+function reviewKey() {
+  return [state.chosen, (current() || {}).pane || "", state.find].join("\n");
+}
+
+// Open the file a comment is about, on the tab that shows whole files.
+function goToComment(path) {
+  chooseFile(path);
+  // Not just `goTo`: the file may sit under a closed directory or behind a
+  // filter, and then the list has nothing to move to. `revealInTree` opens
+  // the way and clears the box.
+  revealInTree(path);
+  showTab("files");
 }
 
 async function submitReview() {
   const id = state.chosen;
   const answer = await tell(id, "send", { text: reviewText() });
   if (!answer || answer.error) {
-    $("reviewwhy").textContent = (answer && answer.error) || "it was not sent";
+    said({ error: (answer && answer.error) || "it was not sent" });
     return;
   }
   const session = current();
-  $("review").close();
-  state.review = [];
-  state.overall = "";
+  state.review = blankReview();
+  state.writing = null;
   keepReview();
   redrawCode();
   // Claude Code queues what arrives mid-turn, so a review sent to a working
@@ -6438,14 +6556,13 @@ async function submitReview() {
     : "review sent" });
 }
 
-// It appears with the first comment and carries the count, so "is there a
-// review waiting" is answered by whether the button is there at all.
-function drawReviewButton(side) {
-  if (!state.review.length) return;
-  const button = put(side, "button", "verb submit",
-                     "submit review · " + state.review.length);
-  button.type = "button";
-  button.addEventListener("click", showReview);
+// The tab says how many comments are waiting, the way the Diff tab says how
+// much has changed. Without it a review written and left would be invisible.
+function drawReviewCount() {
+  const badge = $("reviewcount");
+  const many = state.review.comments.length;
+  badge.hidden = !many;
+  badge.textContent = String(many);
 }
 
 function drawDiffCount() {
@@ -6465,11 +6582,15 @@ const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0 },
   files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true },
+  // No `load`: a review is written in this browser, so there is nothing to
+  // fetch. `load()` draws for a tab that says so, which is the half an empty
+  // loader forgot — and then switching here left the page on the tab before.
+  review: { draw: drawReview, load: null, poll: 0, splits: true },
 };
 
 // Which tab each number key picks. A key for a tab that is not built yet does
 // nothing, because showTab only accepts a name TABS knows.
-const TAB_KEYS = ["transcript", "files", "diff"];
+const TAB_KEYS = ["transcript", "files", "diff", "review"];
 
 function draw() {
   const box = $("content");
@@ -6537,7 +6658,7 @@ function choose(id) {
   state.diff = null;
   recallReview(id);
   state.writing = null;
-  state.marks = new Map();
+  drawReviewCount();
   state.diffRaw = "";
   state.diffAt += 1;
   drawDiffCount();          // the last session's counts are not this one's
@@ -6571,7 +6692,8 @@ async function ask(id, what, query, raw) {
 async function load() {
   if (!state.chosen) { draw(); return; }
   try {
-    await TABS[state.tab].load();
+    const fetcher = TABS[state.tab].load;
+    if (fetcher) await fetcher(); else draw();
   } finally {
     repoll();
   }
@@ -6749,7 +6871,7 @@ document.addEventListener("keydown", (press) => {
   switch (press.key) {
     case "/": $("find").focus(); break;
     case "f": $("pick").focus(); break;
-    case "r": showReview(); break;
+    case "r": showTab("review"); break;
     case "Enter": jumpToPane(); break;
     case "s":
       if ($("sendbar").hidden) return;
@@ -6779,15 +6901,6 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
-$("reviewsend").addEventListener("click", submitReview);
-$("reviewstop").addEventListener("click", () => $("review").close());
-// The one thing in the preview you can type into. It goes into the message as
-// you write, so what is shown is always what would be sent.
-$("overall").addEventListener("input", (typed) => {
-  state.overall = typed.target.value;
-  $("reviewtext").textContent = reviewText();
-  keepReview();
-});
 $("bell").addEventListener("click", () => { toggleNotifications(); });
 
 async function jumpToPane() {
