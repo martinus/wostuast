@@ -208,6 +208,10 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   the rows on screen between two spacers; a redraw costs 5 ms. **Below that
   length nothing changes**, so an ordinary file keeps the browser's own find
   and a copy of the whole thing, and the page says which of the two you got.
+- **`BIG_LINES` and `CODE_WHOLE` answer one question in two shapes** (PLAN
+  4.8.3). The Diff tab closes a long file; the Files tab windows one. A diff
+  stacks many files of differing height in one pane, so it has no grid for a
+  scrollbar to be read against. Do not quietly make either into the other.
 - **`CODE_H` is the row height in pixels and `.dlines` must set the same
   number.** A grid the scrollbar is read against cannot be `line-height: 1.65`.
   `.code.windowed .dlines` drops its padding for the same reason.
