@@ -39,11 +39,19 @@ def test_the_diff_colours_what_changed(repo_page):
         try:
             show_tab(page, "diff")
             assert page.locator(".dline.added").count() >= 2
-            # The numbers come first in the row; `.dtext` is the line itself.
+            # `.dtext` is the line itself; the marker beside it is its own
+            # span, so what the highlighter is given is exactly the line.
             added = page.eval_on_selector_all(
                 ".dline.added .dtext", "els => els.map(e => e.textContent)")
             assert any("second line" in line for line in added)
-            assert all(line.startswith("+") for line in added)
+            marks = page.eval_on_selector_all(
+                ".dline.added .sign", "els => els.map(e => e.textContent)")
+            assert marks and all(mark == "+" for mark in marks)
+            assert len(marks) == len(added)
+            # It is still copied with the diff, unlike the numbers.
+            assert page.eval_on_selector(
+                ".dline.added .sign", "el => getComputedStyle(el).userSelect"
+            ) != "none"
         finally:
             browser.close()
 
@@ -86,8 +94,9 @@ def test_an_untracked_file_opens_as_one_added_block(repo_page):
             block = page.locator(".dfile:has(.what:text-is('untracked'))")
             assert block.count() == 1
             assert block.locator(".path").inner_text() == "NOTES.md"
-            first = block.locator(".dline.added .dtext").first.inner_text()
-            assert first == "+# Notes"
+            row = block.locator(".dline.added").first
+            assert row.locator(".sign").inner_text() == "+"
+            assert row.locator(".dtext").inner_text() == "# Notes"
             assert block.locator(".dline.removed").count() == 0
             # It is numbered and lined up like every other block. Nothing was
             # removed, so the old side's column stays empty all the way down.

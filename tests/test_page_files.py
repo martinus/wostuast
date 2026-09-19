@@ -11,6 +11,7 @@ import pytest
 
 import conftest
 from browser import (
+    code_text,
     skip_without_browser,
     sync_playwright,
     open_page,
@@ -43,7 +44,7 @@ def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(700)
             assert page.locator(".filebody .prose").count() == 0
-            assert "print(1)" in page.locator(".filebody pre.plain").inner_text()
+            assert "print(1)" in code_text(page)
         finally:
             browser.close()
 
@@ -280,8 +281,9 @@ def test_code_is_painted(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
-            assert page.locator(".filebody pre.plain .hljs-keyword").inner_text() == "print"
-            assert page.locator(".filebody pre.plain").inner_text() == "print(1)"
+            assert page.locator(".filebody .code .hljs-keyword").inner_text() == "print"
+            # The stub paints the first line; the rest of the file follows it.
+            assert code_text(page) == "print(1)\nprint(2)"
         finally:
             browser.close()
 
@@ -296,7 +298,7 @@ def test_the_page_does_not_trust_the_highlighter_either(repo_page):
             open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
                             " + '<img src=x onerror=\"window.pwned=1\">'"
                             " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
-            body = page.locator(".filebody pre.plain")
+            body = page.locator(".filebody .code")
             assert page.evaluate("window.pwned") is None
             assert body.locator("img").count() == 0
             assert body.locator(".row").count() == 0
@@ -304,7 +306,7 @@ def test_the_page_does_not_trust_the_highlighter_either(repo_page):
             assert body.locator("#n").count() == 0
             # the text survives, only the dressing is gone
             assert body.locator(".hljs-string").inner_text() == "b"
-            assert body.inner_text() == "ab"
+            assert code_text(page) == "ab\nprint(2)"
         finally:
             browser.close()
 
@@ -315,7 +317,7 @@ def test_a_sublanguage_class_survives(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
-            assert page.locator(".filebody pre.plain .hljs-title.function_").count() == 1
+            assert page.locator(".filebody .code .hljs-title.function_").count() == 1
         finally:
             browser.close()
 
@@ -330,9 +332,9 @@ def test_no_highlighter_still_shows_the_file(repo_page):
             page.evaluate("hljsAsked = Promise.resolve(null);")
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(400)
-            assert page.locator(".filebody pre.plain").inner_text().strip() == (
+            assert code_text(page).strip() == (
                 "print(1)\nprint(2)")
-            assert page.locator(".filebody pre.plain span").count() == 0
+            assert page.locator(".filebody .code .dtext span").count() == 0
         finally:
             browser.close()
 
@@ -368,7 +370,7 @@ def test_a_file_that_is_not_markdown_has_no_box(repo_page):
             show_tab(page, "files")
             page.click(".filelist button:has-text('code.py')")
             page.wait_for_timeout(400)
-            look = page.eval_on_selector(".filebody pre.plain", """el => {
+            look = page.eval_on_selector(".filebody .code", """el => {
               const seen = getComputedStyle(el);
               return [seen.borderTopWidth, seen.backgroundColor];
             }""")
@@ -621,16 +623,17 @@ def test_a_file_is_numbered_beside_the_code_not_inside_it(repo_page):
         try:
             show_tab(page, "files")
             page.click(".filelist button:has-text('code.py')")
-            page.wait_for_selector(".filebody .code .nums")
-            assert page.locator(".filebody .nums").inner_text() == "1\n2\n3\n4"
-            assert page.locator(".filebody pre.plain .ln").count() == 0
-            # both columns share a line height, so they stay level
-            look = page.eval_on_selector_all(
-                ".filebody .code pre",
-                "els => els.map(e => getComputedStyle(e).lineHeight)")
-            assert look[0] == look[1]
+            page.wait_for_selector(".filebody .code .dline")
+            got = page.eval_on_selector_all(
+                ".filebody .code .dline .ln", "els => els.map(e => e.textContent.trim())")
+            assert got == ["1", "2", "3", "4"]
+            # The number is beside the line, not part of it, so copying the
+            # code does not take it.
+            assert page.eval_on_selector_all(
+                ".filebody .code .dline .dtext",
+                "els => els.map(e => e.textContent)") == ["one", "two", "three", "four"]
             assert page.eval_on_selector(
-                ".filebody .nums", "el => getComputedStyle(el).userSelect"
+                ".filebody .code .ln", "el => getComputedStyle(el).userSelect"
             ) == "none"
         finally:
             browser.close()

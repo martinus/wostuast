@@ -4064,19 +4064,13 @@ body:not(.show-thinking) .thinking { display: none; }
 .filelist button.chosen .lit { color: var(--needs); }
 /* No box. A file that is not Markdown is the whole page here, not a quotation
    inside a document that does not exist, and the border made a shell script
-   look like one. The gutter beside it shares this ramp, because the two only
-   stay level while they agree on it. */
-.filebody pre.plain, .code pre.nums {
-  margin: 0; padding: 0; font-family: var(--mono); font-size: 12.5px;
-  line-height: 1.6; white-space: pre;
-}
-.filebody pre.plain { color: var(--code-ink); overflow-x: auto;
-  flex-grow: 1; min-width: 0; }
-.code { display: flex; gap: 14px; align-items: flex-start; }
-.code pre.nums { flex-shrink: 0; text-align: right; }
+   look like one. It is drawn as diff rows, so it shares their ramp too. */
+.code { color: var(--code-ink); font-size: 12.5px; }
 /* Which line this was. Numbers are not the content, here or in a diff, so
    they are faint and they are not copied with it. */
-.code pre.nums, .dline .ln { color: var(--ink-faint); user-select: none; }
+.dline .ln { color: var(--ink-faint); user-select: none; }
+.dline.plain { color: var(--code-ink); }
+.dline .sign { user-select: auto; }
 /* Our colours, not the highlighter's: its stylesheets are not fetched. */
 .hljs-comment, .hljs-quote { color: var(--syn-com); font-style: italic; }
 .hljs-keyword, .hljs-literal, .hljs-selector-tag,
@@ -5080,6 +5074,84 @@ function paintedInto(holder, marked_up) {
 
 // The text is on the page before this returns, so a slow or missing CDN shows
 // the file at once and paints it a moment later, or never.
+// The highlighted file, cut into one fragment per line.
+//
+// The highlighter is given the whole file, because a block comment or a
+// multi-line string only makes sense whole — painting line by line gets those
+// wrong. But the page shows one row per line, so the painted result has to be
+// cut up afterwards. A span that crosses a newline is closed at the end of the
+// line and opened again on the next, which is what `open` is for.
+//
+// It walks the scrubbed fragment, never a string of HTML: whatever the
+// highlighter returned has already been through `paintedInto`.
+function cutIntoLines(painted) {
+  const lines = [document.createDocumentFragment()];
+  const open = [];                       // the spans we are inside, outermost first
+  let holder = lines[0];
+
+  function nextLine() {
+    const line = document.createDocumentFragment();
+    lines.push(line);
+    let at = line;
+    for (const span of open) {           // the same nesting, reopened
+      const copy = document.createElement("span");
+      copy.className = span.className;
+      at.appendChild(copy);
+      at = copy;
+    }
+    return at;
+  }
+
+  function walk(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const pieces = child.data.split("\n");
+        holder.appendChild(document.createTextNode(pieces[0]));
+        for (let i = 1; i < pieces.length; i += 1) {
+          holder = nextLine();
+          holder.appendChild(document.createTextNode(pieces[i]));
+        }
+        continue;
+      }
+      const copy = document.createElement("span");
+      copy.className = child.className;
+      holder.appendChild(copy);
+      open.push(child);
+      holder = copy;
+      walk(child);
+      open.pop();
+      // Back out one level, on whichever line we have ended up on.
+      holder = holder.parentNode;
+    }
+  }
+
+  walk(painted);
+  return lines;
+}
+
+// Paint a file that is drawn as rows. The text is on the page before this
+// returns, so a slow or missing CDN costs the reader nothing but colour.
+async function paintLines(box, path, text, sniffed) {
+  const want = box.dataset.path;
+  const lib = await hljsReady();
+  if (!lib || !box.isConnected || box.dataset.path !== want) return;
+  const language = languageOf(path, text, sniffed);
+  if (!language || !lib.getLanguage(language)) return;
+  let lines;
+  try {
+    const done = lib.highlight(text, { language, ignoreIllegals: true });
+    lines = cutIntoLines(paintedInto(document.createElement("template"),
+                                     done.value));
+  } catch (error) {
+    return;                     // a language that throws leaves the plain text
+  }
+  const rows = box.querySelectorAll(".dline > .dtext");
+  // Only when the two agree. A highlighter that returned a different number of
+  // lines than the file has would otherwise put the colour on the wrong ones.
+  if (rows.length !== lines.length) return;
+  rows.forEach((row, at) => row.replaceChildren(lines[at]));
+}
+
 async function paint(node, path, text, sniffed) {
   const want = node.dataset.path;
   const lib = await hljsReady();
@@ -5708,6 +5780,10 @@ function drawFiles(box) {
   }
 
   const same = (box.dataset.bodyKey || "").split("\n")[0] === String(state.file);
+  // A comment box holds what the reader is typing, and the file is read again
+  // whenever the agent saves. Rebuilding under an open box would take the text
+  // with it. The box closes, and then the file catches up.
+  if (state.writing !== null && box.dataset.bodyKey) return;
   if (!fresh(box, "bodyKey", state.file + "\n" + state.fileMtime)) return;
   const place = same ? pane.scrollTop : 0;   // the same file, read again
   pane.replaceChildren();
@@ -5727,18 +5803,16 @@ function drawFiles(box) {
   } else if (MARKDOWN.test(state.file)) {
     markdown(pane, state.fileText);
   } else {
-    // A gutter of its own, beside the code rather than inside it. Numbers in
-    // the same element would be copied with the code, and they would have to
-    // survive the highlighter rewriting everything between them.
-    const both = put(pane, "div", "code");
-    const lines = state.fileText.replace(/\n$/, "").split("\n");
-    put(both, "pre", "nums",
-        lines.map((one, at) => at + 1).join("\n"));
-    // The text goes up first and the colour arrives after, so a CDN that is
-    // slow or gone costs the reader nothing but paint.
-    const code = put(both, "pre", "plain", state.fileText);
+    // One row per line, through the same renderer the diff uses, so a file
+    // gets the numbers, the `+` and the comments the diff already had — and a
+    // comment on line 42 lands on the same anchor whichever tab wrote it.
+    const code = put(pane, "div", "code");
     code.dataset.path = state.file;
-    paint(code, state.file, state.fileText, state.fileLang);
+    // The rows and the highlighter are given the very same text, so the two
+    // can never disagree about how many lines there are.
+    const body = state.fileText.replace(/\n$/, "");
+    fillDiffFile(code, asLines(state.file, body));
+    paintLines(code, state.file, body, state.fileLang);
   }
   if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
 }
@@ -5971,9 +6045,12 @@ const HUNK_AT = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 function walkHunks(one, onHunk, onLine) {
   for (const hunk of one.hunks || []) {
     const where = onHunk ? onHunk(hunk) : null;
+    // A file read as lines carries no `@@` header, and its first line is line
+    // one. A diff hunk whose header will not parse is no better off starting
+    // at zero than at one.
     const found = HUNK_AT.exec(hunk.header);
-    let old = found ? Number(found[1]) : 0;
-    let now = found ? Number(found[2]) : 0;
+    let old = found ? Number(found[1]) : 1;
+    let now = found ? Number(found[2]) : 1;
     for (const line of hunk.lines) {
       onLine(line, old, now, where);
       if (line.kind !== "added") old += 1;
@@ -5982,23 +6059,33 @@ function walkHunks(one, onHunk, onLine) {
   }
 }
 
+// `plain` is a line of a file being read rather than a line of a diff: no
+// marker in front of it, one number rather than two, and no tint. The Files
+// tab draws through here for it, so a file gets the numbers, the `+` and the
+// comments the diff already had, and a comment on line 42 lands on the same
+// anchor whichever tab it was written in.
+const SIGN = { added: "+", removed: "\u2212", context: " ", plain: "" };
+
 function fillDiffFile(body, one) {
-  const sign = { added: "+", removed: "\u2212", context: " " };
   walkHunks(one, (hunk) => {
-    put(body, "div", "hunk", hunk.header);
+    if (hunk.header) put(body, "div", "hunk", hunk.header);
     return put(body, "div", "dlines");
   }, (line, old, now, lines) => {
       const row = put(lines, "div", "dline " + line.kind);
-      // Both numbers in one span, lined up with spaces. The row is already
+      // The numbers in one span, lined up with spaces. The row is already
       // `white-space: pre` in a monospace face, so they stay in column
       // without a flex box and three elements around every line — a diff of
       // twelve thousand lines is the difference between 24,000 nodes and
       // 84,000. A removed line has no number on the new side and an added one
       // has none on the old side, so that side is left blank.
-      put(row, "span", "ln",
-          (line.kind === "added" ? "" : String(old)).padStart(5) +
-          (line.kind === "removed" ? "" : String(now)).padStart(6) + "  ");
-      put(row, "span", "dtext", sign[line.kind] + line.text);
+      put(row, "span", "ln", line.kind === "plain"
+          ? String(now).padStart(6) + "  "
+          : (line.kind === "added" ? "" : String(old)).padStart(5) +
+            (line.kind === "removed" ? "" : String(now)).padStart(6) + "  ");
+      // The marker is its own span so that what follows it is exactly the
+      // line, which is what the highlighter is given and what it paints.
+      if (SIGN[line.kind]) put(row, "span", "sign", SIGN[line.kind]);
+      put(row, "span", "dtext", line.text);
       const anchor = lineAnchor(one.path, line, old, now);
       if (commentAt(anchor) || state.writing === anchor) {
         putReview(put(lines, "div", "onLine"), anchor, line.text, "plus");
@@ -6006,6 +6093,13 @@ function fillDiffFile(body, one) {
         putReview(row, anchor, line.text, "plus");
       }
   });
+}
+
+// One file as lines, in the shape `fillDiffFile` wants.
+function asLines(path, text) {
+  const lines = text === "" ? [] : text.split("\n");
+  return { path, hunks: [{ header: "",
+    lines: lines.map((one) => ({ kind: "plain", text: one })) }] };
 }
 
 // --- the review ---------------------------------------------------------------
@@ -6131,13 +6225,14 @@ function writeComment(anchor, quoted, note) {
   }
   state.writing = null;
   keepReview();
-  redrawDiff();
+  redrawCode();
 }
 
-// The diff is rebuilt from `state.diff`, which the poll replaces every couple
-// of seconds. `fresh` holds the rebuild to when that answer changes, so a
-// comment added or removed has to say so itself.
-function redrawDiff() {
+// The Files and Diff tabs are both rebuilt from an answer the poll replaces
+// every couple of seconds, and `fresh` holds the rebuild to when that answer
+// changes — so a comment added or removed has to say so itself. They share the
+// one content box, so this redraws whichever is open.
+function redrawCode() {
   const box = $("content");
   box.dataset.bodyKey = "";
   draw();
@@ -6161,7 +6256,7 @@ function putComment(parent, one) {
   edit.type = "button";
   edit.addEventListener("click", () => {
     state.writing = one.anchor;
-    redrawDiff();
+    redrawCode();
   });
   return node;
 }
@@ -6180,9 +6275,9 @@ function putCommentBox(parent, anchor, quoted) {
   save.addEventListener("click", () => writeComment(anchor, quoted, area.value));
   const stop = put(row, "button", "link", "cancel");
   stop.type = "button";
-  stop.addEventListener("click", () => { state.writing = null; redrawDiff(); });
+  stop.addEventListener("click", () => { state.writing = null; redrawCode(); });
   area.addEventListener("keydown", (press) => {
-    if (press.key === "Escape") { state.writing = null; redrawDiff(); }
+    if (press.key === "Escape") { state.writing = null; redrawCode(); }
   });
   requestAnimationFrame(() => { area.focus(); area.select(); });
   return form;
@@ -6200,7 +6295,7 @@ function putReview(parent, anchor, quoted, cls) {
   add.title = "comment here";
   add.addEventListener("click", () => {
     state.writing = anchor;
-    redrawDiff();
+    redrawCode();
   });
   return add;
 }
@@ -6269,7 +6364,7 @@ async function submitReview() {
   state.review = [];
   state.overall = "";
   keepReview();
-  redrawDiff();
+  redrawCode();
   // Claude Code queues what arrives mid-turn, so a review sent to a working
   // agent is not lost — it is read when the turn ends. Say so, because from
   // here it looks like nothing happened.

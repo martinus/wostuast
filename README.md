@@ -315,10 +315,15 @@ line has none on the new side and an added one has none on the old side — and
 those numbers are not copied with the diff either. git has no diff for an untracked file, so picking one shows it
 as a single added block: every line in it is new.
 
-**Reviewing a diff.** Hover a diff line and a `+` appears in the gutter.
+**Reviewing.** Hover any line, on the Diff tab or in a file you are reading,
+and a `+` appears in the gutter.
 Click it, write what you want changed, and save. A file takes a comment of its
 own at the end of its diff, for what is about the file rather than a line.
 Clearing a comment and saving is how it goes away.
+
+A comment belongs to a line, not to a tab: one left on line 42 of the diff is
+there on line 42 of the file, and the other way round. So you can review a
+change through its diff, or read a whole file and comment anywhere in it.
 
 The comments collect into a review. "Submit review" under the file list — it
 appears with the first comment and counts them — opens a preview of the exact

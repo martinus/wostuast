@@ -427,8 +427,28 @@ it does not track, but every line in it is new, so selecting one reads the
 file through the same route the Files tab uses and shows it as one added
 block. That is what the file is: an addition nobody has staged.
 
-Syntax highlighting applies to diff lines as well, under the added and
-removed tints. Large diffs: collapse files over 500 lines, expand on click.
+Large diffs: collapse files over 500 lines, expand on click. Diff lines are
+not painted; only a file being read is. The marker is its own span, so the
+same could be done here, but it has not been.
+
+### 4.8.0 One renderer for a line
+
+The Files tab and the Diff tab draw a line through `fillDiffFile`, and an
+untracked file too. A file being read is a hunk of `plain` lines: no marker in
+front, one number rather than two, no tint. Three ways to draw a line would be
+three ways for them to drift apart.
+
+It is what makes a review work in both tabs. A comment is anchored by path,
+side and line, so a note left on line 42 of the diff is the same note on line
+42 of the file, and both tabs show it.
+
+The highlighter is given the **whole file** and its answer is cut into lines
+afterwards, by `cutIntoLines`. A block comment or a long string only makes
+sense whole; painting each line on its own gets them wrong. A span that
+crosses a newline is closed at the end of the line and opened again on the
+next. The cut walks the scrubbed fragment, never a string of HTML, and if it
+ever returns a different number of lines than the file has, nothing is
+painted — colour on the wrong lines is worse than none.
 
 ### 4.8.1 What language is this?
 

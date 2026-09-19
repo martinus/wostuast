@@ -10,6 +10,8 @@ import pytest
 
 import conftest
 from browser import (
+    open_page,
+    code_text,
     skip_without_browser,
     sync_playwright,
     fresh_context,
@@ -161,7 +163,11 @@ def test_the_review_belongs_to_the_session_it_is_about(repo_page):
             comment_on_first_line(page, "about this session")
             page.wait_for_function("state.review.length === 1")
             page.evaluate("choose('someone-else')")
-            assert page.evaluate("state.review.length") == 0
+            seen = page.evaluate(
+                """() => ({n: state.review.length, chosen: state.chosen,
+                           keys: Object.keys(localStorage)
+                             .filter((k) => k.startsWith("wostuast-review-"))})""")
+            assert seen["n"] == 0, seen
         finally:
             browser.close()
 
@@ -474,7 +480,7 @@ def test_a_comment_whose_line_changed_says_so(repo_page):
                 }
               }
               state.diffAt += 1;
-              redrawDiff();
+              redrawCode();
             }""")
             page.wait_for_selector(".comment.stale")
             shown = page.locator(".comment.stale").inner_text()
@@ -494,7 +500,7 @@ def test_a_comment_with_nowhere_left_to_sit_is_still_shown(repo_page):
               for (const section of state.diff.sections) section.files = [];
               state.diff.untracked = [];
               state.diffAt += 1;
-              redrawDiff();
+              redrawCode();
             }""")
             page.wait_for_selector(".diffhead.gone")
             assert page.locator(".comment.stale").count() == 1
@@ -521,5 +527,95 @@ def test_a_review_for_a_session_that_is_gone_is_swept_up(repo_page):
                 ".filter((k) => k.startsWith('wostuast-review-'))")
             assert len(kept) == 1
             assert "someone-else" not in kept[0]
+        finally:
+            browser.close()
+
+
+# --- reviewing from the Files tab --------------------------------------------
+
+#: One highlighter span that opens on line 2 and closes on line 4, as a real
+#: one returns for a triple-quoted string. The point of painting the file whole.
+QUOTE = chr(39) * 3
+PAINTED = ("a = 1\n"
+           '<span class="hljs-string">' + QUOTE + "\n"
+           "still inside\n"
+           + QUOTE + "</span>\n"
+           "b = 2")
+
+
+def open_file(play, where, name="code.py"):
+    """The Files tab with a file open, drawn as rows."""
+    browser, page = open_page(play, where)
+    show_tab(page, "files")
+    page.click(f".filelist button:has-text('{name}')")
+    page.wait_for_selector(".filebody .code .dline")
+    return browser, page
+
+
+def test_any_line_of_any_file_can_be_commented_on(repo_page):
+    """Not only a line that happens to be in the diff."""
+    with sync_playwright() as play:
+        browser, page = open_file(play, repo_page)
+        try:
+            rows = page.locator(".filebody .code .dline")
+            assert rows.count() >= 2
+            rows.nth(1).locator(".plus").click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "the second line, from the file")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".filebody .comment")
+            # Anchored to the line, on the side a diff comment would use.
+            anchor = page.evaluate("state.review[0].anchor")
+            assert anchor.startswith("code.py\n")
+            assert anchor.endswith("\nnew\n2")
+        finally:
+            browser.close()
+
+
+def test_a_comment_made_on_the_diff_shows_in_the_file(repo_page):
+    """One anchor, so the two tabs are two views of the same review."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            page.evaluate(
+                "([one]) => { state.review = [one]; }",
+                [{"anchor": "code.py\nnew\n2", "quoted": "print(2)",
+                  "note": "written on the diff tab"}])
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_selector(".filebody .comment")
+            assert "written on the diff tab" in page.locator(
+                ".filebody .comment").inner_text()
+        finally:
+            browser.close()
+
+
+def test_the_whole_file_is_highlighted_then_cut_into_lines(repo_page):
+    """The point of doing it this way. A block comment or a long string only
+    makes sense whole, so the highlighter is given the whole file and its
+    answer is cut up afterwards: a span that crosses a newline is closed at
+    the end of the line and opened again on the next."""
+    root, _ = repo_page
+    (root / "code.py").write_text(
+        "a = 1\n" + QUOTE + "\nstill inside\n" + QUOTE + "\nb = 2\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.evaluate(
+                "([value]) => { hljsAsked = Promise.resolve("
+                "{ getLanguage: () => true, highlight: () => ({ value }) }); }",
+                [PAINTED])
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_selector(".filebody .code .hljs-string")
+            # One span per line it covers, not one span swallowing the rows.
+            spans = page.eval_on_selector_all(
+                ".filebody .code .dline .hljs-string",
+                "els => els.map(e => e.textContent)")
+            assert spans == [QUOTE, "still inside", QUOTE]
+            assert code_text(page) == (
+                "a = 1\n" + QUOTE + "\nstill inside\n" + QUOTE + "\nb = 2")
         finally:
             browser.close()

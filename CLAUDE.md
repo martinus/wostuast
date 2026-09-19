@@ -199,6 +199,17 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   often the only event a session ever sends — resume one and leave it and
   nothing follows until you type. `mark_idle` settles it to `done` after
   `STARTING_MAX`, and an idle notification says the same sooner.
+- **One renderer for a line, in `fillDiffFile`.** The Files tab, the Diff tab
+  and an untracked file all go through it; a file being read is a hunk of
+  `plain` lines. That is what makes a review work in both tabs — line 42 has
+  the same anchor either way — and why there are not three ways to draw a line
+  that drift apart.
+- **The highlighter gets the whole file; `cutIntoLines` cuts the answer up.**
+  A block comment or a long string only makes sense whole, so painting line by
+  line gets them wrong. A span crossing a newline is closed and reopened on the
+  next line. The cut walks the scrubbed fragment, never a string of HTML, and
+  a line count that disagrees with the file paints nothing: colour on the wrong
+  lines is worse than none.
 - **What language is this? Three questions, most certain first** (PLAN 4.8.1):
   the name, then the shebang, then `file` on the daemon — asked only when the
   first two came up empty, so a suffix never pays for a subprocess. `file` is
