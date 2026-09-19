@@ -27,7 +27,7 @@ Nothing else writes to a terminal. Nothing owns the agent process.
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
 | `PLAN.md` | Goals, non-goals, design, milestones. |
 | `README.md` | What a user reads. Keep in step with the commands. |
-| `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, plus one job with a browser. Both run `pytest -q`; neither names a test file, and it should stay that way — naming one broke the browser job the moment a file was renamed. |
+| `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, plus one job with a browser. Both run `pytest -q -n auto`; neither names a test file, and it should stay that way — naming one broke the browser job the moment a file was renamed. |
 
 ### Finding code in `wostuast`
 
@@ -84,11 +84,18 @@ animation for four milestones while a second one was added on top of it;
 ## How to work here
 
 ```
-pytest -q                          # ~3 min. Before every commit.
+pytest -q -n auto                   # 62 s. Before every commit. Needs pytest-xdist.
+pytest -q                           # 190 s, same result, if xdist is not installed
 pytest tests/test_page_review.py -q # the subject you are changing. Do this first.
-pytest tests/test_state.py -q      # no browser, <1 s
+pytest tests/test_state.py -q       # no browser, under a second
 ./wostuast doctor / ls / serve
 ```
+
+Most of the suite drives a real browser, so it waits far more than it computes:
+four workers cut it from 190 s to 62 s, and the tests are safe in parallel —
+every daemon binds port 0, every fixture has its own `tmp_path`, and each worker
+launches a Chromium of its own. More workers than cores starts to time out
+rather than go faster. CI runs `-n auto` in both jobs.
 
 Throwaway home, never your own:
 

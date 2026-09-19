@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# The suite is 460 tests and most of them drive a real browser, so it is
+# wall-clock bound on waiting rather than on CPU: 190 s in one process, 62 s
+# across four. `-n auto` takes the runner's core count, which is 4 here, and
+# both jobs use it. Sharding across several jobs was the other option and is
+# slower: once the tests take a minute, a second runner's checkout, pip install
+# and browser download cost more than they save.
+env:
+  PYTEST: pytest -q -n auto
+
 jobs:
   pytest:
     runs-on: ubuntu-latest
@@ -22,10 +31,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install pytest
-        run: python -m pip install --upgrade pip pytest
+        run: python -m pip install --upgrade pip pytest pytest-xdist
 
       - name: Run the tests
-        run: pytest -q
+        run: ${{ env.PYTEST }}
 
       - name: Check that the program starts
         run: |
@@ -43,10 +52,21 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pytest and a browser
-        run: |
-          python -m pip install --upgrade pip pytest playwright
-          python -m playwright install --with-deps chromium
+      - name: Install pytest and playwright
+        run: python -m pip install --upgrade pip pytest pytest-xdist playwright
+
+      # Chromium is 170 MB over three downloads. A hit saves about twenty
+      # seconds; a miss costs nothing, because the install below fetches
+      # whatever is not already there.
+      - name: Keep the browser between runs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('.github/workflows/tests.yml') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Install the browser
+        run: python -m playwright install --with-deps chromium
 
       # The whole suite, not just the page files. Naming them here meant the
       # job broke silently the moment one was renamed, which is exactly what
@@ -54,4 +74,4 @@ jobs:
       # environment where playwright is installed, which is a different import
       # path from the matrix jobs above.
       - name: Run the tests, this time with a browser
-        run: pytest -q
+        run: ${{ env.PYTEST }}
