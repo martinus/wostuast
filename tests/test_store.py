@@ -156,15 +156,18 @@ def test_a_long_prompt_is_cut_before_it_reaches_the_page(ws, store):
     assert len(store.rows[0]["last_prompt"]) == ws.PROMPT_WIDTH
 
 
-def test_needs_you_sorts_first_with_the_longest_wait_on_top(ws, store):
-    ws.append_event(event("Stop", sid="done", ts=1005.0))
-    ws.append_event(event("PermissionRequest", sid="late", tool_name="Bash",
-                          tool_input={"command": "b"}, ts=1004.0))
-    ws.append_event(event("PermissionRequest", sid="early", tool_name="Bash",
-                          tool_input={"command": "a"}, ts=1001.0))
-    ws.append_event(event("UserPromptSubmit", sid="busy", prompt="x", ts=1006.0))
+def test_rows_come_out_by_name_whatever_the_state(ws, store):
+    """The state used to decide the order, so every tool call moved the list
+    under the reader. The name does not move."""
+    ws.append_event(event("Stop", sid="d", cwd="/w/repo/pear", ts=1005.0))
+    ws.append_event(event("PermissionRequest", sid="c", cwd="/w/repo/fig",
+                          tool_name="Bash", tool_input={"command": "b"}, ts=1004.0))
+    ws.append_event(event("PermissionRequest", sid="b", cwd="/w/repo/apple",
+                          tool_name="Bash", tool_input={"command": "a"}, ts=1001.0))
+    ws.append_event(event("SessionEnd", sid="a", cwd="/w/repo/beet", ts=1006.0))
     store.refresh(now=1010.0, alive=lambda p: True)
-    assert [r["id"] for r in store.rows] == ["early", "late", "busy", "done"]
+    # apple, fig, pear, then the ended one at the bottom however early its name.
+    assert [r["id"] for r in store.rows] == ["b", "c", "d", "a"]
 
 
 def test_a_refresh_asked_for_during_the_cool_down_is_not_lost(ws, monkeypatch):

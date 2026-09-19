@@ -75,7 +75,13 @@ late. Measured against a real session: the row still read `working` three
 seconds after the dialog was up. A tool whose first job is "who needs me?"
 cannot be twelve seconds behind, so wostuast listens for both.
 
-Nothing fires when you answer the dialog. Saying No sends no hook at all, so
+Nothing fires when you answer the dialog. Saying Yes is only visible once the
+tool finishes and `PostToolUse` arrives, so an approved `cmake --build` leaves
+the row amber for as long as the build runs. That is a gap wostuast cannot
+close from events, and it must not be papered over with a guess; Peek shows
+what the pane is really doing.
+
+Saying No sends no hook at all, so
 wostuast cannot see a denial: the session keeps `needs_you`, which is still
 true, because the agent is now waiting for you to say what to do instead. Only
 the reason on the row is older than it looks. Do not invent an event that does
@@ -157,8 +163,8 @@ One session per `session_id`. Derive state from events, in this order:
 | `PreToolUse` / `PostToolUse` | `working` | Store `last_tool` (name + short summary) |
 | `PermissionRequest` | `needs_you` | At once, as the dialog appears |
 | `PostToolUseFailure` | `working` | The tool ran and failed, was interrupted, or timed out |
-| `Notification`, permission | `needs_you` | The same thing, up to 12 s later |
-| `Notification`, idle | `needs_you` | `reason = "waiting for input"` |
+| `Notification`, permission | `needs_you` | The same thing, up to 12 s later. Dropped once the session has sent a `PermissionRequest` |
+| `Notification`, idle | unchanged | `reason = "waiting for input"` |
 | `Stop` | `done` | Agent finished its turn |
 | `SubagentStop` | unchanged | Only update `last_event` |
 | `PreCompact` | unchanged | Show a small "compacted" marker in the transcript |
@@ -168,9 +174,20 @@ One session per `session_id`. Derive state from events, in this order:
 `needs_you` clears on the next `UserPromptSubmit` or `PostToolUse` for that
 session. Show how long it has been waiting.
 
-A `Notification` means `needs_you` when its `notification_type` is
-`permission_prompt`, `idle_prompt` or `elicitation_dialog`. `auth_success` does
-not. Older Claude Code versions send no type; read the message instead.
+`needs_you` means one thing: the agent cannot go on until you answer. A
+`Notification` means it when its `notification_type` is `permission_prompt` or
+`elicitation_dialog`. `auth_success` does not, and neither does `idle_prompt`:
+that one says the turn is over and the agent sits at its prompt, which `Stop`
+already said. Nothing you do clears an idle prompt, so a row that went amber on
+it stayed amber for the rest of the day. It sets the reason and leaves the
+state alone. Older Claude Code versions send no type; read the message instead.
+
+A permission `Notification` is dropped once the session has sent a
+`PermissionRequest`, because from then on it is only ever the same news twelve
+seconds late: either the dialog is still up and the row already says so, or it
+was answered while the notification was on its way, and honouring it would
+raise the alarm again for a question that is gone. That was the bug behind
+"needs you never clears".
 
 The label of a session is its `session_name` when the status line gave one,
 else `repo/dirname`.
@@ -411,6 +428,77 @@ block. That is what the file is: an addition nobody has staged.
 Syntax highlighting applies to diff lines as well, under the added and
 removed tints. Large diffs: collapse files over 500 lines, expand on click.
 
+### 4.9 Review
+
+The Diff tab reads. A review is the reply, written where the code is.
+
+You read the diff, leave a comment on a line or on a whole file, read on,
+leave another, and press Submit when the review is finished. wostuast turns
+the comments into one message and sends it to the agent through the send verb.
+That is the GitHub review loop with the agent in the place of the author, and
+without the trip back to the terminal to retype from memory what you just
+read.
+
+**A comment is one note on one place.** A line of the diff, or a file. A line
+comment quotes its line; a file comment does not. Every comment can be edited
+and deleted until the review is submitted. There is no comment on a range of
+lines in this milestone: one line, or the whole file.
+
+**The drafts live in the browser, not in the daemon.** A review is yours until
+you submit it, and the daemon serves the same page to every browser, so a
+draft it held would be a draft everyone could read. `localStorage`, keyed by
+session, survives a reload — which a review written over ten minutes needs —
+and costs the daemon nothing. The daemon learns a review exists at the moment
+it is sent, and not before.
+
+**An anchor is the path, the side, the line number and the text of that
+line.** The agent keeps working while you read, so the diff can move under a
+half-written review. A comment whose line no longer holds the text it was
+written against is marked stale, still shows the line it quoted, and is still
+sent. Nothing is silently dropped, and nothing is silently moved onto the
+wrong line.
+
+**The preview is the message, and it is where the review is approved.** Submit
+opens a panel holding the exact text the agent will receive. The only thing
+you can type into it is the overall note, which is the review's comment on
+itself; a line comment is edited where the line is, so there is one text and
+one place it comes from. Cancel goes back with everything kept. The message is
+plain, and reads as well in a terminal as on the page:
+
+```
+Review: 4 comments on 3 files.
+
+<the overall note, when there is one>
+
+src/table.cpp:112
+> const auto n = rows.size();
+This underflows when rows is empty. Use a signed type.
+
+src/table.cpp:180
+> for (auto& r : rows) {
+Can this take a span instead?
+
+docs/PLAN.md
+Keep the heading order.
+```
+
+**A person reads every byte before it goes.** A quoted line is text an agent
+wrote, and it is about to be pasted into a terminal. The preview is where that
+is caught, which is why Submit is the only way a review leaves the page and
+why the preview cannot be skipped. It is the same rule as "never approve a
+permission prompt": the person decides.
+
+**Nothing new writes to the terminal.** Submit calls the send verb with the
+composed text. That text has newlines in it, so it travels as a bracketed
+paste and waits for the reader's own Enter, exactly as a typed message does,
+and the POST carries the token like every other one. A session with no pane
+can be reviewed but not submitted: Submit is disabled and says "not in tmux",
+the way the other verbs already do.
+
+**The review never leaves this machine.** No GitHub API, no pull request, no
+posting anywhere. It goes to the agent standing in that worktree. That is the
+whole of it.
+
 ## 5. The page
 
 One HTML page, embedded in the Python file as a string. Vanilla JavaScript.
@@ -442,8 +530,24 @@ storage, so a reload does too. A double-click on the edge puts it back.
 └──────────────┴───────────────────────────────────────────────┘
 ```
 
-Sidebar rows, top to bottom: `needs_you` first (oldest wait first), then
-`working`, `done`, `starting`, then `ended`/`dead` dimmed. Each row:
+Sidebar rows are sorted by worktree, with `ended` and `dead` last and dimmed.
+Sorting by state moved every row each time an agent started or finished a tool
+call, so the list kept shifting under the reader. Which agent needs you is said
+by the amber tint, by the counts in the top bar and by the `n` key, none of
+which need the order.
+
+By the worktree, not by the session's name: the worktree is what the row shows
+first, and it is the one thing about a session that cannot change. A name
+arrives from the status line a second after the session starts, and `/rename`
+changes it later, so a list ordered by name jumps under the reader for the
+very reason this order exists.
+
+Above the rows is a filter box. It matches the same way the Files tab does, on
+scattered letters, over the worktree, the session's name and the branch, so
+`ofd` finds `oans/fastduck`. The counts in the top bar stay about every
+session: "who needs me" must not change because you typed in a box, so they
+are drawn before the check that asks whether the shown rows moved — behind it,
+a session the filter hides could go amber and reach nothing. Each row:
 
 - line 1: state dot, `repo/dirname` in bright monospace, state word
 - line 2: the session's own name, smaller and muted, when the status line
@@ -515,9 +619,27 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
   icons except a few inline stroke SVGs, no emoji anywhere.
 - Motion: a row that changes state fades its dot (200 ms). A new transcript
   block slides in 4 px (150 ms). The needs-you ring pulses slowly (2 s).
-  Nothing else moves.
+  Nothing else moves. All three need the node to outlive the change, so the
+  sidebar keeps its rows and fills them in again rather than building them
+  afresh, and a block slides in only where a block arrives — never on a
+  redraw, or the tab would shiver each time an agent ran a tool. One
+  `prefers-reduced-motion` block turns off all three at once. "Never on a
+  redraw" is the part that is easy to get wrong: the slide sat on `.turn`
+  itself for a long time, so the whole history slid every time the transcript
+  was rebuilt, and moving a row with `appendChild` takes it out of the
+  document and back, which can cancel the animation on it.
 - Light theme: `prefers-color-scheme: light` gets an equivalent palette on
-  `#f6f5f1`. Do it with CSS variables from the start so it is one block.
+  `#f6f5f1`. Do it with CSS variables from the start so it is one block. Every
+  colour is a variable, including the ones that are easy to forget: the ring
+  around the needs-you dot, the tint on the chosen row, the warning colour of
+  a full context window and of a dropped connection, and the search hit. That
+  last one is why: the hit sat on the amber with near-black text, and the
+  light theme's amber is a dark brown, so a hit could not be read at all.
+  A search hit has to reach 4.5:1 against its background in both themes, and
+  a test says so in numbers rather than by eye. A second test reads the
+  stylesheet and fails on any colour written outside a `:root` block, which is
+  the rule that catches the next one. A tint or a ring is derived from its
+  colour with `color-mix`, so it cannot be left behind at the old hue.
 
 ### 5.3 Attention
 
@@ -531,8 +653,8 @@ The target is "a sibling of tmux": dark, quiet, precise, and alive.
 ### 5.4 Keyboard
 
 `j`/`k` move, `Enter` jump to tmux, `1`–`4` tabs, `s` focus send box,
-`Esc` leave send box, `n` next needs-you, `t` toggle thinking, `?` shows
-this list. No key does anything while the send box has focus except `Esc`
+`Esc` leave send box, `n` next needs-you, `f` filter the session list,
+`r` open the review, `t` toggle thinking, `?` shows this list. No key does anything while the send box has focus except `Esc`
 and `Enter`.
 
 ### 5.5 Empty and error states
@@ -543,6 +665,9 @@ and `Enter`.
 - Transcript file missing: "transcript not found at <path>".
 - Daemon stopped: the page shows a thin red bar "connection lost" and
   reconnects the SSE stream every 3 s.
+- Review with no comments: no Submit button. The button appears with the
+  first comment and carries the count, so "is there a review waiting" is
+  answered by whether the button is there.
 
 ## 6. Command line
 
@@ -649,17 +774,36 @@ Commit at the end of each milestone. Each one leaves a working tool.
 5. **Act.** jump, send, Peek, attention (title, favicon, notification).
    The first two are the only things this program does that a terminal can
    feel, which is why every `POST` carries the token of section 4.4.1.
-6. **Shine.** Light theme, motion, empty states, keyboard help, README with
-   two screenshots and one short GIF, `docs/` in the same plain style as this
-   file.
+6. **Shine.** Light theme, motion, empty states, keyboard help, README.
+
+   No screenshots and no GIF. A screenshot of this page is a screenshot of
+   somebody's agents; made-up ones would show a tool nobody is using, and a
+   GIF would need a recorder this program does not have and must not grow.
+   The README says to run `serve --open`, which takes one command and shows
+   the reader their own. `docs/` holds the two mockups that the page was
+   built against, and nothing that needs prose.
+
+7. **Review.** Reply to a diff from the page, the way a pull request is
+   reviewed, with the agent in the place of the author. Section 4.9 is the
+   spec. Three stages, each one leaving a working tool.
+
+   1. **Mark.** A comment on a line, and a comment on a file. Drawn where it
+      belongs, edited and deleted in place. Nothing is sent yet, so this stage
+      can be judged on its own: is commenting while reading pleasant enough
+      that you would do it?
+   2. **Send.** The preview, the overall note, Submit, and the send itself. A
+      review reaches the agent. This is the milestone's point, and the first
+      stage that changes anything outside the browser.
+   3. **Keep.** Drafts survive a reload. A comment whose line has moved says
+      so rather than pointing at whatever is there now.
 
 ## 10. README
 
 Write it in the style of the gra README: a one-line tagline, "a minute with
 wostuast" (six commands), how it works in one diagram, install, commands,
 then a reference section. Plain language, short sentences, no marketing
-words. The first screenshot is the Transcript tab with one session in
-`needs_you`, one `working`, one `done`.
+words. The reference section lists the keys, so the page can be worked
+without opening it first.
 
 ## 11. Working agreement
 
@@ -689,6 +833,10 @@ words. The first screenshot is the Transcript tab with one session in
 | One find box, moved to where it is used | Above the list on a tab that has one, in the tab strip for the transcript. Two boxes would be two values to keep in step, and `/` would have to guess which one it meant. |
 | An untracked file opens as one added block | `git diff` shows nothing for it, so it was named and left unclickable — the one thing on the tab you could not open. Every line in it is new, and the file route already reads it. |
 | No approve button | Approving without seeing the pane is how directories get deleted. |
+| A review is composed in the page and sent as one message | The alternative is what the tool replaced: read here, switch to the terminal, retype from memory. One message also reaches the agent as one thought, rather than as four interruptions. |
+| Draft comments live in `localStorage` | A review is yours until you submit it, and the daemon serves every browser the same page. Keeping drafts there would show them to everyone and would make the daemon hold state it has no other reason to hold. |
+| The preview cannot be skipped | A quoted line is text an agent wrote, about to be pasted into a terminal. The preview is where a person reads it. Same rule as the permission prompt: the person decides. |
+| A comment whose line moved is marked, not dropped | The agent keeps working while you read. Dropping the comment loses your work; moving it to the same line number points it at different code. Saying so does neither. |
 | No gra dependency | Works for any worktree layout; a `repo/dir` label is all gra would add. |
 | Session name and context come from the status line | Hooks do not carry them. The status line payload has `session_name` and `used_percentage`, and costs one small file. |
 | The status line writes one file per session, not events | It runs on every redraw. An append would flood the log with nothing new. |

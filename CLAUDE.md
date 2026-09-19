@@ -94,6 +94,16 @@ settings.
   `cmd_hook` does not just add noise: it answers a permission prompt for the
   user. Logging goes to the log file. Tests assert the silence for that event
   by name; never weaken them.
+- **Amber means one thing: the agent cannot go on until you answer.** An idle
+  `Notification` is not that — `Stop` already said the turn was over, and
+  nothing you do clears an idle prompt, so a row that went amber on it stayed
+  amber for ever. And a permission `Notification` is dropped once the session
+  has sent a `PermissionRequest`: from then on it is the same news twelve
+  seconds late, and honouring it raised the alarm again for a question you had
+  already answered. Those two together were "needs you never clears".
+- **The sidebar sorts by name.** Sorting by state moved every row each time an
+  agent started or finished a tool call, so the list shifted under the reader.
+  The colour, the counts and the `n` key answer "who needs me" without it.
 - **Folding an event twice must change nothing.** Handlers assign and never
   accumulate, and `Store.apply` drops an event older than the session has
   already seen. A rotation makes the daemon read the archive again, so old
@@ -183,6 +193,31 @@ settings.
   command an agent ran.
 - **Keep the raw payload.** Do not strip fields from a hook event. A new field
   from a newer Claude Code must not break an older wostuast.
+- **The sidebar keeps its rows and fills them in again.** Rebuilding the list
+  threw away the one thing the motion is for: a dot can only fade into its new
+  colour if it is the same dot, and the needs-you ring can only finish a cycle
+  if its row outlives the change that started it. `newRow` builds every part
+  once, empty; `fillRow` reaches them by position; and a row is moved only when
+  its place actually changed, because `appendChild` on a row already in place
+  is a remove and an insert, and a node that leaves the document is a node
+  that may lose its animation. A transcript block slides in only where a block
+  arrives, in `patchTranscript`. That animation sat on `.turn` for a long
+  time, so the whole history slid every time the tab was rebuilt.
+- **The counts are about every session; only the list is filtered.**
+  `drawCounts` runs before the guard that asks whether the shown rows changed,
+  because a session the filter hides can still go amber, and that has to reach
+  the counts, the title, the icon and the notification. Behind the guard it
+  reached none of them.
+- **Every colour on the page is a variable, and a `:root` block is the only
+  place a colour may be a number.** A colour written into a rule is right in
+  one theme and wrong in the other: the search hit was near-black on amber,
+  which in the light theme is near-black on dark brown, and nobody saw it
+  until someone searched. `test_every_colour_outside_the_palette_is_named` is
+  the rule that catches the next one, and
+  `test_a_search_hit_can_be_read_in_both_themes` puts a number on that one:
+  4.5:1 in both themes. A tint or a ring is derived from its colour with
+  `color-mix`, never by copying the same rgb triple out again, or it is left
+  behind at the old hue the day the colour moves.
 - **The page tests share one browser and wait for things, not for seconds.**
   Starting Playwright costs 0.43 s and launching Chromium 0.15 s, so doing
   both per test spent half a minute on nothing; each test gets its own
@@ -220,4 +255,8 @@ tool behind.
    correct, fast, room, read. `PLAN.md` section 9 lists what is in each one.
 5. **Act** — done. jump, send, Peek. Attention (title, icon, notifications)
    arrived early, in milestone 2, because it was asked for.
-6. **Shine** — next. Light theme, motion, empty states, README.
+6. **Shine** — done. Light theme, motion, empty states, keyboard help,
+   README. No screenshots: `PLAN.md` section 9 says why.
+7. **Review** — next. Comment on a diff line or a file, then submit the whole
+   review to the agent as one message. `PLAN.md` section 4.9 is the spec;
+   three stages: mark, send, keep.

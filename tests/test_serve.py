@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -656,3 +657,49 @@ def test_peek_says_so_when_tmux_does_not_answer(ws, served, monkeypatch):
     status, body = get(f"{base}/api/session/s1/peek")
     assert status == 200 and body["runs"] == []
     assert "did not answer" in body["missing"]
+
+
+# --- the palette -------------------------------------------------------------
+
+#: A colour written out rather than named. `#bell` and the like do not match:
+#: a hex colour is three, four, six or eight hex digits and then a word end.
+COLOUR = re.compile(
+    r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b"
+    r"|\b(?:rgba?|hsla?)\s*\("
+)
+
+
+def stylesheet(page: str) -> str:
+    """The page's CSS with the palette blocks taken out.
+
+    Every `:root` block is a palette, and a palette is where a colour is
+    allowed to be a number. Everything after them names one instead.
+    """
+    css = page[page.index("<style>"):page.index("</style>")]
+    out = []
+    at = 0
+    for start in [m.start() for m in re.finditer(r"^:root[^{]*\{", css, re.M)]:
+        out.append(css[at:start])
+        at = css.index("}", start) + 1
+    out.append(css[at:])
+    return "".join(out)
+
+
+def test_every_colour_outside_the_palette_is_named(ws):
+    """A colour written into a rule is right in one theme and wrong in the
+    other. The search hit was near-black on amber, which in the light theme is
+    near-black on dark brown, and nobody saw it until someone searched. This
+    is the rule that catches the next one, rather than a reader who cannot
+    read something.
+    """
+    loose = sorted(set(COLOUR.findall(stylesheet(ws.PAGE))))
+    assert not loose, f"write these as a variable in the palette: {loose}"
+
+
+def test_the_palette_check_would_notice(ws):
+    """The test above passes trivially if `stylesheet` cuts too much."""
+    css = stylesheet(ws.PAGE)
+    assert "var(--needs)" in css and len(css) > 10000
+    assert COLOUR.search("a { color: #e0a642; }")
+    assert COLOUR.search("a { color: rgba(0,0,0,.5); }")
+    assert not COLOUR.search("#bell { margin-left: 14px; }")

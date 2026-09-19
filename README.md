@@ -26,8 +26,8 @@ wostuast uninstall   # remove the hooks; keep the event log
 ```
 STATE      SESSION                                   BRANCH          CHANGES  PANE  AGE    LAST
 needs you  Add substring search · oans/warmhare      feature/search  ↑2 ●5    %7    38 s   permission: Bash cmake --build build -j
-working    Speed up the table render · oans          main            ●1       %9    4 s    Edit src/table.cpp
 done       Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓     %11   4 min  stopped
+working    Speed up the table render · oans          main            ●1       %9    4 s    Edit src/table.cpp
 
 1 needs you · 1 working · 1 done
 ```
@@ -115,8 +115,27 @@ and `status`.
 | `ended` | The session ended. |
 | `killed` | The process is gone, without an end event. |
 
-`needs you` rows come first, the longest wait on top. Ended and killed rows go
-to the bottom.
+Rows are sorted by name, with ended and killed ones last. Sorting by state
+moved every row each time an agent started or finished a tool call, so the list
+kept shifting under you. Which agent needs you is said by the colour, by the
+counts under the list, and on the page by the `n` key.
+
+### Keys
+
+The page is worked from the keyboard. `?` shows this list without leaving it.
+
+| Key | Does |
+| --- | --- |
+| `j` `k` | move down and up the session list |
+| `n` | jump to the next session that needs you |
+| `f` | filter the session list |
+| `/` | find: text in the transcript, a file on the other tabs |
+| `1` – `4` | Transcript, Files, Diff, Peek |
+| `Enter` | jump to that agent's tmux pane |
+| `s` | type into its terminal |
+| `t` | show or hide the agent's thinking |
+| `c` | colours: auto, light, dark |
+| `Esc` | clear a box, or close the help |
 
 ### Files
 
@@ -168,7 +187,8 @@ header, so a request for `http://your-server:7331/` is refused even if it
 somehow arrives. The page shows a session list
 on the left and the selected session's transcript on the right, and it updates
 itself as the agents work: there is no reload button because there is nothing
-to reload.
+to reload. A box above the session list filters it: type any letters from the
+worktree, the session's name or the branch, and `f` puts the cursor there.
 
 ### Acting on a session
 
@@ -300,11 +320,18 @@ counts what it kept. `Esc` clears it.
 
 ## Status
 
-Milestones 1 to 5 of [`PLAN.md`](PLAN.md) are done: wostuast records your
+Milestones 1 to 6 of [`PLAN.md`](PLAN.md) are done. wostuast records your
 sessions, lists them in the terminal, and serves a live page with the
 transcript, the worktree's files and its diff, and it can jump to a pane, type
-into it and show you what it holds. Milestone 6 is what is left: the light
-theme's last corners, motion, empty states and the screenshots.
+into it and show you what it holds.
+
+Milestone 7 is next: review a diff from the page the way you review a pull
+request — a comment on a line, a comment on a file, then one Submit that sends
+the whole review to the agent.
+
+There are no screenshots here. A screenshot of this page is a screenshot of
+somebody's agents, and made-up ones would show a tool nobody is using. Run
+`wostuast serve --open` instead: it takes one command and shows you your own.
 
 `PLAN.md` is the complete brief. [`CLAUDE.md`](CLAUDE.md) says how to work in
 this repository.

@@ -54,10 +54,10 @@ MATCHER_EVENTS = frozenset(
 #: checked even though the log keeps whatever it was sent.
 PANE_PATTERN = re.compile(r"^%\d+$")
 
-#: A notification with one of these types means the agent waits for you.
-ATTENTION_NOTIFICATIONS = frozenset(
-    {"permission_prompt", "idle_prompt", "elicitation_dialog"}
-)
+#: A notification with one of these types means the agent cannot go on until
+#: you answer. `idle_prompt` is not one: it says the turn is over, which is
+#: what `Stop` already said, and nothing you do clears it.
+ATTENTION_NOTIFICATIONS = frozenset({"permission_prompt", "elicitation_dialog"})
 
 #: A hook that is still running after this many seconds gives up and exits 0.
 #: It must never hold Claude Code, whatever goes wrong underneath it.
@@ -115,8 +115,8 @@ STATE_COLORS = {
     "dead": "\033[90m",
 }
 
-#: Sort order, taken from the order of STATE_WORDS so the two cannot drift.
-STATE_ORDER = {state: index for index, state in enumerate(STATE_WORDS)}
+#: A session nobody can talk to any more. These sink to the bottom.
+GONE_STATES = frozenset({"ended", "dead"})
 
 
 def state_dir() -> Path:
@@ -455,6 +455,10 @@ class Session:
     last_tool: str = ""
     reason: str = ""
     attention_since: float = 0.0
+    # True once this session has sent a PermissionRequest. That event is
+    # the same news as a permission Notification, up to twelve seconds
+    # earlier, so once it arrives the Notification is only ever stale.
+    asks_first: bool = False
     end_reason: str = ""
     last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
@@ -795,6 +799,7 @@ def _on_permission_request(session: Session, event: dict[str, Any], ts: float) -
     twelve seconds late. For a tool whose first job is answering "who needs
     me?", that is too slow. This event fires as the dialog appears.
     """
+    session.asks_first = True
     session.state = "needs_you"
     session.attention_since = ts
     name = str(event.get("tool_name") or "")
@@ -803,19 +808,38 @@ def _on_permission_request(session: Session, event: dict[str, Any], ts: float) -
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
+    """What a notification means, and the two it is not allowed to mean.
+
+    An idle prompt is not "needs you". The agent finished its turn and sits at
+    its prompt, which `Stop` already said. Nothing here blocks it, so nothing
+    you do clears it either, and a row that turned amber on this stayed amber
+    for the rest of the day. It keeps the state it has and says why it is
+    quiet.
+
+    A permission notification is the same news as `PermissionRequest`, up to
+    twelve seconds later. On a session that sends that event the notification
+    can only be stale: by now the dialog is either still up, and the row
+    already says so, or it was answered while this was on its way, and
+    honouring it would raise the alarm again for a question that is gone.
+    """
     kind = str(event.get("notification_type") or "")
     message = str(event.get("message") or "")
     if not kind:
         # Older Claude Code versions send no type. Read the message instead.
         kind = "idle_prompt" if "waiting for your input" in message else "permission_prompt"
-    if kind not in ATTENTION_NOTIFICATIONS:
-        session.last_event = message or kind
+    if kind == "idle_prompt":
+        # An open dialog is the better reason, and it outranks this one.
+        if session.state != "needs_you":
+            session.reason = "waiting for input"
+        session.last_event = message or "waiting for input"
+        return
+    session.last_event = message or kind
+    stale = kind == "permission_prompt" and session.asks_first
+    if stale or kind not in ATTENTION_NOTIFICATIONS:
         return
     session.state = "needs_you"
     session.attention_since = ts
-    if kind == "idle_prompt":
-        session.reason = "waiting for input"
-    elif session.last_tool:
+    if session.last_tool:
         session.reason = f"permission: {session.last_tool}"
     else:
         session.reason = message or "permission"
@@ -991,14 +1015,30 @@ def build_sessions(
 
 
 def sort_sessions(sessions: list[Session]) -> list[Session]:
-    """needs_you first and the longest wait on top, ended and dead last."""
+    """By name, with the ended and the dead last.
+
+    Sorting by state put every row somewhere new each time an agent started or
+    finished a tool call, so the list you were reading kept moving under you.
+    A name does not move. Which agent needs you is said by the colour, by the
+    counts in the top bar, and by the `n` key, none of which need the order.
+
+    The name is the worktree, which is what the row shows first and the one
+    thing about a session that cannot change. Sorting on `label` instead puts
+    the list in the order of the name Claude Code gave the session — which the
+    status line supplies a second after the session starts, and which
+    `/rename` changes later. A row that jumps when its name arrives is the
+    same bug as a row that jumps when its state changes.
+
+    A session nobody can talk to any more still sinks to the bottom: it is
+    dimmed, it is often the larger half of a long list, and it is never what
+    you came to look at.
+    """
     return sorted(
         sessions,
         key=lambda s: (
-            STATE_ORDER.get(s.state, 9),
-            # The longest wait first, but the newest of everything else first.
-            s.since if s.state == "needs_you" else -s.since,
-            s.label,
+            s.state in GONE_STATES,
+            path_label(s.cwd, s.git.repo).lower(),
+            s.session_id,
         ),
     )
 
@@ -2827,7 +2867,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
                                  "error": f"that is more than {SEND_MAX}"
                                           " characters"}, 400)
                 return
-            if session.state in ("ended", "dead"):
+            if session.state in GONE_STATES:
                 self.reply_json({"id": session_id,
                                  "error": "this session is over"}, 409)
                 return
@@ -3145,7 +3185,7 @@ def cmd_ls(args: argparse.Namespace) -> int:
 
     counts = Counter(session.state for session in sessions)
     summary = " · ".join(
-        f"{counts[state]} {STATE_WORDS[state]}" for state in STATE_ORDER if counts.get(state)
+        f"{counts[state]} {STATE_WORDS[state]}" for state in STATE_WORDS if counts.get(state)
     )
     print()
     print(summary)
@@ -3453,6 +3493,12 @@ PAGE = r"""<!doctype html>
      this, and amber is spoken for. */
   --mine: #8aa4d0; --mine-soft: rgba(138,164,208,.10);
   --code: #0f1014; --code-ink: #c9ccd8;
+  /* A context window nearly full. It is a warning, not a state, so it may not
+     wear the amber; the dropped-connection bar uses --cut-bg, which is this
+     same orange with the alpha a background wants. */
+  --hot: #d97757;
+  /* The tint that lifts the chosen row off the panel. */
+  --tint: rgba(255,255,255,.045);
   /* Syntax colours. Amber is not among them: it is the one warm colour on
      this page and it means "an agent needs you". */
   --syn-key: #9a8cf0; --syn-str: #8fcf9f; --syn-num: #5bb0b5;
@@ -3464,6 +3510,16 @@ PAGE = r"""<!doctype html>
      air. A condensed one shows the end of the path, which is the part you
      were looking for. */
   --narrow: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+}
+/* Derived from the palette above, so they follow it into either theme and
+   cannot be left behind at an old hue. The search hit takes the amber the
+   background wants rather than the one a dot wants: white on the light
+   theme's --needs is 4.0:1, and --needs-warm is 5.58:1. */
+:root {
+  --ring-near: color-mix(in srgb, var(--needs) 25%, transparent);
+  --ring-far: color-mix(in srgb, var(--needs) 10%, transparent);
+  --mark: var(--needs-warm);
+  --veil: rgba(0,0,0,.5);
 }
 :root[data-theme="light"] {
   --bg: #f6f5f1; --panel: #efeee9; --raised: #e7e6e0; --chosen: #dedcd4;
@@ -3478,6 +3534,9 @@ PAGE = r"""<!doctype html>
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
   --mine: #3c5a8c; --mine-soft: rgba(60,90,140,.09);
   --code: #eceae3; --code-ink: #33363d;
+  --hot: #b2452a;
+  --tint: rgba(0,0,0,.05);
+  --veil: rgba(0,0,0,.3);
   --syn-key: #5b3fb0; --syn-str: #26694a; --syn-num: #1d6f74;
   --syn-com: #8b8e96; --syn-fn: #2a6ea8; --syn-meta: #6a6d76;
   --syn-attr: #7a3f8f;
@@ -3509,7 +3568,8 @@ body {
 .theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
 .theme:disabled { opacity: .5; cursor: default; }
 #bell { margin-left: 14px; }
-.dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%; }
+.dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%;
+  transition: background .2s ease, border-color .2s ease; }
 .dot.needs_you { background: var(--needs); }
 .dot.working { background: var(--working); }
 .dot.done { background: var(--done); }
@@ -3551,10 +3611,7 @@ body.dragging { cursor: col-resize; user-select: none; }
    something else: a ring and a brighter face. */
 .row.chosen {
   outline: 1px solid var(--ink-faint); outline-offset: -1px;
-  box-shadow: inset 0 0 0 40px rgba(255,255,255,.045);
-}
-:root[data-theme="light"] .row.chosen {
-  box-shadow: inset 0 0 0 40px rgba(0,0,0,.05);
+  box-shadow: inset 0 0 0 40px var(--tint);
 }
 .row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
@@ -3594,13 +3651,21 @@ body.dragging { cursor: col-resize; user-select: none; }
 .dirty { color: var(--needs); }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
-.row .dot { transition: background .2s ease, border-color .2s ease; }
-.row.needs_you .dot { box-shadow: 0 0 0 3px rgba(224,166,66,.25); animation: ring 2s ease-in-out infinite; }
+.row.needs_you .dot { box-shadow: 0 0 0 3px var(--ring-near); animation: ring 2s ease-in-out infinite; }
 @keyframes ring {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(224,166,66,.25); }
-  50% { box-shadow: 0 0 0 5px rgba(224,166,66,.10); }
+  0%, 100% { box-shadow: 0 0 0 3px var(--ring-near); }
+  50% { box-shadow: 0 0 0 5px var(--ring-far); }
 }
-@media (prefers-reduced-motion: reduce) { .row.needs_you .dot { animation: none; } }
+
+/* One switch for everything that moves. A reader whose system asks for less
+   motion gets a page that only changes colour. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
 .hints {
   flex-shrink: 0; padding: 12px 16px; border-top: 1px solid var(--edge);
   font-family: var(--mono); font-size: 11px; color: var(--ink-faint); line-height: 1.8;
@@ -3688,7 +3753,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 .ctx .fill { display: block; height: 100%; background: var(--working); }
 .ctx.warm .fill { background: var(--needs); }
-.ctx.hot .fill { background: #d97757; }
+.ctx.hot .fill { background: var(--hot); }
 .tabs {
   height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
   padding: 0 24px; border-bottom: 1px solid var(--edge);
@@ -3712,15 +3777,18 @@ body.dragging { cursor: col-resize; user-select: none; }
 .find::placeholder { color: var(--ink-faint); }
 .live { margin-left: 12px; display: inline-flex; align-items: center;
   color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
-mark { background: var(--needs); color: #14151a; border-radius: 2px; padding: 0 1px; }
+mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0 1px; }
 .nohits { color: var(--ink-mute); padding: 4px 0; }
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 24px; min-height: 0; }
 
 /* transcript */
-.turn { display: flex; gap: 12px; margin-bottom: 22px; position: relative;
-  animation: slide .15s ease-out; }
+.turn { display: flex; gap: 12px; margin-bottom: 22px; position: relative; }
+/* Only a block that has just arrived. It used to sit on `.turn`, so the whole
+   history slid every time the tab was rebuilt — which is whenever anything
+   about the transcript changes. `patchTranscript` is the one place a block is
+   new; the reduced-motion switch above covers this like everything else. */
+.fresh { animation: slide .15s ease-out; }
 @keyframes slide { from { transform: translateY(4px); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .turn { animation: none; } }
 .who {
   width: 64px; flex-shrink: 0; padding-top: 2px; font-family: var(--mono);
   font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.5;
@@ -3950,7 +4018,7 @@ body:not(.show-thinking) .thinking { display: none; }
 .empty h2 { font-size: 16px; color: var(--ink-bright); margin: 0 0 10px; }
 
 .lost {
-  display: none; padding: 6px 16px; background: rgba(217,119,87,.16);
+  display: none; padding: 6px 16px; background: var(--cut-bg);
   color: var(--cut-ink); font-family: var(--mono); font-size: 12px;
   border-bottom: 1px solid var(--edge);
 }
@@ -3960,7 +4028,7 @@ dialog.help {
   border: 1px solid var(--edge-bright); border-radius: 8px; background: var(--panel);
   color: var(--ink); padding: 18px 22px; font-family: var(--mono); font-size: 13px;
 }
-dialog.help::backdrop { background: rgba(0,0,0,.5); }
+dialog.help::backdrop { background: var(--veil); }
 dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
 dialog.help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
 dialog.help dt { color: var(--needs); }
@@ -3980,9 +4048,13 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   <div class="body">
     <div class="sidebar">
       <div class="sidebar-head">Sessions</div>
+      <div class="findslot">
+        <input class="find" id="pick" type="search" placeholder="filter sessions  f"
+               autocomplete="off" spellcheck="false">
+      </div>
       <div class="rows" id="rows"></div>
       <div class="hints">
-        <div><b>j k</b> move &nbsp; <b>n</b> next needs-you &nbsp; <b>/</b> find</div>
+        <div><b>j k</b> move &nbsp; <b>n</b> next needs-you &nbsp; <b>f</b> filter &nbsp; <b>/</b> find</div>
         <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
       </div>
     </div>
@@ -4022,6 +4094,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   <dl>
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
+    <dt>f</dt><dd>filter the session list</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 4</dt><dd>transcript, files, diff, peek</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
@@ -4043,6 +4116,7 @@ const state = {
   nodes: [],
   blocks: [],
   find: "",
+  pick: "",             // what the sidebar filter box holds
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   stream: null,
@@ -4261,44 +4335,86 @@ function clock(when) {
 
 const ages = [];
 
+// The rows the filter box leaves. A session is matched on everything the row
+// shows: the worktree, the name Claude Code gave it, and the branch. `fuzzy`
+// is the same matcher the Files tab uses, so "ofd" finds "oans/fastduck".
+function shownSessions() {
+  if (!state.pick) return state.sessions;
+  return state.sessions.filter((s) => fuzzy(
+    [s.place, s.name, s.branch].filter(Boolean).join(" "), state.pick));
+}
+
+// One empty row, built once and then only filled in. Every row has the same
+// parts whether or not it has anything to put in them, so `fillRow` can reach
+// them by position and nothing has to be created again later.
+function newRow(id) {
+  const row = document.createElement("div");
+  row.dataset.id = id;
+  row.addEventListener("click", () => choose(id));
+  const one = put(row, "div", "line1");
+  put(one, "span", "dot");
+  put(one, "span", "name");
+  put(one, "span", "word");
+  put(row, "div", "called");
+  put(row, "div", "line2");
+  const three = put(row, "div", "line3");
+  put(three, "span", "said");
+  put(three, "span", "age");
+  return row;
+}
+
+function fillRow(row, s) {
+  const [one, called, two, three] = row.children;
+  row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
+  one.children[0].className = "dot " + s.state;
+  one.children[1].textContent = s.place || s.label || s.id.slice(0, 8);
+  one.children[2].textContent = s.state_word;
+  called.textContent = s.name || "";
+  called.hidden = !s.name;
+  two.replaceChildren();
+  if (s.branch) put(two, "span", "branch", s.branch);
+  if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
+  if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
+  if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
+  else if (s.branch) put(two, "span", "clean", "✓ clean");
+  three.children[0].textContent = s.reason || s.last_event || "";
+  three.children[1].textContent = ago(s.since);
+  ages.push([three.children[1], s.since]);
+}
+
 function drawSessions() {
   const box = $("rows");
   // Only when they would come out different. The stream re-subscribes the
   // moment a session is first chosen, and the new stream opens with a full
-  // push of its own, so every page load built the whole sidebar twice — and
-  // the second build threw away the first one's dot transition and restarted
-  // the needs-you pulse before it could finish a cycle.
-  const drawn = JSON.stringify([state.sessions, state.chosen]);
-  if (box.dataset.drawn === drawn) return;
-  box.dataset.drawn = drawn;
-  box.replaceChildren();
-  ages.length = 0;
-  for (const s of state.sessions) {
-    const row = put(box, "div", "row " + s.state);
-    row.dataset.id = s.id;
-    if (s.id === state.chosen) row.classList.add("chosen");
-    row.addEventListener("click", () => choose(s.id));
-
-    const one = put(row, "div", "line1");
-    put(one, "span", "dot " + s.state);
-    put(one, "span", "name", s.place || s.label || s.id.slice(0, 8));
-    put(one, "span", "word", s.state_word);
-
-    if (s.name) put(row, "div", "called", s.name);
-
-    const two = put(row, "div", "line2");
-    if (s.branch) put(two, "span", "branch", s.branch);
-    if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
-    if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
-    if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
-    else if (s.branch) put(two, "span", "clean", "✓ clean");
-
-    const said = s.reason || s.last_event || "";
-    const line = put(row, "div", "line3");
-    if (said) put(line, "span", "said", said);
-    ages.push([put(line, "span", "age", ago(s.since)), s.since]);
+  // push of its own, so every page load drew the whole sidebar twice.
+  const shown = shownSessions();
+  drawCounts(shown);
+  if (!fresh(box, "drawn", JSON.stringify([shown, state.chosen]))) return;
+  // A row that is still there is kept and filled in again. A dot can only
+  // fade into its new colour if it is the same dot, and the needs-you ring
+  // can only finish a cycle if its row outlives the change that started it —
+  // and a state change is exactly when both of those used to be thrown away.
+  // Anything that is not a row goes first — the "no session matches" line is
+  // the only one — because the loop below places rows by position, and a
+  // stray node would shift every one of them.
+  const had = new Map();
+  for (const node of Array.from(box.children)) {
+    if (node.dataset.id) had.set(node.dataset.id, node);
+    else node.remove();
   }
-  drawCounts();
+  ages.length = 0;
+  let at = 0;
+  for (const s of shown) {
+    const row = had.get(s.id) || newRow(s.id);
+    had.delete(s.id);
+    fillRow(row, s);
+    if (box.children[at] !== row) box.insertBefore(row, box.children[at] || null);
+    at += 1;
+  }
+  for (const gone of had.values()) gone.remove();
+  if (!shown.length && state.sessions.length) {
+    put(box, "div", "nohits", "no session matches");
+  }
 }
 
 // Only the ages change by themselves. Rebuilding the rows to advance them
@@ -4308,7 +4424,7 @@ function tickAges() {
   for (const [node, since] of ages) node.textContent = ago(since);
 }
 
-function drawCounts() {
+function drawCounts(shown) {
   const box = $("counts");
   box.replaceChildren();
   // The rows arrive already sorted by state, and each carries its own word, so
@@ -4334,8 +4450,11 @@ function drawCounts() {
     : working ? working + " working · wostuast" : "wostuast";
   drawIcon(needs ? "needs_you" : working ? "working"
     : state.sessions.length ? "done" : "gone");
-  $("where").textContent = state.sessions.length + " session" +
-    (state.sessions.length === 1 ? "" : "s");
+  const all = state.sessions.length;
+  // Everything above is about every session, filter or no filter: "who needs
+  // me" must not change because you typed in a box. Only this line narrows.
+  $("where").textContent = (shown.length === all ? all : shown.length + " of " + all) +
+    " session" + (all === 1 ? "" : "s");
   notifyAbout(state.sessions);
 }
 
@@ -4772,7 +4891,11 @@ function patchTranscript(indexes) {
     if (index < state.nodes.length) {
       redrawBlock(index);
     } else {
+      // Arriving, rather than being drawn again. This is the only place a
+      // block is new: a full redraw builds the whole history, and a history
+      // that slid in block by block would be a page having a fit.
       const node = blockNode(state.blocks[index], index);
+      node.classList.add("fresh");
       state.nodes[index] = node;
       box.appendChild(node);
     }
@@ -5785,14 +5908,17 @@ function resubscribe() {
 // --- keys --------------------------------------------------------------------
 
 function move(step) {
-  if (!state.sessions.length) return;
-  const at = state.sessions.findIndex((s) => s.id === state.chosen);
-  const next = Math.min(state.sessions.length - 1, Math.max(0, at + step));
-  choose(state.sessions[next].id);
+  const shown = shownSessions();
+  if (!shown.length) return;
+  const at = shown.findIndex((s) => s.id === state.chosen);
+  const next = Math.min(shown.length - 1, Math.max(0, at + step));
+  choose(shown[next].id);
   const row = document.querySelector(".row.chosen");
   if (row) row.scrollIntoView({ block: "nearest" });
 }
 
+// Over every session, not only the shown ones: this key is the answer to "who
+// needs me", and a filter left in the box must not hide one of them.
 function nextNeedsYou() {
   const waiting = state.sessions.filter((s) => s.state === "needs_you");
   if (!waiting.length) return;
@@ -5808,6 +5934,7 @@ document.addEventListener("keydown", (press) => {
   if (tag === "input" || tag === "textarea") return;   // typing, not commanding
   switch (press.key) {
     case "/": $("find").focus(); break;
+    case "f": $("pick").focus(); break;
     case "Enter": jumpToPane(); break;
     case "s":
       if ($("sendbar").hidden) return;
@@ -5894,6 +6021,17 @@ drawBell();
 $("find").addEventListener("input", (typed) => {
   state.find = typed.target.value.trim().toLowerCase();
   draw();
+});
+$("pick").addEventListener("input", (typed) => {
+  state.pick = typed.target.value.trim().toLowerCase();
+  drawSessions();
+});
+$("pick").addEventListener("keydown", (press) => {
+  if (press.key !== "Escape") return;
+  $("pick").value = "";
+  state.pick = "";
+  $("pick").blur();
+  drawSessions();
 });
 $("find").addEventListener("keydown", (press) => {
   if (press.key !== "Escape") return;
