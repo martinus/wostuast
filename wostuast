@@ -2098,23 +2098,75 @@ class DiffReport:
     failed: bool = False    # git did not answer; "nothing changed" would lie
 
 
+#: What git writes after a backslash inside a quoted path. Anything else it
+#: escapes as `\\ooo`, one octal byte at a time.
+QUOTE_ESCAPES = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
+                 "t": "\t", "v": "\v", '"': '"', "\\": "\\"}
+
+
+def unquote_path(text: str) -> str:
+    """Undo git's C-style quoting of a path, if it is quoted.
+
+    `core.quotePath=false` only stops the quoting of bytes above 0x80. A path
+    holding a quote, a backslash or a control character is quoted whatever
+    that setting says, and then the whole thing, `a/` prefix and all, sits
+    inside the quotes. Left alone, `we"ird.txt` came out of a diff as
+    `"b/we\\"ird.txt"` — a name the Files tab never produces, so the same line
+    had two different anchors in the two tabs and a plain edit was reported as
+    a rename.
+    """
+    if len(text) < 2 or not text.startswith('"') or not text.endswith('"'):
+        return text
+    body = text[1:-1]
+    out = bytearray()
+    at = 0
+    while at < len(body):
+        if body[at] != "\\":
+            out += body[at].encode("utf-8")
+            at += 1
+            continue
+        at += 1
+        if at >= len(body):
+            break
+        mark = body[at]
+        digits = body[at:at + 3]
+        # Three octal digits and nothing else. `int(s, 8)` reads "1_2" as ten
+        # and takes leading spaces, neither of which git ever wrote.
+        if len(digits) == 3 and all(one in "01234567" for one in digits):
+            out.append(int(digits, 8))
+            at += 3
+            continue
+        out += QUOTE_ESCAPES.get(mark, mark).encode("utf-8")
+        at += 1
+    # `run` reads git the same way, so a byte that is not UTF-8 looks the same
+    # here as it does in a file listing.
+    return out.decode("utf-8", "replace")
+
+
 def diff_header_paths(line: str) -> tuple[str, str]:
     """The old and new path out of a `diff --git a/old b/new` line.
 
     A file name holding ` b/` makes this line ambiguous, which is why git also
     writes `---` and `+++` lines. Those are read when they come; this is what
     a file with no content change, such as a plain rename, is left with.
+
+    Either side may be quoted, and a quoted side starts with `"b/` rather than
+    `b/`, so that is looked for first.
     """
     rest = line[len("diff --git "):]
-    old, _, new = rest.rpartition(" b/")
-    old = old[2:] if old.startswith("a/") else old
-    return old, new
+    at = rest.rfind(' "b/')
+    if at == -1:
+        at = rest.rfind(" b/")
+    if at == -1:
+        return "", rest
+    return diff_side(rest[:at]), diff_side(rest[at + 1:])
 
 
 def diff_side(text: str) -> str:
     """The path out of a `--- a/path` or `+++ b/path` line. /dev/null is none."""
     if text == "/dev/null":
         return ""
+    text = unquote_path(text)
     return text[2:] if text[:2] in ("a/", "b/") else text
 
 
@@ -2131,11 +2183,21 @@ def parse_diff(text: str) -> list[DiffFile]:
 
     Only what the page shows is read. The index line, the mode lines and
     `\\ No newline at end of file` are passed over.
+
+    Split on `\\n` and nothing else. `str.splitlines()` also breaks on a form
+    feed, a vertical tab, `\\x1c`-`\\x1e` and `\\u0085`, and git does not escape
+    any of those inside diff content — it only quotes paths. One form feed in
+    a source line made every line after it in the hunk count one too high, so
+    the Diff tab showed wrong numbers, the Files tab disagreed with it, and a
+    review comment anchored to a line nobody commented on.
     """
     files: list[DiffFile] = []
     current: DiffFile | None = None
     hunk: Hunk | None = None
-    for line in text.splitlines():
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()       # the newline that ends the last line, not a line
+    for line in lines:
         if line.startswith("diff --git "):
             old, new = diff_header_paths(line)
             current = DiffFile(path=new, old_path=old)
@@ -2161,9 +2223,9 @@ def parse_diff(text: str) -> list[DiffFile]:
         elif line.startswith("+++ "):
             current.path = diff_side(line[4:])   # empty means the file is gone
         elif line.startswith("rename from "):
-            current.old_path = line[len("rename from "):]
+            current.old_path = unquote_path(line[len("rename from "):])
         elif line.startswith("rename to "):
-            current.path = line[len("rename to "):]
+            current.path = unquote_path(line[len("rename to "):])
         elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
             current.binary = True
     for one in files:
@@ -2226,9 +2288,20 @@ def git_diff(
     )
     if out is None:
         return None, False
-    if len(out) > DIFF_MAX_BYTES:
-        return out[:DIFF_MAX_BYTES], True
-    return out, False
+    # In bytes, and back to the last newline. `run` hands back text, so the
+    # cap used to count code points and let a CJK diff through at about four
+    # times the size — while `FILE_MAX_BYTES` measures real bytes, so the two
+    # caps disagreed about what they meant. And a cut that landed inside a
+    # `diff --git` line parsed as a file that does not exist, reported as a
+    # rename, at the bottom of the tab: `cut` says something was dropped, not
+    # that the last entry is fiction.
+    if len(out) * 4 <= DIFF_MAX_BYTES:     # too small to be over, whatever is in it
+        return out, False
+    raw = out.encode("utf-8")
+    if len(raw) <= DIFF_MAX_BYTES:
+        return out, False
+    whole = raw[:DIFF_MAX_BYTES].rpartition(b"\n")[0]
+    return (whole + b"\n" if whole else b"").decode("utf-8", "replace"), True
 
 
 def worktree_diff(cwd: str, runner: Callable[..., str | None] = run) -> DiffReport:
