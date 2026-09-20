@@ -584,7 +584,10 @@ def test_untracked_files_are_listed_in_name_order(ws, seeded):
 
 
 def test_a_directory_without_git_has_no_untracked_files(ws, tmp_path):
-    assert ws.untracked_files(str(tmp_path)) == []
+    """git fails outside a repository, and `git_names` reports that as None.
+    The caller above turns it into "nothing is untracked" only where it knows
+    the directory is one — here it is the honest answer."""
+    assert ws.untracked_files(str(tmp_path)) is None
 
 
 def test_the_base_falls_back_to_main(ws, seeded):

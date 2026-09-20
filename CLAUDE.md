@@ -437,6 +437,23 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   unreadable until the daemon was restarted. The same for `file`:
   `sniff_language` returns `None` for "it did not answer" and `""` for "it
   answered, and not with something we paint", and only the second is kept.
+  `GitFacts.failed`, `Worktree.failed` and `DiffReport.failed` are how each
+  answer says which it is; `reload_git` puts a failed directory back on the
+  list rather than over what it already knew.
+- **`run` gives None for "the command failed" and for "it could not run".**
+  Outside a repository git *fails*, so an empty answer is not by itself a
+  failure. Two ways to tell them apart: another call that already worked on
+  the same directory (`git_facts` knows it is a repository because
+  `rev-parse` answered), or `git_answers()`, which asks `git --version` — it
+  cannot fail inside a working git, and stalls on the same stalled machine.
+  Only in the failure path, so a repository never pays for it.
+- **The two changed-file counts are about different things, and stay that
+  way.** The sidebar's comes from `git status` in git's default untracked
+  mode, which collapses a wholly-untracked directory into one entry; the
+  Files tab dots each name, from `--untracked-files=all`. So five new files in
+  a new directory read as "1 file" beside five dots. The cheap call is on the
+  tick thread under a two second timeout, and the thorough one is not — that
+  is the reason, and it is worth more than the two numbers agreeing.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once, `fresh()` decides what changed, both reading the DOM. One key
   over the whole tab re-rendered the file you were reading every two seconds.
