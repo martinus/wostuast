@@ -253,12 +253,18 @@ def log(message: str) -> None:
         pass
 
 
-def write_atomic(path: Path, text: str, private: bool = False) -> None:
+def write_atomic(path: Path, text: str, private: bool = False,
+                 mode: int | None = None, sync: bool = False) -> None:
     """Write the whole file or none of it, so a reader never sees half a file.
 
     The temporary name carries this process's pid. A fixed name would be shared
     by two writers, and one could rename the other's half-written file into
     place. The status line runs on every redraw, so two writers is normal.
+
+    `mode` keeps a file's own permissions: a new file takes the umask, which
+    for `settings.json` meant 0600 came back 0644. `sync` puts the bytes and
+    then the rename on the disk, which costs a wait — the status line writes on
+    every redraw, so it is asked for rather than given.
     """
     if private:
         private_dir(path.parent)
@@ -269,7 +275,28 @@ def write_atomic(path: Path, text: str, private: bool = False) -> None:
         temporary.write_text(text, encoding="utf-8")
         if private:
             temporary.chmod(0o600)
+        elif mode is not None:
+            temporary.chmod(mode)
+        if sync:
+            with open(temporary, "rb") as handle:
+                os.fsync(handle.fileno())
         temporary.replace(path)
+        if sync:
+            # The rename is on the disk only once the directory is. Without
+            # this, a power loss right here can leave the file empty — and
+            # `settings.json` is the one file Claude Code will not start
+            # without. Not every filesystem allows the open; the write has
+            # landed either way, so a refusal is not an error.
+            try:
+                folder = os.open(path.parent, os.O_RDONLY)
+            except OSError:
+                return
+            try:
+                os.fsync(folder)
+            except OSError:
+                pass
+            finally:
+                os.close(folder)
     finally:
         try:
             temporary.unlink()
@@ -2568,12 +2595,16 @@ def remove_hooks(settings: dict[str, Any]) -> list[str]:
                 for entry in entries
                 if not (isinstance(entry, dict) and is_ours(entry.get("command"), "hook"))
             ]
-            if len(kept) != len(entries):
-                changes.append(f"removed hook {event}")
-                removed_here = True
+            if len(kept) == len(entries):
+                kept_groups.append(group)   # untouched, empty list and all
+                continue
+            changes.append(f"removed hook {event}")
+            removed_here = True
             if kept:
                 group["hooks"] = kept
                 kept_groups.append(group)
+            # A group we emptied goes: a machine with no hooks before install
+            # has none after uninstall.
         # Only rewrite a key we actually took something out of. An empty list
         # the user put there is theirs, and deleting it would be a silent edit.
         if not removed_here:
@@ -2633,8 +2664,20 @@ def load_settings(path: Path) -> tuple[dict[str, Any], int | str, bool]:
 
 
 def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: bool) -> None:
+    """Write the user's settings back, as their own file.
+
+    Their permissions are kept. This file can hold API keys and environment
+    values, and `install` promises to touch nothing but our own hooks — it
+    used to hand a 0600 file back at 0644.
+    """
+    import stat
+
     text = json.dumps(data, indent=indent, ensure_ascii=False)
-    write_atomic(path, text + "\n" if newline else text)
+    try:
+        mode: int | None = stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        mode = None            # no settings file yet; the umask decides
+    write_atomic(path, text + "\n" if newline else text, mode=mode, sync=True)
 
 
 # --- output helpers ----------------------------------------------------------
@@ -2681,9 +2724,20 @@ def changes_column(facts: GitFacts) -> str:
 
 def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
     """Left-align every column. The last one is not padded. Each row says its
-    own state, which gives it its colour; an empty state means no colour."""
+    own state, which gives it its colour; an empty state means no colour.
+
+    Control characters come out of the cells here, which is why this is the
+    one place a row is turned into a line. The last column holds a
+    `Notification` message or a summary of a tool input — text an agent wrote,
+    and a hostile file or a prompt injection can steer it. One of those set
+    the terminal's title and turned the rest of the output red, and the column
+    widths went wrong besides, because `len` counts an escape sequence. The
+    page is careful about exactly this text, and so is `tmux_send`.
+    """
     if not rows:
         return ""
+    rows = [(state, [CONTROL_CHARS.sub("", cell) for cell in cells])
+            for state, cells in rows]
     widths = [0] * len(rows[0][1])
     for _, cells in rows:
         for index, cell in enumerate(cells[:-1]):
