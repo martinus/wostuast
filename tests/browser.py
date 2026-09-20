@@ -214,7 +214,7 @@ def comment_on_line(page, at, note):
     Every test that hand-rolled this skipped a wait, and the one that did was
     the one test that failed under a full parallel run.
     """
-    page.locator(".dline").nth(at).locator(".plus").click(force=True)
+    page.locator(".dline").nth(at).locator(".addnote").click(force=True)
     page.wait_for_selector(".commentbox textarea")
     page.fill(".commentbox textarea", note)
     page.click(".commentbox .verb")
@@ -222,7 +222,7 @@ def comment_on_line(page, at, note):
 
 
 def comment_on_first_line(page, note):
-    page.locator(".dline .plus").first.click(force=True)
+    page.locator(".dline .addnote").first.click(force=True)
     page.wait_for_selector(".commentbox textarea")
     page.fill(".commentbox textarea", note)
     page.click(".commentbox .verb")

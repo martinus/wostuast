@@ -188,6 +188,25 @@ def test_alerts_are_off_until_you_ask(page_at):
             browser.close()
 
 
+def test_the_history_bar_goes_when_the_filter_leaves_nothing_to_fold(past_at):
+    """The bar is made once and kept between draws, so a draw with nothing
+    under it has to take it away. `barPlaced` started as `!past.length`, which
+    is true in exactly the case that needs the removal — so the bar stayed,
+    over nothing, still clickable, saying how many sessions it was not
+    holding."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, past_at)
+        try:
+            page.wait_for_selector(".histhead")
+            page.fill("#pick", "session")       # what the live one is called
+            page.wait_for_function(
+                "document.querySelectorAll('.histhead').length === 0")
+            page.press("#pick", "Escape")
+            page.wait_for_selector(".histhead")  # and it comes back
+        finally:
+            browser.close()
+
+
 def test_finished_sessions_are_folded_away_under_history(past_at):
     with sync_playwright() as play:
         browser, page = open_page(play, past_at)

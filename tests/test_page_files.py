@@ -980,7 +980,7 @@ def test_markdown_can_be_read_as_the_lines_it_is_written_in(repo_page):
             assert page.locator(".filebody .prose").count() == 0
             assert "# The readme" in code_text(page)
             # And every line now carries the `+` that a comment hangs on.
-            assert page.locator(".filebody .code .dline .plus").count() > 0
+            assert page.locator(".filebody .code .dline .addnote").count() > 0
 
             page.click(".filebody .where .link")
             page.wait_for_selector(".filebody .prose")

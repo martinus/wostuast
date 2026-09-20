@@ -305,3 +305,77 @@ def test_marked_is_pinned_too(page_at):
             assert tag.get_attribute("crossorigin") == "anonymous"
         finally:
             browser.close()
+
+
+def append_blocks(daemon, texts):
+    """Write assistant turns onto the session's transcript and push them."""
+    with open(daemon_transcript(daemon), "a") as handle:
+        for text in texts:
+            handle.write(json.dumps({
+                "type": "assistant", "timestamp": "2026-09-18T14:09:00.000Z",
+                "message": {"role": "assistant",
+                            "content": [{"type": "text", "text": text}]}}) + "\n")
+    daemon.tick()
+
+
+def test_a_search_keeps_its_place_while_the_agent_works(page_at):
+    """With a filter typed, every push draws the whole tab again, and a draw
+    ends at the top. On a live session that is once a second, so a search was
+    unreadable: you scrolled down, the agent said something, and you were back
+    at the top."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
+            page.wait_for_function(
+                "document.querySelectorAll('.turn').length > 50")
+            page.fill("#find", "pytest")
+            page.wait_for_function("document.querySelectorAll('mark').length > 0")
+
+            page.evaluate("document.getElementById('content').scrollTop = 600")
+            was = page.evaluate("document.getElementById('content').scrollTop")
+            assert was > 0, "the filtered list is too short to scroll"
+
+            append_blocks(daemon, ["pytest run 60"])
+            page.wait_for_function(
+                "document.querySelectorAll('.turn').length > 60")
+            assert page.evaluate(
+                "document.getElementById('content').scrollTop") == was
+        finally:
+            browser.close()
+
+
+def test_expanding_a_tool_result_keeps_the_search_highlighted(page_at):
+    """`redrawBlock` rebuilt the node but never marked it again, so the one
+    block you clicked stopped being highlighted while every other match kept
+    its `<mark>`."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.fill("#find", "pytest")
+            page.wait_for_function("document.querySelectorAll('mark').length > 0")
+            before = page.locator("mark").count()
+            page.click(".tool")
+            page.wait_for_selector(".tool-result")
+            assert page.locator("mark").count() >= before
+        finally:
+            browser.close()
+
+
+def test_an_error_in_the_live_slot_clears_while_a_search_is_on(page_at):
+    """It used to assign itself back — `state.find ? box.textContent : …` —
+    so the error stayed and the match count never returned."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.fill("#find", "pytest")
+            page.wait_for_function(
+                "document.getElementById('live').textContent.includes(' of ')")
+            page.evaluate("said({error: 'no pane for this session'})")
+            assert "no pane" in page.locator("#live").inner_text()
+            page.wait_for_function(
+                "document.getElementById('live').textContent.includes(' of ')",
+                timeout=15000)
+        finally:
+            browser.close()

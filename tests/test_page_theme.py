@@ -103,3 +103,25 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
                 "getComputedStyle(document.body).backgroundColor") == dark
         finally:
             browser.close()
+
+
+def test_the_tab_icon_follows_a_theme_change(page_at):
+    """The icon is a dot painted out of the palette, and the section is placed
+    beside the colours so that it follows them. It did not: `drawIcon` returns
+    early when the state it shows has not changed, and the state does not
+    change with the theme — so a dark-theme dot sat on a light page."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.wait_for_function(
+                "document.querySelector(\"link[rel='icon']\") !== null")
+            before = page.evaluate(
+                "document.querySelector(\"link[rel='icon']\").href")
+            assert before.startswith("data:image/png")
+
+            page.locator("#theme").click()          # whatever it was, not that
+            page.wait_for_function(
+                """(was) => document.querySelector("link[rel='icon']").href !== was""",
+                arg=before)
+        finally:
+            browser.close()

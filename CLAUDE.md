@@ -88,7 +88,11 @@ fifty failures.
 
 Before adding a CSS rule, grep for the selector. `.turn` already carried a slide
 animation for four milestones while a second one was added on top of it;
-`.row .dot` already had its transition.
+`.row .dot` already had its transition. The review's hover button was given
+`.plus`, which was already the green "+3" beside a changed file — so every
+count on the page became an invisible 18×18 box, and a file that had gained
+lines read as if it had only lost them. Nothing looked broken; the number was
+simply not there.
 
 ## How to work here
 
@@ -461,6 +465,16 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   the page is broken until a reload. `draw()` takes it home when
   `box.dataset.tab` says another tab owns the box; `split()` takes it back. Two
   outages; `test_every_way_from_one_tab_to_another_works` watches for a third.
+- **Ask the box which tab it holds, not `state.tab`.** `showTab` sets the name
+  and then awaits `load()`, and for that whole await the box still holds the
+  tab before it. A transcript push landing in the gap appended a turn as a
+  fourth column of the Files tab. `draw()` had this right already.
+- **The search redraws the whole tab, so it has to put the reader back.**
+  `drawTranscript` ends at the top, which is right when a filter is typed and
+  wrong on every push after — once a second on a live session.
+- **One block redrawn on its own still has to be marked.** `redrawBlock` is the
+  Transcript tab's `fillDiffFile`: everything `drawTranscript` does to a node
+  it must do too, or the block you touched loses what the others keep.
 - **No JavaScript library is vendored.** `marked` and `highlight.js` are fetched
   through the one `fetchScript`, each pinned by the hash of its bytes, with
   `crossorigin` so the browser checks it. Any script on this page can POST to
