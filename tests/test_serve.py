@@ -736,3 +736,119 @@ def test_a_session_with_no_pane_can_still_be_named(ws, served):
     status, body = post(f"{base}/api/session/s1/name", {"name": "over"},
                         token=daemon.token)
     assert status == 200 and body["name"] == "over"
+
+
+# --- the socket itself, where urllib will not go -----------------------------
+
+
+def raw_exchange(base, request, wait=5.0, reads=3):
+    """Send bytes at the daemon and read what comes back on that one socket.
+
+    `urllib` writes a well-formed request and reads one answer, so none of
+    this area can be tested through it.
+    """
+    import socket as sockets
+    from urllib.parse import urlparse
+
+    where = urlparse(base)
+    sock = sockets.create_connection((where.hostname, where.port), timeout=wait)
+    try:
+        sock.sendall(request)
+        sock.settimeout(wait)
+        out = b""
+        for _ in range(reads):
+            try:
+                piece = sock.recv(65536)
+            except (TimeoutError, OSError):
+                break
+            if not piece:
+                break
+            out += piece
+        return out
+    finally:
+        sock.close()
+
+
+def test_a_body_too_large_to_read_does_not_frame_the_next_request(in_tmux):
+    """`asked()` refuses to read a body over `POST_MAX`, and the connection
+    used to stay open under it — so the rest of the body was parsed as the
+    next request on that socket. A cross-origin page can send this POST with
+    no preflight, and the daemon answered the GET written inside it.
+
+    Not a way past the token: every POST verb still demands it. A way to put
+    a request of someone else's framing through the router, and to leave the
+    answers on that socket out of step with the questions.
+    """
+    daemon, base, seen = in_tmux
+    smuggled = (b"GET /api/sessions HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                + b"x" * 70000)
+    request = (b"POST /api/session/s1/send HTTP/1.1\r\n"
+               b"Host: localhost\r\n"
+               b"Content-Type: text/plain\r\n"
+               b"Content-Length: " + str(len(smuggled)).encode() + b"\r\n"
+               b"\r\n" + smuggled)
+    out = raw_exchange(base, request)
+    assert out.count(b"HTTP/1.") == 1, out[:400]
+    assert b"403" in out.split(b"\r\n")[0]
+    assert b'"sessions"' not in out
+    assert seen == []
+
+
+def test_an_origin_that_will_not_parse_is_refused_quietly(in_tmux):
+    """`urlparse("http://[::1")` raises. The checks used to run in front of
+    the `try`, so an unauthenticated request could kill the thread: no status
+    line at all, and a traceback in the terminal running `serve`."""
+    daemon, base, seen = in_tmux
+    request = (b"POST /api/session/s1/jump HTTP/1.1\r\n"
+               b"Host: localhost\r\n"
+               b"Origin: http://[::1\r\n"
+               b"X-Wostuast-Token: " + daemon.token.encode() + b"\r\n"
+               b"Content-Length: 0\r\n\r\n")
+    out = raw_exchange(base, request)
+    assert out.startswith(b"HTTP/1."), out[:200]
+    assert b"403" in out.split(b"\r\n")[0]
+    assert seen == []
+
+
+def test_a_token_header_that_is_not_ascii_is_refused_quietly(in_tmux):
+    """Headers decode as latin-1, and `hmac.compare_digest` raises on a
+    string that is not ASCII."""
+    daemon, base, seen = in_tmux
+    request = (b"POST /api/session/s1/jump HTTP/1.1\r\n"
+               b"Host: localhost\r\n"
+               b"X-Wostuast-Token: \xe9\r\n"
+               b"Content-Length: 0\r\n\r\n")
+    out = raw_exchange(base, request)
+    assert out.startswith(b"HTTP/1."), out[:200]
+    assert b"403" in out.split(b"\r\n")[0]
+    assert seen == []
+
+
+def test_a_request_with_no_host_is_not_ours(served):
+    """The check exists because a site can point its own name at 127.0.0.1.
+    An empty Host used to satisfy it, which made it skippable."""
+    daemon, base = served
+    out = raw_exchange(base, b"GET /api/sessions HTTP/1.0\r\n\r\n")
+    assert b"403" in out.split(b"\r\n")[0], out[:200]
+    assert b'"sessions"' not in out
+
+
+def test_the_c1_controls_do_not_reach_a_terminal(ws):
+    """NEL and CSI are controls a terminal may act on, and they are in text an
+    agent wrote. U+2028 is a line break that `"\\n" in text` does not see."""
+    sent = []
+    ws.tmux_send("%1", "before\u009bafter\u0085and more",
+                 runner=lambda args, **rest: sent.append(args) or "")
+    text = sent[0][-1]
+    assert text == "beforeafterandmore"
+    assert "\u009b" not in text and "\u0085" not in text and " " not in text
+
+
+def test_a_path_that_will_not_parse_answers_rather_than_dying(served):
+    """`urlparse(self.path)` used to run in front of the `try` on the GET side
+    too, so a request line holding an unterminated IPv6 host killed the thread
+    with no status line sent. Every part of a request is inside the guard."""
+    daemon, base = served
+    out = raw_exchange(base, b"GET http://[::1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    assert out.startswith(b"HTTP/1."), out[:200]
+    assert b"500" in out.split(b"\r\n")[0] or b"404" in out.split(b"\r\n")[0]

@@ -186,7 +186,21 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `allowed()` wants three things to agree: Host, an Origin that is ours when
   there is one, and the token printed into the page.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 is not enough —
-  a site can point its own name at 127.0.0.1. `Serving.ours()` checks Host.
+  a site can point its own name at 127.0.0.1. `Serving.ours()` checks Host, and
+  a request without one is refused: an empty Host used to pass, which made the
+  check skippable by leaving the header out.
+- **A check must fail closed, and nothing may run outside the guard.** Both
+  checks used to sit in front of the `try`, where `Origin: http://[::1` or one
+  byte above 0x7f in the token header killed the thread — no status line, a
+  traceback into the terminal running `serve`, from a request nobody had
+  authenticated. They refuse a header they cannot read; `guarded()` catches
+  the rest, and it wraps the whole of a request.
+- **A body that is not read stays in the socket.** `asked()` refuses one over
+  `POST_MAX`, and with keep-alive the rest of it was parsed as the next
+  request: the daemon answered a `GET` written inside a refused POST's body,
+  three answers on one connection. Refusing to read the body closes the
+  connection. The handler has a socket timeout for the other half of it — a
+  `Content-Length` announced and never sent held a thread for ever.
 - **The page never trusts what an agent wrote.** Markdown goes into an inert
   `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
   events use `textContent`. Assigning `innerHTML` first fires `onerror` before
@@ -194,7 +208,10 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
   of text with colours, never markup.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
-  characters, keeping tab and newline. A bracketed paste ends at `ESC [ 2 0 1 ~`,
+  characters, keeping tab and newline. "Below a space" includes the C1 block
+  above `\x7f` — NEL and CSI are controls, and U+2028 is a line break that
+  `"\n" in text` does not see, so it went out unpasted.
+  A bracketed paste ends at `ESC [ 2 0 1 ~`,
   and a review quotes lines an agent wrote, so those bytes would end the paste
   and leave the rest arriving as keystrokes — with any newline as Enter. A
   person reading the preview cannot catch this; an escape byte is invisible.
