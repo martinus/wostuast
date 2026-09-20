@@ -315,9 +315,11 @@ def append_event(record: dict[str, Any]) -> None:
     hook that finds it is holding the wrong inode simply opens again.
 
     Surrogates are replaced rather than raising. `json.dumps` emits a lone
-    surrogate happily and a UTF-8 encoder refuses it, so one `\ud800` in a tool
-    response lost the whole event — and a `SessionStart` lost that way costs
-    the session its cwd, pane and pid for good.
+    surrogate happily and a UTF-8 encoder refuses it, so one in a tool response
+    lost the whole event — and a `SessionStart` lost that way costs the session
+    its cwd, pane and pid for good. (Naming the escape here in the usual way
+    would put a real lone surrogate in this docstring, and Python 3.13 cannot
+    write that into a bytecode cache. It broke CI on 3.13 alone.)
     """
     target = events_path()
     private_dir(target.parent)

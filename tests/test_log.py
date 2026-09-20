@@ -321,13 +321,46 @@ def test_a_lone_surrogate_does_not_lose_the_event(ws):
     """JS strings are UTF-16 and `JSON.stringify` escapes an unpaired
     surrogate rather than refusing it, so one can arrive in a tool response.
     A strict encoder turned that into a dropped event — and a SessionStart
-    lost that way costs the session its cwd, pane and pid for good."""
+    lost that way costs the session its cwd, pane and pid for good.
+
+    The surrogate is built with `chr`, never written as an escape in this
+    file: that would put a real one in the source, and Python 3.13 cannot
+    write a module holding one into a bytecode cache."""
+    lonely = "before" + chr(0xD800) + "after"
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": "/w/one", "tool_response": "before\ud800after"})
+                     "cwd": "/w/one", "tool_response": lonely})
     events = list(ws.read_events())
     assert len(events) == 1
     assert events[0]["cwd"] == "/w/one"
     assert "before" in events[0]["tool_response"]
+
+
+def test_no_source_file_holds_a_lone_surrogate(ws):
+    """Writing the escape in a docstring, to say what the fix is about, puts a
+    real lone surrogate in the source. Python 3.10 to 3.12 marshal one into a
+    bytecode cache without complaint; **3.13 refuses**, and the import fails
+    before a single test runs. So the suite was green on four versions and the
+    build was red on one, over a comment.
+
+    Build such a character with `chr(0xD800)` instead. This test reads every
+    source file the same way on every version, so the rule does not depend on
+    which Python is running it.
+    """
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    files = [root / "wostuast"] + sorted(root.glob("tests/*.py"))
+    guilty = []
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text(), str(path))):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            try:
+                node.value.encode("utf-8")
+            except UnicodeEncodeError:
+                guilty.append(f"{path.name}:{node.lineno}")
+    assert not guilty, f"use chr(0xD800) rather than the escape: {guilty}"
 
 
 def test_the_log_is_ours_from_the_moment_it_exists(ws):
