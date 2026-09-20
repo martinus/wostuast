@@ -231,6 +231,18 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   leaves a window in which the file already holds a prompt and anyone on the
   machine can read it, and that window does not close if the process dies in
   it. The log holds every prompt and every command an agent ran.
+- **`settings.json` is the user's file, not ours.** `install` touches our hooks
+  and nothing else: its permissions are kept (a fresh temporary takes the
+  umask, so 0600 came back 0644, on a file that can hold API keys), and the
+  write is fsynced, file and directory — Claude Code will not start without
+  it. `uninstall` leaves a group it took nothing out of exactly as it was,
+  including an empty one the user put there.
+- **Anything printed to a terminal is scrubbed, like anything sent to one.**
+  `ls`'s last column is a `Notification` message or a tool summary — text an
+  agent wrote. `table` takes the control characters out, in the one place a
+  row becomes a line; one of them set the terminal's title and reddened the
+  rest of the output, and `len` counting the escape bytes made the columns
+  wrong as well.
 - **A `flock` is on an inode, not on a name.** Between opening the log and
   getting its lock, another hook can rotate it away — and then the lock is on
   the archive. A hook that did not notice renamed the fresh log on top of the

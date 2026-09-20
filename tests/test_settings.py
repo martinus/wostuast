@@ -286,3 +286,40 @@ def test_a_path_with_a_space_is_still_quoted(ws, tmp_path, monkeypatch):
     notes = ws.add_status_line(settings, ws.status_command(ws.install_path()))
     line = [n for n in notes if "--then" in n][0].strip()
     assert ws.words_of(line)[:1] == ["/home/a b/wostuast"]
+
+
+def test_install_leaves_the_settings_file_at_its_own_permissions(ws, tmp_path,
+                                                                 monkeypatch):
+    """`settings.json` can hold API keys and environment values. It came back
+    0644 from a 0600 file, because a fresh temporary takes the umask — and
+    `install` promises to touch nothing but our own hooks."""
+    import stat
+
+    path = ws.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(FOREIGN, indent=2) + "\n")
+    path.chmod(0o600)
+    monkeypatch.setattr(ws, "install_path", lambda: tmp_path / "bin" / "wostuast")
+
+    assert ws.cmd_install(None) == 0
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert ws.cmd_uninstall(None) == 0
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_uninstall_keeps_an_empty_group_of_the_users(ws):
+    """The rule is that a group we took nothing out of is left exactly as it
+    was. A group the user left empty was dropped instead — it looked like one
+    we had emptied ourselves, and those two are told apart by what was
+    removed, not by what is left."""
+    settings = {"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [
+            {"type": "command", "command": "/home/m/mine.sh"}]},
+        {"matcher": "Edit", "hooks": []},
+    ]}}
+    ws.add_hooks(settings, OURS)
+    ws.remove_hooks(settings)
+    assert {"matcher": "Edit", "hooks": []} in settings["hooks"]["PreToolUse"]
+    assert {"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "/home/m/mine.sh"}]} \
+        in settings["hooks"]["PreToolUse"]

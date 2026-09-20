@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import time
+
+import conftest
 
 
 
@@ -162,3 +165,25 @@ def test_the_store_keeps_the_whole_prompt(ws):
     assert session.last_prompt == long_prompt
     assert long_prompt in session.last_event
     assert len(ws.clip(session.last_event, 60)) == 60
+
+
+def test_ls_does_not_pass_an_escape_sequence_to_the_terminal(ws, capsys):
+    """`session.reason` is a `Notification` message or a summary of a tool
+    input: text an agent wrote, which a hostile file or a prompt injection can
+    steer. It went to stdout unfiltered — one set the terminal's title and
+    turned the rest of the output red, and the column widths went wrong
+    besides, because `len` counts the escape bytes.
+
+    The page uses `textContent` for exactly this text and `tmux_send` strips
+    it. `ls` is the same data on the same terminal.
+    """
+    nasty = "\x1b]0;pwned\x07\x1b[31mtook over the terminal"
+    ws.append_event(conftest.event("SessionStart", cwd="/w/one", pane="%7",
+                                   pid=1, ts=time.time()))
+    ws.append_event(conftest.event("Notification", cwd="/w/one",
+                                   message=nasty, ts=time.time()))
+    assert ws.cmd_ls(None) == 0
+    out = capsys.readouterr().out
+    assert "took over the terminal" in out
+    assert "\x1b" not in out
+    assert "\x07" not in out
