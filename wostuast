@@ -1529,9 +1529,14 @@ DIFF_TIMEOUT = 8.0
 PASTE_START = "\x1b[200~"
 PASTE_END = "\x1b[201~"
 
-#: Everything below a space except tab and newline, and the delete character.
-#: `tmux_send` takes these out of anything on its way to a terminal.
-CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+#: What `tmux_send` takes out of anything on its way to a terminal: everything
+#: below a space except tab and newline, the delete character, and the C1
+#: block above it. C1 holds NEL (U+0085) and CSI (U+009B), controls a terminal
+#: may act on and an agent may write; U+2028 and U+2029 are line breaks that
+#: `"\n" in text` does not see, so they would have gone out unpasted. The rule
+#: is "nothing below a space reaches a terminal", and these are below one.
+CONTROL_CHARS = re.compile(
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
 
 #: The header a POST carries its token in. A cross-origin request cannot add a
 #: header of its own without asking us first, and we never say yes — so a page
@@ -2978,9 +2983,16 @@ class Serving:
         answer. Neither stops a site pointing its own name at 127.0.0.1:
         the browser then treats us as that site's own origin and lets it
         read everything. The Host header is what gives that away.
+
+        A request with no Host at all is refused. The empty string used to be
+        in this list for a bare HTTP/1.0 client, which meant the check could
+        be skipped by leaving the header out. Every browser sends it.
         """
-        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-        return host in ("localhost", "127.0.0.1", "::1", "")
+        sent = self.headers.get("Host")
+        if not sent:
+            return False
+        host = sent.rsplit(":", 1)[0].strip("[]")
+        return host in ("localhost", "127.0.0.1", "::1")
 
     def allowed(self) -> bool:
         """Whether a POST may act on the terminal.
@@ -2991,29 +3003,49 @@ class Serving:
         into the page, in a header of its own. A cross-origin `fetch` may
         send a plain POST with no questions asked, and the effect here is
         `tmux send-keys` into a live terminal, so neither check is spare.
+
+        A header either check cannot read is a header that is not ours, so
+        both fail closed rather than raise. `Origin: http://[::1` is a
+        `ValueError` out of `urlparse`, and one byte above 0x7f in the token
+        header is a `TypeError` out of `compare_digest` — headers arrive as
+        latin-1. Either one used to leave the thread with no status line sent
+        and a traceback in the terminal running `serve`.
         """
         import hmac
         from urllib.parse import urlparse
 
         origin = (self.headers.get("Origin") or "").strip()
         if origin:
-            if urlparse(origin).hostname not in ("localhost", "127.0.0.1",
-                                                 "::1"):
+            try:
+                where = urlparse(origin).hostname
+            except ValueError:
+                return False
+            if where not in ("localhost", "127.0.0.1", "::1"):
                 return False
         sent = self.headers.get(TOKEN_HEADER) or ""
+        if not sent.isascii():
+            return False
         return hmac.compare_digest(sent, self.daemon.token)
 
     def asked(self) -> dict[str, Any]:
         """The JSON a POST carried, or an empty one.
 
         It is read before anything is checked, because a body left in the
-        socket makes the next request on that connection nonsense.
+        socket makes the next request on that connection nonsense. A body
+        too large to read is not read — so that connection is closed instead
+        of being kept alive: the refusal used to leave 70 KB of the caller's
+        choosing in the socket, and the daemon answered the `GET` written in
+        the middle of it. Three responses on one connection, the second one
+        framed by whoever sent the first.
         """
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
-        if length <= 0 or length > POST_MAX:
+        if length > POST_MAX:
+            self.close_connection = True
+            return {}
+        if length <= 0:
             return {}
         try:
             body = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -3021,7 +3053,29 @@ class Serving:
             return {}
         return body if isinstance(body, dict) else {}
 
+    def guarded(self, route: Callable[[], None]) -> None:
+        """Run a request with nothing outside the guard.
+
+        The checks used to sit in front of the `try`, where a header they
+        could not parse killed the thread with no status line sent and a
+        traceback into the terminal running `serve`. They fail closed on
+        their own now; this is what catches whatever nobody thought of.
+        """
+        try:
+            route()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as error:
+            log(f"request {self.path} failed: {error!r}")
+            try:
+                self.reply_json({"error": "something went wrong"}, 500)
+            except OSError:
+                pass
+
     def do_POST(self) -> None:  # noqa: N802 - the name http.server requires
+        self.guarded(self.route_post)
+
+    def route_post(self) -> None:
         from urllib.parse import urlparse
 
         body = self.asked()
@@ -3034,23 +3088,14 @@ class Serving:
                             403)
             return
         parts = urlparse(self.path).path.strip("/").split("/")
-        try:
-            if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-                verb = POST_VERBS.get(parts[3])
-                if verb is None:
-                    self.reply_json({"error": "no such thing"}, 404)
-                else:
-                    verb(self, parts[2], body)
-            else:
+        if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
+            verb = POST_VERBS.get(parts[3])
+            if verb is None:
                 self.reply_json({"error": "no such thing"}, 404)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-        except Exception as error:
-            log(f"request {self.path} failed: {error!r}")
-            try:
-                self.reply_json({"error": "something went wrong"}, 500)
-            except OSError:
-                pass
+            else:
+                verb(self, parts[2], body)
+        else:
+            self.reply_json({"error": "no such thing"}, 404)
 
     def in_tmux(self, session_id: str) -> Session | None:
         """The session, when it is one the verbs can reach at all."""
@@ -3111,6 +3156,9 @@ class Serving:
                          "done": tmux_send(session.pane, text)})
 
     def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
+        self.guarded(self.route_get)
+
+    def route_get(self) -> None:
         from urllib.parse import parse_qs, urlparse
 
         if not self.ours():
@@ -3120,30 +3168,21 @@ class Serving:
         path = url.path
         query = parse_qs(url.query)
         parts = path.strip("/").split("/")
-        try:
-            if path == "/":
-                page = PAGE.replace(TOKEN_MARK, self.daemon.token)
-                self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
-            elif path == "/api/sessions":
-                self.reply_json(self.daemon.sessions_payload())
-            elif path == "/api/events":
-                self.stream(query.get("watch", [""])[0])
-            elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-                verb = GET_VERBS.get(parts[3])
-                if verb is None:
-                    self.reply_json({"error": "no such thing"}, 404)
-                else:
-                    verb(self, parts[2], query)
-            else:
+        if path == "/":
+            page = PAGE.replace(TOKEN_MARK, self.daemon.token)
+            self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
+        elif path == "/api/sessions":
+            self.reply_json(self.daemon.sessions_payload())
+        elif path == "/api/events":
+            self.stream(query.get("watch", [""])[0])
+        elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
+            verb = GET_VERBS.get(parts[3])
+            if verb is None:
                 self.reply_json({"error": "no such thing"}, 404)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-        except Exception as error:
-            log(f"request {self.path} failed: {error!r}")
-            try:
-                self.reply_json({"error": "something went wrong"}, 500)
-            except OSError:
-                pass
+            else:
+                verb(self, parts[2], query)
+        else:
+            self.reply_json({"error": "no such thing"}, 404)
 
     def known(self, session_id: str) -> Session | None:
         """The session, or None with a 404 already sent."""
@@ -3252,6 +3291,10 @@ def make_server(daemon: Daemon, port: int) -> Any:
 
     class Handler(Serving, BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        # A `Content-Length` announced and never sent used to hold a thread
+        # for ever. The event stream writes at least every fifteen seconds,
+        # so it is never the one that runs out.
+        timeout = 30
         server_version = f"wostuast/{VERSION}"
         daemon = None        # this server's own, set right below
 
