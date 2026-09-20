@@ -4504,6 +4504,7 @@ const state = {
   looseText: null,      // null while it is being read
   looseBinary: false,
   diff: null,
+  diffOpen: new Map(),  // diff files the reader opened or shut by hand
   // The review being written. It lives in this browser and nowhere else
   // until it is sent. See PLAN.md section 4.9 and `blankReview`.
   review: null,         // set below, because it is built in one place
@@ -5615,13 +5616,24 @@ function split(box, tab, bodyClass) {
   return [side.children[2], box.lastChild, side.children[1], side.children[3]];
 }
 
-// Is the reader writing a comment in what this box holds? Both row tabs are
-// rebuilt from an answer the poll replaces every couple of seconds, and a
-// rebuild under an open box would take the text with it and move the code the
-// comment is about. `redrawCode` clears `bodyKey`, which is how the box's own
-// open and close get through this.
+// Is the open comment box inside this node? Both row tabs are rebuilt from an
+// answer the poll replaces every couple of seconds, and a rebuild under an
+// open box would take the text with it and move the code the comment is
+// about.
+//
+// `state.writing` alone says only that a box is open somewhere. One opened on
+// the Diff tab then froze the Files tab, which had no box on screen to close:
+// the pane kept drawing a file the reader had already left, and only going
+// back or reloading got it moving again. So the question is asked of the DOM,
+// which knows where the box actually is.
+function writingIn(node) {
+  return state.writing !== null && node.querySelector(".commentbox") !== null;
+}
+
+// `redrawCode` clears `bodyKey`, which is how the box's own open and close get
+// through this.
 function holdingText(box) {
-  return state.writing !== null && box.dataset.bodyKey;
+  return writingIn(box) && box.dataset.bodyKey;
 }
 
 function fresh(box, which, key) {
@@ -6081,11 +6093,12 @@ function lineAt(tall, y) {
 function fillCode(pane, at = pane.scrollTop) {
   const code = pane.querySelector(".code.windowed");
   if (!code) return;                   // a short file, or another tab's body
-  // The window stands still while a comment is being written, for the reason
-  // the diff stands still: moving it would throw away what is being typed. A
+  // The window stands still while a comment is being written in it, for the
+  // reason the diff stands still: moving it would throw away what is being
+  // typed. A box open on some other file or tab is none of its business. A
   // window that has not been drawn yet is drawn all the same — that is the
   // redraw the box itself asked for, the same trick `holdingText` plays.
-  if (state.writing !== null && code.dataset.first) return;
+  if (writingIn(code) && code.dataset.first) return;
   const all = code.lines;
   const tall = tallLines(code);
   // Where the code starts inside the pane, so that how far the reader has
@@ -6228,7 +6241,12 @@ function drawFiles(box) {
 // it is drawn, because only there is a row's height a fixed number.
 function lineTop(pane, code, line) {
   const from = code.offsetTop - pane.offsetTop;
-  return Math.max(0, from + (line - 1) * CODE_H - CODE_H * 3);
+  // Not `(line - 1) * CODE_H`: a commented line is taller than a row, and
+  // `fillCode` lays the file out knowing that. With fifteen comments above it
+  // the target landed 1600 px below a 760 px pane — off screen, in a jump
+  // whose whole point is to put it on screen. `heightOf` is that layout.
+  const above = heightOf(tallLines(code), line - 1);
+  return Math.max(0, from + above - CODE_H * 3);
 }
 
 // Put a line on screen, whichever way the file is drawn. A windowed file is
@@ -6346,6 +6364,9 @@ function putAsText(where) {
 }
 
 function forgetFile(path) {
+  // A comment box belongs to the file it is on. Leaving the file takes the
+  // box with it, so the flag goes too — it is what `putReview` would reopen.
+  if (state.writing !== null) state.writing = null;
   state.files.path = path;
   state.files.text = "";
   state.files.binary = false;
@@ -6388,7 +6409,7 @@ function drawDiff(box) {
     put(list, "div", "head", section.title);
     put(pane, "div", "diffhead " + section.name, section.title);
     for (const { one, at } of files) {
-      const node = drawDiffFile(pane, one);
+      const node = drawDiffFile(pane, one, section.name === "committed");
       const button = put(list, "button");
       button.type = "button";
       button.title = one.path;
@@ -6506,7 +6527,7 @@ async function chooseUntracked(path) {
   draw();
 }
 
-function drawDiffFile(pane, one) {
+function drawDiffFile(pane, one, atHead = false) {
   const node = put(pane, "div", "dfile");
   const head = put(node, "button", "name");
   head.type = "button";
@@ -6526,13 +6547,18 @@ function drawDiffFile(pane, one) {
   }
   const size = one.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
   const why = put(head, "span", "why");
-  let open = size <= BIG_LINES;
+  // `drawDiff` rebuilds this pane whenever the agent saves anything, so what
+  // the reader opened has to live outside the node, the way the transcript's
+  // expanded tool rows do. `BIG_LINES` only decides a file nobody has touched.
+  const chose = state.diffOpen.get(one.path);
+  let open = chose === undefined ? size <= BIG_LINES : chose;
   const mark = () => { why.textContent = size + " lines" + (open ? "" : ", hidden"); };
-  if (open) fillDiffFile(body, one);
+  if (open) fillDiffFile(body, one, atHead);
   mark();
   head.addEventListener("click", () => {
     open = !open;
-    if (open) fillDiffFile(body, one); else body.replaceChildren();
+    state.diffOpen.set(one.path, open);
+    if (open) fillDiffFile(body, one, atHead); else body.replaceChildren();
     mark();
   });
   return node;
@@ -6574,7 +6600,7 @@ function walkHunks(one, onHunk, onLine) {
 // anchor whichever tab it was written in.
 const SIGN = { added: "+", removed: "\u2212", context: " " };
 
-function fillDiffFile(body, one) {
+function fillDiffFile(body, one, atHead = false) {
   walkHunks(one, (hunk) => {
     if (hunk.header) put(body, "div", "hunk", hunk.header);
     return put(body, "div", "dlines");
@@ -6594,7 +6620,8 @@ function fillDiffFile(body, one) {
       // line, which is what the highlighter is given and what it paints.
       if (SIGN[line.kind]) put(row, "span", "sign", SIGN[line.kind]);
       put(row, "span", "dtext", line.text);
-      const anchor = lineAnchor(one.path, line, now);
+      const anchor = lineAnchor(one.path, line,
+                                atHead ? inWorktree(one.path, now) : now);
       if (anchor === null) return;      // a line that is no longer in the file
       if (commentAt(anchor) || state.writing === anchor) {
         putReview(put(lines, "div", "onLine"), anchor, line.text);
@@ -6639,7 +6666,34 @@ function anchorOf(path, line) {
 // it is — and once the diff moved past it, nowhere else either. It was still
 // sent. A removed line is not offered a `+` now.
 function lineAnchor(path, line, now) {
-  return line.kind === "removed" ? null : anchorOf(path, now);
+  if (line.kind === "removed" || !now) return null;
+  return anchorOf(path, now);
+}
+
+// Where a line of HEAD stands in the worktree. The committed section is
+// `base...HEAD`, so its new side is HEAD — not the file on disk — and a
+// comment belongs to a line of the file as it is. Commenting on a committed
+// line after fifty lines were prepended anchored fifty lines too high, and
+// that is wrong at the moment of writing, not because the file moved later.
+//
+// The uncommitted section is exactly the map from HEAD to the worktree, so it
+// is read rather than a second thing to keep in step. Nought means the line
+// is not in the worktree at all, and then there is nowhere to put a comment.
+function inWorktree(path, headLine) {
+  const later = ((state.diff || {}).sections || [])
+    .find((section) => section.name === "uncommitted");
+  const one = ((later || {}).files || []).find((file) => file.path === path);
+  if (!one) return headLine;          // nothing uncommitted: the same file
+  let drift = 0;                      // how far the worktree has slid by here
+  let found = null;
+  walkHunks(one, null, (line, old, now) => {
+    if (found !== null || line.kind === "added") return;   // no old-side number
+    if (old > headLine) { found = headLine + drift; return; }
+    if (old === headLine) { found = line.kind === "removed" ? 0 : now; return; }
+    drift = now - old - (line.kind === "removed" ? 1 : 0);
+  });
+  // Past the last hunk, the whole file has slid by the same amount.
+  return found === null ? headLine + drift : found;
 }
 
 // How a place reads: `path:112`, or just the path when it is the whole file.
@@ -6795,7 +6849,14 @@ function putCommentBox(parent, anchor, quoted) {
 // things and differ only in where they hang them.
 function putReview(parent, anchor, quoted) {
   const seen = commentAt(anchor);
-  if (state.writing === anchor) return putCommentBox(parent, anchor, quoted);
+  // One box per anchor, wherever the line first turns up. A file that is in
+  // both sections has the same line twice, and the second box took the focus
+  // from the first: keystrokes went to a box off screen, and saving the one
+  // the reader could see passed an empty note — which means delete. The
+  // comment was lost without a word.
+  if (state.writing === anchor && !document.querySelector(".commentbox")) {
+    return putCommentBox(parent, anchor, quoted);
+  }
   if (seen) return putComment(parent, seen);
   const add = put(parent, "button", "addnote", "+");
   add.type = "button";
@@ -7022,6 +7083,15 @@ async function submitReview() {
     said({ error: (answer && answer.error) || "it was not sent" });
     return;
   }
+  // `tmux send-keys` takes long enough to press `j` in, and everything below
+  // works on whatever is current: it wiped the new session's draft and
+  // removed its key from storage. The review that was sent is the one to
+  // clear, and where it lives when the reader has moved on is storage.
+  if (state.chosen !== id) {
+    try { localStorage.removeItem(REVIEW_KEY + id); } catch (error) { }
+    said({ error: "review sent" });
+    return;
+  }
   const session = current();
   state.review = blankReview();
   state.writing = null;
@@ -7101,6 +7171,8 @@ function draw() {
 function showTab(name) {
   if (!TABS[name]) return;
   state.tab = name;
+  state.writing = null;       // the box was on the tab you are leaving
+
   drawHeader();               // the send box belongs to the transcript only
   for (const button of document.querySelectorAll(".tab")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
@@ -7136,6 +7208,7 @@ function choose(id) {
   state.looseBinary = false;
   state.goTo = false;
   state.diff = null;
+  state.diffOpen.clear();
   recallReview(id);
   state.writing = null;
   drawReviewCount();
