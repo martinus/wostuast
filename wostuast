@@ -6706,8 +6706,13 @@ function drawReview(box) {
   // agent wrote, so send comes under it rather than beside it: read, then
   // send, in that order down the page. It cannot be edited here — one text,
   // and one place it comes from.
+  // The whole review, never the filtered part of it. The find box narrows
+  // what is on screen; it must not narrow what is sent. It did: with a filter
+  // typed — one left over from finding a file, since the box is shared — the
+  // preview showed one comment and the send took two, quoted source and all.
+  // "One text, one place it comes from" is the rule this breaks.
   put(pane, "div", "sofar", "what the agent will be sent");
-  const preview = put(pane, "pre", "reviewtext", reviewText(comments));
+  const preview = put(pane, "pre", "reviewtext", reviewText());
   putSubmit(put(pane, "div", "buttons"));
 
   // The boxes are wired once the preview exists, so each keystroke writes to
@@ -6721,8 +6726,11 @@ function drawReview(box) {
   }
 
   note.replaceChildren();
-  put(note, "span", null, comments.length
-      + (comments.length === 1 ? " comment" : " comments"));
+  const all = state.review.comments.length;
+  put(note, "span", null,
+      comments.length === all
+        ? all + (all === 1 ? " comment" : " comments")
+        : comments.length + " of " + all + " comments");
 }
 
 // One of the two boxes at the top. They are the only editable things on the

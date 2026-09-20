@@ -859,3 +859,32 @@ def test_a_comment_on_a_document_opens_it_as_lines(repo_page):
             assert page.evaluate("state.files.asText") is True
         finally:
             browser.close()
+
+
+def test_the_filter_narrows_what_is_shown_and_not_what_is_sent(repo_page):
+    """The find box is shared with the other tabs, so a filter left over from
+    finding a file is enough. It used to narrow the preview as well, so the
+    message said one comment and the send carried two — quoted source the
+    reader never saw, on its way into their terminal."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "about the code")
+            page.evaluate("""([one]) => { state.review.comments.push(one);
+              keepReview(); }""",
+              [{"anchor": "elsewhere.md\n9", "quoted": "a line never seen",
+                "note": "a note never read"}])
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .reviewtext")
+            page.fill("#find", "code")
+            page.wait_for_function(
+                "document.querySelectorAll('.reviewbody .spot').length === 1")
+
+            shown = page.locator(".reviewbody .reviewtext").inner_text()
+            assert "elsewhere.md" in shown, "the preview is the whole review"
+            assert shown.rstrip("\n") == page.evaluate("reviewText()").rstrip("\n")
+            # And the strip says the list is narrowed, rather than lying about
+            # how many comments there are.
+            assert "1 of 2 comments" in page.locator(".listnote").inner_text()
+        finally:
+            browser.close()
