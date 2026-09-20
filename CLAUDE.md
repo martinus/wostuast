@@ -219,6 +219,11 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   string, so reachable in a tool response — makes a strict UTF-8 encoder
   refuse the whole line. Surrogates are replaced; a `SessionStart` lost that
   way costs the session its cwd, pane and pid for good.
+  Never write the escape for one in source, not even in a comment: in a normal
+  string it is the character, and Python 3.13 will not put a module holding one
+  in a bytecode cache. CI was green on four versions and red on the fifth, over
+  a docstring. Build one with `chr(0xD800)`;
+  `test_no_source_file_holds_a_lone_surrogate` catches the next one.
 
 ### State
 
@@ -231,6 +236,20 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **Folding an event twice must change nothing.** Handlers assign, never
   accumulate; `Store.apply` drops an event older than the session has seen. A
   log rotation really does deliver old events after new ones.
+- **`Tail` starting over is news the reader has to hear.** It restarts at
+  offset 0 when the file shrinks or its inode changes, which is right — but a
+  reader that only appends then drew the whole transcript a second time on top
+  of what it held, and after a truncate went on showing text the file no
+  longer had. `Tail.restarted` says so; `Transcript` clears and bumps `run`.
+  The event log needs none of this, because `Store.apply` drops what it has
+  seen.
+- **`seq` is a place in one reading, not an identity.** The page patches by
+  index, and `Daemon` builds a new reader whenever `transcript_path` changes —
+  a session resumed from another directory, so `seq` counts from nought for
+  the same session id. Every push and every reply carries `run`; a `run` the
+  page has not seen replaces what it holds rather than being merged into it.
+  Reproduce either one with a **rename**: an unlink and recreate may hand back
+  the same inode, and then nothing restarts and the bug does not appear.
 - **A pid is not an identity.** The numbers wrap. `pid_alive` asks `kill -0`
   *and* `looks_like_claude`, because a session that ended in the morning had
   its pid taken by something else by the evening and the row said "done" all

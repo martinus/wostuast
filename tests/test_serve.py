@@ -302,7 +302,8 @@ def test_the_reader_is_only_advanced_in_one_place(ws, served, transcript_file):
     seen = []
 
     def fetch():
-        seen.append(len(daemon.read_transcript("s1") or []))
+        found = daemon.read_transcript("s1")
+        seen.append(len(found[0]) if found else 0)
 
     threads = [threading.Thread(target=fetch) for _ in range(8)]
     for one in threads:
@@ -311,6 +312,31 @@ def test_the_reader_is_only_advanced_in_one_place(ws, served, transcript_file):
         one.join()
     assert set(seen) == {50}, f"got {sorted(set(seen))}"
     assert len(daemon.transcript("s1").blocks) == 50
+
+
+def test_a_transcript_emptied_under_its_name_reaches_the_watchers(
+        ws, served, transcript_file):
+    """A rewrite that leaves nothing changes no block, so there was nothing to
+    push — and the page went on showing a conversation the file no longer
+    holds, until something else happened to be written.
+
+    The run is pushed when it moves, whether or not a block came with it."""
+    daemon, _ = served
+    path = transcript_file("s1", [
+        {"type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
+         "message": {"role": "user", "content": "the old conversation"}}])
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    daemon.read_transcript("s1")
+
+    sent = []
+    daemon.hub.send = lambda name, body, **rest: sent.append((name, body))
+    path.write_text("")                   # same inode, nothing left in it
+
+    blocks, run = daemon.read_transcript("s1")
+    assert blocks == []
+    assert sent and sent[0][1]["run"] == run
+    assert sent[0][1]["blocks"] == []
 
 
 # --- the Files tab and the Diff tab ------------------------------------------

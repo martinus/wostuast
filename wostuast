@@ -417,17 +417,26 @@ class Tail:
     offset: int = 0
     partial: bytes = b""
     key: tuple[int, int] = (0, 0)
+    #: True when the last read started over rather than carried on. A caller
+    #: that accumulates what it reads has to hear about that: the event log
+    #: does not care, because `Store.apply` drops an event it has seen, but a
+    #: transcript reader that only appends will draw the whole file twice.
+    restarted: bool = False
 
     def read_new(self) -> list[bytes]:
+        self.restarted = False
         try:
             info = self.path.stat()
         except OSError:
             return []
         key = (info.st_dev, info.st_ino)
         if key != self.key:
+            started = self.key != (0, 0)     # not the first look at this name
             self.key, self.offset, self.partial = key, 0, b""
+            self.restarted = started
         elif info.st_size < self.offset:  # rewritten shorter, under the same name
             self.offset, self.partial = 0, b""
+            self.restarted = True
         if info.st_size == self.offset:
             return []
         try:
@@ -1245,16 +1254,36 @@ class Transcript:
     than the file being read again.
     """
 
-    def __init__(self, path: str, cwd: str = "") -> None:
+    def __init__(self, path: str, cwd: str = "", run: int = 0) -> None:
         self.tail = Tail(Path(path))
         self.cwd = cwd
         self.blocks: list[Block] = []
         self.by_tool_use: dict[str, Block] = {}
+        #: Which reading of this session's transcript these blocks belong to.
+        #: `seq` is only a position in one reading, so the page needs to know
+        #: when it is looking at a different one.
+        self.run = run
+        #: The last run the watchers were told about. A transcript rewritten
+        #: to nothing changes no block, so there is nothing to push — and the
+        #: page would go on showing a conversation the file no longer holds.
+        self.run_sent = -1
 
     def read_new(self) -> list[Block]:
-        """Parse whatever has been appended. Returns every block that changed."""
+        """Parse whatever has been appended. Returns every block that changed.
+
+        A transcript can be rewritten under its own name — a `/clear`, a
+        resume, any atomic rewrite — and then `Tail` starts over. What was
+        held has to go with it: appending the re-read file to the blocks
+        already there drew the whole transcript twice, and after a truncate
+        the page went on showing text the file no longer held.
+        """
+        lines = self.tail.read_new()
+        if self.tail.restarted:
+            self.blocks.clear()
+            self.by_tool_use.clear()
+            self.run += 1
         touched: list[Block] = []
-        for record in json_objects(self.tail.read_new()):
+        for record in json_objects(lines):
             touched += self.add(record)
         return touched
 
@@ -2750,11 +2779,18 @@ class Daemon:
             return None
         held = self.transcripts.get(session_id)
         if held is None or held.tail.path != path:
-            held = Transcript(str(path), session.cwd)
+            # A session resumed from another directory writes under another
+            # name, so this is a different reading of the same session and
+            # `seq` starts again. Say so, or the page patches the new blocks
+            # over the head of the old ones and leaves the old tail below.
+            held = Transcript(str(path), session.cwd,
+                              run=held.run + 1 if held else 0)
             self.transcripts[session_id] = held
         return held
 
-    def read_transcript(self, session_id: str) -> list[Block] | None:
+    def read_transcript(
+        self, session_id: str
+    ) -> tuple[list[Block], int] | None:
         """Read whatever is new, tell the watchers, and hand back every block.
 
         Both the tick and a request for the tab come through here, under one
@@ -2769,11 +2805,15 @@ class Daemon:
                 return None
             changed = reader.read_new()
             blocks = list(reader.blocks)
-        if changed:
+            run = reader.run
+            fresh = run != reader.run_sent   # a reading nobody has been told of
+            reader.run_sent = run
+        if changed or fresh:
             self.hub.send("transcript",
-                          {"id": session_id, "blocks": blocks_json(changed)},
+                          {"id": session_id, "run": run,
+                           "blocks": blocks_json(changed)},
                           session_id=session_id)
-        return blocks
+        return blocks, run
 
     def sessions_payload(self) -> dict[str, Any]:
         return {"now": time.time(), "sessions": self.store.rows}
@@ -3040,12 +3080,14 @@ class Serving:
         return session
 
     def transcript(self, session_id: str, query: dict[str, list[str]]) -> None:
-        blocks = self.daemon.read_transcript(session_id)
-        if blocks is None:
+        found = self.daemon.read_transcript(session_id)
+        if found is None:
             self.reply_json({"id": session_id, "blocks": [],
                              "missing": "no transcript for this session"})
             return
-        self.reply_json({"id": session_id, "blocks": blocks_json(blocks)})
+        blocks, run = found
+        self.reply_json({"id": session_id, "run": run,
+                         "blocks": blocks_json(blocks)})
 
     def files(self, session_id: str, query: dict[str, list[str]]) -> None:
         session = self.known(session_id)
@@ -4367,6 +4409,7 @@ const state = {
   tab: "transcript",
   nodes: [],
   blocks: [],
+  run: -1,              // which reading of this transcript the blocks are from
   find: "",
   pick: "",             // what the sidebar filter box holds
   history: false,       // whether the finished sessions are unfolded
@@ -6964,6 +7007,7 @@ function choose(id) {
   if (state.chosen === id) return;
   state.chosen = id;
   state.blocks = [];
+  state.run = -1;
   state.nodes = [];
   state.open.clear();
   state.files = blankFiles();   // a different worktree holds different files
@@ -7020,6 +7064,7 @@ async function loadTranscript() {
   const body = await ask(want, "transcript");
   if (state.chosen !== want) return;        // the reader moved on while we waited
   state.blocks = (body && body.blocks) || [];
+  state.run = body && body.run !== undefined ? body.run : -1;
   draw();
 }
 
@@ -7140,6 +7185,17 @@ function resubscribe() {
   stream.addEventListener("transcript", (message) => {
     const body = JSON.parse(message.data);
     if (body.id !== state.chosen) return;
+    // A transcript can be rewritten under its own name, and then `seq` counts
+    // from nought again. Patching by index would write the new blocks over the
+    // head of the old ones and leave the old tail hanging below, so a new
+    // reading replaces what is held rather than being merged into it.
+    if (body.run !== undefined && body.run !== state.run) {
+      state.run = body.run;
+      state.blocks = body.blocks || [];
+      state.nodes = [];
+      draw();
+      return;
+    }
     patchTranscript(mergeBlocks(body.blocks || []));
   });
 

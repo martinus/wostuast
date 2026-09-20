@@ -86,10 +86,11 @@ def test_only_a_block_that_has_just_arrived_slides_in(page_at):
         browser, page = open_page(play, path)
         try:
             assert page.locator(".fresh").count() == 0, "the history slid in too"
-            blocks = daemon.read_transcript("s1")
+            blocks, run = daemon.read_transcript("s1")
             one = dict(blocks[-1].__dict__)
             one.update(seq=len(blocks), kind="text", text="and one more thing")
-            daemon.hub.send("transcript", {"id": "s1", "blocks": [one]},
+            daemon.hub.send("transcript",
+                            {"id": "s1", "run": run, "blocks": [one]},
                             session_id="s1")
             # In one question, so that a redraw cannot land between asking
             # whether it is there and asking how many there are.
@@ -157,12 +158,46 @@ def test_the_same_blocks_arriving_twice_are_not_shown_twice(page_at):
         try:
             before = page.locator(".turn").count()
             assert before > 1
-            blocks = daemon.read_transcript("s1")
+            blocks, run = daemon.read_transcript("s1")
             daemon.hub.send("transcript",
-                            {"id": "s1", "blocks": [dict(b.__dict__) for b in blocks]},
+                            {"id": "s1", "run": run,
+                             "blocks": [dict(b.__dict__) for b in blocks]},
                             session_id="s1")
             page.wait_for_timeout(800)
             assert page.locator(".turn").count() == before
+        finally:
+            browser.close()
+
+
+def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_at):
+    """A `/clear`, a resume, any atomic rewrite: the file at the same name is
+    a different file, and `seq` counts from nought again. Patched by index,
+    the new blocks landed over the head of the old ones and the old tail hung
+    on below — the reader saw a transcript that never happened.
+
+    The push carries the reading it belongs to, so the page replaces what it
+    holds instead of merging into it.
+    """
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            assert page.locator(".turn").count() > 1
+            held = daemon_transcript(daemon)
+
+            spare = held.parent / "rewritten.jsonl"
+            spare.write_text(json.dumps({
+                "type": "assistant", "timestamp": "2026-09-18T15:00:00.000Z",
+                "message": {"role": "assistant", "content": [
+                    {"type": "text", "text": "The only line now."}]}}) + "\n")
+            spare.replace(held)          # a new inode, as a rewrite makes
+
+            daemon.tick()
+            page.wait_for_function(
+                "document.querySelectorAll('.turn').length === 1")
+            shown = page.locator(".content").inner_text()
+            assert "The only line now." in shown
+            assert "Do the thing." not in shown, "the old reading is still here"
         finally:
             browser.close()
 
