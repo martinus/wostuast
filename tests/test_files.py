@@ -717,9 +717,13 @@ def test_rust_and_go_are_not_called_c(ws, repo):
 
 
 def test_a_machine_without_file_simply_gets_no_answer(ws):
+    """Two kinds of nothing, told apart. Both paint nothing on the page; only
+    one of them is worth asking again."""
     nowhere = pathlib.Path("/etc/hostname")
-    assert ws.sniff_language(nowhere, runner=lambda cmd: None) == ""
-    assert ws.sniff_language(nowhere, runner=lambda cmd: "") == ""
+    # It did not answer.
+    assert ws.sniff_language(nowhere, runner=lambda cmd: None) is None
+    assert ws.sniff_language(nowhere, runner=lambda cmd: "") is None
+    # It answered, and the answer is not one we paint.
     assert ws.sniff_language(
         nowhere, runner=lambda cmd: "application/x-unknown-thing") == ""
 
@@ -778,19 +782,76 @@ def test_reading_the_open_file_asks_once_per_version_of_it(ws, repo):
     assert len(seen) == 4, f"one process per poll, not {len(seen) / 4}"
 
 
-def test_the_check_that_git_still_offers_the_name_is_never_cached(ws, repo):
-    """It is the check that the page asked for a name git offers. A cached yes
-    would mean a file could still be read after it was taken out of the tree."""
-    (repo / "gone.txt").write_text("here\n")
-    git(repo, "add", "-A")
-    git(repo, "commit", "-qm", "seed")
+def test_a_name_git_does_not_offer_is_refused_however_often_it_is_asked(ws, repo):
+    """`is_listed` is the check that the page asked for a name git offers, and
+    it is the one thing here that is never remembered.
+
+    The file has to stay on disk for this to mean anything. An earlier version
+    used `git rm`, which deletes it as well — so the read was refused by
+    `target.is_file()` and the test passed with `is_listed` stubbed to yes. It
+    guarded nothing.
+
+    `.git/config` is the honest case, and it is the one that matters: it is on
+    disk, it is inside the worktree so `inside` lets it through, and it can
+    hold credentials. `is_listed` is the only thing between the page and it.
+    An ignored file is not the case to use — the Files tab lists those, so git
+    does offer them.
+    """
     held = ws.Files()
     seen = []
     run = counting(ws, seen)
 
-    assert ws.read_worktree_file(str(repo), "gone.txt", runner=run, held=held)
-    git(repo, "rm", "-q", "gone.txt")
-    assert ws.read_worktree_file(str(repo), "gone.txt", runner=run, held=held) is None
+    assert (repo / ".git" / "config").is_file(), "there is something to refuse"
+    for _ in range(3):
+        assert ws.read_worktree_file(str(repo), ".git/config",
+                                     runner=run, held=held) is None
+    # Asked every time, not answered from something remembered.
+    assert sum(one == "git" for one in seen) >= 3
+
+
+def test_a_git_failure_is_not_remembered_as_an_answer(ws, repo):
+    """`git rev-parse` has a two second timeout, and a busy machine can pass
+    it. Keeping the empty answer meant one such moment left the worktree
+    unreadable until the daemon was restarted."""
+    (repo / "a.txt").write_text("hi\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    held = ws.Files()
+    real = ws.run
+    failed = []
+
+    def flaky(args, **rest):
+        if "rev-parse" in args and not failed:
+            failed.append(1)               # one timeout, and then git is fine
+            return None
+        return real(args, **rest)
+
+    assert ws.read_worktree_file(str(repo), "a.txt", runner=flaky, held=held) is None
+    found = ws.read_worktree_file(str(repo), "a.txt", runner=flaky, held=held)
+    assert found is not None, "one failed call, and the worktree stayed broken"
+    assert found.text == "hi\n"
+
+
+def test_file_not_answering_is_asked_again_next_time(ws, repo):
+    """"`file` said nothing we paint" and "`file` did not answer" look the same
+    on the page and are not the same thing to remember."""
+    (repo / "deploy").write_text("import os\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    held = ws.Files()
+    real = ws.run
+    asked = []
+
+    def flaky(args, **rest):
+        if args[0] == "file":
+            asked.append(1)
+            return None if len(asked) == 1 else "text/x-shellscript"
+        return real(args, **rest)
+
+    ws.read_worktree_file(str(repo), "deploy", runner=flaky, held=held)
+    found = ws.read_worktree_file(str(repo), "deploy", runner=flaky, held=held)
+    assert len(asked) == 2, "a call that failed was remembered as an answer"
+    assert found.language == "bash"
 
 
 def test_a_file_that_changes_is_asked_about_again(ws, repo):
@@ -819,5 +880,8 @@ def test_the_remembered_answers_do_not_grow_without_end(ws):
     held = ws.Files()
     for n in range(ws.LANGS_KEPT + 20):
         held.langs[f"/w/f{n}\n0\n0"] = ""
-    held.language_of(pathlib.Path("/w/new"), 1.0, 1, lambda args, **rest: None)
+    # An answer, not a failure: a call that did not answer is never kept, so
+    # it would never reach the eviction at all.
+    held.language_of(pathlib.Path("/w/new"), 1.0, 1,
+                     lambda args, **rest: "text/x-shellscript")
     assert len(held.langs) <= ws.LANGS_KEPT

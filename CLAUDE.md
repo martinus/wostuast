@@ -331,7 +331,12 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **Search every name, or say you cannot.** Sending the first 5000 of 52,799 made
   a search find 16 files and miss a thousand: a wrong answer that looks right.
 - **A git call that failed must not render as an empty answer.** "No files" and
-  "git did not answer" look the same and mean opposite things.
+  "git did not answer" look the same and mean opposite things. **Nor may a
+  failure be remembered as one**: `Files.root_of` kept the empty string a
+  timed-out `git rev-parse` returned, and one such moment left that worktree
+  unreadable until the daemon was restarted. The same for `file`:
+  `sniff_language` returns `None` for "it did not answer" and `""` for "it
+  answered, and not with something we paint", and only the second is kept.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once, `fresh()` decides what changed, both reading the DOM. One key
   over the whole tab re-rendered the file you were reading every two seconds.

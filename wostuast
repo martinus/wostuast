@@ -1713,14 +1713,21 @@ class Files:
 
         `git rev-parse` is cheap but it is still a process, and this ran on
         every poll of every browser for an answer that does not move.
+
+        Only an answer is kept. git can fail for a moment — the call has a two
+        second timeout, and a busy machine or a network filesystem can pass
+        it — and an empty answer kept for ever meant one such moment left the
+        worktree unreadable until the daemon was restarted. The same rule the
+        listings keep: a git call that failed is not an answer.
         """
         with self.lock:
             known = self.roots.get(cwd)
-        if known is not None:
+        if known:
             return known
         found = worktree_root(cwd, runner)
-        with self.lock:
-            self.roots[cwd] = found
+        if found:
+            with self.lock:
+                self.roots[cwd] = found
         return found
 
     def language_of(
@@ -1746,6 +1753,10 @@ class Files:
         if known is not None:
             return known
         found = sniff_language(target, runner)
+        if found is None:
+            # It did not answer. Asking again next poll costs a process; not
+            # asking leaves the file grey until someone edits it.
+            return ""
         with self.lock:
             # A reader moving through a worktree would otherwise keep every
             # file it opened. Nothing here is worth a second question, so the
@@ -1897,7 +1908,9 @@ BY_MIME = {
 }
 
 
-def sniff_language(path: Path, runner: Callable[..., str | None] = run) -> str:
+def sniff_language(
+    path: Path, runner: Callable[..., str | None] = run
+) -> str | None:
     """What `file` makes of a file whose name gives nothing away.
 
     Only asked when the name and the shebang both came up empty, so it costs a
@@ -1905,10 +1918,14 @@ def sniff_language(path: Path, runner: Callable[..., str | None] = run) -> str:
     command this program runs, after git and tmux, and a machine without it
     simply gets no answer — the page paints nothing, which is what it did
     before this existed.
+
+    `None` is "it did not answer", and `""` is "it answered, and the answer is
+    not one we paint". They look the same on the page and are not the same
+    thing to remember: the first is worth asking again, the second never is.
     """
     answer = runner(["file", "-b", "--mime-type", "--", str(path)])
     if not answer:
-        return ""
+        return None
     return BY_MIME.get(answer.strip().lower(), "")
 
 
@@ -1958,7 +1975,7 @@ def read_worktree_file(
     if not Path(wanted).suffix and not raw.startswith(b"#!"):
         found.language = (
             held.language_of(target, found.mtime, len(raw), runner) if held
-            else sniff_language(target, runner))
+            else (sniff_language(target, runner) or ""))
     return found
 
 
