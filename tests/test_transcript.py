@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 import pytest
+
+import conftest
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "transcript.jsonl"
 
@@ -225,3 +228,85 @@ def test_a_write_gets_no_line_counts(ws, tmp_path):
     assert block.tool == "Write"
     assert block.target == "PLAN.md"
     assert (block.added, block.removed) == (0, 0)
+
+
+# --- a transcript that started over -------------------------------------------
+
+
+def lines(*texts):
+    return "".join(json.dumps(
+        {"type": "assistant", "message": {"role": "assistant", "content": t}}) + "\n"
+        for t in texts)
+
+
+def test_a_transcript_rewritten_under_its_name_is_not_drawn_twice(ws, tmp_path):
+    """`Tail` starts over when the inode changes, which is right — but a
+    reader that only appends then drew the whole file a second time on top of
+    what it already held, and pushed every one of those to the page as new.
+
+    Reproducing this needs a real inode change. An unlink and recreate may
+    hand back the same inode, and then the reset never fires.
+    """
+    path = tmp_path / "t.jsonl"
+    path.write_text(lines("one", "two"))
+    reader = ws.Transcript(str(path))
+    reader.read_new()
+    assert [b.text for b in reader.blocks] == ["one", "two"]
+    was = reader.run
+
+    spare = tmp_path / "spare.jsonl"
+    spare.write_text(lines("one", "two", "three"))
+    spare.replace(path)                       # a new inode, as a rewrite makes
+
+    changed = reader.read_new()
+    assert [b.text for b in reader.blocks] == ["one", "two", "three"]
+    assert [b.seq for b in reader.blocks] == [0, 1, 2]
+    assert [b.text for b in changed] == ["one", "two", "three"]
+    assert reader.run == was + 1, "the page has to be told it is a new reading"
+
+
+def test_a_transcript_truncated_in_place_forgets_what_went(ws, tmp_path):
+    """Same name, same inode, fewer bytes. The page used to go on showing text
+    the file no longer held."""
+    path = tmp_path / "t.jsonl"
+    path.write_text(lines("aaaa", "bbbb"))
+    reader = ws.Transcript(str(path))
+    reader.read_new()
+    path.write_text(lines("cc"))
+    reader.read_new()
+    assert [b.text for b in reader.blocks] == ["cc"]
+
+
+def test_the_first_read_is_not_a_restart(ws, tmp_path):
+    """Every reader starts with no file behind it. That is not a reset, and
+    calling it one would bump the run on every session that ever opens."""
+    path = tmp_path / "t.jsonl"
+    path.write_text(lines("one"))
+    reader = ws.Transcript(str(path))
+    reader.read_new()
+    assert reader.run == 0
+    assert reader.tail.restarted is False
+
+
+def test_a_new_reader_for_one_session_is_a_new_reading(ws, served, tmp_path,
+                                                       transcript_file):
+    """A session resumed from another directory writes under another name, so
+    `seq` starts again. The page patches by index, so it has to be told."""
+    daemon, _ = served
+    first = transcript_file("s1", [
+        {"type": "assistant", "message": {"role": "assistant", "content": "one"}}])
+    ws.append_event(conftest.event("SessionStart", sid="s1", cwd="/w/one",
+                                   transcript_path=str(first), ts=time.time()))
+    daemon.store.refresh()
+    blocks, run = daemon.read_transcript("s1")
+    assert [b.text for b in blocks] == ["one"]
+
+    second = transcript_file("s2-elsewhere", [
+        {"type": "assistant", "message": {"role": "assistant", "content": "two"}}])
+    ws.append_event(conftest.event("SessionStart", sid="s1", cwd="/w/one",
+                                   transcript_path=str(second),
+                                   ts=time.time() + 1))
+    daemon.store.refresh()
+    blocks, later = daemon.read_transcript("s1")
+    assert [b.text for b in blocks] == ["two"]
+    assert later > run

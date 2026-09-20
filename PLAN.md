@@ -338,6 +338,13 @@ Follow the file: remember the byte offset, read new lines, push them over SSE.
 A partial trailing line is kept for the next read. Do not re-parse the whole
 file on every change.
 
+A transcript can also start over: a `/clear`, a resume, any rewrite under the
+same name. The reader then drops the blocks it held and counts a new **run**,
+and a session resumed from another directory, which is read under a new name,
+counts one too. Every push and every reply carries the run. A block's `seq` is
+its place in one run and nothing more, so the page replaces what it holds when
+the run changes rather than patching by index.
+
 ### 4.7 Files tab
 
 **It lists every file.** What `git ls-files` tracks, plus untracked files that
