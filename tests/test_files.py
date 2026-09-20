@@ -454,6 +454,68 @@ def test_no_newline_at_end_of_file_is_passed_over(ws):
     assert len(one.hunks[0].lines) == 2
 
 
+def test_a_form_feed_inside_a_line_does_not_split_it(ws):
+    """`str.splitlines()` breaks on a form feed, a vertical tab, `\x1c`-`\x1e`
+    and `\u0085`. All of them are legal inside a source line and git does not
+    escape any of them — it only quotes paths. Every line after one counted
+    one too high, so the Diff tab's numbers were wrong, the Files tab (which
+    splits on `\n`) disagreed with it, and a review comment anchored to a line
+    nobody commented on."""
+    text = ("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n"
+            "@@ -1,4 +1,4 @@\n aaa\n bbb\x0c ccc\n ddd\n-eee\n+CHANGED\n")
+    one = ws.parse_diff(text)[0]
+    lines = one.hunks[0].lines
+    assert [line.kind for line in lines] == [
+        "context", "context", "context", "removed", "added"]
+    assert lines[1].text == "bbb\x0c ccc"
+    assert one.added == 1 and one.removed == 1
+
+
+def test_a_form_feed_does_not_double_a_removed_line(ws):
+    """The same split, counted: `-alpha\x0cbeta` was two removed lines."""
+    text = ("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n"
+            "@@ -1 +1 @@\n-alpha\x0c-beta\n+one\n")
+    one = ws.parse_diff(text)[0]
+    assert one.removed == 1
+    assert one.hunks[0].lines[0].text == "alpha\x0c-beta"
+
+
+def test_a_quoted_path_comes_back_as_the_name_git_lists(ws):
+    """`core.quotePath=false` only stops the quoting of bytes above 0x80. A
+    path holding a quote, a backslash or a control character is quoted
+    whatever that says, and the `a/` prefix goes inside the quotes — so
+    `rpartition(" b/")` found nothing, the name was mangled, and a plain edit
+    was reported as a rename because the two mangled sides differed."""
+    text = ('diff --git "a/we\\"ird.txt" "b/we\\"ird.txt"\n'
+            '--- "a/we\\"ird.txt"\n'
+            '+++ "b/we\\"ird.txt"\n'
+            "@@ -1 +1 @@\n-one\n+two\n")
+    one = ws.parse_diff(text)[0]
+    assert one.path == 'we"ird.txt'
+    assert one.old_path == 'we"ird.txt'
+    assert one.status == "modified"
+
+
+def test_a_quoted_rename_keeps_both_names(ws):
+    text = ('diff --git "a/back\\\\slash.txt" "b/we\\"ird.txt"\n'
+            "similarity index 100%\n"
+            'rename from "back\\\\slash.txt"\n'
+            'rename to "we\\"ird.txt"\n')
+    one = ws.parse_diff(text)[0]
+    assert one.old_path == "back\\slash.txt"
+    assert one.path == 'we"ird.txt'
+    assert one.status == "renamed"
+
+
+def test_an_octal_escape_in_a_path_is_one_byte(ws):
+    """git writes a byte it will not print as `\\ooo`, one byte at a time, so
+    two of them make one character."""
+    assert ws.unquote_path(r'"a/\303\244.txt"') == "a/\u00e4.txt"
+    assert ws.unquote_path(r'"a/tab\there"') == "a/tab\there"
+    assert ws.unquote_path("plain.txt") == "plain.txt"
+    assert ws.unquote_path('"unfinished') == '"unfinished'
+
+
 def test_nothing_before_the_first_file_header_is_read(ws):
     assert ws.parse_diff("warning: something\n+not a line\n") == []
 

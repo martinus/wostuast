@@ -173,3 +173,73 @@ def test_a_bare_layout_keeps_the_project_name(ws, tmp_path):
     facts = ws.git_facts(str(tree))
     assert facts.repo == "oans", f"got {facts.repo!r}"
     assert ws.path_label(str(tree), facts.repo) == "oans/gladbird"
+
+
+# --- what a real git actually writes -----------------------------------------
+
+
+def test_a_real_diff_of_a_quoted_name_matches_the_file_listing(ws, repo):
+    """Hand-written diffs are only as right as the hand that wrote them. This
+    one comes out of git, and the name it gives has to be the name `ls-files`
+    gives — or the same line has two different anchors in the two tabs and a
+    review comment lands on neither."""
+    name = 'we"ird.txt'
+    (repo / name).write_text("one\n")
+    git(repo, "add", "--", name)
+    git(repo, "commit", "-qm", "weird")
+    (repo / name).write_text("two\n")
+
+    text, cut = ws.git_diff(str(repo), ["HEAD"])
+    assert cut is False
+    assert text and 'diff --git "a/we' in text, "git did not quote it after all"
+    one = ws.parse_diff(text)[0]
+    assert one.path == name
+    assert one.old_path == name
+    assert one.status == "modified"
+    listed = [one.path for one in ws.worktree_files(str(repo)).files]
+    assert name in listed
+
+
+def test_a_real_diff_of_a_form_feed_keeps_the_line_whole(ws, repo):
+    """git emits four lines here; `splitlines()` made five of them."""
+    (repo / "ff.txt").write_text("aaa\nbbb\x0c ccc\nddd\neee\n")
+    git(repo, "add", "ff.txt")
+    git(repo, "commit", "-qm", "ff")
+    (repo / "ff.txt").write_text("aaa\nbbb\x0c ccc\nddd\nCHANGED\n")
+
+    text, _ = ws.git_diff(str(repo), ["HEAD"])
+    one = ws.parse_diff(text)[0]
+    lines = one.hunks[0].lines
+    assert [line.kind for line in lines] == [
+        "context", "context", "context", "removed", "added"]
+    assert lines[1].text == "bbb\x0c ccc"
+
+
+def test_a_cut_diff_never_ends_inside_a_line(ws, monkeypatch):
+    """The cut used to land wherever the count ran out. Inside a
+    `diff --git` line it parsed as a file that does not exist, reported as a
+    rename, at the bottom of the tab — `cut` says something was dropped, not
+    that the last entry is fiction."""
+    long_name = "a" * 400
+    text = ("diff --git a/small.txt b/small.txt\n--- a/small.txt\n"
+            "+++ b/small.txt\n@@ -1 +1 @@\n-one\n+two\n"
+            f"diff --git a/{long_name} b/{long_name}\n")
+    monkeypatch.setattr(ws, "DIFF_MAX_BYTES", 120)
+    out, cut = ws.git_diff("/w", [], runner=lambda *a, **k: text)
+    assert cut is True
+    assert out.endswith("\n")
+    assert [one.path for one in ws.parse_diff(out)] == ["small.txt"]
+
+
+def test_the_diff_cap_counts_bytes(ws, monkeypatch):
+    """`run` hands back text, so the cap counted code points and let a diff of
+    four-byte characters through at about four times the size. The other cap,
+    `FILE_MAX_BYTES`, measures real bytes."""
+    text = "diff --git a/e.txt b/e.txt\n" + "".join(
+        "+\U0001f600\U0001f600\U0001f600\U0001f600\n" for _ in range(80))
+    monkeypatch.setattr(ws, "DIFF_MAX_BYTES", 600)
+    out, cut = ws.git_diff("/w", [], runner=lambda *a, **k: text)
+    assert cut is True
+    assert len(out.encode("utf-8")) <= 600
+    assert len(text) <= 600, "this text is under the cap in code points"
+    assert len(text.encode("utf-8")) > 600, "and over it in bytes"

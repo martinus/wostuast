@@ -363,6 +363,22 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **Inside a hunk, the first character of a line is the only thing that matters.**
   Removing `-- a comment` writes `--- a comment`; read as a header it renamed the
   file and swallowed the hunk. Only `diff --git` and `@@` may start something new.
+- **Split a diff on `\n`, never with `splitlines()`.** It also breaks on a form
+  feed, a vertical tab, `\x1c`-`\x1e` and `\u0085`, all legal inside a source
+  line and none of them escaped by git — it only quotes paths. One form feed
+  put every later line in the hunk one number too high, so the two tabs
+  disagreed and a review comment anchored to a line nobody commented on.
+- **A path out of a diff may be quoted, and must be unquoted.**
+  `core.quotePath=false` only covers bytes above 0x80; a quote, a backslash or
+  a control character is escaped whatever it says, and the `a/` prefix goes
+  inside the quotes. `we"ird.txt` came out mangled, a plain edit read as a
+  rename, and the name did not match what `ls-files -z` gives the Files tab —
+  so one line had two anchors. `unquote_path` is the one place that undoes it.
+- **A cut goes back to the last newline, and the cap counts bytes.** A cut
+  inside a `diff --git` line parsed as a file that does not exist, reported as
+  a rename. `run` returns text, so a cap on `len()` counts code points and let
+  a four-byte-character diff through at four times the size, while
+  `FILE_MAX_BYTES` measures real bytes.
 - **List every file, stat only the changed ones.** Tens of thousands of files,
   tens of changed ones. Asking the disk about all of them every poll is the
   mistake.
