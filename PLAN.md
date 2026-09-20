@@ -390,6 +390,14 @@ made it look random. The listing gets the timeout a large repository needs,
 and a timeout says it timed out. This is the same bug as a failed diff
 reading as "nothing changed".
 
+The sidebar's `git status` keeps the short timeout, because it runs on the
+tick thread. When it passes, the facts say `failed` and are asked again rather
+than remembered: the empty ones are a clean repository with no branch, which
+is a real state and not that one. That is also why the two changed-file counts
+differ — the sidebar's comes from git's default untracked mode, which collapses
+a wholly-untracked directory into one entry, and the Files tab's walks every
+name. Making them agree would put the thorough walk on the tick.
+
 **A tree, until you type.** The left column is a directory tree, which is how
 you read a repository you do not know. The indent carries the directory, so a
 row only shows the last part of the name, which is the cure for the long ones.
