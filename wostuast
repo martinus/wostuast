@@ -257,9 +257,13 @@ def write_atomic(path: Path, text: str, private: bool = False,
                  mode: int | None = None, sync: bool = False) -> None:
     """Write the whole file or none of it, so a reader never sees half a file.
 
-    The temporary name carries this process's pid. A fixed name would be shared
-    by two writers, and one could rename the other's half-written file into
-    place. The status line runs on every redraw, so two writers is normal.
+    The temporary name carries this process's pid and the writing thread. A
+    fixed name would be shared by two writers, and one could rename the
+    other's half-written file into place — or unlink it from under the other,
+    which is how a `POST /name` beside another one raised `FileNotFoundError`
+    into a browser's request. The status line runs on every redraw, so two
+    processes is normal, and the daemon answers every browser in a thread of
+    its own.
 
     `mode` keeps a file's own permissions: a new file takes the umask, which
     for `settings.json` meant 0600 came back 0644. `sync` puts the bytes and
@@ -270,7 +274,10 @@ def write_atomic(path: Path, text: str, private: bool = False,
         private_dir(path.parent)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    import threading
+
+    temporary = path.with_name(
+        f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         temporary.write_text(text, encoding="utf-8")
         if private:
@@ -654,11 +661,19 @@ class Store:
         self.git_wanted: set[str] = set()
         self.status_seen: dict[str, float] = {}
         self.liveness_checked = 0.0
+        import threading
+
         # The names the reader gave. Written by whichever thread took the
         # rename and read by the one that folds, so it is replaced whole
         # rather than edited — the same trick `rows` plays, for the same
-        # reason: no lock, and a reader never sees half a change.
+        # reason: a reader never sees half a change.
+        #
+        # A writer does need the lock, though. Two `POST /name` requests run
+        # at once in one process, and both built the new map from the same
+        # snapshot: one name was lost, and memory and the file disagreed
+        # about which, so a restart silently swapped them.
         self.names: dict[str, str] = read_names()
+        self.naming = threading.Lock()
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -797,13 +812,14 @@ class Store:
         so that the thread folding events never reads a half-written one.
         """
         clean = " ".join(name.split())[:NAME_MAX]
-        names = dict(self.names)
-        if clean:
-            names[session_id] = clean
-        else:
-            names.pop(session_id, None)
-        write_names(names)
-        self.names = names
+        with self.naming:
+            names = dict(self.names)
+            if clean:
+                names[session_id] = clean
+            else:
+                names.pop(session_id, None)
+            write_names(names)
+            self.names = names
         session = self.sessions.get(session_id)
         if session is not None:
             session.mine = clean
@@ -886,6 +902,13 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     # "ready" means. It used to say "starting" and settle to this after five
     # minutes — a word that was true for a moment and wrong for a day, because
     # `SessionStart` is often the only event a session ever sends.
+    #
+    # Every handler that sets a state clears the attention with it. This one
+    # did not, so a session killed at its permission dialog and then resumed
+    # came back reading "ready" with "permission: Bash rm -rf ~" under it, and
+    # a wait that had started before the agent died. `source=compact` reaches
+    # here mid-session and left the same.
+    _clear_attention(session)
     session.state = "done"
     session.end_reason = ""
     source = str(event.get("source") or "")
@@ -968,20 +991,39 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
     kind = str(event.get("notification_type") or "")
     message = str(event.get("message") or "")
     if not kind:
-        # Older Claude Code versions send no type. Read the message instead.
-        kind = "idle_prompt" if "waiting for your input" in message else "permission_prompt"
+        # Older Claude Code versions send no type, so the message is all there
+        # is. Recognise the two that mean something and call the rest what
+        # they are: anything else used to be taken for a permission prompt,
+        # and `auth_success` — "Logged in as …" — turned the row amber with a
+        # reason nothing could clear. No tool call and no prompt follows an
+        # auth notification, so it sat there until someone typed.
+        spoken = message.lower()
+        if "waiting for your input" in spoken:
+            kind = "idle_prompt"
+        elif "needs your permission" in spoken:
+            kind = "permission_prompt"
+        else:
+            kind = "other"
     if kind == "idle_prompt":
         # An open dialog is the better reason, and it outranks this one.
         if session.state != "needs_you":
             session.reason = "waiting for input"
         session.last_event = message or "waiting for input"
         return
-    session.last_event = message or kind
-    stale = kind == "permission_prompt" and session.asks_first
-    if stale or kind not in ATTENTION_NOTIFICATIONS:
+    if kind == "permission_prompt" and session.asks_first:
+        # Stale: the same news up to twelve seconds late, about a dialog that
+        # is either still up — and the row says so — or already answered. Not
+        # the state, and not the text either: it used to leave a permission
+        # question as the only line under a row reading "ready".
         return
+    session.last_event = message or kind
+    if kind not in ATTENTION_NOTIFICATIONS:
+        return
+    if session.state != "needs_you":
+        # Already waiting, so this is the same wait. Moving the clock made a
+        # row that had waited a minute say it had waited none.
+        session.attention_since = ts
     session.state = "needs_you"
-    session.attention_since = ts
     if session.last_tool:
         session.reason = f"permission: {session.last_tool}"
     else:
