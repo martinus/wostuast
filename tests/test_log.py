@@ -277,3 +277,121 @@ def test_the_hook_records_zero_when_there_is_no_agent_above_it(ws, monkeypatch):
     session = ws.Session(session_id="s", pid=0, state="working")
     ws.mark_dead(session, alive=lambda pid: False)
     assert session.state == "working"
+
+
+# --- what two hooks at once must not do --------------------------------------
+
+
+def test_a_hook_holding_the_old_log_does_not_replace_the_archive(ws, monkeypatch):
+    """A flock is on an inode, not on a name. Hook B opens the log and blocks;
+    hook A rotates and releases; B then holds the *archive*, sees a file over
+    the limit, and renames the fresh log on top of it — every event ever
+    recorded, gone.
+
+    The handle is handed to `append_event` rather than the interleaving being
+    raced, because the condition is what matters: this is a hook that is
+    holding the wrong inode, however it came to be.
+    """
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 500)
+    target = ws.events_path()
+    ws.private_dir(target.parent)
+    target.write_text("EVERY EVENT EVER RECORDED\n" + "x" * 600 + "\n")
+
+    stale = ws.open_private(target)             # opened before the rotation
+    ws.append_event({"session_id": "a"})        # A rotates and appends
+    assert "EVERY EVENT" in ws.rotated_events_path().read_text()
+
+    real_open = ws.open_private
+    handed = []
+
+    def hand_the_stale_one(path):
+        if not handed:
+            handed.append(1)
+            return stale                        # the inode that is now the archive
+        return real_open(path)
+
+    monkeypatch.setattr(ws, "open_private", hand_the_stale_one)
+    ws.append_event({"session_id": "b"})
+
+    assert "EVERY EVENT" in ws.rotated_events_path().read_text(), "the archive went"
+    assert '"session_id": "b"' in target.read_text(), "and the event still landed"
+
+
+def test_a_lone_surrogate_does_not_lose_the_event(ws):
+    """JS strings are UTF-16 and `JSON.stringify` escapes an unpaired
+    surrogate rather than refusing it, so one can arrive in a tool response.
+    A strict encoder turned that into a dropped event — and a SessionStart
+    lost that way costs the session its cwd, pane and pid for good.
+
+    The surrogate is built with `chr`, never written as an escape in this
+    file: that would put a real one in the source, and Python 3.13 cannot
+    write a module holding one into a bytecode cache."""
+    lonely = "before" + chr(0xD800) + "after"
+    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
+                     "cwd": "/w/one", "tool_response": lonely})
+    events = list(ws.read_events())
+    assert len(events) == 1
+    assert events[0]["cwd"] == "/w/one"
+    assert "before" in events[0]["tool_response"]
+
+
+def test_no_source_file_holds_a_lone_surrogate(ws):
+    """Writing the escape in a docstring, to say what the fix is about, puts a
+    real lone surrogate in the source. Python 3.10 to 3.12 marshal one into a
+    bytecode cache without complaint; **3.13 refuses**, and the import fails
+    before a single test runs. So the suite was green on four versions and the
+    build was red on one, over a comment.
+
+    Build such a character with `chr(0xD800)` instead. This test reads every
+    source file the same way on every version, so the rule does not depend on
+    which Python is running it.
+    """
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    files = [root / "wostuast"] + sorted(root.glob("tests/*.py"))
+    guilty = []
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text(), str(path))):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            try:
+                node.value.encode("utf-8")
+            except UnicodeEncodeError:
+                guilty.append(f"{path.name}:{node.lineno}")
+    assert not guilty, f"use chr(0xD800) rather than the escape: {guilty}"
+
+
+def test_the_log_is_ours_from_the_moment_it_exists(ws):
+    """Not after the first write. The window does not close if the process
+    dies inside it, and by then the file already holds a prompt."""
+    import stat
+
+    target = ws.events_path()
+    ws.private_dir(target.parent)
+    assert not target.exists()
+    ws.append_event({"session_id": "s1", "prompt": "something private"})
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_the_hook_logs_under_its_own_deadline(ws, monkeypatch):
+    """`log` opens and writes a file, and the failure being logged may be that
+    the filesystem is not answering. Cancelling the alarm and then writing is
+    how a hook holds Claude Code for ever."""
+    import signal
+
+    seen = []
+    monkeypatch.setattr(ws, "read_stdin_json",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no stdin")))
+    real_log = ws.log
+    monkeypatch.setattr(ws, "log", lambda message: (
+        seen.append(signal.getitimer(signal.ITIMER_REAL)[0]), real_log(message)))
+    assert ws.cmd_hook(None) == 0
+    assert seen and seen[0] > 0, "the deadline was cancelled before the logging"
+
+
+def test_a_pane_id_with_a_newline_is_not_a_pane_id(ws):
+    """`$` matches before a final newline; `\\Z` does not."""
+    assert ws.PANE_PATTERN.match("%7")
+    assert not ws.PANE_PATTERN.match("%7\n")
