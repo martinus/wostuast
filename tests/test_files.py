@@ -740,3 +740,84 @@ def test_a_shebang_is_not_worth_a_subprocess(ws, repo):
     found = ws.read_worktree_file(str(repo), "runme", runner=watched)
     assert found is not None and found.language == ""
     assert not any(cmd[0] == "file" for cmd in asked), "a shebang paid for a fork"
+
+
+# --- what reading the open file costs -----------------------------------------
+
+
+def counting(ws, seen):
+    """A runner that records the command and then really runs it."""
+    real = ws.run
+
+    def run(args, **rest):
+        seen.append(str(args[0]))
+        return real(args, **rest)
+
+    return run
+
+
+def test_reading_the_open_file_asks_once_per_version_of_it(ws, repo):
+    """The Files tab asks every two seconds. Three processes per ask — two git
+    and one `file` — is ninety a minute for one reader sitting on one file.
+    Two of the three answer questions that cannot have changed."""
+    (repo / "deploy").write_text("import os\n")     # no suffix, and no shebang
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    held = ws.Files()
+    seen = []
+    run = counting(ws, seen)
+
+    ws.read_worktree_file(str(repo), "deploy", runner=run, held=held)
+    first = list(seen)
+    assert sum(one == "file" for one in first) == 1
+
+    seen.clear()
+    for _ in range(4):
+        ws.read_worktree_file(str(repo), "deploy", runner=run, held=held)
+    assert "file" not in seen, "`file` was asked again for the same bytes"
+    assert len(seen) == 4, f"one process per poll, not {len(seen) / 4}"
+
+
+def test_the_check_that_git_still_offers_the_name_is_never_cached(ws, repo):
+    """It is the check that the page asked for a name git offers. A cached yes
+    would mean a file could still be read after it was taken out of the tree."""
+    (repo / "gone.txt").write_text("here\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    held = ws.Files()
+    seen = []
+    run = counting(ws, seen)
+
+    assert ws.read_worktree_file(str(repo), "gone.txt", runner=run, held=held)
+    git(repo, "rm", "-q", "gone.txt")
+    assert ws.read_worktree_file(str(repo), "gone.txt", runner=run, held=held) is None
+
+
+def test_a_file_that_changes_is_asked_about_again(ws, repo):
+    (repo / "deploy").write_text("import os\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    held = ws.Files()
+    seen = []
+    run = counting(ws, seen)
+
+    ws.read_worktree_file(str(repo), "deploy", runner=run, held=held)
+    seen.clear()
+    time.sleep(0.02)
+    (repo / "deploy").write_text("#!/bin/sh\necho other\n")
+    ws.read_worktree_file(str(repo), "deploy", runner=run, held=held)
+    # This one has a shebang, so nothing asks `file` at all — the page reads
+    # it. Give it one without, and the answer is asked for again.
+    time.sleep(0.02)
+    (repo / "deploy").write_text("import sys\nimport os\n")
+    seen.clear()
+    ws.read_worktree_file(str(repo), "deploy", runner=run, held=held)
+    assert "file" in seen, "different bytes are a different question"
+
+
+def test_the_remembered_answers_do_not_grow_without_end(ws):
+    held = ws.Files()
+    for n in range(ws.LANGS_KEPT + 20):
+        held.langs[f"/w/f{n}\n0\n0"] = ""
+    held.language_of(pathlib.Path("/w/new"), 1.0, 1, lambda args, **rest: None)
+    assert len(held.langs) <= ws.LANGS_KEPT

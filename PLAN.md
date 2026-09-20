@@ -499,8 +499,11 @@ Three questions, most certain first, and the order matters.
    and `wostuast` itself is one. `#!/usr/bin/env -S python3 -u` and
    `#!/usr/bin/python3.12` both resolve; an interpreter we do not know answers
    nothing.
-3. **`file`, on the daemon.** Only when the first two came up empty, so it
-   costs a subprocess when such a file is opened and never otherwise. It is the
+3. **`file`, on the daemon.** Only when the first two came up empty, and then
+   only once per version of the file: the answer depends on its bytes, and the
+   open file is read again every two seconds. It is kept beside the worktree
+   root, which is remembered for the same reason. The check that git still
+   offers the name is not kept — that one has to be asked every time. It is the
    third and last command this program runs, after git and tmux, and a machine
    without it simply gets no answer.
 
