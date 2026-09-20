@@ -52,7 +52,7 @@ MATCHER_EVENTS = frozenset(
 #: A tmux pane id, as `$TMUX_PANE` gives it. The pane is the only value that
 #: travels from an event payload onto a command line, so the derived field is
 #: checked even though the log keeps whatever it was sent.
-PANE_PATTERN = re.compile(r"^%\d+$")
+PANE_PATTERN = re.compile(r"\A%\d+\Z")
 
 #: A notification with one of these types means the agent cannot go on until
 #: you answer. `idle_prompt` is not one: it says the turn is over, which is
@@ -165,6 +165,20 @@ def private_file(path: Path) -> None:
         pass
 
 
+def open_private(path: Path) -> Any:
+    """Open a file for appending, and create it 0600 if it is not there.
+
+    `open(path, "a")` creates at 0o666 & ~umask — 0644 under the usual one —
+    and a `chmod` afterwards leaves a window in which the file is already on
+    disk, already holding a prompt, and readable by anyone on the machine.
+    That window does not close if the process dies inside it. The mode belongs
+    at creation, which is what the `os.open` flags are for.
+    """
+    return os.fdopen(
+        os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600),
+        "a", encoding="utf-8")
+
+
 def events_path() -> Path:
     return state_dir() / "events.jsonl"
 
@@ -233,9 +247,8 @@ def log(message: str) -> None:
         private_dir(path.parent)
         rotate(path, LOG_MAX_BYTES, path.with_name(path.name + ".1"))
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        with open(path, "a", encoding="utf-8") as handle:
+        with open_private(path) as handle:
             handle.write(f"{stamp} {message}\n")
-        private_file(path)
     except Exception:
         pass
 
@@ -276,31 +289,57 @@ def rotate(path: Path, limit: int, backup: Path) -> None:
 # --- event log: append only, one JSON object per line ------------------------
 
 
+def still_the_file(handle: Any, target: Path) -> bool:
+    """Is the handle we are holding still the file at that name?
+
+    A `flock` is on an inode, not on a name. Between opening a file and
+    getting its lock, another process can rename it away — and then the lock
+    we were waiting for is a lock on something that is no longer the log.
+    """
+    try:
+        ours = os.fstat(handle.fileno())
+        there = os.stat(target)
+    except OSError:
+        return False
+    return (ours.st_dev, ours.st_ino) == (there.st_dev, there.st_ino)
+
+
 def append_event(record: dict[str, Any]) -> None:
     """Append one event. The caller has already added ts, pane and pid.
 
-    The lock is taken before the size is measured, so two hooks crossing the
-    limit at the same moment cannot both rename the log and throw one of the
-    two archives away. The second one sees a small file and simply appends.
+    Two hooks can reach the size limit at the same moment, and the lock alone
+    does not order them: it is taken on the inode, so a hook that opened the
+    log before another rotated it holds the *archive*, sees a file over the
+    limit, and renames the fresh log on top of the archive — every event ever
+    recorded, gone. Measured, before `still_the_file` was here to stop it. A
+    hook that finds it is holding the wrong inode simply opens again.
+
+    Surrogates are replaced rather than raising. `json.dumps` emits a lone
+    surrogate happily and a UTF-8 encoder refuses it, so one `\ud800` in a tool
+    response lost the whole event — and a `SessionStart` lost that way costs
+    the session its cwd, pane and pid for good.
     """
     target = events_path()
     private_dir(target.parent)
-    line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
-    with open(target, "a", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        if os.fstat(handle.fileno()).st_size > EVENTS_MAX_BYTES:
-            os.replace(target, rotated_events_path())
-            # The handle still points at the file we just renamed. Reopen, so
-            # this event lands in the fresh log rather than in the archive.
-            with open(target, "a", encoding="utf-8") as fresh:
-                fcntl.flock(fresh.fileno(), fcntl.LOCK_EX)
-                fresh.write(line)
-            private_file(target)
-            private_file(rotated_events_path())
+    raw = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+    line = raw.encode("utf-8", "replace").decode("utf-8")
+    for _ in range(3):        # a rotation under us; the next open finds it
+        with open_private(target) as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            if not still_the_file(handle, target):
+                continue      # someone rotated while we waited; open the new one
+            if os.fstat(handle.fileno()).st_size > EVENTS_MAX_BYTES:
+                os.replace(target, rotated_events_path())
+                # The handle still points at the file we just renamed. Open the
+                # fresh one, so this event lands there rather than in the
+                # archive. It is created 0600, like every file we make.
+                with open_private(target) as fresh:
+                    fcntl.flock(fresh.fileno(), fcntl.LOCK_EX)
+                    fresh.write(line)
+                return
+            handle.write(line)
+            handle.flush()
             return
-        handle.write(line)
-        handle.flush()
-    private_file(target)
 
 
 def count_events() -> int:
@@ -3171,8 +3210,15 @@ def cmd_hook(args: argparse.Namespace) -> int:
         append_event(record)
         stand_down()
     except BaseException as error:  # a hook must never block Claude Code
+        # The deadline stays armed over the logging. `log` opens and writes a
+        # file, and the failure being logged may be that the filesystem is not
+        # answering — cancelling the alarm first and then writing is how a hook
+        # holds Claude Code for ever, which is the one thing it may not do.
+        try:
+            log(f"hook failed: {error!r}")
+        except BaseException:
+            pass
         stand_down()
-        log(f"hook failed: {error!r}")
     return 0
 
 

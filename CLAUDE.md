@@ -174,7 +174,9 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   assert the silence by event name; never weaken them.
 - **The hook must never block Claude Code.** try/except around everything,
   `give_up_after` deadline, always exit 0. Keep all three. The deadline covers
-  every wait at once, including a stdin that never closes.
+  every wait at once, including a stdin that never closes — **and it stays
+  armed over the logging on the way out.** `log` opens and writes a file, and
+  the failure being logged may be that the filesystem is not answering.
 - **Every POST carries a token.** A cross-origin `fetch` may POST to a loopback
   port unasked, and the effect here is `tmux send-keys` into a live terminal.
   `allowed()` wants three things to agree: Host, an Origin that is ours when
@@ -203,8 +205,20 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `:(literal)` prefix, the `--`, and comparing the answer to what was asked for.
   Ignored files are asked the same way. Never swap either check for a pattern
   that tries to spot a bad path.
-- **The state directory is private.** `0700` dirs, `0600` files. The log holds
-  every prompt and every command an agent ran.
+- **The state directory is private.** `0700` dirs, `0600` files — and `0600`
+  **at creation**, through `open_private`. A `chmod` after the first write
+  leaves a window in which the file already holds a prompt and anyone on the
+  machine can read it, and that window does not close if the process dies in
+  it. The log holds every prompt and every command an agent ran.
+- **A `flock` is on an inode, not on a name.** Between opening the log and
+  getting its lock, another hook can rotate it away — and then the lock is on
+  the archive. A hook that did not notice renamed the fresh log on top of the
+  archive: every event ever recorded, gone. `still_the_file` is that check, and
+  `append_event` opens again when it fails.
+- **An event must survive what is in it.** A lone surrogate — legal in a JS
+  string, so reachable in a tool response — makes a strict UTF-8 encoder
+  refuse the whole line. Surrogates are replaced; a `SessionStart` lost that
+  way costs the session its cwd, pane and pid for good.
 
 ### State
 
