@@ -237,6 +237,13 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   next line. The cut walks the scrubbed fragment, never a string of HTML, and
   a line count that disagrees with the file paints nothing: colour on the wrong
   lines is worse than none.
+- **Reading the open file asks git twice and `file` once — and two of those
+  are remembered.** The Files tab polls every two seconds, so the answers that
+  cannot have changed must not be asked again: `Files.root_of` holds where the
+  worktree starts, `Files.language_of` holds what `file` said, keyed on the
+  path with its mtime and size. **`is_listed` is never cached**: it is the
+  check that git still offers this name, and a remembered yes would let a file
+  be read after it was taken out of the tree.
 - **What language is this? Three questions, most certain first** (PLAN 4.8.1):
   the name, then the shebang, then `file` on the daemon — asked only when the
   first two came up empty, so a suffix never pays for a subprocess. `file` is

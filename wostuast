@@ -117,6 +117,11 @@ STATE_COLORS = {
     "dead": "\033[90m",
 }
 
+#: How many `file` answers to remember. A reader moving through a worktree
+#: opens one file at a time, so this is generous; it is here to stop a long
+#: session growing the map without end.
+LANGS_KEPT = 512
+
 #: A session nobody can talk to any more. These go to the history.
 GONE_STATES = frozenset({"ended", "dead"})
 
@@ -1699,6 +1704,7 @@ class Files:
 
         self.held: dict[str, Listing] = {}
         self.roots: dict[str, str] = {}     # a session's directory to its top
+        self.langs: dict[str, str] = {}     # a file's bytes to what `file` said
         self.gates: dict[str, Any] = {}
         self.lock = threading.Lock()
 
@@ -1715,6 +1721,39 @@ class Files:
         found = worktree_root(cwd, runner)
         with self.lock:
             self.roots[cwd] = found
+        return found
+
+    def language_of(
+        self, target: Path, mtime: float, size: int,
+        runner: Callable[..., str | None],
+    ) -> str:
+        """What `file` made of this one, asked once per version of it.
+
+        The answer depends on the file's bytes and on nothing else, so asking
+        again two seconds later is asking a question already answered. The
+        open file is read on every poll of every browser, and this was the
+        third process each of those paid for.
+
+        The key carries the mtime and the size, which is the same cheap proxy
+        for "the bytes changed" the rest of this program uses. An empty answer
+        is kept as well, and that is most of the saving: `file` says
+        `text/plain` for a suffix-less Python module, which is deliberately
+        not in `BY_MIME`, so the common answer is no answer.
+        """
+        key = f"{target}\n{mtime}\n{size}"
+        with self.lock:
+            known = self.langs.get(key)
+        if known is not None:
+            return known
+        found = sniff_language(target, runner)
+        with self.lock:
+            # A reader moving through a worktree would otherwise keep every
+            # file it opened. Nothing here is worth a second question, so the
+            # oldest simply go.
+            if len(self.langs) >= LANGS_KEPT:
+                for old in list(self.langs)[:LANGS_KEPT // 2]:
+                    self.langs.pop(old, None)
+            self.langs[key] = found
         return found
 
     def gate(self, root: str) -> Any:
@@ -1874,7 +1913,8 @@ def sniff_language(path: Path, runner: Callable[..., str | None] = run) -> str:
 
 
 def read_worktree_file(
-    cwd: str, wanted: str, runner: Callable[..., str | None] = run
+    cwd: str, wanted: str, runner: Callable[..., str | None] = run,
+    held: "Files | None" = None,
 ) -> FileText | None:
     """One file's content, or None.
 
@@ -1883,8 +1923,14 @@ def read_worktree_file(
     worktree once every link is followed. Those two checks together cover
     `..`, an absolute path and a symbolic link out of the tree, without having
     to guess at each of them. See PLAN.md section 4.4.1.
+
+    `held` is the daemon's `Files`, which remembers the two answers that do
+    not change between polls: where the worktree starts, and what `file` made
+    of a name that gives nothing away. **`is_listed` is not one of them** — it
+    is the check that git still offers this name, and a cached yes would mean
+    a file could still be read after it was taken out of the tree.
     """
-    root = worktree_root(cwd, runner)
+    root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
     if not root or not is_listed(root, wanted, runner):
         return None
     target = inside(root, Path(root) / wanted)
@@ -1910,7 +1956,9 @@ def read_worktree_file(
     # and it is the common shape for a file with no suffix, so asking `file`
     # about one is a subprocess for an answer already in hand.
     if not Path(wanted).suffix and not raw.startswith(b"#!"):
-        found.language = sniff_language(target, runner)
+        found.language = (
+            held.language_of(target, found.mtime, len(raw), runner) if held
+            else sniff_language(target, runner))
     return found
 
 
@@ -2967,7 +3015,8 @@ class Serving:
         if session is None:
             return
         wanted = query.get("path", [""])[0]
-        found = read_worktree_file(session.cwd, wanted)
+        found = read_worktree_file(session.cwd, wanted,
+                                   held=self.daemon.files)
         if found is None:
             self.reply_json({"id": session_id, "path": wanted,
                              "missing": "that file is not in this worktree"}, 404)
