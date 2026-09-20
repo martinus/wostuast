@@ -429,8 +429,10 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   agent to search for the quoted line instead.
 - **A goTo is a place, not a path.** `state.files.goTo` moves the list to a
   file and `state.files.goToLine` moves the body to a line in it. A windowed
-  file is arithmetic (`lineTop`), a file drawn whole scrolls to the row, and a
-  document is switched to its lines — it has no line 4 to go to otherwise.
+  file is arithmetic (`lineTop`, through `heightOf` — a commented line is
+  taller than a row, and assuming otherwise landed the target off screen), a
+  file drawn whole scrolls to the row, and a document is switched to its
+  lines — it has no line 4 to go to otherwise.
 - **The Review tab is the only place a review is sent from**, and the message
   stands above the send button, not editable. `drawReview` is the tab,
   `reviewText` is the message, `blankReview` is an empty one.
@@ -438,6 +440,26 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   there is nowhere for the comment to be drawn and nowhere to put it back. The
   anchor used to carry a side for this, and a comment on a removed line could
   not be shown on the Files tab at all — but was still sent.
+- **The committed section's new side is HEAD, not the worktree.** `base...HEAD`
+  stops at the last commit, so its line numbers are not the file's. A comment
+  there is carried through the uncommitted section — which is exactly the map
+  from HEAD to disk — by `inWorktree`, and a line that is no longer on disk
+  gets no `+`, like a removed one. Anchoring to HEAD's number was wrong at the
+  moment of writing, not because the file moved afterwards.
+- **One anchor, one comment box.** A file in both sections shows the same line
+  twice. Two boxes meant the later `focus()` took the keystrokes to a box off
+  screen, and saving the visible one passed an empty note — which means
+  delete, so the comment was lost in silence.
+- **`state.writing` must not outlive its box.** It is cleared when the file or
+  the tab it was on goes away, and the guards ask the DOM (`writingIn`) rather
+  than the flag: a box open on another tab froze a tab that had nothing on
+  screen to close.
+- **What the reader opened lives outside the node.** `state.diffOpen`, like the
+  transcript's `state.open`. A `let open` inside `drawDiffFile` was thrown away
+  on every rebuild, so a big file snapped shut each time the agent saved.
+- **An async answer belongs to the session that asked.** `submitReview` blanked
+  whatever review was current when `tmux send-keys` returned, and removed its
+  key from storage. The sent review is cleared by its own id.
 - **A tab that fetches nothing says `load: null`**, and the shared `load()`
   draws for it. A tab switch goes through `load`, not `draw`, so an empty
   loader left the page showing the tab before.

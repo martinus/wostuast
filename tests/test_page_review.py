@@ -908,3 +908,231 @@ def test_the_filter_narrows_what_is_shown_and_not_what_is_sent(repo_page):
             assert "1 of 2 comments" in page.locator(".listnote").inner_text()
         finally:
             browser.close()
+
+
+# --- the committed section is HEAD, not the file on disk ---------------------
+
+
+CLICK_COMMITTED = """(want) => {
+  const pane = document.querySelector('.diffbody');
+  let committed = false;
+  for (const node of pane.children) {
+    if (node.classList.contains('diffhead')) {
+      committed = node.classList.contains('committed');
+      continue;
+    }
+    if (!committed || !node.classList.contains('dfile')) continue;
+    for (const row of node.querySelectorAll('.dline')) {
+      if (!row.textContent.includes(want)) continue;
+      const plus = row.querySelector('.addnote');
+      if (!plus) return 'no + on that line';
+      plus.click();
+      return 'clicked';
+    }
+  }
+  return 'no such line in the committed section';
+}"""
+
+
+def test_a_committed_line_anchors_to_where_it_is_in_the_worktree(repo_page, ws):
+    """The committed section is `base...HEAD`, so its new side is HEAD — not
+    the file on disk. A comment belongs to a line of the file as it is, and
+    this one was anchored to HEAD's number: with fifty uncommitted lines above
+    it, the comment was drawn on the Files tab over a line nobody commented
+    on, and the message told the agent the wrong place. Wrong at the moment of
+    writing, not because the file moved afterwards."""
+    repo, _ = repo_page
+    code = repo / "code.py"
+    code.write_text("".join(f"new{n}\n" for n in range(50)) + code.read_text())
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.wait_for_function(
+                "document.querySelectorAll('.diffhead.committed').length === 1")
+            assert page.evaluate(CLICK_COMMITTED, "print(2)") == "clicked"
+            page.wait_for_selector(".commentbox textarea")
+            # print(2) is line 2 of HEAD and line 52 of the worktree.
+            assert page.evaluate("state.writing") == "code.py\n52"
+        finally:
+            browser.close()
+
+
+def test_one_line_in_both_sections_opens_one_comment_box(repo_page):
+    """A file changed in both sections has the same worktree line twice, and
+    two boxes were drawn for it. The later `focus()` won, so the keystrokes
+    went to the box off screen — and saving the one the reader could see
+    passed an empty note, which means delete. The comment was lost without a
+    word."""
+    repo, _ = repo_page
+    code = repo / "code.py"
+    code.write_text(code.read_text() + "print(3)\n")   # uncommitted, after it
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.wait_for_function(
+                "document.querySelectorAll('.diffhead.committed').length === 1")
+            assert page.evaluate(CLICK_COMMITTED, "print(2)") == "clicked"
+            page.wait_for_selector(".commentbox textarea")
+            assert page.locator(".commentbox").count() == 1
+            assert page.evaluate("state.writing") == "code.py\n2"
+
+            page.fill(".commentbox textarea", "this is the note I typed")
+            page.click(".commentbox .verb")
+            page.wait_for_selector(".comment")
+            notes = page.evaluate(
+                "state.review.comments.map((one) => one.note)")
+            assert notes == ["this is the note I typed"]
+        finally:
+            browser.close()
+
+
+def test_sending_a_review_leaves_the_next_session_alone(ws, served, repo_page,
+                                                        tmp_path):
+    """`tmux send-keys` takes long enough to press `j` in. Everything after the
+    answer worked on whatever was current by then, so it blanked the **new**
+    session's draft and removed its key from storage."""
+    daemon, _ = served
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "about the first session")
+            page.wait_for_function("state.review.comments.length === 1")
+
+            other = tmp_path / "elsewhere"
+            other.mkdir(exist_ok=True)
+            ws.append_event(conftest.event("SessionStart", sid="s2",
+                                           cwd=str(other), pane="%9", pid=2,
+                                           ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                "document.querySelectorAll('.row').length === 2")
+
+            # Hold the answer open, the way a slow `tmux send-keys` does.
+            page.evaluate("""() => {
+              window.__answer = null;
+              window.__realTell = tell;
+              tell = () => new Promise((done) => { window.__answer = done; });
+              submitReview();
+            }""")
+            page.wait_for_function("window.__answer !== null")
+
+            page.evaluate("choose('s2')")
+            page.evaluate("""() => {
+              state.review.comments.push(
+                {anchor: 'other.py\\n1', note: 'the second session', quoted: ''});
+              keepReview();
+            }""")
+            page.evaluate("window.__answer({ok: true})")
+            page.wait_for_function(
+                "localStorage.getItem('wostuast-review-s1') === null")
+
+            seen = page.evaluate("""() => ({
+              held: state.review.comments.map((one) => one.note),
+              stored: localStorage.getItem('wostuast-review-s2'),
+            })""")
+            assert seen["held"] == ["the second session"]
+            assert seen["stored"] and "the second session" in seen["stored"]
+        finally:
+            browser.close()
+
+
+def test_a_comment_box_on_one_tab_does_not_freeze_another(repo_page):
+    """`holdingText` asked only whether a box was open somewhere. One left on
+    the Diff tab froze the Files tab, which had no box on screen to close: the
+    pane kept drawing the file the reader had already left."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+
+            # The Review tab opens no file, so nothing else can clear it:
+            # leaving the tab the box was on is what has to.
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody")
+            assert page.evaluate("state.writing") is None, \
+                "the box was on the tab you left"
+
+            show_tab(page, "files")
+            page.wait_for_selector(".filebody")
+
+            # And the same within one tab: the box belongs to the file it is
+            # on, and picking another file takes it away.
+            page.click(".filelist button:has-text('code.py')")
+            page.wait_for_selector(".filebody .code .dline")
+            page.locator(".filebody .dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_function("state.files.path === 'NOTES.md'")
+            page.wait_for_function(
+                """() => !document.querySelector('.filebody')
+                           .textContent.includes('print(1)')""")
+            assert page.evaluate("state.writing") is None
+        finally:
+            browser.close()
+
+
+def test_a_big_diff_file_stays_open_when_the_agent_saves(repo_page):
+    """`open` was a local on the node `drawDiffFile` built, and `drawDiff`
+    rebuilds the pane whenever anything is saved — so a file the reader
+    expanded snapped shut on the next poll."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            # Two lines is "big" here, so a small file behaves like a long
+            # one and the test does not need a file of ten thousand.
+            page.evaluate("BIG_LINES = 2; state.diffAt += 1; draw();")
+            shown = """() => {
+              const node = [...document.querySelectorAll('.dfile')].find(
+                (one) => one.querySelector('.path').textContent === 'README.md');
+              return node ? node.querySelectorAll('.dline').length : -1;
+            }"""
+            page.wait_for_function(
+                f"() => ({shown})() === 0")      # over BIG_LINES, so shut
+            page.locator(".dfile:has(.path:text-is('README.md')) .name").click()
+            page.wait_for_function(f"() => ({shown})() > 0")
+            many = page.evaluate(shown)
+
+            page.evaluate("state.diffAt += 1; draw();")   # as a save does
+            assert page.evaluate(shown) == many
+        finally:
+            browser.close()
+
+
+def test_going_to_a_comment_puts_its_line_on_screen(long_page):
+    """`lineTop` assumed every row is `CODE_H` tall. A commented line is
+    taller than that, and `fillCode` lays the file out knowing it — so with
+    fifteen comments above the target the pane landed 1600 px short of a
+    760 px pane, and the line the reader asked for was nowhere on it. Even one
+    comment above it threw the landing off by about five rows."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.evaluate("""() => {
+              for (let n = 10; n <= 150; n += 10) {
+                state.review.comments.push({
+                  anchor: "long.py\\n" + n, note: "note " + n, quoted: ""});
+              }
+              state.review.comments.push(
+                {anchor: "long.py\\n3000", note: "the one to go to", quoted: ""});
+              keepReview();
+            }""")
+            # Through the Review tab, the way a reader gets there: the button
+            # under each comment says where it is.
+            show_tab(page, "review")
+            page.click(".spot .crumb:text-is('long.py:3000')")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.filebody .code .dline .ln')]
+                     .some((e) => e.textContent.trim() === '3000')""")
+            seen = page.evaluate("""() => {
+              const pane = document.querySelector('.filebody');
+              const row = [...pane.querySelectorAll('.dline')].find(
+                (one) => one.querySelector('.ln').textContent.trim() === '3000');
+              const box = row.getBoundingClientRect();
+              const on = pane.getBoundingClientRect();
+              return {top: box.top - on.top, height: on.height};
+            }""")
+            assert 0 <= seen["top"] < seen["height"], seen
+        finally:
+            browser.close()
