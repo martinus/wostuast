@@ -395,3 +395,32 @@ def test_a_pane_id_with_a_newline_is_not_a_pane_id(ws):
     """`$` matches before a final newline; `\\Z` does not."""
     assert ws.PANE_PATTERN.match("%7")
     assert not ws.PANE_PATTERN.match("%7\n")
+
+
+def test_two_threads_writing_one_file_do_not_unlink_each_other(ws, tmp_path):
+    """The temporary name carried the pid alone, which is the same for both —
+    so one thread renamed or unlinked the other's half-written file, and the
+    loser raised `FileNotFoundError` out of `write_atomic`. Two processes were
+    thought of; two threads of one process were not, and the daemon answers
+    every browser in a thread of its own.
+    """
+    import threading
+
+    target = tmp_path / "shared.json"
+    trouble = []
+
+    def write(text):
+        try:
+            for _ in range(20):
+                ws.write_atomic(target, text)
+        except Exception as error:      # noqa: BLE001 - the point of the test
+            trouble.append(error)
+
+    threads = [threading.Thread(target=write, args=(text,))
+               for text in ("one", "two")]
+    for one in threads:
+        one.start()
+    for one in threads:
+        one.join()
+    assert trouble == []
+    assert target.read_text() in ("one", "two")

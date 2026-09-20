@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import time
 
 import pytest
 
@@ -556,3 +557,117 @@ def test_a_new_name_from_the_status_line_reaches_the_row(ws):
     ws.write_status("s1", ws.Status(ts=clock.time(), name="second"))
     store.refresh()
     assert store.rows[0]["name"] == "second"
+
+
+# --- five ways a row said the wrong thing ------------------------------------
+
+
+def test_an_auth_notification_does_not_strand_the_row_amber(ws):
+    """`PLAN.md` 4.3 says plainly that `auth_success` is not needs-you. An
+    older Claude Code sends no `notification_type`, and the fallback took
+    anything that was not the idle message for a permission prompt.
+
+    Nothing clears it: no tool call and no prompt follows an auth
+    notification, so the row sat amber with "Logged in as martin" as its
+    reason until someone typed into that session."""
+    store = ws.Store()
+    store.apply(event("SessionStart", cwd="/w/one", ts=1000.0))
+    store.apply(event("Notification", cwd="/w/one", ts=1001.0,
+                      message="Logged in as martin"))
+    session = store.sessions["s1"]
+    assert session.state != "needs_you"
+    assert session.reason == ""
+    assert session.last_event == "Logged in as martin"
+
+
+def test_an_untyped_permission_message_is_still_read(ws):
+    """The other half: the fallback has to recognise one, not assume it."""
+    store = ws.Store()
+    store.apply(event("SessionStart", cwd="/w/one", ts=1000.0))
+    store.apply(event("Notification", cwd="/w/one", ts=1001.0,
+                      message="Claude needs your permission to use Bash"))
+    assert store.sessions["s1"].state == "needs_you"
+
+
+def test_a_stale_permission_notification_leaves_the_text_alone_too(ws):
+    """Only the state change was dropped. The row read "ready" in blue with a
+    permission question as its only line of text, and stayed that way until
+    someone typed."""
+    store = ws.Store()
+    store.apply(event("SessionStart", cwd="/w/one", ts=1000.0))
+    store.apply(event("PermissionRequest", cwd="/w/one", ts=1000.0,
+                      tool_name="Bash", tool_input={"command": "ls"}))
+    store.apply(event("PostToolUse", cwd="/w/one", ts=1004.0, tool_name="Bash"))
+    store.apply(event("Stop", cwd="/w/one", ts=1006.0))
+    store.apply(event("Notification", cwd="/w/one", ts=1012.0,
+                      notification_type="permission_prompt",
+                      message="Claude needs your permission to use Bash"))
+    session = store.sessions["s1"]
+    assert session.state == "done"
+    assert session.reason == ""
+    assert session.last_event == "stopped"
+
+
+def test_a_resumed_session_is_not_still_waiting(ws):
+    """Every handler that sets a state clears the attention with it. This one
+    did not, so a session killed at its dialog and resumed came back reading
+    "ready" with "permission: Bash rm -rf ~" under it — and a wait that had
+    started before the agent died."""
+    store = ws.Store()
+    store.apply(event("PermissionRequest", cwd="/w/one", ts=1000.0,
+                      tool_name="Bash", tool_input={"command": "rm -rf ~"}))
+    assert store.sessions["s1"].state == "needs_you"
+    store.apply(event("SessionStart", cwd="/w/one", ts=2000.0, source="resume"))
+    session = store.sessions["s1"]
+    assert session.state == "done"
+    assert session.reason == ""
+    assert session.attention_since == 0.0
+
+
+def test_a_second_notification_does_not_restart_the_wait(ws):
+    """A Claude Code that sends no `PermissionRequest` notifies again while
+    the same dialog is up. The clock is how long you have been needed, and
+    moving it made a row that had waited a minute say it had waited none."""
+    store = ws.Store()
+    store.apply(event("SessionStart", cwd="/w/one", ts=900.0))
+    store.apply(event("Notification", cwd="/w/one", ts=1000.0,
+                      notification_type="elicitation_dialog",
+                      message="Claude is asking"))
+    assert store.sessions["s1"].attention_since == 1000.0
+    store.apply(event("Notification", cwd="/w/one", ts=1060.0,
+                      notification_type="elicitation_dialog",
+                      message="Claude is asking"))
+    assert store.sessions["s1"].attention_since == 1000.0
+    assert store.sessions["s1"].state == "needs_you"
+
+
+def test_two_renames_at_once_keep_both_names(ws):
+    """`ThreadingHTTPServer` runs two `POST /name` requests at once in one
+    process. Both built the new map from the same snapshot, so one name was
+    lost — and memory and the file disagreed about which, so a restart
+    silently swapped them. The temporary file was named by pid alone, so one
+    thread also unlinked the other's, which came back as a
+    `FileNotFoundError` into a browser's request.
+    """
+    import threading
+
+    store = ws.Store()
+    real = ws.write_names
+
+    def slow(names):
+        time.sleep(0.05)
+        real(names)
+
+    ws.write_names = slow
+    try:
+        threads = [threading.Thread(target=store.rename, args=(who, f"name-{who}"))
+                   for who in ("a", "b")]
+        for one in threads:
+            one.start()
+        for one in threads:
+            one.join()
+    finally:
+        ws.write_names = real
+
+    assert store.names == {"a": "name-a", "b": "name-b"}
+    assert ws.read_names() == store.names

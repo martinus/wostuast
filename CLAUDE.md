@@ -167,6 +167,11 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **Prefer deleting a feature over adding a config option.**
 - **No module-level mutable state.** The daemon owns a `Store` and a `Hub`. One
   thread writes the Store; readers take `rows`, replaced whole, so no lock.
+  A *writer* that is not that thread does need one: `POST /name` runs in the
+  request's own thread, and two at once built the new map from the same
+  snapshot, so one name was lost and memory and the file disagreed about
+  which. `write_atomic`'s temporary carries the thread as well as the pid, for
+  the same reason — two threads of one process are as real as two processes.
 - **Keep the raw payload.** Never strip fields from a hook event: a new field
   from a newer Claude Code must not break an older wostuast.
 
@@ -265,7 +270,18 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   you do clears an idle prompt, so a row that went amber on it stayed amber for
   ever. A permission `Notification` is dropped once the session has sent a
   `PermissionRequest`: after that it is the same news twelve seconds late, and
-  honouring it raised the alarm again for a question already answered.
+  honouring it raised the alarm again for a question already answered — and
+  dropping it means the text too, or the row reads "ready" with a permission
+  question as its only line. A notification with no `notification_type` is
+  read for the message that means a dialog, never assumed to be one:
+  `auth_success` ("Logged in as …") took the row amber with nothing that
+  could ever clear it.
+- **A state change clears the attention with it.** Every handler that sets a
+  state calls `_clear_attention` — `SessionStart` did not, so a session killed
+  at its dialog and resumed came back "ready" with the old permission question
+  under it. And the wait clock only starts when the wait does: a second
+  notification about the same dialog moved it, so a row that had waited a
+  minute said it had waited none.
 - **Folding an event twice must change nothing.** Handlers assign, never
   accumulate; `Store.apply` drops an event older than the session has seen. A
   log rotation really does deliver old events after new ones.
