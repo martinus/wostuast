@@ -518,6 +518,10 @@ class GitFacts:
     behind: int = 0
     dirty: bool = False
     touched_files: int = 0
+    #: git did not answer about a directory that is a repository. Empty facts
+    #: read as a clean repository with no branch, which is a real state and
+    #: not this one — and they used to be remembered as the answer.
+    failed: bool = False
 
 
 @dataclass
@@ -772,10 +776,19 @@ class Store:
         if not wanted:
             return
         facts = git_facts_many(wanted)
+        # The cool-down applies either way, so a worktree whose `status`
+        # always passes its timeout is not asked every tick. But a failure is
+        # neither written over what we knew nor left standing as the answer:
+        # it goes back on the list, and is asked again when the cool-down is
+        # up. It used to be recorded as read and assigned over the good facts,
+        # so an idle session kept "no branch, clean" until a tool call.
         self.git_read.update(dict.fromkeys(facts, moment))
+        self.git_wanted |= {
+            directory for directory, one in facts.items() if one.failed}
         for session in sessions:
-            if session.cwd in facts:
-                session.git = facts[session.cwd]
+            one = facts.get(session.cwd)
+            if one is not None and not one.failed:
+                session.git = one
 
     def rename(self, session_id: str, name: str) -> str:
         """Give a session a name, or take the name away when it is empty.
@@ -1418,7 +1431,8 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
 
     It looks like `## main...origin/main [ahead 2, behind 1]`. The upstream and
     the counts are left out when there are none. A fresh repository says
-    `## No commits yet on main`.
+    `## No commits yet on main`, and a detached HEAD says `## HEAD (no
+    branch)` — which is not a branch name, and went on the row as if it were.
     """
     text = header[3:] if header.startswith("## ") else header
     ahead = behind = 0
@@ -1430,6 +1444,8 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
             else:
                 behind = int(value)
     text = text.partition("...")[0]
+    if text.strip() == "HEAD (no branch)":
+        return "", ahead, behind
     branch = text.rpartition(" ")[2] if text.startswith("No commits yet on ") else text
     return branch.strip(), ahead, behind
 
@@ -1457,7 +1473,10 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
 
     Two git runs, not four: one gives both directories, the other gives the
     branch, the counts and the changed files at once. A git error gives empty
-    facts, because a directory need not be a repository at all.
+    facts, because a directory need not be a repository at all — except when
+    the first call worked and the second did not, which can only be a failure,
+    and `failed` says so. The two are otherwise the same answer: `status`
+    fails outside a repository just as it does on a stalled disk.
     """
     facts = GitFacts()
     if not cwd or not os.path.isdir(cwd):
@@ -1477,14 +1496,19 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         facts.repo = repo_name(paths.splitlines()[0])
 
     status = git("status", "--porcelain", "--branch")
-    if status is not None:
-        lines = status.splitlines()
-        if lines and lines[0].startswith("## "):
-            facts.branch, facts.ahead, facts.behind = parse_status_branch(lines[0])
-            lines = lines[1:]
-        changed = [line for line in lines if line.strip()]
-        facts.touched_files = len(changed)
-        facts.dirty = bool(changed)
+    if status is None:
+        # `--show-toplevel` answered, so this is a repository and git was
+        # asked about it and did not answer. The call has a two second
+        # timeout, and `status` on a very large worktree can pass it.
+        facts.failed = bool(paths)
+        return facts
+    lines = status.splitlines()
+    if lines and lines[0].startswith("## "):
+        facts.branch, facts.ahead, facts.behind = parse_status_branch(lines[0])
+        lines = lines[1:]
+    changed = [line for line in lines if line.strip()]
+    facts.touched_files = len(changed)
+    facts.dirty = bool(changed)
     return facts
 
 
@@ -1658,6 +1682,21 @@ def worktree_root(cwd: str, runner: Callable[..., str | None] = run) -> str:
     return top.strip() if top else ""
 
 
+def git_answers(runner: Callable[..., str | None] = run) -> bool:
+    """Whether git is answering at all.
+
+    `run` gives None for a command that failed and for one that could not be
+    run, so `rev-parse --show-toplevel` coming back empty means either "this
+    is not a repository" — which is an answer — or "git did not answer",
+    which is not. Nothing in the output tells them apart.
+
+    `git --version` does: it cannot fail inside a working git, and it stalls
+    on the same stalled machine. It is asked only when another call has
+    already come back with nothing, so a repository never pays for it.
+    """
+    return runner(["git", "--version"]) is not None
+
+
 def changed_files(
     cwd: str, runner: Callable[..., str | None] = run
 ) -> set[str] | None:
@@ -1731,6 +1770,11 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     tree = Worktree()
     tree.root = root or worktree_root(cwd, runner)
     if not tree.root:
+        # "No files" and "git did not answer" look the same here and mean
+        # opposite things. Every other git call in this function sets
+        # `failed`; this was the one door left open, and the page drew the
+        # plain empty state over a worktree it simply could not read.
+        tree.failed = not git_answers(runner)
         return tree
     parts = [
         git_names(tree.root, [], runner),
@@ -1884,7 +1928,7 @@ class Files:
         """The listing for the worktree this directory sits in."""
         root = self.root_of(cwd, runner)
         if not root:
-            return Listing()
+            return Listing(tree=Worktree(failed=not git_answers(runner)))
         gate = self.gate(root)
         with gate:
             held = self.held.get(root)
@@ -1947,13 +1991,17 @@ class Files:
         # hand the next caller a different lock from the one in use.
 
 
-def untracked_files(cwd: str, runner: Callable[..., str | None] = run) -> list[str]:
+def untracked_files(
+    cwd: str, runner: Callable[..., str | None] = run
+) -> list[str] | None:
     """The files git neither tracks nor ignores, in name order.
 
     `-z` separates the names with a NUL, which is the only separator a file
-    name cannot hold.
+    name cannot hold. None when git did not answer: it used to come back as
+    an empty list, and the Diff tab said nothing was untracked.
     """
-    return sorted(git_names(cwd, ["--others", "--exclude-standard"], runner) or [])
+    names = git_names(cwd, ["--others", "--exclude-standard"], runner)
+    return None if names is None else sorted(names)
 
 
 def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) -> bool:
@@ -2361,7 +2409,9 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run) -> DiffRepo
     if report.base:
         section("committed", report.base + "...HEAD", report.base + "...HEAD")
     section("uncommitted", "not committed yet", "HEAD")
-    report.untracked = untracked_files(root, runner)[:UNTRACKED_SHOWN]
+    loose = untracked_files(root, runner)
+    report.failed = report.failed or loose is None
+    report.untracked = (loose or [])[:UNTRACKED_SHOWN]
     return report
 
 

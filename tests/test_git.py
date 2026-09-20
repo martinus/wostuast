@@ -81,7 +81,10 @@ def test_the_status_header_is_read(ws):
     assert ws.parse_status_branch(
         "## feature/x...origin/feature/x [ahead 2, behind 1]") == ("feature/x", 2, 1)
     assert ws.parse_status_branch("## No commits yet on main") == ("main", 0, 0)
-    assert ws.parse_status_branch("## HEAD (no branch)") == ("HEAD (no branch)", 0, 0)
+    # A detached HEAD is not on a branch, and this line used to assert that
+    # the whole phrase was one — it recorded what happened rather than what
+    # should. It went on the sidebar row as if it were a branch name.
+    assert ws.parse_status_branch("## HEAD (no branch)") == ("", 0, 0)
 
 
 def test_a_branch_with_dots_keeps_them(ws):
@@ -243,3 +246,100 @@ def test_the_diff_cap_counts_bytes(ws, monkeypatch):
     assert len(out.encode("utf-8")) <= 600
     assert len(text) <= 600, "this text is under the cap in code points"
     assert len(text.encode("utf-8")) > 600, "and over it in bytes"
+
+
+# --- a failed call is not an answer, and is not remembered as one ------------
+
+
+def test_a_failed_status_is_not_a_clean_repository(ws, repo, monkeypatch):
+    """The two used to be byte-identical: a `status` that timed out gave the
+    same empty facts as a repository with nothing to report, minus the branch
+    name. `status` runs under a two second timeout, which PLAN 4.7 already
+    records as measured too short on a large worktree."""
+    real = ws.run
+
+    def runner(args, **rest):
+        if "status" in args:
+            return None                 # as a timeout does
+        return real(args, **rest)
+
+    facts = ws.git_facts(str(repo), runner=runner)
+    assert facts.failed is True
+    assert facts.repo == "myrepo"       # the first call still answered
+    good = ws.git_facts(str(repo))
+    assert good.failed is False
+    assert good.branch == "main"
+
+
+def test_a_directory_that_is_not_a_repository_has_not_failed(ws, tmp_path):
+    """`status` fails outside a repository too, and that is an answer."""
+    facts = ws.git_facts(str(tmp_path))
+    assert facts.failed is False
+    assert facts.branch == "" and facts.repo == ""
+
+
+def test_a_failed_read_is_asked_again_rather_than_kept(ws, repo, monkeypatch):
+    """`reload_git` recorded the directory as read and assigned the empty
+    facts over the good ones, so an idle session kept "no branch, clean" until
+    a tool call happened to touch the tree. The row also renamed itself and
+    jumped, because the sort key holds the repository name."""
+    store = ws.Store()
+    session = ws.Session(session_id="s1", cwd=str(repo))
+    session.git = ws.GitFacts(repo="myrepo", branch="main")
+    store.sessions["s1"] = session
+
+    monkeypatch.setattr(ws, "git_facts_many",
+                        lambda dirs: {d: ws.GitFacts(failed=True) for d in dirs})
+    store.reload_git([session], 1000.0)
+    assert session.git.branch == "main", "the failure was written over it"
+    assert str(repo) in store.git_wanted, "and it will never be asked again"
+
+    monkeypatch.setattr(ws, "git_facts_many",
+                        lambda dirs: {d: ws.GitFacts(repo="myrepo", branch="side")
+                                      for d in dirs})
+    store.reload_git([session], 1000.0 + ws.GIT_MIN_INTERVAL)
+    assert session.git.branch == "side"
+
+
+def test_a_worktree_git_could_not_read_says_so(ws, repo, monkeypatch):
+    """`worktree_root` gives "" both for "not a repository" and for "git did
+    not answer", and the empty listing went out with `failed: false` — so the
+    page drew "this worktree holds no file that git knows about" over a
+    worktree it simply could not read."""
+    tree = ws.worktree_files(str(repo), runner=lambda args, **rest: None)
+    assert tree.failed is True
+    assert tree.files == []
+
+    # And a directory that is not a repository is not a failure: git answers,
+    # it just has nothing to say about this place.
+    nowhere = ws.worktree_files("/", runner=lambda args, **rest:
+                                "git version 2.44.0" if "--version" in args else None)
+    assert nowhere.failed is False
+
+
+def test_a_failed_untracked_listing_is_not_an_empty_one(ws, repo):
+    """`git_names` reports a failure as None and it was collapsed to `[]`, so
+    the Diff tab said nothing was untracked."""
+    (repo / "loose.txt").write_text("new\n")
+    real = ws.run
+
+    def runner(args, **rest):
+        if "ls-files" in args and "--others" in args and "--ignored" not in args:
+            return None
+        return real(args, **rest)
+
+    report = ws.worktree_diff(str(repo), runner=runner)
+    assert report.failed is True
+    assert report.untracked == []
+
+    good = ws.worktree_diff(str(repo))
+    assert good.failed is False
+    assert good.untracked == ["loose.txt"]
+
+
+def test_a_detached_head_is_not_a_branch(ws, repo):
+    """Measured against a real git: `## HEAD (no branch)`."""
+    git(repo, "checkout", "--detach", "-q")
+    facts = ws.git_facts(str(repo))
+    assert facts.branch == ""
+    assert facts.failed is False
