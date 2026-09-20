@@ -180,3 +180,34 @@ def test_switching_tabs_faster_than_they_load_still_lands(repo_page):
             assert not blew_up, blew_up
         finally:
             browser.close()
+
+
+def test_a_transcript_push_during_a_tab_switch_stays_out_of_the_other_tab(
+        repo_page):
+    """`showTab` sets `state.tab` and then awaits `load()`. During that await
+    the box still belongs to the tab before it, and the push's guard read
+    `state.tab` — so a turn was appended as a fourth column of the Files tab.
+
+    `draw()` already asks the box which tab owns it. This does too."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filebody")
+            before = page.evaluate(
+                """() => [...document.getElementById('content').children]
+                           .map((node) => node.className)""")
+
+            # The exact pair an arriving transcript performs, in the window
+            # where the tab has been picked and its body has not been drawn.
+            page.evaluate("""() => {
+              state.tab = 'transcript';
+              patchTranscript([state.blocks.length]);
+              state.tab = 'files';
+            }""")
+            after = page.evaluate(
+                """() => [...document.getElementById('content').children]
+                           .map((node) => node.className)""")
+            assert after == before
+        finally:
+            browser.close()

@@ -4198,15 +4198,20 @@ body:not(.show-thinking) .thinking { display: none; }
 
 /* The review. The `+` sits over the first characters of the gutter and shows
    on hover, the way a pull request does it. `user-select: none` keeps it out
-   of a copied diff, like the line numbers beside it. */
-.plus {
+   of a copied diff, like the line numbers beside it.
+
+   Not `.plus`: that is the green "+3" beside a changed file, and this block
+   was written on top of it. Every count on the page went invisible — a file
+   that had gained lines read as if it had only lost them. */
+.addnote {
   position: absolute; left: 2px; top: 0; width: 18px; height: 18px;
   padding: 0; border: none; border-radius: 4px; cursor: pointer;
   background: var(--needs); color: var(--bg); font: inherit; font-size: 12px;
   line-height: 18px; opacity: 0; user-select: none; transition: opacity .1s ease;
 }
-.dline:hover .plus, .plus:focus { opacity: 1; }
-.onFile .plus, .onLine .plus { position: static; opacity: 1; margin: 6px 0 6px 20px; }
+.dline:hover .addnote, .addnote:focus { opacity: 1; }
+.onFile .addnote, .onLine .addnote {
+  position: static; opacity: 1; margin: 6px 0 6px 20px; }
 /* Sticky, so a comment stays where it can be read when a wide diff is
    scrolled sideways. `pre` is the diff's business, not the note's. */
 .onLine, .onFile { position: sticky; left: 0; white-space: normal; max-width: 680px; }
@@ -4511,9 +4516,10 @@ function said(answer) {
   box.textContent = (answer && answer.error) || "";
   if (!box.textContent) return;
   setTimeout(() => {
-    if (box.textContent === (answer.error || "")) {
-      box.textContent = state.find ? box.textContent : (state.live || "");
-    }
+    // Not `box.textContent` when a search is on: that assigns the error back
+    // to itself, and the match count never comes back. The slot holds one of
+    // two things and `updateLive` knows which.
+    if (box.textContent === (answer.error || "")) updateLive(shownBlocks());
   }, 4000);
 }
 
@@ -4628,6 +4634,7 @@ function applyTheme(choice) {
   }
   const button = $("theme");
   if (button) button.textContent = { system: "auto", light: "light", dark: "dark" }[choice];
+  redrawIcon();
 }
 
 function nextTheme() {
@@ -4806,7 +4813,10 @@ function drawSessions() {
   // One head per group that has anything under it, in the order of `BANDS`.
   // The heads are made fresh each time: they carry only a count, so there is
   // no animation in them to preserve, unlike a row.
-  let barPlaced = !past.length;
+  // Not `!past.length`: with nothing to fold the loop skips the bar, and a
+  // bar left from the last draw then survived the removal below. A filter
+  // that hid every finished session still showed "history · 2" over nothing.
+  let barPlaced = false;
   for (const [name, title] of BANDS) {
     const mine = listed.filter((s) => bandOf(s) === name);
     if (name === "history") {
@@ -4921,6 +4931,14 @@ function drawHeader() {
 // --- the tab icon, drawn here so it follows the colours ---------------------
 
 let iconWas = "";
+
+// The icon is painted out of the palette, but it is only kept against the
+// state it shows — so a theme change left a dark-theme dot on a light page.
+function redrawIcon() {
+  const was = iconWas;
+  iconWas = "";
+  if (was) drawIcon(was);
+}
 
 function drawIcon(state_) {
   if (state_ === iconWas) return;
@@ -5381,8 +5399,19 @@ function drawTranscript(box) {
   else box.scrollTop = 0;
 }
 
+// How many blocks the filter is showing. `drawTranscript` counts them as it
+// draws; anyone else asking has to count them.
+function shownBlocks() {
+  return state.blocks.filter((block) => block && matches(block)).length;
+}
+
 function updateLive(shown) {
-  if (!state.find) { $("live").textContent = state.live || ""; return; }
+  // The find box is shared with the other tabs, so a filter is not by itself
+  // a reason to put a block count in this slot.
+  if (!state.find || state.tab !== "transcript") {
+    $("live").textContent = state.live || "";
+    return;
+  }
   const total = state.blocks.filter(Boolean).length;
   $("live").textContent = shown + " of " + total;
 }
@@ -5390,6 +5419,10 @@ function updateLive(shown) {
 // Redraw one block where it stands, without touching anything else.
 function redrawBlock(index) {
   const node = blockNode(state.blocks[index], index);
+  // Only `drawTranscript` used to mark the hits, so expanding a tool result
+  // during a search left that one block unhighlighted while every other
+  // match kept its `<mark>`.
+  markHits(node, state.find);
   const old = state.nodes[index];
   state.nodes[index] = node;
   if (old && old.parentNode) old.replaceWith(node);
@@ -5398,8 +5431,22 @@ function redrawBlock(index) {
 
 function patchTranscript(indexes) {
   const box = $("content");
-  if (state.tab !== "transcript" || !state.nodes) return;
-  if (state.find) { drawTranscript(box); return; }   // the filter decides what shows
+  // `state.tab` is set the moment a tab is picked, but the box still holds the
+  // tab before it until `load()` comes back. Asking the box, the way `draw()`
+  // does, is the difference between appending a turn to the transcript and
+  // appending it as a fourth column of the Files tab.
+  if (state.tab !== "transcript" || box.dataset.tab !== "transcript") return;
+  if (!state.nodes) return;
+  if (state.find) {
+    // The filter decides what shows, so the whole tab is drawn again — and
+    // that draw goes to the top. On a live session it happens once a second,
+    // which threw the reader back to the top of a search they were reading.
+    const stick = nearBottom(box);
+    const was = box.scrollTop;
+    drawTranscript(box);
+    box.scrollTop = stick ? box.scrollHeight : was;
+    return;
+  }
   if (!state.nodes.length) { drawTranscript(box); return; }
   const stick = nearBottom(box);
   for (const index of indexes) {
@@ -6365,7 +6412,7 @@ function drawLooseFile(pane, path) {
     header: "@@ -0,0 +1," + lines.length + " @@",
     lines: lines.map((text) => ({ kind: "added", text })),
   }] });
-  putReview(put(node, "div", "onFile"), anchorOf(path, 0), "", "plus");
+  putReview(put(node, "div", "onFile"), anchorOf(path, 0), "");
   return node;
 }
 
@@ -6395,7 +6442,7 @@ function drawDiffFile(pane, one) {
     ? one.old_path + " \u2192 " + one.path : one.path);
   putCounts(head, one);
   const body = put(node, "div", "dbody");
-  putReview(put(node, "div", "onFile"), anchorOf(one.path, 0), "", "plus");
+  putReview(put(node, "div", "onFile"), anchorOf(one.path, 0), "");
   if (one.binary) {
     put(body, "div", "note", "Binary file. There is nothing to show.");
     return node;
@@ -6477,9 +6524,9 @@ function fillDiffFile(body, one) {
       const anchor = lineAnchor(one.path, line, now);
       if (anchor === null) return;      // a line that is no longer in the file
       if (commentAt(anchor) || state.writing === anchor) {
-        putReview(put(lines, "div", "onLine"), anchor, line.text, "plus");
+        putReview(put(lines, "div", "onLine"), anchor, line.text);
       } else {
-        putReview(row, anchor, line.text, "plus");
+        putReview(row, anchor, line.text);
       }
   });
 }
@@ -6673,11 +6720,11 @@ function putCommentBox(parent, anchor, quoted) {
 // The button that opens the box, and the comment or box that is already there.
 // One function, because a line and a file header want exactly the same three
 // things and differ only in where they hang them.
-function putReview(parent, anchor, quoted, cls) {
+function putReview(parent, anchor, quoted) {
   const seen = commentAt(anchor);
   if (state.writing === anchor) return putCommentBox(parent, anchor, quoted);
   if (seen) return putComment(parent, seen);
-  const add = put(parent, "button", cls, "+");
+  const add = put(parent, "button", "addnote", "+");
   add.type = "button";
   add.title = "comment here";
   add.addEventListener("click", () => {

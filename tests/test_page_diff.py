@@ -223,3 +223,30 @@ def test_picking_an_untracked_file_moves_the_pane_to_it(repo_page):
             assert 0 <= where["above"] < where["tall"], where
         finally:
             browser.close()
+
+
+def test_a_file_that_gained_lines_says_so(repo_page):
+    """Three places on the page show how far a file moved, all through
+    `putCounts`, and all of them wrote `<span class="plus">`. The review's
+    hover button took the same class later and gave it
+    `position: absolute; opacity: 0` — so every `+n` on the page went
+    invisible while the `−n` beside it stayed, and a file that had gained
+    lines read as if it had only lost them."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dfile")
+            seen = page.evaluate(
+                """() => [...document.querySelectorAll('.plus')].map((node) => {
+                     const style = getComputedStyle(node);
+                     return {text: node.textContent, opacity: style.opacity,
+                             position: style.position};
+                   })""")
+            assert seen, "no line count on the Diff tab at all"
+            for one in seen:
+                assert one["text"].startswith("+"), one
+                assert one["opacity"] == "1", one
+                assert one["position"] == "static", one
+        finally:
+            browser.close()

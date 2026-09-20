@@ -30,7 +30,7 @@ def test_a_diff_line_can_be_commented_on(repo_page):
         browser, page = open_diff(play, repo_page)
         try:
             assert page.locator(".comment").count() == 0
-            page.locator(".dline .plus").first.click(force=True)
+            page.locator(".dline .addnote").first.click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "use a signed type here")
             page.click(".commentbox .verb")
@@ -51,13 +51,13 @@ def test_the_plus_shows_when_you_are_on_the_line(repo_page):
         browser, page = open_diff(play, repo_page)
         try:
             shown = ("() => getComputedStyle("
-                     "document.querySelector('.dline .plus')).opacity")
+                     "document.querySelector('.dline .addnote')).opacity")
             assert page.evaluate(shown) == "0"
             page.locator(".dline").first.hover()
             page.wait_for_function(shown + " === '1'")
             # And it is not part of the diff you copy, like the numbers by it.
             assert page.evaluate("() => getComputedStyle("
-                                 "document.querySelector('.dline .plus'))"
+                                 "document.querySelector('.dline .addnote'))"
                                  ".userSelect") == "none"
         finally:
             browser.close()
@@ -67,7 +67,7 @@ def test_a_whole_file_can_be_commented_on(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".onFile .plus").first.click()
+            page.locator(".onFile .addnote").first.click()
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "keep the heading order")
             page.click(".commentbox .verb")
@@ -83,7 +83,7 @@ def test_a_comment_survives_the_diff_being_read_again(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .plus").first.click(force=True)
+            page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "look again")
             page.click(".commentbox .verb")
             page.wait_for_selector(".comment")
@@ -101,7 +101,7 @@ def test_an_open_box_is_not_swept_away_by_the_poll(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .plus").first.click(force=True)
+            page.locator(".dline .addnote").first.click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "half a thought")
             page.evaluate("state.diffAt += 1; draw()")
@@ -114,7 +114,7 @@ def test_a_comment_can_be_edited_and_emptied_away(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .plus").first.click(force=True)
+            page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "first thought")
             page.click(".commentbox .verb")
             page.wait_for_selector(".comment")
@@ -141,7 +141,7 @@ def test_cancel_leaves_the_comment_as_it_was(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .plus").first.click(force=True)
+            page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "kept")
             page.click(".commentbox .verb")
             page.wait_for_selector(".comment")
@@ -155,20 +155,40 @@ def test_cancel_leaves_the_comment_as_it_was(repo_page):
             browser.close()
 
 
-def test_the_review_belongs_to_the_session_it_is_about(repo_page):
+def test_the_review_belongs_to_the_session_it_is_about(ws, served, repo_page,
+                                                      tmp_path):
+    """The one chosen is a real second session. It used to be a made-up id,
+    and the page does not keep one: the next push of the session list finds
+    nothing under it, picks the first session again, and brings its review
+    back with it. Correct, and it made the test fail about one run in five."""
+    daemon, _ = served
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
             # Through the shared helper, which waits for the box to open and
             # for the comment to land. This test hand-rolled the sequence and
-            # skipped both waits — it predates the helper — and it was the one
-            # test that failed under a full parallel run.
+            # skipped both waits — it predates the helper.
             comment_on_first_line(page, "about this session")
             page.wait_for_function("state.review.comments.length === 1")
-            page.evaluate("choose('someone-else')")
+
+            # The second session arrives now, rather than before the page
+            # opened: the page picks the first session it is given, and this
+            # one has no repository behind it to draw a diff from.
+            other = tmp_path / "elsewhere"
+            other.mkdir(exist_ok=True)
+            ws.append_event(conftest.event("SessionStart", sid="s2",
+                                           cwd=str(other), pane="%9", pid=2,
+                                           ts=time.time()))
+            daemon.tick()          # nothing polls in a test; this pushes the list
+            page.wait_for_function("document.querySelectorAll('.row').length === 2")
+            page.evaluate("choose('s2')")
             seen = page.evaluate(
                 """() => ({n: state.review.comments.length, chosen: state.chosen})""")
-            assert seen == {"n": 0, "chosen": "someone-else"}
+            assert seen == {"n": 0, "chosen": "s2"}
+
+            # And it is still the first session's when you go back to it.
+            page.evaluate("choose('s1')")
+            page.wait_for_function("state.review.comments.length === 1")
         finally:
             browser.close()
 
@@ -182,7 +202,7 @@ def test_nothing_is_sent_yet(repo_page):
             page.evaluate("window.__posts = []; const real = window.fetch;"
                           " window.fetch = (u, o) => { window.__posts.push(String(u));"
                           " return real(u, o); };")
-            page.locator(".dline .plus").first.click(force=True)
+            page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "do not send me")
             page.click(".commentbox .verb")
             page.wait_for_selector(".comment")
@@ -363,7 +383,7 @@ def test_an_untracked_file_anchors_its_comments_to_itself(repo_page):
             page.click(".side button[title='NOTES.md']")
             page.wait_for_selector(".dfile .what:text('untracked')")
             page.wait_for_selector(".dline")
-            page.locator(".dfile:has(.what:text('untracked')) .dline .plus").first.click(
+            page.locator(".dfile:has(.what:text('untracked')) .dline .addnote").first.click(
                 force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "about the notes")
@@ -584,7 +604,7 @@ def test_a_line_of_a_long_file_is_numbered_from_the_file_not_the_window(long_pag
         try:
             open_file(page, "long.py")
             scroll_to(page, 3000)
-            row_for(page, 3000).locator(".plus").click(force=True)
+            row_for(page, 3000).locator(".addnote").click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "about line three thousand")
             page.click(".commentbox .verb")
@@ -601,7 +621,7 @@ def test_a_comment_in_a_long_file_survives_the_file_being_read_again(long_page):
         try:
             open_file(page, "long.py")
             scroll_to(page, 3000)
-            row_for(page, 3000).locator(".plus").click(force=True)
+            row_for(page, 3000).locator(".addnote").click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "still here")
             page.click(".commentbox .verb")
@@ -629,7 +649,7 @@ def test_the_window_stands_still_while_a_comment_is_written(long_page):
         try:
             open_file(page, "long.py")
             scroll_to(page, 3000)
-            row_for(page, 3000).locator(".plus").click(force=True)
+            row_for(page, 3000).locator(".addnote").click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "half a thought")
             page.evaluate("() => { document.querySelector('.filebody')"
@@ -758,11 +778,11 @@ def test_a_removed_line_is_not_offered_a_comment(repo_page):
         browser, page = open_diff(play, repo_page)
         try:
             page.wait_for_selector(".dline.removed")
-            assert page.locator(".dline.removed .plus").count() == 0
-            assert page.locator(".dline.added .plus").count() > 0
+            assert page.locator(".dline.removed .addnote").count() == 0
+            assert page.locator(".dline.added .addnote").count() > 0
             # And every anchor the page can make is a line of the file as it is.
             assert page.evaluate(
-                "[...document.querySelectorAll('.dline .plus')].length > 0")
+                "[...document.querySelectorAll('.dline .addnote')].length > 0")
         finally:
             browser.close()
 
@@ -776,7 +796,7 @@ def test_two_places_in_one_file_cannot_collide(repo_page):
             anchors = page.evaluate("""() => {
               const seen = new Set();
               for (const row of document.querySelectorAll(".dline")) {
-                const plus = row.querySelector(".plus");
+                const plus = row.querySelector(".addnote");
                 if (plus) seen.add(plus.title);
               }
               return [...seen];
