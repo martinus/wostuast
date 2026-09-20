@@ -106,6 +106,14 @@ every daemon binds port 0, every fixture has its own `tmp_path`, and each worker
 launches a Chromium of its own. More workers than cores starts to time out
 rather than go faster. CI runs `-n auto` in both jobs.
 
+**What the suite does not cover.** It drives the happy path thoroughly, in a
+real browser. It says very little about what happens when something *fails*: of
+the eight issues a full-file review filed, three were "a failed git call renders
+as an answer", one a lock race between two HTTP threads, one a rotation race
+between two hooks. Green is not evidence about those. When you change anything
+that calls git, touches a file, or is reached from more than one thread, write
+the failing case yourself — nothing else will.
+
 Throwaway home, never your own:
 
 ```
@@ -120,9 +128,19 @@ exactly once; a sloppy replace in a file this size fails silently. A small
 Python script with `assert s.count(old) == 1` before every `replace` is the
 reliable shape when making several edits at once.
 
-**Prove a test earns its place.** Write the test, then revert the fix and watch
-it fail. A test written here passed with its fix removed — another line was
-saving the state it asserted — and it would have guarded nothing for ever.
+**Prove a test earns its place — by breaking what it claims to guard, which is
+not always the fix you just wrote.** Write the test, then perturb the thing it
+is about and watch it fail. Two have slipped through here:
+
+- One passed with its fix removed, because another line was saving the state it
+  asserted.
+- One claimed `is_listed` is never cached, and removed the file with `git rm` —
+  which deletes it from disk, so the read was refused by `target.is_file()`
+  whatever `is_listed` said. Reverting the cache would not have caught it. The
+  perturbation that did was stubbing `is_listed` to always say yes.
+
+Ask what single change should make this test go red. If that change is not the
+one you make, the test is about something else than you think.
 
 **Playwright.** A hover-only control (`.plus`) needs `click(force=True)`. Wait
 for what the page has drawn, never for a number of seconds; `wait_for_timeout`
