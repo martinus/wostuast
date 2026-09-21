@@ -27,7 +27,29 @@ Each event adds its own fields:
 `notification_type` is one of `permission_prompt`, `idle_prompt`,
 `auth_success`, `elicitation_dialog`.
 
+A newer build adds `scratchpad_dir`, `prompt_id`, `effort` and `shell_pid`
+to the base payload, and `permission_mode` reads `auto`. None of them is read,
+and the log keeps them because it keeps whatever arrives: a field from a newer
+Claude Code must never break an older wostuast.
+
 `wostuast hook` adds three fields of its own: `ts`, `pane` and `pid`.
+
+### A question the agent is stopped on
+
+`AskUserQuestion` is a tool, so the whole of it arrives in `tool_input` --
+every question, every option label and description. Read off a real log, one
+ask sends three events:
+
+| Order | Event | Carries |
+| --- | --- | --- |
+| 1 | `PreToolUse` | the questions, and `tool_use_id` |
+| 2 | `PermissionRequest`, 90 ms later | the same questions, no `tool_use_id` |
+| 3 | `Notification`, 6 s later | `permission_prompt`, "Claude needs your permission" |
+
+`tool_input.questions` is a list, and one ask really does hold more than one
+question. Each has `question`, `header`, `multiSelect` and `options`, and each
+option has `label` and `description`. `read_ask` names those fields and keeps
+nothing else.
 
 ### Two calls at once
 
