@@ -66,6 +66,7 @@ This list exists because each entry was re-implemented once already.
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
 | a folder or a page icon | `putIcon(parent, "dir" \| "file")` — SVG, so not `put` |
+| the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
 
 **Python helpers**: `path_label`, `clip`, `run` (subprocess with a timeout),
@@ -473,6 +474,13 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **The tree holds the tiers.** `dirFiles` orders each directory's own files —
   named, changed newest first, then the rest. `openDirs` opens a directory
   holding a change; `state.dirs` (what the reader opened by hand) wins over it.
+- **Typing is "go to file", not a filter.** The tree never moves: where a file
+  sits is half of what you know about it, and taking the tree apart was hiding
+  that answer as a way of asking for it. `drawGoTo` opens a list under the
+  box — files *and* directories, `pick`-ranked — and picking one opens it and
+  reveals it. The list lives inside `.findslot` so `split`'s children keep
+  their positions, and closing it clears its redraw key, or the same query
+  typed twice matches the key and draws nothing.
 - **A file is found by its name; the path is the fallback, and it must be
   tight.** `findPath` matches the basename first, then the whole path only when
   the matched letters span no more than `TIGHT` times the query length.
