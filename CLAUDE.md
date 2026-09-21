@@ -1,11 +1,51 @@
 # CLAUDE.md
 
-Only an agent reads this file. It is the map, the reuse index, and the scars.
-No greeting, no prose you can skip.
+No human reads this file. It is the map, the reuse index, and the scars.
 
-`PLAN.md` is the brief and wins when the two disagree. Read it first. This file
-says where things are, what already exists, and which mistakes have already
-been made here.
+**How a rule is written here, and how to add one.** One bullet: the assertion
+in bold, then why the obvious alternative is wrong, then the symbols to grep
+and the test that holds it. Name the symbols in the rule itself, so `grep -n
+tmux_send CLAUDE.md` finds it.
+
+**Never cut the why to make this shorter.** The assertion says what to do; the
+why is the only thing that stops the next agent doing the plausible wrong
+thing again, and every one of these was written after something shipped
+broken. This file is long because the program is subtle, and it is read by
+something that can hold all of it at once.
+
+**State no number a person would have to maintain.** Give the command that
+answers it. Three numbers in here went stale by 40% before anybody noticed,
+and a stale fact is worse than no fact: it is believed. **A measurement is
+not that**: "2,500 lines took 144 ms" records an experiment somebody ran, and
+it stays true. The rotting kind describes this repository as it is today —
+how long the program is, how long the suite takes.
+
+`PLAN.md` is the brief and wins where the two disagree. Read it when the
+question is *what* or *why* — the goals, the non-goals, and section 12, which
+is the decision log. This file is *where* and *how*.
+
+## Where to look
+
+Rules are grouped by what they are about. Find yours before editing, not
+after the tests go red.
+
+| About to touch | Read |
+| --- | --- |
+| `cmd_hook`, anything on the hook path | Safety, first two bullets. It must never print and never block. |
+| a hook or status-line field name | **Do not guess payload fields**, and `tests/fixtures/README.md` |
+| `tmux_send`, `tmux_jump`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
+| the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
+| `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
+| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask` | State |
+| `newRow`, `fillRow`, `BANDS`, `settled` | The sidebar |
+| `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
+| `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
+| `putComment`, `anchorOf`, a review comment | The review |
+| `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
+| a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
+| a new test | **How to work here** — it is not a test until you have made it fail |
+| a push to `main`, or landing a change | **How to work here**, last bullet — `main` is protected and nothing bypasses it |
+| the issue list | `.claude/skills/issues/SKILL.md`, or say "do the issues" |
 
 ## The program in five lines
 
@@ -20,7 +60,7 @@ Nothing else writes to a terminal. Nothing owns the agent process.
 
 | Path | What it holds |
 | --- | --- |
-| `wostuast` | The whole program. ~7000 lines. Python to `PAGE = r"""`, then HTML/CSS/JS. |
+| `wostuast` | The whole program: Python, then `PAGE = r"""` and the HTML/CSS/JS. Five figures of lines — `wc -l wostuast` rather than a number here that rots. |
 | `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
 | `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
@@ -28,6 +68,7 @@ Nothing else writes to a terminal. Nothing owns the agent process.
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
 | `PLAN.md` | Goals, non-goals, design, milestones. |
 | `README.md` | What a user reads. Keep in step with the commands. |
+| `.claude/skills/issues/SKILL.md` | How to work the issue list: group, reproduce, ask, prove, review, merge on green, read the list again. Invoked as `/issues`, and by "do the issues". |
 | `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, plus one job with a browser. Both run `pytest -q -n auto`; neither names a test file, and it should stay that way — naming one broke the browser job the moment a file was renamed. |
 
 ### Finding code in `wostuast`
@@ -110,15 +151,15 @@ simply not there.
 ## How to work here
 
 ```
-pytest -q -n auto                   # 62 s. Before every commit. Needs pytest-xdist.
-pytest -q                           # 190 s, same result, if xdist is not installed
+pytest -q -n auto                   # the gate, before every commit. Needs pytest-xdist.
+pytest -q                           # same result, about three times as long
 pytest tests/test_page_review.py -q # the subject you are changing. Do this first.
 pytest tests/test_state.py -q       # no browser, under a second
 ./wostuast doctor / ls / serve
 ```
 
 Most of the suite drives a real browser, so it waits far more than it computes:
-four workers cut it from 190 s to 62 s, and the tests are safe in parallel —
+four workers cut it to about a third, and the tests are safe in parallel —
 every daemon binds port 0, every fixture has its own `tmp_path`, and each worker
 launches a Chromium of its own. More workers than cores starts to time out
 rather than go faster. CI runs `-n auto` in both jobs.
@@ -140,8 +181,8 @@ export HOME=/tmp/try WOSTUAST_STATE=/tmp/try/state CLAUDE_CONFIG_DIR=/tmp/try/cl
 `WOSTUAST_STATE` and `CLAUDE_CONFIG_DIR` are test seams, not user settings. Do
 not document them as settings.
 
-**Editing one 6600-line file.** Anchor on a unique string and assert you hit it
-exactly once; a sloppy replace in a file this size fails silently. A small
+**Editing one very large file.** Anchor on a unique string and assert you hit
+it exactly once; a sloppy replace in a file of this size fails silently. A small
 Python script with `assert s.count(old) == 1` before every `replace` is the
 reliable shape when making several edits at once.
 
@@ -171,6 +212,29 @@ transcript fills one fetch later. Abort `api/session/*/transcript` and the
 list is empty with the page otherwise drawn, which is what a loaded CI runner
 looks like: four tests read that list straight away and one of them went red
 the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
+
+**`main` is protected, and a push to it is refused.** A change lands through a
+pull request, with every job in `.github/workflows/tests.yml` green. A
+force-push to `main`, and a deletion of it, are refused too. The rule is a
+GitHub ruleset, so it lives outside this repository and no test here can hold
+it: `gh api repos/{owner}/{repo}/rulesets` is what answers what it says. Three
+things about it are worth knowing before they surprise you.
+
+- **It has no bypass actors, on purpose.** An agent pushes with the owner's
+  token, so a bypass for the owner is a bypass for every agent, and the rule
+  would be decorative. To land something without a pull request, set the
+  ruleset's enforcement to `disabled`, push, and set it back — a deliberate
+  act, which is the point.
+- **It asks for no approving review, and that is not an oversight.** GitHub
+  will not let you approve your own pull request, and this repository has one
+  reviewer. One required approval would lock the owner out of their own
+  repository, and it would read as a broken merge button rather than as a
+  rule. Nought still forces the pull request, and still forces green.
+- **The required checks are named one by one, so the matrix and the ruleset
+  can drift.** Add a Python version to `tests.yml` and its job is not required
+  until you add it to the ruleset. Take one out and the ruleset waits for a
+  check that will never report, and then nothing can be merged at all. Change
+  the matrix, change the ruleset.
 
 ## Rules, each one a bug that already happened
 
