@@ -67,10 +67,11 @@ def now_asking(ws, daemon, at=None):
     daemon.store.refresh()
 
 
-def test_an_open_question_is_drawn_over_whatever_tab_you_are_on(ws, in_pane):
+def test_an_open_question_stands_at_the_foot_of_the_transcript(ws, in_pane):
     """The row can say "needs you" and the reason line can name the question.
     Neither can hold the question and its answers, and that is what you came
-    to the page for."""
+    to the page for. It is the last thing in the conversation because it is
+    the last thing in the conversation."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
     with sync_playwright() as play:
@@ -87,15 +88,119 @@ def test_an_open_question_is_drawn_over_whatever_tab_you_are_on(ws, in_pane):
                      one.querySelector('.asklabel').textContent])""")
             assert options == [["1", "Approve"], ["2", "Changes needed"],
                                ["3", "Abandon"]]
-            # And it stands over every tab, not only the one it was drawn on.
-            for tab in ("files", "diff", "review", "session"):
-                show_tab(page, tab)
-                assert page.locator("#asking .askopt").count() == 5, tab
+            # Under the transcript and over the send box, on the screen and
+            # not only in the markup: answering is sending, so the two belong
+            # together and the question is the thing you read last.
+            where = page.evaluate("""() => {
+              const box = (id) =>
+                document.getElementById(id).getBoundingClientRect();
+              return [box('content').bottom, box('asking').top,
+                      box('asking').bottom, box('sendbar').top];
+            }""")
+            assert where[0] <= where[1] + 1, where
+            assert where[2] <= where[3] + 1, where
         finally:
             browser.close()
 
 
-def test_picking_an_option_presses_its_number_in_the_terminal(ws, in_pane):
+def test_a_question_belongs_to_the_transcript_and_no_other_tab(ws, in_pane):
+    """It is not the bar over every tab that `PLAN.md` took away. The row
+    still goes amber wherever you are, which is what the row is for; this is
+    the answer to "what is it asking", and that is asked here."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .askopt")
+            for tab in ("files", "diff", "review", "session"):
+                show_tab(page, tab)
+                assert page.locator("#asking .askopt").count() == 0, tab
+                assert page.locator("#asking:not([hidden])").count() == 0, tab
+            show_tab(page, "transcript")
+            page.wait_for_selector("#asking:not([hidden]) .askopt")
+            assert page.locator("#asking .askopt").count() == 5
+        finally:
+            browser.close()
+
+
+def option(question, at):
+    return (f"#asking .askone:nth-child({question}) "
+            f".askopts .askopt:nth-child({at})")
+
+
+def test_picking_types_nothing_and_can_be_changed(ws, in_pane):
+    """A click that went straight into a terminal was a click you could not
+    take back, on a page you may have opened on a phone in a pocket."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            page.click(option(1, 2))
+            page.wait_for_timeout(300)
+            assert page.locator(option(1, 2)).evaluate(
+                "one => one.classList.contains('chosen')")
+            # Nothing has reached the terminal, and the reader can change
+            # their mind as often as they like.
+            assert not [one for one in seen if "send-keys" in one]
+            page.click(option(1, 3))
+            assert not page.locator(option(1, 2)).evaluate(
+                "one => one.classList.contains('chosen')")
+            assert page.locator(option(1, 3)).evaluate(
+                "one => one.classList.contains('chosen')")
+            assert not [one for one in seen if "send-keys" in one]
+        finally:
+            browser.close()
+
+
+def test_submit_waits_until_every_question_is_answered(ws, in_pane):
+    """The agent asks them one after the other, so a half-filled submit
+    would press a number at a question the reader never looked at."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .asksend .verb")
+            assert page.locator("#asking .asksend .verb").is_disabled()
+            assert page.inner_text("#asking .asksays") == "pick an answer to each"
+            page.click(option(1, 2))
+            assert page.locator("#asking .asksend .verb").is_disabled()
+            page.click(option(2, 1))
+            assert not page.locator("#asking .asksend .verb").is_disabled()
+            # And it says what it will do before it is pressed. These are
+            # keystrokes into a live terminal.
+            assert page.inner_text("#asking .asksays") == "presses 2, then 1"
+        finally:
+            browser.close()
+
+
+def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
+    """The bar is built again when it comes back, and a pick belongs to the
+    question it was made for — not to the draw it was made on. Half-answering
+    a question, glancing at the diff, and finding the marks gone is a page
+    that cannot be trusted with the other half."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            page.click(option(1, 3))
+            show_tab(page, "diff")
+            assert page.locator("#asking .askopt").count() == 0
+            show_tab(page, "transcript")
+            page.wait_for_selector("#asking .askopt")
+            assert page.locator(option(1, 3)).evaluate(
+                "one => one.classList.contains('chosen')")
+            assert page.inner_text("#asking .asksays") == "pick an answer to each"
+        finally:
+            browser.close()
+
+
+def test_submit_presses_the_numbers_in_the_order_they_were_asked(ws, in_pane):
     """A keystroke, not a paste: `tmux_send` sends one line literally and
     then presses Enter, which is exactly what a finger would do."""
     daemon, base, seen = in_pane
@@ -104,9 +209,13 @@ def test_picking_an_option_presses_its_number_in_the_terminal(ws, in_pane):
         browser, page = open_page(play, (None, base))
         try:
             page.wait_for_selector("#asking .askopt")
-            page.click("#asking .askone:nth-child(1) .askopt:nth-child(2)")
-            page.wait_for_timeout(500)
-            assert ["tmux", "send-keys", "-t", "%7", "-l", "--", "2"] in seen
+            page.click(option(1, 3))
+            page.click(option(2, 2))
+            page.click("#asking .asksend .verb")
+            page.wait_for_timeout(700)
+            typed = [one[-1] for one in seen
+                     if "send-keys" in one and "-l" in one]
+            assert typed == ["3", "2"], seen
             assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
             # No paste markers: a chooser reads keys, and a paste is not one.
             assert not [one for one in seen
@@ -124,18 +233,23 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
         browser, page = open_page(play, (None, base))
         try:
             page.wait_for_selector("#asking .askopt")
-            page.click("#asking .askone:nth-child(1) .askopt:nth-child(1)")
+            page.click(option(1, 1))
+            page.click(option(2, 1))
+            page.click("#asking .asksend .verb")
             page.wait_for_timeout(600)
             assert page.locator("#asking .askopt").count() == 5
-            # And the button the reader pressed stays pressed. The rows
-            # arrive about once a second while an agent works, and a bar
-            # rebuilt under the reader hands back an enabled button for a
-            # question that has already been answered once.
-            picked = "#asking .askone:nth-child(1) .askopt:nth-child(1)"
-            assert page.locator(picked).is_disabled()
+            # And what the reader picked stays picked. The rows arrive about
+            # once a second while an agent works, and a bar rebuilt under the
+            # reader would clear the marks and hand back a live submit for a
+            # question already answered.
+            assert page.locator(option(1, 1)).evaluate(
+                "one => one.classList.contains('chosen')")
+            assert page.locator("#asking .asksend .verb").is_disabled()
             daemon.hub.send("sessions", daemon.sessions_payload())
             page.wait_for_timeout(400)
-            assert page.locator(picked).is_disabled()
+            assert page.locator(option(1, 1)).evaluate(
+                "one => one.classList.contains('chosen')")
+            assert page.locator("#asking .asksend .verb").is_disabled()
 
             ws.append_event({"session_id": "s1", "hook_event_name": "PostToolUse",
                              "tool_name": "AskUserQuestion", "tool_input": ASKED,

@@ -5008,7 +5008,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    one thing is the point. */
 .asking {
   flex-shrink: 0; max-height: 40vh; overflow-y: auto;
-  padding: 12px 16px; border-bottom: 1px solid var(--edge);
+  padding: 12px 16px; border-top: 1px solid var(--edge);
   background: color-mix(in srgb, var(--needs) 8%, var(--raised));
 }
 .askone + .askone { margin-top: 14px; padding-top: 14px;
@@ -5033,6 +5033,18 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   border-color: var(--needs);
 }
 .askopt:disabled { opacity: .55; cursor: default; }
+/* What you picked, and what submit will press. It wears the needs-you
+   colour, like the row this question came from. */
+.askopt.chosen {
+  background: var(--raised); color: var(--ink-bright);
+  border-color: var(--needs);
+  box-shadow: inset 2px 0 0 var(--needs);
+}
+.askopt.chosen .asknum {
+  background: var(--needs); border-color: var(--needs); color: var(--sunken);
+}
+.asksend { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.asksays { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
 .asknum {
   flex-shrink: 0; min-width: 18px; text-align: center;
   font-family: var(--mono); font-size: 11px; color: var(--needs);
@@ -5585,8 +5597,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         </div>
         <div class="live" id="live"></div>
       </div>
-      <div class="asking" id="asking" hidden></div>
       <div class="content" id="content"></div>
+      <div class="asking" id="asking" hidden></div>
       <form class="sendbar" id="sendbar" hidden>
         <textarea class="say" id="say" rows="1" autocomplete="off"
                   spellcheck="false"
@@ -5631,6 +5643,10 @@ const state = {
   links: [],
   // What is wrong with `links.json`, if anything. Shown on the Session tab.
   linkTrouble: [],
+  // What the reader has picked for the question on screen, one index per
+  // question, and which question they belong to. Not in the DOM: a pick made
+  // for one question must never be submitted for the next.
+  picked: { id: "", at: [] },
   // Where each session was left, by id. The choices only -- see `savePlace`.
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
@@ -6038,11 +6054,23 @@ window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", ()
 const ICONS = {
   dir: "M1 3.2a1 1 0 0 1 1-1h3.1l1.2 1.6H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1"
        + " 1 0 0 1-1-1z",
-  // The same folder with its lid tipped back. It is what says a directory
-  // stands open, now that there is no triangle in front of it to say so.
-  dirOpen: "M1 11.2V3.2a1 1 0 0 1 1-1h3.1l1.2 1.6H11a1 1 0 0 1 1 1v1.3H4.4"
-           + "L2.2 12.2H12a1 1 0 0 0 1-1",
-  file: "M3.5 1.5h4.7L11.5 5v8.5h-8zM8 1.7V5h3.3",
+  // The same folder with its front panel tipped forward. It is what says a
+  // directory stands open, now that there is no triangle in front of it to
+  // say so.
+  //
+  // Two subpaths, and the front one is closed. The first drawing left it
+  // open on the right -- the lid stopped at x=12, the floor ran to x=13 and
+  // ended in a curl, and nothing joined them -- so the folder read as one
+  // with its right side sliced off. Nothing was clipped: the stroke sat
+  // inside the box either way. A shape that is not closed looks cut whether
+  // or not anything cut it.
+  dirOpen: "M1 10.6V3.2a1 1 0 0 1 1-1h3.1l1.2 1.6H11a1 1 0 0 1 1 1v1.1"
+           + "M3.5 6.6h8.4a.8 .8 0 0 1 .78 1l-1 3.9a.8 .8 0 0 1-.78 .6H1.6"
+           + "a.8 .8 0 0 1-.78-1l1-3.9a.8 .8 0 0 1 .78-.6z",
+  // The page ends at 13.4 and not at 13.5, because the stroke is 1.2 wide
+  // and reaches 0.6 past the line. At 13.5 the last tenth of it fell outside
+  // the box, and an `svg` clips to its viewport.
+  file: "M3.5 1.5h4.7L11.5 5v8.4h-8zM8 1.7V5h3.3",
 };
 
 function putIcon(parent, kind) {
@@ -6329,15 +6357,20 @@ function current() {
   return state.sessions.find((s) => s.id === state.chosen) || null;
 }
 
-// The question an agent is waiting on, over whatever tab you are reading.
+// The question an agent is waiting on: at the foot of the transcript, over
+// the send box.
 //
-// This is the bar `PLAN.md` took away, back for one thing. That bar said the
-// branch, the pane, the model and the state — all of which the chosen row
-// says one column to the left — and it cost 56 pixels on every tab for ever.
-// This one says what nothing else on the page can: the row can say "needs
-// you" and the reason line can name the question, but neither can hold the
-// question and its answers, and that is what you came to the page for. It
-// stands only while an agent is actually stopped on one.
+// It is not the bar `PLAN.md` took away, and that is the point. That one
+// stood over every tab saying the branch, the pane, the model and the state,
+// all of which the chosen row says one column to the left, and it cost 56
+// pixels on every tab for ever. This stands in one place, for as long as one
+// agent is stopped, and it is the last thing in the conversation because it
+// *is* the last thing in the conversation — the transcript ends at its foot,
+// which is where a question belongs and where your eye already is. Answering
+// is sending, so it sits with the send box.
+//
+// The row still goes amber from any tab, which is what the row is for. This
+// is the answer to "what is it asking", and that question is asked here.
 //
 // `asking` is cleared wherever the attention is, and exactly by its own
 // `tool_use_id` when the answer lands — so answering in the terminal takes
@@ -6345,7 +6378,9 @@ function current() {
 function drawAsking() {
   const box = $("asking");
   const s = current();
-  const ask = s && s.asking;
+  // `state.tab` and not the content box: this is chrome outside that box,
+  // like the send box, and it is drawn after `showTab` has set the name.
+  const ask = s && state.tab === "transcript" ? s.asking : null;
   box.hidden = !ask;
   if (!ask) {
     // And forget what was drawn, or the same question asked twice in a row
@@ -6358,8 +6393,13 @@ function drawAsking() {
   // under a button the reader is about to press is how a click lands on the
   // wrong option, and a disabled button would come back enabled.
   if (!fresh(box, "ask", s.id + "\n" + ask.id)) return;
+  // A pick belongs to the question it was made for. A different question
+  // arriving takes the old picks with it rather than submitting them.
+  if (state.picked.id !== ask.id) {
+    state.picked = { id: ask.id, at: ask.questions.map(() => -1) };
+  }
   box.replaceChildren();
-  for (const one of ask.questions) {
+  ask.questions.forEach((one, which) => {
     const block = put(box, "div", "askone");
     if (one.header) put(block, "div", "askhead", one.header);
     put(block, "p", "askwhat", one.question);
@@ -6367,45 +6407,79 @@ function drawAsking() {
     one.options.forEach((option, at) => {
       const button = put(list, "button", "askopt");
       button.type = "button";
-      // The number it sends, shown. What a button will type into your
-      // terminal should not be a thing you have to trust.
+      // The number it will press, shown. What reaches your terminal should
+      // not be a thing you have to trust.
       put(button, "span", "asknum", String(at + 1));
       const text = put(button, "span", "asktext");
       put(text, "span", "asklabel", option.label);
       if (option.description) put(text, "span", "askwhy", option.description);
-      button.addEventListener("click", () => answerAsk(s.id, at + 1, button));
+      // Picking types nothing. It marks, and it can be changed: a click that
+      // went straight into a terminal was a click you could not take back,
+      // on a page you may have opened on a phone in a pocket.
+      button.addEventListener("click", () => {
+        state.picked.at[which] = at;
+        paintPicks(box, ask);
+      });
     });
     if (one.many) {
       put(block, "div", "asknote", "This one takes more than one answer."
-          + " A button here sends one number; finish it in the terminal.");
+          + " Here you can pick one; finish it in the terminal.");
     }
-  }
-  if (ask.questions.length > 1) {
-    put(box, "div", "asknote", ask.questions.length + " questions, one after"
-        + " the other. Answer them in the order they stand.");
-  }
+  });
+  const foot = put(box, "div", "asksend");
+  const send = put(foot, "button", "verb");
+  send.type = "button";
+  send.addEventListener("click", () => submitAsk(s.id, ask, box));
+  put(foot, "span", "asksays");
+  paintPicks(box, ask);
 }
 
-// Press the number in the agent's terminal.
+// What is picked, and what pressing submit would do. Everything that changes
+// when a reader clicks an option lives here, so picking never rebuilds the
+// bar: a rebuild under the hand is how a click lands on the wrong option.
+function paintPicks(box, ask) {
+  const picked = state.picked.at;
+  box.querySelectorAll(".askone").forEach((block, which) => {
+    block.querySelectorAll(".askopt").forEach((button, at) => {
+      button.classList.toggle("chosen", picked[which] === at);
+    });
+  });
+  const ready = picked.every((at) => at >= 0);
+  const send = box.querySelector(".asksend .verb");
+  const says = box.querySelector(".asksays");
+  send.disabled = !ready;
+  send.textContent = "submit";
+  // Said before it is pressed, not after. These are keystrokes into a live
+  // terminal, and the reader is the one answerable for them.
+  says.textContent = ready
+    ? "presses " + picked.map((at) => at + 1).join(", then ")
+    : (picked.length > 1 ? "pick an answer to each" : "pick an answer");
+}
+
+// Press the numbers in the agent's terminal, in the order it asked.
 //
-// `tmux_send` sends one line literally and then presses Enter, so this is a
-// keystroke and not a paste: exactly what your own finger would do. It is the
-// one road to a terminal this page has, the same one the send box uses, and
-// it carries the same token.
+// `tmux_send` sends one line literally and then presses Enter, so each of
+// these is a keystroke and not a paste: exactly what your own finger would
+// do. It is the one road to a terminal this page has, the same one the send
+// box uses, and it carries the same token.
 //
 // The question does not go away here. It goes away when the daemon sees the
 // `PostToolUse` for this exact `tool_use_id`, which is the only thing that
 // knows the answer landed — clearing it on the click would hide a question
 // that a missed keystroke left standing.
-async function answerAsk(id, number, button) {
-  button.disabled = true;
-  const answer = await tell(id, "send", { text: String(number) });
-  if (answer && answer.error) {
-    said(answer);
-    button.disabled = false;
-    return;
+async function submitAsk(id, ask, box) {
+  const send = box.querySelector(".asksend .verb");
+  send.disabled = true;
+  const numbers = state.picked.at.map((at) => at + 1);
+  for (const number of numbers) {
+    const answer = await tell(id, "send", { text: String(number) });
+    if (answer && answer.error) {
+      said(answer);
+      send.disabled = false;      // nothing landed, or only part of it did
+      return;
+    }
   }
-  said({ error: "sent " + number });
+  said({ error: "pressed " + numbers.join(", ") });
 }
 
 function drawHeader() {

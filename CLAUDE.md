@@ -372,21 +372,34 @@ the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
   says *this* question was answered. A `PostToolUse` for another call is not
   an answer -- two calls really do overlap -- and this stale question has
   buttons on it, which type a number into a terminal that has moved on.
-- **The question bar is the bar `PLAN.md` took away, back for one thing.** The
-  old one said the branch, the pane, the model and the state, all of which the
-  chosen row says one column to the left, at 56 px on every tab for ever. This
-  one says what nothing else can hold: the question and its answers. It stands
-  only while `asking` is set. `drawAsking` is called from `drawHeader`, so a
-  fifth call site cannot forget it, and it has a redraw key -- rows arrive
-  about once a second, and a bar rebuilt under the reader hands back an
-  enabled button for a question already answered once.
-- **A button that types into a terminal shows what it types.** The option's
-  number is drawn on it, and `answerAsk` sends exactly that through the one
-  road this page has: `tell(id, "send", ...)`, which is `tmux_send`, which
-  sends one line literally and then presses Enter -- a keystroke, not a paste.
-  No new verb and no new route. **It does not clear the question**: that
-  happens when the daemon sees the `PostToolUse`, because clearing on the
-  click would hide a question a missed keystroke left standing.
+- **The question bar belongs to the Transcript tab, at its foot.** It is not
+  the bar `PLAN.md` took away: that one stood over every tab saying the
+  branch, the pane, the model and the state, all of which the chosen row says
+  one column to the left, at 56 px on every tab for ever. This stands in one
+  place, over the send box, because the transcript ends at its foot and
+  answering is sending. The row still goes amber from any tab, which is what
+  the row is for. It reads `state.tab`, like the send box, because it is
+  chrome outside the content box and is drawn after `showTab` has set the
+  name. `drawAsking` is called from `drawHeader`, so a fifth call site cannot
+  forget it.
+- **Picking types nothing; submit does.** A click that went straight into a
+  terminal was a click you could not take back, on a page you may have opened
+  on a phone in a pocket. `state.picked` holds one index per question **with
+  the ask's id**, so a pick made for one question is never submitted for the
+  next, and it survives a look at another tab -- the bar is built again when
+  it comes back, and half an answer lost that way is a page you cannot trust
+  with the other half. `paintPicks` is everything that changes on a click, so
+  picking never rebuilds the bar: a rebuild under the hand is how a click
+  lands on the wrong option. Submit waits until every question has an answer,
+  because the agent asks them one after the other.
+- **A button that types into a terminal says what it types, before it is
+  pressed.** Each option carries its number, and the submit says `presses 2,
+  then 1`. `submitAsk` sends exactly those, in order, through the one road
+  this page has: `tell(id, "send", ...)`, which is `tmux_send`, which sends
+  one line literally and then presses Enter -- a keystroke, not a paste. No
+  new verb and no new route. **It does not clear the question**: that happens
+  when the daemon sees the `PostToolUse`, because clearing on the click would
+  hide a question a missed keystroke left standing.
 - **A call starting clears the attention; a call finishing only clears its
   own.** Claude Code runs two tools at once now and then — one of 233 calls on
   a real machine started while another was still open, both of them `Bash`.
@@ -663,6 +676,16 @@ the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
   0.2 KB. So **the order the names are sent in must depend only on which files
   exist**: `in_order` is pinned-then-name. Put a changed tier back into it and
   the tag moves on every save. The reader's order is the page's, in `dirFiles`.
+- **An icon is measured against its box, not eyeballed.** `putIcon` draws
+  into a `0 0 14 14` viewBox and an `svg` clips to its viewport, so a stroke
+  -- 1.2 wide, reaching 0.6 past the line it is drawn on -- must end by 13.4.
+  The page icon's bottom sat at 13.5 and lost its last tenth.
+  `test_every_icon_fits_inside_its_box` measures every entry in `ICONS` with
+  the page's own CSS. **And a shape that is not closed looks cut whether or
+  not anything cut it**: `dirOpen` first ran the lid to x=12 and the floor to
+  x=13 with nothing joining them, and read as a folder with its right side
+  sliced off, although nothing was ever clipped. Draw it, look at it at 13 px,
+  then measure it.
 - **A folder row carries no triangle.** It stood where nothing stood on a
   file row, so a folder's name sat 9 px right of a file's at the same depth —
   and a file one level deeper lined up exactly with the folder above it, which
