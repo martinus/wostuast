@@ -24,6 +24,7 @@ def test_the_page_draws_the_session(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             assert page.locator(".row").count() == 1
             # The worktree leads the row; what Claude Code called the session
             # goes under it, because the name is often long and often vague
@@ -48,6 +49,9 @@ def test_hostile_markdown_cannot_run(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            # Without this the transcript may not have arrived, and a page
+            # that drew nothing passes every assertion below vacuously.
+            wait_for_map(page)
             assert page.evaluate("window.PWNED ?? null") is None
             assert page.locator(".prose img").count() == 0
             assert page.locator(".prose script").count() == 0
@@ -138,6 +142,11 @@ def test_the_session_the_page_picks_for_you_is_watched(page_at, ws):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
+            # `open_page` returns on the first draw, which is the tab's frame:
+            # the transcript is still in flight. Counting straight away read
+            # nought turns on a loaded CI runner, and then the push delivered
+            # the whole transcript at once -- `assert 3 == (0 + 1)`.
+            wait_for_map(page)
             before = page.locator(".turn").count()
             assert page.locator(".row.chosen").count() == 1
 
@@ -162,6 +171,7 @@ def test_the_same_blocks_arriving_twice_are_not_shown_twice(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
+            wait_for_map(page)
             before = page.locator(".turn").count()
             assert before > 1
             blocks, run = daemon.read_transcript("s1")
@@ -188,6 +198,7 @@ def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_a
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
+            wait_for_map(page)
             assert page.locator(".turn").count() > 1
             held = daemon_transcript(daemon)
 
@@ -261,6 +272,7 @@ def test_searching_never_re_parses_what_an_agent_wrote(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             page.locator("#find").fill("<img")
             page.wait_for_timeout(250)
             assert page.evaluate("window.PWNED ?? null") is None
