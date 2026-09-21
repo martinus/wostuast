@@ -838,6 +838,52 @@ def test_a_row_of_the_map_is_one_line(page_at):
             browser.close()
 
 
+def test_a_message_sent_to_a_busy_agent_reads_as_what_you_typed(ws, page_at):
+    """Every message this page sends to a working agent comes back wrapped in
+    a header, a footer and a `<system-reminder>`, and all three were drawn as
+    though the reader had typed them. The map beside the transcript carried
+    the header as the name of the round."""
+    daemon, path = page_at
+    typed = ("also creating a worktree would be slower, so many files.\n"
+             "Is there a way to keep the corpus out of it?")
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(json.dumps({
+            "type": "user", "timestamp": "2026-09-18T14:21:00.000Z",
+            "message": {"role": "user", "content":
+                        "<system-reminder>\n"
+                        "The user sent a new message while you were working:\n"
+                        + typed + "\n\n"
+                        "This is how Claude Code surfaces messages the user"
+                        " sends mid-turn \u2014 within the running turn, often"
+                        " alongside the next tool result, rather than as a"
+                        " separate conversation turn. Address the message above"
+                        " as you continue this turn.\n"
+                        "</system-reminder>"}}) + "\n")
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn.mine')]
+                     .some((one) => one.innerText.includes('the corpus'))""")
+            seen = page.evaluate("""() => ({
+              mine: [...document.querySelectorAll('.turn.mine')]
+                      .map((one) => one.innerText),
+              rows: [...document.querySelectorAll('.filelist.transcript button')]
+                      .map((one) => one.title),
+            })""")
+            said = [one for one in seen["mine"] if "corpus" in one][0]
+            assert "while you were working" not in said, said
+            assert "system-reminder" not in said, said
+            assert "mid-turn" not in said, said
+            assert "so many files" in said and "keep the corpus" in said
+            # The map names the round by what was typed, not by the wrapper.
+            assert not [one for one in seen["rows"]
+                        if "while you were working" in one], seen["rows"]
+        finally:
+            browser.close()
+
+
 def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
     """A background task finishing is real news and nobody typed it. It used
     to wear your rail and your tint, and it filled the map beside the

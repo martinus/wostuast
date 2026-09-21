@@ -1494,15 +1494,48 @@ class Block:
 #: the reader did, in four records, none of which they typed.
 MACHINE_TAG = re.compile(
     r"<(command-name|command-message|command-args|local-command-stdout"
-    r"|local-command-caveat)>.*?</\1>", re.S)
+    r"|local-command-caveat|system-reminder)>.*?</\1>", re.S)
 COMMAND_NAME = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
 COMMAND_ARGS = re.compile(r"<command-args>\s*(.*?)\s*</command-args>", re.S)
 TASK_NOTE = re.compile(r"^<task-notification>\s*(.*?)\s*</task-notification>$",
                        re.S)
 
+#: Claude Code's own wrapper round a message that arrived while the agent was
+#: working -- which is every message this page sends to a busy agent, so it is
+#: the shape a reader of this program meets most.
+#:
+#: A header names it, a footer explains it to the agent, and the words the
+#: person typed are in between. Both lines went into the transcript as though
+#: they had been typed, so a message sent from here came back wearing a
+#: paragraph about how Claude Code queues messages.
+#:
+#: Read off a real transcript, header and footer verbatim. The footer is
+#: matched by its first sentence only: it is the part that names what the
+#: wrapper is, and matching all of it would turn a reworded tail into a
+#: header on the page again.
+QUEUED = re.compile(
+    r"\A\s*The user sent a new message while you were working:\s*\n"
+    r"(.*?)\n\s*This is how Claude Code surfaces messages the user sends"
+    r" mid-turn\b.*\Z", re.S)
+
 #: A `user` record the harness wrote and not the reader. It is shown, because
 #: it is real news, but never as a prompt: nobody typed it.
 NOTED = ("<task-notification>", "Another Claude session sent a message:")
+
+
+def strip_reminder(text: str) -> str:
+    """The inside of a `<system-reminder>`, when that is the whole record.
+
+    The wrapper round a queued message is written inside one, and a reminder
+    that holds nothing else is machine text either way -- so taking the tags
+    off changes nothing about what is shown and lets one pattern read both
+    shapes. A reminder beside other text is left alone here; `MACHINE_TAG`
+    takes that one out in the usual way.
+    """
+    body = text.strip()
+    if body.startswith("<system-reminder>") and body.endswith("</system-reminder>"):
+        return body[len("<system-reminder>"):-len("</system-reminder>")].strip()
+    return body
 
 
 def read_user_text(text: str) -> tuple[str, str]:
@@ -1515,7 +1548,15 @@ def read_user_text(text: str) -> tuple[str, str]:
     A record is only read as a command when there is nothing else on it. A
     prompt really can hold `<command-name>` in it: somebody asking about this
     very feature types one, and that is a prompt.
+
+    A message sent to a busy agent comes back wrapped in a header and a
+    footer, and inside a `<system-reminder>`. The words are the reader's own,
+    so the wrapper comes off and the prompt is drawn like any other --
+    **before** the reminder is stripped, or the message would go with it.
     """
+    inside = QUEUED.search(strip_reminder(text))
+    if inside:
+        return "prompt", inside.group(1).strip()
     rest = MACHINE_TAG.sub("", text).strip()
     named = COMMAND_NAME.search(text)
     if named and not rest:

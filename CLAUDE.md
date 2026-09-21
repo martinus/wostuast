@@ -882,6 +882,20 @@ the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
   only read as a command when there is nothing else on it**: a prompt really
   can hold `<command-name>` in it, because somebody asking about this very
   feature types one.
+- **A message sent to a busy agent comes back wrapped, and the wrapper is not
+  yours.** Claude Code queues it into the running turn and writes a header
+  (`The user sent a new message while you were working:`), the words typed,
+  and a footer explaining the queueing to the agent -- all inside a
+  `<system-reminder>`. It is a `user` record, so all three were drawn as the
+  reader's own prompt, and the map named the round after the header. This is
+  the shape a reader of *this* program meets most, because every message this
+  page sends to a working agent takes it. `QUEUED` keeps the middle.
+  **Order matters**: the reminder tags come off first (`strip_reminder`), and
+  the message is pulled out *before* `MACHINE_TAG` runs -- `system-reminder`
+  is on that list now, so stripping first would take the message with it.
+  The header must open the record and the footer must be there, or a person
+  quoting the wrapper to ask about it -- which is how this was reported --
+  gets their question answered with its own quotation.
 - **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
   the agent's text and nothing else, so the map stays a map of the
   conversation.
