@@ -236,23 +236,61 @@ def test_old_sessions_are_dropped(ws, recorded_events):
     assert ws.build_sessions(recorded_events, now=later, alive=lambda pid: True) == []
 
 
-def test_sort_is_by_name_with_the_gone_ones_last(ws):
+def test_sort_is_newest_first_with_the_gone_ones_last(ws):
+    """The session you touched last is the one you are looking for. It used
+    to be sorted by worktree, so in a list of twenty it was somewhere in the
+    middle under `a`."""
     def make(state, sid, where, **kw):
         return ws.Session(session_id=sid, state=state, cwd="/a/" + where, **kw)
 
     rows = [
-        make("done", "d", "Pear", last_ts=50.0),
-        make("needs_you", "n2", "fig", attention_since=20.0),
-        make("working", "w", "apple", last_ts=60.0),
-        make("ended", "e", "acorn", last_ts=70.0),
-        make("needs_you", "n1", "plum", attention_since=10.0),
-        make("dead", "x", "aloe", last_ts=80.0),
-        make("done", "s", "beet", last_ts=80.0),
+        make("done", "d", "Pear", state_since=50.0),
+        make("needs_you", "n2", "fig", state_since=20.0),
+        make("working", "w", "apple", state_since=60.0),
+        make("ended", "e", "acorn", state_since=70.0),
+        make("needs_you", "n1", "plum", state_since=10.0),
+        make("dead", "x", "aloe", state_since=80.0),
+        make("done", "s", "beet", state_since=80.0),
     ]
     order = [s.session_id for s in ws.sort_sessions(rows)]
-    # apple, beet, fig, Pear, plum — case does not split the list — then the
-    # ended and the dead, by name among themselves.
-    assert order == ["w", "s", "n2", "d", "n1", "e", "x"]
+    # The live ones newest first, then the ended and the dead the same way.
+    assert order == ["s", "w", "d", "n2", "n1", "x", "e"]
+
+
+def test_the_worktree_is_only_the_tiebreaker(ws):
+    """Two sessions that last moved at the same instant have to come out in
+    some order, and it has to be the same order every time — a name does not
+    move, and `label` does: it arrives a second late and `/rename` changes it.
+    """
+    rows = [
+        ws.Session(session_id="p", state="done", cwd="/a/plum", state_since=9.0),
+        ws.Session(session_id="a", state="done", cwd="/a/Apple", state_since=9.0),
+        ws.Session(session_id="f", state="done", cwd="/a/fig", state_since=9.0),
+    ]
+    # Apple, fig, plum — case does not split the list.
+    assert [s.session_id for s in ws.sort_sessions(rows)] == ["a", "f", "p"]
+
+
+def test_a_working_session_does_not_move_on_every_tool_call(ws):
+    """This is why the order is `settled` and not `since`. A working
+    session's last event moves every few seconds, so two busy agents would
+    swap places while you read them."""
+    store = ws.Store()
+    store.apply(event("UserPromptSubmit", prompt="go", ts=100.0))
+    began = store.get("s1").settled
+    for at, ts in enumerate([101.0, 102.0, 103.0]):
+        store.apply(event("PreToolUse", tool_name="Bash",
+                          tool_input={"command": f"one {at}"}, ts=ts))
+        store.apply(event("PostToolUse", tool_name="Bash",
+                          tool_input={"command": f"one {at}"}, ts=ts))
+    session = store.get("s1")
+    assert session.state == "working"
+    assert session.settled == began, "the order would churn"
+    assert session.since == 103.0, "the age still counts from the last event"
+
+    # The turn ending is a change, and it does move.
+    store.apply(event("Stop", ts=110.0))
+    assert store.get("s1").settled == 110.0
 
 
 # --- finding the agent's own process ----------------------------------------

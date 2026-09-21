@@ -406,3 +406,52 @@ def test_a_session_that_has_just_started_is_ready(ws, served):
     daemon.store.refresh()
     assert daemon.store.rows[0]["state"] == "done"
     assert daemon.store.rows[0]["state_word"] == "ready"
+
+
+def test_the_list_is_newest_first_inside_a_band(ws, pair_at):
+    """The session you touched last is the one you came for. It used to be
+    sorted by worktree, so in a list of twenty it was somewhere in the middle
+    under `a`. Sort `sort_sessions` by name again and the order flips."""
+    daemon, url = pair_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, url)
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            first = page.eval_on_selector_all(
+                ".row", "els => els.map((one) => one.dataset.id)")
+            # The one that spoke last leads. `pair_at` starts s2 after s1.
+            assert first == ["s2", "s1"], first
+
+            # And it follows what happens, not what the rows are called.
+            # A whole turn, so s1 ends back under "ready" beside s2 rather
+            # than in the band below it: the order inside a band is what this
+            # is about.
+            now = time.time()
+            ws.append_event(conftest.event(
+                "UserPromptSubmit", sid="s1", prompt="go", ts=now + 5))
+            ws.append_event(conftest.event("Stop", sid="s1", ts=now + 6))
+            daemon.tick()            # fold it, and tell the page
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.row')]
+                           .map((one) => one.dataset.id)[0] === 's1'""")
+        finally:
+            browser.close()
+
+
+def test_an_age_older_than_an_hour_carries_two_units(pair_at):
+    """"2d" covers two days to just short of three, which is not an answer to
+    "when did this last do something". Drop the second unit and the row says
+    "2d" for a session last seen two and a half days ago."""
+    _, url = pair_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, url)
+        try:
+            said = page.evaluate("""() => {
+              const now = Date.now() / 1000 + state.skew;
+              return [40, 90, 2 * 3600, 2 * 3600 + 15 * 60,
+                      2 * 86400, 2 * 86400 + 6 * 3600]
+                       .map((old) => ago(now - old));
+            }""")
+            assert said == ["40s", "1min", "2h", "2h 15min", "2d", "2d 6h"]
+        finally:
+            browser.close()

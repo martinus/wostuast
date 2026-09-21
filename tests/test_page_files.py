@@ -1226,8 +1226,11 @@ def test_a_session_comes_back_to_where_it_was_left(two_repos):
                 "document.querySelector('.filescroll').scrollTop > 100")
             was = page.eval_on_selector(".filescroll", "el => el.scrollTop")
 
-            # Away, and back.
+            # Away, and back. The other session is put on the Files tab
+            # by hand: which tab it lands on is one of the things a session
+            # remembers, and the page may have chosen it once already.
             page.evaluate("choose('s2')")
+            show_tab(page, "files")
             page.wait_for_function("state.files.path === 'OTHER.md'")
             assert page.evaluate("state.files.dirs.size") == 0
             page.evaluate("choose('s1')")
@@ -1299,8 +1302,9 @@ def test_a_place_in_a_file_survives_leaving_the_files_tab(two_repos):
             show_tab(page, "diff")
             assert page.locator(".filescroll").count() == 0
             page.evaluate("choose('s2')")
-            # s2 is on the Diff tab too, so its Files tab never loads and
-            # there is no open file to wait for; its diff is the signal.
+            # Wherever s2 was left, it is not where this test is looking;
+            # the Diff tab is the one it can wait on without an open file.
+            show_tab(page, "diff")
             page.wait_for_function(
                 "state.chosen === 's2' && state.diff !== null")
             page.evaluate("choose('s1')")
@@ -1431,5 +1435,36 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
             assert "tab" in seen["kept"], seen
             assert seen["back"] == [one for one in seen["kept"] if one != "tab"], seen
             assert len(seen["kept"]) >= 9, seen
+        finally:
+            browser.close()
+
+
+def test_the_go_to_list_is_wider_than_the_box_it_hangs_under(repo_page):
+    """The sidebar is 268 px and a path is not, so every row was clipped to
+    its last few letters — which is the half you can already read in the tree.
+    Put `right: 10px` back and the list is the width of the box again."""
+    root, _ = repo_page
+    deep = root / "native" / "shared" / "libcorrelation" / "doc"
+    deep.mkdir(parents=True)
+    (deep / "SAMPLING.md").write_text("# sampling\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "deep")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "SAMPLING")
+            page.wait_for_selector(".goto button")
+            seen = page.evaluate("""() => {
+              const list = document.querySelector('.goto');
+              const box = document.querySelector('#find');
+              const name = document.querySelector('.goto button .name');
+              return {list: list.getBoundingClientRect().width,
+                      box: box.getBoundingClientRect().width,
+                      clipped: name.scrollWidth > name.clientWidth + 1};
+            }""")
+            assert seen["list"] > seen["box"] + 100, seen
+            # And the whole path really fits, which is the point of the width.
+            assert seen["clipped"] is False, seen
         finally:
             browser.close()

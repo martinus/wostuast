@@ -156,9 +156,9 @@ def test_a_long_prompt_is_cut_before_it_reaches_the_page(ws, store):
     assert len(store.rows[0]["last_prompt"]) == ws.PROMPT_WIDTH
 
 
-def test_rows_come_out_by_name_whatever_the_state(ws, store):
-    """The state used to decide the order, so every tool call moved the list
-    under the reader. The name does not move."""
+def test_rows_come_out_newest_first_whatever_their_names(ws, store):
+    """The one you touched last is at the top, and a finished one is at the
+    bottom however lately it finished."""
     ws.append_event(event("Stop", sid="d", cwd="/w/repo/pear", ts=1005.0))
     ws.append_event(event("PermissionRequest", sid="c", cwd="/w/repo/fig",
                           tool_name="Bash", tool_input={"command": "b"}, ts=1004.0))
@@ -166,8 +166,7 @@ def test_rows_come_out_by_name_whatever_the_state(ws, store):
                           tool_name="Bash", tool_input={"command": "a"}, ts=1001.0))
     ws.append_event(event("SessionEnd", sid="a", cwd="/w/repo/beet", ts=1006.0))
     store.refresh(now=1010.0, alive=lambda p: True)
-    # apple, fig, pear, then the ended one at the bottom however early its name.
-    assert [r["id"] for r in store.rows] == ["b", "c", "d", "a"]
+    assert [r["id"] for r in store.rows] == ["d", "c", "b", "a"]
 
 
 def test_a_refresh_asked_for_during_the_cool_down_is_not_lost(ws, monkeypatch):

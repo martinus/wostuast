@@ -127,10 +127,18 @@ count; click it to open them, and that browser remembers. They are grey, to
 read as over. They are still counted above the list, the filter still finds
 them, and the one you are reading never disappears from the list.
 
-The rest are sorted by name. Sorting by state
-moved every row each time an agent started or finished a tool call, so the list
-kept shifting under you. Which agent needs you is said by the colour, by the
-counts under the list, and on the page by the `n` key.
+Inside each of those groups the newest is first: the session you last did
+something with is at the top, where you are looking for it. "Newest" is when a
+session last became what it is — a turn beginning, ending, or stopping on a
+question — not its last hook event. Sorting by the last event would have two
+busy agents swapping places every few seconds while you read them.
+
+Beside each session is how long it has been that way: `40s`, `4min`,
+`2h 15min`, `2d 6h`. Two units once the first one is coarse, because `2d`
+covers two days to just short of three.
+
+Which agent needs you is said by the colour, by the counts under the list, and
+on the page by the `n` key.
 
 ### Keys
 
