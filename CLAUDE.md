@@ -11,7 +11,8 @@ been made here.
 
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
 `wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
-SSE. The page shows a session list and three tabs: Transcript, Files, Diff.
+SSE. The page shows a session list and five tabs: Transcript, Files, Diff,
+Review, Session.
 Two things go back to the terminal, both through tmux: jump and send.
 Nothing else writes to a terminal. Nothing owns the agent process.
 
@@ -299,6 +300,13 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **Folding an event twice must change nothing.** Handlers assign, never
   accumulate; `Store.apply` drops an event older than the session has seen. A
   log rotation really does deliver old events after new ones.
+- **`Session.log` and `Session.counts` are the two things that accumulate**,
+  and the rule that makes them safe is **strictly newer**: `apply` drops what
+  is *older* than the session has seen, but an event with the very same `ts`
+  folds again and a rotation re-delivers the newest one. They are appended
+  under `ts > last_ts`, which is asked once, before `last_ts` moves. Two
+  events in one instant cost the log the second of them and nothing else. The
+  log is bounded (`SESSION_LOG_MAX`); the counts are the whole story.
 - **`Tail` starting over is news the reader has to hear.** It restarts at
   offset 0 when the file shrinks or its inode changes, which is right — but a
   reader that only appends then drew the whole transcript a second time on top
@@ -567,6 +575,17 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **An async answer belongs to the session that asked.** `submitReview` blanked
   whatever review was current when `tmux send-keys` returned, and removed its
   key from storage. The sent review is cleared by its own id.
+- **The Session tab is where everything about one session lives**, and the
+  only place it is named. There was a bar over every tab saying the branch,
+  the pane, the model and the state — three of which the chosen row says one
+  column to the left, at a cost of 56 pixels on every tab. What it said that
+  the row does not is in the tab: the whole path, the context bar, the counts,
+  and the session's own event log. `drawHeader` is what is left, and all it
+  does now is the send box.
+- **The name box is built once and the rest is rebuilt around it.**
+  `drawSession` keeps two children for this reason: the panel is polled, and a
+  rebuild under a box being typed in takes what is in it — the rule the review
+  keeps for its comments, in a second place.
 - **A tab that fetches nothing says `load: null`**, and the shared `load()`
   draws for it. A tab switch goes through `load`, not `draw`, so an empty
   loader left the page showing the tab before.

@@ -5,6 +5,8 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 
+import time
+
 import pytest
 
 import conftest
@@ -19,11 +21,15 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_jump_puts_the_cursor_in_the_pane(in_pane):
+    """The button lives beside the pane it is about, in the Session tab. It
+    used to sit in a bar over every tab, saying nothing the chosen row was not
+    already saying."""
     daemon, base, seen = in_pane
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
         try:
-            page.click("#jump")
+            show_tab(page, "session")
+            page.click(".sessionbody .verb")
             page.wait_for_timeout(400)
             assert ["tmux", "select-window", "-t", "%7"] in seen
             assert ["tmux", "select-pane", "-t", "%7"] in seen
@@ -69,9 +75,11 @@ def test_the_verbs_are_not_there_without_a_pane(no_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, no_pane[1]))
         try:
-            assert page.locator("#jump").is_hidden()
             assert page.locator("#sendbar").is_hidden()
-            assert "not in tmux" in page.locator("#facts").inner_text()
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody dl")
+            assert "not in tmux" in page.locator(".sessionbody").inner_text()
+            assert page.locator(".sessionbody .verb").count() == 0
         finally:
             browser.close()
 
@@ -165,17 +173,12 @@ def test_a_session_can_be_renamed_from_the_page(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base_of(in_pane)))
         try:
-            page.click("#title")
-            page.wait_for_selector("#rename:not([hidden])")
-            page.fill("#rename", "the parser")
-            page.press("#rename", "Enter")
-            page.wait_for_function(
-                "document.getElementById('title').textContent"
-                ".startsWith('the parser')")
-            assert page.locator("#rename").is_hidden()
-            # And it is on the row as well, not only in the header. The row
-            # puts the worktree in `.name` and the session's own name in
-            # `.called`, which is the one a rename changes.
+            show_tab(page, "session")
+            page.fill(".sessionbody .rename", "the parser")
+            page.press(".sessionbody .rename", "Enter")
+            # The row is where a name is read: there is no second place that
+            # says it any more. The row puts the worktree in `.name` and the
+            # session's own name in `.called`, which is what a rename changes.
             page.wait_for_function(
                 "document.querySelector('.row .called').textContent"
                 ".includes('the parser')")
@@ -187,14 +190,12 @@ def test_escape_leaves_the_name_as_it_was(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base_of(in_pane)))
         try:
-            was = page.locator("#title").inner_text()
-            page.click("#title")
-            page.wait_for_selector("#rename:not([hidden])")
-            page.fill("#rename", "not this")
-            page.press("#rename", "Escape")
-            page.wait_for_selector("#rename", state="hidden")
+            show_tab(page, "session")
+            was = page.locator(".row .called").inner_text()
+            page.fill(".sessionbody .rename", "not this")
+            page.press(".sessionbody .rename", "Escape")
             page.wait_for_timeout(300)      # proving it did not go
-            assert page.locator("#title").inner_text() == was
+            assert page.locator(".row .called").inner_text() == was
         finally:
             browser.close()
 
@@ -203,17 +204,83 @@ def test_an_empty_name_gives_the_session_its_place_back(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base_of(in_pane)))
         try:
-            page.click("#title")
-            page.fill("#rename", "for a moment")
-            page.press("#rename", "Enter")
+            show_tab(page, "session")
+            page.fill(".sessionbody .rename", "for a moment")
+            page.press(".sessionbody .rename", "Enter")
             page.wait_for_function(
-                "document.getElementById('title').textContent"
-                ".startsWith('for a moment')")
-            page.click("#title")
-            page.fill("#rename", "")
-            page.press("#rename", "Enter")
-            page.wait_for_function(
-                "!document.getElementById('title').textContent"
+                "document.querySelector('.row .called').textContent"
                 ".includes('for a moment')")
+            page.fill(".sessionbody .rename", "")
+            page.press(".sessionbody .rename", "Enter")
+            page.wait_for_function(
+                "!document.querySelector('.row .called').textContent"
+                ".includes('for a moment')")
+        finally:
+            browser.close()
+
+
+# --- the Session tab ---------------------------------------------------------
+
+
+def test_the_session_tab_says_what_the_row_cannot(in_pane):
+    """The bar that used to stand over every tab said the branch, the pane,
+    the model and the state. Three of those the chosen row says already, one
+    column to the left — and it cost 56 pixels of every tab to repeat them.
+    What it said that the row does not say is here, with the rest."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            assert page.locator(".session-head").count() == 0
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody dl")
+            said = page.locator(".sessionbody").inner_text()
+            assert "%7" in said                      # the pane
+            assert "/w/one" in said or "one" in said  # the whole path
+            assert "session id" in said
+        finally:
+            browser.close()
+
+
+def test_the_session_tab_counts_what_the_session_did(in_pane, ws):
+    daemon, base, seen = in_pane
+    ws.append_event(conftest.event("UserPromptSubmit", cwd="/w/one",
+                                   ts=time.time(), prompt="do the thing"))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody .counts")
+            page.wait_for_function(
+                """() => document.querySelector('.sessionbody .counts')
+                     .textContent.includes('prompts')""")
+            # And the log says the same thing in the order it happened.
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.sessionlog .said')]
+                     .some((e) => e.textContent.includes('do the thing'))""")
+        finally:
+            browser.close()
+
+
+def test_a_name_being_typed_survives_the_tab_redrawing(in_pane):
+    """The panel is polled, and the name box is typed into. Rebuilding it
+    under the reader would take the name with it — the rule the review keeps
+    for its comments."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody .rename")
+            page.click(".sessionbody .rename")
+            page.fill(".sessionbody .rename", "half a name")
+            # Whatever the poll brings, and a state change on top of it.
+            page.evaluate("""() => {
+              state.events = {counts: {Stop: 3}, events: [], at: state.events.at + 1};
+              draw();
+            }""")
+            page.wait_for_function(
+                """() => document.querySelector('.sessionbody .counts')
+                     .textContent.includes('3')""")
+            assert page.input_value(".sessionbody .rename") == "half a name"
         finally:
             browser.close()

@@ -742,3 +742,58 @@ def test_a_dialog_with_no_tool_named_is_cleared_by_anything(ws):
     )
     assert session.state == "working"
     assert session.reason == ""
+
+
+# --- what a session has done -------------------------------------------------
+
+
+def test_a_session_keeps_its_own_short_history(ws):
+    """The Session tab reads the daemon's own log, folded as the events
+    arrived. `events.jsonl` is twenty megabytes at its largest and holds every
+    session; walking it per request for one of them is not a trade worth
+    making."""
+    store = ws.Store()
+    store.apply(event("SessionStart", cwd="/w/one", ts=1000.0))
+    store.apply(event("UserPromptSubmit", cwd="/w/one", ts=1001.0,
+                      prompt="do the thing"))
+    store.apply(event("PreToolUse", cwd="/w/one", ts=1002.0, tool_name="Bash",
+                      tool_input={"command": "pytest -q"}))
+    session = store.sessions["s1"]
+    assert [one["name"] for one in session.log] == [
+        "SessionStart", "UserPromptSubmit", "PreToolUse"]
+    assert session.log[-1]["text"] == "Bash pytest -q"
+    assert session.counts == {"SessionStart": 1, "UserPromptSubmit": 1,
+                              "PreToolUse": 1}
+
+
+def test_folding_an_event_twice_does_not_count_it_twice(ws):
+    """Everything else here assigns; these two accumulate, which is the one
+    thing `CLAUDE.md` says a handler may not do. The rule that makes it safe
+    is strictly-newer: `apply` drops what is *older* than the session has
+    seen, but an event with the very same `ts` folds again and a rotation
+    re-delivers the newest one."""
+    store = ws.Store()
+    same = event("PreToolUse", cwd="/w/one", ts=1002.0, tool_name="Bash",
+                 tool_input={"command": "ls"})
+    store.apply(event("SessionStart", cwd="/w/one", ts=1000.0))
+    store.apply(same)
+    store.apply(same)                  # the rotation delivering it again
+    store.apply(dict(same))            # and a copy of it, for good measure
+    session = store.sessions["s1"]
+    assert session.counts["PreToolUse"] == 1
+    assert len(session.log) == 2
+
+
+def test_the_history_does_not_grow_without_bound(ws):
+    """A session that runs all day would otherwise keep every event it ever
+    sent, in memory, for a panel nobody is looking at most of the time."""
+    store = ws.Store()
+    for n in range(ws.SESSION_LOG_MAX + 50):
+        store.apply(event("PreToolUse", cwd="/w/one", ts=1000.0 + n,
+                          tool_name="Bash", tool_input={"command": f"n{n}"}))
+    session = store.sessions["s1"]
+    assert len(session.log) == ws.SESSION_LOG_MAX
+    # The newest are the ones kept.
+    assert session.log[-1]["text"].endswith(f"n{ws.SESSION_LOG_MAX + 49}")
+    # And the count is the whole story, not what is left of the log.
+    assert session.counts["PreToolUse"] == ws.SESSION_LOG_MAX + 50

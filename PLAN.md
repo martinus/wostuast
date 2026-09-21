@@ -16,10 +16,10 @@ worktree. The terminal is a good place to type and a bad place to read.
 `wostuast` is the reading side. It never owns the agent process. It learns
 what happens from Claude Code hooks, which append one JSON line per event to
 a log file. A small Python daemon tails that log and serves one web page.
-The page has a sidebar (one row per session, with state) and four tabs for the
-selected session: Transcript, Files, Diff. Two actions go back to the
-terminal, all through tmux: jump to the window, send text to the agent, and
-capture the screen. Nothing else writes to the terminal.
+The page has a sidebar (one row per session, with state) and five tabs for the
+selected session: Transcript, Files, Diff, Review, Session. Two actions go
+back to the terminal, both through tmux: jump to the window, and send text to
+the agent. Nothing else writes to the terminal.
 
 ## 2. Goals
 

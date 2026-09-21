@@ -1,4 +1,4 @@
-"""Moving between the four tabs.
+"""Moving between the five tabs.
 
 See tests/browser.py for the shared browser and the helpers."""
 
@@ -19,13 +19,13 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
-    """`showTab` only takes a name TABS knows, so a key past the last tab
-    changes nothing. There are four; there is no `5`."""
+    """A number key picks the tab in that place in `TAB_KEYS`, so a key past
+    the last one changes nothing. There are five; there is no `6`."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             turns = page.locator(".turn").count()
-            page.keyboard.press("5")
+            page.keyboard.press("6")
             page.wait_for_timeout(200)
             assert page.locator(".tab[data-tab='transcript']").get_attribute(
                 "aria-selected") == "true"
@@ -122,8 +122,27 @@ def test_every_tab_is_built(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            for name in ("transcript", "files", "diff", "review"):
+            for name in ("transcript", "files", "diff", "review", "session"):
                 assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
+        finally:
+            browser.close()
+
+
+def test_every_tab_has_a_number_key_and_it_is_the_one_it_is_drawn_under(page_at):
+    """The keys used to be spelled out one `case` each and stopped at four,
+    so the fifth tab shipped with no key. Take an entry off the end of
+    `TAB_KEYS` and the tab it names stops answering."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            names = page.evaluate("TAB_KEYS")
+            drawn = page.eval_on_selector_all(
+                ".tab", "els => els.map((one) => one.dataset.tab)")
+            assert names == drawn, (names, drawn)
+            for at, name in enumerate(names):
+                page.keyboard.press(str(at + 1))
+                page.wait_for_function(
+                    "(name) => $('content').dataset.tab === name", arg=name)
         finally:
             browser.close()
 
