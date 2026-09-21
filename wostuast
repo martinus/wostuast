@@ -1376,10 +1376,32 @@ class Transcript:
         return block
 
     def add(self, record: dict[str, Any]) -> list[Block]:
+        """One line of the transcript, folded into the blocks.
+
+        A compaction is written as two records: a `system` one that marks the
+        boundary, and a `user` one carrying the summary. Measured on 31
+        transcripts across three machines, `summary` — which this used to be
+        the only marker for — is not written at all any more; the branch stays
+        for an older Claude Code that does write it.
+        """
         kind = str(record.get("type") or "")
         if kind == "summary":
+            # An older build. What it meant there was never settled — the
+            # payload schema says a session that was compacted *or* resumed —
+            # and no build in use writes one, so there is nothing to measure.
+            return [self.keep(Block(kind="divider", text="context compacted"))]
+        if kind == "system":
+            if str(record.get("subtype") or "") != "compact_boundary":
+                return []
             return [self.keep(Block(kind="divider", text="context compacted"))]
         if kind not in ("user", "assistant"):
+            return []
+        if record.get("isCompactSummary"):
+            # The summary Claude Code writes to carry the conversation across
+            # a compaction. It is a `user` record, so it was drawn as a
+            # prompt — thirteen thousand characters of machine text sitting
+            # in the transcript as though the reader had typed them. The
+            # divider above says what happened; this is not a prompt.
             return []
 
         message = record.get("message")
