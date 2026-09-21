@@ -125,3 +125,48 @@ def test_the_tab_icon_follows_a_theme_change(page_at):
                 arg=before)
         finally:
             browser.close()
+
+
+def test_every_icon_fits_inside_its_box(page_at):
+    """An `svg` clips to its own viewport, and a stroke reaches half its
+    width past the line it is drawn on. The page icon's bottom edge sat at
+    13.5 with a 1.2 stroke, so the last tenth of it was cut away — and the
+    next icon anybody draws would have gone the same way.
+
+    Measured with the page's own `putIcon` and the page's own CSS, so this is
+    the width that really ships and not a number copied into a test.
+    """
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            out = page.evaluate("""() => {
+              const where = "http://www.w3.org/2000/svg";
+              // Inside a `.filelist`, because that is where `.icon` is
+              // styled and the stroke width is the thing being measured.
+              const host = document.createElement("div");
+              host.className = "filelist";
+              host.style.position = "absolute";
+              host.style.visibility = "hidden";
+              document.body.appendChild(host);
+              putIcon(host, "dir");
+              const wide = parseFloat(
+                getComputedStyle(host.querySelector(".icon")).strokeWidth);
+              const svg = host.querySelector("svg");
+              const path = svg.querySelector("path");
+              const found = {};
+              for (const [name, d] of Object.entries(ICONS)) {
+                path.setAttribute("d", d);
+                const box = path.getBBox();
+                const half = wide / 2;
+                found[name] = [box.x - half, box.y - half,
+                               box.x + box.width + half,
+                               box.y + box.height + half];
+              }
+              host.remove();
+              return {wide, found};
+            }""")
+            assert out["wide"] > 0, out
+            for name, edge in out["found"].items():
+                assert all(-0.001 <= one <= 14.001 for one in edge), (name, edge)
+        finally:
+            browser.close()
