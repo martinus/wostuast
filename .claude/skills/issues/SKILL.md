@@ -12,9 +12,13 @@ Read every open issue, finish them all, stop when nothing is left.
 and the issue list has been read again.
 
 Saying "do the issues" is the permission to merge: **merge a PR of your own
-the moment CI is green**, and only then. Nothing else in this repository's
-rules is relaxed — `CLAUDE.md` still wins on every question it answers, and
-`PLAN.md` wins over `CLAUDE.md`.
+the moment CI is green**, and only then. Nothing else is relaxed.
+
+**This file is the order of the work. `CLAUDE.md` is the rules.** Where it
+answers a question, it answers it here too, and it is not restated below —
+one rule in two files is two rules that drift, which is a scar this
+repository already carries about a list kept in two languages. `PLAN.md`
+wins over both.
 
 ## One pass
 
@@ -62,24 +66,28 @@ scrub protects, and any choice where two readings lead to different work.
 
 Decide everything else yourself and say what you decided.
 
-### 4. Build it, and prove every test by perturbation
+### 4. Build it
 
-Break the thing the test claims to guard and watch it go red. A test that
-passes against its own perturbation is not a test. Two have slipped through
-here, and a third slipped through recently because the `-k` filter it was run
-under never selected it — read the count, not the colour.
+`CLAUDE.md` **Where to look** routes from what you are about to touch to the
+rules for it. Read that row before editing, not after the tests go red.
+
+Every test proved by perturbation — `CLAUDE.md` **How to work here** says how
+and why. The part that catches people: read the count pytest prints, not the
+colour. A test run under a `-k` that never selected it is a test you have not
+run.
 
 ### 5. Write the scar down in the same commit
 
 | Where | What |
 | --- | --- |
-| `CLAUDE.md` | a rule the next agent needs |
-| `PLAN.md` §12 | a decision and why it earned its exception |
-| `tests/fixtures/README.md` | a payload shape, read off a real one |
+| `CLAUDE.md` | a rule the next agent needs, in the shape its header sets |
+| `PLAN.md` §12 | a decision, and what earned it its exception |
+| `tests/fixtures/README.md` | a payload shape, read off a real payload |
 | `README.md` | anything a reader of the program sees |
 
 The rule and the code that keeps it land together, or the rule is not true
-yet.
+yet. Add the symbol to `CLAUDE.md`'s **Where to look** table if the rule is
+about code an agent would go looking for.
 
 ### 6. Review it when review is worth it
 
@@ -96,13 +104,13 @@ Fix what they find before the PR goes up. Say which you ran.
 
 ### 7. Full suite, then push, then watch CI
 
-`pytest -q -n auto` — about 110 s, so there is no excuse. Green locally is
-**not** the gate; CI is. It has caught two races no local run could: a
-browser test that only fails on a loaded runner, and a failure message wiped
-by a push a quiet machine never sends.
+`pytest -q -n auto`, whole, every time. Green locally is **not** the gate; CI
+is. It has caught two races no local run could: a browser test that only
+fails on a loaded runner, and a failure message wiped by a push a quiet
+machine never sends.
 
 A red CI on a PR you opened is work now, not news. Re-diagnose and push again
-until it is green. Never skip, disable or quarantine a test to get there.
+until it is green.
 
 ### 8. Merge, reset, and read the list again
 
@@ -122,8 +130,9 @@ Stop watching the merged PR and cancel any check-in you armed for it.
   code you are already changing, do it now — a fix one line from the one you
   are making is not widening the PR. Otherwise file an issue and leave it.
   Trivia is not an issue.
-- **Never guess a payload, a browser, or a shape.** Record a real event, read
-  a real transcript, drive a real Chromium, measure the box.
+- **Never guess a payload, a browser, or a shape** — record a real event,
+  drive a real Chromium, measure the box. `CLAUDE.md` **Do not guess payload
+  fields** says where the recorded ones live.
 - **Say what you left out, and why.** A pass that skipped something without
   saying so reads as a pass that finished.
 

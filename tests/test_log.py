@@ -424,3 +424,28 @@ def test_two_threads_writing_one_file_do_not_unlink_each_other(ws, tmp_path):
         one.join()
     assert trouble == []
     assert target.read_text() in ("one", "two")
+
+
+def test_the_map_in_claude_md_points_at_real_symbols():
+    """`CLAUDE.md` opens with a table routing "about to touch X" to the
+    section that holds the rules for it. A router that names a symbol the
+    program no longer has sends an agent grepping for nothing, and a wrong
+    map is worse than none: it is believed.
+
+    Three numbers in that file went stale by 40% before anybody noticed. The
+    table is the part most likely to go the same way, because it is the part
+    that names code.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    doc = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    program = (root / "wostuast").read_text(encoding="utf-8")
+    start = doc.index("## Where to look")
+    table = doc[start:doc.index("\n## ", start + 4)]
+    named = sorted(set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", table)))
+    assert len(named) > 20, "the table stopped naming symbols"
+    missing = [one for one in named if one not in program]
+    assert not missing, f"CLAUDE.md routes to symbols that are gone: {missing}"
+
