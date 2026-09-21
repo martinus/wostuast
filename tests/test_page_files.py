@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 import os
+import re
 import time
 
 import pytest
@@ -929,25 +930,30 @@ def test_a_short_file_is_still_drawn_whole(long_page):
 
 
 def test_scrolling_sideways_survives_the_window_moving(long_page):
-    """The rows are in a new box every time the window moves, so how far along
-    a long line the reader had scrolled has to be carried over."""
+    """The pane is what scrolls sideways, and it is not rebuilt when the
+    window moves — so how far along a long line the reader stood carries over
+    on its own. It used to be the row box, which is new every time the window
+    moves, and the place had to be put back by hand."""
     root, _ = long_page
     # Wide enough to scroll sideways, and short enough that the whole file
-    # stays under the half megabyte the daemon will send.
+    # stays under the half megabyte the daemon will send. Those two pull
+    # against each other, so the threshold comes down instead — the question
+    # is what a windowed file does, not how many lines make one.
     root.joinpath("long.py").write_text(
         "".join(f"line{n} = {n}  # {'wide ' * 20}\n"
                 for n in range(conftest.LONG_LINES)))
     with sync_playwright() as play:
         browser, page = open_page(play, long_page)
         try:
+            page.evaluate("CODE_WHOLE = 500")
             open_file(page, "long.py")
             page.wait_for_selector(".code.windowed")
             page.wait_for_function(
-                "document.querySelector('.filebody .dlines').scrollWidth >"
-                " document.querySelector('.filebody .dlines').clientWidth")
-            # As far right as this window goes, whatever that turns out to be.
+                "document.querySelector('.filebody').scrollWidth >"
+                " document.querySelector('.filebody').clientWidth")
+            # As far right as the pane goes, whatever that turns out to be.
             along = page.eval_on_selector(
-                ".filebody .dlines",
+                ".filebody",
                 "el => { el.scrollLeft = 4000; return el.scrollLeft; }")
             assert along > 0
             page.evaluate("() => { document.querySelector('.filebody')"
@@ -956,7 +962,7 @@ def test_scrolling_sideways_survives_the_window_moving(long_page):
                 "document.querySelector('.filebody .code .dline .ln')"
                 ".textContent.trim() !== '1'")
             assert page.eval_on_selector(
-                ".filebody .dlines", "el => el.scrollLeft") == along
+                ".filebody", "el => el.scrollLeft") == along
         finally:
             browser.close()
 
@@ -1008,11 +1014,16 @@ def test_reading_as_text_holds_across_files(repo_page):
 
 
 def test_a_file_that_is_not_a_document_has_no_switch(repo_page):
+    """The header carries two controls for how a file is drawn. The switch
+    between a rendered document and its lines is not one of them: a file that
+    is not a document has nothing to switch between."""
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
             open_file(page, "code.py")
-            assert page.locator(".filebody .where .link").count() == 0
+            said = page.eval_on_selector_all(
+                ".filebody .where .link", "els => els.map((e) => e.textContent)")
+            assert said == ["tab 4", "wrap"]
         finally:
             browser.close()
 
@@ -1082,5 +1093,204 @@ def test_the_whole_path_is_still_one_string_to_copy(repo_page):
                 ".textContent === 'a/b/c.py'")
             assert page.eval_on_selector(
                 ".filebody .crumbs", "el => el.innerText") == "a/b/c.py"
+        finally:
+            browser.close()
+
+
+# --- how a file is drawn: the header, and the reader's two choices -----------
+
+
+def test_a_file_of_a_few_thousand_lines_is_drawn_whole_and_coloured(long_page):
+    """Windowing used to start at 2,000 lines, so an ordinary source file lost
+    its colour and its browser find. Measured: 2,500 lines cost 144 ms to draw
+    whole and paint, which is a price worth paying to read a file."""
+    root, _ = long_page
+    root.joinpath("mid.py").write_text(
+        "".join(f"value_{n} = {n}\n" for n in range(2426)))
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_code(page, "'<span class=\"hljs-keyword\">value_0</span>'",
+                      "mid.py")
+            assert page.locator(".code.windowed").count() == 0
+            assert page.locator(".filebody .note").count() == 0
+            page.wait_for_function(
+                "document.querySelectorAll('.filebody .code .dline').length === 2426")
+            # Drawn whole *and painted*, which is the half the old threshold
+            # took away.
+            page.wait_for_selector(".filebody .code .hljs-keyword")
+        finally:
+            browser.close()
+
+
+def test_the_header_says_what_the_file_is(repo_page):
+    """Type, size and when it last changed — all of it already in hand: the
+    type the page worked out to paint it, the rest from the one stat the
+    daemon does anyway."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page, "code.py")
+            about = page.locator(".filebody .where .whatis").inner_text()
+            # What the page worked out in order to paint it, which is the
+            # highlighter's name for the language and not a prettier one.
+            assert "py" in about
+            assert " B" in about or "KB" in about
+            # `21 Sep 07:20`, so a day and a month and a clock.
+            assert re.search(r"\d+ [A-Z][a-z]{2} \d\d:\d\d", about), about
+        finally:
+            browser.close()
+
+
+def test_the_header_stays_in_view_down_a_long_file(long_page):
+    """It carries the path and the two controls, and scrolling away from them
+    was scrolling away from the only place that says which file this is."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.evaluate("() => { document.querySelector('.filebody')"
+                          ".scrollTop = 4000; }")
+            page.wait_for_function(
+                "document.querySelector('.filebody').scrollTop > 1000")
+            seen = page.evaluate("""() => {
+              const pane = document.querySelector('.filebody');
+              const head = pane.querySelector('.where');
+              return {top: head.getBoundingClientRect().top
+                           - pane.getBoundingClientRect().top};
+            }""")
+            assert -1 <= seen["top"] <= 1, seen
+        finally:
+            browser.close()
+
+
+def test_the_long_line_scrollbar_is_at_the_bottom_of_the_screen(repo_page):
+    """It used to sit under the last line of the file, which in a file of any
+    length is somewhere the reader never scrolls to."""
+    repo, _ = repo_page
+    repo.joinpath("wide.py").write_text(
+        "".join(f"value_{n} = '{'x' * 400}'\n" for n in range(400)))
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page, "wide.py")
+            seen = page.evaluate("""() => {
+              const pane = document.querySelector('.filebody');
+              const rows = pane.querySelector('.dlines');
+              return {pane: pane.scrollWidth > pane.clientWidth,
+                      rows: getComputedStyle(rows).overflowX};
+            }""")
+            assert seen["pane"] is True, "the pane does not scroll sideways"
+            # `visible` is a box with no scrollbar of its own, which is the
+            # point: one bar, at the bottom of the screen.
+            assert seen["rows"] == "visible", seen
+        finally:
+            browser.close()
+
+
+def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(repo_page):
+    """Two choices about reading, not about a session, so they live in this
+    browser like the theme does."""
+    repo, _ = repo_page
+    repo.joinpath("tabs.py").write_text("def a():\n\treturn 1\n")
+    wrapped = ("getComputedStyle(document.querySelector('.filebody .dline'))"
+               ".whiteSpace")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page, "tabs.py")
+            assert page.evaluate(
+                "getComputedStyle(document.querySelector('.dlines')).tabSize") == "4"
+            assert page.evaluate(wrapped) == "pre"
+
+            page.click(".filebody .where .link:text('tab 4')")
+            page.wait_for_function(
+                "getComputedStyle(document.querySelector('.dlines')).tabSize === '8'")
+            page.click(".filebody .where .link:text('wrap')")
+            page.wait_for_function(f"{wrapped} === 'pre-wrap'")
+
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(".row")
+            open_file(page, "tabs.py")
+            page.wait_for_function(f"{wrapped} === 'pre-wrap'")
+            assert page.evaluate(
+                "getComputedStyle(document.querySelector('.dlines')).tabSize") == "8"
+        finally:
+            browser.close()
+
+
+def test_a_windowed_file_says_it_cannot_wrap(long_page):
+    """A windowed file's rows are a grid the scrollbar is read against, and a
+    wrapped row is not one row tall. A control that quietly did nothing would
+    be worse than one that says why."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.wait_for_selector(".code.windowed")
+            assert page.eval_on_selector(
+                ".filebody .where .link:text('wrap')", "el => el.disabled") is True
+        finally:
+            browser.close()
+
+
+def test_every_row_says_whether_it_is_a_file_or_a_folder(repo_page):
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button")
+            seen = page.eval_on_selector_all(
+                ".filelist button",
+                """els => els.map((b) => [b.classList.contains('dir'),
+                                          b.querySelectorAll('svg.icon').length])""")
+            assert seen and all(many == 1 for _, many in seen)
+        finally:
+            browser.close()
+
+
+def test_changing_how_a_file_is_drawn_keeps_a_comment_being_written(repo_page):
+    """Both controls used to call `redrawCode`, which clears the very key
+    `holdingText` guards an open comment box with — so the pane rebuilt under
+    the reader and `putCommentBox` re-seeded the box from the saved note,
+    which for an unsaved one is the empty string. The header is sticky, so
+    those buttons are on screen and clickable the whole time you are typing.
+
+    Neither control rebuilds anything now: both are read from the root by the
+    cascade.
+    """
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page, "code.py")
+            page.locator(".filebody .dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "half a thought")
+
+            page.click(".filebody .where .link:text('tab 4')")
+            page.click(".filebody .where .link:text('wrap')")
+            page.wait_for_function(
+                "getComputedStyle(document.querySelector('.filebody .dline'))"
+                ".whiteSpace === 'pre-wrap'")
+            assert page.input_value(".commentbox textarea") == "half a thought"
+        finally:
+            browser.close()
+
+
+def test_a_windowed_file_does_not_wrap_even_if_it_is_told_to(long_page):
+    """The button being disabled is a courtesy. The rule itself is that a
+    windowed file's rows are a grid the scrollbar is read against, and a
+    wrapped row is not one row tall — so turning wrap on while a windowed file
+    is open must change nothing about its rows."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.wait_for_selector(".code.windowed")
+            page.evaluate("""() => { keepReading({tab: 4, wrap: true}); }""")
+            assert page.evaluate("document.documentElement.dataset.wrap") == "yes"
+            assert page.evaluate(
+                "getComputedStyle(document.querySelector('.filebody .dline'))"
+                ".whiteSpace") == "pre"
         finally:
             browser.close()

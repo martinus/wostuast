@@ -1732,6 +1732,9 @@ class FileText:
 
     text: str = ""
     mtime: float = 0.0
+    #: Bytes on disk, which is not what `len(text)` says once it is decoded
+    #: or cut at `FILE_MAX_BYTES`. The stat that reads the mtime has it.
+    size: int = 0
     binary: bool = False
     # What `file` made of it, when the name and the first line said nothing.
     # The page decides what to do with it; see `languageOf`.
@@ -2204,7 +2207,8 @@ def read_worktree_file(
     try:
         if not target.is_file():
             return None
-        found = FileText(mtime=target.stat().st_mtime)
+        info = target.stat()
+        found = FileText(mtime=info.st_mtime, size=info.st_size)
         # One byte past the cap is enough to know the file runs past it.
         # Reading it whole first put a tracked video in memory every poll.
         with target.open("rb") as handle:
@@ -4392,6 +4396,14 @@ body:not(.show-thinking) .thinking { display: none; }
   display: flex; align-items: center; gap: 5px;
 }
 .filelist.fixed .name { flex-grow: 1; min-width: 0; }
+/* Beside every name, so a file and a folder are told apart without reading
+   either. It sits on the text baseline, which is where the eye expects it. */
+.filelist .icon {
+  width: 13px; height: 13px; flex-shrink: 0; color: var(--ink-faint);
+  fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round;
+}
+.filelist button.dir .icon { color: var(--ink-mute); }
+.filelist button.chosen .icon, .filelist button:hover .icon { color: inherit; }
 .filelist .caret {
   flex-shrink: 0; width: 9px; color: var(--ink-faint); font-size: 9px;
 }
@@ -4451,7 +4463,12 @@ body:not(.show-thinking) .thinking { display: none; }
 .filebody, .diffbody, .reviewbody {
   flex-grow: 1; overflow-y: auto; min-width: 0;
 }
-.filebody { padding: 20px 26px; }
+/* The padding is on the children, because the header is stuck to the pane's
+   edges and must not be inset. Everything except it, so a branch added to
+   `drawFiles` later cannot quietly lose its gutter. */
+.filebody { padding: 0; }
+.filebody > :not(.where) { padding: 0 26px 20px; }
+.filebody > .empty { padding-top: 20px; }
 .reviewbody { padding: 16px 20px; }
 /* The small label look: the path above a file, and the names of the two
    boxes at the top of a review. */
@@ -4459,12 +4476,24 @@ body:not(.show-thinking) .thinking { display: none; }
   font-family: var(--narrow); font-size: 12px; letter-spacing: .04em;
   color: var(--ink-faint);
 }
-/* The path of the open file, and beside it the switch between a rendered
-   document and the lines it is written in. */
+/* What the open file is: its path, what it holds, and the two controls for
+   how it is drawn. It stays in view, in both directions — `top` for scrolling
+   down a long file and `left` for a long line, because the pane now scrolls
+   sideways and the header would otherwise slide off it. */
 .filebody .where {
-  margin-bottom: 14px; display: flex; align-items: baseline; gap: 14px;
+  position: sticky; top: 0; left: 0; z-index: 2;
+  margin-bottom: 14px; padding: 12px 26px; gap: 14px;
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  background: var(--bg); border-bottom: 1px solid var(--edge);
 }
 .filebody .where .link { margin-top: 0; flex-shrink: 0; }
+/* What is known about the file, after its name: the type, the size, when it
+   last changed. `auto` pushes the controls to the far end. */
+.filebody .where .whatis { color: var(--ink-mute); flex-shrink: 0; }
+.filebody .where .reading { margin-left: auto; display: flex; gap: 10px;
+  align-items: baseline; flex-shrink: 0; }
+.filebody .where .reading .link[aria-pressed="true"] { color: var(--needs); }
+.link:disabled { opacity: .5; cursor: default; }
 /* One piece of the path. Text nodes separate them, so the whole line is still
    one string to select and copy. */
 .crumbs { min-width: 0; word-break: break-all; }
@@ -4505,11 +4534,30 @@ body:not(.show-thinking) .thinking { display: none; }
 .dlines {
   padding: 5px 0; overflow-x: auto; color: var(--code-ink);
   font-family: var(--mono); font-size: 12.5px; line-height: 21px;
+  /* How wide a tab is drawn. The reader picks it; see `recallReading`. */
+  tab-size: var(--tab-w, 4);
 }
 /* A windowed file's rows are a grid the scrollbar is read against, so the row
    height is a whole number of pixels (`CODE_H`) and nothing pads the block
    they sit in. See `fillCode`. */
 .code.windowed .dlines { padding: 0; }
+/* On the Files tab the rows give up their own scroller, so the long-line bar
+   is at the bottom of the screen instead of under the last line of the file —
+   which in a file of any length is somewhere nobody scrolls to. The pane
+   scrolls both ways instead, and the place the reader had scrolled to then
+   survives a window move for free.
+   The Diff tab keeps the scroller here on purpose: it stacks many files in
+   one pane, so a bar at the bottom of the screen would belong to whichever
+   block happened to be under it. */
+.filebody .dlines { overflow-x: visible; }
+/* Wrapped: the line breaks instead of running off the side. On the root, like
+   the theme, because it is about this browser and not about a tab — and
+   `:not(.windowed)` is the exclusion itself rather than a promise made in
+   three other places: a windowed file's rows are a grid the scrollbar is read
+   against, and a wrapped row is not one row tall. */
+:root[data-wrap="yes"] .filebody .code:not(.windowed) .dline {
+  white-space: pre-wrap; min-width: 0; overflow-wrap: anywhere;
+}
 .dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
 .dline { position: relative; }
 .dline.context { color: var(--ink-mute); }
@@ -4963,6 +5011,29 @@ function nextTheme() {
 window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
   if (themeChoice() === "system") applyTheme("system");
 });
+
+// A folder and a page, drawn rather than fetched: no icon font, no image, and
+// `currentColor` means each one is already the right colour in both themes
+// and when its row is chosen. SVG needs its own namespace, which is the whole
+// reason this is not `put`.
+const ICONS = {
+  dir: "M1 3.2a1 1 0 0 1 1-1h3.1l1.2 1.6H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1"
+       + " 1 0 0 1-1-1z",
+  file: "M3.5 1.5h4.7L11.5 5v8.5h-8zM8 1.7V5h3.3",
+};
+
+function putIcon(parent, kind) {
+  const where = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(where, "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("viewBox", "0 0 14 14");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(where, "path");
+  path.setAttribute("d", ICONS[kind]);
+  svg.appendChild(path);   // how it is drawn is CSS, on `.filelist .icon`
+  parent.appendChild(svg);
+  return svg;
+}
 
 // Everything below comes from an agent. It is never trusted as HTML.
 function put(parent, tag, cls, text) {
@@ -6220,6 +6291,7 @@ function drawRow(list, row) {
   button.title = row.path;
   button.style.paddingLeft = (14 + row.depth * 13) + "px";   // the tree's step
   if (dir) put(button, "span", "caret", open ? "\u25be" : "\u25b8");
+  putIcon(button, dir ? "dir" : "file");
   // A row shows one segment of a path. The letters that matched were found
   // in the whole of it, so a letter found in a directory is picked out on
   // that directory's own row and nowhere else. Cutting the name and the
@@ -6281,7 +6353,15 @@ function countNote(note, many) {
 // Below CODE_WHOLE nothing here runs. An ordinary file is drawn whole, so the
 // browser's own find still sees all of it and a copy is the whole file. That
 // is worth keeping, and it is why this starts at a length rather than always.
-const CODE_WHOLE = 2000;
+// Measured in a real browser, drawing whole and painting: 2,500 lines cost
+// 144 ms, 5,000 cost 280 ms, 10,000 cost 774 ms and 40,000 cost 2.8 s — and
+// that is paid again on every save of the file being read. Five thousand
+// covers a hand-written source file, which is what a reader is looking at.
+//
+// A `let`, like `BIG_LINES`, and for the same reason: how much DOM is too
+// much is the page's own business, and a test can say so without having to
+// build a file of five thousand lines to ask the question.
+let CODE_WHOLE = 5000;
 const CODE_H = 21;          // one row, exactly. `.dlines` sets the same number
 const CODE_SHOWN = 160;     // a tall screenful, and some either side
 
@@ -6357,17 +6437,13 @@ function fillCode(pane, at = pane.scrollTop) {
       code.dataset.last === String(last)) return;
   code.dataset.first = String(first);
   code.dataset.last = String(last);
-  // A long line is read by scrolling sideways, and the rows are rebuilt under
-  // the reader every time the window moves. Their box is new each time, so how
-  // far along it stood has to be carried over by hand.
-  const along = code.querySelector(".dlines");
-  const sideways = along ? along.scrollLeft : 0;
+  // The pane is what scrolls sideways now, and the pane is not rebuilt, so
+  // how far along the reader stood carries over on its own.
   code.replaceChildren();
   put(code, "div", "gap").style.height = heightOf(tall, first) + "px";
   fillDiffFile(code, asLines(code.path, all.slice(first, last), first + 1));
   put(code, "div", "gap").style.height =
     (heightOf(tall, all.length) - heightOf(tall, last)) + "px";
-  if (sideways) code.querySelector(".dlines").scrollLeft = sideways;
   measureTall(code, tall, first, last);
 }
 
@@ -6439,9 +6515,18 @@ function drawFiles(box) {
       : "This worktree holds no file that git knows about.");
     return;
   }
-  const where = putWhere(pane, state.files.path);
   const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
+  // Split once. The header wants to know how long the file is and so does the
+  // body, and two copies of that arithmetic are two copies that can drift —
+  // the one that decides whether the wrap control does anything, and the one
+  // that decides whether it could.
+  const asCode = !state.files.binary && !(isDoc && !state.files.asText);
+  const body = asCode ? state.files.text.replace(/\n$/, "") : "";
+  const rows = asCode ? linesOf(body) : null;
+  const windowed = !!rows && rows.length > CODE_WHOLE;
+  const where = putWhere(pane, state.files.path);
   if (isDoc) putAsText(where);
+  putAbout(where, rows, windowed);
   if (state.files.binary) {
     put(pane, "div", "note", "Binary file. There is nothing to show.");
   } else if (isDoc && !state.files.asText) {
@@ -6452,16 +6537,15 @@ function drawFiles(box) {
     // comment on line 42 lands on the same anchor whichever tab wrote it.
     //
     // The rows and the highlighter are given the very same text, so the two
-    // can never disagree about how many lines there are.
-    const body = state.files.text.replace(/\n$/, "");
-    const rows = linesOf(body);
-    const windowed = rows.length > CODE_WHOLE;
+    // can never disagree about how many lines there are. Both were worked out
+    // above, because the header asks the same question.
     if (windowed) {
-      // Said plainly, because both of these are things the reader would
-      // otherwise go looking for and not find.
-      put(pane, "div", "note", rows.length + " lines. Only the ones on screen"
-          + " are drawn, so this file has no colour and your browser's own"
-          + " find will not see the rest of it.");
+      // Only for a file that really is too long to draw. Said plainly,
+      // because both of these are things the reader would otherwise go
+      // looking for and not find.
+      put(pane, "div", "note", rows.length + " lines — too many to draw at"
+          + " once. Only the ones on screen are here, so this file has no"
+          + " colour and your browser's own find will not see the rest.");
     }
     const code = put(pane, "div", "code" + (windowed ? " windowed" : ""));
     code.dataset.path = state.files.path;
@@ -6528,6 +6612,7 @@ function blankFiles() {
     binary: false,
     lang: "",           // what `file` made of it, when the name said nothing
     mtime: 0,           // which version of that text is loaded
+    size: 0,            // its bytes on disk, which the decoded text does not say
     // Markdown reads as Markdown, which has no lines to comment on. This
     // turns it back into the rows every other file gets. It is remembered
     // across files, because a reader who wants to review one document
@@ -6536,6 +6621,70 @@ function blankFiles() {
     goTo: null,         // a path the list has been asked to move to
     goToLine: 0,        // and the line in it the body should show, if any
   };
+}
+
+// --- how a file is drawn -----------------------------------------------------
+//
+// Two choices the reader makes about reading, not about a session: how wide a
+// tab is, and whether a long line wraps. They live in this browser, like the
+// theme, because they are about this screen and these eyes. No config file:
+// `PLAN.md` rules one out, and a control you can see beats a setting you
+// cannot.
+
+const TAB_WIDTHS = [2, 4, 8];
+const READING_KEY = "wostuast-reading";
+
+// Both live on the root element, which is then the only copy — the theme's
+// pattern, and for the same reason: the cascade does the work, so neither
+// control has to rebuild anything to be obeyed.
+function readingNow() {
+  const root = document.documentElement;
+  const tab = Number(root.style.getPropertyValue("--tab-w"));
+  return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
+           wrap: root.dataset.wrap === "yes" };
+}
+
+function applyReading(next) {
+  const root = document.documentElement;
+  root.style.setProperty("--tab-w", String(next.tab));
+  root.dataset.wrap = next.wrap ? "yes" : "no";
+}
+
+function keepReading(next) {
+  applyReading(next);
+  try { localStorage.setItem(READING_KEY, JSON.stringify(next)); }
+  catch (error) { }              // it still applies; it just is not remembered
+}
+
+function recallReading() {
+  let held = null;
+  try { held = JSON.parse(localStorage.getItem(READING_KEY) || "null"); }
+  catch (error) { held = null; } // a private window, or something else's key
+  // Storage is not a place to trust blindly, the same rule a review keeps.
+  // Whatever it did not answer for, the default stands — and the default is
+  // applied either way, so the gutter and the label cannot disagree.
+  const shape = held && typeof held === "object" ? held : {};
+  applyReading({ tab: TAB_WIDTHS.includes(shape.tab) ? shape.tab : 4,
+                 wrap: shape.wrap === true });
+}
+
+// How big a file is, in the units a person reads. Bytes on disk, which is not
+// what the text length says once it has been decoded or cut.
+function sizeOf(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// `21 Sep 07:20`, which is short enough to sit in a header and exact enough
+// to tell two saves apart.
+function whenOf(seconds) {
+  if (!seconds) return "";
+  const at = new Date(seconds * 1000);
+  return at.getDate() + " " + MONTHS[at.getMonth()] + " " + clock(seconds);
 }
 
 // The path of the open file, one clickable piece per part of it, and still
@@ -6558,6 +6707,56 @@ function putWhere(pane, path) {
     piece.addEventListener("click", () => revealInTree(upto));
   }
   return where;
+}
+
+// What is known about the open file, and the two controls for how it is
+// drawn. Everything here is already in hand: the type the page worked out to
+// paint it, and the size and mtime the daemon took from the one stat it does
+// anyway.
+function putAbout(where, rows, windowed) {
+  const facts = [];
+  const lang = languageOf(state.files.path, state.files.text, state.files.lang);
+  if (lang) facts.push(lang);
+  if (state.files.size) facts.push(sizeOf(state.files.size));
+  const when = whenOf(state.files.mtime);
+  if (when) facts.push(when);
+  if (facts.length) put(where, "span", "whatis", facts.join(" · "));
+  // A binary file and a rendered document have no rows, so neither control
+  // would do anything to what is on screen. A control that quietly does
+  // nothing is worse than no control.
+  if (!rows) return;
+
+  const reading = readingNow();
+  const box = put(where, "span", "reading");
+  const tab = put(box, "button", "link", "tab " + reading.tab);
+  tab.type = "button";
+  tab.title = "how wide a tab is drawn";
+  tab.addEventListener("click", () => {
+    const now = readingNow();
+    const at = TAB_WIDTHS.indexOf(now.tab);
+    now.tab = TAB_WIDTHS[(at + 1) % TAB_WIDTHS.length];
+    keepReading(now);
+    // Only the label: `tab-size` reads `--tab-w` from the root, so the rows
+    // redraw themselves. Rebuilding the pane here would re-highlight the
+    // whole file for a number — and would take an open comment box with it,
+    // because `redrawCode` clears the very key that guards one.
+    tab.textContent = "tab " + now.tab;
+  });
+  const wrap = put(box, "button", "link", "wrap");
+  wrap.type = "button";
+  // A windowed file's rows are a grid the scrollbar is read against, and a
+  // wrapped row is not one row tall. The CSS is what enforces that; this says
+  // so, rather than letting the reader press something inert.
+  wrap.disabled = windowed;
+  wrap.title = windowed ? "a file drawn a window at a time cannot wrap"
+                        : "break a long line instead of scrolling sideways";
+  wrap.setAttribute("aria-pressed", String(reading.wrap && !windowed));
+  wrap.addEventListener("click", () => {
+    const now = readingNow();
+    now.wrap = !now.wrap;
+    keepReading(now);
+    wrap.setAttribute("aria-pressed", String(now.wrap));
+  });
 }
 
 // Open the tree down to a path, and ask the list to move to it. A filter hides
@@ -6617,6 +6816,7 @@ function forgetFile(path) {
   state.files.binary = false;
   state.files.lang = "";
   state.files.mtime = 0;
+  state.files.size = 0;
 }
 
 function chooseFile(path) {
@@ -7551,6 +7751,7 @@ async function loadFiles() {
       state.files.binary = !!body.binary;
       state.files.lang = body.language || "";
       state.files.mtime = body.mtime || 0;
+      state.files.size = body.size || 0;
     }
   }
   draw();
@@ -7799,6 +8000,7 @@ $("find").addEventListener("keydown", (press) => {
   draw();
 });
 applyTheme(themeChoice());
+recallReading();
 dragWidth($("grip"), "--sidebar-w", 200, 760);
 
 drawSessions();
