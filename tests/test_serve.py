@@ -66,6 +66,22 @@ def test_the_page_is_served(served):
         assert b"<!doctype html>" in response.read().lower()
 
 
+def test_the_links_route_carries_both_answers(ws, served):
+    """The usable links, and what is wrong with the rest. Both, because the
+    page cannot tell "no links" from "your file is broken" on its own -- and
+    the difference is the whole of the reader's problem."""
+    _, base = served
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
+        {"match": "BAD-(", "url": "https://tickets/"},
+    ]), encoding="utf-8")
+    status, body = get(f"{base}/api/links")
+    assert status == 200
+    assert body["links"] == [{"match": r"OK-(\d+)", "url": "https://tickets/$1"}]
+    assert len(body["trouble"]) == 1 and "link 2" in body["trouble"][0]
+
+
 def test_sessions_are_json(ws, served):
     daemon, base = served
     ws.append_event(event("UserPromptSubmit", prompt="do it"))

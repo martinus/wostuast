@@ -686,6 +686,75 @@ def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
             browser.close()
 
 
+def test_a_links_file_the_daemon_cannot_use_says_so_on_the_session_tab(ws,
+                                                                       page_at):
+    """A file you wrote and got wrong must never look like a file you never
+    wrote. Without this the page is identical either way: no links, no clue,
+    and `doctor` is something you had no reason to run."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text("not json at all", encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody .trouble")
+            said = page.inner_text(".sessionbody .trouble")
+            assert "links.json" in said
+            assert "not valid JSON" in said
+        finally:
+            browser.close()
+
+
+def test_a_links_file_that_works_says_nothing(ws, page_at):
+    """A note on every Session tab would be noise, and noise is not read."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            show_tab(page, "session")
+            assert page.locator(".sessionbody .trouble").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_pattern_this_browser_cannot_use_says_so_too(ws, page_at):
+    """Python took the pattern and JavaScript will not -- the two dialects
+    are close and not the same, so this one is only findable here, and it is
+    the same silence if the page keeps it to itself."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody")
+            # The answer is taken and the page asked in one go, with no
+            # poll in between: the note has to arrive because `loadLinks`
+            # redrew for it, not because something else happened to.
+            said = page.evaluate("""async () => {
+              // What the daemon serves, with a pattern Python compiles and
+              // this browser does not: `(?P<x>)` is Python's alone.
+              window.fetch = async () => ({json: async () => ({
+                links: [{match: '(?P<id>OA-1)', url: 'https://tickets/'}],
+                trouble: []})});
+              await loadLinks();
+              return [state.linkTrouble,
+                      document.querySelector('.sessionbody .trouble')
+                        ? document.querySelector('.sessionbody .trouble').innerText
+                        : null];
+            }""")
+            trouble, drawn = said
+            assert len(trouble) == 1 and "(?P<id>OA-1)" in trouble[0], trouble
+            assert drawn and "(?P<id>OA-1)" in drawn, drawn
+        finally:
+            browser.close()
+
+
 def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
     """It walks text nodes and builds one anchor at a time, with an href this
     side checks again — so a url template that is not http(s), or one that

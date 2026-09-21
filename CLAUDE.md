@@ -269,6 +269,18 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   would be a line in `doctor` saying the file is wrong. It is written with
   `write_atomic(private=True)`, like everything else there, and a failure to
   write it never stops `serve`.
+- **A `links.json` that cannot be used is never silent.** "No links" and
+  "your file is broken" looked identical — nothing on the page either way —
+  and the only way to find out was `doctor`, which you had no reason to run.
+  The first thing anybody writes is `\d`, which is not a JSON escape, so the
+  file never parses. `load_links` returns the usable entries *and* what is
+  wrong with the rest; `read_links` is the wrapper for a caller with nowhere
+  to put the trouble. `serve` prints it, `/api/links` carries it, the Session
+  tab shows it, `doctor` says it. **The file is never repaired**: guessing at
+  a backslash somebody meant is a worse surprise than the message. And the
+  page adds its own trouble — a pattern Python compiled and this browser
+  will not is only findable there. `state.linkTrouble` is in the Session
+  tab's redraw key, or a late answer draws nothing.
 - **The list of what may be shown lives in the daemon, once.** `SHOWN_AS` is
   read by `shown_as`, which the `raw` route enforces and which
   `read_worktree_file` reports as `FileText.shown` — so the page holds no

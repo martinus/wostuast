@@ -145,8 +145,12 @@ example `links.json` the first time it runs, so editing it is all there is:
 ```
 
 `match` is a regular expression, `url` is where a match goes, and `$1` to `$9`
-are its groups. `wostuast doctor` says what is wrong with an entry it cannot
-use, so a link that does nothing is never a mystery. Keep patterns simple:
+are its groups. **Double every backslash**: this is JSON, so a `\d` has to be
+written `\\d`.
+
+A file wostuast cannot use is never silent. `serve` says what is wrong the
+moment you restart it, the Session tab shows the same line, and `doctor` says
+it too — so a link that does nothing is never a mystery. Keep patterns simple:
 nothing in a browser can stop a regular expression once it starts.
 
 This is the one file you write. Everything else under
