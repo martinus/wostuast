@@ -601,6 +601,30 @@ the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
 - **List every file, stat only the changed ones.** Tens of thousands of files,
   tens of changed ones. Asking the disk about all of them every poll is the
   mistake.
+- **A wholly-ignored directory is walked by us, with a budget.** git's
+  `--directory` collapses one into a single entry and looks no further, and
+  dropping that entry left `.oa-implement` — a directory an agent writes its
+  plan into, which is the one ignored place a reader wants — with no way in
+  at all. `walk_ignored` lists it **only when what it holds fits in
+  `IGNORED_MAX`**, counting what is under it and not counting a folder
+  already left out, and it stops reading the moment it knows. So a build root
+  of a hundred thousand objects costs 2,000 reads, comes back as one name in
+  `Worktree.skipped`, and the plan beside it is listed because what is left
+  of the directory then fits. Nothing is ever half-listed: a folder comes back
+  whole or comes back as its own name. `node_modules` fails the same test and
+  stays one row, which is what git's own rule was protecting.
+  **The budget is an argument, not a default read at import**, or a test
+  would have to build two thousand files to reach it.
+  A link to a directory is neither followed nor listed: following it is a way
+  round the budget and into a loop, and it is not a file.
+- **`skipped` is not in the listing's tag.** The tag is a hash of the names,
+  and a build root that appears adds none — every file in it is left out. So
+  the page rebuilds the tree when the names move **or** when `skipped` does,
+  and `buildTree(names, skipped)` makes an empty folder for each one: a
+  directory holding nothing is a directory nothing above would create, and a
+  folder the reader cannot see is the same silence as one that says nothing.
+  Its row carries `.toobig` and does not open — a folder that opens onto
+  nothing reads as broken.
 - **One listing per worktree, and the page holds the names.** `Files` keeps it
   for `LIST_FRESH` and serves a stale one while re-reading behind. Names go with
   a tag; a listing that has not moved answers without them — 1733 KB against

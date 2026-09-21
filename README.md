@@ -30,10 +30,12 @@ comments collect into one review, and you send the whole thing to the agent as
 a single message. A comment belongs to a line, not to a tab: one left on line
 42 of the diff is there on line 42 of the file.
 
-**You read the worktree without leaving the page.** Every file git knows about,
-the diff against the branch point, and your own ticket ids turned into links.
-Quick on a large repository: fifty-odd thousand files cost 1.7 MB once and
-200 bytes on every check after it.
+**You read the worktree without leaving the page.** Every file git knows
+about, what an agent generated into an ignored directory, the diff against the
+branch point, and your own ticket ids turned into links. Quick on a large
+repository: fifty-odd thousand files cost 1.7 MB once and 200 bytes on every
+check after it, and a build directory of a hundred thousand objects is one row
+that says so rather than a wait.
 
 **It never owns the agent.** tmux does. wostuast reads; exactly two things go
 back to the terminal, jump and send, and it never answers a permission prompt
@@ -79,7 +81,7 @@ the tab, the open file, the place in it.
 | Tab | Holds |
 | --- | --- |
 | **Transcript** | What the agent said and did, with a map of the conversation beside it: a row per thing you typed and the replies under it. Click a row to go there. |
-| **Files** | Every file in the worktree as a tree, with syntax highlighting, pictures shown as pictures, and go-to-file by scattered letters — `mbldr` finds `MetricBuilder.h`. |
+| **Files** | Every file in the worktree as a tree, with syntax highlighting, pictures shown as pictures, and go-to-file by scattered letters — `mbldr` finds `MetricBuilder.h`. An ignored directory an agent generated into is in the tree too; a folder with thousands of files in it is one row saying it is not listed. |
 | **Diff** | What the branch has committed against `origin/HEAD`, and what is not committed yet. |
 | **Review** | The comments you have written, as one task to send. |
 | **Session** | Everything about this one: worktree, branch, model, context, pane, and its own event log. It is the only place a session is renamed. |

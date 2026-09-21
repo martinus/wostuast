@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import pathlib
 import subprocess
@@ -10,6 +11,26 @@ import time
 import pytest
 
 from conftest import git_in as git
+
+
+class _Reading:
+    """`os.scandir` is a context manager as well as an iterator, and the
+    counting stand-in has to be both."""
+
+    def __init__(self, walking):
+        self.walking = walking
+
+    def __iter__(self):
+        return self.walking
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *gone):
+        return False
+
+    def close(self):
+        self.walking.close()
 
 
 @pytest.fixture
@@ -39,13 +60,19 @@ def test_an_untracked_file_is_listed(ws, seeded):
     assert "draft.md" in paths
 
 
-def test_an_ignored_file_is_not_listed(ws, seeded):
+def test_a_small_ignored_directory_is_listed(ws, seeded):
+    """An agent writes its plan and its notes into an ignored directory, and
+    that is the one ignored place a reader wants to read. git collapses such
+    a directory to one entry and looks no further; wostuast walks it, as long
+    as it is small enough to be a place somebody reads."""
     (seeded / ".gitignore").write_text("build/\n")
     (seeded / "build").mkdir()
     (seeded / "build" / "out.md").write_text("# out\n")
-    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
-    assert "build/out.md" not in paths
+    tree = ws.worktree_files(str(seeded))
+    paths = [one.path for one in tree.files]
+    assert "build/out.md" in paths
     assert ".gitignore" in paths
+    assert tree.skipped == []
 
 
 def test_the_named_files_come_first(ws, seeded):
@@ -129,16 +156,92 @@ def test_an_ignored_file_is_listed(ws, seeded):
     assert "generated.h" in [one.path for one in ws.worktree_files(str(seeded)).files]
 
 
-def test_an_ignored_directory_is_not_walked(ws, seeded):
-    """`node_modules` holds more files than the repository does. git collapses
-    it to one entry ending in a slash, and a name nobody can open is dropped.
-    """
+def test_an_ignored_directory_too_big_to_walk_is_one_name(ws, seeded,
+                                                          monkeypatch):
+    """`node_modules` holds more files than the repository does, and it is not
+    a place to browse. It comes back as its own name and nothing else, so the
+    tree can draw one row saying so."""
+    monkeypatch.setattr(ws, "IGNORED_MAX", 3)
     (seeded / ".gitignore").write_text("node_modules/\n")
     (seeded / "node_modules").mkdir()
     for index in range(5):
         (seeded / "node_modules" / f"m{index}.js").write_text("x")
-    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
+    tree = ws.worktree_files(str(seeded))
+    paths = [one.path for one in tree.files]
     assert not [one for one in paths if one.startswith("node_modules")]
+    assert tree.skipped == ["node_modules"]
+
+
+def test_one_folder_too_big_does_not_cost_the_rest_of_the_directory(
+        ws, seeded, monkeypatch):
+    """The whole point. `.oa-implement` holds a plan, some notes and a build
+    root of a hundred thousand objects. The build root is one row; the plan
+    and the notes are listed, because what is left of the directory fits."""
+    monkeypatch.setattr(ws, "IGNORED_MAX", 3)
+    (seeded / ".gitignore").write_text(".oa-implement/\n")
+    (seeded / ".oa-implement" / "_build_root_c2").mkdir(parents=True)
+    (seeded / ".oa-implement" / "notes").mkdir()
+    (seeded / ".oa-implement" / "PLAN.md").write_text("# plan\n")
+    (seeded / ".oa-implement" / "notes" / "one.md").write_text("# one\n")
+    for index in range(20):
+        (seeded / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
+    tree = ws.worktree_files(str(seeded))
+    paths = [one.path for one in tree.files]
+    assert ".oa-implement/PLAN.md" in paths
+    assert ".oa-implement/notes/one.md" in paths
+    assert not [one for one in paths if "_build_root_c2" in one]
+    assert tree.skipped == [".oa-implement/_build_root_c2"]
+
+
+def test_the_walk_stops_at_the_budget_however_big_the_directory_is(ws,
+                                                                   tmp_path,
+                                                                   monkeypatch):
+    """A build root of a hundred thousand objects must cost the budget in
+    reads and not a hundred thousand, or the thing this walk was added for --
+    browsing without waiting -- is the thing it breaks."""
+    big = tmp_path / "build"
+    big.mkdir()
+    for index in range(500):
+        (big / f"o{index}.o").write_text("x")
+
+    read = 0
+    real = os.scandir
+
+    def counting(where):
+        def walking():
+            nonlocal read
+            with real(where) as entries:
+                for entry in entries:
+                    read += 1
+                    yield entry
+        return contextlib.closing(_Reading(walking()))
+
+    monkeypatch.setattr(os, "scandir", counting)
+    names, skipped = ws.walk_ignored(str(tmp_path), "build", 10)
+    assert names == [] and skipped == ["build"]
+    # The budget, the entry that broke it, and nothing like five hundred.
+    assert read <= 12, read
+
+
+def test_a_directory_link_is_not_followed(ws, tmp_path):
+    """It is a way round the budget and a way into a loop. The file it points
+    at is listed where it really is."""
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "one.txt").write_text("one\n")
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "elsewhere" / "big.txt").write_text("big\n")
+    (tmp_path / "build" / "out").symlink_to(tmp_path / "elsewhere")
+    names, skipped = ws.walk_ignored(str(tmp_path), "build", 100)
+    assert sorted(names) == ["build/one.txt"]
+    assert skipped == []
+
+
+def test_a_directory_that_cannot_be_read_is_not_a_failure(ws, tmp_path):
+    """A generated directory can go while we are walking it, and a walk that
+    raised would take the whole listing with it."""
+    (tmp_path / "build").mkdir()
+    names, skipped = ws.walk_ignored(str(tmp_path), "build/gone", 10)
+    assert names == [] and skipped == []
 
 
 def test_a_listing_git_could_not_read_is_not_an_empty_worktree(ws, seeded):
@@ -270,17 +373,23 @@ def test_the_git_directory_is_not_readable(ws, seeded):
     assert ws.read_worktree_file(str(seeded), ".git/config") is None
 
 
-def test_a_file_inside_an_ignored_directory_is_readable_but_not_listed(ws, seeded):
-    """The listing collapses an ignored directory to keep node_modules out of
-    it. The guard answers a different question — is this safe to open — and
-    a file under an ignored directory is as safe as any other in the tree."""
+def test_a_file_in_a_directory_too_big_to_list_is_still_readable(ws, seeded,
+                                                                monkeypatch):
+    """The listing and the guard answer different questions. One is "is this
+    worth drawing", the other is "is this safe to open", and a file left out
+    of a crowded folder is as safe as any other in the tree — so a link to
+    one, or a file an agent has just touched, still opens."""
+    monkeypatch.setattr(ws, "IGNORED_MAX", 3)
     (seeded / ".gitignore").write_text("build/\n")
     (seeded / "build").mkdir()
-    (seeded / "build" / "out.txt").write_text("out\n")
-    paths = [one.path for one in ws.worktree_files(str(seeded)).files]
-    assert "build/out.txt" not in paths
+    for index in range(5):
+        (seeded / "build" / f"out{index}.txt").write_text("out\n")
+    tree = ws.worktree_files(str(seeded))
+    paths = [one.path for one in tree.files]
+    assert not [one for one in paths if one.startswith("build/")]
     assert "build/" not in paths
-    assert ws.read_worktree_file(str(seeded), "build/out.txt").text == "out\n"
+    assert tree.skipped == ["build"]
+    assert ws.read_worktree_file(str(seeded), "build/out1.txt").text == "out\n"
 
 
 def test_a_path_that_climbs_out_is_refused(ws, seeded, tmp_path):
