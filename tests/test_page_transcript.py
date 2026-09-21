@@ -416,7 +416,7 @@ def test_a_reply_older_than_today_says_which_day_it_was(page_at):
         try:
             seen = page.evaluate("""() => {
               const was = state.skew;
-              const ts = state.blocks.find((one) => one && one.ts).ts;
+              const ts = state.turns.blocks.find((one) => one && one.ts).ts;
               const at = (when) => {
                 state.skew = when - Date.now() / 1000;
                 drawTranscript($('content'));
@@ -487,13 +487,13 @@ def test_a_reply_is_a_link_you_can_open_in_another_tab(page_at):
             # it. The mark is on a two-and-a-half second timer and a busy
             # machine can outlive one between two calls, so it is asked for
             # in a single round trip below.
-            page.wait_for_function("state.goToBlock === null")
+            page.wait_for_function("state.turns.goTo === null")
             assert page.evaluate(
-                "state.blocks[Number(location.hash.split('/').pop())].kind"
+                "state.turns.blocks[Number(location.hash.split('/').pop())].kind"
             ) == "text"
 
             marked = page.evaluate("""(wanted) => {
-              state.goToBlock = Number(wanted.split('/').pop());
+              state.turns.goTo = Number(wanted.split('/').pop());
               drawTranscript($('content'));
               const one = document.querySelector('.turn.linked');
               return one && one.querySelector('.self').getAttribute('href');
@@ -520,7 +520,7 @@ def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
             page.wait_for_timeout(300)      # proving something did not happen
             assert not blew_up, blew_up
             assert page.locator(".turn.linked").count() == 0
-            assert page.evaluate("state.goToBlock") == 900
+            assert page.evaluate("state.turns.goTo") == 900
         finally:
             browser.close()
 
@@ -737,5 +737,72 @@ def test_at_most_forty_links_in_one_block(ws, page_at):
               return box.querySelectorAll('a.ticket').length;
             }""")
             assert made == 40, made
+        finally:
+            browser.close()
+
+
+def test_a_row_of_the_map_is_one_line(page_at):
+    """`.filelist button` is a block, because a Diff tab row carries a second
+    line of counts under its name. A row that is one line has to say so — the
+    icon sat above the text otherwise, which is what it did when this list
+    first shipped. Take the `display: flex` off and the two stack again."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            seen = page.evaluate("""() => [...document.querySelectorAll(
+              '.filelist.transcript button')].map((one) => {
+                const icon = one.querySelector('.icon').getBoundingClientRect();
+                const name = one.querySelector('.name').getBoundingClientRect();
+                return {sameLine: Math.abs(icon.top - name.top) < 8,
+                        after: name.left > icon.right,
+                        tall: one.getBoundingClientRect().height};
+              })""")
+            assert seen, "the list drew nothing"
+            for one in seen:
+                assert one["sameLine"] and one["after"], one
+                assert one["tall"] < 40, one
+        finally:
+            browser.close()
+
+
+def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
+    """A background task finishing is real news and nobody typed it. It used
+    to wear your rail and your tint, and it filled the map beside the
+    transcript with rows for things you never said."""
+    daemon, path = page_at
+    with open(daemon_transcript(daemon), "a") as handle:
+        for text in (
+            "<task-notification>The sweep is done</task-notification>",
+            "<command-name>/reload-plugins</command-name>"
+            "<command-message>reload-plugins</command-message>"
+            "<command-args></command-args>",
+            "<local-command-stdout>(no content)</local-command-stdout>",
+        ):
+            handle.write(json.dumps({
+                "type": "user", "timestamp": "2026-09-18T14:20:00.000Z",
+                "message": {"role": "user", "content": text}}) + "\n")
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_selector(".turn.aside")
+            seen = page.evaluate("""() => ({
+              notes: [...document.querySelectorAll('.turn.aside')]
+                       .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
+              mine: [...document.querySelectorAll('.turn.mine')]
+                      .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
+              rows: [...document.querySelectorAll('.filelist.transcript button')]
+                      .map((one) => one.title),
+            })""")
+            # The harness speaking is a note, not a prompt.
+            assert any("The sweep is done" in one for one in seen["notes"]), seen
+            assert not any("task-notification" in one for one in seen["notes"]), seen
+            assert not any("sweep" in one for one in seen["mine"]), seen
+            # The command is one line, and its output is nowhere.
+            assert any("/reload-plugins" == one for one in seen["rows"]), seen
+            assert not any("no content" in one for one in seen["rows"]), seen
+            assert not any("command-message" in one for one in seen["rows"]), seen
+            # And a note is not a round and not a reply.
+            assert not any("sweep" in one for one in seen["rows"]), seen
         finally:
             browser.close()
