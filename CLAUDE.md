@@ -63,7 +63,7 @@ This list exists because each entry was re-implemented once already.
 | walk a diff's lines with their numbers | `walkHunks(one, onHunk, onLine)` |
 | the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]` |
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
-| "3 min ago" | `ago(when)` |
+| "3 min ago" | `ago(when)` — `40s`, `4min`, `2h 15min`, `2d 6h`; two units once the first is coarse |
 | one session's route | `apiUrl(id, what, query)` |
 | "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
@@ -459,15 +459,26 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 
 ### The sidebar
 
-- **It is grouped by state, and sorted by worktree inside a group.** The four
+- **It is grouped by state, and newest first inside a group.** The four
   groups are `BANDS`, most urgent first: needs you, ready, working, history.
   This supersedes the old rule that the list must never sort by state — that
   was written when sorting by state churned the list for nothing. A row
   arriving under "needs you" is the one thing this tool exists to say, and it
   only moves when a turn begins, ends, or stops on a question. **Inside a
-  group the daemon's order stands**, which is by worktree: sorting by `label`
-  is still wrong, because the name arrives from the status line a second after
-  the session starts and `/rename` changes it later.
+  group the daemon's order stands**, which is by `Session.settled`, newest
+  first.
+- **`settled` is not `since`, and that is the whole point.** `since` is the
+  last event, which for a working session moves every few seconds: two busy
+  agents would swap places while you read them. `settled` is the moment the
+  session last *became* what it is — a turn beginning, ending, or stopping on
+  a question — which is when the row changes band anyway, so the list moves
+  once rather than twice. It is stamped in one place, `Store.apply`, and only
+  on a change: every handler assigns a state whether or not it is a new one,
+  and `_on_pre_tool` writes "working" on every tool call. `_bury` is the one
+  place outside `apply` that stamps it, because nothing reports being dead.
+  The worktree is the tiebreaker only. Sorting on `label` is still wrong, for
+  the reason it always was: the name arrives from the status line a second
+  after the session starts, and `/rename` changes it later.
 - **There are four states, not five.** "starting" is gone: it was the first
   few minutes of a session that had said nothing else, which is the same as
   being ready, told in a way that went stale. `SessionStart` sets `done`, and

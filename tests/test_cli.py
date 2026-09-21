@@ -34,11 +34,19 @@ def test_clip_collapses_whitespace(ws):
 
 
 def test_ago_reads_in_words(ws):
-    assert ws.ago(5) == "5 s"
-    assert ws.ago(90) == "1 min"
-    assert ws.ago(7200) == "2 h"
-    assert ws.ago(200000) == "2 d"
-    assert ws.ago(-5) == "0 s"
+    assert ws.ago(5) == "5s"
+    assert ws.ago(90) == "1min"
+    assert ws.ago(-5) == "0s"
+    # Two units once the first one is coarse: "2d" covers two days to just
+    # short of three, which is not an answer to "when did this last do
+    # something".
+    assert ws.ago(7200) == "2h"
+    assert ws.ago(7200 + 15 * 60) == "2h 15min"
+    assert ws.ago(2 * 86400) == "2d"
+    assert ws.ago(2 * 86400 + 6 * 3600) == "2d 6h"
+    # The second unit is left off when it is nought, so "2d" still means
+    # exactly two days rather than two days and something.
+    assert ws.ago(2 * 86400 + 59) == "2d"
 
 
 def test_the_changes_column(ws):

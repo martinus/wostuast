@@ -558,6 +558,11 @@ class Session:
     pid: int = 0
     transcript_path: str = ""
     state: str = "done"
+    #: The moment this session last became what it is, which is what the list
+    #: is ordered by. Moved in one place -- `Store.apply`, and `settle` for
+    #: the two states nothing reports -- because a handler assigns the same
+    #: state over and over and only a change is a change.
+    state_since: float = 0.0
     last_ts: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
@@ -607,6 +612,18 @@ class Session:
     def since(self) -> float:
         """The moment a row's age counts from: the wait, or the last event."""
         return self.attention_since if self.state == "needs_you" else self.last_ts
+
+    @property
+    def settled(self) -> float:
+        """The moment this session last became what it is. The list's order.
+
+        Not `since`, which for a working session is the last event and so
+        moves every few seconds: two busy agents would swap places while you
+        read them. This one moves when a turn begins, ends, or stops on a
+        question -- the same moments the row changes band, so the list moves
+        once instead of twice.
+        """
+        return self.state_since or self.last_ts
 
 
 def path_label(cwd: str, repo: str = "") -> str:
@@ -733,10 +750,17 @@ class Store:
             session.pid = pid
 
         handler = _HANDLERS.get(name)
+        was = session.state
         if handler is not None:
             handler(session, event, ts)
         elif name:
             session.last_event = name
+        # Only a change. Every handler assigns a state whether or not it is a
+        # new one -- `_on_pre_tool` writes "working" on every tool call -- and
+        # moving this each time would put the list back to sorting by the last
+        # event, which is what it must not do.
+        if session.state != was:
+            session.state_since = ts or session.last_ts
 
         if fresh and name:
             # After the handler, so the line is the one it wrote: the Session
@@ -1253,17 +1277,23 @@ def mark_dead(
     check = alive or pid_alive
     if session.state == "ended":
         return
+    moment = time.time() if now is None else now
     if session.pid:
         if not check(session.pid):
-            session.state = "dead"
-            if not session.end_reason:
-                session.end_reason = "process gone"
+            _bury(session, moment, "process gone")
         return
-    moment = time.time() if now is None else now
     if session.last_ts and moment - session.last_ts > QUIET_MAX:
-        session.state = "dead"
-        if not session.end_reason:
-            session.end_reason = "no sign of it"
+        _bury(session, moment, "no sign of it")
+
+
+def _bury(session: Session, moment: float, why: str) -> None:
+    """Dead, and stamped with when. Nothing reports this state, so it is the
+    one place outside `Store.apply` that `state_since` has to move."""
+    if session.state != "dead":
+        session.state_since = moment
+    session.state = "dead"
+    if not session.end_reason:
+        session.end_reason = why
 
 
 def build_sessions(
@@ -1287,19 +1317,24 @@ def build_sessions(
 
 
 def sort_sessions(sessions: list[Session]) -> list[Session]:
-    """By name, with the ended and the dead last.
+    """Newest first, with the ended and the dead last.
 
-    Sorting by state put every row somewhere new each time an agent started or
-    finished a tool call, so the list you were reading kept moving under you.
-    A name does not move. Which agent needs you is said by the colour, by the
-    counts in the top bar, and by the `n` key, none of which need the order.
+    `settled` is the moment a session last became what it is, and it is the
+    right number precisely because it is not the last event: sorting a
+    working session by its last hook event would have two busy agents
+    swapping places every few seconds while you read them. It moves when a
+    turn begins, ends, or stops on a question -- which is when the row
+    changes band anyway, so the list moves once rather than twice.
 
-    The name is the worktree, which is what the row shows first and the one
-    thing about a session that cannot change. Sorting on `label` instead puts
-    the list in the order of the name Claude Code gave the session — which the
-    status line supplies a second after the session starts, and which
-    `/rename` changes later. A row that jumps when its name arrives is the
-    same bug as a row that jumps when its state changes.
+    This replaces sorting by worktree. That was chosen when the alternative
+    was sorting by *state*, which put every row somewhere new on every tool
+    call; a name does not move, so it did not churn. But a name is also not
+    what anyone is looking for in a list of twenty: the session you touched
+    last is, and it was somewhere in the middle under `a`.
+
+    Sorting on `label` is still wrong, for the reason it always was: the name
+    arrives from the status line a second after the session starts, and
+    `/rename` changes it later. The worktree is the tiebreaker only.
 
     A session nobody can talk to any more still sinks to the bottom: it is
     dimmed, it is often the larger half of a long list, and it is never what
@@ -1309,6 +1344,7 @@ def sort_sessions(sessions: list[Session]) -> list[Session]:
         sessions,
         key=lambda s: (
             s.state in GONE_STATES,
+            -s.settled,
             path_label(s.cwd, s.git.repo).lower(),
             s.session_id,
         ),
@@ -2964,15 +3000,25 @@ def paint(text: str, state: str, color: bool) -> str:
 
 
 def ago(seconds: float) -> str:
-    """A short age, for example `4 min` or `2 h`."""
-    seconds = max(0.0, seconds)
+    """A short age: `40s`, `4min`, `2h 15min`, `2d 6h`.
+
+    Two units once the first one is coarse. `2d` covers anything from two
+    days to just short of three, which is not an answer to "when did this
+    last do something"; `40s` needs no second unit at all. The second is left
+    off when it is nought, so `2d` still means exactly two days.
+    """
+    seconds = int(max(0.0, seconds))
     if seconds < 60:
-        return f"{int(seconds)} s"
+        return f"{seconds}s"
     if seconds < 3600:
-        return f"{int(seconds // 60)} min"
+        return f"{seconds // 60}min"
     if seconds < 86400:
-        return f"{int(seconds // 3600)} h"
-    return f"{int(seconds // 86400)} d"
+        return _two(seconds // 3600, "h", seconds % 3600 // 60, "min")
+    return _two(seconds // 86400, "d", seconds % 86400 // 3600, "h")
+
+
+def _two(big: int, big_unit: str, small: int, small_unit: str) -> str:
+    return f"{big}{big_unit} {small}{small_unit}" if small else f"{big}{big_unit}"
 
 
 def changes_column(facts: GitFacts) -> str:
@@ -4601,8 +4647,14 @@ body:not(.show-thinking) .thinking { display: none; }
 /* The list of places to go sits under the box, so the slot is what it is
    measured from. */
 .findslot { position: relative; }
+/* As wide as a path, not as wide as the box it hangs under. The sidebar is
+   268 px by default and a path is not, so every row was clipped to its last
+   few letters -- which is the half you can already see in the tree. It runs
+   out over the pane to the right, which is empty space while you are typing
+   a name into the box. */
 .goto {
-  position: absolute; left: 10px; right: 10px; top: 100%; z-index: 5;
+  position: absolute; left: 10px; right: auto; top: 100%; z-index: 5;
+  min-width: calc(100% - 20px); width: 560px; max-width: 70vw;
   max-height: 60vh; overflow-y: auto;
   background: var(--panel); border: 1px solid var(--edge);
   border-radius: 6px; box-shadow: 0 10px 24px var(--shadow);
@@ -5478,12 +5530,22 @@ function put(parent, tag, cls, text) {
   return node;
 }
 
+// A short age: `40s`, `4min`, `2h 15min`, `2d 6h`. Two units once the first
+// one is coarse -- `2d` covers anything from two days to just short of three,
+// which is not an answer to "when did this last do something". The second is
+// left off when it is nought, so `2d` still means exactly two days.
 function ago(when) {
-  const seconds = Math.max(0, (Date.now() / 1000 + state.skew) - when);
-  if (seconds < 60) return Math.floor(seconds) + " s";
-  if (seconds < 3600) return Math.floor(seconds / 60) + " min";
-  if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
-  return Math.floor(seconds / 86400) + " d";
+  const seconds = Math.floor(Math.max(0, (Date.now() / 1000 + state.skew) - when));
+  const two = (big, bigUnit, small, smallUnit) =>
+    small ? big + bigUnit + " " + small + smallUnit : big + bigUnit;
+  if (seconds < 60) return seconds + "s";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "min";
+  if (seconds < 86400) {
+    return two(Math.floor(seconds / 3600), "h",
+               Math.floor(seconds % 3600 / 60), "min");
+  }
+  return two(Math.floor(seconds / 86400), "d",
+             Math.floor(seconds % 86400 / 3600), "h");
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
