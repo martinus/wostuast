@@ -118,6 +118,17 @@ def open_page(play, where, scheme="dark", with_marked=True):
     page.wait_for_function(ready, timeout=15000)
     return browser, page
 
+def wait_for_map(page, rows=1):
+    """Wait for the map beside the transcript to have rows in it.
+
+    `open_page` waits for the first draw, and the first draw is the tab's
+    frame: the map fills one fetch later, when the transcript arrives. On a
+    loaded machine that gap is real, and a test that asked straight away read
+    an empty list as "the list drew nothing"."""
+    page.wait_for_function(
+        "n => document.querySelectorAll("
+        "'.filelist.transcript button').length >= n", arg=rows, timeout=15000)
+
 def show_tab(page, name):
     """Open a tab and wait for its first answer, not for a fixed time."""
     page.click(f".tab[data-tab='{name}']")

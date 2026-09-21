@@ -165,6 +165,13 @@ is right only when proving something did **not** happen. Ask one question when a
 redraw could land between two: `wait_for_function("...length === 1")`, not
 `wait_for_selector` then `.count()`.
 
+**`open_page` returning is not the transcript arriving.** It waits for the
+first draw, and the first draw is the tab's frame — the map beside the
+transcript fills one fetch later. Abort `api/session/*/transcript` and the
+list is empty with the page otherwise drawn, which is what a loaded CI runner
+looks like: four tests read that list straight away and one of them went red
+the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
+
 ## Rules, each one a bug that already happened
 
 ### Shape

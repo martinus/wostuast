@@ -14,6 +14,7 @@ from browser import (
     sync_playwright,
     open_page,
     show_tab,
+    wait_for_map,
     daemon_transcript,
 )
 
@@ -215,9 +216,9 @@ def test_typing_narrows_the_list_and_leaves_the_transcript_whole(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             everything = page.locator(".turn").count()
             rows = page.locator(".filelist.transcript button").count()
-            assert rows > 0, "the list drew nothing"
 
             page.locator("#find").fill("pytest")
             page.wait_for_function(
@@ -242,6 +243,7 @@ def test_a_search_that_matches_nothing_says_so(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             turns = page.locator(".turn").count()
             page.locator("#find").fill("zzzznotherezzzz")
             page.wait_for_selector(".filelist.transcript .nohits")
@@ -535,6 +537,7 @@ def test_the_transcript_has_a_list_of_rounds_beside_it(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page, 2)
             seen = page.eval_on_selector_all(
                 ".filelist.transcript button",
                 """els => els.map((one) => [one.className.includes('dir'),
@@ -818,6 +821,7 @@ def test_a_row_of_the_map_is_one_line(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             seen = page.evaluate("""() => [...document.querySelectorAll(
               '.filelist.transcript button')].map((one) => {
                 const icon = one.querySelector('.icon').getBoundingClientRect();
