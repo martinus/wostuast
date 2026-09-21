@@ -671,3 +671,74 @@ def test_two_renames_at_once_keep_both_names(ws):
 
     assert store.names == {"a": "name-a", "b": "name-b"}
     assert ws.read_names() == store.names
+
+
+# --- two tools at once, and a dialog on one of them --------------------------
+
+
+def test_a_result_for_another_call_does_not_clear_an_open_dialog(ws):
+    """Claude Code runs two tools at once now and then — measured over 233
+    calls on a real machine, one started while another was still open, and
+    both were `Bash`. Both `PreToolUse` events come before the dialog, so the
+    other call reports back while the dialog is still on screen.
+
+    Clearing the amber on that turned the row green while the agent sat
+    blocked: the one thing this program exists to say, said backwards.
+    """
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "pytest -q"},
+              ts=1000.0),
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "rm -rf build"},
+              ts=1000.7),
+        event("PermissionRequest", tool_name="Bash",
+              tool_input={"command": "rm -rf build"}, ts=1001.0),
+        event("PostToolUse", tool_name="Bash", tool_input={"command": "pytest -q"},
+              ts=1003.0),
+    )
+    assert session.state == "needs_you"
+    assert session.reason == "permission: Bash rm -rf build"
+    assert session.attention_since == 1001.0
+
+
+def test_the_result_the_dialog_was_about_does_clear_it(ws):
+    """The other half. Say yes, the call runs, and the row goes back to work."""
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "pytest -q"},
+              ts=1000.0),
+        event("PermissionRequest", tool_name="Bash",
+              tool_input={"command": "pytest -q"}, ts=1001.0),
+        event("PostToolUse", tool_name="Bash", tool_input={"command": "pytest -q"},
+              ts=1003.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""
+
+
+def test_a_failure_of_another_call_does_not_clear_it_either(ws):
+    """A failure is a call finishing, so it is paired the same way."""
+    session = fold(
+        ws,
+        event("PermissionRequest", tool_name="Bash",
+              tool_input={"command": "rm -rf build"}, ts=1001.0),
+        event("PostToolUseFailure", tool_name="Bash",
+              tool_input={"command": "pytest -q"}, ts=1003.0),
+    )
+    assert session.state == "needs_you"
+    assert session.reason == "permission: Bash rm -rf build"
+
+
+def test_a_dialog_with_no_tool_named_is_cleared_by_anything(ws):
+    """A `Notification` raises the alarm without naming a tool, and so can a
+    `PermissionRequest`. With nothing to pair against, the old rule stands —
+    the first thing that happens answers it. Guessing a pairing would be
+    worse: it could leave a row amber for ever."""
+    session = fold(
+        ws,
+        event("PermissionRequest", ts=1000.0),
+        event("PostToolUse", tool_name="Read",
+              tool_input={"file_path": "/w/repo/a.py"}, ts=1003.0),
+    )
+    assert session.state == "working"
+    assert session.reason == ""

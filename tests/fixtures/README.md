@@ -29,6 +29,23 @@ Each event adds its own fields:
 
 `wostuast hook` adds three fields of its own: `ts`, `pane` and `pid`.
 
+### Two calls at once
+
+Claude Code runs tools in parallel now and then. Measured on a real event log:
+**one of 233 calls started while another was still open**, and both were
+`Bash`. So a `PostToolUse` can arrive for one call while another is still
+going — including while that other one has a permission dialog on screen.
+
+`PreToolUse` and `PostToolUse` carry `tool_use_id`, which pairs a call with its
+result. **`PermissionRequest` does not**, so a dialog cannot be paired to a
+call exactly. It carries `tool_name` and `tool_input`, which is enough to tell
+two different Bash commands apart and not enough to tell two runs of the same
+one apart.
+
+Both `PreToolUse` events come before the dialog: nothing new starts while one
+is up. That is what separates "the agent moved on" from "the other call
+finished" — see `_on_pre_tool`.
+
 `status.json` is one status line payload, in the shape the `statusLine`
 command receives on stdin.
 
