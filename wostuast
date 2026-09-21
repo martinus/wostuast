@@ -563,6 +563,9 @@ class Session:
     # the same news as a permission Notification, up to twelve seconds
     # earlier, so once it arrives the Notification is only ever stale.
     asks_first: bool = False
+    #: What the open permission dialog is about, as `tool_summary` says it.
+    #: Empty when no dialog is open, or when the event did not name a tool.
+    asked_about: str = ""
     end_reason: str = ""
     last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
@@ -895,6 +898,7 @@ def _clear_attention(session: Session) -> None:
     """Forget that the agent was waiting. Every caller sets the state itself."""
     session.attention_since = 0.0
     session.reason = ""
+    session.asked_about = ""
 
 
 def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -925,15 +929,41 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
 
 
 def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
-    # PostToolUse comes here too: a call starting and a result arriving both
-    # mean the agent is running. Either way the last permission question is
-    # answered, allowed or denied, so the waiting state goes; PermissionRequest
-    # for this call arrives next and sets it again if there is one.
-    _clear_attention(session)
-    session.state = "working"
-    session.last_tool = tool_summary(
+    """A call starting, or a result arriving. Both mean the agent is running.
+
+    Whether either answers the open permission question depends on which it
+    is, and that is the whole of this:
+
+    **A call starting says the agent moved on**, so the question was answered
+    — allowed, or denied, which fires no hook of its own and leaves this as
+    the only sign. Nothing new starts while a dialog is up; that is what the
+    dialog does.
+
+    **A call finishing says only that that call finished.** Claude Code runs
+    two tools at once now and then — measured over 233 calls on a real
+    machine, one started while another was still open — and both `PreToolUse`
+    events come before the dialog, so the other call can report back while it
+    is still on screen. Clearing on that turned the row green while the agent
+    sat blocked. That is the one thing this program exists to say, said
+    backwards.
+
+    `PermissionRequest` carries no `tool_use_id`, so a result cannot be paired
+    to it exactly. It carries `tool_name` and `tool_input`, which is what
+    `tool_summary` is made of, and that separates two Bash calls — which is
+    what the measured overlap was. Two runs of the *same* command at the same
+    moment still cannot be told apart. Nothing in the payload can.
+    """
+    summary = tool_summary(
         str(event.get("tool_name") or ""), event.get("tool_input"), session.cwd
     )
+    starting = str(event.get("hook_event_name") or "") == "PreToolUse"
+    if starting or not session.asked_about or session.asked_about == summary:
+        # The state goes with the attention. A row that stays amber because
+        # the dialog is still up must not also say it is working.
+        _clear_attention(session)
+        session.state = "working"
+    # What happened is still the latest thing that happened, either way.
+    session.last_tool = summary
     session.last_event = session.last_tool
 
 
@@ -947,10 +977,13 @@ def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
     not wrong, because the agent really is waiting for you to say what to do
     instead; only the reason it shows is older than it looks.
     """
-    _clear_attention(session)
-    session.state = "working"
     name = str(event.get("tool_name") or "")
     summary = tool_summary(name, event.get("tool_input"), session.cwd) if name else "tool"
+    # A call finishing, so the same pairing `_on_pre_tool` does: a failure of
+    # the other call is not an answer to the question this one is asking.
+    if not session.asked_about or session.asked_about == summary:
+        _clear_attention(session)
+        session.state = "working"
     if event.get("is_interrupt"):
         session.last_event = f"{summary} interrupted"
     else:
@@ -970,6 +1003,7 @@ def _on_permission_request(session: Session, event: dict[str, Any], ts: float) -
     session.attention_since = ts
     name = str(event.get("tool_name") or "")
     summary = tool_summary(name, event.get("tool_input"), session.cwd) if name else ""
+    session.asked_about = summary
     session.reason = f"permission: {summary}" if summary else "permission"
 
 

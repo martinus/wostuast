@@ -276,6 +276,17 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   read for the message that means a dialog, never assumed to be one:
   `auth_success` ("Logged in as …") took the row amber with nothing that
   could ever clear it.
+- **A call starting clears the attention; a call finishing only clears its
+  own.** Claude Code runs two tools at once now and then — one of 233 calls on
+  a real machine started while another was still open, both of them `Bash`.
+  Both `PreToolUse` events come before the dialog, so the other call reports
+  back while it is on screen, and clearing on that turned the row green while
+  the agent sat blocked. A `PreToolUse` is different: nothing new starts while
+  a dialog is up, so one says the agent moved on — which is the only sign of a
+  denial, because saying No fires no hook at all. `PermissionRequest` carries
+  no `tool_use_id`, so the pairing goes by `tool_summary`; two runs of the same
+  command at the same moment cannot be told apart, and nothing in the payload
+  can.
 - **A state change clears the attention with it.** Every handler that sets a
   state calls `_clear_attention` — `SessionStart` did not, so a session killed
   at its dialog and resumed came back "ready" with the old permission question
