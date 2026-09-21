@@ -250,3 +250,43 @@ def test_a_file_that_gained_lines_says_so(repo_page):
                 assert one["position"] == "static", one
         finally:
             browser.close()
+
+
+def test_an_empty_diff_is_inset_like_an_empty_review(repo_page):
+    """The Diff tab's body has no padding of its own -- a diff's rows run to
+    the edge -- so "Nothing has changed" sat against the left edge while the
+    Review tab's "No review yet" sat properly inset. Drop
+    `.diffbody > .empty` and the first measurement goes to nought."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".diffbody > *")
+            # The one state this tab is hard to reach with a real worktree:
+            # everything committed, nothing untracked.
+            page.evaluate("""() => {
+              state.diff = {sections: [], untracked: [], base: 'origin/main'};
+              state.diffAt += 1;
+              draw();
+            }""")
+            page.wait_for_selector(".diffbody .empty")
+            assert "Nothing has changed against origin/main." in \
+                page.locator(".diffbody .empty").inner_text()
+            diff = page.evaluate("""() => {
+              const body = document.querySelector('.diffbody');
+              return document.querySelector('.diffbody .empty')
+                       .getBoundingClientRect().left
+                     - body.getBoundingClientRect().left;
+            }""")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .empty")
+            review = page.evaluate("""() => {
+              const body = document.querySelector('.reviewbody');
+              return document.querySelector('.reviewbody .empty')
+                       .getBoundingClientRect().left
+                     - body.getBoundingClientRect().left;
+            }""")
+            assert diff > 10, diff
+            assert abs(diff - review) < 1, (diff, review)
+        finally:
+            browser.close()

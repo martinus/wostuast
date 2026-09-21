@@ -582,7 +582,7 @@ def test_the_whole_file_is_highlighted_then_cut_into_lines(repo_page):
 
 def scroll_to(page, line):
     """Put the window over `line`, and wait for it to arrive."""
-    page.evaluate("(n) => { document.querySelector('.filebody')"
+    page.evaluate("(n) => { document.querySelector('.filescroll')"
                   ".scrollTop = n * 21; }", line)
     page.wait_for_function(
         "(n) => [...document.querySelectorAll('.filebody .code .dline .ln')]"
@@ -631,7 +631,7 @@ def test_a_comment_in_a_long_file_survives_the_file_being_read_again(long_page):
             assert "still here" in page.locator(".comment").inner_text()
             # And the file is still as long as it was: a taller row is counted
             # rather than ignored, so the last line is still reachable.
-            page.evaluate("() => { const p = document.querySelector('.filebody');"
+            page.evaluate("() => { const p = document.querySelector('.filescroll');"
                           " p.scrollTop = p.scrollHeight; }")
             page.wait_for_function(
                 "(n) => [...document.querySelectorAll('.filebody .code .dline .ln')]"
@@ -652,7 +652,7 @@ def test_the_window_stands_still_while_a_comment_is_written(long_page):
             row_for(page, 3000).locator(".addnote").click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "half a thought")
-            page.evaluate("() => { document.querySelector('.filebody')"
+            page.evaluate("() => { document.querySelector('.filescroll')"
                           ".scrollTop = 200 * 21; }")
             page.wait_for_timeout(300)      # proving it did not move
             assert page.input_value(".commentbox textarea") == "half a thought"
@@ -853,7 +853,7 @@ def test_a_comment_leads_to_its_line_in_a_file_drawn_whole(repo_page):
             page.wait_for_function("state.tab === 'files'")
             page.wait_for_selector(".filebody .code .dline")
             page.wait_for_function(
-                "document.querySelector('.filebody').scrollTop > 200")
+                "document.querySelector('.filescroll').scrollTop > 200")
         finally:
             browser.close()
 

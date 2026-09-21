@@ -152,13 +152,13 @@ def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "files")
-            page.eval_on_selector(".filebody", "el => el.scrollTop = 900")
+            page.eval_on_selector(".filescroll", "el => el.scrollTop = 900")
             (root / "README.md").write_text(long_file + "\n\nand one more\n")
             # Wait for the new line to arrive, not for a poll to have passed.
             page.wait_for_function(
                 "document.querySelector('.filebody .prose').innerText"
                 ".includes('and one more')", timeout=15000)
-            where = page.eval_on_selector(".filebody", "el => el.scrollTop")
+            where = page.eval_on_selector(".filescroll", "el => el.scrollTop")
             assert where > 500, "the reader was thrown back to the top"
         finally:
             browser.close()
@@ -765,24 +765,42 @@ def test_the_header_says_what_the_file_is(repo_page):
             browser.close()
 
 
-def test_the_header_stays_in_view_down_a_long_file(long_page):
-    """It carries the path and the two controls, and scrolling away from them
-    was scrolling away from the only place that says which file this is."""
+def test_the_scrollbar_starts_under_the_header_not_beside_it(long_page):
+    """The header carries the path and the two controls, and scrolling away
+    from them was scrolling away from the only place that says which file
+    this is. It was sticky, which keeps it in view but not out of the
+    scrollbar's way: the bar ran the whole height of the pane, beside a line
+    that never moves.
+
+    It is outside the scroller now. Put the header back inside `.filescroll`
+    and the first measurement stops being nought."""
     with sync_playwright() as play:
         browser, page = open_page(play, long_page)
         try:
             open_file(page, "long.py")
-            page.evaluate("() => { document.querySelector('.filebody')"
-                          ".scrollTop = 4000; }")
-            page.wait_for_function(
-                "document.querySelector('.filebody').scrollTop > 1000")
             seen = page.evaluate("""() => {
               const pane = document.querySelector('.filebody');
+              const view = pane.querySelector('.filescroll');
               const head = pane.querySelector('.where');
-              return {top: head.getBoundingClientRect().top
-                           - pane.getBoundingClientRect().top};
+              return {inside: view.contains(head),
+                      gap: view.getBoundingClientRect().top
+                           - head.getBoundingClientRect().bottom,
+                      tall: view.scrollHeight > view.clientHeight};
             }""")
-            assert -1 <= seen["top"] <= 1, seen
+            assert seen["inside"] is False, seen
+            assert -1 <= seen["gap"] <= 1, seen
+            assert seen["tall"] is True, "nothing to scroll, nothing to prove"
+
+            # And the header does not move when the file does.
+            before = page.eval_on_selector(
+                ".filebody > .where", "el => el.getBoundingClientRect().top")
+            page.evaluate("() => { document.querySelector('.filescroll')"
+                          ".scrollTop = 4000; }")
+            page.wait_for_function(
+                "document.querySelector('.filescroll').scrollTop > 1000")
+            after = page.eval_on_selector(
+                ".filebody > .where", "el => el.getBoundingClientRect().top")
+            assert abs(after - before) < 1, (before, after)
         finally:
             browser.close()
 
@@ -798,7 +816,7 @@ def test_the_long_line_scrollbar_is_at_the_bottom_of_the_screen(repo_page):
         try:
             open_file(page, "wide.py")
             seen = page.evaluate("""() => {
-              const pane = document.querySelector('.filebody');
+              const pane = document.querySelector('.filescroll');
               const rows = pane.querySelector('.dlines');
               return {pane: pane.scrollWidth > pane.clientWidth,
                       rows: getComputedStyle(rows).overflowX};
@@ -1079,5 +1097,45 @@ def test_a_dotfile_in_the_go_to_list_keeps_its_dot_at_the_front(repo_page):
             }""")
             assert seen["text"] == ".gitignore", seen
             assert seen["dot"] < seen["end"], seen
+        finally:
+            browser.close()
+
+
+def test_another_file_opens_at_its_top(repo_page):
+    """A different file inherited wherever the one before it had been read
+    to: open a long file after reading another to its end and it started at
+    its end.
+
+    Two things keep it at the top now. `.filescroll` is built with the file,
+    so a new one starts at nought; and `same` refuses to carry the old place
+    over. Drop `same` and the second file opens where the first was left.
+
+    Both files are long, or the browser would clamp the scrollbar to nought
+    on its own and the test would pass against the bug."""
+    root, _ = repo_page
+    for name in ("first.py", "second.py"):
+        (root / name).write_text(
+            "".join(f"{name[:-3]}_{n} = {n}\n" for n in range(600)))
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "two long files")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page, "first.py")
+            page.evaluate("""() => { const view =
+              document.querySelector('.filescroll');
+              view.scrollTop = view.scrollHeight; }""")
+            page.wait_for_function(
+                "document.querySelector('.filescroll').scrollTop > 1000")
+            open_file(page, "second.py")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('second.py')""")
+            page.wait_for_function(
+                "document.querySelector('.filescroll').scrollTop === 0",
+                timeout=5000)
+            # And it really could have kept a place: this file scrolls too.
+            assert page.eval_on_selector(
+                ".filescroll", "el => el.scrollHeight > el.clientHeight + 1000")
         finally:
             browser.close()
