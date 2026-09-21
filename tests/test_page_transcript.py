@@ -13,6 +13,7 @@ from browser import (
     skip_without_browser,
     sync_playwright,
     open_page,
+    show_tab,
     daemon_transcript,
 )
 
@@ -30,8 +31,12 @@ def test_the_page_draws_the_session(page_at):
             assert place and "A session" not in place
             assert "A session" in page.locator(".row .called").inner_text()
             assert page.title() == "wostuast"
-            assert "Opus 5" in page.locator("#facts").inner_text()
             assert page.locator(".turn").count() >= 2
+            # The model is a fact about the session, so it is in the tab that
+            # holds those — not in a bar standing over every tab.
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody dl")
+            assert "Opus 5" in page.locator(".sessionbody").inner_text()
         finally:
             browser.close()
 

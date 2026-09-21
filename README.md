@@ -142,8 +142,8 @@ The page is worked from the keyboard. `?` shows this list without leaving it.
 | `n` | jump to the next session that needs you |
 | `f` | filter the session list |
 | `r` | the review you have written |
-| `/` | find: text in the transcript, a file on the other tabs |
-| `1` – `3` | Transcript, Files, Diff |
+| `/` | find: text in the transcript, go to a file on the Files tab |
+| `1` – `5` | Transcript, Files, Diff, Review, Session |
 | `Enter` | jump to that agent's tmux pane |
 | `s` | type into its terminal |
 | `t` | show or hide the agent's thinking |
@@ -206,9 +206,10 @@ worktree, the session's name or the branch, and `f` puts the cursor there.
 ### Acting on a session
 
 The page reads. Three things are the exception, and all three go through tmux:
+naming a session, jumping to its pane, and typing into it.
 
 **Jump** puts the cursor in that agent's pane — its window first, then the pane.
-Press `Enter`, or the button beside the session name. Set `WOSTUAST_FOCUS` to a
+Press `Enter`, or the button beside the pane on the Session tab. Set `WOSTUAST_FOCUS` to a
 command that raises your terminal window and jump runs that too; which command
 does that is your window manager's business, not this program's.
 
@@ -245,18 +246,27 @@ session with no pane, or one that has ended, can still be named.
 
 **Transcript** is what the agent said and did, as it happens.
 
+**Session** is everything about the one you are reading: its name, the whole
+path of its worktree, its branch, its model, how full its context window is,
+which tmux pane it is in and the button to jump there — and under those, how
+many prompts and tool calls it has had, and the last few things it did. It is
+the only place a session is renamed.
+
 **Files** lists every file in the worktree: what git tracks, what is untracked,
 and what `.gitignore` covers. An ignored directory such as `node_modules` is
 left out whole, because walking it would cost more than any answer inside it.
 An ignored file that sits among tracked files — a generated header — is listed
 like any other.
 
-Type in the box above the list to filter the tree — the branches that hold no
-match fold away, and the ones that lead to one open up. It is a file picker,
-not a filter on the names: the letters have to turn up in the name in that
-order, but not next to each other, so `mbldr` finds `MetricBuilder.h`. One
-letter of a longer query may be missing altogether, so `MetricsBuilder` finds
-`MetricBuilder.h` too.
+Type in the box above the list to **go to a file**. A list of places opens
+under the box; the arrows walk it, `Enter` takes the one under the cursor, and
+picking one opens that file and shows where it sits. The tree itself does not
+move — where a file sits is half of what you know about it. Folders are in the
+list too, and picking one opens the tree down to it.
+
+The letters have to turn up in the name in that order, but not next to each
+other, so `mbldr` finds `MetricBuilder.h`. One letter of a longer query may be
+missing altogether, so `MetricsBuilder` finds `MetricBuilder.h` too.
 
 The name is what is searched. Spread across a long path the letters of a query
 mean nothing — they will land in four directories at once and match a file you
@@ -268,13 +278,13 @@ The best match sorts to the top and the letters that matched are picked out. Pre
 `Esc` to clear it. Every name in the repository is searched, however many
 there are.
 
-Before you type it is a tree. In each directory the order is `PLAN.md`,
+The list is a tree, always. In each directory the order is `PLAN.md`,
 `CLAUDE.md` and `README.md` first, then whatever the agent has changed with
 the newest first, then the rest by name. A changed file carries a dot, and so
 does every directory above it, so a closed branch still says there is
 something new inside. A directory holding a change opens itself; if you close
-it, it stays closed. The strip above the list says how many files there are,
-or how many matched what you typed.
+it, it stays closed. Every row carries a folder or a page icon, and the strip
+above the list says how many files there are.
 
 The list is quick on a large repository because it does very little. wostuast
 asks git once and shares the answer for a few seconds, and the browser keeps
@@ -300,11 +310,19 @@ numbers are not part of the file, so copying the code does not take them. A bina
 file is read again within a couple of seconds of the agent changing it, and you
 keep your place in it.
 
-A file over two thousand lines long is drawn a screenful at a time, and the
-page says so at the top of it. Building the whole of a very long file took
-about a second, and again on every save. Such a file is not coloured, and your
-browser's own find sees only the part on screen; a shorter file is drawn whole
-and keeps both.
+Above the file a header stays in view, whatever you scroll: the path, one
+clickable piece at a time, then the type, the size and when it last changed.
+Beside those, two choices about reading — how wide a tab is drawn, and whether
+a long line wraps instead of running off the side. Both are remembered in this
+browser, like the theme. A long line puts its scrollbar at the bottom of the
+screen, not at the end of the file.
+
+A file over five thousand lines long is drawn a screenful at a time, and the
+page says so at the top of it. Drawing and painting one whole was measured at
+144 ms for 2,500 lines, 774 ms for 10,000 and 2.8 s for 40,000 — and that is
+paid again on every save. Such a file is not coloured, your browser's own find
+sees only the part on screen, and it cannot wrap: its rows are a grid the
+scrollbar is read against. A shorter file is drawn whole and keeps all of it.
 
 The page fetches two scripts and nothing else: `marked`, which renders the
 Markdown, and `highlight.js`, which paints the code. Neither is inside

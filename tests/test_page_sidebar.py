@@ -14,6 +14,7 @@ from browser import (
     sync_playwright,
     fresh_context,
     open_page,
+    show_tab,
     two_rows,
 )
 
@@ -165,13 +166,18 @@ def test_the_tab_says_what_is_happening(page_at):
 
 
 def test_the_context_percent_is_a_bar(page_at):
+    """How full a context window is reads at a glance and does not at a
+    count. It lives in the Session tab, which is where everything the chosen
+    row does not already say now lives."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody .ctx .bar")
             assert page.locator(".ctx .bar").count() == 1
             width = page.evaluate("document.querySelector('.ctx .fill').style.width")
             assert width == "41%"
-            assert "41% ctx" in page.locator("#facts").inner_text()
+            assert "41% ctx" in page.locator(".sessionbody").inner_text()
         finally:
             browser.close()
 

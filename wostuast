@@ -92,6 +92,11 @@ TICK = 1.0
 CLIENT_BACKLOG = 20
 
 EVENTS_MAX_BYTES = 20 * 1024 * 1024
+
+#: How much of a session's own history the Session tab can show. The log is
+#: for reading, not for counting — `Session.counts` is the whole story and
+#: costs one number per event name.
+SESSION_LOG_MAX = 300
 LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
 RUN_TIMEOUT = 2.0
@@ -563,6 +568,13 @@ class Session:
     # the same news as a permission Notification, up to twelve seconds
     # earlier, so once it arrives the Notification is only ever stale.
     asks_first: bool = False
+    #: The last few things this session did, newest last, for the Session tab.
+    #: Bounded, because a session that runs all day would otherwise keep every
+    #: event it ever sent in memory.
+    log: list[dict[str, Any]] = field(default_factory=list)
+    #: How many of each event this session has sent. Not a `Counter`, so it
+    #: serialises as it stands.
+    counts: dict[str, int] = field(default_factory=dict)
     #: What the open permission dialog is about, as `tool_summary` says it.
     #: Empty when no dialog is open, or when the event did not name a tool.
     asked_about: str = ""
@@ -699,6 +711,14 @@ class Store:
             # the archive deliver events a second time, and replaying them here
             # would set the state back to what it was then.
             return session
+        # Strictly newer, which is the one question that makes appending
+        # safe. `apply` drops what is *older* than the session has seen, but
+        # an event with the very same `ts` folds again, and a rotation
+        # re-delivers the newest one — so a list that grew, or a number that
+        # went up, would do it twice. Everything else here assigns, and this
+        # is the rule that lets these two accumulate. Two events in one
+        # instant cost this log the second of them, and nothing else.
+        fresh = bool(ts) and ts > session.last_ts
         if ts > session.last_ts:
             session.last_ts = ts
         for key in ("cwd", "transcript_path"):
@@ -717,6 +737,15 @@ class Store:
             handler(session, event, ts)
         elif name:
             session.last_event = name
+
+        if fresh and name:
+            # After the handler, so the line is the one it wrote: the Session
+            # tab says what the row says, in the order it happened.
+            session.counts[name] = session.counts.get(name, 0) + 1
+            session.log.append({"ts": ts, "name": name,
+                                "text": session.last_event})
+            if len(session.log) > SESSION_LOG_MAX:
+                del session.log[:-SESSION_LOG_MAX]
 
         if session.cwd and touched_the_tree(name, event):
             self.git_wanted.add(session.cwd)
@@ -3441,6 +3470,21 @@ class Serving:
             return
         self.reply_json(dict(asdict(found), id=session_id, path=wanted))
 
+    def events(self, session_id: str, query: dict[str, list[str]]) -> None:
+        """What this session has done, for the Session tab.
+
+        The log is the daemon's own, folded as the events arrived — not the
+        file read again. `events.jsonl` is twenty megabytes at its largest and
+        holds every session; walking it per request, for one of them, to draw
+        a panel nobody is looking at most of the time is not a trade worth
+        making.
+        """
+        session = self.known(session_id)
+        if session is None:
+            return
+        self.reply_json({"id": session_id, "counts": session.counts,
+                         "events": session.log})
+
     def diff(self, session_id: str, query: dict[str, list[str]]) -> None:
         session = self.known(session_id)
         if session is None:
@@ -3473,6 +3517,7 @@ class Serving:
 
 # The verbs a session route can end in.
 GET_VERBS: dict[str, Any] = {
+    "events": Serving.events,
     "transcript": Serving.transcript,
     "files": Serving.files,
     "file": Serving.file,
@@ -4196,28 +4241,53 @@ body.dragging { cursor: col-resize; user-select: none; }
 
 /* main */
 .main { flex-grow: 1; display: flex; flex-direction: column; min-width: 0; }
-.session-head {
-  height: 56px; flex-shrink: 0; display: flex; align-items: center; gap: 16px;
-  padding: 0 24px; border-bottom: 1px solid var(--edge); min-width: 0;
+/* The Session tab: everything about the one that is open, and the only place
+   it is named. There used to be a bar above every tab saying some of this,
+   which said again what the chosen row already says and cost 56 pixels of
+   every tab to do it. */
+.sessionbody { flex-grow: 1; overflow-y: auto; padding: 20px 26px; }
+.sessionbody .field { margin-bottom: 22px; max-width: 760px; }
+.sessionbody dl {
+  display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px;
+  margin: 0; font-size: 13px;
 }
-/* The name of the open session, and the button that renames it. */
-.session-head .title {
-  font-family: var(--mono); font-size: 16px; font-weight: 600;
-  color: var(--ink-bright); white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis;
-  border: none; background: none; padding: 0; text-align: left; cursor: pointer;
+.sessionbody dt {
+  font-family: var(--narrow); font-size: 12px; letter-spacing: .04em;
+  color: var(--ink-faint);
 }
-.session-head .title:hover { color: var(--needs); }
-.session-head .title:disabled { cursor: default; color: var(--ink-bright); }
-.session-head .facts {
-  display: flex; align-items: center; gap: 10px; min-width: 0;
-  font-family: var(--mono); font-size: 13px; color: var(--ink-mute);
-  white-space: nowrap; overflow: hidden;
+.sessionbody dd {
+  margin: 0; font-family: var(--mono); color: var(--ink);
+  overflow-wrap: anywhere;
 }
-.session-head .facts > span { overflow: hidden; text-overflow: ellipsis; }
-.session-head .word.needs_you { color: var(--needs); }
-.session-head .word.working { color: var(--working); }
-.session-head .word.done { color: var(--done); }
+.sessionbody dd.word.needs_you { color: var(--needs); }
+.sessionbody dd.word.working { color: var(--working); }
+.sessionbody dd.word.done { color: var(--done); }
+/* The name, and the box that changes it. */
+.sessionbody .rename { width: 100%; max-width: 480px; }
+.sessionbody .counts { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.sessionbody .counts span { font-family: var(--mono); font-size: 13px; }
+.sessionbody .counts b { color: var(--ink-bright); font-weight: 600; }
+/* What this session has done, newest last, the way it happened. */
+.sessionlog {
+  border: 1px solid var(--edge); border-radius: 6px; max-height: 42vh;
+  overflow-y: auto; background: var(--panel);
+}
+.sessionlog div {
+  display: flex; gap: 14px; padding: 5px 12px; font-size: 12.5px;
+  border-bottom: 1px solid var(--edge);
+}
+.sessionlog div:last-child { border-bottom: 0; }
+.sessionlog .at {
+  font-family: var(--mono); color: var(--ink-faint); flex-shrink: 0;
+}
+.sessionlog .what {
+  font-family: var(--narrow); color: var(--ink-soft); flex-shrink: 0;
+  width: 130px;
+}
+.sessionlog .said {
+  color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The two things this page can do to a terminal. They look like buttons and
    nothing else on the page does, because everything else only reads. */
 .verb {
@@ -4744,21 +4814,11 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       <div class="rows" id="rows"></div>
       <div class="hints">
         <div><b>j k</b> move &nbsp; <b>n</b> next needs-you &nbsp; <b>f</b> filter &nbsp; <b>/</b> find</div>
-        <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
+        <div><b>1-5</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
       </div>
     </div>
     <div class="grip" id="grip"></div>
     <div class="main">
-      <div class="session-head">
-        <button class="title" id="title" type="button"
-                title="rename this session">no session</button>
-        <input class="rename" id="rename" type="text" hidden
-               autocomplete="off" spellcheck="false"
-               placeholder="a name for this session  ·  enter to keep, escape to leave">
-        <div class="facts" id="facts"></div>
-        <button class="verb" id="jump" type="button" hidden
-                title="put the cursor in that pane  ⏎">jump</button>
-      </div>
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" aria-selected="true" data-tab="transcript">1 Transcript</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="files">2 Files</button>
@@ -4766,6 +4826,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           class="badge" id="diffcount" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="review">4 Review<span
           class="badge" id="reviewcount" hidden></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="session">5 Session</button>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
                  autocomplete="off" spellcheck="false">
@@ -4791,7 +4852,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>f</dt><dd>filter the session list</dd>
     <dt>r</dt><dd>the review you have written</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 4</dt><dd>transcript, files, diff, review</dd>
+    <dt>1 – 5</dt><dd>transcript, files, diff, review, session</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>type into its terminal</dd>
     <dt>t</dt><dd>show or hide thinking</dd>
@@ -4827,6 +4888,9 @@ const state = {
   looseText: null,      // null while it is being read
   looseBinary: false,
   diff: null,
+  // What the Session tab shows: how many of each event, and the last few of
+  // them. `at` moves when an answer arrives, which is what the tab redraws on.
+  events: { counts: {}, events: [], at: 0 },
   diffOpen: new Map(),  // diff files the reader opened or shut by hand
   // The review being written. It lives in this browser and nowhere else
   // until it is sent. See PLAN.md section 4.9 and `blankReview`.
@@ -4872,28 +4936,10 @@ async function tell(id, verb, body) {
 // `/rename` changes that, but the name it hands the status line is the one the
 // session started with — so a rename in the terminal does not reach this page
 // until the session is started again. A name set here is ours and wins.
-function openRename() {
-  const s = current();
-  if (!s) return;
-  const box = $("rename");
-  // What is already there, when it is a name someone chose. A name Claude
-  // Code wrote is a starting point too, so it goes in as well.
-  box.value = s.name || "";
-  box.hidden = false;
-  $("title").hidden = true;
-  box.focus();
-  box.select();
-}
-
-function closeRename() {
-  $("rename").hidden = true;
-  $("title").hidden = false;
-}
-
-async function keepRename() {
+async function keepRename(box) {
   const id = state.chosen;
-  const asked = $("rename").value;
-  closeRename();
+  const asked = box.value;
+  box.blur();
   if (!id) return;
   const answer = await tell(id, "name", { name: asked });
   if (answer && answer.error) { said(answer); return; }
@@ -4906,6 +4952,171 @@ async function keepRename() {
   }
   drawHeader();
   drawSessions();
+  if (state.tab === "session") draw();
+}
+
+// --- the Session tab ---------------------------------------------------------
+//
+// Everything about the one session that is open, in the one place that is
+// about it. It replaces a bar that stood over every tab and said the branch,
+// the pane, the model and the state — which the chosen row says already, one
+// column to the left, and which cost 56 pixels of every tab to repeat.
+
+// The names a reader would recognise, for the counts. An event this does not
+// know still shows, under the name Claude Code gave it.
+const EVENT_WORDS = {
+  UserPromptSubmit: "prompts", PreToolUse: "tool calls",
+  PostToolUse: "results", PostToolUseFailure: "failures",
+  PermissionRequest: "permission asks", Notification: "notifications",
+  Stop: "turns ended", SubagentStop: "subagents", PreCompact: "compactions",
+  SessionStart: "starts", SessionEnd: "ends",
+};
+
+function putFacts(pane, s) {
+  const field = put(pane, "div", "field");
+  const list = put(field, "dl");
+  const row = (name, value, cls) => {
+    if (value === "" || value === null || value === undefined) return;
+    put(list, "dt", null, name);
+    put(list, "dd", cls || null, String(value));
+  };
+  row("state", s.state_word, "word " + s.state);
+  row("worktree", s.cwd);
+  row("repository", s.repo);
+  row("branch", s.branch || "not in a repository");
+  if (s.ahead || s.behind) row("against upstream", "↑" + s.ahead + " ↓" + s.behind);
+  row("changed files", s.dirty ? s.touched_files : "none");
+  row("model", s.model);
+  if (s.context_pct !== null && s.context_pct !== undefined) {
+    // The bar, not a number: how full a context window is reads at a glance
+    // and does not at a count. It was the one thing in the old bar above the
+    // tabs that the chosen row does not say.
+    const pct = Math.round(s.context_pct);
+    put(list, "dt", null, "context used");
+    const cell = put(list, "dd");
+    const ctx = put(cell, "span",
+                    "ctx" + (pct >= 85 ? " hot" : pct >= 60 ? " warm" : ""));
+    const bar = put(ctx, "span", "bar");
+    put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
+    put(ctx, "span", null, pct + "% ctx");
+  }
+  row("started", whenOf(s.since) + "  ·  " + ago(s.since) + " ago");
+  row("session id", s.id);
+  // The pane, and the one thing this page can do with it. `jump` used to sit
+  // in the bar above every tab; it belongs beside the pane it is about.
+  put(list, "dt", null, "tmux pane");
+  const where = put(list, "dd");
+  put(where, "span", null, s.pane || "not in tmux");
+  if (s.pane) {
+    const go = put(where, "button", "verb", "jump");
+    go.type = "button";
+    go.style.marginLeft = "12px";
+    go.title = "put the cursor in that pane  ⏎";
+    go.addEventListener("click", jumpToPane);
+  }
+}
+
+function putRename(pane, s) {
+  const field = put(pane, "div", "field");
+  put(field, "div", "fieldname", "name");
+  const box = put(field, "input", "rename");
+  box.type = "text";
+  box.autocomplete = "off";
+  box.spellcheck = false;
+  box.placeholder = "a name for this session  ·  enter to keep";
+  // What is already there, when it is a name someone chose. A name Claude
+  // Code wrote is a starting point too, so it goes in as well.
+  box.value = s.name || "";
+  box.addEventListener("keydown", (press) => {
+    if (press.key === "Enter") { press.preventDefault(); keepRename(box); }
+    else if (press.key === "Escape") { press.preventDefault(); box.blur(); }
+  });
+}
+
+function putTally(pane, counts) {
+  const field = put(pane, "div", "field");
+  put(field, "div", "fieldname", "what it has done");
+  const box = put(field, "div", "counts");
+  const names = Object.keys(counts).sort(
+    (a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  if (!names.length) {
+    put(box, "span", null, "nothing yet");
+    return;
+  }
+  for (const name of names) {
+    const one = put(box, "span");
+    put(one, "b", null, String(counts[name]));
+    put(one, "span", null, " " + (EVENT_WORDS[name] || name));
+  }
+}
+
+function putLog(pane, events) {
+  const field = put(pane, "div", "field");
+  put(field, "div", "fieldname",
+      "the last " + events.length + (events.length === 1 ? " event" : " events"));
+  const box = put(field, "div", "sessionlog");
+  if (!events.length) {
+    put(box, "div", "note", "Nothing has arrived for this session yet.");
+    return;
+  }
+  // Newest last, the way it happened, and scrolled to the end: the thing you
+  // came to read is what it did most recently.
+  for (const one of events) {
+    const row = put(box, "div");
+    put(row, "span", "at", clock(one.ts));
+    put(row, "span", "what", EVENT_WORDS[one.name] || one.name);
+    put(row, "span", "said", one.text || "");
+  }
+  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+}
+
+function drawSession(box) {
+  if (box.dataset.tab !== "session") {
+    homeFind($("findhome"));   // it may be inside what is about to be cleared
+    box.replaceChildren();
+    box.dataset.tab = "session";
+    box.dataset.nameKey = "";
+    box.dataset.bodyKey = "";
+    const body = put(box, "div", "sessionbody");
+    // Two parts, because one of them is typed into. The name field is built
+    // when the session changes and not again; everything else is rebuilt
+    // whenever it moves. A poll that redrew the box being typed in would take
+    // the name with it, which is the rule the review keeps for its comments.
+    put(body, "div", "namefield");
+    put(body, "div", "rest");
+  }
+  const [name, rest] = box.firstChild.children;
+  const s = current();
+  if (fresh(box, "nameKey", s ? s.id : "none")) {
+    name.replaceChildren();
+    if (s) putRename(name, s);
+  }
+  if (!s) {
+    if (!fresh(box, "bodyKey", "none")) return;
+    rest.replaceChildren();
+    drawEmpty(rest);
+    return;
+  }
+  const key = JSON.stringify([s.id, s.state, s.branch, s.cwd, s.pane, s.model,
+                              s.context_pct, s.dirty, s.touched_files, s.since,
+                              state.events.at]);
+  if (!fresh(box, "bodyKey", key)) return;
+  rest.replaceChildren();
+  putFacts(rest, s);
+  putTally(rest, state.events.counts);
+  putLog(rest, state.events.events);
+}
+
+async function loadSession() {
+  const want = state.chosen;
+  if (!want) { draw(); return; }
+  const body = await ask(want, "events");
+  if (state.chosen !== want) return;   // the reader moved on while we waited
+  if (body && !body.missing) {
+    state.events = { counts: body.counts || {}, events: body.events || [],
+                     at: state.events.at + 1 };
+  }
+  draw();
 }
 
 function said(answer) {
@@ -5311,35 +5522,14 @@ function current() {
 }
 
 function drawHeader() {
+  // All that is left of a bar that used to stand over every tab saying the
+  // branch, the pane, the model and the state — which the chosen row already
+  // says, one column to the left. The send box is what remains, and it
+  // belongs to the transcript: there is nowhere else on this page you would
+  // type to an agent.
   const s = current();
-  const title = $("title");
-  title.textContent = s ? (s.label || s.id.slice(0, 8)) : "no session";
-  title.disabled = !s;
-  // The box is only in the way while it is open, and a redraw arrives every
-  // second or so — closing it here would take the name being typed with it.
-  if (!s && !$("rename").hidden) closeRename();
-  const box = $("facts");
-  box.replaceChildren();
-  if (!s) return;
-  const bits = [];
-  if (s.branch) bits.push(s.branch);
-  bits.push(s.pane ? "pane " + s.pane : "not in tmux");
-  if (s.model) bits.push(s.model);
-  put(box, "span", null, bits.join(" · "));
-  if (s.context_pct !== null && s.context_pct !== undefined) {
-    const pct = Math.round(s.context_pct);
-    const ctx = put(box, "span", "ctx" + (pct >= 85 ? " hot" : pct >= 60 ? " warm" : ""));
-    const bar = put(ctx, "span", "bar");
-    put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
-    put(ctx, "span", null, pct + "% ctx");
-  }
-  put(box, "span", "word " + s.state, "· " + s.state_word);
-  // Without a pane there is nothing to jump to and nothing to type into, so
-  // the verbs are not there to be pressed. A session that has ended can still
-  // be jumped to — its pane may hold what it left behind — but not typed at.
-  $("jump").hidden = !s.pane;
   const was = $("sendbar").hidden;
-  $("sendbar").hidden = !s.pane || state.tab !== "transcript"
+  $("sendbar").hidden = !s || !s.pane || state.tab !== "transcript"
     || s.state === "ended" || s.state === "dead";
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
@@ -7653,11 +7843,12 @@ const TABS = {
   // fetch. `load()` draws for a tab that says so, which is the half an empty
   // loader forgot — and then switching here left the page on the tab before.
   review: { draw: drawReview, load: null, poll: 0, splits: true },
+  session: { draw: drawSession, load: loadSession, poll: 4000 },
 };
 
 // Which tab each number key picks. A key for a tab that is not built yet does
 // nothing, because showTab only accepts a name TABS knows.
-const TAB_KEYS = ["transcript", "files", "diff", "review"];
+const TAB_KEYS = ["transcript", "files", "diff", "review", "session"];
 
 function draw() {
   const box = $("content");
@@ -7727,6 +7918,7 @@ function choose(id) {
   state.looseBinary = false;
   state.goTo = false;
   state.diff = null;
+  state.events = { counts: {}, events: [], at: 0 };
   state.diffOpen.clear();
   recallReview(id);
   state.writing = null;
@@ -7973,10 +8165,15 @@ document.addEventListener("keydown", (press) => {
     case "t": document.body.classList.toggle("show-thinking"); break;
     case "c": nextTheme(); break;
     case "?": help.open ? help.close() : help.showModal(); break;
-    case "1": case "2": case "3": case "4":
-      showTab(TAB_KEYS["1234".indexOf(press.key)]);
-      break;
-    default: return;
+    default: {
+      // A tab per number key, in the order the tabs are drawn. The list is
+      // the one in `TAB_KEYS`, so a new tab is an entry there and nothing
+      // else: the keys used to be spelled out here and stopped at four, and
+      // the fifth tab shipped with no key at all.
+      const at = "123456789".indexOf(press.key);
+      if (at < 0 || at >= TAB_KEYS.length) return;
+      showTab(TAB_KEYS[at]);
+    }
   }
   press.preventDefault();
 });
@@ -7991,12 +8188,6 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
-$("title").addEventListener("click", openRename);
-$("rename").addEventListener("keydown", (press) => {
-  if (press.key === "Enter") { press.preventDefault(); keepRename(); }
-  else if (press.key === "Escape") { press.preventDefault(); closeRename(); }
-});
-$("rename").addEventListener("blur", closeRename);
 $("bell").addEventListener("click", () => { toggleNotifications(); });
 
 async function jumpToPane() {
@@ -8019,7 +8210,6 @@ async function sendTyped() {
   }
 }
 
-$("jump").addEventListener("click", jumpToPane);
 $("sendbar").addEventListener("submit", (press) => {
   press.preventDefault();
   sendTyped();
