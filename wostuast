@@ -4373,6 +4373,25 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.5;
 }
 .who.claude { color: var(--needs); }
+/* The name is a link to this block. It reads as the name it always was; the
+   browser's own "open in a new tab" is what it is there for. */
+.who .self { color: inherit; text-decoration: none; }
+.who .self:hover { text-decoration: underline; }
+.who .day { color: var(--ink-faint); }
+/* Copy the source of a reply. It is there when the pointer is on the turn,
+   the way the `+` on a diff line is: a button beside every line of a
+   transcript would be the loudest thing on the page. Keyboard focus shows it
+   too, or it could not be reached without a mouse. */
+.who .copy {
+  margin-top: 5px; padding: 0; border: none; background: none; cursor: pointer;
+  font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
+  opacity: 0; transition: opacity .1s ease;
+}
+.turn:hover .copy, .copy:focus { opacity: 1; }
+.who .copy:hover { color: var(--needs); }
+/* Where a link landed, for long enough to find with your eye. */
+.turn.linked { outline: 2px solid var(--needs); outline-offset: 6px;
+  border-radius: 4px; }
 .bubble {
   flex-grow: 1; padding: 11px 15px; border-radius: 6px; background: var(--raised);
   border: 1px solid var(--edge); line-height: 1.5; min-width: 0;
@@ -4891,6 +4910,7 @@ const state = {
   history: false,       // whether the finished sessions are unfolded
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
+  goToBlock: null,      // the block a link asked for, until it is on screen
   stream: null,
   // Everything the Files tab holds, and nothing another tab reads. A tab's
   // state arrives and leaves with the tab: the flat bag this came out of meant
@@ -5307,11 +5327,27 @@ function ago(when) {
   return Math.floor(seconds / 86400) + " d";
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 function clock(when) {
   if (!when) return "";
   const at = new Date(when * 1000);
   return String(at.getHours()).padStart(2, "0") + ":" +
          String(at.getMinutes()).padStart(2, "0");
+}
+
+// The day a moment fell on -- `21 Sep` -- or nothing at all when it is today.
+// A transcript read the next morning is a column of bare times, and "15:48"
+// is then a lie by omission. The day the daemon thinks it is, not the one
+// this browser does: `state.skew` is the difference, and it is what every
+// other age on this page is measured against.
+function dayOf(when) {
+  if (!when) return "";
+  const at = new Date(when * 1000);
+  const now = new Date((Date.now() / 1000 + state.skew) * 1000);
+  if (at.toDateString() === now.toDateString()) return "";
+  return at.getDate() + " " + MONTHS[at.getMonth()];
 }
 
 // --- the sidebar ------------------------------------------------------------
@@ -5920,6 +5956,86 @@ async function paintLines(box, path, text, sniffed) {
   rows.forEach((row, at) => row.replaceChildren(lines[at]));
 }
 
+// Onto the clipboard, with the old way behind it. A loopback origin counts
+// as secure, so `navigator.clipboard` is usually there -- but it is refused
+// often enough (a page that never had the focus, a browser that wants a
+// permission) that the answer has to be checked rather than assumed. Neither
+// path may throw: this runs from a click handler.
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (error) {
+    // the old way, below
+  }
+  try {
+    const holder = document.createElement("textarea");
+    holder.value = text;
+    holder.setAttribute("readonly", "");
+    holder.style.position = "fixed";
+    holder.style.top = "-1000px";
+    document.body.appendChild(holder);
+    holder.select();
+    const done = document.execCommand("copy");
+    holder.remove();
+    return done;
+  } catch (error) {
+    return false;
+  }
+}
+
+// A link to one reply: `#<session>/<seq>`.
+//
+// `seq` is a place in one reading of a transcript, not an identity -- a
+// session resumed from another directory counts from nought again -- so a
+// link is a good pointer and not a promise. Nothing moves when it no longer
+// fits, and that is the whole of the failure.
+function blockHref(index) {
+  return "#" + encodeURIComponent(state.chosen || "") + "/" + index;
+}
+
+function placeInHash() {
+  const raw = (location.hash || "").replace(/^#/, "");
+  const cut = raw.lastIndexOf("/");
+  if (cut < 1) return null;
+  const seq = Number(raw.slice(cut + 1));
+  if (!Number.isInteger(seq) || seq < 0) return null;
+  try {
+    return { id: decodeURIComponent(raw.slice(0, cut)), seq };
+  } catch (error) {
+    return null;              // a hash somebody typed by hand
+  }
+}
+
+// Following a link: at startup, and whenever the hash changes. The session is
+// chosen first, because a link may name one that is not on screen, and the
+// block is asked for after that -- `choose` blanks everything the last
+// session had, this included.
+function goToLink() {
+  const place = placeInHash();
+  if (!place || !place.id) return;
+  choose(place.id);           // does nothing when it is already the one shown
+  state.goToBlock = place.seq;
+  showTab("transcript");
+}
+
+// The block a link asked for, once it has been drawn. It wins over the usual
+// landing at the foot of the transcript, and it wins once: scrolling there
+// again on every later draw would drag the reader back every second of a live
+// session.
+function landOnBlock(box) {
+  if (state.goToBlock === null) return false;
+  const node = state.nodes[state.goToBlock];
+  if (!node || node.parentNode !== box) return false;
+  state.goToBlock = null;
+  node.scrollIntoView({ block: "center" });
+  node.classList.add("linked");
+  setTimeout(() => node.classList.remove("linked"), 2500);
+  return true;
+}
+
 // One node per block, kept so that a change redraws that block and no other.
 // Rebuilding the lot re-ran marked over the whole history on every update, and
 // restarted the slide-in of every turn each time one line arrived.
@@ -5943,11 +6059,39 @@ function blockNode(block, index) {
   const node = document.createElement("div");
   node.className = "turn" + (mine ? " mine" : "")
     + (block.kind === "thinking" ? " thinking" : "");
-  const who = put(node, "div", "who" + (mine ? "" : " claude"), mine ? "you" : "claude");
-  if (block.ts) put(who, "div", null, clock(block.ts));
+  const who = put(node, "div", "who" + (mine ? "" : " claude"));
+  // The name is a link to this block, so the address bar holds one after a
+  // click and the browser's own "open in a new tab" works on it. Nothing is
+  // intercepted: a plain anchor is already all three of those things.
+  const name = put(who, "a", "self", mine ? "you" : "claude");
+  name.href = blockHref(index);
+  name.title = "link to this " + (mine ? "prompt" : "reply");
+  if (block.ts) {
+    const day = dayOf(block.ts);
+    if (day) put(who, "div", "day", day);
+    put(who, "div", null, clock(block.ts));
+  }
+  putCopy(who, block, mine);
   if (mine || block.kind === "thinking") put(node, "div", "bubble", block.text);
   else markdown(node, block.text);
   return node;
+}
+
+// The Markdown an agent wrote, as it wrote it. The page shows it drawn; this
+// is the source, which is what goes into a bug report or another prompt.
+function putCopy(parent, block, mine) {
+  if (!block.text) return null;
+  const copy = put(parent, "button", "copy", "copy");
+  copy.type = "button";
+  copy.title = "copy this " + (mine ? "prompt" : "reply") + " as Markdown";
+  copy.addEventListener("click", async () => {
+    const done = await copyToClipboard(block.text);
+    // The node may be redrawn out from under this; writing to a node that has
+    // left the page is harmless, and there is nothing to put back.
+    copy.textContent = done ? "copied" : "cannot";
+    setTimeout(() => { copy.textContent = "copy"; }, 1400);
+  });
+  return copy;
 }
 
 function nearBottom(box) {
@@ -6019,8 +6163,8 @@ function drawTranscript(box) {
   }
   if (state.find && !shown) put(box, "div", "nohits", "Nothing here matches.");
   updateLive(shown);
-  if (!state.find) box.scrollTop = box.scrollHeight;
-  else box.scrollTop = 0;
+  if (state.find) box.scrollTop = 0;
+  else if (!landOnBlock(box)) box.scrollTop = box.scrollHeight;
 }
 
 // How many blocks the filter is showing. `drawTranscript` counts them as it
@@ -6086,7 +6230,7 @@ function patchTranscript(indexes) {
       box.appendChild(node);
     }
   }
-  if (stick) box.scrollTop = box.scrollHeight;
+  if (!landOnBlock(box) && stick) box.scrollTop = box.scrollHeight;
 }
 
 // Three places show how far a file moved. They say it the same way.
@@ -6953,11 +7097,9 @@ function sizeOf(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
 // `21 Sep 07:20`, which is short enough to sit in a header and exact enough
-// to tell two saves apart.
+// to tell two saves apart. The day is always in it: a file's mtime is read
+// against other files' mtimes, not against the time of day.
 function whenOf(seconds) {
   if (!seconds) return "";
   const at = new Date(seconds * 1000);
@@ -7933,6 +8075,7 @@ function choose(id) {
   state.run = -1;
   state.nodes = [];
   state.open.clear();
+  state.goToBlock = null;       // a link into the last session is not this one
   state.files = blankFiles();   // a different worktree holds different files
   state.loose = null;
   state.looseText = null;
@@ -8098,6 +8241,10 @@ function resubscribe() {
     document.body.classList.remove("lost");
     const body = JSON.parse(message.data);
     state.skew = body.now - Date.now() / 1000;
+    // A link in the address bar chooses a session before this list exists,
+    // and until it arrives `current()` is null and every tab draws its empty
+    // state. This is the moment that session becomes a real one.
+    const waiting = !!state.chosen && !current();
     state.sessions = body.sessions || [];
     if (!current() && state.sessions.length) {
       // Pick the first one for the reader. It has to go through choose(), or
@@ -8106,6 +8253,8 @@ function resubscribe() {
       const first = state.sessions[0].id;
       state.chosen = null;
       choose(first);
+    } else if (waiting && current()) {
+      draw();
     }
     drawSessions();
     drawHeader();
@@ -8299,6 +8448,11 @@ drawSessions();
 drawHeader();
 draw();
 resubscribe();
+
+// A link into one reply, followed when the page opens with one and every time
+// the hash changes after that -- which is what clicking a reply's name does.
+goToLink();
+window.addEventListener("hashchange", goToLink);
 
 // The transcript is already on screen as text. When marked lands it is drawn
 // again as Markdown; when it does not, the text stays, and that is the answer.

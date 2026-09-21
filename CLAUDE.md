@@ -64,6 +64,8 @@ This list exists because each entry was re-implemented once already.
 | the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]` |
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
 | "3 min ago" | `ago(when)` |
+| "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
+| text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
 | a folder or a page icon | `putIcon(parent, "dir" \| "file")` — SVG, so not `put` |
@@ -642,6 +644,18 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   and then awaits `load()`, and for that whole await the box still holds the
   tab before it. A transcript push landing in the gap appended a turn as a
   fourth column of the Files tab. `draw()` had this right already.
+- **A link to a turn is `#<session>/<seq>`, and `seq` is a place in one
+  reading.** A session resumed from another directory counts from nought
+  again, so an old link can name a turn that is no longer there. `landOnBlock`
+  does nothing then, and that is the whole of the failure. It also wins over
+  the usual landing at the foot of the transcript exactly once: `state.goToBlock`
+  is cleared the moment it lands, or a live session would drag the reader back
+  to it every second.
+- **A session can be chosen before the session list exists.** The address bar
+  holds a link at startup, so `choose` runs with `state.sessions` empty —
+  `current()` is null and every tab draws its empty state. The `sessions`
+  event draws again when the chosen session turns out to be real; without
+  that, a linked page stayed empty until the reader clicked a row.
 - **The search redraws the whole tab, so it has to put the reader back.**
   `drawTranscript` ends at the top, which is right when a filter is typed and
   wrong on every push after — once a second on a live session.

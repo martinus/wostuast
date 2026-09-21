@@ -384,3 +384,127 @@ def test_an_error_in_the_live_slot_clears_while_a_search_is_on(page_at):
                 timeout=15000)
         finally:
             browser.close()
+
+
+# --- copying a reply, linking to one, and saying which day it was ------------
+
+def test_a_reply_older_than_today_says_which_day_it_was(page_at):
+    """A transcript read the next morning is a column of bare times. The day
+    the daemon thinks it is decides, not this browser's — `state.skew` is the
+    difference, and every other age on the page is measured against it.
+
+    Both halves are driven from the block's own timestamp, so the test says
+    the same thing whatever day it is run on. Make `dayOf` return the date
+    always and the first count stops being nought."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            seen = page.evaluate("""() => {
+              const was = state.skew;
+              const ts = state.blocks.find((one) => one && one.ts).ts;
+              const at = (when) => {
+                state.skew = when - Date.now() / 1000;
+                drawTranscript($('content'));
+                return [...document.querySelectorAll('.who .day')]
+                         .map((one) => one.textContent);
+              };
+              const sameDay = at(ts + 600);
+              const threeDaysOn = at(ts + 3 * 86400);
+              state.skew = was;
+              return {sameDay, threeDaysOn};
+            }""")
+            assert seen["sameDay"] == []
+            assert seen["threeDaysOn"], seen
+            # The block's own day, not today's.
+            assert all(one == "18 Sep" for one in seen["threeDaysOn"]), seen
+        finally:
+            browser.close()
+
+
+def test_a_reply_can_be_copied_as_the_markdown_it_was_written_in(page_at):
+    """The page shows a reply drawn. What goes into a bug report or the next
+    prompt is its source, which is why this copies `block.text` and not what
+    is on screen. Copy the node's text instead and the fences go missing."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        browser.grant_permissions(["clipboard-read", "clipboard-write"])
+        try:
+            # The button is on hover, like the `+` on a diff line.
+            page.locator(".turn.mine .copy").first.click(force=True)
+            page.wait_for_selector(".turn.mine .copy:text-is('copied')")
+            assert page.evaluate(
+                "navigator.clipboard.readText()") == "Do the thing."
+
+            # And the agent's answer, which is Markdown with a fence in it.
+            page.locator(".turn:not(.mine) .copy").first.click(force=True)
+            page.wait_for_function(
+                """() => navigator.clipboard.readText()
+                           .then((text) => text.includes('```python'))""")
+            got = page.evaluate("navigator.clipboard.readText()")
+            assert "<img src=x" in got, got      # the source, not the scrub
+            assert "if len(hits) > 1:" in got, got
+        finally:
+            browser.close()
+
+
+def test_a_reply_is_a_link_you_can_open_in_another_tab(page_at):
+    """The name of every turn is an anchor, so the browser's own "open in a
+    new tab" works on it and a click leaves the link in the address bar.
+    Opening one lands on that block and says which it is.
+
+    Take `landOnBlock` out of `drawTranscript` and the page opens at the foot
+    of the transcript with nothing marked."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            links = page.eval_on_selector_all(
+                ".turn .self", "els => els.map((one) => one.getAttribute('href'))")
+            assert links and all(one.startswith("#s1/") for one in links), links
+            # The second turn: what Claude said.
+            wanted = links[1]
+        finally:
+            browser.close()
+
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at[1] + wanted)
+        try:
+            # Landing is what clears the ask, so this is the durable half of
+            # it. The mark is on a two-and-a-half second timer and a busy
+            # machine can outlive one between two calls, so it is asked for
+            # in a single round trip below.
+            page.wait_for_function("state.goToBlock === null")
+            assert page.evaluate(
+                "state.blocks[Number(location.hash.split('/').pop())].kind"
+            ) == "text"
+
+            marked = page.evaluate("""(wanted) => {
+              state.goToBlock = Number(wanted.split('/').pop());
+              drawTranscript($('content'));
+              const one = document.querySelector('.turn.linked');
+              return one && one.querySelector('.self').getAttribute('href');
+            }""", wanted)
+            assert marked == wanted
+        finally:
+            browser.close()
+
+
+def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
+    """`seq` is a place in one reading of a transcript, not an identity: a
+    session resumed from another directory counts from nought again. So a
+    link is a pointer, not a promise, and the whole of its failure is that
+    nothing moves."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at[1] + "#s1/900")
+        try:
+            blew_up = []
+            page.on("pageerror", lambda error: blew_up.append(str(error)))
+            page.wait_for_selector(".turn")
+            # There is no block 900, so the draw must fall through to its
+            # usual landing rather than reaching into an empty slot.
+            page.evaluate("drawTranscript($('content'))")
+            page.wait_for_timeout(300)      # proving something did not happen
+            assert not blew_up, blew_up
+            assert page.locator(".turn.linked").count() == 0
+            assert page.evaluate("state.goToBlock") == 900
+        finally:
+            browser.close()
