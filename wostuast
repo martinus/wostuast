@@ -3990,6 +3990,9 @@ PAGE = r"""<!doctype html>
   --hot: #d97757;
   /* The tint that lifts the chosen row off the panel. */
   --tint: rgba(255,255,255,.045);
+  /* Under whatever floats over the page. Darker here than on a light page:
+     a shadow is the absence of the background, and this background is dark. */
+  --shadow: rgba(0,0,0,.55);
   /* Syntax colours. Amber is not among them: it is the one warm colour on
      this page and it means "an agent needs you". */
   --syn-key: #9a8cf0; --syn-str: #8fcf9f; --syn-num: #5bb0b5;
@@ -4027,6 +4030,7 @@ PAGE = r"""<!doctype html>
   --code: #eceae3; --code-ink: #33363d;
   --hot: #b2452a;
   --tint: rgba(0,0,0,.05);
+  --shadow: rgba(0,0,0,.18);
   --veil: rgba(0,0,0,.3);
   --syn-key: #5b3fb0; --syn-str: #26694a; --syn-num: #1d6f74;
   --syn-com: #8b8e96; --syn-fn: #2a6ea8; --syn-meta: #6a6d76;
@@ -4376,6 +4380,32 @@ body:not(.show-thinking) .thinking { display: none; }
   width: var(--side-w, 268px); flex-shrink: 0; display: flex;
   flex-direction: column; min-height: 0;
 }
+/* The list of places to go sits under the box, so the slot is what it is
+   measured from. */
+.findslot { position: relative; }
+.goto {
+  position: absolute; left: 10px; right: 10px; top: 100%; z-index: 5;
+  max-height: 60vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--edge);
+  border-radius: 6px; box-shadow: 0 10px 24px var(--shadow);
+}
+.goto button {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  padding: 6px 12px; background: none; border: 0; color: var(--ink-mute);
+  font: inherit; font-family: var(--narrow); font-size: 12.5px;
+  text-align: left; cursor: pointer;
+}
+.goto button .name { overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; direction: rtl; }
+.goto button .icon {
+  width: 13px; height: 13px; flex-shrink: 0; color: var(--ink-faint);
+  fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round;
+}
+.goto button:hover, .goto button.chosen {
+  background: var(--raised); color: var(--ink-bright);
+}
+.goto .lit { color: var(--needs-warm); font-weight: 600; }
+.goto .nohits { padding: 10px 12px; }
 .findslot { flex-shrink: 0; display: flex; padding: 8px 10px;
   border-bottom: 1px solid var(--edge); }
 .findslot .find { width: 100%; }
@@ -6135,72 +6165,117 @@ function dirFiles(files) {
 // The rows a tree shows, in the order they are drawn. Only what is open is
 // walked, so a closed repository costs its top level and no more.
 //
-// `only` is what typing leaves: the matching files bucketed by the directory
-// that holds them, and the letters that matched. Without it every file shows
-// and the tiers decide the order.
-//
-// A row carries where its name starts and the letters found in the whole
-// path, not the name and the letters in it. Fifty thousand rows are built to
-// draw eighty, so the work of cutting one up belongs where it is drawn.
-function treeRows(dirs, open, only = null) {
+// A row carries where its name starts, not the name: fifty thousand rows are
+// built to draw eighty, so the work of cutting one up belongs where it is
+// drawn.
+function treeRows(dirs, open) {
   const rows = [];
   const walk = (path, depth) => {
     const one = dirs.get(path);
     if (!one) return;
     const from = path ? path.length + 1 : 0;
     for (const child of one.dirs) {
-      if (only && !only.keep.has(child)) continue;
-      const wide = only ? true : open.has(child);
-      rows.push({ path: child, from, depth, dir: true, open: wide,
-                  hit: only ? only.keep.get(child) : null });
+      const wide = open.has(child);
+      rows.push({ path: child, from, depth, dir: true, open: wide });
       if (wide) walk(child, depth + 1);
     }
     // Only a directory holding something named or changed needs its files put
     // in order; everywhere else they are already in the order they arrived,
     // and `state.files.marked` says which those are. It halves a fully opened tree.
-    const files = only ? (only.inside.get(path) || [])
-      : (path && !state.files.marked.has(path)) ? one.files : dirFiles(one.files);
-    for (const file of files) {
-      rows.push({ path: file, from, depth,
-                  hit: only ? only.marks.get(file) : null });
-    }
+    const files = (path && !state.files.marked.has(path))
+      ? one.files : dirFiles(one.files);
+    for (const file of files) rows.push({ path: file, from, depth });
   };
   walk("", 0);
   return rows;
 }
 
-// The tree with everything that does not match taken out of it. A flat list
-// of matches loses where a file sits, and where it sits is half of what you
-// know about it.
+// --- go to file --------------------------------------------------------------
 //
-// `pick` hands the matches over best first, so putting each one in its
-// directory's bucket as it arrives leaves every bucket in that order: the
-// best match leads its directory without anything being sorted again. The
-// directories keep their own order, because that is what a tree is.
-function matching() {
-  const marks = new Map();
-  const inside = new Map();      // directory to its matching files, best first
-  const keep = new Map();        // and to the letters of the best beneath it
-  for (const hit of pick(state.files.names)) {
-    marks.set(hit.one, hit.at);
-    const cut = hit.one.lastIndexOf("/");
-    const home = cut < 0 ? "" : hit.one.slice(0, cut);
-    const held = inside.get(home);
-    if (held) held.push(hit.one); else inside.set(home, [hit.one]);
-    for (const above of ancestors(hit.one)) {
-      // Once a directory is known, so is every directory above it: the hit
-      // that put it there walked the same way to the root.
-      if (keep.has(above)) break;
-      keep.set(above, hit.at);
-    }
-  }
-  return { keep, marks, inside };
+// What you type opens a list under the box; picking one opens that file and
+// shows it in the tree. The tree itself never moves, which is the point: it
+// is the answer to "where does this sit", and filtering it away was hiding
+// that answer as a way of asking for it.
+
+const GOTO_SHOWN = 40;
+
+// Which row the keys are on. It is the index into what was last drawn, so it
+// goes back to the top whenever the query does.
+let goToAt = 0;
+
+function goToHits() {
+  return pick(state.files.places).slice(0, GOTO_SHOWN);
 }
 
-// What the left column shows. Typing filters the tree; it does not replace it.
+// The list under the box, rebuilt as you type. It lives inside the find slot
+// so that `split`'s children keep their positions, and `homeFind` keeps the
+// input first because it only moves the box when its parent is wrong.
+function drawGoTo(slot) {
+  let popup = slot.querySelector(".goto");
+  if (!state.find || state.tab !== "files") {
+    if (popup) popup.remove();
+    // And forget what was drawn, or typing the same query again would match
+    // the key and draw nothing at all.
+    slot.dataset.goto = "";
+    return;
+  }
+  if (!fresh(slot, "goto", state.find + "\n" + state.files.tag)) return;
+  const found = goToHits();
+  goToAt = 0;
+  if (popup) popup.remove();
+  popup = put(slot, "div", "goto");
+  if (!found.length) {
+    put(popup, "div", "nohits", "no name matches");
+    return;
+  }
+  found.forEach((hit, at) => {
+    const row = put(popup, "button", at === goToAt ? "chosen" : "");
+    row.type = "button";
+    row.title = hit.one;
+    putIcon(row, state.files.known.has(hit.one) ? "file" : "dir");
+    putName(row, hit.one, hit.at);
+    // `mousedown`, not `click`: the box loses focus first otherwise, and the
+    // blur that follows would take the list away before the click landed.
+    row.addEventListener("mousedown", (press) => {
+      press.preventDefault();
+      goTo(hit.one);
+    });
+  });
+}
+
+// Open what was picked, and show where it sits. A directory has nothing to
+// read, so it is only revealed.
+function goTo(path) {
+  if (state.files.known.has(path)) chooseFile(path);
+  revealInTree(path);          // clears the box, which closes this list
+  $("find").blur();
+}
+
+// `j`/`k` belong to the sidebar, so this is the arrows and Enter only.
+function goToKey(press) {
+  const slot = $("find").parentNode;
+  const popup = slot.querySelector(".goto");
+  const rows = popup ? [...popup.querySelectorAll("button")] : [];
+  if (!rows.length) return false;
+  if (press.key === "ArrowDown" || press.key === "ArrowUp") {
+    goToAt = (goToAt + (press.key === "ArrowDown" ? 1 : rows.length - 1))
+      % rows.length;
+    rows.forEach((row, at) => row.classList.toggle("chosen", at === goToAt));
+    rows[goToAt].scrollIntoView({ block: "nearest" });
+    return true;
+  }
+  if (press.key === "Enter") {
+    goTo(rows[goToAt].title);
+    return true;
+  }
+  return false;
+}
+
+// What the left column shows. Always the tree: typing opens a list under the
+// box (see `drawGoTo`) rather than taking the tree apart. Hiding the tree was
+// hiding the answer to "where does this file sit" as a way of asking it.
 function listRows() {
-  const only = state.find ? matching() : null;
-  return treeRows(state.files.tree, only ? null : openDirs(), only);
+  return treeRows(state.files.tree, openDirs());
 }
 
 // Everything whose path matches what is typed, in the order it came, each one
@@ -6323,10 +6398,6 @@ function noteList(note, found) {
     // git failing and a worktree holding nothing look the same and mean
     // opposite things, so the strip says which one this is.
     put(note, "span", null, "git did not answer");
-  } else if (state.find && !hits) {
-    put(note, "span", null, "no name matches");
-  } else if (state.find) {
-    put(note, "span", null, hits + " of " + state.files.total);
   } else if (state.files.cut) {
     put(note, "span", null, state.files.total + " files, more than one list"
         + " can answer for");
@@ -6459,6 +6530,7 @@ function measureTall(code, tall, first, last) {
 
 function drawFiles(box) {
   const [list, pane, note] = split(box, "files", "filebody");
+  drawGoTo($("find").parentNode);
 
   // What the list draws is what decides whether it is drawn again: which
   // names there are, which file is open, which carry a dot, and which
@@ -6599,6 +6671,7 @@ function blankFiles() {
   return {
     names: [],          // every path in the worktree, in the order sent
     known: new Set(),   // the same paths, for asking whether one is still there
+    places: [],         // the names and the directories, for "go to file"
     tree: new Map(),    // every directory, with what it holds
     marked: new Set(),  // the directories holding something that changed
     dirs: new Map(),    // the ones the reader opened or closed by hand
@@ -7623,7 +7696,8 @@ function showTab(name) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
   $("find").placeholder = (name === "transcript" ? "find in transcript  /"
-                                                 : "find a file  /");
+                          : name === "files" ? "go to file  /"
+                                             : "find a file  /");
   load();
   resubscribe();
 }
@@ -7727,6 +7801,11 @@ async function loadFiles() {
     state.files.names = body.names ? body.names.split("\0") : [];
     state.files.tree = buildTree(state.files.names);
     state.files.known = new Set(state.files.names);   // built once, asked every poll
+    // Everything the reader can go to, files and the directories holding
+    // them, built here for the same reason the tree is: fifty thousand names
+    // are not worth walking once per keystroke to add the folders back.
+    state.files.places = state.files.names.concat(
+      [...state.files.tree.keys()].filter(Boolean));
   }
   state.files.marked = dirsWithChanges(state.files.changed);
   if (!state.files.known.has(state.files.path)) {
@@ -7993,6 +8072,8 @@ $("pick").addEventListener("keydown", (press) => {
   drawSessions();
 });
 $("find").addEventListener("keydown", (press) => {
+  // The list under the box takes the arrows and Enter while it is open.
+  if (goToKey(press)) { press.preventDefault(); return; }
   if (press.key !== "Escape") return;
   $("find").value = "";
   state.find = "";

@@ -153,11 +153,14 @@ def test_every_way_from_one_tab_to_another_works(repo_page):
                     assert page.locator(DRAWN[other]).count() > 0, \
                         f"{one} to {other} drew nothing"
                     assert not blew_up, blew_up
-            # and the find box is still there, still working
+            # and the find box is still there, still working. On the Files
+            # tab that means the list of places opens under it; the tree
+            # behind it is not what answers.
             show_tab(page, "files")
             page.fill("#find", "code")
-            page.wait_for_timeout(400)
-            assert page.locator(".filelist button").count() == 1
+            page.wait_for_selector(".goto button")
+            assert page.eval_on_selector_all(
+                ".goto button", "els => els.map(e => e.title)") == ["code.py"]
             assert not blew_up, blew_up
         finally:
             browser.close()
