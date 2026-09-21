@@ -4603,10 +4603,21 @@ body:not(.show-thinking) .thinking { display: none; }
 /* The padding is on the children, because the header is stuck to the pane's
    edges and must not be inset. Everything except it, so a branch added to
    `drawFiles` later cannot quietly lose its gutter. */
-.filebody { padding: 0; }
-.filebody > :not(.where) { padding: 0 26px 20px; }
-.filebody > .empty { padding-top: 20px; }
+/* Two children: a header that does not move, and the part that does. The
+   header used to be `position: sticky` inside the scroller, which keeps it
+   in view but not out of the scrollbar's way -- the bar ran the whole height
+   of the pane, beside a line that never scrolls. */
+.filebody { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.filescroll { flex-grow: 1; min-height: 0; overflow: auto; padding-top: 14px; }
+.filescroll > * { padding: 0 26px 20px; }
+.filebody > .empty { padding: 20px 26px; }
 .reviewbody { padding: 16px 20px; }
+/* The Diff tab's body has no padding of its own -- a diff's rows run to the
+   edge -- so its empty state has to bring its own inset, or it sits against
+   the left edge while the Review tab's sits properly in from it. A margin
+   and not a padding: it is the block that has to move, and a padded box
+   still starts at the edge. */
+.diffbody > .empty { margin: 16px 20px; }
 /* The small label look: the path above a file, and the names of the two
    boxes at the top of a review. */
 .filebody .where, .fieldname {
@@ -4614,12 +4625,10 @@ body:not(.show-thinking) .thinking { display: none; }
   color: var(--ink-faint);
 }
 /* What the open file is: its path, what it holds, and the two controls for
-   how it is drawn. It stays in view, in both directions — `top` for scrolling
-   down a long file and `left` for a long line, because the pane now scrolls
-   sideways and the header would otherwise slide off it. */
-.filebody .where {
-  position: sticky; top: 0; left: 0; z-index: 2;
-  margin-bottom: 14px; padding: 12px 26px; gap: 14px;
+   how it is drawn. It is outside the scroller, so it stays in view in both
+   directions without being sticky in either. */
+.filebody > .where {
+  flex-shrink: 0; padding: 12px 26px; gap: 14px;
   display: flex; align-items: baseline; flex-wrap: wrap;
   background: var(--bg); border-bottom: 1px solid var(--edge);
 }
@@ -6313,10 +6322,7 @@ function split(box, tab, bodyClass) {
     // far the list scrolls. The count strip above it is one clipped line.
     put(side, "div", "sidefoot");
     dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
-    const body = put(box, "div", bodyClass);
-    // A file too long to draw whole is drawn a window at a time, and the
-    // window follows the scrollbar — the only thing that moves it.
-    if (windowed) body.addEventListener("scroll", () => fillCode(body));
+    put(box, "div", bodyClass);
   }
   const side = box.firstChild;
   homeFind(side.firstChild);
@@ -6942,7 +6948,8 @@ function drawFiles(box) {
   // they were in: they asked to be somewhere else.
   const wanted = state.files.goToLine;
   state.files.goToLine = 0;
-  const place = (same && !wanted) ? pane.scrollTop : 0;
+  const had = pane.querySelector(".filescroll");
+  const place = (same && !wanted && had) ? had.scrollTop : 0;
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
   if (!state.files.path) {
@@ -6967,10 +6974,14 @@ function drawFiles(box) {
   const where = putWhere(pane, state.files.path);
   if (isDoc) putAsText(where);
   putAbout(where, rows, windowed);
+  // Everything below the header, and the only thing that scrolls. It is built
+  // with the file, so the listener a windowed file needs goes on with it.
+  const view = put(pane, "div", "filescroll");
+  if (windowed) view.addEventListener("scroll", () => fillCode(view));
   if (state.files.binary) {
-    put(pane, "div", "note", "Binary file. There is nothing to show.");
+    put(view, "div", "note", "Binary file. There is nothing to show.");
   } else if (isDoc && !state.files.asText) {
-    markdown(pane, state.files.text);
+    markdown(view, state.files.text);
   } else {
     // One row per line, through the same renderer the diff uses, so a file
     // gets the numbers, the `+` and the comments the diff already had — and a
@@ -6983,11 +6994,11 @@ function drawFiles(box) {
       // Only for a file that really is too long to draw. Said plainly,
       // because both of these are things the reader would otherwise go
       // looking for and not find.
-      put(pane, "div", "note", rows.length + " lines — too many to draw at"
+      put(view, "div", "note", rows.length + " lines — too many to draw at"
           + " once. Only the ones on screen are here, so this file has no"
           + " colour and your browser's own find will not see the rest.");
     }
-    const code = put(pane, "div", "code" + (windowed ? " windowed" : ""));
+    const code = put(view, "div", "code" + (windowed ? " windowed" : ""));
     code.dataset.path = state.files.path;
     if (windowed) {
       code.lines = rows;
@@ -6996,14 +7007,18 @@ function drawFiles(box) {
       // Where the reader will be once `place` is put back, not where an
       // emptied pane says they are: the rows have to be there before the
       // scrollbar can reach them.
-      fillCode(pane, wanted ? lineTop(pane, code, wanted) : place);
+      fillCode(view, wanted ? lineTop(view, code, wanted) : place);
     } else {
       fillDiffFile(code, asLines(state.files.path, rows));
       paintLines(code, state.files.path, body, state.files.lang);
     }
   }
-  if (wanted) requestAnimationFrame(() => showLine(pane, wanted));
-  else if (place) requestAnimationFrame(() => { pane.scrollTop = place; });
+  // Said outright, rather than only when there is a place to go back to.
+  // `view` is built with the file, so a different file already starts at
+  // nought -- the pane used to be the scroller, it outlived the file in it,
+  // and a `replaceChildren` does not reliably put its bar back.
+  if (wanted) requestAnimationFrame(() => showLine(view, wanted));
+  else requestAnimationFrame(() => { view.scrollTop = place; });
 }
 
 // How far down the pane a line stands. Only a windowed file can answer before

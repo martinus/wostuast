@@ -327,8 +327,11 @@ numbers are not part of the file, so copying the code does not take them. A bina
 file is read again within a couple of seconds of the agent changing it, and you
 keep your place in it.
 
-Above the file a header stays in view, whatever you scroll: the path, one
+Above the file a header stands still, whatever you scroll: the path, one
 clickable piece at a time, then the type, the size and when it last changed.
+It is outside the part that scrolls, so the scrollbar starts under it rather
+than running the whole height of the pane. Opening another file starts you at
+its top.
 Beside those, two choices about reading — how wide a tab is drawn, and whether
 a long line wraps instead of running off the side. Both are remembered in this
 browser, like the theme. A long line puts its scrollbar at the bottom of the

@@ -344,12 +344,28 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `.dlines` put the horizontal bar under the last line of the file, where in a
   file of any length nobody ever scrolls to. The pane scrolls both ways, so the
   bar is at the bottom of the screen — and the place the reader had scrolled to
-  carries over across a window move for free, because the pane is not rebuilt.
-  The file header is `sticky` in **both** axes for the same reason. **The Diff
+  carries over across a window move for free, because `.filescroll` is not
+  rebuilt for a window move. **The Diff
   tab keeps its scroller on `.dlines`**, because it stacks many files in one
   pane and a bar at the bottom of the screen would belong to whichever block
   happened to be under it. The override sits beside `.dlines`, not behind
   `.filebody`, so the two are read together.
+- **The file header stands outside the scroller.** `.filebody` is a flex
+  column of two: `.where`, which does not move, and `.filescroll`, which
+  does. The header used to be `position: sticky` inside the scroller, which
+  keeps it in view but not out of the scrollbar's way — the bar ran the whole
+  height of the pane, beside a line that never scrolls. Everything that
+  scrolls the file scrolls `.filescroll`: `fillCode`, `lineTop`, `showLine`,
+  and the place a redraw puts back.
+- **`.filescroll` is built with the file, so a different file starts at its
+  top.** The pane used to be the scroller and outlived the file in it, so the
+  next file opened wherever the last one had been read to. `same` is the other
+  half of that: it is what refuses to carry the old place over.
+- **A tab's empty state is inset by whatever its body does not inset.** The
+  Review tab's body has padding, the Files tab's children have it, and the
+  Diff tab's body has none at all — a diff's rows run to the edge — so
+  `.diffbody > .empty` brings its own. A margin, not a padding: the block has
+  to move, and a padded box still starts at the edge.
 - **Wrapping and windowing cannot both be on.** A windowed file's rows are a
   grid the scrollbar is read against, and a wrapped row is not one row tall.
   The CSS is what enforces it — `:not(.windowed)` — rather than a ternary in
