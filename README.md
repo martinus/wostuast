@@ -246,6 +246,17 @@ session with no pane, or one that has ended, can still be named.
 
 **Transcript** is what the agent said and did, as it happens.
 
+Each turn carries its name, the time, and the day when it is not today's. The
+name is a link to that turn: click it and the address bar holds a link you can
+send or keep, open it in a new tab and the page lands on that turn and marks
+it. Point at a turn and a **copy** button appears beside the name; it puts the
+reply on the clipboard as the Markdown it was written in, not as the page
+draws it.
+
+A link points at a place in one reading of the transcript. A session resumed
+from another directory is read again from the start, so an old link can name
+a turn that is no longer there. Nothing moves then, and nothing else happens.
+
 **Session** is everything about the one you are reading: its name, the whole
 path of its worktree, its branch, its model, how full its context window is,
 which tmux pane it is in and the button to jump there — and under those, how
