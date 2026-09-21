@@ -423,6 +423,31 @@ def test_a_failure_in_the_live_slot_stays_there(page_at):
             browser.close()
 
 
+def test_a_push_from_the_daemon_does_not_wipe_a_failure(ws, page_at):
+    """The stream writes "live" into this slot on every push, which is about
+    once a second while an agent works. A failure painted straight into it
+    was gone before the reader looked up — the thing they most needed to
+    read was the thing that lasted least. CI caught this one."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                "document.getElementById('live').textContent === 'live'")
+            page.evaluate("said({error: 'no pane for this session'})")
+            assert "no pane" in page.locator("#live").inner_text()
+
+            # A push, which is what the daemon does whenever anything moves.
+            daemon.hub.send("sessions", daemon.sessions_payload())
+            page.wait_for_timeout(500)
+            assert "no pane" in page.locator("#live").inner_text()
+            # And the stream's own word is not lost either: it is underneath.
+            page.evaluate("said({done: true})")
+            assert page.locator("#live").inner_text() == "live"
+        finally:
+            browser.close()
+
+
 # --- copying a reply, linking to one, and saying which day it was ------------
 
 def test_a_reply_older_than_today_says_which_day_it_was(page_at):

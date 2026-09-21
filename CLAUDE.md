@@ -954,6 +954,16 @@ the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
   this page" is about something you asked for and did not get, and fading it
   left a strip reading "live" over a page where nothing worked — which is
   exactly how the restart above went unexplained.
+- **One painter for the live slot, and three things that want it.**
+  `state.live` is what the stream is doing, `state.trouble` is something you
+  asked for and did not get, and `note` borrows the slot over both for four
+  seconds. `paintLive` decides; nothing else assigns to `#live`. Four writers
+  raced before it: the stream writes "live" on every push, about once a
+  second while an agent works, so a failure written straight into the slot
+  was wiped within a second — the thing the reader most needed to read was
+  the thing that lasted least. **CI caught that**, not the browser tests I
+  had just written: the assertion was three lines below a
+  `wait_for_timeout(4500)` and passed locally because nothing was pushing.
 - **No JavaScript library is vendored.** `marked` and `highlight.js` are fetched
   through the one `fetchScript`, each pinned by the hash of its bytes, with
   `crossorigin` so the browser checks it. Any script on this page can POST to

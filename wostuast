@@ -5734,6 +5734,9 @@ const state = {
   links: [],
   // What is wrong with `links.json`, if anything. Shown on the Session tab.
   linkTrouble: [],
+  // The last thing the daemon refused to do, on the one line the page keeps
+  // for saying things. It stays there until something replaces it.
+  trouble: "",
   // What the reader has picked for the question on screen, one index per
   // question, and which question they belong to. Not in the DOM: a pick made
   // for one question must never be submitted for the next.
@@ -6016,19 +6019,33 @@ function said(answer) {
   // A page from an earlier `serve` cannot do anything at all, and no strip
   // this small can carry that. The bar says it, and only a reload clears it.
   if (answer && answer.stale) document.body.classList.add("outdated");
-  const box = $("live");
-  box.textContent = (answer && answer.error) || state.live || "";
+  // Kept, not painted and forgotten: the stream writes "live" into this slot
+  // on every push, which is about once a second while an agent works, so a
+  // failure written straight in was wiped within a second. The thing the
+  // reader most needed to read was the thing that lasted least. An answer
+  // that worked clears it, which is the other half of "until something
+  // replaces it".
+  state.trouble = (answer && answer.error) || "";
+  paintLive();
+}
+
+// The one line the page keeps for saying things, and the three things that
+// want it: what the stream is doing, something you asked for and did not
+// get, and a passing word that borrows the slot over both.
+//
+// One painter, because four writers raced for it.
+function paintLive(borrowed) {
+  $("live").textContent = borrowed || state.trouble || state.live || "";
 }
 
 // Our own word about what just happened -- "review sent", "pressed 2, 1".
 // News, so it goes stale, so it fades; nothing was asked for and refused.
 function note(text) {
-  const box = $("live");
-  box.textContent = text;
+  paintLive(text);
   setTimeout(() => {
     // Only when the slot still holds this line. Assigning unconditionally
     // would wipe whatever the stream has put there since.
-    if (box.textContent === text) box.textContent = state.live || "";
+    if ($("live").textContent === text) paintLive();
   }, 4000);
 }
 
@@ -9772,7 +9789,7 @@ function resubscribe() {
     drawSessions();
     drawHeader();
     state.live = "live";
-    if (!state.find) $("live").textContent = "live";
+    if (!state.find) paintLive();
   });
 
   stream.addEventListener("transcript", (message) => {
@@ -9797,7 +9814,7 @@ function resubscribe() {
   stream.onerror = () => {
     document.body.classList.add("offline");
     state.live = "reconnecting";
-    if (!state.find) $("live").textContent = "reconnecting";
+    if (!state.find) paintLive();
   };
 }
 
