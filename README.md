@@ -258,7 +258,14 @@ to, and the tree opened the way you opened it. It remembers what you chose and
 nothing else: the file listing, the file's text and the diff are all fetched
 again, because by the time you come back they have moved.
 
-**Transcript** is what the agent said and did, as it happens.
+**Transcript** is what the agent said and did, as it happens, with a map of
+the conversation beside it: one row per thing you typed, and the agent's
+replies to it under that. Each row is the first line of what it names. Click
+one and the transcript goes there and marks it.
+
+Typing in the box above the map narrows the map. The transcript itself stays
+whole — you keep your place and the conversation around a hit, which is what
+you were reading it for — and every match is marked where it stands.
 
 Each turn carries its name, the time, and the day when it is not today's. The
 name is a link to that turn: click it and the address bar holds a link you can
