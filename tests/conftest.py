@@ -318,8 +318,11 @@ def big_page(ws, served, big_repo):
     return big_repo, base
 
 
-#: How many lines `long.py` has. Well over `CODE_WHOLE`, so the Files tab
-#: windows it, and not so many that writing it costs anything.
+#: How many lines `long.py` has. Over `CODE_WHOLE`, so the Files tab windows
+#: it, and not so many that writing it costs anything. The margin is thin now
+#: that the threshold is 5,000 — a test that needs a windowed file and cannot
+#: also afford the lines lowers `CODE_WHOLE` from the page instead, the way
+#: the diff's tests lower `BIG_LINES`.
 LONG_LINES = 6000
 
 

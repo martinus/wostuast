@@ -43,7 +43,7 @@ commands · command line · the page.
 Page: asking the daemon · dragging an edge · the two fetched scripts · colours ·
 **the sidebar** · tab icon · notifications · **the transcript** · painting code ·
 **the Files tab** · finding a file · the tree · a file too long to draw whole ·
-**the Diff tab** · **the review** ·
+how a file is drawn · **the Diff tab** · **the review** ·
 keeping a review · **the Review tab** · the tabs · talking to the
 daemon · keys.
 
@@ -65,6 +65,8 @@ This list exists because each entry was re-implemented once already.
 | "3 min ago" | `ago(when)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
+| a folder or a page icon | `putIcon(parent, "dir" \| "file")` — SVG, so not `put` |
+| bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
 
 **Python helpers**: `path_label`, `clip`, `run` (subprocess with a timeout),
 `private_dir`/`private_file`, `safe_transcript`, `worktree_root`, `is_listed`,
@@ -316,12 +318,36 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   day for an agent that was gone. Safe to read /proc there: a session only has
   a pid where `agent_pid` could read /proc in the first place.
 - **A file over `CODE_WHOLE` lines is drawn a window at a time, and not
-  painted.** Measured: 76,000 short lines is 306,000 nodes and about a second
-  to build, plus another second and a quarter to cut the highlighter's answer
-  into lines — repaid on every save of the file being read. `fillCode` builds
-  the rows on screen between two spacers; a redraw costs 5 ms. **Below that
-  length nothing changes**, so an ordinary file keeps the browser's own find
-  and a copy of the whole thing, and the page says which of the two you got.
+  painted.** Measured whole, in a browser, drawing and painting: 2,500 lines
+  144 ms, 5,000 280 ms, 10,000 774 ms, 40,000 2.8 s — and it is paid again on
+  every save of the file being read. `CODE_WHOLE` is 5,000, which covers a
+  hand-written source file, which is what a reader is looking at. It was 2,000
+  and an ordinary file lost its colour for nothing. `fillCode` builds the rows
+  on screen between two spacers; a redraw costs 5 ms. **Below that length
+  nothing changes**, so an ordinary file keeps the browser's own find and a
+  copy of the whole thing, and the page says which of the two you got.
+- **On the Files tab the pane scrolls sideways, not the rows.** A scroller on
+  `.dlines` put the horizontal bar under the last line of the file, where in a
+  file of any length nobody ever scrolls to. The pane scrolls both ways, so the
+  bar is at the bottom of the screen — and the place the reader had scrolled to
+  carries over across a window move for free, because the pane is not rebuilt.
+  The file header is `sticky` in **both** axes for the same reason. **The Diff
+  tab keeps its scroller on `.dlines`**, because it stacks many files in one
+  pane and a bar at the bottom of the screen would belong to whichever block
+  happened to be under it. The override sits beside `.dlines`, not behind
+  `.filebody`, so the two are read together.
+- **Wrapping and windowing cannot both be on.** A windowed file's rows are a
+  grid the scrollbar is read against, and a wrapped row is not one row tall.
+  The CSS is what enforces it — `:not(.windowed)` — rather than a ternary in
+  one function and a promise in two comments. The control being disabled is a
+  courtesy on top of that.
+- **How a file is drawn is the reader's, and lives in this browser.** Tab width
+  and wrap are about this screen and these eyes, not about a session, so they
+  go in `localStorage` like the theme — not a config option, which `PLAN.md`
+  rules out anyway. Both live on the root element, so the cascade obeys them and **neither
+  control rebuilds anything** — `redrawCode` clears the key that guards an
+  open comment box, so a preference that redrew took half a written comment
+  with it. `recallReading` checks the shape of what comes back.
 - **`BIG_LINES` and `CODE_WHOLE` answer one question in two shapes** (PLAN
   4.8.3). The Diff tab closes a long file; the Files tab windows one. A diff
   stacks many files of differing height in one pane, so it has no grid for a
