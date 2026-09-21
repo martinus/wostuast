@@ -294,6 +294,62 @@ def test_the_send_box_types_into_the_terminal(in_pane):
             browser.close()
 
 
+def test_a_restarted_daemon_says_so_and_keeps_saying_it(ws, in_pane):
+    """Restarting `serve` gives the daemon a new token, and an open page
+    keeps the one printed into it. The stream is a GET and reconnects, so
+    the sidebar goes on moving and the page looks alive while every send is
+    refused -- in every session, because the token belongs to the daemon.
+
+    It used to flash "that did not come from this page" for four seconds and
+    then read "live" again, over a page where nothing worked.
+    """
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.fill("#say", "before the restart")
+            page.press("#say", "Enter")
+            page.wait_for_function("document.getElementById('say').value === ''")
+
+            daemon.token = "the token a restarted serve would make"
+
+            page.fill("#say", "after the restart")
+            page.press("#say", "Enter")
+            # A bar over the whole page, because no strip this small can
+            # carry "nothing you do here will work".
+            page.wait_for_selector("body.outdated .stale")
+            said = page.inner_text(".stale")
+            assert "restarted" in said and "Reload" in said
+
+            # The text is still there: they typed it at a terminal they
+            # cannot see, and it never went in.
+            assert page.input_value("#say") == "after the restart"
+            # And the strip still says why, four seconds on.
+            page.wait_for_timeout(4500)
+            assert "restarted" in page.inner_text("#live")
+        finally:
+            browser.close()
+
+
+def test_our_own_word_about_what_happened_still_fades(ws, in_pane):
+    """"Review sent" is news, and news goes stale. Only a thing you asked
+    for and did not get stays."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            said = page.evaluate("""async () => {
+              note("review sent");
+              return document.getElementById('live').textContent;
+            }""")
+            assert said == "review sent"
+            page.wait_for_function(
+                "document.getElementById('live').textContent !== 'review sent'",
+                timeout=8000)
+        finally:
+            browser.close()
+
+
 def test_the_send_box_keeps_the_text_when_it_did_not_go_in(ws, in_pane,
                                                            monkeypatch):
     """They typed it at a terminal they cannot see. Losing it is not on."""

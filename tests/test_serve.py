@@ -582,6 +582,49 @@ def test_a_post_from_another_site_does_nothing(in_tmux):
     assert seen == []
 
 
+def test_a_page_from_an_earlier_serve_is_told_to_reload(in_tmux):
+    """The token is made fresh in `Daemon.__init__`, so restarting `serve`
+    leaves every open page holding one this daemon never knew. The stream is
+    a GET and reconnects, so the sidebar goes on moving and the page looks
+    alive while every POST is refused -- in every session at once, because
+    the token belongs to the daemon and not to a session.
+
+    "That did not come from this page" is true and useless: it came from the
+    page, one `serve` ago. Only the page can say what to do about it, so the
+    daemon has to tell it which refusal this is.
+    """
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello"},
+                        token="the-token-from-the-last-serve",
+                        origin=f"http://127.0.0.1:1234")
+    assert status == 403
+    assert body["stale"] is True
+    assert "restarted" in body["error"] and "Reload" in body["error"]
+    assert seen == [], "it typed into the terminal on a refused POST"
+
+
+def test_a_caller_with_no_token_is_told_nothing_of_the_sort(in_tmux):
+    """It never had a token, so it is not a page of ours that went out of
+    date -- and a stranger is told nothing it did not already know."""
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send", {"text": "rm -rf /"})
+    assert status == 403
+    assert "stale" not in body
+    assert body["error"] == "that did not come from this page"
+
+
+def test_another_site_holding_a_wrong_token_is_not_a_stale_page(in_tmux):
+    """It fails the Origin check, which no page of ours ever does. Reading
+    `stale` off the token alone would have handed that wording to a caller
+    that is not a page of ours at all."""
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello"},
+                        token="a-guess", origin="https://evil.example")
+    assert status == 403
+    assert "stale" not in body
+    assert seen == []
+
+
 def test_a_post_from_this_page_acts(in_tmux):
     daemon, base, seen = in_tmux
     status, body = post(f"{base}/api/session/s1/send", {"text": "run the tests"},

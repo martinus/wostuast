@@ -385,10 +385,28 @@ def test_expanding_a_tool_result_keeps_the_search_highlighted(page_at):
             browser.close()
 
 
-def test_an_error_in_the_live_slot_gives_the_slot_back(page_at):
-    """The slot says whether the stream is live. An error borrows it for four
-    seconds and has to give it back — it used to assign itself back, so the
-    word never returned."""
+def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
+    """The slot says whether the stream is live. A passing word borrows it
+    for four seconds and has to give it back — it used to assign itself
+    back, so the word never returned."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.wait_for_function(
+                "document.getElementById('live').textContent === 'live'")
+            page.evaluate("note('review sent')")
+            assert "review sent" in page.locator("#live").inner_text()
+            page.wait_for_function(
+                "document.getElementById('live').textContent === 'live'",
+                timeout=15000)
+        finally:
+            browser.close()
+
+
+def test_a_failure_in_the_live_slot_stays_there(page_at):
+    """It is not news that goes stale: it is a thing you asked for and did
+    not get. Fading it left a strip reading "live" over a page where the
+    thing you tried had not happened, and nothing said why."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
@@ -396,9 +414,11 @@ def test_an_error_in_the_live_slot_gives_the_slot_back(page_at):
                 "document.getElementById('live').textContent === 'live'")
             page.evaluate("said({error: 'no pane for this session'})")
             assert "no pane" in page.locator("#live").inner_text()
-            page.wait_for_function(
-                "document.getElementById('live').textContent === 'live'",
-                timeout=15000)
+            page.wait_for_timeout(4500)     # proving it did NOT go away
+            assert "no pane" in page.locator("#live").inner_text()
+            # The next thing that works gives the slot back.
+            page.evaluate("said({done: true})")
+            assert page.locator("#live").inner_text() == "live"
         finally:
             browser.close()
 

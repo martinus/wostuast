@@ -127,6 +127,49 @@ def test_the_tab_icon_follows_a_theme_change(page_at):
             browser.close()
 
 
+def test_no_state_on_the_body_can_make_the_page_vanish(page_at):
+    """`stream.onerror` does `classList.add("lost")`, and the rule that hid
+    the bar until it was wanted was `.lost { display: none }` — which the
+    body then matched itself. The whole page went to `display: none` the
+    moment the stream hiccupped, and came back when it reconnected or when
+    the reader pressed F5. From the outside it read as a page that had
+    simply stopped working.
+
+    So the rule is not "do not call it `lost`" but this: whatever the page
+    puts on `body`, the page is still there. Every class it sets is named
+    here, and a new one belongs in this list.
+    """
+    states = ["offline", "outdated", "show-thinking", "dragging"]
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            seen = page.evaluate("""(states) => {
+              const look = () => [
+                getComputedStyle(document.body).display,
+                Math.round(document.querySelector(".app")
+                             .getBoundingClientRect().height),
+                document.querySelectorAll(".row").length];
+              const out = {before: look()};
+              for (const one of states) {
+                document.body.classList.add(one);
+                out[one] = look();
+                document.body.classList.remove(one);
+              }
+              // And all of them at once, which is a real Tuesday.
+              document.body.classList.add(...states);
+              out.together = look();
+              return out;
+            }""", states)
+            tall = seen["before"][1]
+            assert tall > 100, seen
+            for where, found in seen.items():
+                assert found[0] != "none", (where, found)
+                assert found[1] == tall, (where, found)
+                assert found[2] == seen["before"][2], (where, found)
+        finally:
+            browser.close()
+
+
 def test_every_icon_fits_inside_its_box(page_at):
     """An `svg` clips to its own viewport, and a stroke reaches half its
     width past the line it is drawn on. The page icon's bottom edge sat at
