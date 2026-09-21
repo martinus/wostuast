@@ -66,6 +66,7 @@ This list exists because each entry was re-implemented once already.
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
 | "3 min ago" | `ago(when)` — `40s`, `4min`, `2h 15min`, `2d 6h`; two units once the first is coarse |
 | one session's route | `apiUrl(id, what, query)` |
+| the reader's ticket links in some text | `linkTickets(root)` — after any scrub |
 | "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
@@ -222,6 +223,18 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
   events use `textContent`. Assigning `innerHTML` first fires `onerror` before
   any scrub runs — that was real.
+- **An autolink runs after the scrub, over text nodes, and checks its own
+  href.** `linkTickets` builds one anchor at a time and never parses
+  anything, so a `url` template can put text on the page and nothing else.
+  `ticketUrl` tests for `http(s)` a second time, although `link_trouble`
+  already refused anything else: the two sides are far apart and only one of
+  them is the one that inserts. `links.json` is the reader's own file, in
+  the state directory — never a per-worktree one, which an agent could write.
+- **Nothing can time a regular expression out in a browser.** `risky_pattern`
+  spots the one shape that backtracks catastrophically — a quantifier inside
+  a quantified group — and `LINKS_MAX` caps the links in one block, and that
+  is the whole of the defence. It is a heuristic; say so rather than implying
+  the page is safe from a pattern somebody writes.
 - **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
   of text with colours, never markup.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control

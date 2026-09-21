@@ -166,7 +166,37 @@ The page is worked from the keyboard. `?` shows this list without leaving it.
 | `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. Rotates at 20 MB. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
+| `~/.local/state/wostuast/links.json` | Your own ticket links, if you want any. |
 | `~/.claude/settings.json` | Where the hooks are registered. |
+
+### Ticket links
+
+If your work has ticket ids in it — `OA-73219`, `QSP-52811` — you can have
+them become links. Write `~/.local/state/wostuast/links.json`:
+
+```json
+[
+  {"match": "(OA|QSP)-(\\d+)", "url": "https://tickets.example.com/browse/$1-$2"}
+]
+```
+
+`match` is a regular expression and `url` is where a match goes. `$1` to `$9`
+are its groups and `$0` is the whole match. The url has to start with `http://`
+or `https://`.
+
+Links are made in what the agent wrote and in what you typed, never inside
+code or inside a link that is already one: a ticket id in a command line is
+part of the command. At most forty links are made in one turn.
+
+`wostuast doctor` says what is wrong with an entry it cannot use, so a link
+that does nothing is never a mystery. It also refuses a pattern with a
+quantifier inside a quantified group — `(a+)+` — because that shape can
+backtrack long enough to freeze the page, and nothing in a browser can stop a
+regular expression once it starts. Keep patterns simple.
+
+The file is yours and nothing writes it but you. There is no per-project
+version: an agent can write a file in its own worktree, and a link it chose
+where you expect yours is a link you would follow.
 
 ### The status line
 

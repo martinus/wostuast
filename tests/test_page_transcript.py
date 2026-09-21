@@ -620,3 +620,122 @@ def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
             assert said[5] == ""
         finally:
             browser.close()
+
+
+# --- the reader's own autolinks ----------------------------------------------
+
+def test_a_ticket_id_becomes_a_link(ws, page_at, tmp_path):
+    """The whole of #92: a pattern and a url in `links.json`, and a ticket id
+    in what the agent wrote becomes a link to it."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"},
+    ]), encoding="utf-8")
+    daemon, path = page_at
+    append_blocks(daemon, [
+        "Fixed OA-73219 and QSP-52811.\n\n"
+        "Not in code: `git log OA-11111` or\n\n```\nOA-22222\n```\n",
+    ])
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            page.wait_for_selector(".prose a.ticket")
+            seen = page.eval_on_selector_all(
+                ".prose a.ticket",
+                "els => els.map((one) => [one.textContent, one.href, one.target])")
+            assert seen == [
+                ["OA-73219", "https://tickets/browse/OA-73219", "_blank"],
+                ["QSP-52811", "https://tickets/browse/QSP-52811", "_blank"],
+            ], seen
+            # A ticket id inside code is part of the command, not a link.
+            assert page.locator("code a.ticket, pre a.ticket").count() == 0
+            # The page holds this fixture's own fences too, so it is asked
+            # for all of them rather than for the first.
+            code = page.eval_on_selector_all(
+                ".prose code, .prose pre", "els => els.map((o) => o.textContent)")
+            assert any("OA-11111" in one for one in code), code
+            assert any("OA-22222" in one for one in code), code
+        finally:
+            browser.close()
+
+
+def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
+    """A prompt is plain text, not Markdown, so it goes through the same
+    walker rather than through `markdown`."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"OA-(\d+)", "url": "https://tickets/browse/OA-$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            made = page.evaluate("""() => {
+              const box = document.createElement('div');
+              box.textContent = 'please look at OA-4242 today';
+              linkTickets(box);
+              const one = box.querySelector('a.ticket');
+              return one && [one.textContent, one.getAttribute('href'),
+                             box.textContent];
+            }""")
+            assert made == ["OA-4242", "https://tickets/browse/OA-4242",
+                            "please look at OA-4242 today"]
+        finally:
+            browser.close()
+
+
+def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
+    """It walks text nodes and builds one anchor at a time, with an href this
+    side checks again — so a url template that is not http(s), or one that
+    tries to be markup, produces text and no link."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            seen = page.evaluate("""() => {
+              // A template the daemon would have refused, forced in here.
+              state.links = [{re: /OA-(\\d+)/g, url: 'javascript:alert($1)'},
+                             {re: /QSP-(\\d+)/g,
+                              url: '"><img src=x onerror=alert(1)>$1'}];
+              const box = document.createElement('div');
+              box.textContent = 'OA-1 and QSP-2';
+              linkTickets(box);
+              return {links: box.querySelectorAll('a').length,
+                      images: box.querySelectorAll('img').length,
+                      text: box.textContent};
+            }""")
+            assert seen == {"links": 0, "images": 0, "text": "OA-1 and QSP-2"}
+            assert page.evaluate("window.PWNED ?? null") is None
+        finally:
+            browser.close()
+
+
+def test_at_most_forty_links_in_one_block(ws, page_at):
+    """A pattern that matches everything would otherwise build a link per
+    word. The cap is the daemon's number too."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"T-(\d+)", "url": "https://tickets/$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            made = page.evaluate("""() => {
+              const box = document.createElement('div');
+              box.textContent = Array.from({length: 100},
+                                           (x, n) => 'T-' + n).join(' ');
+              linkTickets(box);
+              return box.querySelectorAll('a.ticket').length;
+            }""")
+            assert made == 40, made
+        finally:
+            browser.close()

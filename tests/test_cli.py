@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import argparse
 import time
 
@@ -195,3 +196,63 @@ def test_ls_does_not_pass_an_escape_sequence_to_the_terminal(ws, capsys):
     assert "took over the terminal" in out
     assert "\x1b" not in out
     assert "\x07" not in out
+
+
+# --- the reader's own autolinks ----------------------------------------------
+
+
+def write_links(ws, text):
+    """The state directory is made on demand everywhere else, so a test that
+    writes straight into it has to make it too."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(text, encoding="utf-8")
+
+
+def test_only_a_usable_autolink_reaches_the_page(ws, tmp_path):
+    """A broken entry is dropped here and named by `doctor`, rather than
+    becoming a link that quietly does nothing."""
+    write_links(ws, json.dumps([
+        {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"},
+        {"match": "OA-", "url": "javascript:alert(1)"},       # not http
+        {"match": "OA-(", "url": "https://tickets/"},          # will not compile
+        {"match": "", "url": "https://tickets/"},              # nothing to match
+        {"url": "https://tickets/"},                           # no match at all
+        "not an object",
+        {"match": "x" * 300, "url": "https://tickets/"},       # far too long
+        {"match": "(a+)+b", "url": "https://tickets/"},         # backtracks
+    ]))
+    assert ws.read_links() == [
+        {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"}]
+
+
+def test_no_links_file_is_no_links(ws):
+    assert ws.read_links() == []
+
+
+def test_a_links_file_that_is_not_a_list_is_no_links(ws):
+    write_links(ws, '{"match": "OA-", "url": "https://t/"}')
+    assert ws.read_links() == []
+
+
+def test_a_quantifier_inside_a_quantified_group_is_refused(ws):
+    """`(a+)+b` is the shape that backtracks catastrophically, and nothing on
+    the page can time a regular expression out. Spotting it is a heuristic
+    and says so; it is the one shape worth spotting."""
+    assert ws.risky_pattern("(a+)+") is True
+    assert ws.risky_pattern("(x*)*y") is True
+    assert ws.risky_pattern(r"([a-z]+\d*)+") is True
+    assert ws.risky_pattern(r"(OA|QSP)-(\d+)") is False
+    assert ws.risky_pattern(r"\bTICKET-\d+\b") is False
+    assert ws.risky_pattern("(abc)+") is False
+
+
+def test_doctor_names_a_broken_autolink(ws, capsys):
+    write_links(ws, json.dumps([
+        {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
+        {"match": "BAD-(", "url": "https://tickets/"},
+    ]))
+    ws.cmd_doctor(argparse.Namespace())
+    said = capsys.readouterr().out
+    assert "link 2" in said and "not a regular expression" in said
+    # And a broken link is not a reason for the whole check to fail.
+    assert "note" in said

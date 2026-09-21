@@ -213,6 +213,17 @@ def names_path() -> Path:
     return state_dir() / "names.json"
 
 
+def links_path() -> Path:
+    """The reader's own autolinks: a ticket id in a transcript, turned into a
+    link to wherever their tickets live.
+
+    Yours, on your machine, across every session. It is not a settings file --
+    `PLAN.md` rules those out -- it is a list of two-field entries, and the
+    page works without it. `doctor` says what is wrong with a bad one.
+    """
+    return state_dir() / "links.json"
+
+
 def log_path() -> Path:
     return state_dir() / "wostuast.log"
 
@@ -2699,6 +2710,89 @@ def write_status(session_id: str, status: Status) -> None:
 NAME_MAX = 120
 
 
+#: A pattern longer than this is refused. It is not a safety property --
+#: nothing bounds what a regular expression costs -- but a pattern that long
+#: is a mistake, and refusing it is cheaper than explaining the slowness.
+LINK_PATTERN_MAX = 200
+
+#: At most this many links in one block. A pattern that matches everything
+#: would otherwise build a link per word.
+LINKS_MAX = 40
+
+
+def risky_pattern(pattern: str) -> bool:
+    """A quantifier inside a group that is itself quantified: `(a+)+`.
+
+    This is the shape that backtracks catastrophically, and it is the one
+    shape worth spotting. It is a heuristic and says so: nothing here can
+    prove a regular expression is quick, and the page is what pays.
+    """
+    for at, char in enumerate(pattern):
+        if char != "(":
+            continue
+        depth, close = 0, -1
+        for here in range(at, len(pattern)):
+            if pattern[here] == "\\":
+                continue
+            if pattern[here] == "(":
+                depth += 1
+            elif pattern[here] == ")":
+                depth -= 1
+                if depth == 0:
+                    close = here
+                    break
+        if close < 0 or close + 1 >= len(pattern):
+            continue
+        body = pattern[at + 1:close]
+        if pattern[close + 1] in "*+{" and any(one in body for one in "*+{"):
+            return True
+    return False
+
+
+def link_trouble(one: Any) -> str:
+    """What is wrong with one autolink entry, or empty when nothing is.
+
+    The page is handed only the entries that pass, so a broken one is a line
+    in `doctor` rather than a link that quietly does nothing.
+    """
+    if not isinstance(one, dict):
+        return "not an object with `match` and `url`"
+    match = one.get("match")
+    url = one.get("url")
+    if not isinstance(match, str) or not match:
+        return "`match` is missing or not text"
+    if not isinstance(url, str) or not url:
+        return "`url` is missing or not text"
+    if len(match) > LINK_PATTERN_MAX:
+        return f"`match` is longer than {LINK_PATTERN_MAX} characters"
+    if not url.startswith(("http://", "https://")):
+        return "`url` does not start with http:// or https://"
+    try:
+        re.compile(match)
+    except re.error as trouble:
+        return f"`match` is not a regular expression: {trouble}"
+    if risky_pattern(match):
+        return ("`match` has a quantifier inside a quantified group, which can"
+                " be slow enough to freeze the page")
+    return ""
+
+
+def read_links() -> list[dict[str, str]]:
+    """The autolinks that are usable, in the order they were written.
+
+    A file that is missing, unreadable or the wrong shape is no links at all:
+    this is a convenience, and the transcript reads perfectly well without it.
+    """
+    try:
+        payload = json.loads(links_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [{"match": one["match"], "url": one["url"]}
+            for one in payload if not link_trouble(one)]
+
+
 def read_names() -> dict[str, str]:
     """Every name the reader has given, or an empty map."""
     try:
@@ -3545,6 +3639,11 @@ class Serving:
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
+        elif path == "/api/links":
+            # The reader's own, not a session's, so it hangs off nothing. It
+            # is read from disk here rather than held, because it changes
+            # when a person edits a file and a reload should be enough.
+            self.reply_json({"links": read_links()})
         elif path == "/api/events":
             self.stream(query.get("watch", [""])[0])
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -3954,6 +4053,27 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     report(which_tmux(), "tmux found",
            "tmux not found; jump and send stay hidden", fatal=False)
+
+    # The autolinks, if there are any. A broken one is a note and not a
+    # failure: the transcript reads perfectly well without it, and the point
+    # of saying so is that a link doing nothing gives no clue why.
+    links = links_path()
+    if links.exists():
+        try:
+            payload = json.loads(links.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            payload = None
+            report(False, "", f"cannot read {links}: {error}", fatal=False)
+        if payload is not None and not isinstance(payload, list):
+            report(False, "", f"{links} is not a list of links", fatal=False)
+        elif payload is not None:
+            bad = [(at, link_trouble(one)) for at, one in enumerate(payload)]
+            broken = [(at, why) for at, why in bad if why]
+            report(not broken,
+                   f"{len(payload)} autolink(s) in {links}",
+                   "; ".join(f"link {at + 1} in {links}: {why}"
+                             for at, why in broken),
+                   fatal=False)
     report(install_path().exists(), f"installed at {install_path()}",
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
 
@@ -4582,6 +4702,12 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   color: var(--ink-bright);
 }
 .prose { flex-grow: 1; line-height: 1.55; min-width: 0; }
+/* One of the reader's own autolinks. It sits inside an agent's words, so it
+   is underlined rather than coloured: a colour here would compete with the
+   four this page already spends on state. */
+.ticket { color: inherit; text-decoration: underline dotted;
+  text-underline-offset: 2px; }
+.ticket:hover { color: var(--needs); text-decoration-style: solid; }
 .prose > *:first-child { margin-top: 0; }
 .prose > *:last-child { margin-bottom: 0; }
 .prose h1, .prose h2, .prose h3 {
@@ -5116,6 +5242,9 @@ const state = {
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   goToBlock: null,      // the block a link asked for, until it is on screen
+  // The reader's own autolinks, compiled once. Empty until `/api/links`
+  // answers, and empty for ever on a machine with no `links.json`.
+  links: [],
   // Where each session was left, by id. The choices only -- see `savePlace`.
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
@@ -5920,6 +6049,112 @@ function notifyAbout(sessions) {
 
 // --- the transcript ---------------------------------------------------------
 
+//: At most this many links in one block. A pattern that matches everything
+//: would otherwise build a link per word. The daemon has the same number and
+//: the same reason.
+const LINKS_MAX = 40;
+
+// The reader's own autolinks, from `links.json` by way of the daemon. It has
+// already thrown out an entry that will not compile or whose url is not
+// http(s); this compiles what is left, once, and drops anything that still
+// will not take -- the two regular expression dialects are close but not the
+// same, and a pattern Python accepts may not be one JavaScript does.
+async function loadLinks() {
+  let body = null;
+  try {
+    const answer = await fetch("/api/links");
+    body = await answer.json();
+  } catch (error) {
+    return;                            // no links is a fine answer
+  }
+  const out = [];
+  for (const one of (body && body.links) || []) {
+    try {
+      out.push({ re: new RegExp(one.match, "g"), url: String(one.url) });
+    } catch (error) {
+      // the daemon says why, in `doctor`
+    }
+  }
+  state.links = out;
+  if (out.length) draw();              // the transcript on screen has none yet
+}
+
+// The address one match stands for. `$1` to `$9` are the groups and `$0` is
+// the whole of it, which is the gitlens shape written the way a person who
+// has used `sed` expects.
+function ticketUrl(template, hit) {
+  const built = template.replace(/\$([0-9])/g,
+                                 (whole, n) => hit[Number(n)] || "");
+  return /^https?:\/\//i.test(built) ? built : "";
+}
+
+// Turn what the reader's patterns match into links, in place.
+//
+// It walks text nodes, like `markHits`, so nothing an agent wrote is ever
+// re-parsed as HTML -- and it skips code and anything already inside a link,
+// because a ticket id in a command line is part of the command and a url is
+// already where it points.
+function linkTickets(root) {
+  if (!state.links.length) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const found = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.parentElement && node.parentElement.closest("code, pre, a")) continue;
+    found.push(node);
+  }
+  let made = 0;
+  for (const node of found) {
+    if (made >= LINKS_MAX) return;
+    const pieces = linkOne(node.nodeValue, LINKS_MAX - made);
+    if (!pieces) continue;
+    made += pieces.made;
+    node.replaceWith(pieces.holder);
+  }
+}
+
+// One text node, cut into text and links. Null when nothing matched, so the
+// common case costs a scan and no DOM work at all.
+function linkOne(text, room) {
+  const holder = document.createDocumentFragment();
+  let from = 0;
+  let made = 0;
+  while (from < text.length && made < room) {
+    // The earliest match among every pattern, so two patterns that overlap
+    // give the same answer whichever order they are written in.
+    let best = null;
+    for (const one of state.links) {
+      one.re.lastIndex = from;
+      const hit = one.re.exec(text);
+      // A pattern that can match nothing would never move `from` on.
+      if (hit && hit[0] && (!best || hit.index < best.hit.index)) {
+        best = { one, hit };
+      }
+    }
+    if (!best) break;
+    const where = ticketUrl(best.one.url, best.hit);
+    const at = best.hit.index;
+    if (at > from) {
+      holder.appendChild(document.createTextNode(text.slice(from, at)));
+    }
+    if (where) {
+      const link = put(holder, "a", "ticket", best.hit[0]);
+      link.href = where;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      made += 1;
+    } else {
+      holder.appendChild(document.createTextNode(best.hit[0]));
+    }
+    from = at + best.hit[0].length;
+  }
+  if (!made) return null;
+  if (from < text.length) {
+    holder.appendChild(document.createTextNode(text.slice(from)));
+  }
+  return { holder, made };
+}
+
 function safeLinks(root) {
   for (const link of root.querySelectorAll("a")) {
     const href = link.getAttribute("href") || "";
@@ -6008,6 +6243,10 @@ function markdown(parent, text) {
     node.textContent = text;   // assigning text already clears the children
   }
   safeLinks(node);
+  // After the scrub, so a pattern can never put an element on this page: it
+  // walks text nodes and builds one anchor at a time, with an href this side
+  // has checked again.
+  linkTickets(node);
   return node;
 }
 
@@ -6304,8 +6543,11 @@ function blockNode(block, index) {
     put(who, "div", null, clock(block.ts));
   }
   putCopy(who, block, mine);
-  if (mine || block.kind === "thinking") put(node, "div", "bubble", block.text);
-  else markdown(node, block.text);
+  if (mine || block.kind === "thinking") {
+    linkTickets(put(node, "div", "bubble", block.text));
+  } else {
+    markdown(node, block.text);
+  }
   return node;
 }
 
@@ -8950,6 +9192,10 @@ window.addEventListener("hashchange", goToLink);
 // The transcript is already on screen as text. When marked lands it is drawn
 // again as Markdown; when it does not, the text stays, and that is the answer.
 markedReady().then((came) => { if (came) draw(); });
+
+// The reader's own autolinks, asked for once. A machine with no `links.json`
+// gets an empty list and nothing here changes.
+loadLinks();
 </script>
 </body>
 </html>"""
