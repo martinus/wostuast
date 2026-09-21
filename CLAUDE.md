@@ -28,6 +28,7 @@ Nothing else writes to a terminal. Nothing owns the agent process.
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
 | `PLAN.md` | Goals, non-goals, design, milestones. |
 | `README.md` | What a user reads. Keep in step with the commands. |
+| `.claude/skills/issues/SKILL.md` | How to work the issue list: group, reproduce, ask, prove, review, merge on green, read the list again. Invoked as `/issues`, and by "do the issues". |
 | `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, plus one job with a browser. Both run `pytest -q -n auto`; neither names a test file, and it should stay that way — naming one broke the browser job the moment a file was renamed. |
 
 ### Finding code in `wostuast`
