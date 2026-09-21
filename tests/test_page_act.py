@@ -37,6 +37,132 @@ def test_jump_puts_the_cursor_in_the_pane(in_pane):
             browser.close()
 
 
+# --- a question the agent is stopped on --------------------------------------
+
+#: Two questions in one call, the shape a real `AskUserQuestion` sends.
+ASKED = {"questions": [
+    {"question": "Approve the plan and proceed?", "header": "Plan approval",
+     "options": [
+         {"label": "Approve", "description": "Start writing the test."},
+         {"label": "Changes needed", "description": "Describe what to change."},
+         {"label": "Abandon", "description": "Stop without committing."},
+     ], "multiSelect": False},
+    {"question": "Run it on every PR?", "header": "On every PR",
+     "options": [
+         {"label": "On demand", "description": "No annotation."},
+         {"label": "Every PR", "description": "One more app start per build."},
+     ], "multiSelect": False},
+]}
+
+
+def now_asking(ws, daemon, at=None):
+    """The two events a real ask sends, folded into the daemon."""
+    at = at or time.time()
+    ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
+                     "tool_name": "AskUserQuestion", "tool_input": ASKED,
+                     "tool_use_id": "toolu_q1", "ts": at})
+    ws.append_event({"session_id": "s1", "hook_event_name": "PermissionRequest",
+                     "tool_name": "AskUserQuestion", "tool_input": ASKED,
+                     "ts": at + 0.1})
+    daemon.store.refresh()
+
+
+def test_an_open_question_is_drawn_over_whatever_tab_you_are_on(ws, in_pane):
+    """The row can say "needs you" and the reason line can name the question.
+    Neither can hold the question and its answers, and that is what you came
+    to the page for."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .askopt")
+            seen_text = page.eval_on_selector_all(
+                "#asking .askhead", "els => els.map((one) => one.textContent)")
+            assert seen_text == ["Plan approval", "On every PR"]
+            options = page.eval_on_selector_all(
+                "#asking .askone:nth-child(1) .askopt",
+                """els => els.map((one) => [
+                     one.querySelector('.asknum').textContent,
+                     one.querySelector('.asklabel').textContent])""")
+            assert options == [["1", "Approve"], ["2", "Changes needed"],
+                               ["3", "Abandon"]]
+            # And it stands over every tab, not only the one it was drawn on.
+            for tab in ("files", "diff", "review", "session"):
+                show_tab(page, tab)
+                assert page.locator("#asking .askopt").count() == 5, tab
+        finally:
+            browser.close()
+
+
+def test_picking_an_option_presses_its_number_in_the_terminal(ws, in_pane):
+    """A keystroke, not a paste: `tmux_send` sends one line literally and
+    then presses Enter, which is exactly what a finger would do."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            page.click("#asking .askone:nth-child(1) .askopt:nth-child(2)")
+            page.wait_for_timeout(500)
+            assert ["tmux", "send-keys", "-t", "%7", "-l", "--", "2"] in seen
+            assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+            # No paste markers: a chooser reads keys, and a paste is not one.
+            assert not [one for one in seen
+                        if any("200~" in str(part) for part in one)]
+        finally:
+            browser.close()
+
+
+def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
+    """Clearing it on the click would take away a question that a missed
+    keystroke left standing, and the reader would never know."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            page.click("#asking .askone:nth-child(1) .askopt:nth-child(1)")
+            page.wait_for_timeout(600)
+            assert page.locator("#asking .askopt").count() == 5
+            # And the button the reader pressed stays pressed. The rows
+            # arrive about once a second while an agent works, and a bar
+            # rebuilt under the reader hands back an enabled button for a
+            # question that has already been answered once.
+            picked = "#asking .askone:nth-child(1) .askopt:nth-child(1)"
+            assert page.locator(picked).is_disabled()
+            daemon.hub.send("sessions", daemon.sessions_payload())
+            page.wait_for_timeout(400)
+            assert page.locator(picked).is_disabled()
+
+            ws.append_event({"session_id": "s1", "hook_event_name": "PostToolUse",
+                             "tool_name": "AskUserQuestion", "tool_input": ASKED,
+                             "tool_use_id": "toolu_q1", "ts": time.time()})
+            daemon.tick()            # fold it, and tell the page
+            # `hidden` is an attribute, not a thing that can be waited for by
+            # being visible: an element that is hidden never is.
+            page.wait_for_function(
+                "document.getElementById('asking').hidden === true",
+                timeout=15000)
+        finally:
+            browser.close()
+
+
+def test_a_session_with_no_question_shows_no_bar(ws, in_pane):
+    """It is the bar `PLAN.md` took away. It comes back for one thing only,
+    and it costs nothing the rest of the time."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            assert page.locator("#asking:not([hidden])").count() == 0
+            assert page.locator("#asking .askopt").count() == 0
+        finally:
+            browser.close()
+
+
 def test_the_send_box_types_into_the_terminal(in_pane):
     daemon, base, seen = in_pane
     with sync_playwright() as play:

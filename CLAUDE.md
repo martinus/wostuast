@@ -355,6 +355,38 @@ the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
   read for the message that means a dialog, never assumed to be one:
   `auth_success` ("Logged in as …") took the row amber with nothing that
   could ever clear it.
+- **A question is a question, not a permission.** `AskUserQuestion` is a tool,
+  so `PreToolUse` and then `PermissionRequest` carry the whole of it in
+  `tool_input` -- every question, every option, every description. It used to
+  fall to `tool_target`'s catch-all and reach the row as
+  `AskUserQuestion {"questions": [{"question": "Approve the pla…`, clipped at
+  eighty characters: everything the reader needed was in the payload and none
+  of it reached them. `read_ask` keeps what the page draws, **named field by
+  field**, because a row goes to every browser on every push and a field
+  nobody read must not reach the page. The row says `asks:` and not
+  `permission:` -- the word sent people looking for a dialog that asks
+  something else.
+- **`Session.asking` is cleared wherever the attention is, and by its own
+  `tool_use_id`.** `PreToolUse` carries that id and `PermissionRequest` does
+  not, so the ask is read from the first of the two: it is the only thing that
+  says *this* question was answered. A `PostToolUse` for another call is not
+  an answer -- two calls really do overlap -- and this stale question has
+  buttons on it, which type a number into a terminal that has moved on.
+- **The question bar is the bar `PLAN.md` took away, back for one thing.** The
+  old one said the branch, the pane, the model and the state, all of which the
+  chosen row says one column to the left, at 56 px on every tab for ever. This
+  one says what nothing else can hold: the question and its answers. It stands
+  only while `asking` is set. `drawAsking` is called from `drawHeader`, so a
+  fifth call site cannot forget it, and it has a redraw key -- rows arrive
+  about once a second, and a bar rebuilt under the reader hands back an
+  enabled button for a question already answered once.
+- **A button that types into a terminal shows what it types.** The option's
+  number is drawn on it, and `answerAsk` sends exactly that through the one
+  road this page has: `tell(id, "send", ...)`, which is `tmux_send`, which
+  sends one line literally and then presses Enter -- a keystroke, not a paste.
+  No new verb and no new route. **It does not clear the question**: that
+  happens when the daemon sees the `PostToolUse`, because clearing on the
+  click would hide a question a missed keystroke left standing.
 - **A call starting clears the attention; a call finishing only clears its
   own.** Claude Code runs two tools at once now and then — one of 233 calls on
   a real machine started while another was still open, both of them `Bash`.

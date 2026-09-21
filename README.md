@@ -19,10 +19,11 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 
 ## Why
 
-**You see which agent needs you.** The list is grouped by state, most urgent
-first, newest inside each group. The browser tab title and icon say it too, so
-a background tab still tells you, and it can raise a notification when an agent
-starts waiting.
+**You see which agent needs you, and what it is asking.** The list is grouped
+by state, most urgent first, newest inside each group. The browser tab title
+and icon say it too, so a background tab still tells you. When an agent stops
+to ask you something, the question and every answer stand over the page —
+click one and wostuast presses that number in its terminal.
 
 **You review its work like a pull request.** Hover any line — in the diff or in
 a file you are reading — click the `+`, write what you want changed. The

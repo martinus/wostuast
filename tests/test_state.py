@@ -386,6 +386,140 @@ def test_a_permission_request_needs_you_at_once(ws):
     assert session.reason == "permission: Bash ls ~"
 
 
+# --- a question the agent is stopped on ---------------------------------------
+
+#: Two questions in one call, as a real `AskUserQuestion` sends them. The
+#: shape was read off a recorded `PreToolUse`, not guessed; the text is
+#: invented, because a real one holds somebody's work.
+ASKED = {"questions": [
+    {"question": "Approve the plan and proceed with implementation?",
+     "header": "Plan approval",
+     "options": [
+         {"label": "Approve", "description": "Start writing the test."},
+         {"label": "Changes needed", "description": "Describe what to change."},
+         {"label": "Abandon", "description": "Stop without committing."},
+     ],
+     "multiSelect": False},
+    {"question": "Run it on every PR, or only when asked?",
+     "header": "On every PR",
+     "options": [
+         {"label": "On demand (Recommended)", "description": "No annotation."},
+         {"label": "Every PR", "description": "One more app start per build."},
+     ],
+     "multiSelect": False},
+]}
+
+
+def asked(**extra):
+    """The two events a real ask sends, in the order and shape it sends them:
+    `PreToolUse` with the `tool_use_id`, then `PermissionRequest` without
+    one, ninety milliseconds later."""
+    return [
+        event("PreToolUse", tool_name="AskUserQuestion", tool_input=ASKED,
+              tool_use_id="toolu_q1", ts=1000.0, **extra),
+        event("PermissionRequest", tool_name="AskUserQuestion",
+              tool_input=ASKED, ts=1000.1, **extra),
+    ]
+
+
+def test_a_question_is_kept_whole_enough_to_answer(ws):
+    """The row said `AskUserQuestion {"questions": [{"question": "Approve …`
+    -- the catch-all summary, clipped at eighty characters. Everything a
+    reader needs to answer was in the payload and none of it reached them."""
+    session = fold(ws, *asked())
+    assert session.state == "needs_you"
+    assert session.asking["id"] == "toolu_q1"
+    first = session.asking["questions"][0]
+    assert first["header"] == "Plan approval"
+    assert first["question"].startswith("Approve the plan")
+    assert [one["label"] for one in first["options"]] == [
+        "Approve", "Changes needed", "Abandon"]
+    assert first["options"][0]["description"] == "Start writing the test."
+    assert len(session.asking["questions"]) == 2
+
+
+def test_the_row_says_what_is_being_asked_not_json(ws):
+    """And it does not call it a permission: it is a question with answers
+    written out, and "permission" sent you looking for a dialog that asks
+    something else."""
+    session = fold(ws, *asked())
+    assert session.reason == "asks: Plan approval, On every PR"
+
+
+def test_the_question_goes_when_it_is_answered(ws):
+    store = ws.Store()
+    for one in asked():
+        store.apply(one)
+    session = store.sessions["s1"]
+    assert session.asking is not None        # or the rest proves nothing
+    store.apply(event("PostToolUse", tool_name="AskUserQuestion",
+                      tool_input=ASKED, tool_use_id="toolu_q1", ts=1050.0))
+    assert session.asking is None
+    assert session.state == "working"
+
+
+def test_another_call_finishing_does_not_take_the_question_away(ws):
+    """Claude Code runs two tools at once now and then. The other one
+    reporting back is not an answer to this question -- and this one has
+    buttons on it, so a stale question is a button that types a number into a
+    terminal that has moved on."""
+    session = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "sleep 30"},
+              tool_use_id="b1", ts=999.0),
+        *asked(),
+        event("PostToolUse", tool_name="Bash", tool_input={"command": "sleep 30"},
+              tool_use_id="b1", ts=1001.0),
+    )
+    assert session.asking is not None
+    assert session.state == "needs_you"
+
+
+def test_the_question_goes_when_the_agent_moves_on(ws):
+    """A call starting says the agent is no longer stopped on anything --
+    which is the only sign of a denial, because saying No fires no hook."""
+    session = fold(ws, *asked(),
+                   event("PreToolUse", tool_name="Bash",
+                         tool_input={"command": "ls"}, tool_use_id="b2",
+                         ts=1002.0))
+    assert session.asking is None
+
+
+def test_a_question_does_not_survive_a_restart(ws):
+    """A session killed at its dialog and resumed came back "ready" with the
+    old permission question under it. A question with buttons is the same bug
+    with a worse ending."""
+    session = fold(ws, *asked(), event("SessionStart", source="resume",
+                                       ts=1003.0))
+    assert session.asking is None
+
+
+def test_a_question_with_nothing_to_pick_is_not_one(ws):
+    """An ask with no options is nothing a button can answer, and an empty
+    bar over every tab is worse than the row alone."""
+    session = fold(ws, event("PreToolUse", tool_name="AskUserQuestion",
+                             tool_input={"questions": [{"question": "well?"}]},
+                             tool_use_id="q", ts=1000.0))
+    assert session.asking is None
+
+
+def test_only_what_is_drawn_is_kept(ws):
+    """The log keeps every payload whole; a row does not. What goes to every
+    browser on every push is named field by field, so a field nobody read
+    cannot reach the page."""
+    session = fold(ws, event(
+        "PreToolUse", tool_name="AskUserQuestion", tool_use_id="q", ts=1000.0,
+        tool_input={"questions": [{
+            "question": "well?", "header": "H", "multiSelect": True,
+            "surprise": "from a newer Claude Code",
+            "options": [{"label": "yes", "description": "d",
+                         "preview": "also new"}]}]}))
+    one = session.asking["questions"][0]
+    assert sorted(one) == ["header", "many", "options", "question"]
+    assert sorted(one["options"][0]) == ["description", "label"]
+    assert one["many"] is True
+
+
 def test_the_late_notification_does_not_undo_it(ws):
     """Notification says the same thing up to twelve seconds later. It must not
     move the waiting time forward, or the row would show the wrong age."""
