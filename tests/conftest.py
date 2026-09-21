@@ -387,3 +387,50 @@ def no_pane(ws, served, tmp_path, monkeypatch):
                      "ts": time.time()})
     daemon.store.refresh()
     return daemon, base
+
+
+def tiny_png() -> bytes:
+    """A real 1x1 PNG, built here so no test needs a binary in the tree."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    head = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)     # 1x1, 8-bit RGB
+    body = zlib.compress(b"\x00\xff\x00\x00")               # filter byte, red
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head)
+            + chunk(b"IDAT", body) + chunk(b"IEND", b""))
+
+
+@pytest.fixture
+def two_repos(ws, served, repo, tmp_path):
+    """Two sessions, each in a repository of its own.
+
+    `repo_page` has one, and a session's memory of where it was is only
+    testable against another session to leave it for.
+    """
+    (repo / "deep").mkdir()
+    (repo / "deep" / "inner.py").write_text(
+        "".join(f"first_{n} = {n}\n" for n in range(600)))
+    git_in(repo, "add", ".")
+    git_in(repo, "commit", "-qm", "deep")
+
+    other = tmp_path / "otherwork"
+    other.mkdir()
+    git_in(other, "init", "-q", "-b", "main")
+    git_in(other, "config", "user.email", "t@example.com")
+    git_in(other, "config", "user.name", "T")
+    (other / "OTHER.md").write_text("# the other one\n")
+    (other / "other.py").write_text(
+        "".join(f"other_{n} = {n}\n" for n in range(600)))
+    git_in(other, "add", ".")
+    git_in(other, "commit", "-qm", "first")
+
+    daemon, base = served
+    for sid, where in (("s1", repo), ("s2", other)):
+        ws.append_event(event("SessionStart", sid=sid, cwd=str(where),
+                              ts=time.time(), pane="%7", pid=1))
+    daemon.store.refresh()
+    return repo, other, base
