@@ -102,6 +102,10 @@ the tab, the open file, the place in it.
 | `c` | colours: auto, light, dark |
 | `Esc` | clear a box, or close the help |
 
+Jump puts the cursor in that agent's pane. Set `WOSTUAST_FOCUS` to a command
+that raises your terminal window and jump runs that too — which command does
+that is your window manager's business, not this program's.
+
 ## Commands
 
 | Command | What it does |
@@ -131,7 +135,8 @@ sessions then have no name and no context percent.
 
 ### Ticket links
 
-If your work has ticket ids in it, write `links.json` and they become links:
+If your work has ticket ids in it, they can become links. `serve` leaves an
+example `links.json` the first time it runs, so editing it is all there is:
 
 ```json
 [
@@ -143,6 +148,9 @@ If your work has ticket ids in it, write `links.json` and they become links:
 are its groups. `wostuast doctor` says what is wrong with an entry it cannot
 use, so a link that does nothing is never a mystery. Keep patterns simple:
 nothing in a browser can stop a regular expression once it starts.
+
+This is the one file you write. Everything else under
+`~/.local/state/wostuast/` is written by the program.
 
 ## No screenshots
 

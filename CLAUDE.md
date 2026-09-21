@@ -177,7 +177,12 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   script started the daemon and `PAGE` was never assigned.
 - **Ask first** before adding a dependency, a file outside `wostuast` and
   `tests/`, or a tmux command beyond jump and send.
-- **Prefer deleting a feature over adding a config option.**
+- **Prefer deleting a feature over adding a config option.** `links.json` is
+  the one exception PLAN.md goal 4 allows, and the test it passed is the test
+  for a second one: if wostuast could work the answer out, it must, and if the
+  answer is the same for everybody, it is not a setting. A choice about *this
+  screen* — theme, tab width, wrap, column widths — goes in `localStorage`
+  and needs no file.
 - **No module-level mutable state.** The daemon owns a `Store` and a `Hub`. One
   thread writes the Store; readers take `rows`, replaced whole, so no lock.
   A *writer* that is not that thread does need one: `POST /name` runs in the
@@ -257,6 +262,13 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   Ignored files are asked the same way. Never swap either check for a pattern
   that tries to spot a bad path. **Both readers go through it**, so a new one
   cannot be given one check and not the other.
+- **`serve` leaves an example `links.json` and never writes over one.**
+  JSON has no comments, so the example is a working entry — and a
+  deliberately inert one, because nobody's work has a ticket called
+  `EXAMPLE-1`. A commented-out entry is not valid JSON and a broken one
+  would be a line in `doctor` saying the file is wrong. It is written with
+  `write_atomic(private=True)`, like everything else there, and a failure to
+  write it never stops `serve`.
 - **The list of what may be shown lives in the daemon, once.** `SHOWN_AS` is
   read by `shown_as`, which the `raw` route enforces and which
   `read_worktree_file` reports as `FileText.shown` — so the page holds no
