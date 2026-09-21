@@ -5,12 +5,16 @@ on:
     branches: [main]
   pull_request:
 
-# The suite is 460 tests and most of them drive a real browser, so it is
-# wall-clock bound on waiting rather than on CPU: 190 s in one process, 62 s
-# across four. `-n auto` takes the runner's core count, which is 4 here, and
-# both jobs use it. Sharding across several jobs was the other option and is
-# slower: once the tests take a minute, a second runner's checkout, pip install
-# and browser download cost more than they save.
+# Most of this suite drives a real browser, so it waits far more than it
+# computes. Two measurements decide how it is run here, both taken on a
+# four-core box over the whole suite:
+#
+#   -n 4  110 s    -n 6  96 s    -n 8  88 s    -n 12  107 s
+#
+# So oversubscribing the cores pays until about twice their number, and then
+# stops paying. The jobs that run no browser are a different shape: they are
+# CPU-bound and measured slightly slower at -n 8 (25.5 s against 24.5 s), so
+# they keep -n auto, which is the runner's own core count.
 env:
   PYTEST: pytest -q -n auto
 
@@ -41,10 +45,23 @@ jobs:
           python wostuast --version
           python wostuast --help
 
-  browser:
+  browser-shard:
     # The page renders text an agent wrote. The one bug that mattered there
     # could only be seen in a real browser, so the guard runs in one.
+    #
+    # This job was the whole run's wall clock -- 134 s of tests against 28 s
+    # for the matrix beside it -- so it is split four ways. pytest-shard
+    # splits on a hash of the test id, which is why no test file is named
+    # here and none ever should be: naming one broke this job the moment a
+    # file was renamed. The hash also balances, which a split by file would
+    # not: two files are half the suite's time between them. Measured per
+    # shard, 30 s, against 110 s for the suite in one job, and the four
+    # shards run exactly the 674 tests the whole suite runs.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -53,11 +70,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install pytest and playwright
-        run: python -m pip install --upgrade pip pytest pytest-xdist playwright
+        run: |
+          python -m pip install --upgrade pip pytest pytest-xdist pytest-shard playwright
 
       # Chromium is 170 MB over three downloads. A hit saves about twenty
       # seconds; a miss costs nothing, because the install below fetches
-      # whatever is not already there.
+      # whatever is not already there. Every shard reads this cache and only
+      # a miss writes it, so after the first run nothing is written at all.
       - name: Keep the browser between runs
         uses: actions/cache@v4
         with:
@@ -65,13 +84,33 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('.github/workflows/tests.yml') }}
           restore-keys: playwright-${{ runner.os }}-
 
+      # No --with-deps: it runs apt on every job and cost 14 s of a 162 s
+      # run, which four shards would pay four times over. The runner image
+      # already carries what Chromium needs. If a shard ever fails to launch
+      # a browser, that is this line, and `--with-deps` is the answer.
       - name: Install the browser
-        run: python -m playwright install --with-deps chromium
+        run: python -m playwright install chromium
 
       # The whole suite, not just the page files. Naming them here meant the
       # job broke silently the moment one was renamed, which is exactly what
       # happened. It also means the rest of the suite gets one run in an
-      # environment where playwright is installed, which is a different import
-      # path from the matrix jobs above.
-      - name: Run the tests, this time with a browser
-        run: ${{ env.PYTEST }}
+      # environment where playwright is installed, which is a different
+      # import path from the matrix jobs above.
+      - name: Run this shard, with a browser
+        run: pytest -q -n 8 --num-shards=4 --shard-id=${{ matrix.shard }}
+
+  browser:
+    # The name the branch rule requires, and the only reason this job exists:
+    # the shards are named browser-shard, so the required check `browser`
+    # keeps reporting and the ruleset never has to be edited in step with the
+    # matrix. `if: always()` matters -- without it a failed shard leaves this
+    # job skipped rather than failed, and a skipped required check can be
+    # read as a passing one.
+    needs: [browser-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every shard passed
+        run: |
+          echo "shards: ${{ needs.browser-shard.result }}"
+          test "${{ needs.browser-shard.result }}" = "success"
