@@ -256,3 +256,57 @@ def test_doctor_names_a_broken_autolink(ws, capsys):
     assert "link 2" in said and "not a regular expression" in said
     # And a broken link is not a reason for the whole check to fail.
     assert "note" in said
+
+
+def test_serve_leaves_an_example_when_there_is_no_links_file(ws):
+    """Finding out how to write one should be opening it, not reading a
+    README. JSON has no comments, so the example has to be a working entry."""
+    assert ws.write_example_links() is True
+    assert ws.links_path().exists()
+    # It is a file `doctor` is happy with and the page can use.
+    assert ws.read_links() == ws.EXAMPLE_LINKS
+    for one in ws.EXAMPLE_LINKS:
+        assert ws.link_trouble(one) == "", one
+
+
+def test_the_example_links_nothing(ws):
+    """Nobody's work has a ticket called `EXAMPLE-1`, so the example matches
+    nothing until it is edited. An example that made real links would be a
+    program doing something nobody asked for."""
+    import re
+    for one in ws.EXAMPLE_LINKS:
+        pattern = re.compile(one["match"])
+        for text in ("Fixed OA-73219 and QSP-52811.",
+                     "see ticket 4242, and PROJ-7",
+                     "an example of what to do"):
+            assert pattern.search(text) is None, (one, text)
+
+
+def test_an_existing_links_file_is_never_written_over(ws):
+    """A file somebody wrote and got wrong is still theirs; `doctor` says
+    what is wrong with it. Drop the `exists` check and this one is lost."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    for held in ('[{"match": "OA-(\\\\d+)", "url": "https://mine/$1"}]',
+                 "not json at all",
+                 ""):
+        ws.links_path().write_text(held, encoding="utf-8")
+        assert ws.write_example_links() is False
+        assert ws.links_path().read_text(encoding="utf-8") == held
+
+
+def test_the_example_is_private_at_creation(ws):
+    """Everything in the state directory is, and this one is written by the
+    same helper for the same reason."""
+    ws.write_example_links()
+    assert oct(ws.links_path().stat().st_mode)[-3:] == "600"
+    assert oct(ws.links_path().parent.stat().st_mode)[-3:] == "700"
+
+
+def test_a_state_directory_that_cannot_be_written_does_not_stop_serve(ws,
+                                                                     monkeypatch):
+    """It is a convenience. `serve` starts with it or without it."""
+    def refuse(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(ws, "write_atomic", refuse)
+    assert ws.write_example_links() is False

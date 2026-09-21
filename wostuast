@@ -2841,6 +2841,39 @@ def link_trouble(one: Any) -> str:
     return ""
 
 
+#: The file `serve` leaves behind when there is none, so that finding out how
+#: to write one is opening it rather than reading a README.
+#:
+#: The entry is real and it is deliberately inert: nobody's work has a ticket
+#: called `EXAMPLE-1`, so it matches nothing and links nothing. JSON has no
+#: comments, so an example that explains itself has to be a working entry --
+#: a commented-out one is not valid JSON, and a broken one would be a line in
+#: `doctor` saying the file is wrong.
+EXAMPLE_LINKS = [
+    {"match": "EXAMPLE-(\\d+)",
+     "url": "https://tickets.example.com/browse/EXAMPLE-$1"},
+]
+
+
+def write_example_links() -> bool:
+    """Leave an example `links.json` when there is none. True if one was made.
+
+    Never over an existing file, whatever is in it -- a file somebody wrote
+    and got wrong is theirs, and `doctor` says what is wrong with it. And
+    never a reason to fail: this is a convenience, and `serve` starts with or
+    without it.
+    """
+    path = links_path()
+    try:
+        if path.exists():
+            return False
+        write_atomic(path, json.dumps(EXAMPLE_LINKS, indent=2) + "\n",
+                     private=True)
+        return True
+    except OSError:
+        return False
+
+
 def read_links() -> list[dict[str, str]]:
     """The autolinks that are usable, in the order they were written.
 
@@ -4243,6 +4276,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
     where = f"http://{BIND_HOST}:{port}/"
+    made = write_example_links()
     # The first pass folds the whole log and runs git for every worktree, which
     # on a busy machine takes a moment. It happens on the worker, so the page
     # is served straight away rather than after it.
@@ -4252,6 +4286,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print("it listens on this machine only. To read it from another computer,")
     print(f"  run: ssh -N -L {port}:{BIND_HOST}:{port} {os.environ.get('USER', 'you')}@this-machine")
     print(f"  then open {where} there. Opening a firewall port will not work.")
+    if made:
+        print(f"wrote an example {links_path()}; edit it to link your tickets.")
     print("press ctrl-c to stop.")
     if args.open:
         open_browser(where)

@@ -28,7 +28,9 @@ the agent. Nothing else writes to the terminal.
    specs.
 3. Show the diff of a worktree without opening an editor.
 4. Stay small: one Python file, no daemon required to *record* events, no
-   config file, one-line install, one-line uninstall.
+   config file it needs to run, one-line install, one-line uninstall. There
+   is exactly one optional file, `links.json`, and section 12 says why it
+   earned the exception.
 5. Look so good that a screenshot makes people want it.
 
 ## 3. Non-goals
@@ -1067,6 +1069,8 @@ without opening it first.
 | A tree by default, a flat list while typing | A tree is how you read a repository you do not know, and its indent carries the directory, so a row shows only the last part. A match list has no tree to sit in. |
 | Only the rows on screen are built | Ten thousand buttons cost ten thousand buttons. A window over a fixed row height costs the same for ten matches and ten thousand, so no answer has to be cut to stay quick. |
 | Column widths belong to the reader | Paths are long, screens differ, and the alternative to a drag handle is a config option, which this file prefers to delete. |
+| `serve` leaves an example `links.json` | The alternative is a README somebody has to find. JSON has no comments, so the example is a working entry that matches nothing — `EXAMPLE-1` is not anybody's ticket. It is never written over one that exists, because a file you wrote and got wrong is still yours. |
+| `links.json` is the one exception to "no config file" | Goal 4 said no config file at all, and this breaks it. It is allowed because the thing it holds cannot be derived, guessed or defaulted: only you know that `OA-73219` belongs to your tracker. Everything else a reader chooses — the theme, the tab width, the wrap, the column widths — is a choice about *this screen*, so it lives in that browser and needs no file. The test for a future one is the same: if wostuast could work it out, it must, and if the answer is the same for everybody, it is not a setting. Nothing requires the file, `install` never writes one, and the program is identical without it. |
 | The tiers live inside the tree | A section above the tree would list the changed files twice, which in a small repository is most of the list twice. Ordering each directory's own files says the same thing and says it once. |
 | A directory with a change opens itself | A closed tree cannot answer what the agent just did. What the reader opens or closes wins, so it never fights the hand on it. |
 | Your words carry a rail and a tint | Both turns were grey blocks told apart by one small word in a narrow column, which is not enough to find where you last spoke in a long transcript. |
