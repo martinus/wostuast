@@ -1107,8 +1107,9 @@ def test_another_file_opens_at_its_top(repo_page):
     its end.
 
     Two things keep it at the top now. `.filescroll` is built with the file,
-    so a new one starts at nought; and `same` refuses to carry the old place
-    over. Drop `same` and the second file opens where the first was left.
+    so a new one starts at nought; and `forgetFile` puts `state.files.down`
+    back to nought, because another file is not a place to go back to. Take
+    that line out and the second file opens where the first was left.
 
     Both files are long, or the browser would clamp the scrollbar to nought
     on its own and the test would pass against the bug."""
@@ -1312,5 +1313,123 @@ def test_a_place_in_a_file_survives_leaving_the_files_tab(two_repos):
             page.wait_for_function(
                 "(was) => Math.abs(document.querySelector('.filescroll')"
                 ".scrollTop - was) < 30", arg=was)
+        finally:
+            browser.close()
+
+
+def test_coming_back_does_not_bring_the_last_session_place_with_it(two_repos):
+    """`choose` restores the place and then changes the tab. `showTab` used
+    to write the scroll position down on its way through, and at that moment
+    the pane on the page still belonged to the session being left — so the
+    place just restored was overwritten with the other session's.
+
+    The scrollbar is the only writer now. Put a
+    `document.querySelector('.filescroll')` write back into `showTab` and
+    this goes red."""
+    _, _, base = two_repos
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+
+            # s2: read a long file half way down, then leave by another tab.
+            page.evaluate("choose('s2')")
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('other.py')")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('other.py')""")
+            page.evaluate("""() => { const view =
+              document.querySelector('.filescroll');
+              view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
+            page.wait_for_function(
+                "document.querySelector('.filescroll').scrollTop > 100")
+            two = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+            show_tab(page, "diff")
+
+            # s1: a different long file, read to a different place, and left
+            # from the Files tab — which is what put a pane on the page for
+            # `showTab` to read while coming back to s2.
+            page.evaluate("choose('s1')")
+            show_tab(page, "files")
+            page.click(".filelist button.dir:has(.name:text-is('deep'))")
+            page.click(".filelist button:has(.name:text-is('inner.py'))")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('inner.py')""")
+            page.evaluate("""() => { const view =
+              document.querySelector('.filescroll');
+              view.scrollTop = view.scrollHeight; }""")
+            page.wait_for_function(
+                "document.querySelector('.filescroll').scrollTop > 1000")
+            one = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+            assert abs(one - two) > 100, (one, two)
+
+            page.evaluate("choose('s2')")
+            page.wait_for_function("$('content').dataset.tab === 'diff'")
+            assert page.evaluate("state.files.down") == two
+            show_tab(page, "files")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('other.py')""")
+            page.wait_for_function(
+                "(two) => Math.abs(document.querySelector('.filescroll')"
+                ".scrollTop - two) < 30", arg=two)
+        finally:
+            browser.close()
+
+
+def test_what_a_session_keeps_is_what_comes_back(two_repos):
+    """`savePlace` and `usePlace` name their fields by hand. A choice added
+    to one and forgotten in the other simply stops coming back, which looks
+    like the feature half-working rather than like a bug. Every field one
+    writes down, the other has to put back — `tab` excepted, which `choose`
+    hands to `showTab`.
+
+    Take a line out of `usePlace` and the two lists stop agreeing."""
+    _, _, base = two_repos
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            seen = page.evaluate("""() => {
+              state.tab = 'diff';
+              Object.assign(state.files, {path: 'a/b.py', at: 'a',
+                                          asText: true, down: 321});
+              state.files.dirs = new Map([['a', true]]);
+              state.open = new Set([7]);
+              state.diffOpen = new Map([['z.py', true]]);
+              state.loose = 'loose.txt';
+              savePlace('probe');
+              const kept = state.visits.get('probe');
+
+              // Blanked the way `choose` blanks it. The tab goes too: it
+              // is `choose` that puts that one back, through `showTab`.
+              state.tab = 'transcript';
+              state.files = blankFiles();
+              state.open = new Set();
+              state.diffOpen = new Map();
+              state.loose = null;
+              usePlace('probe');
+
+              const after = {
+                tab: state.tab, path: state.files.path, at: state.files.at,
+                asText: state.files.asText, down: state.files.down,
+                dirs: state.files.dirs, open: state.open,
+                diffOpen: state.diffOpen, loose: state.loose,
+              };
+              const flat = (one) =>
+                (one instanceof Map || one instanceof Set)
+                  ? JSON.stringify([...one]) : JSON.stringify(one);
+              return {
+                kept: Object.keys(kept).sort(),
+                back: Object.keys(kept)
+                        .filter((name) => flat(kept[name]) === flat(after[name]))
+                        .sort(),
+              };
+            }""")
+            assert "tab" in seen["kept"], seen
+            assert seen["back"] == [one for one in seen["kept"] if one != "tab"], seen
+            assert len(seen["kept"]) >= 9, seen
         finally:
             browser.close()

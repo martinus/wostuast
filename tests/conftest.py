@@ -423,6 +423,8 @@ def two_repos(ws, served, repo, tmp_path):
     git_in(other, "config", "user.email", "t@example.com")
     git_in(other, "config", "user.name", "T")
     (other / "OTHER.md").write_text("# the other one\n")
+    (other / "other.py").write_text(
+        "".join(f"other_{n} = {n}\n" for n in range(600)))
     git_in(other, "add", ".")
     git_in(other, "commit", "-qm", "first")
 

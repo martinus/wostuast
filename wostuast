@@ -4717,9 +4717,9 @@ body:not(.show-thinking) .thinking { display: none; }
 .filebody, .diffbody, .reviewbody {
   flex-grow: 1; overflow-y: auto; min-width: 0;
 }
-/* The padding is on the children, because the header is stuck to the pane's
-   edges and must not be inset. Everything except it, so a branch added to
-   `drawFiles` later cannot quietly lose its gutter. */
+/* The padding is on the children of the scroller, so a branch added to
+   `drawFiles` later cannot quietly lose its gutter, and so the header --
+   which is not one of them -- keeps running to the pane's edges. */
 /* Two children: a header that does not move, and the part that does. The
    header used to be `position: sticky` inside the scroller, which keeps it
    in view but not out of the scrollbar's way -- the bar ran the whole height
@@ -5057,7 +5057,9 @@ const state = {
   open: new Set(),      // tool blocks the reader expanded
   goToBlock: null,      // the block a link asked for, until it is on screen
   // Where each session was left, by id. The choices only -- see `savePlace`.
-  places: new Map(),
+  // Not `places`: `state.files.places` is the list of things to go to, and
+  // one word for two ideas is how one of them gets shadowed.
+  visits: new Map(),
   stream: null,
   // Everything the Files tab holds, and nothing another tab reads. A tab's
   // state arrives and leaves with the tab: the flat bag this came out of meant
@@ -7069,11 +7071,6 @@ function drawFiles(box) {
   }
   goToInList(list);
 
-  // Which file the pane is showing, asked of the pane itself. It used to be
-  // read out of the redraw key, which `redrawCode` clears — so opening a
-  // comment box made the open file look like a different one and threw the
-  // reader back to the top of it.
-  const same = pane.dataset.file === String(state.files.path);
   if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.files.path + "\n" + state.files.mtime
                            + "\n" + state.files.asText)) return;
@@ -7081,11 +7078,10 @@ function drawFiles(box) {
   // they were in: they asked to be somewhere else.
   const wanted = state.files.goToLine;
   state.files.goToLine = 0;
-  const had = pane.querySelector(".filescroll");
-  // A place kept from the last visit wins over the place the reader is in:
-  // they are coming back to it, not staying where they were.
-  const place = state.files.down
-    || ((same && !wanted && had) ? had.scrollTop : 0);
+  // Where the reader is in this file, whether they scrolled there a moment
+  // ago or left it on their last visit to this session. `forgetFile` puts it
+  // back to nought, which is what makes a different file open at its top.
+  const place = wanted ? 0 : state.files.down;
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
   if (!state.files.path) {
@@ -7113,7 +7109,14 @@ function drawFiles(box) {
   // Everything below the header, and the only thing that scrolls. It is built
   // with the file, so the listener a windowed file needs goes on with it.
   const view = put(pane, "div", "filescroll");
-  if (windowed) view.addEventListener("scroll", () => fillCode(view));
+  // Where the reader is, written down as they move. One writer, and it is
+  // the scrollbar: asking the DOM from `showTab` and again from `savePlace`
+  // meant two writers with different fallbacks, and the second one wrote the
+  // outgoing session's place over the place just restored for the new one.
+  view.addEventListener("scroll", () => {
+    state.files.down = view.scrollTop;
+    if (windowed) fillCode(view);
+  });
   if (state.files.binary) {
     putMedia(view, state.files.path, state.files);
   } else if (isDoc && !state.files.asText) {
@@ -7155,11 +7158,10 @@ function drawFiles(box) {
   // and a `replaceChildren` does not reliably put its bar back.
   if (wanted) requestAnimationFrame(() => showLine(view, wanted));
   else requestAnimationFrame(() => {
-    // A kept place waits for the file to be there. The first draw after a
-    // session is chosen has no text yet, and a scrollbar with nothing under
-    // it goes nowhere -- and then the place would be spent on that draw.
-    if (state.files.down && view.scrollHeight <= view.clientHeight) return;
-    state.files.down = 0;
+    // A place waits for the file to be there. The first draw after a session
+    // is chosen has no text yet, and setting the bar against nothing would
+    // scroll to nought and then be written back as the place.
+    if (place && view.scrollHeight <= view.clientHeight) return;
     view.scrollTop = place;
   });
 }
@@ -8286,11 +8288,6 @@ function draw() {
 
 function showTab(name) {
   if (!TABS[name]) return;
-  // Leaving the Files tab takes the scrollbar with it, so where the reader
-  // was in the open file is written down before the pane goes. `.filescroll`
-  // is on the page only while that tab is, so the query is the check.
-  const view = document.querySelector(".filescroll");
-  if (view) state.files.down = view.scrollTop;
   state.tab = name;
   state.writing = null;       // the box was on the tab you are leaving
 
@@ -8323,28 +8320,34 @@ function drawEmpty(box) {
 // big things, 52,799 names being 1.7 MB of it.
 function savePlace(id) {
   if (!id) return;
-  const view = document.querySelector(".filescroll");
-  state.places.set(id, {
+  state.visits.set(id, {
     tab: state.tab,
     path: state.files.path,
     at: state.files.at,
     asText: state.files.asText,
+    // Written down as the reader scrolls, so this is right whichever tab
+    // they are on when they leave. Asking the DOM here instead meant a
+    // second writer, and it wrote the outgoing session's place over the one
+    // just restored for the new session.
+    down: state.files.down,
     dirs: new Map(state.files.dirs),
-    // The pane is only on the page while the Files tab is; `showTab` writes
-    // this down on the way out, so a session left on another tab still
-    // remembers where it was in the file it had open.
-    down: view ? view.scrollTop : state.files.down,
     open: new Set(state.open),
     diffOpen: new Map(state.diffOpen),
     loose: state.loose,
   });
+  // A session that has gone from the list will not be chosen again, so its
+  // place is dead weight on a page that is meant to stay open for days.
+  const live = new Set(state.sessions.map((one) => one.id));
+  for (const kept of [...state.visits.keys()]) {
+    if (kept !== id && !live.has(kept)) state.visits.delete(kept);
+  }
 }
 
 // Put back onto a state that has just been blanked, so every field is one
 // the blank already has. A session never visited has nothing here and keeps
 // the blank.
 function usePlace(id) {
-  const kept = state.places.get(id);
+  const kept = state.visits.get(id);
   if (!kept) return null;
   state.files.path = kept.path;
   state.files.at = kept.at;
@@ -8383,16 +8386,10 @@ function choose(id) {
   drawDiffCount();          // the last session's counts are not this one's
   const back = usePlace(id);
   drawSessions();
-  // The tab is part of where you were, so coming back to a session goes
-  // through `showTab` -- which is also what draws the header, loads the tab
-  // and resubscribes, so there is nothing to do twice.
-  if (back && TABS[back.tab] && back.tab !== state.tab) {
-    showTab(back.tab);
-    return;
-  }
-  drawHeader();
-  load();
-  resubscribe();
+  // The tab is part of where you were, so coming back to a session ends the
+  // way every tab change ends -- `showTab` draws the header, loads the tab
+  // and resubscribes, which was this function's own tail.
+  showTab(back && TABS[back.tab] ? back.tab : state.tab);
 }
 
 // A tab that reads the worktree asks again while it is on screen. The

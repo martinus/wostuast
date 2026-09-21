@@ -64,11 +64,12 @@ This list exists because each entry was re-implemented once already.
 | the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]` |
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
 | "3 min ago" | `ago(when)` |
+| one session's route | `apiUrl(id, what, query)` |
 | "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
-| a binary file the browser can show | `shownAs(path)`, then `putMedia(parent, path)` |
+| a binary file the browser can show | `putMedia(parent, path, found)` — `found.shown` is the daemon's answer |
 | a folder or a page icon | `putIcon(parent, "dir" \| "dirOpen" \| "file")` — SVG, so not `put` |
 | the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
@@ -242,6 +243,20 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   Ignored files are asked the same way. Never swap either check for a pattern
   that tries to spot a bad path. **Both readers go through it**, so a new one
   cannot be given one check and not the other.
+- **The list of what may be shown lives in the daemon, once.** `SHOWN_AS` is
+  read by `shown_as`, which the `raw` route enforces and which
+  `read_worktree_file` reports as `FileText.shown` — so the page holds no
+  copy of it and `putMedia` reads the answer. A second list in a second
+  language drifts, and a mismatch is silent either way round: a picture that
+  never arrives, or a file that is never offered. A name on that list is
+  reported `binary` without being read at all, because its text is not text
+  and the two-second poll would otherwise read half a megabyte off it for
+  nothing.
+- **`raw` is the one answer a browser may keep.** Every other reply carries
+  `no-store`. Its address holds the file's mtime, so a written file is a
+  different address; without the cache header the browser fetched the whole
+  thing again on every tab switch, which is exactly what the mtime in the
+  address was there to avoid.
 - **The `raw` route may never serve a document.** It hands a worktree file to
   the browser as its own bytes, and the type comes from the end of the name,
   out of `SHOWN_AS` — pictures, video, sound, and nothing else. An SVG or an
@@ -371,11 +386,15 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   top.** The pane used to be the scroller and outlived the file in it, so the
   next file opened wherever the last one had been read to. `same` is the other
   half of that: it is what refuses to carry the old place over.
-- **A tab's empty state is inset by whatever its body does not inset.** The
-  Review tab's body has padding, the Files tab's children have it, and the
-  Diff tab's body has none at all — a diff's rows run to the edge — so
-  `.diffbody > .empty` brings its own. A margin, not a padding: the block has
-  to move, and a padded box still starts at the edge.
+- **A tab's empty state is inset by whatever its body does not inset**, and
+  that is a wart, not a design. The Review tab's body has padding, the Files
+  tab's children have it, the Diff tab's body has none at all — a diff's rows
+  run to the edge — so `.diffbody > .empty` brings its own. Three spellings of
+  one idea. One inset on `.empty` itself would be the mechanism; it is not
+  done because two of the five empty states sit in `.content` rather than in a
+  `*body` and would move with it. When a fourth spelling is needed, do that
+  instead of adding one. A margin, not a padding, either way: the block has to
+  move, and a padded box still starts at the edge.
 - **Wrapping and windowing cannot both be on.** A windowed file's rows are a
   grid the scrollbar is read against, and a wrapped row is not one row tall.
   The CSS is what enforces it — `:not(.windowed)` — rather than a ternary in
@@ -468,20 +487,27 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 ### Tab state
 
 - **A session remembers the choices, never the caches.** `savePlace` and
-  `usePlace`, into `state.places` by session id: the tab, the open file and
+  `usePlace`, into `state.visits` by session id: the tab, the open file and
   the place in it, the directories opened by hand, the expanded tool blocks
   and diff files. Not the listing, the text or the diff — those are fetched
   again, because by the time the reader comes back they have moved, and they
-  are also the big things: 52,799 names is 1.7 MB, per session.
+  are also the big things: 52,799 names is 1.7 MB, per session. **Not
+  `places`** — `state.files.places` is the list of things to go to, and one
+  word for two ideas is how one of them gets shadowed.
 - **`usePlace` writes onto a state that has just been blanked**, so every
   field it sets is one `blankFiles` already has. A session never visited keeps
-  the blank.
-- **The scrollbar is not on the page when the Files tab is not.** `showTab`
-  writes `state.files.down` down on the way out, or a session left from
-  another tab came back to the top of its file. `drawFiles` puts it back once
-  — and only once there is something under the bar, because the first draw
-  after a session is chosen has no text yet and the place would be spent on
-  it.
+  the blank. The two lists are named by hand and
+  `test_what_a_session_keeps_is_what_comes_back` is what stops them drifting:
+  a field saved and not put back is silent, and reads as the feature
+  half-working.
+- **`state.files.down` has one writer, and it is the scrollbar.** The
+  `.filescroll` listener writes it as the reader moves, so `savePlace` reads
+  a field and never asks the DOM. It used to ask, and so did `showTab` — and
+  `choose` restores the place and *then* changes the tab, so `showTab`'s
+  query found the outgoing session's pane and wrote its place over the one
+  just restored. `drawFiles` puts the place back only once there is something
+  under the bar: the first draw after a session is chosen has no text yet,
+  and scrolling to nought there would be written straight back as the place.
 - **A tab's state lives under its own name**, `state.files` so far, and one
   `blankFiles()` builds an empty one. Choosing a session is then
   `state.files = blankFiles()` rather than eleven assignments that could
