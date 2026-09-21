@@ -1667,6 +1667,34 @@ PINNED_FILES = ("PLAN.md", "CLAUDE.md", "README.md")
 #: A file longer than this is cut.
 FILE_MAX_BYTES = 512 * 1024
 
+#: What the page may show as it is, and the type each one is served with.
+#: Decided by the end of the name and by nothing else -- this list is the
+#: whole of what `raw` will serve, so nothing here may be a document.
+#:
+#: SVG is not on it and will not be. It is text, so it already reads as code
+#: on the Files tab; and serving one from this origin would put a page of the
+#: agent's own writing on the origin that holds the token, with a script in it
+#: able to read both.
+SHOWN_AS = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
+    ".bmp": "image/bmp", ".ico": "image/vnd.microsoft.icon",
+    ".mp4": "video/mp4", ".webm": "video/webm", ".ogv": "video/ogg",
+    ".mov": "video/quicktime",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+    ".flac": "audio/flac", ".m4a": "audio/mp4",
+}
+
+#: Bigger than this and the page is told to say so rather than being handed
+#: it. The daemon reads a file whole, and a worktree can hold a gigabyte of
+#: video.
+SHOWN_MAX_BYTES = 25 * 1024 * 1024
+
+
+def shown_as(wanted: str) -> str:
+    """The type this name is served with, or empty for one we do not serve."""
+    return SHOWN_AS.get(Path(wanted).suffix.lower(), "")
+
 #: A ceiling on the whole listing, not on what the page searches. Sending the
 #: first five thousand of 52,799 names made `libcorrelation` find 16 files and
 #: miss more than a thousand, because the thousand were never sent. Past this
@@ -1765,6 +1793,15 @@ class FileText:
     #: or cut at `FILE_MAX_BYTES`. The stat that reads the mtime has it.
     size: int = 0
     binary: bool = False
+    #: The type this file is shown as, when the page may show it as it is --
+    #: `image/png`, `video/mp4`, and so on. Empty for everything else. The
+    #: list lives here, beside the route that has to enforce it, and the page
+    #: reads the answer: two lists in two languages would drift, and a
+    #: mismatch is silent either way round.
+    shown: str = ""
+    #: On that list, but past `SHOWN_MAX_BYTES`. The page then says how big it
+    #: is rather than asking for a file it would be refused.
+    oversize: bool = False
     # What `file` made of it, when the name and the first line said nothing.
     # The page decides what to do with it; see `languageOf`.
     language: str = ""
@@ -2209,11 +2246,11 @@ def sniff_language(
     return BY_MIME.get(answer.strip().lower(), "")
 
 
-def read_worktree_file(
+def worktree_target(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run,
     held: "Files | None" = None,
-) -> FileText | None:
-    """One file's content, or None.
+) -> Path | None:
+    """The file a name from the page points at, or None.
 
     The name comes from the page, so it is input, not fact. It has to be a
     name git itself offers, and the file it points at has to stay inside the
@@ -2221,16 +2258,55 @@ def read_worktree_file(
     `..`, an absolute path and a symbolic link out of the tree, without having
     to guess at each of them. See PLAN.md section 4.4.1.
 
-    `held` is the daemon's `Files`, which remembers the two answers that do
-    not change between polls: where the worktree starts, and what `file` made
-    of a name that gives nothing away. **`is_listed` is not one of them** — it
-    is the check that git still offers this name, and a cached yes would mean
-    a file could still be read after it was taken out of the tree.
+    Both readers come through here, so neither can be given one check and not
+    the other.
+
+    `held` is the daemon's `Files`, which remembers where the worktree starts
+    — the one answer here that does not change between polls. **`is_listed` is
+    not remembered** — it is the check that git still offers this name, and a
+    cached yes would mean a file could still be read after it was taken out of
+    the tree.
     """
     root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
     if not root or not is_listed(root, wanted, runner):
         return None
-    target = inside(root, Path(root) / wanted)
+    return inside(root, Path(root) / wanted)
+
+
+def read_worktree_bytes(
+    cwd: str, wanted: str, runner: Callable[..., str | None] = run,
+    held: "Files | None" = None,
+) -> tuple[bytes, str] | None:
+    """One file's own bytes and the type it is served with, or None.
+
+    Only a name on `SHOWN_AS` — a picture, a video, a sound. The type comes
+    from the end of the name and from nothing else, so the daemon never serves
+    a document from its own origin, whatever a file holds.
+    """
+    kind = shown_as(wanted)
+    if not kind:
+        return None
+    target = worktree_target(cwd, wanted, runner, held)
+    if target is None:
+        return None
+    try:
+        if not target.is_file() or target.stat().st_size > SHOWN_MAX_BYTES:
+            return None
+        return target.read_bytes(), kind
+    except OSError:
+        return None
+
+
+def read_worktree_file(
+    cwd: str, wanted: str, runner: Callable[..., str | None] = run,
+    held: "Files | None" = None,
+) -> FileText | None:
+    """One file's content, or None.
+
+    `held` also remembers what `file` made of a name that gives nothing away;
+    the checks on the name itself are `worktree_target`'s.
+    """
+    target = worktree_target(cwd, wanted, runner, held)
     if target is None:
         return None
     try:
@@ -2238,6 +2314,15 @@ def read_worktree_file(
             return None
         info = target.stat()
         found = FileText(mtime=info.st_mtime, size=info.st_size)
+        found.shown = shown_as(wanted)
+        if found.shown:
+            # A picture, a video or a sound. Its text is not text, and the
+            # page asks for its bytes on the other route -- so reading half a
+            # megabyte off it here, every two seconds for as long as it is on
+            # screen, would be for nothing.
+            found.binary = True
+            found.oversize = info.st_size > SHOWN_MAX_BYTES
+            return found
         # One byte past the cap is enough to know the file runs past it.
         # Reading it whole first put a tracked video in memory every poll.
         with target.open("rb") as handle:
@@ -3196,13 +3281,19 @@ class Serving:
     def log_message(self, fmt: str, *args: Any) -> None:
         pass  # the access log goes nowhere; our own log has what matters
 
-    def reply(self, code: int, body: bytes, kind: str) -> None:
+    def reply(self, code: int, body: bytes, kind: str,
+              cache: str = "no-store") -> None:
         self.send_response(code)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
+        # `raw` serves a worktree file, and the type it is given comes from
+        # the end of its name. A browser that sniffed the bytes instead could
+        # read a file called `a.png` as something else entirely, on the origin
+        # that holds the token.
+        self.send_header("X-Content-Type-Options", "nosniff")
         # No Access-Control-Allow-Origin, ever. Another site may send a
         # request here, but without this header it cannot read the answer.
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(body)
 
@@ -3470,6 +3561,31 @@ class Serving:
             return
         self.reply_json(dict(asdict(found), id=session_id, path=wanted))
 
+    def raw(self, session_id: str, query: dict[str, list[str]]) -> None:
+        """One file of the worktree as its own bytes, for the page to show.
+
+        The same checks every read makes, and one this route needs and the
+        others do not: the type is decided by the end of the name, from a
+        fixed list, and nothing on that list is a document. A file served as
+        `text/html` from here would be a page an agent wrote, on the origin
+        that holds the token, able to read both.
+        """
+        session = self.known(session_id)
+        if session is None:
+            return
+        wanted = query.get("path", [""])[0]
+        found = read_worktree_bytes(session.cwd, wanted,
+                                    held=self.daemon.files)
+        if found is None:
+            self.reply_json({"error": "not a file this page shows"}, 404)
+            return
+        raw, kind = found
+        # Not the `no-store` every other answer carries. The address holds the
+        # file's mtime, so a file the agent has written is a different address
+        # -- and without this the browser fetched the whole thing again on
+        # every tab switch, which is what the mtime was put there to avoid.
+        self.reply(200, raw, kind, cache="private, max-age=300")
+
     def events(self, session_id: str, query: dict[str, list[str]]) -> None:
         """What this session has done, for the Session tab.
 
@@ -3521,6 +3637,7 @@ GET_VERBS: dict[str, Any] = {
     "transcript": Serving.transcript,
     "files": Serving.files,
     "file": Serving.file,
+    "raw": Serving.raw,
     "diff": Serving.diff,
 }
 
@@ -4611,6 +4728,14 @@ body:not(.show-thinking) .thinking { display: none; }
 .filescroll { flex-grow: 1; min-height: 0; overflow: auto; padding-top: 14px; }
 .filescroll > * { padding: 0 26px 20px; }
 .filebody > .empty { padding: 20px 26px; }
+/* Shown as it is: a picture, a video, a sound. Given room and no more -- a
+   screenshot wider than the pane would otherwise set the pane's width and
+   take the sideways scrollbar with it. */
+.media img, .media video {
+  max-width: 100%; height: auto; border: 1px solid var(--edge);
+  border-radius: 6px; background: var(--code);
+}
+.media audio { width: 100%; max-width: 420px; }
 .reviewbody { padding: 16px 20px; }
 /* The Diff tab's body has no padding of its own -- a diff's rows run to the
    edge -- so its empty state has to bring its own inset, or it sits against
@@ -4938,6 +5063,7 @@ const state = {
   // said which tab owned any of them. See `blankFiles`.
   files: null,          // set below, because it is built in one place
   loose: null,          // an untracked file picked on the Diff tab
+  looseFound: {},       // the whole answer for it, for `putMedia`
   goTo: false,          // and whether the pane still has to move to it
   looseText: null,      // null while it is being read
   looseBinary: false,
@@ -4970,10 +5096,15 @@ const $ = (id) => document.getElementById(id);
 // asking first, and the daemon never says yes.
 const TOKEN = "__WOSTUAST_TOKEN__";
 
+// Where one session's routes live. Three callers: the two that fetch, and
+// `putMedia`, which wants an address for a `src` rather than an answer.
+function apiUrl(id, what, query) {
+  return "/api/session/" + encodeURIComponent(id) + "/" + what + (query || "");
+}
+
 async function tell(id, verb, body) {
   try {
-    const answer = await fetch("/api/session/" + encodeURIComponent(id) + "/"
-                               + verb, {
+    const answer = await fetch(apiUrl(id, verb), {
       method: "POST",
       headers: { "Content-Type": "application/json",
                  "X-Wostuast-Token": TOKEN },
@@ -6979,7 +7110,7 @@ function drawFiles(box) {
   const view = put(pane, "div", "filescroll");
   if (windowed) view.addEventListener("scroll", () => fillCode(view));
   if (state.files.binary) {
-    put(view, "div", "note", "Binary file. There is nothing to show.");
+    putMedia(view, state.files.path, state.files);
   } else if (isDoc && !state.files.asText) {
     markdown(view, state.files.text);
   } else {
@@ -7019,6 +7150,47 @@ function drawFiles(box) {
   // and a `replaceChildren` does not reliably put its bar back.
   if (wanted) requestAnimationFrame(() => showLine(view, wanted));
   else requestAnimationFrame(() => { view.scrollTop = place; });
+}
+
+// A file with no text in it. A picture, a video or a sound is shown as it is;
+// anything else really has nothing to show, and says so.
+//
+// What kind of file this is comes from the daemon, in the same answer as the
+// text: `found.shown` is the type it will be served as, or empty. The list
+// lives there, with the route that has to enforce it. A copy of it here would
+// be a second list in a second language, and a mismatch is silent either way
+// round -- a picture that never arrives, or a file that is never offered.
+//
+// Everything it needs is an argument. The Files tab and an untracked file on
+// the Diff tab are the same question, and a screenshot an agent has just
+// taken is an untracked file.
+function putMedia(parent, path, found) {
+  if (!found.shown) {
+    put(parent, "div", "note", "Binary file. There is nothing to show.");
+    return;
+  }
+  if (found.oversize) {
+    put(parent, "div", "note", sizeOf(found.size) + " — too big to show here.");
+    return;
+  }
+  const kind = found.shown.split("/")[0];       // image, video or audio
+  const box = put(parent, "div", "media");
+  const node = document.createElement(kind === "image" ? "img" : kind);
+  // The mtime is in the address, so a file the agent has just written is a
+  // different address and is fetched again. This is the one answer the
+  // daemon lets a browser keep, and that is why.
+  node.src = apiUrl(state.chosen, "raw", "?path=" + encodeURIComponent(path)
+                                         + "&at=" + found.mtime);
+  if (kind === "image") node.alt = path;
+  else node.controls = true;
+  // A type the browser will not take, or a file that went away between the
+  // listing and the fetch. Saying so beats a broken picture.
+  node.addEventListener("error", () => {
+    box.replaceChildren();
+    put(box, "div", "note", "This one did not come back, or your browser"
+        + " cannot show it.");
+  });
+  box.appendChild(node);
 }
 
 // How far down the pane a line stands. Only a windowed file can answer before
@@ -7072,6 +7244,11 @@ function blankFiles() {
     at: null,
     text: "",
     binary: false,
+    // What the daemon will serve this one as, when the page may show it as
+    // it is -- `image/png`, and so on -- and whether it is past the cap. The
+    // list is the daemon's; see `putMedia`.
+    shown: "",
+    oversize: false,
     lang: "",           // what `file` made of it, when the name said nothing
     mtime: 0,           // which version of that text is loaded
     size: 0,            // its bytes on disk, which the decoded text does not say
@@ -7276,6 +7453,8 @@ function forgetFile(path) {
   state.files.at = path;
   state.files.text = "";
   state.files.binary = false;
+  state.files.shown = "";
+  state.files.oversize = false;
   state.files.lang = "";
   state.files.mtime = 0;
   state.files.size = 0;
@@ -7392,7 +7571,10 @@ function drawLooseFile(pane, path) {
     return node;
   }
   if (state.looseBinary) {
-    put(body, "div", "note", "Binary file. There is nothing to show.");
+    // The same answer the Files tab gives, from the same place: a screenshot
+    // an agent has just taken is an untracked file, and it read as "nothing
+    // to show" on one tab and showed as a picture on the other.
+    putMedia(body, path, state.looseFound);
     return node;
   }
   const lines = state.looseText === "" ? []
@@ -7422,6 +7604,7 @@ async function chooseUntracked(path) {
   state.loose = path;
   state.looseText = null;
   state.looseBinary = false;
+  state.looseFound = {};
   state.goTo = true;            // until the block is on screen with the file
   state.diffAt += 1;            // the body key has to move for the redraw
   draw();
@@ -7430,6 +7613,7 @@ async function chooseUntracked(path) {
   if (state.chosen !== want || state.loose !== path) return;
   state.looseText = body ? (body.text || body.missing || "") : "";
   state.looseBinary = !!(body && body.binary);
+  state.looseFound = body || {};   // what `putMedia` needs, if it is a picture
   state.diffAt += 1;
   draw();
 }
@@ -8121,6 +8305,7 @@ function choose(id) {
   state.goToBlock = null;       // a link into the last session is not this one
   state.files = blankFiles();   // a different worktree holds different files
   state.loose = null;
+  state.looseFound = {};
   state.looseText = null;
   state.looseBinary = false;
   state.goTo = false;
@@ -8152,8 +8337,7 @@ function repoll() {
 
 async function ask(id, what, query, raw) {
   try {
-    const answer = await fetch("/api/session/" + encodeURIComponent(id) + "/" +
-                               what + (query || ""));
+    const answer = await fetch(apiUrl(id, what, query));
     return raw ? await answer.text() : await answer.json();
   } catch (error) {
     return null;                            // the daemon went away; try later
@@ -8227,6 +8411,8 @@ async function loadFiles() {
     if (body.mtime !== state.files.mtime) {
       state.files.text = body.text || body.missing || "";
       state.files.binary = !!body.binary;
+      state.files.shown = body.shown || "";
+      state.files.oversize = !!body.oversize;
       state.files.lang = body.language || "";
       state.files.mtime = body.mtime || 0;
       state.files.size = body.size || 0;

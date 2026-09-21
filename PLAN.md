@@ -245,6 +245,10 @@ crash the daemon.
   - `GET /api/session/<id>/file?path=…` → one file's text, mtime and whether
     it is binary. The path must be a name git itself offers, and must stay
     inside the worktree.
+  - `GET /api/session/<id>/raw?path=…` → one file as its own bytes, for a
+    picture, a video or a sound the browser can show. The same checks as
+    `file`, and one more: the type comes from the end of the name, from a
+    fixed list, so this route can never serve a document from our origin.
   - `GET /api/session/<id>/diff` → parsed diff as JSON.
   - `POST /api/session/<id>/jump`, `POST /api/session/<id>/send`
     (body: `{"text": "…"}`).

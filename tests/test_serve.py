@@ -852,3 +852,40 @@ def test_a_path_that_will_not_parse_answers_rather_than_dying(served):
     out = raw_exchange(base, b"GET http://[::1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
     assert out.startswith(b"HTTP/1."), out[:200]
     assert b"500" in out.split(b"\r\n")[0] or b"404" in out.split(b"\r\n")[0]
+
+
+# --- a file served as its own bytes ------------------------------------------
+
+
+def test_a_picture_is_served_with_the_type_its_name_says(repo_session):
+    root, base = repo_session
+    raw = conftest.tiny_png()
+    (root / "logo.png").write_bytes(raw)
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "logo")
+    with urllib.request.urlopen(f"{base}/api/session/s1/raw?path=logo.png",
+                                timeout=5) as answer:
+        assert answer.status == 200
+        assert answer.headers["Content-Type"] == "image/png"
+        # Never let the browser read the bytes and pick its own type: this
+        # origin holds the token the page POSTs with.
+        assert answer.headers["X-Content-Type-Options"] == "nosniff"
+        assert answer.headers.get("Access-Control-Allow-Origin") is None
+        assert answer.read() == raw
+
+
+def test_the_raw_route_serves_nothing_that_could_be_a_document(repo_session):
+    """An SVG or an HTML file served from here would be a page an agent wrote,
+    on the origin that holds the token, with a script in it able to read
+    both. The list of types is the whole of what this route will serve."""
+    root, base = repo_session
+    for name, body in (("page.html", b"<b>hi</b>"), ("draw.svg", b"<svg/>"),
+                       ("notes.txt", b"words")):
+        (root / name).write_bytes(body)
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "sundry")
+    for name in ("page.html", "draw.svg", "notes.txt", "../../etc/hosts"):
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(
+                f"{base}/api/session/s1/raw?path={name}", timeout=5)
+        assert caught.value.code == 404, name

@@ -68,6 +68,7 @@ This list exists because each entry was re-implemented once already.
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
+| a binary file the browser can show | `shownAs(path)`, then `putMedia(parent, path)` |
 | a folder or a page icon | `putIcon(parent, "dir" \| "dirOpen" \| "file")` — SVG, so not `put` |
 | the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
@@ -234,12 +235,21 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **A path out of the event log is input, not fact.** `transcript_path` goes
   through `safe_transcript`. `cwd` is used for git and for labels, never to open
   a file the page asked for.
-- **A path out of the page is input too.** `read_worktree_file` opens a file only
+- **A path out of the page is input too.** `worktree_target` opens a file only
   when `is_listed` says git offers that exact name and `inside` says the resolved
   path is still in the worktree. Keep all three parts of the first check — the
   `:(literal)` prefix, the `--`, and comparing the answer to what was asked for.
   Ignored files are asked the same way. Never swap either check for a pattern
-  that tries to spot a bad path.
+  that tries to spot a bad path. **Both readers go through it**, so a new one
+  cannot be given one check and not the other.
+- **The `raw` route may never serve a document.** It hands a worktree file to
+  the browser as its own bytes, and the type comes from the end of the name,
+  out of `SHOWN_AS` — pictures, video, sound, and nothing else. An SVG or an
+  HTML file served from here would be a page an agent wrote, on the origin
+  that holds the token, with a script in it able to read both. `nosniff` is on
+  every answer for the same reason: a browser that guessed the type from the
+  bytes would undo the list. Never add a type to `SHOWN_AS` that a browser
+  will execute or navigate to.
 - **The state directory is private.** `0700` dirs, `0600` files — and `0600`
   **at creation**, through `open_private`. A `chmod` after the first write
   leaves a window in which the file already holds a prompt and anyone on the

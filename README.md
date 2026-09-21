@@ -323,9 +323,20 @@ A Markdown file is rendered; anything else is shown as code, with syntax
 highlighting — a file with no suffix is read from its shebang, and failing that
 from what `file` makes of it, so a Python script called `deploy` is painted like
 one — line numbers down a gutter beside it, and no box around it. The
-numbers are not part of the file, so copying the code does not take them. A binary file is named, not shown. The open
-file is read again within a couple of seconds of the agent changing it, and you
-keep your place in it.
+numbers are not part of the file, so copying the code does not take them. The
+open file is read again within a couple of seconds of the agent changing it,
+and you keep your place in it.
+
+A picture, a video or a sound is shown as it is — png, jpg, gif, webp, avif,
+bmp, ico; mp4, webm, ogv, mov; mp3, wav, ogg, flac, m4a — up to 25 MB, over
+which the page says how big it is instead. What it is comes from the end of
+its name and from nothing else, and that list is the whole of what the daemon
+will hand over as bytes.
+
+SVG is not on that list and will not be. An SVG is text, so it already reads
+as code here. And the page's token lives on this origin: a script inside an
+SVG served from it could read that token. Any other binary file is named, not
+shown.
 
 Above the file a header stands still, whatever you scroll: the path, one
 clickable piece at a time, then the type, the size and when it last changed.

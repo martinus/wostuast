@@ -387,3 +387,18 @@ def no_pane(ws, served, tmp_path, monkeypatch):
                      "ts": time.time()})
     daemon.store.refresh()
     return daemon, base
+
+
+def tiny_png() -> bytes:
+    """A real 1x1 PNG, built here so no test needs a binary in the tree."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    head = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)     # 1x1, 8-bit RGB
+    body = zlib.compress(b"\x00\xff\x00\x00")               # filter byte, red
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head)
+            + chunk(b"IDAT", body) + chunk(b"IEND", b""))

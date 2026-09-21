@@ -1139,3 +1139,59 @@ def test_another_file_opens_at_its_top(repo_page):
                 ".filescroll", "el => el.scrollHeight > el.clientHeight + 1000")
         finally:
             browser.close()
+
+
+def test_a_picture_is_shown_rather_than_named(repo_page):
+    """"Binary file. There is nothing to show." is true of a compiled object
+    and false of a screenshot. The picture really arrives here: the check is
+    the width the browser decoded, not that an element was built."""
+    root, _ = repo_page
+    (root / "logo.png").write_bytes(conftest.tiny_png())
+    (root / "blob.bin").write_bytes(b"\0\0\0not a picture\0")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "a picture and a blob")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            # Not `open_file`: it waits for rows, and a picture has none.
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('logo.png')")
+            page.wait_for_selector(".filebody .media img")
+            page.wait_for_function(
+                "document.querySelector('.filebody .media img').naturalWidth > 0")
+            assert page.locator(".filebody .note").count() == 0
+
+            # And a binary that is not a picture still says so.
+            page.click(".filelist button:has-text('blob.bin')")
+            page.wait_for_function(
+                """() => {
+                     const note = document.querySelector('.filebody .note');
+                     return note && note.textContent.includes('Binary file');
+                   }""")
+            assert page.locator(".filebody .media").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_picture_too_big_to_show_says_so(ws, repo_page, monkeypatch):
+    """The daemon holds the cap, because it is the one that reads the file
+    whole. It says so in the same answer, and the page says how big it is
+    rather than asking for a file it will be refused."""
+    root, _ = repo_page
+    monkeypatch.setattr(ws, "SHOWN_MAX_BYTES", 8)   # the picture is 69 bytes
+    (root / "logo.png").write_bytes(conftest.tiny_png())
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "a picture")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('logo.png')")
+            page.wait_for_function(
+                """() => {
+                     const note = document.querySelector('.filebody .note');
+                     return note && note.textContent.includes('too big');
+                   }""")
+            assert page.locator(".filebody .media").count() == 0
+        finally:
+            browser.close()

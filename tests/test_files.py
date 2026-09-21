@@ -950,3 +950,65 @@ def test_the_remembered_answers_do_not_grow_without_end(ws):
     held.language_of(pathlib.Path("/w/new"), 1.0, 1,
                      lambda args, **rest: "text/x-shellscript")
     assert len(held.langs) <= ws.LANGS_KEPT
+
+
+# --- a file the page shows as it is ------------------------------------------
+
+
+def test_a_picture_comes_back_as_its_own_bytes(ws, seeded):
+    import conftest
+    raw = conftest.tiny_png()
+    (seeded / "logo.png").write_bytes(raw)
+    git(seeded, "add", "."), git(seeded, "commit", "-qm", "logo")
+    found = ws.read_worktree_bytes(str(seeded), "logo.png")
+    assert found == (raw, "image/png")
+
+
+def test_the_type_comes_from_the_name_and_nothing_else(ws, seeded):
+    """The list is what this route will serve, and it is read off the end of
+    the name. Reading the bytes to decide instead would let a file an agent
+    wrote pick its own type on the origin that holds the token."""
+    import conftest
+    (seeded / "shot.png").write_bytes(b"GIF89a" + conftest.tiny_png())
+    git(seeded, "add", "."), git(seeded, "commit", "-qm", "shot")
+    found = ws.read_worktree_bytes(str(seeded), "shot.png")
+    assert found is not None and found[1] == "image/png"
+
+
+def test_only_a_name_on_the_list_is_served(ws, seeded):
+    """Everything else is refused outright — an SVG among them, because it is
+    a document: a script inside one served from this origin could read the
+    page and the token in it."""
+    for name, body in (("page.html", b"<b>hi</b>"), ("draw.svg", b"<svg/>"),
+                       ("notes.txt", b"words"), ("blob.bin", b"\0\0")):
+        (seeded / name).write_bytes(body)
+    git(seeded, "add", "."), git(seeded, "commit", "-qm", "sundry")
+    for name in ("page.html", "draw.svg", "notes.txt", "blob.bin"):
+        assert ws.read_worktree_bytes(str(seeded), name) is None, name
+
+
+def test_the_same_two_checks_guard_the_bytes(ws, seeded, tmp_path):
+    """It goes through `worktree_target`, like every other read, so a name
+    git does not offer and a path out of the worktree are refused here too.
+    Open the path directly instead and all four of these come back."""
+    import conftest
+    raw = conftest.tiny_png()
+    (seeded / ".git" / "hidden.png").write_bytes(raw)   # git offers no name here
+    (tmp_path / "secret.png").write_bytes(raw)
+    seeded.joinpath("out.png").symlink_to(tmp_path / "secret.png")
+    git(seeded, "add", "-A"), git(seeded, "commit", "-qm", "a link out")
+    for name in (".git/hidden.png", "../secret.png", "/etc/hosts.png",
+                 "out.png", "nothere.png"):
+        assert ws.read_worktree_bytes(str(seeded), name) is None, name
+
+
+def test_a_picture_too_big_to_show_is_not_read(ws, seeded, monkeypatch):
+    """The daemon reads a file whole, and a worktree can hold a gigabyte of
+    video."""
+    import conftest
+    monkeypatch.setattr(ws, "SHOWN_MAX_BYTES", 32)
+    (seeded / "logo.png").write_bytes(conftest.tiny_png())   # 69 bytes
+    git(seeded, "add", "."), git(seeded, "commit", "-qm", "logo")
+    assert ws.read_worktree_bytes(str(seeded), "logo.png") is None
+    monkeypatch.setattr(ws, "SHOWN_MAX_BYTES", 4096)
+    assert ws.read_worktree_bytes(str(seeded), "logo.png") is not None
