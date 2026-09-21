@@ -51,6 +51,27 @@ question. Each has `question`, `header`, `multiSelect` and `options`, and each
 option has `label` and `description`. `read_ask` names those fields and keeps
 nothing else.
 
+### A message that arrives mid-turn
+
+Sent to an agent that is working -- which is what this page's send box does --
+Claude Code queues it into the running turn and writes one `user` record
+holding three things:
+
+```
+<system-reminder>
+The user sent a new message while you were working:
+<the words that were typed>
+
+This is how Claude Code surfaces messages the user sends mid-turn - within the
+running turn, often alongside the next tool result, rather than as a separate
+conversation turn. Address the message above as you continue this turn.
+</system-reminder>
+```
+
+Header and footer read off a real transcript. A build that writes it as an
+`attachment` record instead is ignored by the Transcript tab, which reads
+`user` and `assistant` only. `read_user_text` keeps the middle.
+
 ### Two calls at once
 
 Claude Code runs tools in parallel now and then. Measured on a real event log:

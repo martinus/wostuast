@@ -393,6 +393,81 @@ def test_the_harness_speaking_is_a_note_and_not_your_prompt(ws, tmp_path):
     assert "the repo sweep is in." in two.text
 
 
+#: What Claude Code writes when a message arrives while the agent is working
+#: -- which is every message this page sends to a busy agent, so it is the
+#: shape a reader of this program meets most. Header and footer verbatim from
+#: a real transcript; the words between them are invented.
+QUEUED = """<system-reminder>
+The user sent a new message while you were working:
+also creating a worktree would be slower, so many files to check out.
+Is there a way to keep the corpus out of it?
+
+This is how Claude Code surfaces messages the user sends mid-turn \u2014 within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.
+</system-reminder>"""
+
+
+def test_a_message_sent_to_a_busy_agent_is_drawn_as_what_you_typed(ws, tmp_path):
+    """Every message this page sends to a working agent comes back wrapped:
+    a header naming it, a footer explaining it to the agent, both inside a
+    `<system-reminder>`. All three went into the transcript as though the
+    reader had typed them."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(user_record(QUEUED))
+    assert one.kind == "prompt"
+    assert one.text == (
+        "also creating a worktree would be slower, so many files to check out."
+        "\nIs there a way to keep the corpus out of it?")
+    assert "while you were working" not in one.text
+    assert "system-reminder" not in one.text
+
+
+def test_a_queued_message_of_several_lines_keeps_all_of_them(ws, tmp_path):
+    """The words between the two lines are the whole of what was typed, and
+    a message sent from this page is often a paragraph."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(user_record(QUEUED.replace(
+        "Is there a way to keep the corpus out of it?",
+        "one\n\ntwo\n\nthree")))
+    assert one.text.endswith("one\n\ntwo\n\nthree")
+
+
+def test_a_prompt_that_talks_about_the_wrapper_is_still_a_prompt(ws, tmp_path):
+    """Somebody asking about this very feature pastes the wrapper into the
+    box — which is exactly how this bug was reported. Two things keep such a
+    prompt whole: the header has to open the record, and the footer has to be
+    there. Drop either and the question is answered with its own quotation.
+    """
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    quoted = (
+        "why does wostuast show this? e.g.\n"
+        "The user sent a new message while you were working:\n"
+        "my message\n\n"
+        "This is how Claude Code surfaces messages the user sends mid-turn"
+        " \u2014 within the running turn.\n"
+        "is that Claude Code or you?")
+    half = ("The user sent a new message while you were working:\n"
+            "is that line yours or Claude Code's?")
+    for typed in (
+        quoted,                                     # the header does not open it
+        half,                                       # no footer, so no wrapper
+        "why does 'The user sent a new message while you were working:' show"
+        " up in my transcript?",
+        "The user sent a new message while you were working: is that from"
+        " Claude Code or from wostuast?",
+    ):
+        one, = reader.add(user_record(typed))
+        assert (one.kind, one.text) == ("prompt", typed), typed
+
+
+def test_a_system_reminder_on_its_own_is_not_a_prompt(ws, tmp_path):
+    """It is written to the agent, not by the reader. Shown as a prompt it
+    put a paragraph of machine instructions in the reader's own rail."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    assert reader.add(user_record(
+        "<system-reminder>The file has been read. Do not read it again."
+        "</system-reminder>")) == []
+
+
 def test_a_prompt_that_talks_about_a_command_is_still_a_prompt(ws, tmp_path):
     """Somebody asking about this very feature types `<command-name>` into
     the box. Only a record with nothing else on it is a command.
