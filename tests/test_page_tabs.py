@@ -50,21 +50,22 @@ def test_a_number_key_picks_a_tab_that_is_built(page_at):
             browser.close()
 
 
-def test_the_find_box_sits_above_the_file_list(repo_page):
+def test_the_find_box_sits_above_the_list_it_narrows(repo_page):
     """One box, moved to where it is used. Two would be two values to keep in
-    step, and `/` would have to guess which one it meant."""
+    step, and `/` would have to guess which one it meant. Every tab with a
+    list keeps it in that list's slot; the Session tab has none, so there the
+    box goes home."""
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
-            assert page.eval_on_selector(
-                "#find", "el => el.parentElement.id") == "findhome"
-            show_tab(page, "files")
-            assert page.eval_on_selector(
-                "#find", "el => el.parentElement.className") == "findslot"
-            assert page.eval_on_selector(
-                "#find", "el => el.closest('.side') !== null")
-            # and it goes back when a tab without a list is chosen
-            show_tab(page, "transcript")
+            for name in ("transcript", "files", "diff"):
+                show_tab(page, name)
+                assert page.eval_on_selector(
+                    "#find", "el => el.parentElement.className") == "findslot", name
+                assert page.eval_on_selector(
+                    "#find", "el => el.closest('.side') !== null"), name
+            # and it goes home when a tab without a list is chosen
+            show_tab(page, "session")
             assert page.eval_on_selector(
                 "#find", "el => el.parentElement.id") == "findhome"
         finally:
@@ -98,20 +99,20 @@ def test_the_diff_tab_gets_the_box_too(repo_page):
             browser.close()
 
 
-def test_a_tab_comes_back_after_visiting_the_transcript(repo_page):
+def test_a_tab_comes_back_after_visiting_another(repo_page):
     """The content box says which tab built it, and `split` rebuilds when that
-    is another tab. The transcript emptied the box without saying so, and the
-    next Files draw believed its columns were still there."""
+    is another tab. A tab that emptied the box without saying so left the next
+    draw believing its columns were still there."""
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
             for name in ("files", "diff"):
                 show_tab(page, name)
-                assert page.locator(".filelist button").count() > 0
-                show_tab(page, "transcript")
+                assert page.locator(f".filelist.{name} button").count() > 0
+                show_tab(page, "session")
                 assert page.locator(".filelist").count() == 0
                 show_tab(page, name)
-                assert page.locator(".filelist button").count() > 0, name
+                assert page.locator(f".filelist.{name} button").count() > 0, name
                 assert page.eval_on_selector(
                     "#find", "el => el.parentElement.className") == "findslot"
         finally:

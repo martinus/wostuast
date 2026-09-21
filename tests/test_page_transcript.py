@@ -207,34 +207,48 @@ def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_a
             browser.close()
 
 
-def test_typing_finds_text_in_the_transcript(page_at):
+def test_typing_narrows_the_list_and_leaves_the_transcript_whole(page_at):
+    """The find box belongs to the list beside the transcript now. Taking
+    turns out of the transcript took the conversation around a hit away with
+    them, which is the thing you were reading it for. The hits are still
+    marked where they stand."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             everything = page.locator(".turn").count()
+            rows = page.locator(".filelist.transcript button").count()
+            assert rows > 0, "the list drew nothing"
+
             page.locator("#find").fill("pytest")
-            page.wait_for_timeout(250)
-            assert page.locator(".turn").count() < everything
-            assert page.locator("mark").count() >= 1
+            page.wait_for_function(
+                "document.querySelectorAll('mark').length > 0")
+            assert page.locator(".turn").count() == everything
+            assert page.locator(".filelist.transcript button").count() < rows
             assert "pytest" in page.locator("mark").first.inner_text().lower()
-            assert " of " in page.locator("#live").inner_text()
+            assert " of " in page.locator(".listnote").inner_text()
 
             page.locator("#find").fill("")
-            page.wait_for_timeout(250)
+            page.wait_for_function(
+                "document.querySelectorAll('mark').length === 0")
             assert page.locator(".turn").count() == everything
-            assert page.locator("mark").count() == 0
+            assert page.locator(".filelist.transcript button").count() == rows
         finally:
             browser.close()
 
 
 def test_a_search_that_matches_nothing_says_so(page_at):
+    """In the list, which is what the box narrows. The transcript stays as it
+    was: it is not what the question was about."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            turns = page.locator(".turn").count()
             page.locator("#find").fill("zzzznotherezzzz")
-            page.wait_for_timeout(250)
-            assert page.locator(".turn").count() == 0
-            assert "Nothing here matches" in page.locator(".content").inner_text()
+            page.wait_for_selector(".filelist.transcript .nohits")
+            assert "Nothing here matches" in \
+                page.locator(".filelist.transcript").inner_text()
+            assert page.locator(".filelist.transcript button").count() == 0
+            assert page.locator(".turn").count() == turns
         finally:
             browser.close()
 
@@ -324,10 +338,11 @@ def append_blocks(daemon, texts):
 
 
 def test_a_search_keeps_its_place_while_the_agent_works(page_at):
-    """With a filter typed, every push draws the whole tab again, and a draw
-    ends at the top. On a live session that is once a second, so a search was
-    unreadable: you scrolled down, the agent said something, and you were back
-    at the top."""
+    """A push used to draw the whole tab again whenever a filter was typed,
+    and a draw ends at the top. On a live session that is once a second, so a
+    search was unreadable: you scrolled down, the agent said something, and
+    you were back at the top. Nothing is filtered out of the transcript any
+    more, so a push appends — but the place still has to survive it."""
     daemon, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -338,15 +353,15 @@ def test_a_search_keeps_its_place_while_the_agent_works(page_at):
             page.fill("#find", "pytest")
             page.wait_for_function("document.querySelectorAll('mark').length > 0")
 
-            page.evaluate("document.getElementById('content').scrollTop = 600")
-            was = page.evaluate("document.getElementById('content').scrollTop")
-            assert was > 0, "the filtered list is too short to scroll"
+            page.evaluate("document.querySelector('.turnbody').scrollTop = 600")
+            was = page.evaluate("document.querySelector('.turnbody').scrollTop")
+            assert was > 0, "the transcript is too short to scroll"
 
             append_blocks(daemon, ["pytest run 60"])
             page.wait_for_function(
                 "document.querySelectorAll('.turn').length > 60")
             assert page.evaluate(
-                "document.getElementById('content').scrollTop") == was
+                "document.querySelector('.turnbody').scrollTop") == was
         finally:
             browser.close()
 
@@ -368,19 +383,19 @@ def test_expanding_a_tool_result_keeps_the_search_highlighted(page_at):
             browser.close()
 
 
-def test_an_error_in_the_live_slot_clears_while_a_search_is_on(page_at):
-    """It used to assign itself back — `state.find ? box.textContent : …` —
-    so the error stayed and the match count never returned."""
+def test_an_error_in_the_live_slot_gives_the_slot_back(page_at):
+    """The slot says whether the stream is live. An error borrows it for four
+    seconds and has to give it back — it used to assign itself back, so the
+    word never returned."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            page.fill("#find", "pytest")
             page.wait_for_function(
-                "document.getElementById('live').textContent.includes(' of ')")
+                "document.getElementById('live').textContent === 'live'")
             page.evaluate("said({error: 'no pane for this session'})")
             assert "no pane" in page.locator("#live").inner_text()
             page.wait_for_function(
-                "document.getElementById('live').textContent.includes(' of ')",
+                "document.getElementById('live').textContent === 'live'",
                 timeout=15000)
         finally:
             browser.close()
@@ -506,5 +521,102 @@ def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
             assert not blew_up, blew_up
             assert page.locator(".turn.linked").count() == 0
             assert page.evaluate("state.goToBlock") == 900
+        finally:
+            browser.close()
+
+
+# --- the map of the conversation ---------------------------------------------
+
+def test_the_transcript_has_a_list_of_rounds_beside_it(page_at):
+    """What you typed is a folder, what came back to it is what is in it.
+    Tool calls are left out: there are hundreds of them in a real session —
+    233 in one that was measured — and they are already in the transcript.
+    Put `kind === "tool"` into `rounds` and the count goes up."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            seen = page.eval_on_selector_all(
+                ".filelist.transcript button",
+                """els => els.map((one) => [one.className.includes('dir'),
+                                            one.querySelector('.name').textContent])""")
+            assert seen == [[True, "Do the thing."],
+                            [False, "Read from a README:"]], seen
+            # The tool call in this fixture is in the transcript and not here.
+            assert page.locator(".turn.toolrow").count() == 1
+        finally:
+            browser.close()
+
+
+def append_rounds(daemon, many):
+    """Whole rounds — a prompt and a long reply to it — so the transcript is
+    taller than the pane and an early round is really off screen."""
+    with open(daemon_transcript(daemon), "a") as handle:
+        for n in range(many):
+            handle.write(json.dumps({
+                "type": "user", "timestamp": "2026-09-18T14:10:00.000Z",
+                "message": {"role": "user", "content": f"round {n} please"}})
+                + "\n")
+            handle.write(json.dumps({
+                "type": "assistant", "timestamp": "2026-09-18T14:11:00.000Z",
+                "message": {"role": "assistant", "content": [
+                    {"type": "text",
+                     "text": f"answer {n}\n\n" + "filler line\n" * 12}]}})
+                + "\n")
+    daemon.tick()
+
+
+def test_a_row_goes_to_its_place_in_the_transcript(page_at):
+    """Clicking a row is the whole point of the list. It marks where you went
+    as well, or clicking a row already on screen answers with nothing —
+    which is how the same thing read as broken on the Files tab."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            append_rounds(daemon, 12)
+            page.wait_for_function(
+                "document.querySelectorAll('.filelist.transcript button').length > 20")
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.turnbody');
+                           return one.scrollHeight > one.clientHeight + 400; }""")
+            # The transcript opens at its foot, so an early round is off screen.
+            page.click(".filelist.transcript button >> nth=0")
+            page.wait_for_selector(".turn.linked")
+            seen = page.evaluate("""() => {
+              const pane = document.querySelector('.turnbody');
+              const one = pane.querySelector('.turn.linked');
+              const box = one.getBoundingClientRect();
+              const on = pane.getBoundingClientRect();
+              return {top: box.top - on.top, height: on.height,
+                      at: state.turns.at,
+                      marked: document.querySelectorAll(
+                        '.filelist.transcript button.chosen').length};
+            }""")
+            assert 0 <= seen["top"] < seen["height"], seen
+            assert seen["at"] == 0, seen
+            assert seen["marked"] == 1, seen
+        finally:
+            browser.close()
+
+
+def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
+    """The first line with anything on it, with Markdown's own marks taken
+    off the front — a reply that opens with a heading would otherwise spend
+    its first characters saying so."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            said = page.evaluate("""() => [
+              glimpse("## A heading\\n\\nand then some"),
+              glimpse("\\n\\n- a bullet first"),
+              glimpse("**bold to start** and on"),
+              glimpse("`code` first"),
+              glimpse("x".repeat(80)),
+              glimpse(""),
+            ]""")
+            assert said[:4] == ["A heading", "a bullet first",
+                                "bold to start and on", "code first"]
+            assert len(said[4]) == 44 and said[4].endswith("…")
+            assert said[5] == ""
         finally:
             browser.close()

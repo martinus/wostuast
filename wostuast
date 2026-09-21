@@ -4766,9 +4766,17 @@ body:not(.show-thinking) .thinking { display: none; }
 .minus { color: var(--cut-ink); }
 /* What a tab's body is: the column that scrolls. The diff sets its own
    padding, because its rows run to the edge. */
-.filebody, .diffbody, .reviewbody {
+.filebody, .diffbody, .reviewbody, .turnbody {
   flex-grow: 1; overflow-y: auto; min-width: 0;
 }
+.turnbody { padding: 20px 24px; }
+.turnbody > .empty { max-width: 52ch; }
+/* The map of the conversation. Same rows as the file tree, because they are
+   the same thing: a list on the left that names what is on the right. */
+.filelist.transcript .name { display: block; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.filelist.transcript button.dir .icon { color: var(--mine); }
+.filelist.transcript button.dir { color: var(--ink); }
 /* The padding is on the children of the scroller, so a branch added to
    `drawFiles` later cannot quietly lose its gutter, and so the header --
    which is not one of them -- keeps running to the pane's edges. */
@@ -5118,6 +5126,7 @@ const state = {
   // fifteen more names in one scope every time a tab was added, and nothing
   // said which tab owned any of them. See `blankFiles`.
   files: null,          // set below, because it is built in one place
+  turns: null,          // the Transcript tab's own; see `blankTurns`
   loose: null,          // an untracked file picked on the Diff tab
   looseFound: {},       // the whole answer for it, for `putMedia`
   goTo: false,          // and whether the pane still has to move to it
@@ -5139,6 +5148,7 @@ const state = {
 };
 
 state.files = blankFiles();
+state.turns = blankTurns();
 state.review = blankReview();
 
 const $ = (id) => document.getElementById(id);
@@ -5365,10 +5375,11 @@ function said(answer) {
   box.textContent = (answer && answer.error) || "";
   if (!box.textContent) return;
   setTimeout(() => {
-    // Not `box.textContent` when a search is on: that assigns the error back
-    // to itself, and the match count never comes back. The slot holds one of
-    // two things and `updateLive` knows which.
-    if (box.textContent === (answer.error || "")) updateLive(shownBlocks());
+    // Only when the slot still holds this error. Assigning unconditionally
+    // would wipe whatever the stream has put there since.
+    if (box.textContent === (answer.error || "")) {
+      box.textContent = state.live || "";
+    }
   }, 4000);
 }
 
@@ -6358,51 +6369,162 @@ function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// One round of the conversation: what you typed, and what came back to it.
+//
+// Only prompts and the agent's own text. A tool call is not a round and there
+// are hundreds of them -- 233 in one measured session -- and they are already
+// in the transcript beside this. Thinking is hidden by default, so a row for
+// one would point at nothing.
+//
+// A transcript can open with the agent talking: a session resumed, or one
+// read from partway through. That is a round with no prompt of its own.
+function rounds() {
+  const out = [];
+  let here = null;
+  for (let at = 0; at < state.blocks.length; at += 1) {
+    const block = state.blocks[at];
+    if (!block) continue;
+    if (block.kind === "prompt") {
+      out.push(here = { seq: at, text: block.text, replies: [] });
+    } else if (block.kind === "text") {
+      if (!here) out.push(here = { seq: at, text: "", replies: [] });
+      here.replies.push({ seq: at, text: block.text });
+    }
+  }
+  return out;
+}
+
+//: How much of a line is enough to know what it was about.
+const GLIMPSE = 44;
+
+// The first line with anything on it, short enough to read at a glance.
+// Markdown's own marks are taken off the front: a reply that opens with a
+// heading or a bullet would otherwise spend its first characters saying so.
+function glimpse(text) {
+  const lines = String(text || "").split("\n");
+  const first = (lines.find((one) => one.trim()) || "").trim()
+    .replace(/^(#{1,6}|[-*>]|\d+\.)\s+/, "")
+    .replace(/^\*\*(.*?)\*\*/, "$1")
+    .replace(/^`(.*?)`/, "$1")
+    .trim();
+  return first.length > GLIMPSE ? first.slice(0, GLIMPSE - 1) + "…" : first;
+}
+
+// The rounds the find box leaves. A round stays when it matches or when one
+// of its replies does; under it, the replies that match -- unless the round
+// itself matched, in which case the whole of it is what you asked for.
+function shownRounds() {
+  const all = rounds();
+  if (!state.find) return all;
+  const has = (text) => String(text || "").toLowerCase().includes(state.find);
+  const out = [];
+  for (const one of all) {
+    const mine = has(one.text);
+    const replies = mine ? one.replies : one.replies.filter((r) => has(r.text));
+    if (mine || replies.length) out.push({ ...one, replies });
+  }
+  return out;
+}
+
+// The left bar: a round is a folder, the replies to it are what is in it.
+// Clicking either goes to that place in the transcript beside it.
+function drawTurnList(list) {
+  list.replaceChildren();
+  const found = shownRounds();
+  if (!found.length) {
+    put(list, "div", "nohits",
+        state.find ? "Nothing here matches." : "Nothing said yet.");
+    return found;
+  }
+  for (const one of found) {
+    putTurnRow(list, one.seq, 0, glimpse(one.text) || "(no prompt)", true);
+    for (const reply of one.replies) {
+      putTurnRow(list, reply.seq, 1, glimpse(reply.text) || "(no text)", false);
+    }
+  }
+  return found;
+}
+
+function putTurnRow(list, seq, depth, text, mine) {
+  const button = put(list, "button",
+                     (mine ? "dir" : "") + (seq === state.turns.at ? " chosen" : ""));
+  button.type = "button";
+  button.title = text;
+  button.style.paddingLeft = (14 + depth * 13) + "px";
+  putIcon(button, mine ? "dirOpen" : "file");
+  put(button, "span", "name", text);
+  button.addEventListener("click", () => goToTurn(seq));
+  return button;
+}
+
+// Go to one turn, and mark where you went. The list is the map; the mark is
+// what answers a click on a row that was already on screen.
+function goToTurn(seq) {
+  state.turns.at = seq;
+  state.goToBlock = seq;
+  const pane = document.querySelector(".turnbody");
+  if (!pane || !landOnBlock(pane)) draw();
+  else drawTurnList(document.querySelector(".filelist.transcript"));
+}
+
 function drawTranscript(box) {
-  box.replaceChildren();
-  // `split` rebuilds only when this says another tab owns the box. Leaving
-  // the old name here emptied the box and then let the next Files draw think
-  // its columns were still there, so the tab came back blank.
-  box.dataset.tab = "transcript";
+  const [list, pane, note] = split(box, "transcript", "turnbody");
+  const found = drawTurnList(list);
+  noteTurns(note, found);
+  // The whole transcript, always. The find box narrows the list beside it and
+  // nothing else: you keep your place and the conversation around it, which
+  // is what a transcript is for. It still marks what matched, because a hit
+  // you scroll past unmarked is a hit you miss.
+  //
+  // No redraw key. The live path is `patchTranscript`, which appends; getting
+  // here means a tab switch, a session, or a keystroke in the find box, and
+  // every one of those really does want the blocks built again. A key here
+  // would also leave the arriving block's `fresh` class on it for ever --
+  // drawing a block again is not the block arriving again.
+  //
+  // Read before the pane is emptied: `replaceChildren` puts the scrollbar
+  // back to nought, and the listener below would write that down as the
+  // place the reader was.
+  const place = state.turns.down;
+  if (!pane.dataset.watched) {
+    pane.dataset.watched = "1";
+    pane.addEventListener("scroll",
+                          () => { state.turns.down = pane.scrollTop; });
+  }
+  pane.replaceChildren();
   state.nodes = [];
   if (!state.blocks.length) {
-    const empty = put(box, "div", "empty");
+    const empty = put(pane, "div", "empty");
     put(empty, "p", null, "Nothing in this transcript yet.");
-    updateLive(0);
     return;
   }
-  let shown = 0;
   for (let index = 0; index < state.blocks.length; index += 1) {
     const block = state.blocks[index];
     if (!block) continue;
     const node = blockNode(block, index);
     state.nodes[index] = node;
-    if (!matches(block)) continue;
     markHits(node, state.find);
-    box.appendChild(node);
-    shown += 1;
+    pane.appendChild(node);
   }
-  if (state.find && !shown) put(box, "div", "nohits", "Nothing here matches.");
-  updateLive(shown);
-  if (state.find) box.scrollTop = 0;
-  else if (!landOnBlock(box)) box.scrollTop = box.scrollHeight;
+  // Where the reader was, or the foot of it. A transcript is read from the
+  // bottom -- the last thing the agent said is the thing you came for -- so
+  // that is where a session with no kept place lands.
+  if (!landOnBlock(pane)) pane.scrollTop = place || pane.scrollHeight;
 }
 
-// How many blocks the filter is showing. `drawTranscript` counts them as it
-// draws; anyone else asking has to count them.
-function shownBlocks() {
-  return state.blocks.filter((block) => block && matches(block)).length;
-}
-
-function updateLive(shown) {
-  // The find box is shared with the other tabs, so a filter is not by itself
-  // a reason to put a block count in this slot.
-  if (!state.find || state.tab !== "transcript") {
-    $("live").textContent = state.live || "";
-    return;
-  }
-  const total = state.blocks.filter(Boolean).length;
-  $("live").textContent = shown + " of " + total;
+// How much of the conversation the list is showing.
+function noteTurns(note, found) {
+  note.replaceChildren();
+  const replies = found.reduce((n, one) => n + one.replies.length, 0);
+  const all = rounds();
+  const every = all.reduce((n, one) => n + one.replies.length, 0);
+  const what = (n) => n + (n === 1 ? " reply" : " replies");
+  put(note, "span", null,
+      found.length === all.length && replies === every
+        ? found.length + (found.length === 1 ? " round · " : " rounds · ")
+          + what(replies)
+        : found.length + " of " + all.length + " rounds · "
+          + replies + " of " + every + " replies");
 }
 
 // Redraw one block where it stands, without touching anything else.
@@ -6425,19 +6547,14 @@ function patchTranscript(indexes) {
   // does, is the difference between appending a turn to the transcript and
   // appending it as a fourth column of the Files tab.
   if (state.tab !== "transcript" || box.dataset.tab !== "transcript") return;
-  if (!state.nodes) return;
-  if (state.find) {
-    // The filter decides what shows, so the whole tab is drawn again — and
-    // that draw goes to the top. On a live session it happens once a second,
-    // which threw the reader back to the top of a search they were reading.
-    const stick = nearBottom(box);
-    const was = box.scrollTop;
-    drawTranscript(box);
-    box.scrollTop = stick ? box.scrollHeight : was;
-    return;
-  }
+  const pane = box.querySelector(".turnbody");
+  const list = box.querySelector(".filelist.transcript");
+  if (!pane || !list || !state.nodes) return;
+  // The list is a map of the whole conversation, so a new block changes it
+  // whatever the find box holds. It is cheap: a row per prompt and reply.
+  noteTurns(box.querySelector(".listnote"), drawTurnList(list));
   if (!state.nodes.length) { drawTranscript(box); return; }
-  const stick = nearBottom(box);
+  const stick = nearBottom(pane);
   for (const index of indexes) {
     if (index < state.nodes.length) {
       redrawBlock(index);
@@ -6447,11 +6564,12 @@ function patchTranscript(indexes) {
       // that slid in block by block would be a page having a fit.
       const node = blockNode(state.blocks[index], index);
       node.classList.add("fresh");
+      markHits(node, state.find);
       state.nodes[index] = node;
-      box.appendChild(node);
+      pane.appendChild(node);
     }
   }
-  if (!landOnBlock(box) && stick) box.scrollTop = box.scrollHeight;
+  if (!landOnBlock(pane) && stick) pane.scrollTop = pane.scrollHeight;
 }
 
 // Three places show how far a file moved. They say it the same way.
@@ -6513,7 +6631,10 @@ function split(box, tab, bodyClass) {
     // list. The window follows the scrollbar, which is the only thing that
     // moves it, so it is watched rather than redrawn from the top each time.
     const windowed = tab === "files";
-    const list = put(side, "div", "filelist" + (windowed ? " fixed" : ""));
+    // The tab's own name as a second class, so a tab can style its list
+    // without a class name of its own to keep in step with this one.
+    const list = put(side, "div",
+                     "filelist " + tab + (windowed ? " fixed" : ""));
     if (windowed) list.addEventListener("scroll", () => fillList(list));
     // Under the list and pinned there, for what must stay in reach however
     // far the list scrolls. The count strip above it is one clipped line.
@@ -7298,6 +7419,16 @@ function showLine(pane, line) {
 
 // An empty Files tab. One place, so that choosing a session, choosing a file
 // and starting up cannot drift apart about what "nothing is open" means.
+// The Transcript tab's own state. Small, because the blocks themselves are
+// shared chrome -- the daemon pushes them and the sidebar's counts read them.
+// This is only what the reader did on this tab.
+function blankTurns() {
+  return {
+    at: null,           // the block the list marks: the last place you went
+    down: 0,            // how far down the transcript you were
+  };
+}
+
 function blankFiles() {
   return {
     names: [],          // every path in the worktree, in the order sent
@@ -8307,7 +8438,8 @@ function drawDiffCount() {
 // --- the tabs ---------------------------------------------------------------
 
 const TABS = {
-  transcript: { draw: drawTranscript, load: loadTranscript, poll: 0 },
+  transcript: { draw: drawTranscript, load: loadTranscript, poll: 0,
+                splits: true },
   files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true },
   // No `load`: a review is written in this browser, so there is nothing to
@@ -8344,7 +8476,6 @@ function draw() {
     drawEmpty(box);
     return;
   }
-  if (state.tab !== "transcript") $("live").textContent = "";
   TABS[state.tab].draw(box);  // showTab only ever sets a tab that is in here
 }
 
@@ -8357,7 +8488,7 @@ function showTab(name) {
   for (const button of document.querySelectorAll(".tab")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
-  $("find").placeholder = (name === "transcript" ? "find in transcript  /"
+  $("find").placeholder = (name === "transcript" ? "find a turn  /"
                           : name === "files" ? "go to file  /"
                                              : "find a file  /");
   load();
@@ -8384,6 +8515,7 @@ function savePlace(id) {
   if (!id) return;
   state.visits.set(id, {
     tab: state.tab,
+    turns: { ...state.turns },
     path: state.files.path,
     at: state.files.at,
     asText: state.files.asText,
@@ -8411,6 +8543,7 @@ function savePlace(id) {
 function usePlace(id) {
   const kept = state.visits.get(id);
   if (!kept) return null;
+  state.turns = { ...blankTurns(), ...kept.turns };
   state.files.path = kept.path;
   state.files.at = kept.at;
   state.files.asText = kept.asText;
@@ -8430,6 +8563,7 @@ function choose(id) {
   state.run = -1;
   state.nodes = [];
   state.open.clear();
+  state.turns = blankTurns();
   state.goToBlock = null;       // a link into the last session is not this one
   state.files = blankFiles();   // a different worktree holds different files
   state.loose = null;

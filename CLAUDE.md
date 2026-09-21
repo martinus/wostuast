@@ -61,7 +61,8 @@ This list exists because each entry was re-implemented once already.
 | scattered-letter match | `fuzzy(text, query)` → `{score, at}` or null |
 | the items in a list whose path matches the find box | `hits(items, pathOf)` — keeps the caller's order; `pick(names)` is the same sorted best-first |
 | walk a diff's lines with their numbers | `walkHunks(one, onHunk, onLine)` |
-| the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]` |
+| the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]`; the list also carries the tab's name as a class |
+| the rounds of a conversation | `rounds()`, `shownRounds()` (filtered), `glimpse(text)` |
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
 | "3 min ago" | `ago(when)` — `40s`, `4min`, `2h 15min`, `2d 6h`; two units once the first is coarse |
 | one session's route | `apiUrl(id, what, query)` |
@@ -519,8 +520,8 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   just restored. `drawFiles` puts the place back only once there is something
   under the bar: the first draw after a session is chosen has no text yet,
   and scrolling to nought there would be written straight back as the place.
-- **A tab's state lives under its own name**, `state.files` so far, and one
-  `blankFiles()` builds an empty one. Choosing a session is then
+- **A tab's state lives under its own name**, `state.files` and
+  `state.turns`, each with one `blank…()` that builds an empty one. Choosing a session is then
   `state.files = blankFiles()` rather than eleven assignments that could
   forget the twelfth. **A new tab gets the same shape from the start**: the
   flat bag this came out of grew fifteen names in one scope for the Files tab
@@ -748,9 +749,27 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `current()` is null and every tab draws its empty state. The `sessions`
   event draws again when the chosen session turns out to be real; without
   that, a linked page stayed empty until the reader clicked a row.
+- **The find box narrows the list, never the transcript.** Taking turns out
+  of the transcript took the conversation around a hit with them, which is
+  what you were reading it for. `shownRounds` filters the left bar;
+  `markHits` still marks what matched where it stands, because a hit you
+  scroll past unmarked is a hit you miss.
+- **`drawTranscript` has no redraw key, on purpose.** The live path is
+  `patchTranscript`, which appends. Getting to a full draw means a tab
+  switch, a session, or a keystroke in the find box, and every one of those
+  really does want the blocks built again. A key there would also leave an
+  arriving block's `fresh` class on it for ever: drawing a block again is not
+  the block arriving again, and
+  `test_only_a_block_that_has_just_arrived_slides_in` says so.
+- **`state.turns.down` is read before the pane is emptied.**
+  `replaceChildren` puts the scrollbar back to nought and the scroll listener
+  would write that down as the place the reader was. The listener is attached
+  once per pane, guarded by `pane.dataset.watched`, because `drawTranscript`
+  runs many times over one pane and `split` only rebuilds it on a tab change.
 - **The search redraws the whole tab, so it has to put the reader back.**
-  `drawTranscript` ends at the top, which is right when a filter is typed and
-  wrong on every push after — once a second on a live session.
+  `drawTranscript` ends at the foot of the transcript, which is where a
+  session with no kept place belongs — the last thing the agent said is the
+  thing you came for.
 - **One block redrawn on its own still has to be marked.** `redrawBlock` is the
   Transcript tab's `fillDiffFile`: everything `drawTranscript` does to a node
   it must do too, or the block you touched loses what the others keep.

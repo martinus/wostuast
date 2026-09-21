@@ -70,7 +70,7 @@ MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
 # The transcript shares the box with the two split tabs, so "the box has a
 # child" is already true while the file columns are still standing in it. It
 # has to have stopped being split as well.
-DRAWN = {"transcript": "#content:not(.split) > *", "files": ".filebody > *",
+DRAWN = {"transcript": ".turnbody > *", "files": ".filebody > *",
          "diff": ".diffbody > *", "review": ".reviewbody > *",
          "session": ".sessionbody > *"}
 
