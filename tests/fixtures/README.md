@@ -61,6 +61,30 @@ content blocks. The block types and their keys:
 blocks. `tool_use.name` and `tool_use.input` hold what the hook payload calls
 `tool_name` and `tool_input`, so `tool_summary` reads both without changing.
 
-Other line types appear and are ignored by the transcript tab: `summary`
-(written when a session is compacted or resumed), `queue-operation`,
-`attachment`, `system`, `mode`, `last-prompt` and `atis-latch`.
+### A compaction
+
+Measured over 31 transcripts on three machines, two different builds: **no
+`summary` record appears anywhere**. The schema still lists it, and this
+fixture still holds one, because an older Claude Code wrote them — what one
+meant there (a session compacted *or* resumed) was never settled, and no build
+in use writes one to settle it with.
+
+A current build writes a compaction as two lines, in this order:
+
+| Line | Keys that matter |
+| --- | --- |
+| `type: "system"` | `subtype: "compact_boundary"`, `content: "Conversation compacted"`, `compactMetadata` |
+| `type: "user"` | `isCompactSummary: true`, `isVisibleInTranscriptOnly: true`, and `message.content` as a plain string |
+
+`compactMetadata` holds `trigger` (manual, auto — the same two words as
+`PreCompact`), `preTokens`, `durationMs`, `preCompactDiscoveredTools` and
+`preservedSegment`. The `user` line carries the whole summary: 13,644
+characters in the one this was read from. It is a `user` record and it is not
+a prompt — drawing it as one put that much machine text in the transcript as
+though the reader had typed it.
+
+Other line types appear and are ignored: `queue-operation`, `attachment`,
+`mode`, `last-prompt`, `atis-latch`, `cost-state`, `permission-mode`,
+`ai-title`, `pr-link`, `bridge-session`, `file-history-snapshot` and
+`file-history-delta`. A `system` record other than a compact boundary is
+ignored too.

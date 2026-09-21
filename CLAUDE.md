@@ -603,6 +603,18 @@ Hook and status line field names are in `tests/fixtures/README.md`. Need one
 that is not there? Record a real payload and add it to `tests/fixtures/`. Do not
 invent a name.
 
+**Recording one does not mean committing your conversation.** Both fixtures
+carry real field names in real shapes with invented text, because this
+repository is public. Read a real payload, learn the shape, write the fixture.
+
+**And read more than one machine.** "A compaction writes a `summary` record"
+held for years and was false: 31 transcripts across three machines and two
+builds hold not one. A current build writes a `system` record with
+`subtype: "compact_boundary"`, then a `user` record with `isCompactSummary`
+carrying the whole summary — which went into the transcript as a prompt,
+because it is a `user` record. A claim about a payload is worth what the
+sample behind it is worth.
+
 ## Milestones
 
 `PLAN.md` section 9. Commit at the end of each, leave a working tool behind.

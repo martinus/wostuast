@@ -25,7 +25,11 @@ def parsed(ws):
 def test_the_recorded_transcript_reads_as_expected(parsed):
     got = parsed
     kinds = [b.kind for b in got.blocks]
-    assert kinds == ["prompt", "thinking", "text", "tool", "tool", "text", "divider"]
+    # Two dividers: the `summary` record an older Claude Code wrote, and the
+    # `compact_boundary` a current one writes. The compact summary that
+    # follows the boundary is not among them — see the test below.
+    assert kinds == ["prompt", "thinking", "text", "tool", "tool", "text",
+                     "divider", "divider"]
 
 
 def test_a_prompt_keeps_its_text(parsed):
@@ -64,15 +68,33 @@ def test_a_result_is_attached_to_its_call(parsed):
 
 
 def test_a_compaction_becomes_a_divider(parsed):
+    """Two shapes, one divider. An older Claude Code wrote a `summary`
+    record; a current one writes a `system` record whose subtype is
+    `compact_boundary`, and no `summary` at all — measured over 31
+    transcripts on three machines, where `summary` never appeared once."""
     got = parsed
-    assert got.blocks[-1].kind == "divider"
-    assert got.blocks[-1].text == "context compacted"
+    dividers = [b for b in got.blocks if b.kind == "divider"]
+    assert len(dividers) == 2
+    assert {b.text for b in dividers} == {"context compacted"}
+
+
+def test_the_summary_carried_across_a_compaction_is_not_a_prompt(parsed):
+    """Claude Code carries the conversation over a compaction in a `user`
+    record with `isCompactSummary`. It went into the transcript as a prompt —
+    thirteen thousand characters of machine text sitting there as though the
+    reader had typed them. The divider says what happened; this is not a
+    prompt and not anything else either."""
+    got = parsed
+    assert [b.kind for b in got.blocks].count("prompt") == 1
+    assert not any("continued from a previous conversation" in b.text
+                   for b in got.blocks)
 
 
 def test_timestamps_are_read(parsed):
     got = parsed
     assert got.blocks[0].ts > 0
-    assert got.blocks[-2].ts >= got.blocks[0].ts
+    spoken = [b for b in got.blocks if b.kind != "divider"]
+    assert spoken[-1].ts >= got.blocks[0].ts
 
 
 # --- following it as it grows ------------------------------------------------
@@ -85,8 +107,8 @@ def test_it_follows_without_re_reading(ws, tmp_path):
     first = transcript.read_new()
     # seven blocks, and two of them are touched twice: a tool call is created
     # and then updated when its result arrives, so nine touches in all
-    assert len(transcript.blocks) == 7
-    assert len(first) == 9
+    assert len(transcript.blocks) == 8
+    assert len(first) == 10
     assert transcript.read_new() == []
 
     with open(path, "a") as handle:
@@ -96,7 +118,7 @@ def test_it_follows_without_re_reading(ws, tmp_path):
         }) + "\n")
     more = transcript.read_new()
     assert [b.text for b in more] == ["More."]
-    assert len(transcript.blocks) == 8
+    assert len(transcript.blocks) == 9
 
 
 def test_a_result_arriving_later_updates_the_same_block(ws, tmp_path):
