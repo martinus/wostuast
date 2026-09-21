@@ -44,6 +44,7 @@ after the tests go red.
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
 | a new test | **How to work here** — it is not a test until you have made it fail |
+| a push to `main`, or landing a change | **How to work here**, last bullet — `main` is protected and nothing bypasses it |
 | the issue list | `.claude/skills/issues/SKILL.md`, or say "do the issues" |
 
 ## The program in five lines
@@ -211,6 +212,29 @@ transcript fills one fetch later. Abort `api/session/*/transcript` and the
 list is empty with the page otherwise drawn, which is what a loaded CI runner
 looks like: four tests read that list straight away and one of them went red
 the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
+
+**`main` is protected, and a push to it is refused.** A change lands through a
+pull request, with every job in `.github/workflows/tests.yml` green. A
+force-push to `main`, and a deletion of it, are refused too. The rule is a
+GitHub ruleset, so it lives outside this repository and no test here can hold
+it: `gh api repos/{owner}/{repo}/rulesets` is what answers what it says. Three
+things about it are worth knowing before they surprise you.
+
+- **It has no bypass actors, on purpose.** An agent pushes with the owner's
+  token, so a bypass for the owner is a bypass for every agent, and the rule
+  would be decorative. To land something without a pull request, set the
+  ruleset's enforcement to `disabled`, push, and set it back — a deliberate
+  act, which is the point.
+- **It asks for no approving review, and that is not an oversight.** GitHub
+  will not let you approve your own pull request, and this repository has one
+  reviewer. One required approval would lock the owner out of their own
+  repository, and it would read as a broken merge button rather than as a
+  rule. Nought still forces the pull request, and still forces green.
+- **The required checks are named one by one, so the matrix and the ruleset
+  can drift.** Add a Python version to `tests.yml` and its job is not required
+  until you add it to the ruleset. Take one out and the ruleset waits for a
+  check that will never report, and then nothing can be merged at all. Change
+  the matrix, change the ruleset.
 
 ## Rules, each one a bug that already happened
 
