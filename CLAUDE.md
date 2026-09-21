@@ -78,7 +78,10 @@ This list exists because each entry was re-implemented once already.
 never hand-write the dict. `browser.py` has `open_page`, `show_tab`, `open_diff`,
 `comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`.
 
-**CSS**: `.verb` (button), `.link` (small text button), `.find`/`.findslot`,
+**CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a
+button that only changes what is on screen), `.link` (small text button, now
+only the file header's reading toggles), `.acts` (what you can do to a comment,
+at its right edge), `.find`/`.findslot`,
 `.empty`, `.nohits`, `.note`, `.dot`, `.comment`. **Every colour is a variable**
 and a `:root` block is the only place a colour may be a number —
 `test_every_colour_outside_the_palette_is_named` fails the build otherwise.
@@ -561,6 +564,12 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   from HEAD to disk — by `inWorktree`, and a line that is no longer on disk
   gets no `+`, like a removed one. Anchoring to HEAD's number was wrong at the
   moment of writing, not because the file moved afterwards.
+- **One comment, drawn one way.** `putComment` builds it everywhere; the
+  Review tab passes `full`, which adds the quoted line — there is no code
+  above it there — and the delete button, which only that tab offers. The
+  Review tab used to reach into the node it got back and append both, so the
+  two drifted. Its buttons go in `.acts`, at the right edge, out of the note's
+  way; the comment box's own go under the field, at the same edge.
 - **One anchor, one comment box.** A file in both sections shows the same line
   twice. Two boxes meant the later `focus()` took the keystrokes to a box off
   screen, and saving the visible one passed an empty note — which means

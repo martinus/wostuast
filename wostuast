@@ -4288,8 +4288,11 @@ body.dragging { cursor: col-resize; user-select: none; }
   color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The two things this page can do to a terminal. They look like buttons and
-   nothing else on the page does, because everything else only reads. */
+/* The page's one button shape. A full-strength `.verb` reaches the terminal —
+   jump, send, submit a review — and there are only a few of those. `.quiet` is
+   the same button a size down, for what only changes what is on screen: edit a
+   comment, throw one away. Those were `.link`, which is text you have to find
+   out is clickable. */
 .verb {
   flex-shrink: 0; height: 26px; padding: 0 12px; border-radius: 5px;
   border: 1px solid var(--edge-bright); background: var(--raised);
@@ -4298,6 +4301,10 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 .verb:hover { border-color: var(--needs); color: var(--needs); }
 .verb:active { background: var(--chosen); }
+.verb.quiet {
+  height: 22px; padding: 0 10px; font-size: 11px;
+  background: none; border-color: var(--edge); color: var(--ink-mute);
+}
 .sendbar {
   flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
@@ -4687,6 +4694,10 @@ body:not(.show-thinking) .thinking { display: none; }
   font-family: var(--sans); font-size: 13px; color: var(--ink);
 }
 .comment .note { white-space: pre-wrap; line-height: 1.5; }
+/* What you can do to a comment, at the far end of it. The note is what you
+   came to read; the buttons are not, so they get out of its way. A row of its
+   own rather than `.buttons`, which the Review tab already owns two of. */
+.acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 /* The Review tab: the two boxes at the top, one block per place, and the
    message itself at the bottom. */
 .about { margin-bottom: 20px; }
@@ -4732,6 +4743,9 @@ body:not(.show-thinking) .thinking { display: none; }
 .commentbox .buttons, .reviewbody .buttons {
   display: flex; gap: 12px; align-items: center; margin-top: 6px;
 }
+/* Under the field, at its right edge — where the eye is after reading back
+   what it typed. */
+.commentbox .buttons { justify-content: flex-end; }
 .dline.added { background: var(--add-bg); color: var(--add-ink); }
 .dline.removed { background: var(--cut-bg); color: var(--cut-ink); }
 .note {
@@ -7518,15 +7532,28 @@ function redrawCode() {
 }
 
 // One comment, under the line or the file it is about.
-function putComment(parent, one) {
+//
+// `full` is the Review tab, which shows a comment away from the code: there is
+// no line above it there, so it carries the quoted one itself, and it is the
+// only place a comment can be thrown away outright. Everywhere else the line
+// is right there and an empty save is the way to remove one.
+function putComment(parent, one, full) {
   const node = put(parent, "div", "comment");
+  if (full && one.quoted) put(node, "div", "quoted", one.quoted);
   put(node, "div", "note", one.note);
-  const edit = put(node, "button", "link", "edit");
+  const acts = put(node, "div", "acts");
+  const edit = put(acts, "button", "verb quiet", "edit");
   edit.type = "button";
   edit.addEventListener("click", () => {
     state.writing = one.anchor;
     redrawCode();
   });
+  if (full) {
+    const drop = put(acts, "button", "verb quiet", "delete");
+    drop.type = "button";
+    drop.addEventListener("click",
+                          () => writeComment(one.anchor, one.quoted, ""));
+  }
   return node;
 }
 
@@ -7539,12 +7566,12 @@ function putCommentBox(parent, anchor, quoted) {
   area.placeholder = "what should the agent change here?";
   area.rows = 3;
   const row = put(form, "div", "buttons");
+  const stop = put(row, "button", "verb quiet", "cancel");
+  stop.type = "button";
+  stop.addEventListener("click", () => { state.writing = null; redrawCode(); });
   const save = put(row, "button", "verb", "save");
   save.type = "button";
   save.addEventListener("click", () => writeComment(anchor, quoted, area.value));
-  const stop = put(row, "button", "link", "cancel");
-  stop.type = "button";
-  stop.addEventListener("click", () => { state.writing = null; redrawCode(); });
   area.addEventListener("keydown", (press) => {
     if (press.key === "Escape") { state.writing = null; redrawCode(); }
   });
@@ -7555,7 +7582,7 @@ function putCommentBox(parent, anchor, quoted) {
 // The button that opens the box, and the comment or box that is already there.
 // One function, because a line and a file header want exactly the same three
 // things and differ only in where they hang them.
-function putReview(parent, anchor, quoted) {
+function putReview(parent, anchor, quoted, full) {
   const seen = commentAt(anchor);
   // One box per anchor, wherever the line first turns up. A file that is in
   // both sections has the same line twice, and the second box took the focus
@@ -7565,7 +7592,7 @@ function putReview(parent, anchor, quoted) {
   if (state.writing === anchor && !document.querySelector(".commentbox")) {
     return putCommentBox(parent, anchor, quoted);
   }
-  if (seen) return putComment(parent, seen);
+  if (seen) return putComment(parent, seen, full);
   const add = put(parent, "button", "addnote", "+");
   add.type = "button";
   add.title = "comment here";
@@ -7666,13 +7693,7 @@ function drawReview(box) {
     // The same dispatch every other place uses: the box if it is being
     // written, the comment if it is not. A comment always exists here, so the
     // `+` branch cannot be reached.
-    const shown = putReview(node, one.anchor, one.quoted, "");
-    if (state.writing !== one.anchor) {
-      if (one.quoted) put(shown, "div", "quoted", one.quoted);
-      const drop = put(shown, "button", "link", "delete");
-      drop.type = "button";
-      drop.addEventListener("click", () => writeComment(one.anchor, one.quoted, ""));
-    }
+    putReview(node, one.anchor, one.quoted, true);
     const button = put(list, "button");
     button.type = "button";
     button.title = path;
@@ -7744,7 +7765,7 @@ function putSubmit(foot) {
   // button, in place: redrawing the whole tab to change one word would take
   // the reader's cursor and their place on the page with it.
   let armed = false;
-  const drop = put(foot, "button", "link", "delete this review");
+  const drop = put(foot, "button", "verb quiet", "delete this review");
   drop.type = "button";
   drop.addEventListener("click", () => {
     if (!armed) {

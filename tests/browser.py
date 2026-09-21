@@ -218,7 +218,7 @@ def comment_on_line(page, at, note):
     page.locator(".dline").nth(at).locator(".addnote").click(force=True)
     page.wait_for_selector(".commentbox textarea")
     page.fill(".commentbox textarea", note)
-    page.click(".commentbox .verb")
+    page.click(".commentbox button:text-is('save')")
     page.wait_for_selector(".comment")
 
 
@@ -226,7 +226,7 @@ def comment_on_first_line(page, note):
     page.locator(".dline .addnote").first.click(force=True)
     page.wait_for_selector(".commentbox textarea")
     page.fill(".commentbox textarea", note)
-    page.click(".commentbox .verb")
+    page.click(".commentbox button:text-is('save')")
     page.wait_for_selector(".comment")
 
 def base_of(in_pane):
