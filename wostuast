@@ -5056,6 +5056,8 @@ const state = {
   skew: 0,              // server clock minus ours
   open: new Set(),      // tool blocks the reader expanded
   goToBlock: null,      // the block a link asked for, until it is on screen
+  // Where each session was left, by id. The choices only -- see `savePlace`.
+  places: new Map(),
   stream: null,
   // Everything the Files tab holds, and nothing another tab reads. A tab's
   // state arrives and leaves with the tab: the flat bag this came out of meant
@@ -7080,7 +7082,10 @@ function drawFiles(box) {
   const wanted = state.files.goToLine;
   state.files.goToLine = 0;
   const had = pane.querySelector(".filescroll");
-  const place = (same && !wanted && had) ? had.scrollTop : 0;
+  // A place kept from the last visit wins over the place the reader is in:
+  // they are coming back to it, not staying where they were.
+  const place = state.files.down
+    || ((same && !wanted && had) ? had.scrollTop : 0);
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
   if (!state.files.path) {
@@ -7149,7 +7154,14 @@ function drawFiles(box) {
   // nought -- the pane used to be the scroller, it outlived the file in it,
   // and a `replaceChildren` does not reliably put its bar back.
   if (wanted) requestAnimationFrame(() => showLine(view, wanted));
-  else requestAnimationFrame(() => { view.scrollTop = place; });
+  else requestAnimationFrame(() => {
+    // A kept place waits for the file to be there. The first draw after a
+    // session is chosen has no text yet, and a scrollbar with nothing under
+    // it goes nowhere -- and then the place would be spent on that draw.
+    if (state.files.down && view.scrollHeight <= view.clientHeight) return;
+    state.files.down = 0;
+    view.scrollTop = place;
+  });
 }
 
 // A file with no text in it. A picture, a video or a sound is shown as it is;
@@ -7259,6 +7271,10 @@ function blankFiles() {
     asText: false,
     goTo: null,         // a path the list has been asked to move to
     goToLine: 0,        // and the line in it the body should show, if any
+    // How far down the open file the reader was, kept across a tab switch
+    // and across a visit to another session. Put back once, when there is
+    // something under the scrollbar to put it back into.
+    down: 0,
   };
 }
 
@@ -7451,6 +7467,7 @@ function forgetFile(path) {
   if (state.writing !== null) state.writing = null;
   state.files.path = path;
   state.files.at = path;
+  state.files.down = 0;       // another file, so there is no place to go back to
   state.files.text = "";
   state.files.binary = false;
   state.files.shown = "";
@@ -8269,6 +8286,11 @@ function draw() {
 
 function showTab(name) {
   if (!TABS[name]) return;
+  // Leaving the Files tab takes the scrollbar with it, so where the reader
+  // was in the open file is written down before the pane goes. `.filescroll`
+  // is on the page only while that tab is, so the query is the check.
+  const view = document.querySelector(".filescroll");
+  if (view) state.files.down = view.scrollTop;
   state.tab = name;
   state.writing = null;       // the box was on the tab you are leaving
 
@@ -8295,8 +8317,49 @@ function drawEmpty(box) {
 
 // --- talking to the daemon --------------------------------------------------
 
+// What a session remembers between visits: what the reader chose, and never
+// what the daemon sent. The listing, the file's text and the diff are fetched
+// again -- by the time you come back they have moved, and they are also the
+// big things, 52,799 names being 1.7 MB of it.
+function savePlace(id) {
+  if (!id) return;
+  const view = document.querySelector(".filescroll");
+  state.places.set(id, {
+    tab: state.tab,
+    path: state.files.path,
+    at: state.files.at,
+    asText: state.files.asText,
+    dirs: new Map(state.files.dirs),
+    // The pane is only on the page while the Files tab is; `showTab` writes
+    // this down on the way out, so a session left on another tab still
+    // remembers where it was in the file it had open.
+    down: view ? view.scrollTop : state.files.down,
+    open: new Set(state.open),
+    diffOpen: new Map(state.diffOpen),
+    loose: state.loose,
+  });
+}
+
+// Put back onto a state that has just been blanked, so every field is one
+// the blank already has. A session never visited has nothing here and keeps
+// the blank.
+function usePlace(id) {
+  const kept = state.places.get(id);
+  if (!kept) return null;
+  state.files.path = kept.path;
+  state.files.at = kept.at;
+  state.files.asText = kept.asText;
+  state.files.dirs = new Map(kept.dirs);
+  state.files.down = kept.down;
+  state.open = new Set(kept.open);
+  state.diffOpen = new Map(kept.diffOpen);
+  state.loose = kept.loose;
+  return kept;
+}
+
 function choose(id) {
   if (state.chosen === id) return;
+  savePlace(state.chosen);
   state.chosen = id;
   state.blocks = [];
   state.run = -1;
@@ -8318,7 +8381,15 @@ function choose(id) {
   state.diffRaw = "";
   state.diffAt += 1;
   drawDiffCount();          // the last session's counts are not this one's
+  const back = usePlace(id);
   drawSessions();
+  // The tab is part of where you were, so coming back to a session goes
+  // through `showTab` -- which is also what draws the header, loads the tab
+  // and resubscribes, so there is nothing to do twice.
+  if (back && TABS[back.tab] && back.tab !== state.tab) {
+    showTab(back.tab);
+    return;
+  }
   drawHeader();
   load();
   resubscribe();

@@ -244,6 +244,12 @@ session with no pane, or one that has ended, can still be named.
 
 ### The tabs
 
+Each session remembers where you left it. Come back to one and you are on the
+tab you were on, with the file you had open, at the place in it you had read
+to, and the tree opened the way you opened it. It remembers what you chose and
+nothing else: the file listing, the file's text and the diff are all fetched
+again, because by the time you come back they have moved.
+
 **Transcript** is what the agent said and did, as it happens.
 
 Each turn carries its name, the time, and the day when it is not today's. The

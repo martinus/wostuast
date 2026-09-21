@@ -467,6 +467,21 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 
 ### Tab state
 
+- **A session remembers the choices, never the caches.** `savePlace` and
+  `usePlace`, into `state.places` by session id: the tab, the open file and
+  the place in it, the directories opened by hand, the expanded tool blocks
+  and diff files. Not the listing, the text or the diff — those are fetched
+  again, because by the time the reader comes back they have moved, and they
+  are also the big things: 52,799 names is 1.7 MB, per session.
+- **`usePlace` writes onto a state that has just been blanked**, so every
+  field it sets is one `blankFiles` already has. A session never visited keeps
+  the blank.
+- **The scrollbar is not on the page when the Files tab is not.** `showTab`
+  writes `state.files.down` down on the way out, or a session left from
+  another tab came back to the top of its file. `drawFiles` puts it back once
+  — and only once there is something under the bar, because the first draw
+  after a session is chosen has no text yet and the place would be spent on
+  it.
 - **A tab's state lives under its own name**, `state.files` so far, and one
   `blankFiles()` builds an empty one. Choosing a session is then
   `state.files = blankFiles()` rather than eleven assignments that could

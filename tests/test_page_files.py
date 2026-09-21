@@ -1195,3 +1195,122 @@ def test_a_picture_too_big_to_show_says_so(ws, repo_page, monkeypatch):
             assert page.locator(".filebody .media").count() == 0
         finally:
             browser.close()
+
+
+# --- what a session remembers between visits ---------------------------------
+
+def test_a_session_comes_back_to_where_it_was_left(two_repos):
+    """A session keeps what the reader chose: the tab, the open file, the
+    place in it, and which directories stand open. It keeps none of what the
+    daemon sent — the listing, the text and the diff are fetched again,
+    because by the time you come back they have moved.
+
+    Drop `usePlace` from `choose` and every one of these comes back blank."""
+    repo, _, base = two_repos
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s1')")
+            show_tab(page, "files")
+            page.click(".filelist button.dir:has(.name:text-is('deep'))")
+            page.click(".filelist button:has(.name:text-is('inner.py'))")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('inner.py')""")
+            page.evaluate("""() => { const view =
+              document.querySelector('.filescroll');
+              view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
+            page.wait_for_function(
+                "document.querySelector('.filescroll').scrollTop > 100")
+            was = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+
+            # Away, and back.
+            page.evaluate("choose('s2')")
+            page.wait_for_function("state.files.path === 'OTHER.md'")
+            assert page.evaluate("state.files.dirs.size") == 0
+            page.evaluate("choose('s1')")
+
+            page.wait_for_function("state.tab === 'files'")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('inner.py')""")
+            page.wait_for_function(
+                "(was) => Math.abs(document.querySelector('.filescroll')"
+                ".scrollTop - was) < 30", arg=was)
+            assert page.evaluate("[...state.files.dirs]") == [["deep", True]]
+            # The caches are not kept: this listing came back from the daemon.
+            assert page.evaluate("state.files.names.length") > 0
+        finally:
+            browser.close()
+
+
+def test_a_session_comes_back_to_the_tab_it_was_left_on(two_repos):
+    """The tab is part of where you were. `choose` goes through `showTab` for
+    it, which is also what marks the strip and loads the tab — set
+    `state.tab` by hand instead and the strip points at the wrong one."""
+    _, _, base = two_repos
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s1')")
+            show_tab(page, "diff")
+            page.evaluate("choose('s2')")
+            show_tab(page, "review")
+            page.evaluate("choose('s1')")
+            # The box, not `state.tab`: `showTab` sets the name and then
+            # awaits the load, and until that comes back the box still holds
+            # the tab before it.
+            page.wait_for_function("$('content').dataset.tab === 'diff'")
+            assert page.eval_on_selector(
+                ".tab[data-tab='diff']",
+                "el => el.getAttribute('aria-selected')") == "true"
+        finally:
+            browser.close()
+
+
+def test_a_place_in_a_file_survives_leaving_the_files_tab(two_repos):
+    """The pane is on the page only while the Files tab is, so by the time a
+    session is left from another tab the scrollbar is long gone. `showTab`
+    writes the place down on the way out. Take that line out and the file
+    comes back at its top."""
+    _, _, base = two_repos
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s1')")
+            show_tab(page, "files")
+            page.click(".filelist button.dir:has(.name:text-is('deep'))")
+            page.click(".filelist button:has(.name:text-is('inner.py'))")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('inner.py')""")
+            page.evaluate("""() => { const view =
+              document.querySelector('.filescroll');
+              view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
+            page.wait_for_function(
+                "document.querySelector('.filescroll').scrollTop > 100")
+            was = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+
+            # Leave by another tab, then leave the session, then come back.
+            show_tab(page, "diff")
+            assert page.locator(".filescroll").count() == 0
+            page.evaluate("choose('s2')")
+            # s2 is on the Diff tab too, so its Files tab never loads and
+            # there is no open file to wait for; its diff is the signal.
+            page.wait_for_function(
+                "state.chosen === 's2' && state.diff !== null")
+            page.evaluate("choose('s1')")
+            page.wait_for_function(
+                "state.chosen === 's1' && $('content').dataset.tab === 'diff'")
+            show_tab(page, "files")
+            page.wait_for_function(
+                """() => document.querySelector('.filebody .where')
+                           .textContent.includes('inner.py')""")
+            page.wait_for_function(
+                "(was) => Math.abs(document.querySelector('.filescroll')"
+                ".scrollTop - was) < 30", arg=was)
+        finally:
+            browser.close()
