@@ -294,8 +294,14 @@ The list is a tree, always. In each directory the order is `PLAN.md`,
 the newest first, then the rest by name. A changed file carries a dot, and so
 does every directory above it, so a closed branch still says there is
 something new inside. A directory holding a change opens itself; if you close
-it, it stays closed. Every row carries a folder or a page icon, and the strip
-above the list says how many files there are.
+it, it stays closed. Every row carries a folder or a page icon; the folder is
+drawn open when it is, and in a colour of its own, so the shape of the tree
+reads before any of its names do. The strip above the list says how many files
+there are.
+
+The list marks where you last went — the file you opened, or the directory you
+asked for. Clicking a part of the path above a file takes the list there and
+marks it, even when it was already on screen.
 
 The list is quick on a large repository because it does very little. wostuast
 asks git once and shares the answer for a few seconds, and the browser keeps

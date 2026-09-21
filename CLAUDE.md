@@ -68,7 +68,7 @@ This list exists because each entry was re-implemented once already.
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
-| a folder or a page icon | `putIcon(parent, "dir" \| "file")` — SVG, so not `put` |
+| a folder or a page icon | `putIcon(parent, "dir" \| "dirOpen" \| "file")` — SVG, so not `put` |
 | the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
 
@@ -484,6 +484,20 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   0.2 KB. So **the order the names are sent in must depend only on which files
   exist**: `in_order` is pinned-then-name. Put a changed tier back into it and
   the tag moves on every save. The reader's order is the page's, in `dirFiles`.
+- **A folder row carries no triangle.** It stood where nothing stood on a
+  file row, so a folder's name sat 9 px right of a file's at the same depth —
+  and a file one level deeper lined up exactly with the folder above it, which
+  is the one thing a tree must not do. `ICONS.dirOpen` says what the triangle
+  said.
+- **The list marks where the reader last went, `state.files.at`.** Not the
+  open file: clicking a part of the path above a file that was already on
+  screen scrolled nowhere and marked nothing, so the click read as broken.
+  `at` is in the list's redraw key, or the mark does not move.
+- **A path clipped at its start is a bidi trap.** `direction: rtl` puts the
+  ellipsis at the front, which is what you want on a path — and moves a
+  leading neutral character to the other end, so `.gitignore` drew as
+  `gitignore.`. `unicode-bidi: plaintext` takes the direction from the first
+  strong character instead. Never clip a path at its start without it.
 - **The tree holds the tiers.** `dirFiles` orders each directory's own files —
   named, changed newest first, then the rest. `openDirs` opens a directory
   holding a change; `state.dirs` (what the reader opened by hand) wins over it.
