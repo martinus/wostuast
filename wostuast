@@ -213,6 +213,17 @@ def names_path() -> Path:
     return state_dir() / "names.json"
 
 
+def links_path() -> Path:
+    """The reader's own autolinks: a ticket id in a transcript, turned into a
+    link to wherever their tickets live.
+
+    Yours, on your machine, across every session. It is not a settings file --
+    `PLAN.md` rules those out -- it is a list of two-field entries, and the
+    page works without it. `doctor` says what is wrong with a bad one.
+    """
+    return state_dir() / "links.json"
+
+
 def log_path() -> Path:
     return state_dir() / "wostuast.log"
 
@@ -1359,7 +1370,10 @@ class Block:
     """One thing the Transcript tab shows, in the order it happened."""
 
     seq: int = -1               # its place in the transcript, and its identity
-    kind: str = "text"          # prompt, text, thinking, tool, divider
+    #: prompt, text, thinking, tool, divider, note. A `note` is a `user`
+    #: record the harness wrote -- a task finishing, another session's
+    #: message -- so it is shown but never as something the reader typed.
+    kind: str = "text"
     ts: float = 0.0
     text: str = ""              # prompt and assistant text, as Markdown
     tool: str = ""              # the tool's name
@@ -1369,6 +1383,55 @@ class Block:
     result: str = ""            # the tool's output, shown when expanded
     failed: bool = False
     tool_use_id: str = ""
+
+
+#: The tags Claude Code wraps its own `user` records in. A real sample, from
+#: a real transcript -- typing `/reload-plugins` arrives as these:
+#:
+#:     <command-name>/reload-plugins</command-name>
+#:     <command-message>reload-plugins</command-message>
+#:     <command-args></command-args>
+#:     <local-command-stdout>(no content)</local-command-stdout>
+#:
+#: and a resumed conversation opens with a `<local-command-caveat>`. One thing
+#: the reader did, in four records, none of which they typed.
+MACHINE_TAG = re.compile(
+    r"<(command-name|command-message|command-args|local-command-stdout"
+    r"|local-command-caveat)>.*?</\1>", re.S)
+COMMAND_NAME = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
+COMMAND_ARGS = re.compile(r"<command-args>\s*(.*?)\s*</command-args>", re.S)
+TASK_NOTE = re.compile(r"^<task-notification>\s*(.*?)\s*</task-notification>$",
+                       re.S)
+
+#: A `user` record the harness wrote and not the reader. It is shown, because
+#: it is real news, but never as a prompt: nobody typed it.
+NOTED = ("<task-notification>", "Another Claude session sent a message:")
+
+
+def read_user_text(text: str) -> tuple[str, str]:
+    """What a `user` record really is: a prompt, a note, or nothing to show.
+
+    Claude Code writes `user` records of its own, and they were drawn as
+    though the reader had typed them -- four rows of tags for one
+    `/reload-plugins`, and `(no content)` as a prompt.
+
+    A record is only read as a command when there is nothing else on it. A
+    prompt really can hold `<command-name>` in it: somebody asking about this
+    very feature types one, and that is a prompt.
+    """
+    rest = MACHINE_TAG.sub("", text).strip()
+    named = COMMAND_NAME.search(text)
+    if named and not rest:
+        # One line saying what was run, which is the whole of what happened.
+        args = COMMAND_ARGS.search(text)
+        said = args.group(1).strip() if args else ""
+        return "prompt", (named.group(1) + (" " + said if said else "")).strip()
+    if not rest:
+        return "", ""                      # plumbing, and nothing else
+    if rest.startswith(NOTED):
+        note = TASK_NOTE.match(rest)
+        return "note", (note.group(1) if note else rest)
+    return "prompt", text
 
 
 def parse_timestamp(value: Any) -> float:
@@ -1512,8 +1575,12 @@ class Transcript:
         if isinstance(content, str):
             if not content.strip():
                 return []
-            return [self.keep(Block(kind="prompt" if kind == "user" else "text",
-                                    ts=ts, text=content))]
+            if kind == "user":
+                mine, text = read_user_text(content)
+                if not mine:
+                    return []
+                return [self.keep(Block(kind=mine, ts=ts, text=text))]
+            return [self.keep(Block(kind="text", ts=ts, text=content))]
         if not isinstance(content, list):
             return []
 
@@ -1532,7 +1599,15 @@ class Transcript:
             text = str(piece.get("text") or "")
             if not text.strip():
                 return None
-            block = Block(kind="prompt" if role == "user" else "text", ts=ts, text=text)
+            if role == "user":
+                # The same reading as a record whose content is one string:
+                # Claude Code writes both shapes.
+                mine, text = read_user_text(text)
+                if not mine:
+                    return None
+                block = Block(kind=mine, ts=ts, text=text)
+            else:
+                block = Block(kind="text", ts=ts, text=text)
         elif kind == "thinking":
             text = str(piece.get("thinking") or "")
             if not text.strip():
@@ -2699,6 +2774,89 @@ def write_status(session_id: str, status: Status) -> None:
 NAME_MAX = 120
 
 
+#: A pattern longer than this is refused. It is not a safety property --
+#: nothing bounds what a regular expression costs -- but a pattern that long
+#: is a mistake, and refusing it is cheaper than explaining the slowness.
+LINK_PATTERN_MAX = 200
+
+#: At most this many links in one block. A pattern that matches everything
+#: would otherwise build a link per word.
+LINKS_MAX = 40
+
+
+def risky_pattern(pattern: str) -> bool:
+    """A quantifier inside a group that is itself quantified: `(a+)+`.
+
+    This is the shape that backtracks catastrophically, and it is the one
+    shape worth spotting. It is a heuristic and says so: nothing here can
+    prove a regular expression is quick, and the page is what pays.
+    """
+    for at, char in enumerate(pattern):
+        if char != "(":
+            continue
+        depth, close = 0, -1
+        for here in range(at, len(pattern)):
+            if pattern[here] == "\\":
+                continue
+            if pattern[here] == "(":
+                depth += 1
+            elif pattern[here] == ")":
+                depth -= 1
+                if depth == 0:
+                    close = here
+                    break
+        if close < 0 or close + 1 >= len(pattern):
+            continue
+        body = pattern[at + 1:close]
+        if pattern[close + 1] in "*+{" and any(one in body for one in "*+{"):
+            return True
+    return False
+
+
+def link_trouble(one: Any) -> str:
+    """What is wrong with one autolink entry, or empty when nothing is.
+
+    The page is handed only the entries that pass, so a broken one is a line
+    in `doctor` rather than a link that quietly does nothing.
+    """
+    if not isinstance(one, dict):
+        return "not an object with `match` and `url`"
+    match = one.get("match")
+    url = one.get("url")
+    if not isinstance(match, str) or not match:
+        return "`match` is missing or not text"
+    if not isinstance(url, str) or not url:
+        return "`url` is missing or not text"
+    if len(match) > LINK_PATTERN_MAX:
+        return f"`match` is longer than {LINK_PATTERN_MAX} characters"
+    if not url.startswith(("http://", "https://")):
+        return "`url` does not start with http:// or https://"
+    try:
+        re.compile(match)
+    except re.error as trouble:
+        return f"`match` is not a regular expression: {trouble}"
+    if risky_pattern(match):
+        return ("`match` has a quantifier inside a quantified group, which can"
+                " be slow enough to freeze the page")
+    return ""
+
+
+def read_links() -> list[dict[str, str]]:
+    """The autolinks that are usable, in the order they were written.
+
+    A file that is missing, unreadable or the wrong shape is no links at all:
+    this is a convenience, and the transcript reads perfectly well without it.
+    """
+    try:
+        payload = json.loads(links_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [{"match": one["match"], "url": one["url"]}
+            for one in payload if not link_trouble(one)]
+
+
 def read_names() -> dict[str, str]:
     """Every name the reader has given, or an empty map."""
     try:
@@ -3545,6 +3703,11 @@ class Serving:
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
+        elif path == "/api/links":
+            # The reader's own, not a session's, so it hangs off nothing. It
+            # is read from disk here rather than held, because it changes
+            # when a person edits a file and a reload should be enough.
+            self.reply_json({"links": read_links()})
         elif path == "/api/events":
             self.stream(query.get("watch", [""])[0])
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -3954,6 +4117,27 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     report(which_tmux(), "tmux found",
            "tmux not found; jump and send stay hidden", fatal=False)
+
+    # The autolinks, if there are any. A broken one is a note and not a
+    # failure: the transcript reads perfectly well without it, and the point
+    # of saying so is that a link doing nothing gives no clue why.
+    links = links_path()
+    if links.exists():
+        try:
+            payload = json.loads(links.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            payload = None
+            report(False, "", f"cannot read {links}: {error}", fatal=False)
+        if payload is not None and not isinstance(payload, list):
+            report(False, "", f"{links} is not a list of links", fatal=False)
+        elif payload is not None:
+            bad = [(at, link_trouble(one)) for at, one in enumerate(payload)]
+            broken = [(at, why) for at, why in bad if why]
+            report(not broken,
+                   f"{len(payload)} autolink(s) in {links}",
+                   "; ".join(f"link {at + 1} in {links}: {why}"
+                             for at, why in broken),
+                   fatal=False)
     report(install_path().exists(), f"installed at {install_path()}",
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
 
@@ -4565,6 +4749,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   border: 1px solid var(--edge); line-height: 1.5; min-width: 0;
   white-space: pre-wrap; word-wrap: break-word;
 }
+/* Something the harness said: a background task finishing, a message from
+   another session. It is real news and it is not a prompt, so it gets a quiet
+   block rather than your rail and your tint. It was drawn as though you had
+   typed it, which is part of what made a transcript read as a wall. */
+.turn.aside .bubble {
+  background: none; border-style: dashed; color: var(--ink-mute);
+}
+.turn.aside .who { color: var(--ink-faint); }
 /* Your words against Claude's. A rail and a tint say where you spoke, and a
    rule above each one breaks a long transcript into rounds you can scan.
    Both used to be grey blocks told apart by one small word. */
@@ -4582,6 +4774,12 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   color: var(--ink-bright);
 }
 .prose { flex-grow: 1; line-height: 1.55; min-width: 0; }
+/* One of the reader's own autolinks. It sits inside an agent's words, so it
+   is underlined rather than coloured: a colour here would compete with the
+   four this page already spends on state. */
+.ticket { color: inherit; text-decoration: underline dotted;
+  text-underline-offset: 2px; }
+.ticket:hover { color: var(--needs); text-decoration-style: solid; }
 .prose > *:first-child { margin-top: 0; }
 .prose > *:last-child { margin-bottom: 0; }
 .prose h1, .prose h2, .prose h3 {
@@ -4773,10 +4971,16 @@ body:not(.show-thinking) .thinking { display: none; }
 .turnbody > .empty { max-width: 52ch; }
 /* The map of the conversation. Same rows as the file tree, because they are
    the same thing: a list on the left that names what is on the right. */
-.filelist.transcript .name { display: block; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
+/* The row is a line: icon, then what it says. `.filelist button` is a block,
+   because the Diff tab's rows carry a second line of counts under the name --
+   so a row that is one line has to say so, the way `.fixed` does for the file
+   tree. Without this the icon sat on a line of its own above the text. */
+.filelist.transcript button {
+  display: flex; align-items: center; gap: 5px;
+}
+.filelist.transcript .name { flex-grow: 1; min-width: 0; }
+/* A round is yours, so it takes the one colour that means that. */
 .filelist.transcript button.dir .icon { color: var(--mine); }
-.filelist.transcript button.dir { color: var(--ink); }
 /* The padding is on the children of the scroller, so a branch added to
    `drawFiles` later cannot quietly lose its gutter, and so the header --
    which is not one of them -- keeps running to the pane's edges. */
@@ -5107,15 +5311,13 @@ const state = {
   sessions: [],
   chosen: null,
   tab: "transcript",
-  nodes: [],
-  blocks: [],
-  run: -1,              // which reading of this transcript the blocks are from
   find: "",
   pick: "",             // what the sidebar filter box holds
   history: false,       // whether the finished sessions are unfolded
   skew: 0,              // server clock minus ours
-  open: new Set(),      // tool blocks the reader expanded
-  goToBlock: null,      // the block a link asked for, until it is on screen
+  // The reader's own autolinks, compiled once. Empty until `/api/links`
+  // answers, and empty for ever on a machine with no `links.json`.
+  links: [],
   // Where each session was left, by id. The choices only -- see `savePlace`.
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
@@ -5920,11 +6122,159 @@ function notifyAbout(sessions) {
 
 // --- the transcript ---------------------------------------------------------
 
+//: At most this many links in one block. A pattern that matches everything
+//: would otherwise build a link per word. The daemon has the same number and
+//: the same reason.
+const LINKS_MAX = 40;
+
+// The reader's own autolinks, from `links.json` by way of the daemon. It has
+// already thrown out an entry that will not compile or whose url is not
+// http(s); this compiles what is left, once, and drops anything that still
+// will not take -- the two regular expression dialects are close but not the
+// same, and a pattern Python accepts may not be one JavaScript does.
+async function loadLinks() {
+  let body = null;
+  try {
+    const answer = await fetch("/api/links");
+    body = await answer.json();
+  } catch (error) {
+    return;                            // no links is a fine answer
+  }
+  const out = [];
+  for (const one of (body && body.links) || []) {
+    try {
+      out.push({ re: new RegExp(one.match, "g"), url: String(one.url) });
+    } catch (error) {
+      // the daemon says why, in `doctor`
+    }
+  }
+  state.links = out;
+  if (out.length) draw();              // the transcript on screen has none yet
+}
+
+// The address one match stands for. `$1` to `$9` are the groups and `$0` is
+// the whole of it, which is the gitlens shape written the way a person who
+// has used `sed` expects.
+function ticketUrl(template, hit) {
+  const built = template.replace(/\$([0-9])/g,
+                                 (whole, n) => hit[Number(n)] || "");
+  return /^https?:\/\//i.test(built) ? built : "";
+}
+
+// Turn what the reader's patterns match into links, in place.
+//
+// It walks text nodes, like `markHits`, so nothing an agent wrote is ever
+// re-parsed as HTML -- and it skips code and anything already inside a link,
+// because a ticket id in a command line is part of the command and a url is
+// already where it points.
+function linkTickets(root) {
+  if (!state.links.length) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const found = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.parentElement && node.parentElement.closest("code, pre, a")) continue;
+    found.push(node);
+  }
+  let made = 0;
+  for (const node of found) {
+    if (made >= LINKS_MAX) return;
+    const pieces = linkOne(node.nodeValue, LINKS_MAX - made);
+    if (!pieces) continue;
+    made += pieces.made;
+    node.replaceWith(pieces.holder);
+  }
+}
+
+// One text node, cut into text and links. Null when nothing matched, so the
+// common case costs a scan and no DOM work at all.
+function linkOne(text, room) {
+  const holder = document.createDocumentFragment();
+  let from = 0;
+  let made = 0;
+  while (from < text.length && made < room) {
+    // The earliest match among every pattern, so two patterns that overlap
+    // give the same answer whichever order they are written in.
+    let best = null;
+    for (const one of state.links) {
+      one.re.lastIndex = from;
+      const hit = one.re.exec(text);
+      // A pattern that can match nothing would never move `from` on.
+      if (hit && hit[0] && (!best || hit.index < best.hit.index)) {
+        best = { one, hit };
+      }
+    }
+    if (!best) break;
+    const where = ticketUrl(best.one.url, best.hit);
+    const at = best.hit.index;
+    if (at > from) {
+      holder.appendChild(document.createTextNode(text.slice(from, at)));
+    }
+    if (where) {
+      const link = put(holder, "a", "ticket", best.hit[0]);
+      link.href = where;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      made += 1;
+    } else {
+      holder.appendChild(document.createTextNode(best.hit[0]));
+    }
+    from = at + best.hit[0].length;
+  }
+  if (!made) return null;
+  if (from < text.length) {
+    holder.appendChild(document.createTextNode(text.slice(from)));
+  }
+  return { holder, made };
+}
+
+//: What may be a link on this page. A page an agent wrote is not a place to
+//: follow a `javascript:` or a `data:` from.
+const LINKABLE = /^(https?:|#)/i;
+
+//: The same question for a link this page builds itself, which always goes
+//: somewhere else -- `#` belongs to Markdown an agent wrote, not to a ticket.
+const AWAY = /^https?:\/\//i;
+
+// A link that leaves this page leaves it in a new tab, and takes nothing of
+// this one with it. Both places that build one come through here.
+function opensAway(link) {
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+}
+
 function safeLinks(root) {
   for (const link of root.querySelectorAll("a")) {
-    const href = link.getAttribute("href") || "";
-    if (!/^(https?:|#)/i.test(href)) link.removeAttribute("href");
-    else { link.target = "_blank"; link.rel = "noopener noreferrer"; }
+    if (!LINKABLE.test(link.getAttribute("href") || "")) {
+      link.removeAttribute("href");
+    } else {
+      opensAway(link);
+    }
+  }
+}
+
+// Walk the text of a node and put something else in place of what matches.
+//
+// One place, because this is the invariant the whole page rests on: it builds
+// nodes and never markup, so nothing an agent wrote is ever parsed as HTML.
+// It also collects the text nodes before touching any of them -- replacing
+// one mid-walk leaves the walker pointing at a node that has left the
+// document.
+//
+// `cut` is handed one text node's string and gives back a fragment to put in
+// its place, or null to leave it alone. `skip` is a selector for text that is
+// not prose: code, and a link that is already one.
+function overText(root, cut, skip) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const found = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (skip && node.parentElement && node.parentElement.closest(skip)) continue;
+    found.push(node);
+  }
+  for (const node of found) {
+    const holder = cut(node.nodeValue);
+    if (holder) node.replaceWith(holder);
   }
 }
 
@@ -6008,6 +6358,10 @@ function markdown(parent, text) {
     node.textContent = text;   // assigning text already clears the children
   }
   safeLinks(node);
+  // After the scrub, so a pattern can never put an element on this page: it
+  // walks text nodes and builds one anchor at a time, with an href this side
+  // has checked again.
+  linkTickets(node);
   return node;
 }
 
@@ -6249,7 +6603,7 @@ function goToLink() {
   const place = placeInHash();
   if (!place || !place.id) return;
   choose(place.id);           // does nothing when it is already the one shown
-  state.goToBlock = place.seq;
+  state.turns.goTo = place.seq;
   showTab("transcript");
 }
 
@@ -6258,10 +6612,10 @@ function goToLink() {
 // again on every later draw would drag the reader back every second of a live
 // session.
 function landOnBlock(box) {
-  if (state.goToBlock === null) return false;
-  const node = state.nodes[state.goToBlock];
+  if (state.turns.goTo === null) return false;
+  const node = state.turns.nodes[state.turns.goTo];
   if (!node || node.parentNode !== box) return false;
-  state.goToBlock = null;
+  state.turns.goTo = null;
   node.scrollIntoView({ block: "center" });
   node.classList.add("linked");
   setTimeout(() => node.classList.remove("linked"), 2500);
@@ -6288,24 +6642,31 @@ function blockNode(block, index) {
     return node;
   }
   const mine = block.kind === "prompt";
+  // Something the harness said, not the reader and not the agent.
+  const aside = block.kind === "note";
   const node = document.createElement("div");
-  node.className = "turn" + (mine ? " mine" : "")
+  node.className = "turn" + (mine ? " mine" : "") + (aside ? " aside" : "")
     + (block.kind === "thinking" ? " thinking" : "");
-  const who = put(node, "div", "who" + (mine ? "" : " claude"));
+  const who = put(node, "div", "who" + (mine || aside ? "" : " claude"));
   // The name is a link to this block, so the address bar holds one after a
   // click and the browser's own "open in a new tab" works on it. Nothing is
   // intercepted: a plain anchor is already all three of those things.
-  const name = put(who, "a", "self", mine ? "you" : "claude");
+  const name = put(who, "a", "self",
+                   mine ? "you" : aside ? "system" : "claude");
   name.href = blockHref(index);
-  name.title = "link to this " + (mine ? "prompt" : "reply");
+  name.title = "link to this " + (mine ? "prompt"
+                                       : aside ? "message" : "reply");
   if (block.ts) {
     const day = dayOf(block.ts);
     if (day) put(who, "div", "day", day);
     put(who, "div", null, clock(block.ts));
   }
   putCopy(who, block, mine);
-  if (mine || block.kind === "thinking") put(node, "div", "bubble", block.text);
-  else markdown(node, block.text);
+  if (mine || aside || block.kind === "thinking") {
+    linkTickets(put(node, "div", "bubble", block.text));
+  } else {
+    markdown(node, block.text);
+  }
   return node;
 }
 
@@ -6330,39 +6691,23 @@ function nearBottom(box) {
   return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
 }
 
-function blockText(block) {
-  return [block.text, block.tool, block.target, block.result]
-    .filter(Boolean).join(" ").toLowerCase();
-}
-
-function matches(block) {
-  // The transcript is prose, so it is searched for what you typed, not for
-  // the letters of it scattered about. File names are matched by `fuzzy`.
-  return !state.find || blockText(block).includes(state.find);
-}
-
 // Wrap every occurrence of the search in <mark>. It walks text nodes, so a
 // word split across a tag is missed and nothing an agent wrote is ever
 // re-parsed as HTML.
 function markHits(node, needle) {
   if (!needle) return;
-  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-  const found = [];
-  while (walker.nextNode()) {
-    if (walker.currentNode.nodeValue.toLowerCase().includes(needle)) {
-      found.push(walker.currentNode);
-    }
-  }
-  for (const text of found) {
-    const parts = text.nodeValue.split(new RegExp("(" + escapeRegex(needle) + ")", "ig"));
+  const cutter = new RegExp("(" + escapeRegex(needle) + ")", "ig");
+  overText(node, (text) => {
+    if (!text.toLowerCase().includes(needle)) return null;
+    const parts = text.split(cutter);
     const holder = document.createDocumentFragment();
     for (let i = 0; i < parts.length; i += 1) {
       if (!parts[i]) continue;
       if (i % 2) put(holder, "mark", null, parts[i]);
       else holder.appendChild(document.createTextNode(parts[i]));
     }
-    text.replaceWith(holder);
-  }
+    return holder;
+  });
 }
 
 function escapeRegex(text) {
@@ -6381,12 +6726,12 @@ function escapeRegex(text) {
 function rounds() {
   const out = [];
   let here = null;
-  for (let at = 0; at < state.blocks.length; at += 1) {
-    const block = state.blocks[at];
+  for (let at = 0; at < state.turns.blocks.length; at += 1) {
+    const block = state.turns.blocks[at];
     if (!block) continue;
     if (block.kind === "prompt") {
       out.push(here = { seq: at, text: block.text, replies: [] });
-    } else if (block.kind === "text") {
+    } else if (block.kind === "text") {   // a `note` is neither, by design
       if (!here) out.push(here = { seq: at, text: "", replies: [] });
       here.replies.push({ seq: at, text: block.text });
     }
@@ -6401,8 +6746,11 @@ const GLIMPSE = 44;
 // Markdown's own marks are taken off the front: a reply that opens with a
 // heading or a bullet would otherwise spend its first characters saying so.
 function glimpse(text) {
-  const lines = String(text || "").split("\n");
-  const first = (lines.find((one) => one.trim()) || "").trim()
+  // Not `split("\n")`: an agent's reply is routinely several kilobytes and
+  // this runs for every round and every reply. The first line with something
+  // on it is all that can ever be used.
+  const found = /^[ \t]*\S.*/m.exec(String(text || ""));
+  const first = (found ? found[0] : "").trim()
     .replace(/^(#{1,6}|[-*>]|\d+\.)\s+/, "")
     .replace(/^\*\*(.*?)\*\*/, "$1")
     .replace(/^`(.*?)`/, "$1")
@@ -6413,9 +6761,7 @@ function glimpse(text) {
 // The rounds the find box leaves. A round stays when it matches or when one
 // of its replies does; under it, the replies that match -- unless the round
 // itself matched, in which case the whole of it is what you asked for.
-function shownRounds() {
-  const all = rounds();
-  if (!state.find) return all;
+function onlyMatching(all) {
   const has = (text) => String(text || "").toLowerCase().includes(state.find);
   const out = [];
   for (const one of all) {
@@ -6428,49 +6774,67 @@ function shownRounds() {
 
 // The left bar: a round is a folder, the replies to it are what is in it.
 // Clicking either goes to that place in the transcript beside it.
-function drawTurnList(list) {
+//
+// It is guarded like every other list on this page, because `patchTranscript`
+// calls it on every pushed block -- once a second while an agent works, and
+// most of those blocks are tool calls, which are not on this map at all. It
+// was rebuilding six hundred rows to draw the same six hundred rows.
+function drawTurnList(list, note) {
+  const all = rounds();
+  const found = state.find ? onlyMatching(all) : all;
+  const replies = found.reduce((n, one) => n + one.replies.length, 0);
+  const last = found[found.length - 1];
+  const tail = last && last.replies.length
+    ? last.replies[last.replies.length - 1].seq : -1;
+  // `run` first, and it is not optional: a rewritten transcript counts from
+  // nought again and can give a map of exactly the same shape -- a `/clear`
+  // followed by one reply reads as one round with one reply, which is what
+  // the old reading was too. The list then showed the conversation that had
+  // just been thrown away. Inside one reading `seq` only grows, so the shape
+  // and the last two seqs say the rest.
+  if (!fresh(list, "turns", [state.turns.run, state.find, state.turns.at,
+                             all.length, found.length, replies,
+                             last ? last.seq : -1, tail].join("\n"))) {
+    return;
+  }
   list.replaceChildren();
-  const found = shownRounds();
   if (!found.length) {
     put(list, "div", "nohits",
         state.find ? "Nothing here matches." : "Nothing said yet.");
-    return found;
   }
   for (const one of found) {
-    putTurnRow(list, one.seq, 0, glimpse(one.text) || "(no prompt)", true);
+    putTurnRow(list, one.seq, glimpse(one.text) || "(no prompt)", true);
     for (const reply of one.replies) {
-      putTurnRow(list, reply.seq, 1, glimpse(reply.text) || "(no text)", false);
+      putTurnRow(list, reply.seq, glimpse(reply.text) || "(no text)", false);
     }
   }
-  return found;
+  noteTurns(note, found, replies, all);
 }
 
-function putTurnRow(list, seq, depth, text, mine) {
-  const button = put(list, "button",
-                     (mine ? "dir" : "") + (seq === state.turns.at ? " chosen" : ""));
-  button.type = "button";
-  button.title = text;
-  button.style.paddingLeft = (14 + depth * 13) + "px";
-  putIcon(button, mine ? "dirOpen" : "file");
-  put(button, "span", "name", text);
+// A prompt is a folder and a reply is what is in it, so the depth is the one
+// bit `mine` already carries.
+function putTurnRow(list, seq, text, mine) {
+  const button = putListRow(list, { dir: mine, open: mine, depth: mine ? 0 : 1,
+                                    chosen: seq === state.turns.at,
+                                    title: text });
+  putName(button, text, []);
   button.addEventListener("click", () => goToTurn(seq));
-  return button;
 }
 
 // Go to one turn, and mark where you went. The list is the map; the mark is
 // what answers a click on a row that was already on screen.
 function goToTurn(seq) {
   state.turns.at = seq;
-  state.goToBlock = seq;
+  state.turns.goTo = seq;
   const pane = document.querySelector(".turnbody");
   if (!pane || !landOnBlock(pane)) draw();
-  else drawTurnList(document.querySelector(".filelist.transcript"));
+  else drawTurnList(document.querySelector(".filelist.transcript"),
+                    document.querySelector(".listnote"));
 }
 
 function drawTranscript(box) {
   const [list, pane, note] = split(box, "transcript", "turnbody");
-  const found = drawTurnList(list);
-  noteTurns(note, found);
+  drawTurnList(list, note);
   // The whole transcript, always. The find box narrows the list beside it and
   // nothing else: you keep your place and the conversation around it, which
   // is what a transcript is for. It still marks what matched, because a hit
@@ -6492,17 +6856,17 @@ function drawTranscript(box) {
                           () => { state.turns.down = pane.scrollTop; });
   }
   pane.replaceChildren();
-  state.nodes = [];
-  if (!state.blocks.length) {
+  state.turns.nodes = [];
+  if (!state.turns.blocks.length) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, "Nothing in this transcript yet.");
     return;
   }
-  for (let index = 0; index < state.blocks.length; index += 1) {
-    const block = state.blocks[index];
+  for (let index = 0; index < state.turns.blocks.length; index += 1) {
+    const block = state.turns.blocks[index];
     if (!block) continue;
     const node = blockNode(block, index);
-    state.nodes[index] = node;
+    state.turns.nodes[index] = node;
     markHits(node, state.find);
     pane.appendChild(node);
   }
@@ -6512,11 +6876,11 @@ function drawTranscript(box) {
   if (!landOnBlock(pane)) pane.scrollTop = place || pane.scrollHeight;
 }
 
-// How much of the conversation the list is showing.
-function noteTurns(note, found) {
+// How much of the conversation the list is showing. It is handed what the
+// list already worked out: walking the blocks a second time for two totals
+// doubled the cost of every push.
+function noteTurns(note, found, replies, all) {
   note.replaceChildren();
-  const replies = found.reduce((n, one) => n + one.replies.length, 0);
-  const all = rounds();
   const every = all.reduce((n, one) => n + one.replies.length, 0);
   const what = (n) => n + (n === 1 ? " reply" : " replies");
   put(note, "span", null,
@@ -6529,13 +6893,13 @@ function noteTurns(note, found) {
 
 // Redraw one block where it stands, without touching anything else.
 function redrawBlock(index) {
-  const node = blockNode(state.blocks[index], index);
+  const node = blockNode(state.turns.blocks[index], index);
   // Only `drawTranscript` used to mark the hits, so expanding a tool result
   // during a search left that one block unhighlighted while every other
   // match kept its `<mark>`.
   markHits(node, state.find);
-  const old = state.nodes[index];
-  state.nodes[index] = node;
+  const old = state.turns.nodes[index];
+  state.turns.nodes[index] = node;
   if (old && old.parentNode) old.replaceWith(node);
   return node;
 }
@@ -6549,23 +6913,23 @@ function patchTranscript(indexes) {
   if (state.tab !== "transcript" || box.dataset.tab !== "transcript") return;
   const pane = box.querySelector(".turnbody");
   const list = box.querySelector(".filelist.transcript");
-  if (!pane || !list || !state.nodes) return;
+  if (!pane || !list || !state.turns.nodes) return;
   // The list is a map of the whole conversation, so a new block changes it
   // whatever the find box holds. It is cheap: a row per prompt and reply.
-  noteTurns(box.querySelector(".listnote"), drawTurnList(list));
-  if (!state.nodes.length) { drawTranscript(box); return; }
+  drawTurnList(list, box.querySelector(".listnote"));
+  if (!state.turns.nodes.length) { drawTranscript(box); return; }
   const stick = nearBottom(pane);
   for (const index of indexes) {
-    if (index < state.nodes.length) {
+    if (index < state.turns.nodes.length) {
       redrawBlock(index);
     } else {
       // Arriving, rather than being drawn again. This is the only place a
       // block is new: a full redraw builds the whole history, and a history
       // that slid in block by block would be a page having a fit.
-      const node = blockNode(state.blocks[index], index);
+      const node = blockNode(state.turns.blocks[index], index);
       node.classList.add("fresh");
       markHits(node, state.find);
-      state.nodes[index] = node;
+      state.turns.nodes[index] = node;
       pane.appendChild(node);
     }
   }
@@ -6580,7 +6944,7 @@ function putCounts(parent, one) {
 }
 
 function drawTool(parent, block, index) {
-  const open = state.open.has(index);
+  const open = state.turns.open.has(index);
   const line = put(parent, "button", "tool" + (block.failed ? " failed" : ""));
   line.type = "button";
   put(line, "span", "caret", block.result ? (open ? "▾" : "▸") : " ");
@@ -6593,7 +6957,7 @@ function drawTool(parent, block, index) {
   }
   line.addEventListener("click", () => {
     if (!block.result) return;
-    if (state.open.has(index)) state.open.delete(index); else state.open.add(index);
+    if (state.turns.open.has(index)) state.turns.open.delete(index); else state.turns.open.add(index);
     redrawBlock(index);        // this line only; the rest of the tab stays put
   });
   if (open && block.result) put(parent, "div", "tool-result", block.result);
@@ -7040,24 +7404,37 @@ function fillList(list) {
 }
 
 // One row: a directory that opens, or a file that is read.
+// One row of a list on the left: a button with an icon and a name, stepped
+// in by its depth. The file tree and the transcript's map are the same row,
+// and the step between levels is a number that must not be in two places.
+//
+// No triangle in front of a folder. It stood where nothing stood on a file
+// row, so a folder's name sat 9 px right of a file's at the same depth -- and
+// a file one level deeper then lined up exactly with the folder above it,
+// which is the one thing a tree must never do. The open folder icon says what
+// the triangle said.
+function putListRow(list, { dir, open, chosen, touched, depth, title }) {
+  const button = put(list, "button",
+                     (dir ? "dir" : "") + (chosen ? " chosen" : "")
+                     + (touched ? " touched" : "") + (open ? " open" : ""));
+  button.type = "button";
+  button.title = title;
+  button.style.paddingLeft = (14 + depth * 13) + "px";   // the tree's step
+  putIcon(button, dir ? (open ? "dirOpen" : "dir") : "file");
+  return button;
+}
+
 function drawRow(list, row) {
   const dir = !!row.dir;
-  const open = !!row.open;
-  const button = put(list, "button",
-                     (dir ? "dir" : "") +
-                     (row.path === state.files.at ? " chosen" : "") +
-                     ((dir ? state.files.marked.has(row.path)
-                           : state.files.changed.has(row.path)) ? " touched" : "") +
-                     (open ? " open" : ""));
-  button.type = "button";
-  button.title = row.path;
-  button.style.paddingLeft = (14 + row.depth * 13) + "px";   // the tree's step
-  // No triangle in front of a folder. It stood where nothing stood on a file
-  // row, so a folder's name sat 9 px right of a file's at the same depth --
-  // and a file one level deeper then lined up exactly with the folder above
-  // it, which is the one thing a tree must never do. The open folder icon
-  // says what the triangle said.
-  putIcon(button, dir ? (open ? "dirOpen" : "dir") : "file");
+  const button = putListRow(list, {
+    dir,
+    open: !!row.open,
+    chosen: row.path === state.files.at,
+    touched: dir ? state.files.marked.has(row.path)
+                 : state.files.changed.has(row.path),
+    depth: row.depth,
+    title: row.path,
+  });
   // A row shows one segment of a path. The letters that matched were found
   // in the whole of it, so a letter found in a directory is picked out on
   // that directory's own row and nowhere else. Cutting the name and the
@@ -7073,7 +7450,7 @@ function drawRow(list, row) {
   putName(button, name, at);
   button.addEventListener("click", () => {
     if (!dir) { chooseFile(row.path); return; }
-    state.files.dirs.set(row.path, !open);
+    state.files.dirs.set(row.path, !row.open);
     draw();
   });
 }
@@ -7419,11 +7796,20 @@ function showLine(pane, line) {
 
 // An empty Files tab. One place, so that choosing a session, choosing a file
 // and starting up cannot drift apart about what "nothing is open" means.
-// The Transcript tab's own state. Small, because the blocks themselves are
-// shared chrome -- the daemon pushes them and the sidebar's counts read them.
-// This is only what the reader did on this tab.
+// The Transcript tab's whole state, so that choosing a session is one
+// assignment rather than six that could forget the seventh -- which is the
+// reason `blankFiles` exists, in a second place.
+//
+// The blocks are in here too. Nothing outside this tab reads them: the
+// sidebar's counts come from the session rows, and the daemon pushes blocks
+// at a browser without asking which tab it is on.
 function blankTurns() {
   return {
+    blocks: [],         // what the daemon has pushed, by seq
+    nodes: [],          // the node drawn for each one, so one can be redrawn
+    run: -1,            // which reading of this transcript those are from
+    open: new Set(),    // tool blocks the reader expanded
+    goTo: null,         // a block a link asked for, until it is on screen
     at: null,           // the block the list marks: the last place you went
     down: 0,            // how far down the transcript you were
   };
@@ -8472,7 +8858,7 @@ function draw() {
   if (!current()) {
     box.replaceChildren();
     box.dataset.tab = "";       // nothing is built, so the next tab rebuilds
-    state.nodes = [];
+    state.turns.nodes = [];
     drawEmpty(box);
     return;
   }
@@ -8515,7 +8901,11 @@ function savePlace(id) {
   if (!id) return;
   state.visits.set(id, {
     tab: state.tab,
-    turns: { ...state.turns },
+    // The Transcript tab's choices and not its blocks: those are a cache the
+    // daemon fills again, and `nodes` holds live DOM belonging to a page this
+    // session has left. Spreading the whole bag kept both.
+    turnAt: state.turns.at,
+    turnDown: state.turns.down,
     path: state.files.path,
     at: state.files.at,
     asText: state.files.asText,
@@ -8525,7 +8915,7 @@ function savePlace(id) {
     // just restored for the new session.
     down: state.files.down,
     dirs: new Map(state.files.dirs),
-    open: new Set(state.open),
+    open: new Set(state.turns.open),
     diffOpen: new Map(state.diffOpen),
     loose: state.loose,
   });
@@ -8543,13 +8933,14 @@ function savePlace(id) {
 function usePlace(id) {
   const kept = state.visits.get(id);
   if (!kept) return null;
-  state.turns = { ...blankTurns(), ...kept.turns };
+  state.turns.at = kept.turnAt;
+  state.turns.down = kept.turnDown;
   state.files.path = kept.path;
   state.files.at = kept.at;
   state.files.asText = kept.asText;
   state.files.dirs = new Map(kept.dirs);
   state.files.down = kept.down;
-  state.open = new Set(kept.open);
+  state.turns.open = new Set(kept.open);
   state.diffOpen = new Map(kept.diffOpen);
   state.loose = kept.loose;
   return kept;
@@ -8559,13 +8950,11 @@ function choose(id) {
   if (state.chosen === id) return;
   savePlace(state.chosen);
   state.chosen = id;
-  state.blocks = [];
-  state.run = -1;
-  state.nodes = [];
-  state.open.clear();
+  // One assignment each, which is what the two bags are for: the transcript
+  // and the worktree of the last session are not this one's, and a field
+  // added to either must not need a line here to be forgotten from.
   state.turns = blankTurns();
-  state.goToBlock = null;       // a link into the last session is not this one
-  state.files = blankFiles();   // a different worktree holds different files
+  state.files = blankFiles();
   state.loose = null;
   state.looseFound = {};
   state.looseText = null;
@@ -8622,8 +9011,8 @@ async function loadTranscript() {
   const want = state.chosen;
   const body = await ask(want, "transcript");
   if (state.chosen !== want) return;        // the reader moved on while we waited
-  state.blocks = (body && body.blocks) || [];
-  state.run = body && body.run !== undefined ? body.run : -1;
+  state.turns.blocks = (body && body.blocks) || [];
+  state.turns.run = body && body.run !== undefined ? body.run : -1;
   draw();
 }
 
@@ -8711,7 +9100,7 @@ async function loadDiff() {
 function mergeBlocks(blocks) {
   const moved = [];
   for (const block of blocks) {
-    state.blocks[block.seq] = block;
+    state.turns.blocks[block.seq] = block;
     moved.push(block.seq);
   }
   return moved;
@@ -8762,10 +9151,10 @@ function resubscribe() {
     // from nought again. Patching by index would write the new blocks over the
     // head of the old ones and leave the old tail hanging below, so a new
     // reading replaces what is held rather than being merged into it.
-    if (body.run !== undefined && body.run !== state.run) {
-      state.run = body.run;
-      state.blocks = body.blocks || [];
-      state.nodes = [];
+    if (body.run !== undefined && body.run !== state.turns.run) {
+      state.turns.run = body.run;
+      state.turns.blocks = body.blocks || [];
+      state.turns.nodes = [];
       draw();
       return;
     }
@@ -8950,6 +9339,10 @@ window.addEventListener("hashchange", goToLink);
 // The transcript is already on screen as text. When marked lands it is drawn
 // again as Markdown; when it does not, the text stays, and that is the answer.
 markedReady().then((came) => { if (came) draw(); });
+
+// The reader's own autolinks, asked for once. A machine with no `links.json`
+// gets an empty list and nothing here changes.
+loadLinks();
 </script>
 </body>
 </html>"""

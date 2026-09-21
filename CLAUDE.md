@@ -66,6 +66,7 @@ This list exists because each entry was re-implemented once already.
 | a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
 | "3 min ago" | `ago(when)` — `40s`, `4min`, `2h 15min`, `2d 6h`; two units once the first is coarse |
 | one session's route | `apiUrl(id, what, query)` |
+| the reader's ticket links in some text | `linkTickets(root)` — after any scrub |
 | "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
@@ -222,6 +223,18 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
   events use `textContent`. Assigning `innerHTML` first fires `onerror` before
   any scrub runs — that was real.
+- **An autolink runs after the scrub, over text nodes, and checks its own
+  href.** `linkTickets` builds one anchor at a time and never parses
+  anything, so a `url` template can put text on the page and nothing else.
+  `ticketUrl` tests for `http(s)` a second time, although `link_trouble`
+  already refused anything else: the two sides are far apart and only one of
+  them is the one that inserts. `links.json` is the reader's own file, in
+  the state directory — never a per-worktree one, which an agent could write.
+- **Nothing can time a regular expression out in a browser.** `risky_pattern`
+  spots the one shape that backtracks catastrophically — a quantifier inside
+  a quantified group — and `LINKS_MAX` caps the links in one block, and that
+  is the whole of the defence. It is a heuristic; say so rather than implying
+  the page is safe from a pattern somebody writes.
 - **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
   of text with colours, never markup.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
@@ -749,6 +762,24 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   `current()` is null and every tab draws its empty state. The `sessions`
   event draws again when the chosen session turns out to be real; without
   that, a linked page stayed empty until the reader clicked a row.
+- **A `user` record is not always a prompt.** Claude Code writes its own:
+  one `/reload-plugins` arrives as three or four records of tags, and
+  `(no content)` was drawn as something the reader had typed.
+  `read_user_text` reads one for what it is — a command becomes one line
+  saying what was run, its output and the resumed-session caveat are
+  dropped, and a task notification or another session's message becomes a
+  `note`, which is shown but never wears the reader's rail. **A record is
+  only read as a command when there is nothing else on it**: a prompt really
+  can hold `<command-name>` in it, because somebody asking about this very
+  feature types one.
+- **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
+  the agent's text and nothing else, so the map stays a map of the
+  conversation.
+- **A row of a list is one line, and `.filelist button` is a block.** The
+  Diff tab's rows carry a second line of counts under the name, so a list
+  whose rows are one line has to say so — `.fixed` does it for the file tree
+  and `.filelist.transcript` does it for the map. Without it the icon sits
+  on a line of its own above the text, which is how the map first shipped.
 - **The find box narrows the list, never the transcript.** Taking turns out
   of the transcript took the conversation around a hit with them, which is
   what you were reading it for. `shownRounds` filters the left bar;

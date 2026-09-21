@@ -225,7 +225,7 @@ def test_a_transcript_push_during_a_tab_switch_stays_out_of_the_other_tab(
             # where the tab has been picked and its body has not been drawn.
             page.evaluate("""() => {
               state.tab = 'transcript';
-              patchTranscript([state.blocks.length]);
+              patchTranscript([state.turns.blocks.length]);
               state.tab = 'files';
             }""")
             after = page.evaluate(

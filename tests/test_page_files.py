@@ -1398,11 +1398,12 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
             page.wait_for_function("state.sessions.length === 2")
             seen = page.evaluate("""() => {
               state.tab = 'diff';
-              state.turns = {at: 12, down: 654};
               Object.assign(state.files, {path: 'a/b.py', at: 'a',
                                           asText: true, down: 321});
               state.files.dirs = new Map([['a', true]]);
-              state.open = new Set([7]);
+              state.turns.open = new Set([7]);
+              state.turns.at = 12;
+              state.turns.down = 654;
               state.diffOpen = new Map([['z.py', true]]);
               state.loose = 'loose.txt';
               savePlace('probe');
@@ -1413,16 +1414,17 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
               state.tab = 'transcript';
               state.turns = blankTurns();
               state.files = blankFiles();
-              state.open = new Set();
+              state.turns.open = new Set();
               state.diffOpen = new Map();
               state.loose = null;
               usePlace('probe');
 
               const after = {
-                tab: state.tab, turns: state.turns,
+                tab: state.tab, turnAt: state.turns.at,
+                turnDown: state.turns.down, open: state.turns.open,
                 path: state.files.path, at: state.files.at,
                 asText: state.files.asText, down: state.files.down,
-                dirs: state.files.dirs, open: state.open,
+                dirs: state.files.dirs,
                 diffOpen: state.diffOpen, loose: state.loose,
               };
               const flat = (one) =>

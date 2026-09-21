@@ -166,7 +166,37 @@ The page is worked from the keyboard. `?` shows this list without leaving it.
 | `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. Rotates at 20 MB. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
+| `~/.local/state/wostuast/links.json` | Your own ticket links, if you want any. |
 | `~/.claude/settings.json` | Where the hooks are registered. |
+
+### Ticket links
+
+If your work has ticket ids in it — `OA-73219`, `QSP-52811` — you can have
+them become links. Write `~/.local/state/wostuast/links.json`:
+
+```json
+[
+  {"match": "(OA|QSP)-(\\d+)", "url": "https://tickets.example.com/browse/$1-$2"}
+]
+```
+
+`match` is a regular expression and `url` is where a match goes. `$1` to `$9`
+are its groups and `$0` is the whole match. The url has to start with `http://`
+or `https://`.
+
+Links are made in what the agent wrote and in what you typed, never inside
+code or inside a link that is already one: a ticket id in a command line is
+part of the command. At most forty links are made in one turn.
+
+`wostuast doctor` says what is wrong with an entry it cannot use, so a link
+that does nothing is never a mystery. It also refuses a pattern with a
+quantifier inside a quantified group — `(a+)+` — because that shape can
+backtrack long enough to freeze the page, and nothing in a browser can stop a
+regular expression once it starts. Keep patterns simple.
+
+The file is yours and nothing writes it but you. There is no per-project
+version: an agent can write a file in its own worktree, and a link it chose
+where you expect yours is a link you would follow.
 
 ### The status line
 
@@ -258,8 +288,17 @@ to, and the tree opened the way you opened it. It remembers what you chose and
 nothing else: the file listing, the file's text and the diff are all fetched
 again, because by the time you come back they have moved.
 
-**Transcript** is what the agent said and did, as it happens, with a map of
-the conversation beside it: one row per thing you typed, and the agent's
+**Transcript** is what the agent said and did, as it happens.
+
+Claude Code writes records of its own into a transcript, and they are not
+prompts. A slash command reads as one line saying what you ran — `/plugin
+install dt-mla` — rather than as the three or four records of tags it arrives
+as, and a command's own output is left out. A background task finishing, or a
+message from another session, is shown as a quiet note: it is real news, and
+you did not type it.
+
+Beside the transcript is a map of
+the conversation: one row per thing you typed, and the agent's
 replies to it under that. Each row is the first line of what it names. Click
 one and the transcript goes there and marks it.
 

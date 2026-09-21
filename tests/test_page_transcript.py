@@ -416,7 +416,7 @@ def test_a_reply_older_than_today_says_which_day_it_was(page_at):
         try:
             seen = page.evaluate("""() => {
               const was = state.skew;
-              const ts = state.blocks.find((one) => one && one.ts).ts;
+              const ts = state.turns.blocks.find((one) => one && one.ts).ts;
               const at = (when) => {
                 state.skew = when - Date.now() / 1000;
                 drawTranscript($('content'));
@@ -487,13 +487,13 @@ def test_a_reply_is_a_link_you_can_open_in_another_tab(page_at):
             # it. The mark is on a two-and-a-half second timer and a busy
             # machine can outlive one between two calls, so it is asked for
             # in a single round trip below.
-            page.wait_for_function("state.goToBlock === null")
+            page.wait_for_function("state.turns.goTo === null")
             assert page.evaluate(
-                "state.blocks[Number(location.hash.split('/').pop())].kind"
+                "state.turns.blocks[Number(location.hash.split('/').pop())].kind"
             ) == "text"
 
             marked = page.evaluate("""(wanted) => {
-              state.goToBlock = Number(wanted.split('/').pop());
+              state.turns.goTo = Number(wanted.split('/').pop());
               drawTranscript($('content'));
               const one = document.querySelector('.turn.linked');
               return one && one.querySelector('.self').getAttribute('href');
@@ -520,7 +520,7 @@ def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
             page.wait_for_timeout(300)      # proving something did not happen
             assert not blew_up, blew_up
             assert page.locator(".turn.linked").count() == 0
-            assert page.evaluate("state.goToBlock") == 900
+            assert page.evaluate("state.turns.goTo") == 900
         finally:
             browser.close()
 
@@ -618,5 +618,191 @@ def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
                                 "bold to start and on", "code first"]
             assert len(said[4]) == 44 and said[4].endswith("…")
             assert said[5] == ""
+        finally:
+            browser.close()
+
+
+# --- the reader's own autolinks ----------------------------------------------
+
+def test_a_ticket_id_becomes_a_link(ws, page_at, tmp_path):
+    """The whole of #92: a pattern and a url in `links.json`, and a ticket id
+    in what the agent wrote becomes a link to it."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"},
+    ]), encoding="utf-8")
+    daemon, path = page_at
+    append_blocks(daemon, [
+        "Fixed OA-73219 and QSP-52811.\n\n"
+        "Not in code: `git log OA-11111` or\n\n```\nOA-22222\n```\n",
+    ])
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            page.wait_for_selector(".prose a.ticket")
+            seen = page.eval_on_selector_all(
+                ".prose a.ticket",
+                "els => els.map((one) => [one.textContent, one.href, one.target])")
+            assert seen == [
+                ["OA-73219", "https://tickets/browse/OA-73219", "_blank"],
+                ["QSP-52811", "https://tickets/browse/QSP-52811", "_blank"],
+            ], seen
+            # A ticket id inside code is part of the command, not a link.
+            assert page.locator("code a.ticket, pre a.ticket").count() == 0
+            # The page holds this fixture's own fences too, so it is asked
+            # for all of them rather than for the first.
+            code = page.eval_on_selector_all(
+                ".prose code, .prose pre", "els => els.map((o) => o.textContent)")
+            assert any("OA-11111" in one for one in code), code
+            assert any("OA-22222" in one for one in code), code
+        finally:
+            browser.close()
+
+
+def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
+    """A prompt is plain text, not Markdown, so it goes through the same
+    walker rather than through `markdown`."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"OA-(\d+)", "url": "https://tickets/browse/OA-$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            made = page.evaluate("""() => {
+              const box = document.createElement('div');
+              box.textContent = 'please look at OA-4242 today';
+              linkTickets(box);
+              const one = box.querySelector('a.ticket');
+              return one && [one.textContent, one.getAttribute('href'),
+                             box.textContent];
+            }""")
+            assert made == ["OA-4242", "https://tickets/browse/OA-4242",
+                            "please look at OA-4242 today"]
+        finally:
+            browser.close()
+
+
+def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
+    """It walks text nodes and builds one anchor at a time, with an href this
+    side checks again — so a url template that is not http(s), or one that
+    tries to be markup, produces text and no link."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            seen = page.evaluate("""() => {
+              // A template the daemon would have refused, forced in here.
+              state.links = [{re: /OA-(\\d+)/g, url: 'javascript:alert($1)'},
+                             {re: /QSP-(\\d+)/g,
+                              url: '"><img src=x onerror=alert(1)>$1'}];
+              const box = document.createElement('div');
+              box.textContent = 'OA-1 and QSP-2';
+              linkTickets(box);
+              return {links: box.querySelectorAll('a').length,
+                      images: box.querySelectorAll('img').length,
+                      text: box.textContent};
+            }""")
+            assert seen == {"links": 0, "images": 0, "text": "OA-1 and QSP-2"}
+            assert page.evaluate("window.PWNED ?? null") is None
+        finally:
+            browser.close()
+
+
+def test_at_most_forty_links_in_one_block(ws, page_at):
+    """A pattern that matches everything would otherwise build a link per
+    word. The cap is the daemon's number too."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"T-(\d+)", "url": "https://tickets/$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            made = page.evaluate("""() => {
+              const box = document.createElement('div');
+              box.textContent = Array.from({length: 100},
+                                           (x, n) => 'T-' + n).join(' ');
+              linkTickets(box);
+              return box.querySelectorAll('a.ticket').length;
+            }""")
+            assert made == 40, made
+        finally:
+            browser.close()
+
+
+def test_a_row_of_the_map_is_one_line(page_at):
+    """`.filelist button` is a block, because a Diff tab row carries a second
+    line of counts under its name. A row that is one line has to say so — the
+    icon sat above the text otherwise, which is what it did when this list
+    first shipped. Take the `display: flex` off and the two stack again."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            seen = page.evaluate("""() => [...document.querySelectorAll(
+              '.filelist.transcript button')].map((one) => {
+                const icon = one.querySelector('.icon').getBoundingClientRect();
+                const name = one.querySelector('.name').getBoundingClientRect();
+                return {sameLine: Math.abs(icon.top - name.top) < 8,
+                        after: name.left > icon.right,
+                        tall: one.getBoundingClientRect().height};
+              })""")
+            assert seen, "the list drew nothing"
+            for one in seen:
+                assert one["sameLine"] and one["after"], one
+                assert one["tall"] < 40, one
+        finally:
+            browser.close()
+
+
+def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
+    """A background task finishing is real news and nobody typed it. It used
+    to wear your rail and your tint, and it filled the map beside the
+    transcript with rows for things you never said."""
+    daemon, path = page_at
+    with open(daemon_transcript(daemon), "a") as handle:
+        for text in (
+            "<task-notification>The sweep is done</task-notification>",
+            "<command-name>/reload-plugins</command-name>"
+            "<command-message>reload-plugins</command-message>"
+            "<command-args></command-args>",
+            "<local-command-stdout>(no content)</local-command-stdout>",
+        ):
+            handle.write(json.dumps({
+                "type": "user", "timestamp": "2026-09-18T14:20:00.000Z",
+                "message": {"role": "user", "content": text}}) + "\n")
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_selector(".turn.aside")
+            seen = page.evaluate("""() => ({
+              notes: [...document.querySelectorAll('.turn.aside')]
+                       .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
+              mine: [...document.querySelectorAll('.turn.mine')]
+                      .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
+              rows: [...document.querySelectorAll('.filelist.transcript button')]
+                      .map((one) => one.title),
+            })""")
+            # The harness speaking is a note, not a prompt.
+            assert any("The sweep is done" in one for one in seen["notes"]), seen
+            assert not any("task-notification" in one for one in seen["notes"]), seen
+            assert not any("sweep" in one for one in seen["mine"]), seen
+            # The command is one line, and its output is nowhere.
+            assert any("/reload-plugins" == one for one in seen["rows"]), seen
+            assert not any("no content" in one for one in seen["rows"]), seen
+            assert not any("command-message" in one for one in seen["rows"]), seen
+            # And a note is not a round and not a reply.
+            assert not any("sweep" in one for one in seen["rows"]), seen
         finally:
             browser.close()

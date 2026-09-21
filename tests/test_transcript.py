@@ -332,3 +332,83 @@ def test_a_new_reader_for_one_session_is_a_new_reading(ws, served, tmp_path,
     blocks, later = daemon.read_transcript("s1")
     assert [b.text for b in blocks] == ["two"]
     assert later > run
+
+
+# --- the records Claude Code writes as though you had typed them -------------
+#
+# The shapes below are real, from a real transcript. One `/reload-plugins`
+# arrives as three or four `user` records, none of which a person typed.
+
+
+def user_record(text, when="2026-09-18T14:00:00.000Z"):
+    return {"type": "user", "timestamp": when,
+            "message": {"role": "user", "content": text}}
+
+
+def test_a_slash_command_is_one_line_saying_what_was_run(ws, tmp_path):
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    blocks = reader.add(user_record(
+        "<command-name>/reload-plugins</command-name>\n"
+        "            <command-message>reload-plugins</command-message>\n"
+        "            <command-args></command-args>"))
+    assert [(one.kind, one.text) for one in blocks] == [
+        ("prompt", "/reload-plugins")]
+
+
+def test_a_slash_command_keeps_what_was_passed_to_it(ws, tmp_path):
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    blocks = reader.add(user_record(
+        "<command-name>/plugin</command-name>"
+        "<command-message>plugin</command-message>"
+        "<command-args>install dt-mla</command-args>"))
+    assert [one.text for one in blocks] == ["/plugin install dt-mla"]
+
+
+def test_a_command_s_own_output_is_not_a_prompt(ws, tmp_path):
+    """`(no content)` is not something anybody typed, and neither is the
+    caveat Claude Code puts in front of a resumed conversation."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    for text in ("<local-command-stdout>(no content)</local-command-stdout>",
+                 "<local-command-stdout>✔ Updated 1 marketplace"
+                 "</local-command-stdout>",
+                 "<local-command-caveat>Caveat: The messages below were"
+                 " generated while a session was resumed."
+                 "</local-command-caveat>"):
+        assert reader.add(user_record(text)) == [], text
+
+
+def test_the_harness_speaking_is_a_note_and_not_your_prompt(ws, tmp_path):
+    """Real news, so it is shown — but nobody typed it, so it is not drawn
+    as though they had."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(user_record(
+        "<task-notification>Still waiting on the requirements analyst"
+        "</task-notification>"))
+    assert one.kind == "note"
+    assert one.text == "Still waiting on the requirements analyst"
+
+    two, = reader.add(user_record(
+        "Another Claude session sent a message:\n\nthe repo sweep is in."))
+    assert two.kind == "note"
+    assert "the repo sweep is in." in two.text
+
+
+def test_a_prompt_that_talks_about_a_command_is_still_a_prompt(ws, tmp_path):
+    """Somebody asking about this very feature types `<command-name>` into
+    the box. Only a record with nothing else on it is a command.
+
+    Drop the "and nothing else" check and this prompt becomes the single
+    word it is asking about.
+    """
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    typed = ("why does <command-name>/reload-plugins</command-name> show up"
+             " in my transcript?")
+    one, = reader.add(user_record(typed))
+    assert one.kind == "prompt"
+    assert one.text == typed
+
+
+def test_a_real_prompt_is_left_alone(ws, tmp_path):
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(user_record("Do the thing, please."))
+    assert (one.kind, one.text) == ("prompt", "Do the thing, please.")
