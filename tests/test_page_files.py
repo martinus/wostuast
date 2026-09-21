@@ -38,6 +38,106 @@ def test_the_files_tab_lists_every_file(repo_page):
             browser.close()
 
 
+def test_a_generated_directory_is_in_the_tree_and_its_build_root_is_not(
+        ws, repo_page, monkeypatch):
+    """The whole of it. An agent writes into an ignored directory; the plan
+    and the notes are in the tree and in the find box, and the build root
+    beside them is one row that says it is not listed."""
+    repo, path = repo_page
+    monkeypatch.setattr(ws, "IGNORED_MAX", 3)
+    (repo / ".gitignore").write_text(".oa-implement/\n")
+    (repo / ".oa-implement" / "_build_root_c2").mkdir(parents=True)
+    (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
+    for index in range(20):
+        (repo / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button:has-text('.oa-implement')")
+            page.click(".filelist button:has-text('.oa-implement')")
+            page.wait_for_selector(".filelist button:has-text('_build_root_c2')")
+            # The folder says why it is empty, where it stands.
+            assert page.locator(
+                ".filelist button:has-text('_build_root_c2') .toobig"
+            ).inner_text() == "not listed"
+            # And it does not open onto nothing.
+            page.click(".filelist button:has-text('_build_root_c2')")
+            assert page.locator(".filelist button:has-text('o1.o')").count() == 0
+            # The plan beside it is a file like any other.
+            page.click(".filelist button:has-text('PLAN.md')")
+            # For the text, not only for the name: the pane draws as soon
+            # as the path moves and the file itself arrives a fetch later.
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.filebody .prose');
+                           return one && one.innerText.includes('the plan'); }""")
+            assert "the plan" in page.locator(".filebody .prose").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_build_root_that_appears_later_turns_up_on_its_own(ws, repo_page,
+                                                             monkeypatch):
+    """The first build of the day adds no name to the listing -- every file
+    in it is left out -- so the tag the page holds does not move. Only the
+    list of what was left out does, and the tree is built from both."""
+    repo, path = repo_page
+    monkeypatch.setattr(ws, "IGNORED_MAX", 3)
+    (repo / ".gitignore").write_text(".oa-implement/\n")
+    (repo / ".oa-implement").mkdir()
+    (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button:has-text('.oa-implement')")
+            page.click(".filelist button:has-text('.oa-implement')")
+            page.wait_for_selector(".filelist button:has-text('PLAN.md')")
+            held = page.evaluate("state.files.tag")
+
+            (repo / ".oa-implement" / "_build_root_c2").mkdir()
+            for index in range(20):
+                (repo / ".oa-implement" / "_build_root_c2"
+                 / f"o{index}.o").write_text("x")
+
+            page.wait_for_selector(".filelist button:has-text('_build_root_c2')",
+                                   timeout=15000)
+            # And it really was not the names that brought it: they never moved.
+            assert page.evaluate("state.files.tag") == held
+        finally:
+            browser.close()
+
+
+def test_a_file_in_a_generated_directory_is_found_by_name(ws, repo_page,
+                                                          monkeypatch):
+    """Being in the tree and being findable are two answers, and the find box
+    searches the names the daemon sent -- so a walk that did not send them
+    would leave the box saying no name matches."""
+    repo, path = repo_page
+    monkeypatch.setattr(ws, "IGNORED_MAX", 3)
+    (repo / ".gitignore").write_text(".oa-implement/\n")
+    (repo / ".oa-implement" / "_build_root_c2").mkdir(parents=True)
+    (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
+    for index in range(20):
+        (repo / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist button:has-text('.oa-implement')")
+            page.locator("#find").fill("oaPLAN")
+            page.wait_for_selector(".goto button")
+            found = page.eval_on_selector_all(
+                ".goto button", "els => els.map((one) => one.title)")
+            assert ".oa-implement/PLAN.md" in found, found
+            # Not one file from the build root, because not one was sent.
+            # The folder itself is a place, like every other directory: going
+            # to it shows where it sits, which is the answer it has.
+            assert not [one for one in found if one.endswith(".o")], found
+        finally:
+            browser.close()
+
+
 def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)

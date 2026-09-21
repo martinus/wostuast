@@ -165,6 +165,13 @@ is right only when proving something did **not** happen. Ask one question when a
 redraw could land between two: `wait_for_function("...length === 1")`, not
 `wait_for_selector` then `.count()`.
 
+**`open_page` returning is not the transcript arriving.** It waits for the
+first draw, and the first draw is the tab's frame — the map beside the
+transcript fills one fetch later. Abort `api/session/*/transcript` and the
+list is empty with the page otherwise drawn, which is what a loaded CI runner
+looks like: four tests read that list straight away and one of them went red
+the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
+
 ## Rules, each one a bug that already happened
 
 ### Shape
@@ -269,6 +276,18 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
   would be a line in `doctor` saying the file is wrong. It is written with
   `write_atomic(private=True)`, like everything else there, and a failure to
   write it never stops `serve`.
+- **A `links.json` that cannot be used is never silent.** "No links" and
+  "your file is broken" looked identical — nothing on the page either way —
+  and the only way to find out was `doctor`, which you had no reason to run.
+  The first thing anybody writes is `\d`, which is not a JSON escape, so the
+  file never parses. `load_links` returns the usable entries *and* what is
+  wrong with the rest; `read_links` is the wrapper for a caller with nowhere
+  to put the trouble. `serve` prints it, `/api/links` carries it, the Session
+  tab shows it, `doctor` says it. **The file is never repaired**: guessing at
+  a backslash somebody meant is a worse surprise than the message. And the
+  page adds its own trouble — a pattern Python compiled and this browser
+  will not is only findable there. `state.linkTrouble` is in the Session
+  tab's redraw key, or a late answer draws nothing.
 - **The list of what may be shown lives in the daemon, once.** `SHOWN_AS` is
   read by `shown_as`, which the `raw` route enforces and which
   `read_worktree_file` reports as `FileText.shown` — so the page holds no
@@ -582,6 +601,30 @@ redraw could land between two: `wait_for_function("...length === 1")`, not
 - **List every file, stat only the changed ones.** Tens of thousands of files,
   tens of changed ones. Asking the disk about all of them every poll is the
   mistake.
+- **A wholly-ignored directory is walked by us, with a budget.** git's
+  `--directory` collapses one into a single entry and looks no further, and
+  dropping that entry left `.oa-implement` — a directory an agent writes its
+  plan into, which is the one ignored place a reader wants — with no way in
+  at all. `walk_ignored` lists it **only when what it holds fits in
+  `IGNORED_MAX`**, counting what is under it and not counting a folder
+  already left out, and it stops reading the moment it knows. So a build root
+  of a hundred thousand objects costs 2,000 reads, comes back as one name in
+  `Worktree.skipped`, and the plan beside it is listed because what is left
+  of the directory then fits. Nothing is ever half-listed: a folder comes back
+  whole or comes back as its own name. `node_modules` fails the same test and
+  stays one row, which is what git's own rule was protecting.
+  **The budget is an argument, not a default read at import**, or a test
+  would have to build two thousand files to reach it.
+  A link to a directory is neither followed nor listed: following it is a way
+  round the budget and into a loop, and it is not a file.
+- **`skipped` is not in the listing's tag.** The tag is a hash of the names,
+  and a build root that appears adds none — every file in it is left out. So
+  the page rebuilds the tree when the names move **or** when `skipped` does,
+  and `buildTree(names, skipped)` makes an empty folder for each one: a
+  directory holding nothing is a directory nothing above would create, and a
+  folder the reader cannot see is the same silence as one that says nothing.
+  Its row carries `.toobig` and does not open — a folder that opens onto
+  nothing reads as broken.
 - **One listing per worktree, and the page holds the names.** `Files` keeps it
   for `LIST_FRESH` and serves a stale one while re-reading behind. Names go with
   a tag; a listing that has not moved answers without them — 1733 KB against

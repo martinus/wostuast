@@ -258,6 +258,87 @@ def test_doctor_names_a_broken_autolink(ws, capsys):
     assert "note" in said
 
 
+def test_a_links_file_that_will_not_parse_says_what_is_wrong(ws):
+    """The one people write. `\\d` is not a JSON escape, so the file never
+    parses -- and the page showed nothing, which is also what a machine with
+    no links file looks like. Silence was the bug, not the typo."""
+    write_links(ws, '[{"match": "(OA|QSP)-(\\d+)", "url": "https://t/$1-$2"}]')
+    usable, trouble = ws.load_links()
+    assert usable == []
+    assert len(trouble) == 1
+    assert "not valid JSON" in trouble[0]
+    # And it says the thing that fixes it, because the error alone
+    # ("Invalid \\escape") does not tell anybody to double a backslash.
+    assert "doubled" in trouble[0]
+
+
+def test_an_entry_that_cannot_be_used_is_trouble_and_the_rest_still_are_links(ws):
+    """Dropping a broken entry in silence is the same bug one entry down."""
+    write_links(ws, json.dumps([
+        {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
+        {"match": "BAD-(", "url": "https://tickets/"},
+    ]))
+    usable, trouble = ws.load_links()
+    assert usable == [{"match": r"OK-(\d+)", "url": "https://tickets/$1"}]
+    assert len(trouble) == 1 and "link 2" in trouble[0]
+
+
+def test_no_links_file_is_not_trouble(ws):
+    """Most people want no autolinks, and a machine that never had the file
+    must not be told off for it."""
+    assert ws.load_links() == ([], [])
+
+
+def test_serve_says_what_is_wrong_with_the_links_file(ws, capsys, monkeypatch):
+    """The page cannot make you look at it and `doctor` is something you had
+    no reason to run, so the restart has to say it."""
+    write_links(ws, "not json at all")
+
+    class Fake:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
+    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
+    assert ws.cmd_serve(argparse.Namespace(port=0, open=False)) == 0
+    assert "links:" in capsys.readouterr().err
+
+
+def test_serve_says_nothing_about_a_links_file_it_can_use(ws, capsys,
+                                                          monkeypatch):
+    """A line every start would be noise, and noise is not read."""
+    write_links(ws, json.dumps([{"match": r"OK-(\d+)", "url": "https://t/$1"}]))
+
+    class Fake:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
+    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
+    ws.cmd_serve(argparse.Namespace(port=0, open=False))
+    assert "links:" not in capsys.readouterr().err
+
+
+def test_doctor_names_a_links_file_that_will_not_parse(ws, capsys):
+    write_links(ws, "not json at all")
+    ws.cmd_doctor(argparse.Namespace())
+    said = capsys.readouterr().out
+    assert "not valid JSON" in said
+    assert "note" in said               # still not a reason for the check to fail
+
+
 def test_serve_leaves_an_example_when_there_is_no_links_file(ws):
     """Finding out how to write one should be opening it, not reading a
     README. JSON has no comments, so the example has to be a working entry."""

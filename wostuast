@@ -1812,6 +1812,26 @@ def shown_as(wanted: str) -> str:
 #: many the tab says it cannot answer rather than answering a fraction.
 FILES_MAX = 200_000
 
+#: What one wholly-ignored directory is worth, in names.
+#:
+#: git collapses such a directory into a single entry and walks no further,
+#: which is what keeps `node_modules` from costing a quarter of a million
+#: names. wostuast dropped that entry, so a generated directory -- the one
+#: ignored place a reader does want to read -- had no way in at all.
+#:
+#: Walking it ourselves means keeping git's promise ourselves. A directory
+#: whose contents do not fit in this many names is left out whole and named
+#: instead, and the walk stops as soon as it knows that, so a build root of a
+#: hundred thousand objects costs this many reads and not a hundred thousand.
+#: The rule is recursive, which is what makes it useful: `_build_root_c2` is
+#: left out, and the plan and the notes beside it are listed, because what is
+#: left of the directory then fits.
+#:
+#: 2,000 because a generated directory somebody reads -- a plan, some notes, a
+#: report -- is tens of files. `node_modules` and a build root are thousands,
+#: and neither is a place to browse.
+IGNORED_MAX = 2000
+
 #: How long a listing nobody has asked about is kept. It holds every name in
 #: a repository, so it does not sit there for the life of the daemon.
 LISTING_KEPT = 300.0
@@ -1892,6 +1912,9 @@ class Worktree:
     total: int = 0          # before the list was cut to FILES_MAX
     cut: bool = False       # the worktree holds more names than FILES_MAX
     failed: bool = False    # git did not answer; "no files" would lie
+    #: Ignored directories too big to list, so the tree can say so where they
+    #: stand. A folder with nothing in it and no reason given reads as a bug.
+    skipped: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1916,6 +1939,67 @@ class FileText:
     # What `file` made of it, when the name and the first line said nothing.
     # The page decides what to do with it; see `languageOf`.
     language: str = ""
+
+
+def walk_ignored(root: str, top: str,
+                 budget: int) -> tuple[list[str], list[str]]:
+    """What is inside a wholly-ignored directory, and what was left out.
+
+    `git ls-files --directory` hands over one entry for such a directory and
+    does not look inside it. That is the right trade for `node_modules` and
+    the wrong one for `.oa-implement`, which an agent writes into and a
+    reader wants to read, so the walk is ours to do -- and so is the promise
+    that it stays cheap.
+
+    A directory is listed only when what it holds fits in `budget`, counting
+    what is under it and not counting a folder already left out. Nothing is
+    half-listed: a directory either comes back whole or comes back as its own
+    name in `skipped`, which is the thing the tree draws. So a build root of
+    a hundred thousand objects is one row, the files beside it are listed,
+    and finding that out costs `budget` reads rather than a hundred thousand.
+
+    A link to a directory is neither followed nor listed. Following it is a
+    way round the budget and a way into a loop, and listing it would offer a
+    name that is not a file; what is behind it is listed where it really
+    lives, if git offers that place at all. A link to a file is a file.
+
+    The budget is passed rather than read, so a test can set it to three
+    files instead of building two thousand of them.
+    """
+    def below(here: str) -> tuple[list[str] | None, list[str]]:
+        """This directory's files, or None when it does not fit."""
+        names: list[str] = []
+        skipped: list[str] = []
+        try:
+            with os.scandir(os.path.join(root, here)) as reading:
+                for entry in reading:
+                    where = f"{here}/{entry.name}"
+                    if entry.is_dir(follow_symlinks=False):
+                        found, left = below(where)
+                        if found is None:
+                            skipped.append(where)
+                        else:
+                            names.extend(found)
+                            skipped.extend(left)
+                    elif entry.is_dir():
+                        continue    # a link to a directory: neither of those
+                    else:
+                        names.append(where)
+                    if len(names) > budget:
+                        # What was left out inside a directory that is itself
+                        # left out is not news: the reader is told about the
+                        # one row they can see.
+                        return None, []
+        except OSError:
+            return [], []       # gone between git and us, or not ours to read
+        return names, skipped
+
+    top = top.rstrip("/")
+    names, skipped = below(top)
+    # The whole of it does not fit, so the whole of it is the one name the
+    # reader is given -- a folder they can see, with nothing pretending to be
+    # inside it.
+    return ([], [top]) if names is None else (names, skipped)
 
 
 def in_order(names: set[str]) -> list[str]:
@@ -2066,6 +2150,15 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     for part in parts:
         if part is not None:
             names.update(name for name in part if not name.endswith("/"))
+    # The entries git collapsed. Each is a directory it declined to look
+    # inside, and one of them is where the agent's own work is kept.
+    skipped: list[str] = []
+    for name in parts[2] or []:
+        if name.endswith("/"):
+            found, left = walk_ignored(tree.root, name, IGNORED_MAX)
+            names.update(found)
+            skipped.extend(left)
+    tree.skipped = sorted(skipped)
     touched = touched or set()
     for name in in_order(names):
         entry = FileEntry(path=name, changed=name in touched)
@@ -2874,20 +2967,50 @@ def write_example_links() -> bool:
         return False
 
 
-def read_links() -> list[dict[str, str]]:
-    """The autolinks that are usable, in the order they were written.
+def load_links() -> tuple[list[dict[str, str]], list[str]]:
+    """The autolinks that are usable, and what is wrong with the rest.
 
-    A file that is missing, unreadable or the wrong shape is no links at all:
-    this is a convenience, and the transcript reads perfectly well without it.
+    One reader, because "no links" and "your file is broken" are different
+    answers and looked the same: the page showed nothing either way, and the
+    only way to find out was to run `doctor` you had no reason to run. This
+    is the scar git already left here, in a second place.
+
+    A missing file is not trouble -- most people want no autolinks. Anything
+    else that stops an entry being used is, and the caller says it out loud.
+
+    `\\d` is the one people write, and it is not a JSON escape: JSON allows
+    `\\" \\\\ \\/ \\b \\f \\n \\r \\t` and `\\uXXXX` and nothing else, so a regular
+    expression needs its backslash doubled. The file stays plain JSON --
+    repairing it would be guessing, and the next surprise would be worse --
+    so the message has to be the thing that reaches the reader.
     """
+    path = links_path()
+    if not path.exists():
+        return [], []
     try:
-        payload = json.loads(links_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        return [], [f"cannot read {path}: {error}"]
+    except ValueError as error:
+        return [], [f"{path} is not valid JSON: {error}."
+                    " A backslash in a pattern has to be doubled: `\\\\d`, not"
+                    " `\\d`."]
     if not isinstance(payload, list):
-        return []
-    return [{"match": one["match"], "url": one["url"]}
-            for one in payload if not link_trouble(one)]
+        return [], [f"{path} is not a list of links"]
+    good: list[dict[str, str]] = []
+    trouble: list[str] = []
+    for at, one in enumerate(payload):
+        why = link_trouble(one)
+        if why:
+            trouble.append(f"link {at + 1} in {path}: {why}")
+        else:
+            good.append({"match": one["match"], "url": one["url"]})
+    return good, trouble
+
+
+def read_links() -> list[dict[str, str]]:
+    """Only the usable ones, for a caller with nowhere to put the trouble."""
+    return load_links()[0]
 
 
 def read_names() -> dict[str, str]:
@@ -3740,7 +3863,8 @@ class Serving:
             # The reader's own, not a session's, so it hangs off nothing. It
             # is read from disk here rather than held, because it changes
             # when a person edits a file and a reload should be enough.
-            self.reply_json({"links": read_links()})
+            usable, trouble = load_links()
+            self.reply_json({"links": usable, "trouble": trouble})
         elif path == "/api/events":
             self.stream(query.get("watch", [""])[0])
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -3778,6 +3902,10 @@ class Serving:
         body = {
             "id": session_id, "root": tree.root, "total": tree.total,
             "cut": tree.cut, "failed": tree.failed, "tag": held.tag,
+            # The ignored directories too big to walk, and the number that
+            # decided it. Both every time: they are a few dozen bytes, and
+            # they are not in the tag, which is a hash of the names.
+            "skipped": tree.skipped, "ignored_max": IGNORED_MAX,
             # Name to modification time, for the few files that moved. The
             # page needs the time to put the newest change first.
             "changed": held.changed,
@@ -4154,23 +4282,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # The autolinks, if there are any. A broken one is a note and not a
     # failure: the transcript reads perfectly well without it, and the point
     # of saying so is that a link doing nothing gives no clue why.
-    links = links_path()
-    if links.exists():
-        try:
-            payload = json.loads(links.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            payload = None
-            report(False, "", f"cannot read {links}: {error}", fatal=False)
-        if payload is not None and not isinstance(payload, list):
-            report(False, "", f"{links} is not a list of links", fatal=False)
-        elif payload is not None:
-            bad = [(at, link_trouble(one)) for at, one in enumerate(payload)]
-            broken = [(at, why) for at, why in bad if why]
-            report(not broken,
-                   f"{len(payload)} autolink(s) in {links}",
-                   "; ".join(f"link {at + 1} in {links}: {why}"
-                             for at, why in broken),
-                   fatal=False)
+    if links_path().exists():
+        usable, trouble = load_links()
+        report(not trouble,
+               f"{len(usable)} autolink(s) in {links_path()}",
+               "; ".join(trouble), fatal=False)
     report(install_path().exists(), f"installed at {install_path()}",
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
 
@@ -4277,6 +4393,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     where = f"http://{BIND_HOST}:{port}/"
     made = write_example_links()
+    # Said here because the page cannot make you look at it and `doctor` is
+    # something you had no reason to run. A file you wrote and got wrong must
+    # never look like a file you never wrote.
+    for why in load_links()[1]:
+        print(f"links: {why}", file=sys.stderr)
     # The first pass folds the whole log and runs git for every worktree, which
     # on a busy machine takes a moment. It happens on the worker, so the page
     # is served straight away rather than after it.
@@ -4785,6 +4906,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   border: 1px solid var(--edge); line-height: 1.5; min-width: 0;
   white-space: pre-wrap; word-wrap: break-word;
 }
+/* A file of the reader's own that wostuast cannot use. Not an error of the
+   program's, so it does not shout -- but it has to be visible, because the
+   only other sign is links that never appear. */
+.trouble {
+  margin: 14px 0; padding: 10px 12px; border-radius: 6px;
+  background: var(--cut-bg); color: var(--cut-ink);
+  font-family: var(--mono); font-size: 12px; line-height: 1.6;
+  word-break: break-word;
+}
+.troublehead { font-weight: 600; margin-bottom: 4px; }
 /* Something the harness said: a background task finishing, a message from
    another session. It is real news and it is not a prompt, so it gets a quiet
    block rather than your rail and your tint. It was drawn as though you had
@@ -4971,6 +5102,13 @@ body:not(.show-thinking) .thinking { display: none; }
 .filelist button.touched .name::after {
   content: "\25cf"; margin-left: 6px; color: var(--needs); font-size: 9px;
   vertical-align: middle;
+}
+/* At the right edge of a folder row, where a count sits on a diff row: it
+   is what the folder has instead of contents. Quiet, because it is a fact
+   about a build directory and not a warning about anything. */
+.toobig {
+  margin-left: auto; padding-left: 8px; flex-shrink: 0;
+  font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
 }
 .filelist .lit { color: var(--needs-warm); font-weight: 600; }
 .filelist button.chosen .lit { color: var(--needs); }
@@ -5354,6 +5492,8 @@ const state = {
   // The reader's own autolinks, compiled once. Empty until `/api/links`
   // answers, and empty for ever on a machine with no `links.json`.
   links: [],
+  // What is wrong with `links.json`, if anything. Shown on the Session tab.
+  linkTrouble: [],
   // Where each session was left, by id. The choices only -- see `savePlace`.
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
@@ -5588,12 +5728,23 @@ function drawSession(box) {
   }
   const key = JSON.stringify([s.id, s.state, s.branch, s.cwd, s.pane, s.model,
                               s.context_pct, s.dirty, s.touched_files, s.since,
-                              state.events.at]);
+                              state.events.at, state.linkTrouble]);
   if (!fresh(box, "bodyKey", key)) return;
   rest.replaceChildren();
   putFacts(rest, s);
+  putLinkTrouble(rest);
   putTally(rest, state.events.counts);
   putLog(rest, state.events.events);
+}
+
+// What is wrong with `links.json`. It is the reader's own file and nothing
+// else on the page can say so: the transcript just has no links in it, which
+// is also what a machine with no such file looks like.
+function putLinkTrouble(pane) {
+  if (!state.linkTrouble.length) return;
+  const box = put(pane, "div", "trouble");
+  put(box, "div", "troublehead", "links.json");
+  for (const why of state.linkTrouble) put(box, "div", null, why);
 }
 
 async function loadSession() {
@@ -6174,18 +6325,27 @@ async function loadLinks() {
     const answer = await fetch("/api/links");
     body = await answer.json();
   } catch (error) {
-    return;                            // no links is a fine answer
+    return;                            // the daemon went away; try again later
   }
   const out = [];
+  // What the daemon could not use, plus anything this side cannot compile.
+  // "No links" and "your file is broken" are different answers, and the page
+  // showed nothing either way -- so a file you wrote and got wrong looked
+  // exactly like a file you never wrote.
+  const trouble = [...((body && body.trouble) || [])];
   for (const one of (body && body.links) || []) {
     try {
       out.push({ re: new RegExp(one.match, "g"), url: String(one.url) });
     } catch (error) {
-      // the daemon says why, in `doctor`
+      // Python took this pattern and JavaScript will not. The two dialects
+      // are close and not the same, so this one is only findable here.
+      trouble.push("this browser cannot use the pattern `" + one.match + "`");
     }
   }
   state.links = out;
-  if (out.length) draw();              // the transcript on screen has none yet
+  state.linkTrouble = trouble;
+  // Trouble goes on the Session tab, which may be what is on screen.
+  if (out.length || trouble.length) draw();
 }
 
 // The address one match stands for. `$1` to `$9` are the groups and `$0` is
@@ -7177,7 +7337,7 @@ function findPath(path, query) {
 // in name order, so each directory's children come out in order too. It is
 // built when the names move and not again: a repository of fifty thousand
 // files costs about forty milliseconds here, and nothing per draw.
-function buildTree(names) {
+function buildTree(names, skipped) {
   const dirs = new Map([["", { dirs: [], files: [] }]]);
   // Each missing level is made and linked into the one above it, once. A loop
   // that made the parent itself instead stopped on its own next turn, and
@@ -7194,6 +7354,10 @@ function buildTree(names) {
     const cut = path.lastIndexOf("/");
     folder(cut < 0 ? "" : path.slice(0, cut)).files.push(path);
   }
+  // A directory that was not walked holds no name, so nothing above would
+  // make it -- and a folder the reader cannot see is the same silence as
+  // one that says nothing. It is made here, empty, and the row says why.
+  for (const path of skipped || []) folder(path);
   return dirs;
 }
 
@@ -7262,8 +7426,12 @@ function treeRows(dirs, open) {
     if (!one) return;
     const from = path ? path.length + 1 : 0;
     for (const child of one.dirs) {
-      const wide = open.has(child);
-      rows.push({ path: child, from, depth, dir: true, open: wide });
+      // A directory nobody walked cannot open: there is nothing behind it,
+      // and a folder that opens onto nothing reads as a broken one.
+      const shut = state.files.skipped.has(child);
+      const wide = !shut && open.has(child);
+      rows.push({ path: child, from, depth, dir: true, open: wide,
+                  skipped: shut });
       if (wide) walk(child, depth + 1);
     }
     // Only a directory holding something named or changed needs its files put
@@ -7484,8 +7652,19 @@ function drawRow(list, row) {
     }
   }
   putName(button, name, at);
+  if (row.skipped) {
+    // Where the reader is looking, rather than in a strip at the foot: this
+    // is a fact about this folder, and the question it answers -- "where is
+    // the rest of it?" -- is asked here.
+    put(button, "span", "toobig", "not listed");
+    button.title = row.path + " holds more than " + state.files.ignoredMax
+                 + " files, so it is left out. Opening one in it still works.";
+  }
   button.addEventListener("click", () => {
     if (!dir) { chooseFile(row.path); return; }
+    // A folder that was not walked has nothing to open, so the click does
+    // the other thing a click on a folder does: it marks where you are.
+    if (row.skipped) { state.files.at = row.path; draw(); return; }
     state.files.dirs.set(row.path, !row.open);
     draw();
   });
@@ -7646,7 +7825,7 @@ function drawFiles(box) {
   // mtimes stay out: folding those in re-rendered the open document.
   if (fresh(box, "listKey", JSON.stringify(
       [state.find, state.files.path, state.files.at, state.files.failed,
-       state.files.tag,
+       state.files.tag, [...state.files.skipped],
        [...state.files.changed.keys()].sort(), [...state.files.dirs]]))) {
     // Built here and not before: with a query typed this is a pass over every
     // name in the repository, and a poll that changes nothing wants none of
@@ -7863,6 +8042,11 @@ function blankFiles() {
     total: 0,           // how many the worktree holds
     cut: false,         // more than the daemon will send
     failed: false,      // git did not answer; "no files" would lie
+    // Ignored directories the daemon declined to walk, and the number it
+    // declined them at. They hold nothing, so the tree is told their names
+    // and the row says why it cannot be opened.
+    skipped: new Set(),
+    ignoredMax: 0,
     tag: "",            // the daemon's name for the listing we hold
     path: null,         // the file it shows
     // The row the list marks: the last place the reader went. Usually the
@@ -9066,13 +9250,22 @@ async function loadFiles() {
   state.files.total = body.total || 0;
   state.files.cut = !!body.cut;
   state.files.failed = !!body.failed;
+  state.files.ignoredMax = body.ignored_max || 0;
+  // The tag is a hash of the names, so a directory that has grown past the
+  // budget -- or shrunk back under it -- moves this and nothing else. The
+  // tree is built from both, so it has to be rebuilt for either.
+  const left = (body.skipped || []).join("\0");
+  const moved = left !== [...state.files.skipped].join("\0");
+  if (moved) state.files.skipped = new Set(body.skipped || []);
   // No `names` means the tag we sent still stands, so the ones we hold do too.
   // NUL separates them: it is the only character a file name cannot hold, and
   // an empty listing splits to one empty string rather than to none.
   if (body.names !== undefined) {
     state.files.names = body.names ? body.names.split("\0") : [];
-    state.files.tree = buildTree(state.files.names);
     state.files.known = new Set(state.files.names);   // built once, asked every poll
+  }
+  if (body.names !== undefined || moved) {
+    state.files.tree = buildTree(state.files.names, state.files.skipped);
     // Everything the reader can go to, files and the directories holding
     // them, built here for the same reason the tree is: fifty thousand names
     // are not worth walking once per keystroke to add the folders back.
