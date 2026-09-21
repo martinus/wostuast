@@ -33,7 +33,7 @@ def test_a_diff_line_can_be_commented_on(repo_page):
             page.locator(".dline .addnote").first.click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "use a signed type here")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
             assert "use a signed type here" in page.locator(".comment").inner_text()
             # It is written down, not held in the node it was drawn on.
@@ -70,7 +70,7 @@ def test_a_whole_file_can_be_commented_on(repo_page):
             page.locator(".onFile .addnote").first.click()
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "keep the heading order")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".onFile .comment")
             assert page.evaluate("state.review.comments[0].anchor").endswith("\n0")
         finally:
@@ -85,7 +85,7 @@ def test_a_comment_survives_the_diff_being_read_again(repo_page):
         try:
             page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "look again")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
             page.evaluate("state.diffAt += 1; draw()")
             assert page.locator(".comment").count() == 1
@@ -116,21 +116,21 @@ def test_a_comment_can_be_edited_and_emptied_away(repo_page):
         try:
             page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "first thought")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
 
-            page.click(".comment .link")            # edit
+            page.click(".comment button:text-is('edit')")            # edit
             page.wait_for_selector(".commentbox textarea")
             assert page.input_value(".commentbox textarea") == "first thought"
             page.fill(".commentbox textarea", "second thought")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_function("state.review.comments[0].note === 'second thought'")
 
             # Clearing the box and saving is how a comment goes away, so there
             # is no second thing to find and press.
-            page.click(".comment .link")
+            page.click(".comment button:text-is('edit')")
             page.fill(".commentbox textarea", "   ")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_function("state.review.comments.length === 0")
             assert page.locator(".comment").count() == 0
         finally:
@@ -143,11 +143,11 @@ def test_cancel_leaves_the_comment_as_it_was(repo_page):
         try:
             page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "kept")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
-            page.click(".comment .link")
+            page.click(".comment button:text-is('edit')")
             page.fill(".commentbox textarea", "thrown away")
-            page.click(".commentbox .link")         # cancel
+            page.click(".commentbox button:text-is('cancel')")         # cancel
             page.wait_for_selector(".comment")
             assert "kept" in page.locator(".comment").inner_text()
             assert page.evaluate("state.review.comments.length") == 1
@@ -204,7 +204,7 @@ def test_nothing_is_sent_yet(repo_page):
                           " return real(u, o); };")
             page.locator(".dline .addnote").first.click(force=True)
             page.fill(".commentbox textarea", "do not send me")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
             sent = page.evaluate("window.__posts.filter((u) => u.includes('/send'))")
             assert sent == []
@@ -387,7 +387,7 @@ def test_an_untracked_file_anchors_its_comments_to_itself(repo_page):
                 force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "about the notes")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_function("state.review.comments.length === 1")
             assert page.evaluate("state.review.comments[0].anchor").startswith("NOTES.md\n")
             assert "NOTES.md:" in page.evaluate("reviewText()")
@@ -446,9 +446,9 @@ def test_a_review_that_went_is_not_kept(repo_page):
             show_tab(page, "diff")
             page.wait_for_selector(".dline")
             comment_on_first_line(page, "goes away")
-            page.click(".comment .link")
+            page.click(".comment button:text-is('edit')")
             page.fill(".commentbox textarea", "")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_function("state.review.comments.length === 0")
             assert page.evaluate(
                 "Object.keys(localStorage)"
@@ -607,7 +607,7 @@ def test_a_line_of_a_long_file_is_numbered_from_the_file_not_the_window(long_pag
             row_for(page, 3000).locator(".addnote").click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "about line three thousand")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
             assert page.evaluate("state.review.comments[0].anchor") == "long.py\n3000"
             assert page.evaluate("state.review.comments[0].quoted") == "line2999 = 2999"
@@ -624,7 +624,7 @@ def test_a_comment_in_a_long_file_survives_the_file_being_read_again(long_page):
             row_for(page, 3000).locator(".addnote").click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "still here")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
             page.evaluate("state.files.mtime += 1; draw()")
             page.wait_for_selector(".comment")
@@ -691,7 +691,7 @@ def test_a_comment_can_be_deleted_from_the_review_tab(repo_page):
             comment_on_first_line(page, "goes away")
             show_tab(page, "review")
             page.wait_for_selector(".reviewbody .spot")
-            page.click(".reviewbody .comment .link:text('delete')")
+            page.click(".reviewbody .comment button:text-is('delete')")
             page.wait_for_function("state.review.comments.length === 0")
             assert "No review yet" in page.locator(".reviewbody .empty").inner_text()
         finally:
@@ -706,10 +706,10 @@ def test_the_whole_review_is_deleted_only_on_the_second_press(repo_page):
             comment_on_first_line(page, "careful now")
             show_tab(page, "review")
             page.wait_for_selector(".reviewbody .spot")
-            page.click(".reviewbody .link:text('delete this review')")
-            page.wait_for_selector(".reviewbody .link:text('really delete it?')")
+            page.click(".reviewbody button:text-is('delete this review')")
+            page.wait_for_selector(".reviewbody button:text-is('really delete it?')")
             assert page.evaluate("state.review.comments.length") == 1
-            page.click(".reviewbody .link:text('really delete it?')")
+            page.click(".reviewbody button:text-is('really delete it?')")
             page.wait_for_function("state.review.comments.length === 0")
             assert page.evaluate(
                 "Object.keys(localStorage)"
@@ -977,7 +977,7 @@ def test_one_line_in_both_sections_opens_one_comment_box(repo_page):
             assert page.evaluate("state.writing") == "code.py\n2"
 
             page.fill(".commentbox textarea", "this is the note I typed")
-            page.click(".commentbox .verb")
+            page.click(".commentbox button:text-is('save')")
             page.wait_for_selector(".comment")
             notes = page.evaluate(
                 "state.review.comments.map((one) => one.note)")
@@ -1134,5 +1134,86 @@ def test_going_to_a_comment_puts_its_line_on_screen(long_page):
               return {top: box.top - on.top, height: on.height};
             }""")
             assert 0 <= seen["top"] < seen["height"], seen
+        finally:
+            browser.close()
+
+
+# --- where the buttons are, and what they look like --------------------------
+
+def test_what_you_can_do_to_a_comment_sits_at_its_right_edge(repo_page):
+    """The note is what a reader came for. The buttons are not, so they get
+    out of its way: the note starts at the left of the block and `edit` ends
+    at its right. Take `justify-content` off `.acts` and `edit` lands under
+    the first word of the note instead."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "a thought worth reading")
+            seen = page.evaluate("""() => {
+              const box = document.querySelector('.comment');
+              const note = box.querySelector('.note');
+              const edit = box.querySelector('.acts button');
+              const its = box.getBoundingClientRect();
+              return {
+                wide: its.width,
+                noteLeft: note.getBoundingClientRect().left - its.left,
+                editRight: its.right - edit.getBoundingClientRect().right,
+              };
+            }""")
+            assert seen["wide"] > 200, seen
+            assert seen["noteLeft"] < 20, seen
+            assert seen["editRight"] < 20, seen
+        finally:
+            browser.close()
+
+
+def test_edit_and_delete_look_like_buttons(repo_page):
+    """They were `.link` — text you have to find out is clickable. A button
+    has an edge and a shape. Put either back to `.link` and the border goes
+    to none, which is what this asks about."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "looks like what it is")
+            show_tab(page, "review")
+            page.wait_for_selector(".reviewbody .comment .acts button")
+            seen = page.eval_on_selector_all(
+                ".reviewbody .comment .acts button",
+                """els => els.map((one) => {
+                     const style = getComputedStyle(one);
+                     return [one.textContent, style.borderTopWidth,
+                             style.borderTopStyle, style.borderRadius];
+                   })""")
+            assert [one[0] for one in seen] == ["edit", "delete"], seen
+            for _, width, kind, round_ in seen:
+                assert width != "0px" and kind == "solid", seen
+                assert round_ != "0px", seen
+        finally:
+            browser.close()
+
+
+def test_the_box_keeps_its_own_buttons_under_the_field_on_the_right(repo_page):
+    """Save and cancel end where the field ends, and the one that does
+    something is nearest that end. Drop `justify-content` from
+    `.commentbox .buttons` and both slide to the left of the field."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            seen = page.evaluate("""() => {
+              const box = document.querySelector('.commentbox');
+              const area = box.querySelector('textarea').getBoundingClientRect();
+              const all = [...box.querySelectorAll('.buttons button')];
+              const last = all[all.length - 1].getBoundingClientRect();
+              return {
+                names: all.map((one) => one.textContent),
+                under: last.top >= area.bottom,
+                gap: area.right - last.right,
+              };
+            }""")
+            assert seen["names"] == ["cancel", "save"], seen
+            assert seen["under"], seen
+            assert abs(seen["gap"]) < 4, seen
         finally:
             browser.close()
