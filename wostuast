@@ -3818,6 +3818,26 @@ class Serving:
         host = sent.rsplit(":", 1)[0].strip("[]")
         return host in ("localhost", "127.0.0.1", "::1")
 
+    def origin_ours(self) -> bool:
+        """The Origin, when a browser sent one, is a page of ours.
+
+        A same-origin `fetch` sends none at all, which is why no Origin is
+        allowed through. It fails closed on a header it cannot read:
+        `Origin: http://[::1` is a `ValueError` out of `urlparse`, and that
+        used to leave the thread with no status line sent and a traceback in
+        the terminal running `serve`.
+        """
+        from urllib.parse import urlparse
+
+        origin = (self.headers.get("Origin") or "").strip()
+        if not origin:
+            return True
+        try:
+            where = urlparse(origin).hostname
+        except ValueError:
+            return False
+        return where in ("localhost", "127.0.0.1", "::1")
+
     def allowed(self) -> bool:
         """Whether a POST may act on the terminal.
 
@@ -3828,28 +3848,39 @@ class Serving:
         send a plain POST with no questions asked, and the effect here is
         `tmux send-keys` into a live terminal, so neither check is spare.
 
-        A header either check cannot read is a header that is not ours, so
-        both fail closed rather than raise. `Origin: http://[::1` is a
-        `ValueError` out of `urlparse`, and one byte above 0x7f in the token
-        header is a `TypeError` out of `compare_digest` — headers arrive as
-        latin-1. Either one used to leave the thread with no status line sent
-        and a traceback in the terminal running `serve`.
+        The token header fails closed too: one byte above 0x7f in it is a
+        `TypeError` out of `compare_digest`, because headers arrive as
+        latin-1.
         """
         import hmac
-        from urllib.parse import urlparse
 
-        origin = (self.headers.get("Origin") or "").strip()
-        if origin:
-            try:
-                where = urlparse(origin).hostname
-            except ValueError:
-                return False
-            if where not in ("localhost", "127.0.0.1", "::1"):
-                return False
+        if not self.origin_ours():
+            return False
         sent = self.headers.get(TOKEN_HEADER) or ""
         if not sent.isascii():
             return False
         return hmac.compare_digest(sent, self.daemon.token)
+
+    def stale_page(self) -> bool:
+        """Whether a refused POST is a page from an earlier `serve`.
+
+        The token is made fresh in `Daemon.__init__` and printed into the
+        page, so restarting `serve` leaves every open page holding one this
+        daemon has never heard of. The stream is a GET and reconnects, so
+        the sidebar goes on moving and the page looks perfectly alive while
+        every send, every jump and every answered question is refused -- in
+        every session at once, because the token belongs to the daemon and
+        not to a session. It cost a reader an afternoon, and `doctor` could
+        not have told them: the page is the only thing that knows.
+
+        This is only ever the *wording* of a refusal. `allowed()` has
+        already said no and nothing here changes that. It is true when the
+        request came from a page of ours and carried a token that is simply
+        not this one; a cross-origin caller fails `origin_ours` and is told
+        nothing it did not already know.
+        """
+        sent = self.headers.get(TOKEN_HEADER) or ""
+        return bool(sent) and sent.isascii() and self.origin_ours()
 
     def asked(self) -> dict[str, Any]:
         """The JSON a POST carried, or an empty one.
@@ -3908,8 +3939,13 @@ class Serving:
                             403)
             return
         if not self.allowed():
-            self.reply_json({"error": "that did not come from this page"},
-                            403)
+            if self.stale_page():
+                self.reply_json(
+                    {"error": "wostuast was restarted, so this page is out of"
+                              " date. Reload it.", "stale": True}, 403)
+            else:
+                self.reply_json({"error": "that did not come from this page"},
+                                403)
             return
         parts = urlparse(self.path).path.strip("/").split("/")
         if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -5554,12 +5590,24 @@ body:not(.show-thinking) .thinking { display: none; }
   border-radius: 4px; color: var(--needs-warm); }
 .empty h2 { font-size: 16px; color: var(--ink-bright); margin: 0 0 10px; }
 
-.lost {
+/* Two bars over the whole page, for the two things that stop it working.
+   One goes when the stream comes back; the other goes when you reload,
+   which is the only thing that fixes it.
+
+   The class that says a bar is wanted is never the class the bar wears.
+   `body.lost .lost` reads well and the rule above it, `.lost`, matched the
+   body too -- so `classList.add("lost")` gave `body` `display: none` and the
+   whole page went blank the moment the stream hiccupped. It came back when
+   the stream did, or when the reader pressed F5, which is what made it look
+   like a page that had simply stopped working. Nothing named here may be a
+   word `body` also wears. */
+.lost, .stale {
   display: none; padding: 6px 16px; background: var(--cut-bg);
   color: var(--cut-ink); font-family: var(--mono); font-size: 12px;
   border-bottom: 1px solid var(--edge);
 }
-body.lost .lost { display: block; }
+body.offline .lost { display: block; }
+body.outdated .stale { display: block; }
 
 dialog.help {
   border: 1px solid var(--edge-bright); border-radius: 8px; background: var(--panel);
@@ -5602,6 +5650,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
 <body>
 <div class="app">
   <div class="lost">connection lost — reconnecting…</div>
+  <div class="stale">wostuast was restarted, so this page is out of date and
+    nothing it sends will go in. Reload it.</div>
   <div class="topbar">
     <div class="brand">wostuast</div>
     <div class="where" id="where">—</div>
@@ -5684,6 +5734,9 @@ const state = {
   links: [],
   // What is wrong with `links.json`, if anything. Shown on the Session tab.
   linkTrouble: [],
+  // The last thing the daemon refused to do, on the one line the page keeps
+  // for saying things. It stays there until something replaces it.
+  trouble: "",
   // What the reader has picked for the question on screen, one index per
   // question, and which question they belong to. Not in the DOM: a pick made
   // for one question must never be submitted for the next.
@@ -5953,16 +6006,46 @@ async function loadSession() {
   draw();
 }
 
+// What the daemon answered, on the one line the page keeps for saying
+// things. A failure stays.
+//
+// It used to fade after four seconds, like everything else on this strip,
+// and it is not like everything else: it is about a thing you tried and did
+// not get. A reader whose page had gone stale saw "that did not come from
+// this page" flash while they were looking at the terminal, and then a strip
+// reading "live" over a page where nothing worked. It stays until the next
+// message replaces it, or until something works.
 function said(answer) {
-  const box = $("live");
-  box.textContent = (answer && answer.error) || "";
-  if (!box.textContent) return;
+  // A page from an earlier `serve` cannot do anything at all, and no strip
+  // this small can carry that. The bar says it, and only a reload clears it.
+  if (answer && answer.stale) document.body.classList.add("outdated");
+  // Kept, not painted and forgotten: the stream writes "live" into this slot
+  // on every push, which is about once a second while an agent works, so a
+  // failure written straight in was wiped within a second. The thing the
+  // reader most needed to read was the thing that lasted least. An answer
+  // that worked clears it, which is the other half of "until something
+  // replaces it".
+  state.trouble = (answer && answer.error) || "";
+  paintLive();
+}
+
+// The one line the page keeps for saying things, and the three things that
+// want it: what the stream is doing, something you asked for and did not
+// get, and a passing word that borrows the slot over both.
+//
+// One painter, because four writers raced for it.
+function paintLive(borrowed) {
+  $("live").textContent = borrowed || state.trouble || state.live || "";
+}
+
+// Our own word about what just happened -- "review sent", "pressed 2, 1".
+// News, so it goes stale, so it fades; nothing was asked for and refused.
+function note(text) {
+  paintLive(text);
   setTimeout(() => {
-    // Only when the slot still holds this error. Assigning unconditionally
+    // Only when the slot still holds this line. Assigning unconditionally
     // would wipe whatever the stream has put there since.
-    if (box.textContent === (answer.error || "")) {
-      box.textContent = state.live || "";
-    }
+    if ($("live").textContent === text) paintLive();
   }, 4000);
 }
 
@@ -6520,7 +6603,7 @@ async function submitAsk(id, ask, box) {
       return;
     }
   }
-  said({ error: "pressed " + numbers.join(", ") });
+  note("pressed " + numbers.join(", "));
 }
 
 function drawHeader() {
@@ -9341,7 +9424,7 @@ async function submitReview() {
   // clear, and where it lives when the reader has moved on is storage.
   if (state.chosen !== id) {
     try { localStorage.removeItem(REVIEW_KEY + id); } catch (error) { }
-    said({ error: "review sent" });
+    note("review sent");
     return;
   }
   const session = current();
@@ -9352,9 +9435,9 @@ async function submitReview() {
   // Claude Code queues what arrives mid-turn, so a review sent to a working
   // agent is not lost — it is read when the turn ends. Say so, because from
   // here it looks like nothing happened.
-  said({ error: session && session.state === "working"
+  note(session && session.state === "working"
     ? "review sent; the agent is working, so it reads this when the turn ends"
-    : "review sent" });
+    : "review sent");
 }
 
 // The tab says how many comments are waiting, the way the Diff tab says how
@@ -9685,7 +9768,7 @@ function resubscribe() {
   state.stream = stream;
 
   stream.addEventListener("sessions", (message) => {
-    document.body.classList.remove("lost");
+    document.body.classList.remove("offline");
     const body = JSON.parse(message.data);
     state.skew = body.now - Date.now() / 1000;
     // A link in the address bar chooses a session before this list exists,
@@ -9706,7 +9789,7 @@ function resubscribe() {
     drawSessions();
     drawHeader();
     state.live = "live";
-    if (!state.find) $("live").textContent = "live";
+    if (!state.find) paintLive();
   });
 
   stream.addEventListener("transcript", (message) => {
@@ -9726,12 +9809,12 @@ function resubscribe() {
     patchTranscript(mergeBlocks(body.blocks || []));
   });
 
-  stream.onopen = () => { document.body.classList.remove("lost"); };
+  stream.onopen = () => { document.body.classList.remove("offline"); };
 
   stream.onerror = () => {
-    document.body.classList.add("lost");
+    document.body.classList.add("offline");
     state.live = "reconnecting";
-    if (!state.find) $("live").textContent = "reconnecting";
+    if (!state.find) paintLive();
   };
 }
 

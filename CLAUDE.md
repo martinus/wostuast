@@ -928,6 +928,42 @@ the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
 - **One block redrawn on its own still has to be marked.** `redrawBlock` is the
   Transcript tab's `fillDiffFile`: everything `drawTranscript` does to a node
   it must do too, or the block you touched loses what the others keep.
+- **A class the page puts on `body` is never the class an element wears.**
+  `stream.onerror` did `classList.add("lost")`, and the rule hiding the bar
+  until it was wanted was `.lost { display: none }` — which `body` then
+  matched itself. **The whole page went to `display: none` the moment the
+  stream hiccupped**, and came back when it reconnected or when the reader
+  pressed F5, so from the outside it read as a page that had simply stopped
+  working. The states are `offline` and `outdated` now; the bars stay `.lost`
+  and `.stale`. `test_no_state_on_the_body_can_make_the_page_vanish` names
+  every state the page sets and asserts the page is still there under each,
+  and under all of them at once — a new state belongs in that list.
+- **A restarted `serve` leaves every open page dead, and only the page can
+  say so.** The token is made fresh in `Daemon.__init__` and printed into
+  the page, so a restart leaves every browser holding one this daemon has
+  never heard of. The stream is a GET and reconnects, so the sidebar goes on
+  moving and the page looks alive while every send, every jump and every
+  answered question is refused — in every session at once, because the token
+  belongs to the daemon and not to a session. `stale_page()` picks the
+  *wording* of a refusal `allowed()` has already made; it changes no
+  decision, and a caller that fails `origin_ours` is told nothing it did not
+  already know. The page raises a bar that only a reload clears, which is
+  right anyway: after an upgrade its JavaScript is old too.
+- **`said` is the daemon's answer and it stays; `note` is our own word and it
+  fades.** "Review sent" goes stale in four seconds. "That did not come from
+  this page" is about something you asked for and did not get, and fading it
+  left a strip reading "live" over a page where nothing worked — which is
+  exactly how the restart above went unexplained.
+- **One painter for the live slot, and three things that want it.**
+  `state.live` is what the stream is doing, `state.trouble` is something you
+  asked for and did not get, and `note` borrows the slot over both for four
+  seconds. `paintLive` decides; nothing else assigns to `#live`. Four writers
+  raced before it: the stream writes "live" on every push, about once a
+  second while an agent works, so a failure written straight into the slot
+  was wiped within a second — the thing the reader most needed to read was
+  the thing that lasted least. **CI caught that**, not the browser tests I
+  had just written: the assertion was three lines below a
+  `wait_for_timeout(4500)` and passed locally because nothing was pushing.
 - **No JavaScript library is vendored.** `marked` and `highlight.js` are fetched
   through the one `fetchScript`, each pinned by the hash of its bytes, with
   `crossorigin` so the browser checks it. Any script on this page can POST to
