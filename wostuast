@@ -4040,6 +4040,10 @@ PAGE = r"""<!doctype html>
   --shadow: rgba(0,0,0,.55);
   /* Syntax colours. Amber is not among them: it is the one warm colour on
      this page and it means "an agent needs you". */
+  /* A folder, so the tree reads as a shape and not as a column of names.
+     Not a state colour and not `--mine`: amber means an agent needs you,
+     green and blue are states, and blue-grey means "you said this". */
+  --folder: #b79ad8;
   --syn-key: #9a8cf0; --syn-str: #8fcf9f; --syn-num: #5bb0b5;
   --syn-com: #6f7385; --syn-fn: #7fb3e0; --syn-meta: #8b8f9e;
   --syn-attr: #c6a2d8;
@@ -4077,6 +4081,7 @@ PAGE = r"""<!doctype html>
   --tint: rgba(0,0,0,.05);
   --shadow: rgba(0,0,0,.18);
   --veil: rgba(0,0,0,.3);
+  --folder: #7a4f9c;
   --syn-key: #5b3fb0; --syn-str: #26694a; --syn-num: #1d6f74;
   --syn-com: #8b8e96; --syn-fn: #2a6ea8; --syn-meta: #6a6d76;
   --syn-attr: #7a3f8f;
@@ -4491,8 +4496,16 @@ body:not(.show-thinking) .thinking { display: none; }
   font: inherit; font-family: var(--narrow); font-size: 12.5px;
   text-align: left; cursor: pointer;
 }
+/* A long path is clipped at its start, because the end of it is the part you
+   were looking for -- which is what `direction: rtl` buys. It costs a bidi
+   trap: a leading dot is a neutral character, and in an RTL paragraph a
+   neutral at the edge goes to the other end, so `.gitignore` drew as
+   `gitignore.`. A file with a dot invented on it is a wrong answer that
+   looks right. `unicode-bidi: plaintext` takes the paragraph's direction
+   from the first strong character in it, which for a path is always
+   left-to-right, while the box keeps clipping the start. */
 .goto button .name { overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; direction: rtl; }
+  white-space: nowrap; direction: rtl; unicode-bidi: plaintext; }
 .goto button .icon {
   width: 13px; height: 13px; flex-shrink: 0; color: var(--ink-faint);
   fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round;
@@ -4528,15 +4541,13 @@ body:not(.show-thinking) .thinking { display: none; }
   width: 13px; height: 13px; flex-shrink: 0; color: var(--ink-faint);
   fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round;
 }
-.filelist button.dir .icon { color: var(--ink-mute); }
-.filelist button.chosen .icon, .filelist button:hover .icon { color: inherit; }
-.filelist .caret {
-  flex-shrink: 0; width: 9px; color: var(--ink-faint); font-size: 9px;
-}
+/* A folder carries the one colour on this page that means nothing else, so
+   the shape of the tree is read before any of its names are. A file's icon
+   stays quiet: there are far more of them, and they are not the shape. */
+.filelist button.dir .icon { color: var(--folder); }
+.filelist button:hover .icon { color: inherit; }
+.filelist button.dir:hover .icon { color: var(--folder); }
 .filelist button.dir { color: var(--ink); }
-.filelist button.dir.open .caret, .filelist button.dir:hover .caret {
-  color: var(--ink-soft);
-}
 .listnote {
   flex-shrink: 0; padding: 7px 14px; border-bottom: 1px solid var(--edge);
   font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
@@ -5294,6 +5305,10 @@ window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", ()
 const ICONS = {
   dir: "M1 3.2a1 1 0 0 1 1-1h3.1l1.2 1.6H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1"
        + " 1 0 0 1-1-1z",
+  // The same folder with its lid tipped back. It is what says a directory
+  // stands open, now that there is no triangle in front of it to say so.
+  dirOpen: "M1 11.2V3.2a1 1 0 0 1 1-1h3.1l1.2 1.6H11a1 1 0 0 1 1 1v1.3H4.4"
+           + "L2.2 12.2H12a1 1 0 0 0 1-1",
   file: "M3.5 1.5h4.7L11.5 5v8.5h-8zM8 1.7V5h3.3",
 };
 
@@ -6706,15 +6721,19 @@ function drawRow(list, row) {
   const open = !!row.open;
   const button = put(list, "button",
                      (dir ? "dir" : "") +
-                     (!dir && state.files.path === row.path ? " chosen" : "") +
+                     (row.path === state.files.at ? " chosen" : "") +
                      ((dir ? state.files.marked.has(row.path)
                            : state.files.changed.has(row.path)) ? " touched" : "") +
                      (open ? " open" : ""));
   button.type = "button";
   button.title = row.path;
   button.style.paddingLeft = (14 + row.depth * 13) + "px";   // the tree's step
-  if (dir) put(button, "span", "caret", open ? "\u25be" : "\u25b8");
-  putIcon(button, dir ? "dir" : "file");
+  // No triangle in front of a folder. It stood where nothing stood on a file
+  // row, so a folder's name sat 9 px right of a file's at the same depth --
+  // and a file one level deeper then lined up exactly with the folder above
+  // it, which is the one thing a tree must never do. The open folder icon
+  // says what the triangle said.
+  putIcon(button, dir ? (open ? "dirOpen" : "dir") : "file");
   // A row shows one segment of a path. The letters that matched were found
   // in the whole of it, so a letter found in a directory is picked out on
   // that directory's own row and nowhere else. Cutting the name and the
@@ -6889,7 +6908,8 @@ function drawFiles(box) {
   // in here its dot never appeared — the whole reason this key exists. The
   // mtimes stay out: folding those in re-rendered the open document.
   if (fresh(box, "listKey", JSON.stringify(
-      [state.find, state.files.path, state.files.failed, state.files.tag,
+      [state.find, state.files.path, state.files.at, state.files.failed,
+       state.files.tag,
        [...state.files.changed.keys()].sort(), [...state.files.dirs]]))) {
     // Built here and not before: with a query typed this is a pass over every
     // name in the repository, and a poll that changes nothing wants none of
@@ -7029,6 +7049,12 @@ function blankFiles() {
     failed: false,      // git did not answer; "no files" would lie
     tag: "",            // the daemon's name for the listing we hold
     path: null,         // the file it shows
+    // The row the list marks: the last place the reader went. Usually the
+    // open file, and a directory when they asked for one by name or by
+    // clicking a part of the path above the file. Marking only the open file
+    // meant clicking a part of a path that was already on screen answered
+    // with nothing at all.
+    at: null,
     text: "",
     binary: false,
     lang: "",           // what `file` made of it, when the name said nothing
@@ -7186,6 +7212,7 @@ function revealInTree(path, line = 0) {
   state.files.dirs.set(path, true);   // a directory opens itself; a file has
                                       // no entry, and setting one is harmless
   state.files.goTo = path;
+  state.files.at = path;              // and the list marks where you landed
   state.files.goToLine = line;
   // A document has no line to go to, so being asked for one is being asked
   // for the lines it is written in.
@@ -7231,6 +7258,7 @@ function forgetFile(path) {
   // box with it, so the flag goes too — it is what `putReview` would reopen.
   if (state.writing !== null) state.writing = null;
   state.files.path = path;
+  state.files.at = path;
   state.files.text = "";
   state.files.binary = false;
   state.files.lang = "";

@@ -935,3 +935,149 @@ def test_the_same_query_twice_opens_the_list_again(repo_page):
             page.wait_for_selector(".goto button")
         finally:
             browser.close()
+
+
+# --- the tree's shape, and where a click lands -------------------------------
+
+def test_a_folder_has_no_triangle_and_its_own_colour(repo_page):
+    """The triangle stood where nothing stood on a file row, so a folder's
+    name sat right of a file's at the same depth — and a file one level
+    deeper lined up exactly with the folder above it, which is the one thing
+    a tree must not do. Put `.caret` back and the two names stop agreeing."""
+    root, _ = repo_page
+    (root / "deep").mkdir()
+    (root / "deep" / "inner.py").write_text("x = 1\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "deep")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button.dir:has(.name:text-is('deep'))")
+            page.wait_for_selector(".filelist button:has(.name:text-is('inner.py'))")
+            assert page.locator(".filelist .caret").count() == 0
+            seen = page.evaluate("""() => {
+              const left = (name) => [...document.querySelectorAll('.filelist button')]
+                .find((one) => one.querySelector('.name').textContent === name)
+                .querySelector('.name').getBoundingClientRect().left;
+              const icon = (name) => getComputedStyle(
+                [...document.querySelectorAll('.filelist button')]
+                  .find((one) => one.querySelector('.name').textContent === name)
+                  .querySelector('.icon')).color;
+              return {dir: left('deep'), inside: left('inner.py'),
+                      top: left('README.md'),
+                      dirInk: icon('deep'), fileInk: icon('README.md')};
+            }""")
+            # A folder's name starts where a file's does at the same depth.
+            assert abs(seen["dir"] - seen["top"]) < 1, seen
+            # And what it holds is a step further in, visibly.
+            assert seen["inside"] > seen["dir"] + 8, seen
+            # The folder carries a colour of its own.
+            assert seen["dirInk"] != seen["fileInk"], seen
+        finally:
+            browser.close()
+
+
+def test_an_open_folder_is_drawn_open(repo_page):
+    """The triangle said whether a folder stood open. Without it the icon has
+    to. Draw the same path for both and this goes red."""
+    root, _ = repo_page
+    (root / "deep").mkdir()
+    (root / "deep" / "inner.py").write_text("x = 1\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "deep")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            shut = page.eval_on_selector(
+                ".filelist button.dir path", "el => el.getAttribute('d')")
+            page.click(".filelist button.dir:has(.name:text-is('deep'))")
+            page.wait_for_selector(".filelist button.dir.open")
+            wide = page.eval_on_selector(
+                ".filelist button.dir path", "el => el.getAttribute('d')")
+            assert shut and wide and shut != wide
+        finally:
+            browser.close()
+
+
+def test_a_part_of_a_path_already_on_screen_still_answers(repo_page):
+    """The click worked and moved nothing, because the folder was already
+    open and already in view — so from the reader's seat nothing happened.
+    The list marks where you went now, whether or not it had to scroll.
+
+    Drop `state.files.at` from the list's redraw key and the mark stays on
+    the file."""
+    root, _ = repo_page
+    deep = root / "native" / "doc"
+    deep.mkdir(parents=True)
+    (deep / "SAMPLING.md").write_text("# sampling\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "deep")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            # Walk in by hand, so every folder is already open and in view.
+            for part in ("native", "doc"):
+                page.click(f".filelist button.dir:has(.name:text-is('{part}'))")
+                page.wait_for_selector(
+                    f".filelist button.dir.open:has(.name:text-is('{part}'))")
+            page.click(".filelist button:has(.name:text-is('SAMPLING.md'))")
+            page.wait_for_function(
+                "document.querySelector('.filebody .where')"
+                ".textContent.includes('SAMPLING.md')")
+            assert page.eval_on_selector(
+                ".filelist button.chosen", "el => el.title").endswith(
+                    "SAMPLING.md")
+
+            page.click(".filebody .crumb:has-text('native')")
+            page.wait_for_function(
+                """() => {
+                     const one = document.querySelector('.filelist button.chosen');
+                     return one && one.title === 'native';
+                   }""")
+            # The file is still the one being read; only the mark moved.
+            assert page.evaluate("state.files.path").endswith("SAMPLING.md")
+        finally:
+            browser.close()
+
+
+def test_a_dotfile_in_the_go_to_list_keeps_its_dot_at_the_front(repo_page):
+    """The list clips a long path at its start, which `direction: rtl` buys.
+    It costs a bidi trap: a leading dot is a neutral character, and in an RTL
+    paragraph a neutral at the edge goes to the other end — so `.gitignore`
+    drew as `gitignore.`, a file with a dot invented on it.
+
+    Take `unicode-bidi: plaintext` off and the two measurements swap."""
+    root, _ = repo_page
+    (root / ".gitignore").write_text("*.pyc\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "ignore")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            page.fill("#find", "gitignor")     # no dot, so the dot is not lit
+            page.wait_for_selector(".goto button[title='.gitignore']")
+            seen = page.evaluate("""() => {
+              const name = document.querySelector(
+                ".goto button[title='.gitignore'] .name");
+              const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT);
+              const texts = [];
+              while (walker.nextNode()) texts.push(walker.currentNode);
+              const edge = (node, from) => {
+                const range = document.createRange();
+                range.setStart(node, from);
+                range.setEnd(node, from + 1);
+                return range.getBoundingClientRect().left;
+              };
+              const last = texts[texts.length - 1];
+              return {text: name.textContent,
+                      dot: edge(texts[0], 0),
+                      end: edge(last, last.nodeValue.length - 1)};
+            }""")
+            assert seen["text"] == ".gitignore", seen
+            assert seen["dot"] < seen["end"], seen
+        finally:
+            browser.close()
