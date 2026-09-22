@@ -1019,3 +1019,82 @@ def test_the_raw_route_serves_nothing_that_could_be_a_document(repo_session):
             urllib.request.urlopen(
                 f"{base}/api/session/s1/raw?path={name}", timeout=5)
         assert caught.value.code == 404, name
+
+
+# --- stopping an agent, and the limit that does it for you --------------------
+
+
+def test_interrupt_presses_escape(in_tmux):
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/interrupt", token=daemon.token)
+    assert status == 200 and body["done"] is True
+    assert seen == [["tmux", "send-keys", "-t", "%7", "Escape"]]
+
+
+def test_interrupt_needs_the_token_like_every_other_verb(in_tmux):
+    """It types into a terminal, so it is behind exactly what `send` is."""
+    daemon, base, seen = in_tmux
+    status, _ = post(f"{base}/api/session/s1/interrupt")
+    assert status == 403
+    assert seen == []
+
+
+def test_a_limit_is_stored_and_read_back(ws, in_tmux):
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/limit", {"limit": 12.5},
+                        token=daemon.token)
+    assert status == 200 and body["limit"] == 12.5
+    assert ws.read_limits()["s1"]["limit"] == 12.5
+    assert seen == []                      # setting one writes no terminal
+    status, body = post(f"{base}/api/session/s1/limit", {"limit": 0},
+                        token=daemon.token)
+    assert status == 200 and ws.read_limits() == {}
+
+
+def test_a_limit_that_is_not_a_number_is_refused(ws, in_tmux):
+    daemon, base, seen = in_tmux
+    for bad in ("lots", None, -1, [], float("nan")):
+        status, body = post(f"{base}/api/session/s1/limit", {"limit": bad},
+                            token=daemon.token)
+        assert status == 400, (bad, status)
+        assert body["error"]
+    status, _ = post(f"{base}/api/session/s1/limit", {"limit": 1e9},
+                     token=daemon.token)
+    assert status == 400
+    assert ws.read_limits() == {}
+
+
+def test_the_limit_route_needs_the_token_too(ws, in_tmux):
+    """It writes no terminal itself, and it is what lets the daemon write one
+    later — so it sits behind the same check."""
+    daemon, base, seen = in_tmux
+    status, _ = post(f"{base}/api/session/s1/limit", {"limit": 5})
+    assert status == 403
+    assert ws.read_limits() == {}
+
+
+def test_a_tick_stops_a_session_that_has_gone_over(ws, served, monkeypatch):
+    """The one thing this program does to a terminal that nobody pressed a
+    button for."""
+    daemon, base = served
+    seen = []
+    monkeypatch.setattr(ws, "run", lambda args, **rest: seen.append(list(args)) or "")
+    now = time.time()
+    # Every event carries a pane and `apply` takes it, so the second one has
+    # to say the same as the first or it moves the session to another pane.
+    ws.append_event(event("SessionStart", pane="%7", pid=1, ts=now))
+    ws.append_event(event("UserPromptSubmit", pane="%7", prompt="go", ts=now + 1))
+    daemon.store.refresh()
+    daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=30.0)
+    daemon.store.set_limit("s1", 10.0)
+    assert daemon.store.sessions["s1"].state == "working"
+
+    daemon.tick()
+    assert ["tmux", "send-keys", "-t", "%7", "Escape"] in seen
+    # And the row says why, so a reader who was not watching finds out.
+    said = [one for one in daemon.store.rows if one["id"] == "s1"][0]
+    assert said["spend_limit"] == 10.0 and said["limit_fired"]
+
+    seen.clear()
+    daemon.tick()
+    assert seen == []                      # once, not on every tick

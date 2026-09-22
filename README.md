@@ -94,6 +94,12 @@ is Claude Code's own estimate at list price — it may differ from your bill, an
 it starts again after `/clear`. The Session tab says the same, and adds your
 claude.ai rate-limit windows when your status line carries them.
 
+The Session tab also has **stop**, which presses Escape in that agent's pane —
+it ends the turn and keeps the work done so far — and **stop at**, a number of
+dollars. Once a session's spend passes it, wostuast presses Escape for you,
+once. Raise the number to let it go on. It acts on Claude Code's estimate, so
+treat it as a brake rather than a budget.
+
 ### Alerts
 
 The **alerts** button in the top strip opens two switches: be told when an

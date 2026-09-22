@@ -33,7 +33,8 @@ after the tests go red.
 | --- | --- |
 | `cmd_hook`, anything on the hook path | Safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | **Do not guess payload fields**, and `tests/fixtures/README.md` |
-| `tmux_send`, `tmux_jump`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
+| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
+| `set_limit`, `over_limit`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
@@ -54,8 +55,9 @@ Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/eve
 `wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
 SSE. The page shows a session list and five tabs: Transcript, Files, Diff,
 Review, Session.
-Two things go back to the terminal, both through tmux: jump and send.
-Nothing else writes to a terminal. Nothing owns the agent process.
+Three things go back to the terminal, all through tmux: jump, send and
+interrupt. Nothing else writes to a terminal. Nothing owns the agent process —
+interrupt is a keystroke, not a signal.
 
 ## Layout
 
@@ -381,6 +383,71 @@ things about it are worth knowing before they surprise you.
   what happened. `too_big` is set beside it, and cleared at the top of
   `asked()` rather than only set: with keep-alive one handler object serves
   every request on a connection.
+- **Interrupt is Escape, and never Ctrl-C.** Claude Code's own
+  documentation: Escape stops the current response or tool call mid-turn and
+  "Claude keeps the work done so far"; Ctrl-C "interrupts a running
+  operation", but "if nothing is running, the first press clears the prompt
+  input and a second press exits Claude Code". A turn can end between deciding
+  to stop a session and the key landing, so Ctrl-C on an automatic limit is a
+  race whose losing side is a session that quit. Escape on an idle prompt does
+  nothing. `tmux_interrupt` is a key name, the shape of the `Enter` press
+  `tmux_send` already makes — not something that could go through `tmux_send`,
+  which strips every byte below a space on purpose. Measured: `send-keys C-c`
+  puts 0x03 into a raw-mode app as a keystroke it reads, not as a signal.
+  `test_interrupt_sends_escape_and_never_ctrl_c` holds it.
+- **A spend limit is the one thing here that types with nobody watching, so
+  it is guarded three ways and says so afterwards.** `over_limit` fires only
+  for a session that is **working** (Escape into an idle prompt is a keystroke
+  nobody asked for, and Escape while a permission dialog is up declines it —
+  a decision, and not this one's to make), only **once** (`fired_at` is
+  stamped before the key goes out, or the key lands again on every tick and
+  the agent can never be let go), and only on a spend the status line
+  **actually sent** (`None` is "not told", and stopping an agent over a number
+  nobody sent is the worst of the three). Raising the limit clears `fired_at`,
+  which is how a stopped session is released — otherwise the only way on would
+  be deleting a file nobody told you about. The page says it in the Session
+  panel, beside the box that set it, because "why did my agent stop" is asked
+  there and not in the pane.
+- **`limits.json` is not a second config file.** `PLAN.md` goal 4 allows one,
+  `links.json`, because a human writes it in an editor. This is written by the
+  page through a POST and read by the daemon, which is what `names.json`
+  already is. **The daemon enforces it, not the browser**: a limit that holds
+  only while a tab is open is a promise that breaks when you shut the laptop,
+  and two open tabs would each fire their own.
+- **The tick reads the rows again after a stop, and not with `or`.** A stop
+  moves `fired_at` and the session's last event, both of which are in the row.
+  `if moved or self.store.refresh()` short-circuits, so on a tick that had
+  already changed something the second read never ran and the browsers heard
+  about the stop a tick late. `test_a_tick_stops_a_session_that_has_gone_over`
+  reads the row, not just the tmux call, for exactly this.
+- **The limit box listens for `change`, never `input`.** On `input` the box
+  posts $1 on the way to $12, and a session already past a dollar is stopped
+  by a number the reader was still typing. The test spies on `tell` and
+  asserts one call.
+- **The limit box lives in `drawSession`'s kept half, and it is guarded
+  twice.** `rest` is rebuilt on every four-second poll, and a rebuild under
+  the hand is worse here than for the name: the node is *removed* rather than
+  blurred, so `change` never fires and the number is not merely lost on
+  screen, it is never stored. So it sits in its own part with its own narrow
+  key — that is what keeps the poll's churn out. **And the key is skipped
+  while the box has the focus**, because unlike the name this field has news
+  of its own: a status line that starts reporting a spend, or a limit that
+  has just fired, arriving mid-word. Two tests, because the two guards fail
+  differently.
+- **`over_limit` decides and writes inside one lock.** Reading the map
+  outside `naming` and merging `limits.update(fired)` inside it is a race
+  with `set_limit`: a raise that lands in between is overwritten with the old
+  number and a fresh `fired_at`, and the Escape goes out anyway — the
+  reader's release undone at the moment they made it.
+- **The limit is armed again when the spend drops below it.** `/clear` puts
+  `cost.total_cost_usd` back to nought, so without this one stop disarms the
+  limit for the rest of the session and the agent runs without bound behind a
+  box still showing a number. Only `set_limit` used to clear `fired_at`.
+- **The box says what it will *actually* do.** `over_limit` skips a session
+  with no pane and one whose status line has sent no spend, so "Escape into
+  this pane when the spend passes it" is a promise this program cannot keep
+  for either — and a reader told they are protected when they are not is the
+  worst thing this feature could do. Each case says which it is.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters, keeping tab and newline. "Below a space" includes the C1 block
   above `\x7f` — NEL and CSI are controls, and U+2028 is a line break that
