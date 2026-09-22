@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import argparse
+import re
+import threading
 import time
 
 import conftest
@@ -391,3 +393,42 @@ def test_a_state_directory_that_cannot_be_written_does_not_stop_serve(ws,
 
     monkeypatch.setattr(ws, "write_atomic", refuse)
     assert ws.write_example_links() is False
+
+
+def test_serve_says_how_much_history_it_read_and_how_long_it_took(
+        ws, capsys, monkeypatch):
+    """The log is never thrown away now, so the first read grows for ever,
+    and the start is where you find out what that costs. Nothing else says
+    it: the page is served before the read ends."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 300)
+    for i in range(12):
+        ws.append_event({"session_id": "s1", "n": i, "pad": "z" * 40})
+    files = len(ws.archived_events_paths()) + 1
+    size = sum(path.stat().st_size for path in ws.event_files())
+
+    class Fake:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
+    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
+    ws.cmd_serve(argparse.Namespace(port=0, open=False))
+    for worker in threading.enumerate():
+        if worker.name == "wostuast-refresh":
+            worker.join(10)
+    said = capsys.readouterr().out
+    assert f"read 12 events from {files} files ({ws.size_label(size)}) in " in said
+    assert re.search(r"\) in (\d+ ms|\d+\.\d s)$", said, re.M)
+
+
+def test_a_size_is_said_the_way_a_person_reads_it(ws):
+    assert ws.size_label(412) == "412 B"
+    assert ws.size_label(12 * 1024) == "12 KB"
+    assert ws.size_label(45 * 1024 * 1024 + 200 * 1024) == "45.2 MB"
+    assert ws.size_label(3 * 1024 ** 3 // 2) == "1.5 GB"

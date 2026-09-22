@@ -1141,3 +1141,74 @@ def test_a_limit_raised_while_a_stop_is_being_decided_is_not_clobbered(ws):
         ws.write_limits = real
     # The raise is what stands, and it cleared the firing.
     assert store.limits["s1"] == {"limit": 50.0, "fired_at": 0.0}
+
+
+# --- a history that is never thrown away ------------------------------------
+
+DAY = 86400.0
+
+
+def a_year_of_sessions():
+    """One short session a day for 400 days, and one that ran all of them."""
+    for n in range(400):
+        yield event("SessionStart", session_id=f"s{n}", cwd=f"/w/tree{n}", ts=n * DAY)
+        yield event("PostToolUse", session_id=f"s{n}", cwd=f"/w/tree{n}", tool_name="Edit",
+                    tool_input={"file_path": "a.py"}, ts=n * DAY + 30)
+        yield event("Stop", session_id=f"s{n}", cwd=f"/w/tree{n}", ts=n * DAY + 60)
+        if n == 0:
+            yield event("SessionStart", session_id="long", cwd="/w/long", ts=1.0)
+        # It moved into a subdirectory after it started, so only the kept
+        # SessionStart can still say where it began.
+        yield event("UserPromptSubmit", session_id="long", cwd="/w/long/src",
+                    prompt="and again", ts=n * DAY + 90)
+
+
+def test_the_first_read_holds_a_week_of_sessions_not_all_of_them(ws):
+    """The log is never thrown away now, and the first read folds all of it.
+    `visible()` forgets a session a week quiet, but only once the fold is
+    over -- measured on a year-shaped log, 1,873 sessions at about 80 KB each
+    sat in memory until then. The fold forgets as it goes, by the time the
+    log itself has reached, never the clock: a test's events are from 1970."""
+    store = ws.Store()
+    most = 0
+    for one in a_year_of_sessions():
+        store.fold([one])
+        most = max(most, len(store.sessions))
+    assert most <= 10, f"{most} sessions held at once"
+    # Forgetting goes by the last event, never the first: a session that
+    # started a year ago and is still going keeps where it started.
+    assert store.sessions["long"].home == "/w/long"
+
+
+def test_git_is_asked_about_the_sessions_shown_and_no_others(ws, monkeypatch):
+    """Every tree-touching event puts its directory on `git_wanted`, and only
+    a git run took one off. After a year of history the first refresh ran git
+    on every worktree touched that year, deleted ones included."""
+    asked: list[str] = []
+
+    def git(dirs):
+        asked.extend(dirs)
+        return {d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
+
+    monkeypatch.setattr(ws, "git_facts_many", git)
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    store = ws.Store()
+    store.fold(a_year_of_sessions())
+    store.refresh(now=400 * DAY)
+    shown = {s.cwd for s in store.visible(400 * DAY)}
+    assert set(asked) <= shown, f"git ran on {len(set(asked) - shown)} hidden worktrees"
+    assert set(asked) == shown
+
+
+def test_one_event_from_a_wrong_clock_does_not_forget_everything(ws):
+    """The fold goes by the log's own clock, and `ts` is whatever the machine
+    said when a hook ran. One event stamped a year ahead would make every
+    start forget every session a week older than that -- which is all of them.
+    `visible()` goes by the real time and cannot do that, so the fold never
+    forgets more than `visible()` would."""
+    now = time.time()
+    store = ws.Store()
+    store.fold([event("SessionStart", session_id="today", ts=now - 60),
+                event("SessionStart", session_id="ahead", ts=now + 365 * DAY),
+                event("Stop", session_id="ahead", ts=now + 365 * DAY + 1)])
+    assert "today" in store.sessions

@@ -141,7 +141,7 @@ def test_the_hook_cancels_the_deadline_even_when_it_fails(ws, monkeypatch):
 def fill_until_one_rotation(ws, make_event):
     """Append events until the log rotates exactly once. Returns how many."""
     written = 0
-    while not ws.rotated_events_path().exists():
+    while not ws.archived_events_paths():
         ws.append_event(make_event(written))
         written += 1
         assert written < 500, "the log never rotated"
@@ -174,18 +174,6 @@ def test_both_files_are_read_and_counted(ws, monkeypatch):
                                                      "pad": "z" * 40})
     assert ws.count_events() == written
     assert [e["n"] for e in ws.read_events()] == list(range(written))
-
-
-def test_a_second_rotation_drops_the_oldest_generation(ws, monkeypatch):
-    """The log keeps two files, no more. This is by design; it is pinned so a
-    reader of `ls` is never surprised by history that quietly reappears."""
-    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 400)
-    for i in range(60):
-        ws.append_event({"session_id": "s1", "n": i, "pad": "z" * 40})
-    seen = [e["n"] for e in ws.read_events()]
-    assert seen == sorted(seen)          # still oldest first
-    assert seen[-1] == 59                # the newest is always there
-    assert len(seen) < 60                # but the oldest generation is gone
 
 
 def test_the_hook_says_nothing_at_all(run_cli):
@@ -299,7 +287,7 @@ def test_a_hook_holding_the_old_log_does_not_replace_the_archive(ws, monkeypatch
 
     stale = ws.open_private(target)             # opened before the rotation
     ws.append_event({"session_id": "a"})        # A rotates and appends
-    assert "EVERY EVENT" in ws.rotated_events_path().read_text()
+    assert "EVERY EVENT" in ws.archived_events_paths()[0].read_text()
 
     real_open = ws.open_private
     handed = []
@@ -313,7 +301,7 @@ def test_a_hook_holding_the_old_log_does_not_replace_the_archive(ws, monkeypatch
     monkeypatch.setattr(ws, "open_private", hand_the_stale_one)
     ws.append_event({"session_id": "b"})
 
-    assert "EVERY EVENT" in ws.rotated_events_path().read_text(), "the archive went"
+    assert "EVERY EVENT" in ws.archived_events_paths()[0].read_text(), "the archive went"
     assert '"session_id": "b"' in target.read_text(), "and the event still landed"
 
 
@@ -449,3 +437,45 @@ def test_the_map_in_claude_md_points_at_real_symbols():
     missing = [one for one in named if one not in program]
     assert not missing, f"CLAUDE.md routes to symbols that are gone: {missing}"
 
+
+
+def test_no_rotation_ever_loses_an_event(ws, monkeypatch):
+    """The log used to keep two files and drop the older one on the next
+    rotation, which capped history at 40 MB. Disk is cheap and the history is
+    what the log is for, so every archive is kept."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 400)
+    for i in range(60):
+        ws.append_event({"session_id": "s1", "n": i, "pad": "z" * 40})
+    assert [e["n"] for e in ws.read_events()] == list(range(60))
+    assert ws.count_events() == 60
+    assert len(ws.archived_events_paths()) > 2
+
+
+def test_archives_are_read_in_the_order_they_were_made(ws):
+    """By number, not by name: as text, `events.10` sorts before `events.9`,
+    and the tenth archive is where that starts."""
+    folder = ws.events_path().parent
+    ws.private_dir(folder)
+    for n in (2, 10, 9, 1):
+        (folder / f"events.{n}.jsonl").write_text(json.dumps({"n": n}) + "\n")
+    ws.events_path().write_text(json.dumps({"n": 99}) + "\n")
+    (folder / "events.old.jsonl").write_text(json.dumps({"n": -1}) + "\n")
+    assert [e["n"] for e in ws.read_events()] == [1, 2, 9, 10, 99]
+
+
+def test_a_rotation_never_writes_over_an_archive(ws, monkeypatch):
+    """The archive's name is worked out and then used, and anything that
+    lands on that name in between would be replaced, silently, by
+    `os.replace`. Hand the rotation a list that is out of date and the name
+    it picks is already taken."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 100)
+    folder = ws.events_path().parent
+    ws.private_dir(folder)
+    (folder / "events.1.jsonl").write_text("KEEP ME\n")
+    ws.events_path().write_text("x" * 200 + "\n")
+    monkeypatch.setattr(ws, "archived_events_paths", lambda: [], raising=False)
+
+    ws.append_event({"session_id": "s"})
+
+    assert (folder / "events.1.jsonl").read_text() == "KEEP ME\n"
+    assert (folder / "events.2.jsonl").read_text().startswith("x" * 200)

@@ -138,7 +138,7 @@ that is your window manager's business, not this program's.
 | `wostuast uninstall` | Remove our hooks and our status line. Keep the event log. |
 | `wostuast ls` | List the sessions, in the order of the page's sidebar. |
 | `wostuast doctor` | Check python, the state directory, the log, the hooks, tmux. |
-| `wostuast serve` | Start the daemon and serve the page on 127.0.0.1. |
+| `wostuast serve` | Start the daemon and serve the page on 127.0.0.1. It reads the whole event log first, and says how many events, files and bytes that was, and how long it took. |
 | `wostuast hook` / `status` | Claude Code calls these. You do not. |
 
 `install` also registers `wostuast status` as your Claude Code status line, but
@@ -151,7 +151,7 @@ sessions then have no name and no context percent.
 | Path | Holds |
 | --- | --- |
 | `~/.local/bin/wostuast` | The program. One file. |
-| `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. Rotates at 20 MB. |
+| `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. Every 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
 | `~/.local/state/wostuast/links.json` | Your own ticket links, if you want any. |
