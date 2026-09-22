@@ -385,6 +385,28 @@ def test_the_list_is_grouped_by_what_each_session_needs(past_at, ws):
             browser.close()
 
 
+def test_a_working_agent_is_listed_above_one_waiting_at_its_prompt(ws, pair_at):
+    """An agent still going is something you may want to look in on. One
+    sitting at its prompt has finished with you. Ready used to come second,
+    on the reading that wanting a prompt is nearer to wanting you -- it is
+    not, because nothing about it is waiting."""
+    daemon, url = pair_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, url)
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            assert bands(page) == ["ready \u00b7 2"]
+
+            ws.append_event(conftest.event(
+                "UserPromptSubmit", sid="s2", prompt="go", ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                "() => document.querySelectorAll('.rows .band').length === 2")
+            assert bands(page) == ["working \u00b7 1", "ready \u00b7 1"]
+        finally:
+            browser.close()
+
+
 def test_a_group_with_nothing_in_it_has_no_heading(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)

@@ -565,6 +565,14 @@ class Session:
 
     session_id: str
     cwd: str = ""
+    #: Where this session started. `cwd` is the directory the agent is
+    #: standing in, and Claude Code moves it the moment the agent changes
+    #: directory -- so a row that said `repo/dir` renamed itself to
+    #: `repo/src` mid-turn, and the one fact you cannot read anywhere else on
+    #: the page moved under you. Stamped by `SessionStart`, because a resumed
+    #: session really does start somewhere else, and otherwise only while
+    #: nothing is known yet. Read through `place`, never on its own.
+    home: str = ""
     pane: str = ""
     pid: int = 0
     transcript_path: str = ""
@@ -617,11 +625,21 @@ class Session:
         agents are running, so both are shown. A session with no name is just
         its place.
         """
-        place = path_label(self.cwd, self.git.repo)
+        place = self.place
         name = self.mine or self.status.name
         if not name:
             return place
         return f"{clip(name, 40)} · {place}"
+
+    @property
+    def place(self) -> str:
+        """Where this session is, in two levels, and it does not move.
+
+        `home` and not `cwd`: see the field. One spelling, because the row,
+        the label and the list's tiebreaker all ask the same question and a
+        second spelling is how one of them starts answering it differently.
+        """
+        return path_label(self.home or self.cwd, self.git.repo)
 
     @property
     def since(self) -> float:
@@ -824,6 +842,12 @@ class Store:
             value = event.get(key)
             if value:
                 setattr(session, key, str(value))
+        # A session starts once, and every event after that carries wherever
+        # the agent has walked to since. `SessionStart` is the one event that
+        # means "this is where I am starting", and a resume really does start
+        # a session in another directory, so it is the one that may move this.
+        if session.cwd and (not session.home or name == "SessionStart"):
+            session.home = session.cwd
         pane = str(event.get("pane") or "")
         if pane and PANE_PATTERN.match(pane):
             session.pane = pane
@@ -1002,7 +1026,7 @@ def row(session: Session) -> dict[str, Any]:
         # front, because that is the one fact you cannot read anywhere else on
         # the page; the name Claude Code wrote from the first prompt is often
         # long and often vague, and it used to push the worktree off the end.
-        "place": path_label(session.cwd, facts.repo),
+        "place": session.place,
         "state": session.state,
         "state_word": STATE_WORDS.get(session.state, session.state),
         "cwd": session.cwd,
@@ -1453,7 +1477,7 @@ def sort_sessions(sessions: list[Session]) -> list[Session]:
         key=lambda s: (
             s.state in GONE_STATES,
             -s.settled,
-            path_label(s.cwd, s.git.repo).lower(),
+            s.place.lower(),
             s.session_id,
         ),
     )
@@ -6279,10 +6303,16 @@ function isGone(s) {
 // tool exists to tell you, and it only happens when a turn ends, begins, or
 // stops on a question. Inside a group the daemon's order stands, which is by
 // worktree, so nothing shuffles while a session works.
+//
+// Working sits above ready, and that is the order a reader asked for: an
+// agent still going is something you may want to look in on, and one waiting
+// at its prompt is something you have already finished with. Ready used to be
+// second, on the reading that a session wanting a prompt is nearer to wanting
+// you -- it is not, because nothing about it is waiting.
 const BANDS = [
   ["needs", "needs you", (s) => s.state === "needs_you"],
-  ["ready", "ready", (s) => s.state === "done"],
   ["working", "working", (s) => s.state === "working"],
+  ["ready", "ready", (s) => s.state === "done"],
   ["history", "history", isGone],
 ];
 

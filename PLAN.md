@@ -1077,6 +1077,8 @@ without opening it first.
 | A directory with a change opens itself | A closed tree cannot answer what the agent just did. What the reader opens or closes wins, so it never fights the hand on it. |
 | Your words carry a rail and a tint | Both turns were grey blocks told apart by one small word in a narrow column, which is not enough to find where you last spoke in a long transcript. |
 | The worktree leads the sidebar row | It is the one fact you cannot read anywhere else on the page. The name Claude Code writes from the first prompt is often long and often vague, and it pushed the worktree off the end. |
+| The row says where a session started, not where it stands | `cwd` arrives on every hook event and Claude Code moves it as the agent changes directory, so the row renamed itself from `repo/dir` to `repo/src` mid-turn. Where an agent has walked to is not what you are scanning the list for. `Session.home` holds the starting directory, moved only by `SessionStart` — a resumed session really does start somewhere else. `cwd` is unchanged everywhere it is the right question: git, the Files tab, the Diff tab. |
+| Working is listed above ready | The four bands are ordered by how much of your attention they want. An agent still going is something you may want to look in on; one waiting at its prompt has finished with you. Ready was second for a while, on the reading that a session wanting a prompt is nearer to wanting you. Nothing about it is waiting. |
 | Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
 | Nothing is vendored | `marked` and `highlight.js` are 157 KB against a 175 KB program. Carrying them would nearly double the file the install one-liner curls, and the page already fetches its fonts. |
 | Both are pinned by hash | Any script on this page can type into your terminal through `/send`. `integrity` means a CDN that has been tampered with gets you the fallback rather than other code. |
@@ -1086,7 +1088,8 @@ without opening it first.
 
 1. **Port.** 7331 by default.
 2. **Label.** `name · repo/dirname`, and just `repo/dirname` when there is no
-   name. Never the full path. Claude Code titles a session from its first
+   name. Never the full path, and never where the agent has walked to since:
+   `dirname` is the directory the session started in. Claude Code titles a session from its first
    prompt, so nearly every session has a name; showing only the name loses
    which worktree the agent stands in, which is exactly what you need when
    several are running.

@@ -36,7 +36,7 @@ after the tests go red.
 | `tmux_send`, `tmux_jump`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
-| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask` | State |
+| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
 | `newRow`, `fillRow`, `BANDS`, `settled` | The sidebar |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
@@ -618,6 +618,18 @@ things about it are worth knowing before they surprise you.
   row with a name, a branch and a reason on it had an untinted stripe down its
   middle. A `linear-gradient` background layer covers any height and sits over
   the state's own colour instead of replacing it.
+- **What the row says a session is, is where it started, not where it
+  stands.** `cwd` is in every hook payload and Claude Code moves it the
+  moment the agent changes directory, so a row reading `repo/dir` renamed
+  itself to `repo/src` mid-turn — and the worktree is the one fact on that
+  row you cannot read anywhere else on the page. `Session.home` is stamped by
+  `SessionStart`, because a resumed session really does start somewhere else,
+  and otherwise only while nothing is known yet. `Session.place` is the one
+  spelling of the question, and the row, the label and `sort_sessions`'s
+  tiebreaker all go through it — three call sites built the same string by
+  hand before, which is three chances for one of them to answer differently.
+  `cwd` is still what git, the Files tab and the Diff tab are asked about:
+  it is where the agent is, which is the right question for those.
 - **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
   is no `/proc` — on macOS, always. Such a session is taken for gone after
   `QUIET_MAX`. One with a pid is never buried for being quiet.
@@ -625,7 +637,12 @@ things about it are worth knowing before they surprise you.
 ### The sidebar
 
 - **It is grouped by state, and newest first inside a group.** The four
-  groups are `BANDS`, most urgent first: needs you, ready, working, history.
+  groups are `BANDS`, most urgent first: needs you, working, ready, history.
+  **Working sits above ready**, which is the reader's own order: an agent
+  still going is something you may want to look in on, and one waiting at its
+  prompt has finished with you. Ready was second for a while, on the reading
+  that a session wanting a prompt is nearer to wanting you — it is not,
+  because nothing about it is waiting.
   This supersedes the old rule that the list must never sort by state — that
   was written when sorting by state churned the list for nothing. A row
   arriving under "needs you" is the one thing this tool exists to say, and it
