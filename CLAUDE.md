@@ -408,6 +408,19 @@ things about it are worth knowing before they surprise you.
   be deleting a file nobody told you about. The page says it in the Session
   panel, beside the box that set it, because "why did my agent stop" is asked
   there and not in the pane.
+- **A control that cannot work is disabled where it stands, and says why.**
+  Everything on this page works with no tmux — the log, the sidebar, all five
+  tabs, alerts, the spend on the strip. The five things that do not are the
+  five that type into a pane: jump, send, interrupt, answering a question and
+  submitting a review. jump, send and stop are simply absent for a session
+  with no pane, and the review's submit has always refused; two were offered
+  anyway. `paintPicks` enabled **submit** on a question and said `presses 1`,
+  which is a promise of keystrokes into a terminal that does not exist, and
+  `putLimit` took a number and warned only once one had been typed, because
+  its `!s.pane` aside sat behind `!s.spend_limit` in the chain. **Reading is
+  not acting**: the question bar and the limit box both stay where they are,
+  because the panel is where you go to find out what a session is. It is the
+  press that is refused. Grep `canType` and `box.disabled`.
 - **`limits.json` is not a second config file.** `PLAN.md` goal 4 allows one,
   `links.json`, because a human writes it in an editor. This is written by the
   page through a POST and read by the daemon, which is what `names.json`
