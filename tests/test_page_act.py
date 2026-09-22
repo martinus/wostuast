@@ -380,6 +380,52 @@ def test_the_verbs_are_not_there_without_a_pane(no_pane):
             browser.close()
 
 
+def test_a_question_can_be_read_without_tmux_but_not_answered(ws, no_pane):
+    """Reading the question is the one thing this page exists to tell you, so
+    the bar stays wherever the session runs. Answering it is keystrokes into a
+    tmux pane, and there is none — so the button is refused rather than left
+    to fail on the press. It used to offer "presses 1" to a terminal that
+    could never be typed into."""
+    daemon, base = no_pane
+    ws.append_event(conftest.event(
+        "PreToolUse", pane="", tool_name="AskUserQuestion", tool_use_id="t1",
+        ts=time.time(),
+        tool_input={"questions": [{"question": "Which way?", "header": "Way",
+                                   "multiSelect": False,
+                                   "options": [{"label": "Left", "description": "a"},
+                                               {"label": "Right", "description": "b"}]}]}))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden])")
+            assert "Which way?" in page.locator("#asking").inner_text()
+            page.click("#asking .askopt >> nth=0")     # a complete answer
+            page.wait_for_function(
+                """() => document.querySelector('#asking .askopt.chosen') !== null""")
+            assert page.locator("#asking .asksend .verb").is_disabled()
+            assert "not in tmux" in page.locator(".asksays").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_spend_limit_is_not_offered_where_nothing_can_be_pressed(no_pane):
+    """jump and stop are simply absent for such a session. The box stays,
+    disabled, because the panel is where you go to find out what a session is
+    — but it used to take a number and warn only once one had been typed."""
+    _, base = no_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".limitbox")
+            assert page.locator(".limitbox").is_disabled()
+            assert "not in tmux" in page.locator(".limitrow").inner_text()
+            assert page.locator(".sessionbody .verb").count() == 0
+        finally:
+            browser.close()
+
+
 def test_the_send_box_belongs_to_the_transcript(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base_of(in_pane)))

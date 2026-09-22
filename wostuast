@@ -5419,6 +5419,7 @@ body.dragging { cursor: col-resize; user-select: none; }
   font-family: var(--mono); font-size: 12px;
 }
 .limitbox:focus { outline: none; border-color: var(--needs); }
+.limitbox:disabled { opacity: .5; cursor: default; }
 .ctx.warm .fill { background: var(--needs); }
 .ctx.hot .fill { background: var(--hot); }
 .tabs {
@@ -6445,21 +6446,27 @@ function putLimit(pane, s) {
     + " Empty or 0 means it never does.";
   box.value = s.spend_limit ? String(s.spend_limit) : "";
   box.addEventListener("change", () => setLimit(s.id, box.value));
+  // Nothing to press, so nothing to offer. jump and stop are simply absent
+  // for such a session; this box stays, disabled, because the panel is where
+  // you go to find out what a session is and "you cannot stop this one from
+  // here" is part of that. It used to accept a number and warn only once one
+  // had been typed.
+  if (!s.pane) box.disabled = true;
   // What it will actually do, which is not always what it was asked to do.
   // `over_limit` skips a session with no pane and one whose status line has
   // not sent a spend, so promising either reader that they are protected is
   // the worst thing this box could say.
   const blind = s.cost_usd === null || s.cost_usd === undefined;
-  if (s.limit_fired) {
+  if (!s.pane) {
+    put(cell, "span", "aside",
+        "this session is not in tmux, so nothing can be pressed");
+  } else if (s.limit_fired) {
     // Said here and not only in the log, because "why did my agent stop" is
     // asked in front of this panel. Raising the box is what lets it go again.
     put(cell, "span", "aside",
         "stopped " + ago(s.limit_fired) + " ago · raise it to go on");
   } else if (!s.spend_limit) {
     // Nothing promised, so nothing to warn about.
-  } else if (!s.pane) {
-    put(cell, "span", "aside",
-        "this session is not in tmux, so nothing can be pressed");
   } else if (blind) {
     put(cell, "span", "aside",
         "its status line does not send the spend, so this cannot fire");
@@ -7184,11 +7191,21 @@ function paintPicks(box, ask) {
   const ready = picked.every((at) => at >= 0);
   const send = box.querySelector(".asksend .verb");
   const says = box.querySelector(".asksays");
-  send.disabled = !ready;
+  // Reading the question is worth having wherever the session runs -- it is
+  // the one thing this page exists to tell you. *Answering* it is keystrokes
+  // into a tmux pane, and a session outside tmux has none, so the button is
+  // refused rather than left to fail on the press. The Review tab's submit
+  // has said this for as long as it has existed; this bar did not, and
+  // offered "presses 1" to a terminal that could never be typed into.
+  const s = current();
+  const canType = !!(s && s.pane);
+  send.disabled = !ready || !canType;
   send.textContent = "submit";
   // Said before it is pressed, not after. These are keystrokes into a live
   // terminal, and the reader is the one answerable for them.
-  says.textContent = ready
+  says.textContent = !canType
+    ? "this session is not in tmux, so nothing can be pressed"
+    : ready
     ? "presses " + picked.map((at) => at + 1).join(", then ")
     : (picked.length > 1 ? "pick an answer to each" : "pick an answer");
 }
