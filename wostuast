@@ -2048,9 +2048,22 @@ TOKEN_MARK = "__WOSTUAST_TOKEN__"
 #: The most a POST body may be.
 POST_MAX = 64 * 1024
 
-#: The most text one `send` may type. Longer is refused rather than cut: what
-#: arrives in the terminal must be what the user wrote, or nothing.
-SEND_MAX = 4000
+#: The most text one `send` may type, **in bytes**. Longer is refused rather
+#: than cut: what arrives in the terminal must be what the user wrote, or
+#: nothing.
+#:
+#: Bytes and not characters, because that is what tmux counts. Measured
+#: against tmux 3.4: `send-keys -t %0 -l -- <text>` takes 16,341 bytes of
+#: text and refuses 16,342 with "command too long", and the same bisection
+#: run with `ä` -- two bytes in UTF-8 -- stops at 8,170. The target's name
+#: comes out of the same budget: by session name rather than pane id it was
+#: 16,338. So a cap on `len()` would let 16,000 characters of Japanese
+#: through as 48,000 bytes, and tmux would refuse the lot.
+#:
+#: 12,000 leaves room for the paste markers, for a longer pane name, and for
+#: a tmux whose number is not this one. It was 4,000 characters, which is
+#: less than one long paste: a reader hit it with 4,400.
+SEND_MAX = 12000
 
 #: How many untracked files the Diff tab names. git diff shows none of them,
 #: so the tab says they are there rather than leaving a hole.
@@ -3034,11 +3047,6 @@ NAME_MAX = 120
 #: is a mistake, and refusing it is cheaper than explaining the slowness.
 LINK_PATTERN_MAX = 200
 
-#: At most this many links in one block. A pattern that matches everything
-#: would otherwise build a link per word.
-LINKS_MAX = 40
-
-
 def risky_pattern(pattern: str) -> bool:
     """A quantifier inside a group that is itself quantified: `(a+)+`.
 
@@ -3909,6 +3917,10 @@ class Serving:
     def asked(self) -> dict[str, Any]:
         """The JSON a POST carried, or an empty one.
 
+        `too_big` is set beside it, because an empty body and a body that
+        was refused for its size are not the same answer and the routes see
+        only the empty one: `send` read it as "there is nothing to send".
+
         It is read before anything is checked, because a body left in the
         socket makes the next request on that connection nonsense. A body
         too large to read is not read — so that connection is closed instead
@@ -3917,12 +3929,20 @@ class Serving:
         the middle of it. Three responses on one connection, the second one
         framed by whoever sent the first.
         """
+        # Cleared first, not merely set below: with keep-alive one handler
+        # object serves every request on a connection, so a flag left standing
+        # would answer for the next one.
+        self.too_big = False
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
         if length > POST_MAX:
             self.close_connection = True
+            # Said out loud, because the routes see only the empty body this
+            # returns: `send` read it as "there is nothing to send", which is
+            # the opposite of what happened.
+            self.too_big = True
             return {}
         if length <= 0:
             return {}
@@ -3996,8 +4016,14 @@ class Serving:
         session = self.in_tmux(session_id)
         if session is None:
             return
-        self.reply_json({"id": session_id,
-                         "done": tmux_jump(session.pane)})
+        # Like `send` below: an answer carrying no `error` clears the live
+        # slot, so a jump into a pane tmux has since closed failed with
+        # nothing at all on the page.
+        if not tmux_jump(session.pane):
+            self.reply_json({"id": session_id,
+                             "error": "tmux would not go to that pane"}, 502)
+            return
+        self.reply_json({"id": session_id, "done": True})
 
     def name(self, session_id: str, body: dict[str, Any]) -> None:
         """Name a session, or take its name away with an empty one.
@@ -4021,23 +4047,46 @@ class Serving:
         session = self.in_tmux(session_id)
         if session is None:
             return
+        if self.too_big:
+            self.reply_json({"id": session_id,
+                             "error": "that message is too large to accept"},
+                            413)
+            return
         text = body.get("text")
         text = text if isinstance(text, str) else ""
         if not text.strip():
             self.reply_json({"id": session_id,
                              "error": "there is nothing to send"}, 400)
             return
-        if len(text) > SEND_MAX:
+        # Bytes, because that is what tmux counts. See `SEND_MAX`.
+        size = len(text.encode("utf-8", "replace"))
+        if size > SEND_MAX:
             self.reply_json({"id": session_id,
-                             "error": f"that is more than {SEND_MAX}"
-                                      " characters"}, 400)
+                             "error": f"that is {size} bytes, and the most"
+                                      f" that can be typed is {SEND_MAX}"},
+                            400)
             return
         if session.state in GONE_STATES:
             self.reply_json({"id": session_id,
                              "error": "this session is over"}, 409)
             return
-        self.reply_json({"id": session_id,
-                         "done": tmux_send(session.pane, text)})
+        # "It did not work" and nothing else on the page is how this arrives
+        # for a reader: `done: false` carries no `error`, so `said` clears the
+        # slot and writes nothing into it. A refusal from tmux is something
+        # you asked for and did not get, and it has to say so.
+        #
+        # And it must not say more than it knows. `tmux_send` runs two
+        # commands: the text, then Enter. If the second one failed the text is
+        # already sitting on the agent's prompt, and "nothing went in" would
+        # send the reader back to type it a second time -- so the message says
+        # to look, which is the only thing that settles it.
+        if not tmux_send(session.pane, text):
+            self.reply_json({"id": session_id,
+                             "error": "tmux did not answer. Look at the pane"
+                                      " before sending again: the text may be"
+                                      " on the prompt, unsent."}, 502)
+            return
+        self.reply_json({"id": session_id, "done": True})
 
     def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
         self.guarded(self.route_get)
@@ -6759,9 +6808,18 @@ function notifyAbout(sessions) {
 // --- the transcript ---------------------------------------------------------
 
 //: At most this many links in one block. A pattern that matches everything
-//: would otherwise build a link per word. The daemon has the same number and
-//: the same reason.
-const LINKS_MAX = 40;
+//: would otherwise build a link per word, and every one of them is a DOM
+//: node on a page that redraws.
+//:
+//: It lives here alone. The daemon carried the same name and the same number
+//: and read it nowhere -- the page is the only side that makes a link -- so
+//: the copy was not a second opinion, it was a second thing to forget.
+//:
+//: It was 40, which a file of release notes went straight past: the links
+//: stopped halfway down and nothing said why. 500 costs 4 ms, measured in
+//: this browser on the worst text there is -- a block of 5,000 words, every
+//: one of them a match.
+const LINKS_MAX = 500;
 
 // The reader's own autolinks, from `links.json` by way of the daemon. It has
 // already thrown out an entry that will not compile or whose url is not

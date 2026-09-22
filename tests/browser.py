@@ -155,6 +155,24 @@ def contrast(front, back):
 def daemon_transcript(daemon):
     return daemon.transcript("s1").tail.path
 
+def wait_for_watching(daemon, session_id="s1", seconds=15):
+    """Wait until the page's stream is listening to one session.
+
+    `wait_for_map` proves the fetch answered; it does not prove the stream is
+    subscribed, because `showTab` fetches and *then* calls `resubscribe`. A
+    tick in that gap sends to nobody, and no fixture here runs a ticker, so
+    the push never comes again and the test waits out its whole timeout.
+    The daemon is the only side that knows, so this asks the daemon.
+    """
+    import time as _time
+
+    until = _time.monotonic() + seconds
+    while _time.monotonic() < until:
+        if session_id in daemon.hub.watchers():
+            return
+        _time.sleep(0.02)
+    raise AssertionError(f"the page never subscribed to {session_id}")
+
 def two_rows(page):
     page.wait_for_function("document.querySelectorAll('.row').length === 2")
 

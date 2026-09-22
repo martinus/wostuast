@@ -14,6 +14,7 @@ from browser import (
     DRAWN,
     open_page,
     show_tab,
+    wait_for_map,
 )
 
 pytestmark = skip_without_browser
@@ -24,6 +25,10 @@ def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            # Both counts have to be of the same transcript. Taking the first
+            # before it had arrived made the second one larger, and the key
+            # got the blame for a block the stream had delivered.
+            wait_for_map(page)
             turns = page.locator(".turn").count()
             page.keyboard.press("6")
             page.wait_for_timeout(200)
