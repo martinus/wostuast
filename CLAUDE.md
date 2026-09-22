@@ -907,6 +907,15 @@ things about it are worth knowing before they surprise you.
   `rev-parse` answered), or `git_answers()`, which asks `git --version` — it
   cannot fail inside a working git, and stalls on the same stalled machine.
   Only in the failure path, so a repository never pays for it.
+- **The Diff tab says what each half is a diff of, in words.** The headings
+  were `origin/main...HEAD` and "not committed yet" — precise, and readable
+  only if you already know what three dots mean, so nobody could tell whether
+  the tab showed the last commit, the branch, the worktree, or some of each.
+  `DiffSection.about` carries the sentence, the daemon builds it with the base
+  named in it, the pane draws it under the heading and the list carries it as
+  a `title`. **And when there is no base the committed half is missing
+  altogether**, which used to look like a tab that simply had less in it: the
+  pane says so, and names what git was asked for.
 - **The two changed-file counts are about different things, and stay that
   way.** The sidebar's comes from `git status` in git's default untracked
   mode, which collapses a wholly-untracked directory into one entry; the

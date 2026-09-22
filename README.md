@@ -84,7 +84,7 @@ the tab, the open file, the place in it.
 | --- | --- |
 | **Transcript** | What the agent said and did, with a map of the conversation beside it: a row per thing you typed and the replies under it. Click a row to go there, or its icon to fold the round away. Scrolled up? A **↓ latest** button takes you back to the end. |
 | **Files** | Every file in the worktree as a tree, with syntax highlighting, pictures shown as pictures, and go-to-file by scattered letters — `mbldr` finds `MetricBuilder.h`. An ignored directory an agent generated into is in the tree too; a folder with thousands of files in it is one row saying it is not listed. |
-| **Diff** | What the branch has committed against `origin/HEAD`, and what is not committed yet. |
+| **Diff** | Two halves, each saying what it is a diff of: everything this branch has committed that the default branch has not, and what the files on disk hold that the last commit does not. Untracked files are named on their own, because git has no diff for one. |
 | **Review** | The comments you have written, as one task to send. |
 | **Session** | Everything about this one: worktree, branch, model, context, pane, and its own event log. It is the only place a session is renamed. |
 
