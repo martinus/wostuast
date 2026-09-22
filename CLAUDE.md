@@ -710,6 +710,25 @@ things about it are worth knowing before they surprise you.
 - **The fold is not a filter.** Finished sessions fold under the history bar, but
   they are still counted, the filter still searches them, and the chosen one is
   never missing from the list it is chosen in.
+- **There are two alerts, and they are not one switch.** An agent that needs
+  you cannot go on without you; an agent that has finished is a turn you can
+  read. One switch would mean taking the one you want with the one you do
+  not. `alertsWanted()` holds both, in `localStorage` like the theme, and
+  checks the shape of what comes back — storage survives across versions and
+  anything can be in it. The older single key is read once so a reader who
+  had alerts on keeps them. **Needs-you is on the moment alerts are**: it is
+  what this tool exists to say, so a browser that has already granted
+  permission and stored nothing gets it without asking.
+- **"Finished" is a change, not a state.** `done` is where a session sits
+  between turns, so a rule reading the state would say it again on every
+  push. `wasDoing` holds what each session was doing last pass, and it is
+  written **on every pass whatever the switches say**: ticking the box while
+  an agent is working still tells you when it stops, and a session that
+  reached `done` while nobody was listening is already at `done` rather than
+  a change waiting to be announced. `waiting` is the same promise for amber.
+  A test that only turns the switch on *after* a turn ends proves neither —
+  it passes with the recording moved inside the switch. The one that bites
+  ticks the box mid-turn.
 - **The counts are about every session.** `drawCounts` runs *before* the guard
   that asks whether the shown rows changed — behind it, a session the filter
   hides could go amber and reach the title, icon and notification: none of them.

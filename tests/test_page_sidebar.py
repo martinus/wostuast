@@ -4,6 +4,7 @@ See tests/browser.py for the shared browser and the helpers."""
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -475,5 +476,194 @@ def test_an_age_older_than_an_hour_carries_two_units(pair_at):
                        .map((old) => ago(now - old));
             }""")
             assert said == ["40s", "1min", "2h", "2h 15min", "2d", "2d 6h"]
+        finally:
+            browser.close()
+
+
+# --- what to be told about ----------------------------------------------------
+
+
+def alerts_page(play, where):
+    """A page whose browser has already allowed alerts, and which records
+    every one it is handed. A real `Notification` cannot be read back from
+    Playwright, so it is replaced before the page's own script runs."""
+    browser = fresh_context(play)
+    browser.grant_permissions(["notifications"])
+    page = browser.new_page()
+    page.add_init_script("""
+      window.__told = [];
+      window.Notification = function (title, options) {
+        window.__told.push([title, (options || {}).body || ""]);
+      };
+      window.Notification.permission = "granted";
+      window.Notification.requestPermission = async () => "granted";
+    """)
+    page.goto(where, wait_until="domcontentloaded")
+    page.wait_for_selector(".row", timeout=15000)
+    page.wait_for_function("!!window.marked", timeout=15000)
+    return browser, page
+
+
+def test_the_needs_you_alert_is_on_as_soon_as_alerts_are(page_at):
+    """It is the one thing this tool exists to tell you, so it is not a
+    second choice on top of allowing alerts at all. The finished one is a
+    choice, so it is off until it is asked for."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            page.click("#bell")
+            page.wait_for_selector("#alerts", state="visible")
+            assert page.is_checked("#alertneeds")
+            assert not page.is_checked("#alertdone")
+            assert "alerts on" in page.locator("#bell").inner_text()
+        finally:
+            browser.close()
+
+
+def test_an_agent_that_needs_you_is_said_once(ws, page_at):
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            ws.append_event(conftest.event(
+                "PermissionRequest", tool_name="Bash",
+                tool_input={"command": "rm -rf build"}, ts=time.time()))
+            daemon.tick()
+            page.wait_for_function("window.__told.length === 1")
+            told = page.evaluate("window.__told")
+            assert "needs you" in told[0][0], told
+
+            # A second pass over the same amber row says nothing more. It has
+            # to be a pass that really happens: the daemon pushes only when a
+            # row differs, so a tick that changes nothing never reaches
+            # `notifyAbout` at all and would prove nothing. A second dialog
+            # about another command moves `reason`, and leaves it amber.
+            ws.append_event(conftest.event(
+                "PermissionRequest", tool_name="Bash",
+                tool_input={"command": "rm -rf dist"}, ts=time.time() + 1))
+            daemon.tick()
+            page.wait_for_function(
+                "() => state.sessions[0].reason.includes('dist')")
+            assert page.evaluate("window.__told.length") == 1
+        finally:
+            browser.close()
+
+
+def test_a_finished_agent_is_said_only_when_it_was_working(ws, page_at):
+    """"done" is where a session sits between turns, so the news is the moment
+    it gets there. A session already finished when the page opened is not
+    news, and neither is one this page has never seen working."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            page.click("#bell")
+            page.click("#alertdone")
+            page.wait_for_function("document.getElementById('alertdone').checked")
+            # A real second pass over sessions that are sitting at "done".
+            # It has to be a pass that really happens: the daemon pushes only
+            # when a row differs, so a tick that changes nothing never reaches
+            # `notifyAbout` and would prove nothing. A second session starting
+            # changes the list, and neither of them has been seen working.
+            now = time.time()
+            ws.append_event(conftest.event(
+                "SessionStart", sid="s2", ts=now, pane="%9"))
+            daemon.tick()
+            page.wait_for_function("state.sessions.length === 2")
+            assert page.evaluate("window.__told.length") == 0
+
+            ws.append_event(conftest.event(
+                "UserPromptSubmit", prompt="go", ts=now + 1))
+            daemon.tick()
+            page.wait_for_function(
+                "() => state.sessions.some((one) => one.state === 'working')")
+            assert page.evaluate("window.__told.length") == 0
+
+            ws.append_event(conftest.event("Stop", ts=now + 2))
+            daemon.tick()
+            page.wait_for_function("window.__told.length === 1")
+            assert "has finished" in page.evaluate("window.__told")[0][0]
+        finally:
+            browser.close()
+
+
+def test_an_alert_switched_on_mid_turn_still_reports_that_turn(ws, page_at):
+    """What each session is doing is written down on every pass, whatever the
+    switches say. So ticking the box while an agent is working still tells
+    you when it stops — and a session that reached "done" while nobody was
+    listening is already at "done" rather than a change waiting to be
+    announced, which is what stops a backlog arriving at once.
+
+    Record the states only while the switch is on and the alert goes silent
+    for exactly the turn the reader switched it on for."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            now = time.time()
+            ws.append_event(conftest.event(
+                "UserPromptSubmit", prompt="go", ts=now))
+            daemon.tick()
+            page.wait_for_function("state.sessions[0].state === 'working'")
+            assert page.evaluate("window.__told.length") == 0
+
+            # On, with the turn already running.
+            page.click("#bell")
+            page.click("#alertdone")
+            page.wait_for_function("document.getElementById('alertdone').checked")
+
+            ws.append_event(conftest.event("Stop", ts=now + 1))
+            daemon.tick()
+            page.wait_for_function("window.__told.length === 1")
+            assert "has finished" in page.evaluate("window.__told")[0][0]
+        finally:
+            browser.close()
+
+
+def test_the_two_switches_are_remembered_apart(page_at):
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            page.click("#bell")
+            page.click("#alertneeds")      # off, from its default on
+            page.click("#alertdone")       # on
+            page.wait_for_function(
+                """() => !document.getElementById('alertneeds').checked
+                      && document.getElementById('alertdone').checked""")
+            kept = page.evaluate("localStorage.getItem('wostuast-alerts')")
+            assert json.loads(kept) == {"needs": False, "done": True}, kept
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(".row")
+            page.click("#bell")
+            page.wait_for_selector("#alerts", state="visible")
+            assert not page.is_checked("#alertneeds")
+            assert page.is_checked("#alertdone")
+        finally:
+            browser.close()
+
+
+def test_the_alert_panel_shuts_from_anywhere(page_at):
+    """A panel only its own button can close is a panel you have to go back
+    to."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            for shut in ("body click", "escape", "the bell"):
+                page.click("#bell")
+                page.wait_for_selector("#alerts", state="visible")
+                if shut == "body click":
+                    page.mouse.click(700, 500)
+                elif shut == "escape":
+                    page.keyboard.press("Escape")
+                else:
+                    page.click("#bell")
+                page.wait_for_selector("#alerts", state="hidden")
+                assert page.get_attribute("#bell", "aria-expanded") == "false", shut
         finally:
             browser.close()
