@@ -88,6 +88,14 @@ the tab, the open file, the place in it.
 | **Review** | The comments you have written, as one task to send. |
 | **Session** | Everything about this one: worktree, branch, model, context, pane, and its own event log. It is the only place a session is renamed. |
 
+### Alerts
+
+The **alerts** button in the top strip opens two switches: be told when an
+agent needs you, and be told when one has finished. The first is on as soon as
+alerts are — it is what this tool is for. The second is off until you ask for
+it. Both are your browser's own notifications, so it asks permission the first
+time, and both are remembered in that browser and nowhere else.
+
 ### Keys
 
 `?` shows this list without leaving the page.

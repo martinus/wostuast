@@ -4886,7 +4886,27 @@ body {
 }
 .theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
 .theme:disabled { opacity: .5; cursor: default; }
-#bell { margin-left: 14px; }
+/* The bell and what hangs under it. The slot is what the panel is measured
+   from, so the panel follows the button wherever the strip puts it. */
+.bellslot { position: relative; margin-left: 14px; display: flex; }
+.alerts {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+  min-width: 232px; padding: 10px; border-radius: 6px;
+  border: 1px solid var(--edge-bright); background: var(--panel);
+  box-shadow: 0 4px 14px var(--shadow);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.alerts[hidden] { display: none; }
+.alertnote {
+  padding: 2px 6px 8px; color: var(--ink-faint); font-size: 11px;
+  line-height: 1.5;
+}
+.alertone {
+  display: flex; align-items: center; gap: 8px; padding: 5px 6px;
+  border-radius: 5px; color: var(--ink); font-size: 12px; cursor: pointer;
+}
+.alertone:hover { background: var(--raised); color: var(--ink-bright); }
+.alertone input { margin: 0; cursor: pointer; accent-color: var(--needs); }
 .dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%;
   transition: background .2s ease, border-color .2s ease; }
 .dot.needs_you { background: var(--needs); }
@@ -5814,7 +5834,17 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <div class="brand">wostuast</div>
     <div class="where" id="where">—</div>
     <div class="counts" id="counts"></div>
-    <button type="button" class="theme" id="bell" title="tell me when an agent needs me"></button>
+    <div class="bellslot">
+      <button type="button" class="theme" id="bell"
+              aria-expanded="false" title="what to be told about"></button>
+      <div class="alerts" id="alerts" hidden>
+        <div class="alertnote" id="alertnote"></div>
+        <label class="alertone"><input type="checkbox" id="alertneeds">
+          <span>an agent needs you</span></label>
+        <label class="alertone"><input type="checkbox" id="alertdone">
+          <span>an agent has finished</span></label>
+      </div>
+    </div>
     <button type="button" class="theme" id="theme" title="light, dark, or follow the system"></button>
   </div>
   <div class="body">
@@ -6843,65 +6873,166 @@ function drawIcon(state_) {
   link.href = canvas.toDataURL("image/png");
 }
 
-// --- telling you when an agent starts waiting -------------------------------
-// Only when you have asked for it, and only as a session turns amber, never
-// again for the same one.
+// --- telling you when an agent wants you ------------------------------------
+//
+// Two things are worth being told about, and they are not the same thing. An
+// agent that needs you cannot go on without you; an agent that has finished
+// is a turn you can read. The first is why this program exists, so it is on
+// as soon as alerts are; the second is a choice, so it is off until asked
+// for. One switch for both would mean taking the one you want with the one
+// you do not.
+//
+// Both live in this browser, like the theme: they are about this screen, and
+// `PLAN.md` rules out a config file for anything wostuast could work out or
+// that is the same for everybody.
 
 const waiting = new Set();
 
-function notificationsOn() {
-  try {
-    return localStorage.getItem("wostuast-notify") === "yes";
-  } catch (error) {
-    return false;
+//: What each session was doing last time round, so "it has finished" can be
+//: a change rather than a state. A session already finished when the page
+//: opens is not news, and it has no entry here on the first pass.
+const wasDoing = new Map();
+
+const ALERTS_KEY = "wostuast-alerts";
+
+//: The needs-you alert is on the moment alerts are: it is the one thing this
+//: tool exists to tell you. The finished one is a choice.
+const ALERTS_DEFAULT = { needs: true, done: false };
+
+// Storage is not a place to trust blindly -- it survives across versions and
+// anything at all can be in it -- so the shape is checked, like `recallReview`
+// and `recallReading` do. The older single switch is read once, so a reader
+// who had alerts on keeps them.
+function alertsWanted() {
+  let kept = null;
+  try { kept = localStorage.getItem(ALERTS_KEY); } catch (error) {}
+  if (kept) {
+    try {
+      const one = JSON.parse(kept);
+      if (one && typeof one === "object") {
+        return { needs: one.needs === true, done: one.done === true };
+      }
+    } catch (error) {
+      // Not ours, or half-written. The defaults are better than nothing.
+    }
   }
+  let old = null;
+  try { old = localStorage.getItem("wostuast-notify"); } catch (error) {}
+  if (old === "yes") return { ...ALERTS_DEFAULT };
+  if (old === "no") return { needs: false, done: false };
+  // Nothing stored. If this browser has already allowed alerts then the
+  // reader has said yes to being told things, and the needs-you one is what
+  // they were saying yes to -- so it is on, which is the default the issue
+  // asks for. Without permission nothing can arrive whatever this says, and
+  // a switch that claims to be on while nothing happens is worse than off.
+  if ("Notification" in window && Notification.permission === "granted") {
+    return { ...ALERTS_DEFAULT };
+  }
+  return { needs: false, done: false };
+}
+
+function rememberAlerts(want) {
+  try { localStorage.setItem(ALERTS_KEY, JSON.stringify(want)); } catch (error) {}
+}
+
+function alertsCan() {
+  return "Notification" in window && Notification.permission === "granted";
+}
+
+function anyAlert() {
+  const want = alertsWanted();
+  return want.needs || want.done;
 }
 
 function drawBell() {
   const button = $("bell");
   if (!button) return;
   const can = "Notification" in window;
-  button.textContent = !can ? "no alerts"
-    : notificationsOn() && Notification.permission === "granted" ? "alerts on"
-    : "alerts off";
   button.disabled = !can;
+  button.textContent = !can ? "no alerts"
+    : alertsCan() && anyAlert() ? "alerts on" : "alerts off";
+  const want = alertsWanted();
+  $("alertneeds").checked = want.needs;
+  $("alertdone").checked = want.done;
+  $("alertnote").textContent = !can
+    ? "This browser cannot show alerts."
+    : Notification.permission === "denied"
+      ? "This browser is blocking alerts for this page. Allow them in its"
+        + " site settings and they will start."
+      : Notification.permission === "granted"
+        ? "Shown by your browser, once per session, while this page is open."
+        : "Tick one and your browser will ask whether to allow alerts.";
 }
 
-async function toggleNotifications() {
-  if (!("Notification" in window)) return;
-  if (notificationsOn()) {
-    try { localStorage.setItem("wostuast-notify", "no"); } catch (error) {}
-    drawBell();
-    return;
+// Ticking a box is what asks for permission, so nobody is asked before they
+// have said what they want. A refusal leaves the box ticked and the note
+// saying why nothing arrives -- unticking it silently would read as the page
+// having lost the click.
+async function setAlert(which, on) {
+  const want = alertsWanted();
+  want[which] = on;
+  rememberAlerts(want);
+  if (on && "Notification" in window && Notification.permission === "default") {
+    await Notification.requestPermission();
   }
-  const answer = Notification.permission === "granted"
-    ? "granted" : await Notification.requestPermission();
-  try {
-    localStorage.setItem("wostuast-notify", answer === "granted" ? "yes" : "no");
-  } catch (error) {}
   drawBell();
 }
 
+function showAlerts(open) {
+  $("alerts").hidden = !open;
+  $("bell").setAttribute("aria-expanded", String(open));
+}
+
 function notifyAbout(sessions) {
+  const want = alertsWanted();
+  const on = alertsCan();
   const now = new Set(sessions.filter((s) => s.state === "needs_you").map((s) => s.id));
   for (const id of waiting) if (!now.has(id)) waiting.delete(id);
-  if (!notificationsOn() || !("Notification" in window)
-      || Notification.permission !== "granted") {
+
+  // Read before anything is sent, and written on every pass whatever the
+  // switches say. Two things rest on that. Ticking the box while an agent is
+  // working still tells you when it stops, which is the turn you ticked it
+  // for -- record only while the switch is on and that one alert goes
+  // missing. And a session that reached "done" while nobody was listening is
+  // then already at "done" rather than a change waiting to be announced, so
+  // switching on does not bring an hour of news with it. `waiting` is the
+  // same promise for the amber one.
+  const before = new Map(wasDoing);
+  wasDoing.clear();
+  for (const session of sessions) wasDoing.set(session.id, session.state);
+  const live = new Set(sessions.map((one) => one.id));
+  for (const id of [...before.keys()]) if (!live.has(id)) before.delete(id);
+
+  if (!on) {
     for (const id of now) waiting.add(id);   // do not shout about a backlog later
     return;
   }
   for (const session of sessions) {
-    if (session.state !== "needs_you" || waiting.has(session.id)) continue;
-    waiting.add(session.id);
-    try {
-      const note = new Notification(session.label + " needs you", {
-        body: session.reason || "waiting for you",
-        tag: "wostuast-" + session.id,
-      });
-      note.onclick = () => { window.focus(); choose(session.id); note.close(); };
-    } catch (error) {
-      // Some browsers refuse without a service worker. Nothing else breaks.
+    if (want.needs && session.state === "needs_you" && !waiting.has(session.id)) {
+      waiting.add(session.id);
+      tellAbout(session, session.label + " needs you",
+                session.reason || "waiting for you");
     }
+    // A change, not a state: "done" is where a session sits between turns,
+    // so the news is the moment it got there. A session this page has not
+    // seen before has no entry, which is why one already finished when you
+    // opened the page says nothing.
+    if (want.done && session.state === "done"
+        && before.get(session.id) === "working") {
+      tellAbout(session, session.label + " has finished", "ready for you");
+    }
+  }
+}
+
+function tellAbout(session, title, body) {
+  try {
+    const note = new Notification(title, {
+      body: body,
+      tag: "wostuast-" + session.id,
+    });
+    note.onclick = () => { window.focus(); choose(session.id); note.close(); };
+  } catch (error) {
+    // Some browsers refuse without a service worker. Nothing else breaks.
   }
 }
 
@@ -10189,6 +10320,7 @@ document.addEventListener("keydown", (press) => {
     for (const box of document.querySelectorAll("dialog")) {
       if (box.open) box.close();
     }
+    showAlerts(false);       // not a dialog, and it closes the same way
     return;
   }
   if (press.metaKey || press.ctrlKey || press.altKey) return;
@@ -10239,7 +10371,21 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
-$("bell").addEventListener("click", () => { toggleNotifications(); });
+$("bell").addEventListener("click", (press) => {
+  press.stopPropagation();            // or the listener below shuts it again
+  showAlerts($("alerts").hidden);
+});
+$("alertneeds").addEventListener("change", (press) => {
+  setAlert("needs", press.target.checked);
+});
+$("alertdone").addEventListener("change", (press) => {
+  setAlert("done", press.target.checked);
+});
+// A panel that only its own button can close is a panel you have to go back
+// to. Anywhere else on the page, and Escape, shut it.
+document.addEventListener("click", (press) => {
+  if (!$("alerts").hidden && !press.target.closest(".bellslot")) showAlerts(false);
+});
 
 async function jumpToPane() {
   if (!state.chosen) return;
