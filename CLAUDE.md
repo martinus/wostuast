@@ -1141,6 +1141,27 @@ things about it are worth knowing before they surprise you.
 - **One block redrawn on its own still has to be marked.** `redrawBlock` is the
   Transcript tab's `fillDiffFile`: everything `drawTranscript` does to a node
   it must do too, or the block you touched loses what the others keep.
+- **A scrollbar is the browser's, so the page has to tell it which way round
+  it is.** Without `color-scheme` a dark page carried the system's bright bar
+  down every column — measured: `color-scheme: normal` and
+  `scrollbar-color: auto` in both themes. Both properties are set and both
+  are needed: `scrollbar-color` is the exact hue, taken from the same
+  `--edge-bright` every other edge on this page uses and with a transparent
+  track so it shows what it lies on; `color-scheme` is what a browser that
+  ignores the first falls back to, and it is also what puts the form controls
+  right — the search box's clear button, the send box's own bar.
+  `scrollbar-color` is inherited, so `:root` is the only place it is said.
+- **A tab that cannot use the find box does not show one**, and `TABS.finds`
+  is where that lives — the placeholder was a ternary in `showTab` naming
+  three tabs, so the two it did not name got whatever the last arm said, and
+  the Session tab offered "find a file" for a list it does not have. One
+  entry per tab, like `draw`, `load` and `poll`. **`.findhome` needs
+  `[hidden] { display: none }`** for the reason `.sendbar` does — it sets
+  `display: flex`, which beats the browser's own rule for the attribute —
+  and that is the third time this shape has caught something here. Its
+  `margin-left: auto` is also what pushes the live slot to the far end of the
+  tab bar, so `.findhome[hidden] + .live` takes that over or the slot comes
+  to rest against the last tab.
 - **A class the page puts on `body` is never the class an element wears.**
   `stream.onerror` did `classList.add("lost")`, and the rule hiding the bar
   until it was wanted was `.lost { display: none }` — which `body` then

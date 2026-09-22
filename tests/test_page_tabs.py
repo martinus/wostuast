@@ -239,3 +239,53 @@ def test_a_transcript_push_during_a_tab_switch_stays_out_of_the_other_tab(
             assert after == before
         finally:
             browser.close()
+
+
+def test_a_tab_with_nothing_to_narrow_offers_no_find_box(page_at):
+    """The Session tab is about one session and has no list to narrow, and it
+    was offering "find a file" — a promise about a tab one over. `finds` in
+    `TABS` says what the box is for, or `null`, so a new tab is one entry
+    rather than another arm of a ternary that names three tabs and gives the
+    rest whatever the last arm said."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            seen = {}
+            for tab in ("transcript", "files", "diff", "review", "session"):
+                show_tab(page, tab)
+                seen[tab] = page.evaluate("""() => {
+                  const box = document.getElementById('find');
+                  return {shown: !!box.offsetParent, hint: box.placeholder};
+                }""")
+            assert seen["session"]["shown"] is False, seen
+            for tab in ("transcript", "files", "diff", "review"):
+                assert seen[tab]["shown"] is True, (tab, seen)
+            # And each says what it is for, rather than three of them saying
+            # the same thing because a ternary ran out of arms.
+            hints = [seen[one]["hint"]
+                     for one in ("transcript", "files", "diff", "review")]
+            assert len(set(hints)) == 4, hints
+        finally:
+            browser.close()
+
+
+def test_the_live_slot_keeps_the_far_end_when_the_find_box_goes(page_at):
+    """`margin-left: auto` on the find box is what pushed both it and the
+    live slot to the end of the tab bar. With the box gone the slot came to
+    rest against the last tab."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            show_tab(page, "session")
+            seen = page.evaluate("""() => {
+              const bar = document.querySelector('.tabs').getBoundingClientRect();
+              const live = document.getElementById('live').getBoundingClientRect();
+              const last = [...document.querySelectorAll('.tab')]
+                .pop().getBoundingClientRect();
+              return {gap: bar.right - live.right, fromTab: live.left - last.right};
+            }""")
+            assert seen["gap"] < 40, seen         # still at the far end
+            assert seen["fromTab"] > 100, seen    # not up against the tabs
+        finally:
+            browser.close()
+
