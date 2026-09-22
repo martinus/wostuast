@@ -969,3 +969,30 @@ def test_the_history_does_not_grow_without_bound(ws):
     assert session.log[-1]["text"].endswith(f"n{ws.SESSION_LOG_MAX + 49}")
     # And the count is the whole story, not what is left of the log.
     assert session.counts["PreToolUse"] == ws.SESSION_LOG_MAX + 50
+
+
+def test_the_place_does_not_follow_the_agent_into_a_subdirectory(ws):
+    """`cwd` is where the agent is standing, and Claude Code moves it the
+    moment the agent changes directory. The row's one irreplaceable fact is
+    which worktree this is, and it renamed itself mid-turn."""
+    session = fold(
+        ws,
+        event("SessionStart", cwd="/w/repo/dir"),
+        event("PreToolUse", cwd="/w/repo/dir/src/deep", ts=1001.0,
+              tool_name="Bash", tool_input={"command": "ls"}),
+    )
+    assert session.cwd == "/w/repo/dir/src/deep"   # still true, and still used
+    assert session.place == "dir"                  # but not what the row says
+
+
+def test_a_resumed_session_starts_where_it_was_resumed(ws):
+    """A session really can be resumed from another directory, and then the
+    new one is where it is. `SessionStart` is the one event that may move it."""
+    session = fold(
+        ws,
+        event("SessionStart", cwd="/w/repo/dir"),
+        event("PreToolUse", cwd="/w/repo/dir/src", ts=1001.0,
+              tool_name="Bash", tool_input={"command": "ls"}),
+        event("SessionStart", cwd="/w/repo/other", source="resume", ts=1002.0),
+    )
+    assert session.place == "other"

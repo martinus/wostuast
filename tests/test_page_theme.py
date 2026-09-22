@@ -25,6 +25,11 @@ def test_both_themes_are_readable(page_at):
         for scheme in ("dark", "light"):
             browser, page = open_page(play, page_at, scheme)
             try:
+                # `open_page` returns on the first draw, and the first draw is
+                # the tab's frame -- the transcript, and so the code block
+                # this reads, arrives one fetch later. Asking straight away
+                # threw on a null element, on a loaded runner and nowhere else.
+                page.wait_for_selector(".prose pre code")
                 seen[scheme] = (
                     page.evaluate("getComputedStyle(document.body).backgroundColor"),
                     page.evaluate(
