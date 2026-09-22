@@ -4837,6 +4837,13 @@ PAGE = r"""<!doctype html>
   --syn-com: #8b8e96; --syn-fn: #2a6ea8; --syn-meta: #6a6d76;
   --syn-attr: #7a3f8f;
 }
+/* Not a colour, so not in the palette above. The width of a drag handle,
+   and the one number that says how far the right-hand half of a split tab
+   starts from the left: `.grip` is that wide, and the send box and the
+   question bar are indented by the column plus this. It was written out
+   twice, which is two places to change and one of them to forget. */
+:root { --grip-w: 5px; }
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -4881,7 +4888,8 @@ body {
    both column edges are draggable. The alternative is a config option, which
    PLAN.md prefers to delete. */
 .grip {
-  flex-shrink: 0; width: 5px; cursor: col-resize; background: var(--edge);
+  flex-shrink: 0; width: var(--grip-w); cursor: col-resize;
+  background: var(--edge);
   border: 0; padding: 0; transition: background .15s ease;
 }
 .grip:hover, .grip.dragging { background: var(--needs); }
@@ -5071,7 +5079,7 @@ body.dragging { cursor: col-resize; user-select: none; }
    By margin and not by moving them into the pane: the question bar holds
    picks that have not been submitted and the send box holds what you are
    typing, and a node that changes parents is a node that is rebuilt. */
-.sendbar, .asking { margin-left: calc(var(--side-w, 268px) + 5px); }
+.sendbar, .asking { margin-left: calc(var(--side-w, 268px) + var(--grip-w)); }
 .sendbar {
   flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
@@ -5293,7 +5301,17 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    and, with the reply below it being the thing you next want to read, as
    belonging to the one after. 6 above and 22 below says which.
    The margins collapse against `.turn`'s own 22, so the numbers here are not
-   the gaps: above is 22 + (-16) = 6, and below is max(5, 22) = 22. */
+   the gaps: above is 22 + (-16) = 6, and below is max(5, 22) = 22.
+
+   Margin collapse was chosen over the honest mechanism, on purpose. The
+   honest one is a `.toolgroup` node around each run of calls and a `gap` on
+   a flex column, which is one number and no arithmetic -- but blocks are
+   appended flat, and `patchTranscript` appends a new one by index into
+   `state.turns.nodes`, which is the only place a block is ever new and so is
+   what the arriving-block animation rests on. Grouping changes both. If the
+   numbers here need touching again, measure them in a browser rather than
+   reading them off; and if they need touching a third time, the wrapper is
+   the answer and this is what it costs. */
 .turn.toolrow { margin-bottom: 5px; }
 .turn:not(.toolrow) + .turn.toolrow { margin-top: -16px; }
 .turn.toolrow + .turn:not(.toolrow) { margin-top: 22px; }
@@ -5326,7 +5344,9 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 body:not(.show-thinking) .thinking { display: none; }
 
 /* files and diff: a list on the left, what it names on the right */
-.content.split { padding: 0; overflow: hidden; display: flex; }
+/* `relative` for the Transcript tab's "latest" button, which is the one
+   thing on a split tab that stands over the pane rather than in it. */
+.content.split { padding: 0; overflow: hidden; display: flex; position: relative; }
 .side {
   width: var(--side-w, 268px); flex-shrink: 0; display: flex;
   flex-direction: column; min-height: 0;
@@ -5401,6 +5421,13 @@ body:not(.show-thinking) .thinking { display: none; }
    the shape of the tree is read before any of its names are. A file's icon
    stays quiet: there are far more of them, and they are not the shape. */
 .filelist button.dir .icon { color: var(--folder); }
+/* On the map a round's icon is a second target -- the row goes to that place
+   in the transcript, the icon folds it away -- so it has to say so. Nothing
+   else in this list has two, which is why this is the transcript's rule and
+   not the list's. No `cursor` here: the row is a button and already sets
+   one, so a second declaration would say nothing. The colour under the
+   pointer is the part that separates the icon from the rest of the row. */
+.filelist.transcript button.dir .icon:hover { color: var(--needs); }
 .filelist button:hover .icon { color: inherit; }
 .filelist button.dir:hover .icon { color: var(--folder); }
 .filelist button.dir { color: var(--ink); }
@@ -5466,18 +5493,15 @@ body:not(.show-thinking) .thinking { display: none; }
 .turnbody { padding: 20px 24px; }
 .turnbody > .empty { max-width: 52ch; }
 /* Over the transcript, at its foot, and only while it would do something.
-   It sits on the content box rather than inside the scroller, which is why
-   the box is the thing that is positioned. */
-.content.split { position: relative; }
+   It is a `.verb`, which already gives it the height, the padding, the
+   border, the raised background, the type and the hover -- so what is left
+   here is only what makes it float. It needs no `[hidden]` rule of its own
+   the way `.sendbar` does: `.verb` sets no `display`, so nothing beats the
+   browser's own rule for the attribute. */
 .tofoot {
   position: absolute; right: 22px; bottom: 16px; z-index: 4;
-  height: 26px; padding: 0 12px; border-radius: 13px; cursor: pointer;
-  border: 1px solid var(--edge-bright); background: var(--raised);
-  color: var(--ink-soft); font-family: var(--mono); font-size: 11px;
-  box-shadow: 0 2px 8px var(--shadow);
+  border-radius: 13px; box-shadow: 0 2px 8px var(--shadow);
 }
-.tofoot:hover { color: var(--ink-bright); border-color: var(--needs); }
-.tofoot[hidden] { display: none; }
 /* The map of the conversation. Same rows as the file tree, because they are
    the same thing: a list on the left that names what is on the right. */
 /* The row is a line: icon, then what it says. `.filelist button` is a block,
@@ -6732,12 +6756,9 @@ function toggleThinking() {
   const on = document.body.classList.toggle("show-thinking");
   const many = state.turns.blocks.filter(
     (one) => one && one.kind === "thinking").length;
-  if (!many) {
-    note("nothing was thought aloud in this transcript");
-    return;
-  }
-  note((on ? "showing " : "hiding ") + many
-       + (many === 1 ? " thought" : " thoughts"));
+  note(!many ? "nothing was thought aloud in this transcript"
+             : (on ? "showing " : "hiding ") + many
+               + (many === 1 ? " thought" : " thoughts"));
 }
 
 function drawHeader() {
@@ -7503,6 +7524,14 @@ function rounds() {
 //: reply that may be kilobytes long. It was 44, which is narrower than the
 //: column at its default width, so every row ended in a "…" the column had
 //: room for and the number did not.
+//:
+//: The number has to clear what the widest possible column can show, or it
+//: is the clip again. Measured at `dragWidth`'s own cap of 700 px, where the
+//: name box is 639 px: 49 of the widest glyphs and **176 of the narrowest**.
+//: The list is a condensed sans, not a monospace, so the thin end is what
+//: sets this -- a first guess of 120 from counting monospace characters
+//: would have clipped a line of narrow letters on a wide column, which is
+//: the bug this is fixing.
 const GLIMPSE = 200;
 
 // The first line with anything on it, short enough to read at a glance.
@@ -7560,9 +7589,12 @@ function drawTurnList(list, note) {
                              last ? last.seq : -1, tail,
                              // Or folding a round redraws nothing: the shape
                              // of the conversation has not changed, only what
-                             // is shown of it.
-                             [...state.turns.shut].sort().join(","),
-                             ].join("\n"))) {
+                             // is shown of it. Sorted, so the key is what the
+                             // set holds and not the order it was filled in:
+                             // folding 1 then 2 and folding 2 then 1 are the
+                             // same list, and a spurious redraw is a rebuild
+                             // of every row.
+                             [...state.turns.shut].sort().join(",")].join("\n"))) {
     return;
   }
   list.replaceChildren();
@@ -7595,11 +7627,18 @@ function putTurnRow(list, seq, text, mine) {
                                     depth: mine ? 0 : 1,
                                     chosen: seq === state.turns.at,
                                     title: text });
+  if (mine) {
+    // Said out loud, because a second target on a row nothing else on this
+    // page has two of is not something a reader can be expected to find.
+    button.setAttribute("aria-expanded", String(!shut));
+    button.firstChild.setAttribute(
+      "title", shut ? "open this round" : "fold this round away");
+  }
   putName(button, text, []);
   button.addEventListener("click", (press) => {
     if (mine && press.target.closest(".icon")) {
       if (shut) state.turns.shut.delete(seq); else state.turns.shut.add(seq);
-      drawTurnList(list, document.querySelector(".listnote"));
+      redrawMap();
       return;
     }
     goToTurn(seq);
@@ -7608,13 +7647,22 @@ function putTurnRow(list, seq, text, mine) {
 
 // Go to one turn, and mark where you went. The list is the map; the mark is
 // what answers a click on a row that was already on screen.
+// Draw the map beside the transcript. Three places want it and each paired
+// the list with a `.listnote` it fetched itself -- three chances for one of
+// them to fetch a different one. `drawTranscript` is the fourth and does not
+// come through here, because `split` hands it both nodes already.
+function redrawMap(root) {
+  const where = root || document;
+  drawTurnList(where.querySelector(".filelist.transcript"),
+               where.querySelector(".listnote"));
+}
+
 function goToTurn(seq) {
   state.turns.at = seq;
   state.turns.goTo = seq;
   const pane = document.querySelector(".turnbody");
   if (!pane || !landOnBlock(pane)) draw();
-  else drawTurnList(document.querySelector(".filelist.transcript"),
-                    document.querySelector(".listnote"));
+  else redrawMap();
 }
 
 // The way back to the end of a transcript you have scrolled up out of.
@@ -7622,35 +7670,36 @@ function goToTurn(seq) {
 // A new block carries you along only while you are near the foot, which is
 // right -- reading something further up should not be yanked away from. But
 // once that has stopped, nothing on the page said how to start again, and on
-// a long transcript the scrollbar is a thin sliver. The button is shown only
-// when it would do something.
+// a long transcript the scrollbar is a thin sliver.
 //
-// It hangs off the content box rather than off the scroller, because the
-// scroller's children are the blocks and `drawTranscript` replaces all of
-// them. `split` builds the box, so the button outlives every redraw and is
-// destroyed with the tab.
-function putToFoot(box, pane) {
-  let button = box.querySelector(".tofoot");
-  if (!button) {
-    button = put(box, "button", "tofoot", "\u2193 latest");
-    button.type = "button";
-    button.title = "go to the end, and follow it again";
-    button.addEventListener("click", () => {
-      pane.scrollTop = pane.scrollHeight;
-      showToFoot(box);
-    });
-  }
-  showToFoot(box);
+// Built once, by `split`, with the rest of the frame: it hangs off the
+// content box rather than off the scroller, because the scroller's children
+// are the blocks and `drawTranscript` replaces all of them.
+function putToFoot(box) {
+  const button = put(box, "button", "verb tofoot", "\u2193 latest");
+  button.type = "button";
+  button.title = "go to the end, and follow it again";
+  button.addEventListener("click", () => {
+    const pane = box.children[2];
+    pane.scrollTop = pane.scrollHeight;
+    button.hidden = true;        // it is the foot now; no need to measure
+  });
+  return button;
 }
 
-function showToFoot(box) {
-  const button = box.querySelector(".tofoot");
-  const pane = box.querySelector(".turnbody");
+// Shown only when it would do something. **Both nodes are handed in.** This
+// runs on every scroll event -- dozens of times in one gesture, and again on
+// every pushed block -- and `box.querySelector(".tofoot")` is a pre-order
+// walk that reaches the button only after crossing the whole transcript.
+// On a long one that is on the order of a hundred thousand nodes visited,
+// per scroll frame, to set one boolean. Every caller already holds both.
+function showToFoot(button, pane) {
   if (button && pane) button.hidden = nearBottom(pane);
 }
 
 function drawTranscript(box) {
   const [list, pane, note] = split(box, "transcript", "turnbody");
+  const foot = box.children[3];      // built by `split`; see `putToFoot`
   drawTurnList(list, note);
   // The whole transcript, always. The find box narrows the list beside it and
   // nothing else: you keep your place and the conversation around it, which
@@ -7671,7 +7720,7 @@ function drawTranscript(box) {
     pane.dataset.watched = "1";
     pane.addEventListener("scroll", () => {
       state.turns.down = pane.scrollTop;
-      showToFoot(box);
+      showToFoot(foot, pane);
     });
   }
   pane.replaceChildren();
@@ -7679,22 +7728,21 @@ function drawTranscript(box) {
   if (!state.turns.blocks.length) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, "Nothing in this transcript yet.");
-    putToFoot(box, pane);
-    return;
+  } else {
+    for (let index = 0; index < state.turns.blocks.length; index += 1) {
+      const block = state.turns.blocks[index];
+      if (!block) continue;
+      const node = blockNode(block, index);
+      state.turns.nodes[index] = node;
+      markHits(node, state.find);
+      pane.appendChild(node);
+    }
+    // Where the reader was, or the foot of it. A transcript is read from the
+    // bottom -- the last thing the agent said is the thing you came for --
+    // so that is where a session with no kept place lands.
+    if (!landOnBlock(pane)) pane.scrollTop = place || pane.scrollHeight;
   }
-  for (let index = 0; index < state.turns.blocks.length; index += 1) {
-    const block = state.turns.blocks[index];
-    if (!block) continue;
-    const node = blockNode(block, index);
-    state.turns.nodes[index] = node;
-    markHits(node, state.find);
-    pane.appendChild(node);
-  }
-  // Where the reader was, or the foot of it. A transcript is read from the
-  // bottom -- the last thing the agent said is the thing you came for -- so
-  // that is where a session with no kept place lands.
-  if (!landOnBlock(pane)) pane.scrollTop = place || pane.scrollHeight;
-  putToFoot(box, pane);
+  showToFoot(foot, pane);
 }
 
 // How much of the conversation the list is showing. It is handed what the
@@ -7737,7 +7785,7 @@ function patchTranscript(indexes) {
   if (!pane || !list || !state.turns.nodes) return;
   // The list is a map of the whole conversation, so a new block changes it
   // whatever the find box holds. It is cheap: a row per prompt and reply.
-  drawTurnList(list, box.querySelector(".listnote"));
+  redrawMap(box);
   if (!state.turns.nodes.length) { drawTranscript(box); return; }
   const stick = nearBottom(pane);
   for (const index of indexes) {
@@ -7757,7 +7805,7 @@ function patchTranscript(indexes) {
   if (!landOnBlock(pane) && stick) pane.scrollTop = pane.scrollHeight;
   // A block arriving makes the transcript taller, so a reader who was at the
   // foot and is no longer carried there has somewhere to go back to.
-  showToFoot(box);
+  showToFoot(box.children[3], pane);
 }
 
 // Three places show how far a file moved. They say it the same way.
@@ -7829,14 +7877,21 @@ function split(box, tab, bodyClass) {
     put(side, "div", "sidefoot");
     dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
     put(box, "div", bodyClass);
+    // The Transcript tab's way back to the end, built here with the rest of
+    // the frame. It cannot live inside the pane -- `drawTranscript` replaces
+    // every child of that -- and building it in `drawTranscript` instead put
+    // half of this box's positional contract in another function. It is a
+    // branch here for the same reason `windowed` is: one tab wants it, and
+    // the frame is where the tab's parts are built.
+    if (tab === "transcript") putToFoot(box);
   }
   const side = box.firstChild;
   homeFind(side.firstChild);
   // By position, so that adding a part above does not silently renumber the
   // rest: findslot, count, list, foot.
-  // By position on this side too, not `box.lastChild`: the Transcript tab
-  // hangs a "latest" button off the same box, and the last child would then
-  // be that button on every draw after the first.
+  // And by position on this side too, not `box.lastChild`: the Transcript
+  // tab's button is built above as `box.children[3]`, so the last child is
+  // that button rather than the pane.
   return [side.children[2], box.children[2], side.children[1], side.children[3]];
 }
 
@@ -9758,6 +9813,9 @@ function savePlace(id) {
     // session has left. Spreading the whole bag kept both.
     turnAt: state.turns.at,
     turnDown: state.turns.down,
+    // Which reading those `seq`s belong to. Without it, coming back to a
+    // session looks exactly like its transcript having been rewritten.
+    turnRun: state.turns.run,
     path: state.files.path,
     at: state.files.at,
     asText: state.files.asText,
@@ -9788,6 +9846,7 @@ function usePlace(id) {
   if (!kept) return null;
   state.turns.at = kept.turnAt;
   state.turns.down = kept.turnDown;
+  state.turns.run = kept.turnRun;
   state.files.path = kept.path;
   state.files.at = kept.at;
   state.files.asText = kept.asText;
@@ -9861,12 +9920,35 @@ async function load() {
   }
 }
 
+// `seq` is a place in one reading, not an identity. A transcript rewritten
+// under its own name counts from nought again, so everything the reader
+// chose by `seq` then points at a different block: the tool results they had
+// expanded, the rounds they had folded shut, and the row the map marks. They
+// are forgotten together, in one place, because there are three of them and
+// a fourth would be added to two of them.
+//
+// This is why `run` is one of the things a session keeps: coming back to a
+// session whose transcript has not been rewritten must keep your place, and
+// `usePlace` putting the choices back without the reading they belong to
+// would make every return look like a rewrite.
+function forgetPlaces() {
+  state.turns.open = new Set();
+  state.turns.shut = new Set();
+  state.turns.at = null;
+  state.turns.goTo = null;
+}
+
 async function loadTranscript() {
   const want = state.chosen;
   const body = await ask(want, "transcript");
   if (state.chosen !== want) return;        // the reader moved on while we waited
   state.turns.blocks = (body && body.blocks) || [];
-  state.turns.run = body && body.run !== undefined ? body.run : -1;
+  const run = body && body.run !== undefined ? body.run : -1;
+  // Only a reading replacing another one. `-1` is "none held yet", which is
+  // every first load -- and `goTo` is set from the address bar before this
+  // runs, so forgetting there would throw away the link the page opened on.
+  if (state.turns.run !== -1 && run !== state.turns.run) forgetPlaces();
+  state.turns.run = run;
   draw();
 }
 
@@ -10015,9 +10097,17 @@ function resubscribe() {
     // head of the old ones and leave the old tail hanging below, so a new
     // reading replaces what is held rather than being merged into it.
     if (body.run !== undefined && body.run !== state.turns.run) {
+      // The same `-1` guard `loadTranscript` carries, and for a sharper
+      // reason: the first push can land before the first fetch has returned,
+      // and then `run` is still -1 with nothing held. Replacing the blocks
+      // there is right; forgetting the reader's place is not, and it threw
+      // away a link the page had opened on whenever the machine was busy
+      // enough to reverse those two.
+      const held = state.turns.run !== -1;
       state.turns.run = body.run;
       state.turns.blocks = body.blocks || [];
       state.turns.nodes = [];
+      if (held) forgetPlaces();
       draw();
       return;
     }

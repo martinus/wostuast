@@ -62,6 +62,12 @@ def test_the_diff_tab_carries_its_counts(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "diff")
+            # `show_tab` waits for the tab's frame; the badge over the tab is
+            # filled when the diff itself lands, which is one fetch later. It
+            # read "+0 −0" on a loaded runner.
+            page.wait_for_function(
+                """() => { const one = document.getElementById('diffcount');
+                           return one && one.innerText.startsWith('+2'); }""")
             badge = page.locator("#diffcount").inner_text()
             assert badge.startswith("+2")     # one line in each half
         finally:

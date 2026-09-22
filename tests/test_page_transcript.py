@@ -417,8 +417,12 @@ def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
         try:
             page.wait_for_function(
                 "document.getElementById('live').textContent === 'live'")
+            # One question, not two: a push landing between an `evaluate` and
+            # an `inner_text` repaints the slot, and the word is gone before
+            # the assertion reads it.
             page.evaluate("note('review sent')")
-            assert "review sent" in page.locator("#live").inner_text()
+            page.wait_for_function(
+                "document.getElementById('live').textContent === 'review sent'")
             page.wait_for_function(
                 "document.getElementById('live').textContent === 'live'",
                 timeout=15000)
@@ -681,19 +685,21 @@ def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
         browser, page = open_page(play, page_at)
         try:
             wait_for_map(page)          # the map has to exist to be measured
-            said = page.evaluate("""() => {
-              const CSS_CLIPS = () => getComputedStyle(
-                document.querySelector('.filelist.transcript .name')).textOverflow;
-              return [
-              glimpse("## A heading\\n\\nand then some"),
-              glimpse("\\n\\n- a bullet first"),
-              glimpse("**bold to start** and on"),
-              glimpse("`code` first"),
-              glimpse("x".repeat(80)),
-              glimpse(""),
-              glimpse("y".repeat(400)),
-              [GLIMPSE, CSS_CLIPS()],
-            ]; }""")
+            seen = page.evaluate("""() => ({
+              said: [
+                glimpse("## A heading\\n\\nand then some"),
+                glimpse("\\n\\n- a bullet first"),
+                glimpse("**bold to start** and on"),
+                glimpse("`code` first"),
+                glimpse("x".repeat(80)),
+                glimpse(""),
+                glimpse("y".repeat(400)),
+              ],
+              cap: GLIMPSE,
+              clips: getComputedStyle(
+                document.querySelector('.filelist.transcript .name')).textOverflow,
+            })""")
+            said = seen["said"]
             assert said[:4] == ["A heading", "a bullet first",
                                 "bold to start and on", "code first"]
             # A line the column has room for is handed over whole: the column
@@ -703,10 +709,14 @@ def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
             # for and the number did not.
             assert said[4] == "x" * 80
             assert said[5] == ""
+            assert seen["clips"] == "ellipsis", seen["clips"]
             # And a reply of several kilobytes is still bounded, because every
-            # round puts one of these in the DOM.
-            assert len(said[6]) == said[7][0] and said[6].endswith("…")
-            assert said[7][1] == "ellipsis", said[7]
+            # round puts one of these in the DOM. Measured: at the widest the
+            # column can be dragged the name box is 639 px, which holds 49 of
+            # the widest glyphs and 176 of the narrowest — so the cap has to
+            # clear 176 or it becomes the clip again.
+            assert seen["cap"] > 176, seen["cap"]
+            assert len(said[6]) == seen["cap"] and said[6].endswith("…")
         finally:
             browser.close()
 
@@ -1248,5 +1258,125 @@ def test_the_send_box_starts_where_the_transcript_does(page_at):
             }""")
             assert abs(seen["bar"] - seen["pane"]) <= 1, seen
             assert seen["bar"] > seen["side"], seen
+        finally:
+            browser.close()
+
+
+def test_a_rewritten_transcript_forgets_what_was_chosen_by_seq(page_at):
+    """`seq` is a place in one reading, not an identity. A transcript
+    rewritten under its own name counts from nought again, so the expanded
+    tool results, the folded rounds and the marked row all point at different
+    blocks. Three things keyed the same way, forgotten in one place."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            seen = page.evaluate("""() => {
+              state.turns.run = 4;
+              state.turns.open = new Set([2]);
+              state.turns.shut = new Set([0]);
+              state.turns.at = 2;
+              const same = (run) => {
+                forgetPlaces();     // what a run change calls
+                return [state.turns.open.size, state.turns.shut.size,
+                        state.turns.at];
+              };
+              return same();
+            }""")
+            assert seen == [0, 0, None], seen
+        finally:
+            browser.close()
+
+
+def test_a_reading_that_has_not_changed_forgets_nothing(page_at):
+    """Two things must not look like a rewrite. `-1` is "none held yet",
+    which is every first load — and `goTo` is set from the address bar before
+    the transcript is fetched, so forgetting there threw away the link the
+    page had just been opened on. And a session coming back keeps its place,
+    which is why `run` is one of the things `savePlace` writes down."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            seen = page.evaluate("""async () => {
+              const out = {};
+              // A first load, with a link pending from the address bar.
+              state.turns.run = -1;
+              state.turns.goTo = 2;
+              state.turns.open = new Set([1]);
+              await loadTranscript();
+              out.first = [state.turns.open.size, state.turns.run];
+
+              // The same reading again: nothing has been rewritten.
+              state.turns.open = new Set([1]);
+              state.turns.shut = new Set([0]);
+              await loadTranscript();
+              out.again = [state.turns.open.size, state.turns.shut.size];
+
+              // A reading that really did change.
+              state.turns.run = 99;
+              await loadTranscript();
+              out.rewritten = [state.turns.open.size, state.turns.shut.size,
+                               state.turns.at];
+              return out;
+            }""")
+            # The link survived the first load, whatever `run` came back.
+            assert seen["first"][0] == 1, seen
+            assert seen["again"] == [1, 1], seen
+            assert seen["rewritten"] == [0, 0, None], seen
+        finally:
+            browser.close()
+
+
+def test_a_round_on_the_map_says_whether_it_is_folded(page_at):
+    """A second target on a row is not something a reader can be expected to
+    find, and `.icon` is decoration everywhere else in this list."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            wait_for_map(page, 2)
+            row = ".filelist.transcript button.dir >> nth=0"
+            assert page.locator(row).get_attribute("aria-expanded") == "true"
+            assert "fold" in page.locator(row + " >> .icon").get_attribute("title")
+            page.click(row + " >> .icon")
+            page.wait_for_function(
+                """() => document.querySelector('.filelist.transcript button.dir')
+                          .getAttribute('aria-expanded') === 'false'""")
+            assert "open" in page.locator(row + " >> .icon").get_attribute("title")
+        finally:
+            browser.close()
+
+
+def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
+    """The stream and the fetch race, and on a busy machine the push wins.
+    `run` is then still -1 with nothing held, so replacing the blocks is
+    right and forgetting the reader's place is not — it threw away a link
+    the page had opened on whenever the two arrived in that order."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            # Exactly the state a push-before-fetch lands on: nothing held,
+            # and a place the address bar has already asked for.
+            page.evaluate("""() => {
+              state.turns.run = -1;
+              state.turns.at = 2;
+              state.turns.open = new Set([1]);
+            }""")
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write(json.dumps({
+                    "type": "assistant",
+                    "timestamp": "2026-09-18T14:30:00.000Z",
+                    "message": {"role": "assistant", "content": [
+                        {"type": "text", "text": "Pushed."}]}}) + "\n")
+            daemon.tick()
+            page.wait_for_function(
+                "() => state.turns.run !== -1")
+            assert page.evaluate("state.turns.at") == 2
+            assert page.evaluate("state.turns.open.size") == 1
         finally:
             browser.close()
