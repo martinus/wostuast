@@ -555,6 +555,18 @@ class Status:
     name: str = ""
     model: str = ""
     context_pct: float | None = None
+    #: What this session has spent, in dollars. Claude Code works it out on
+    #: the client at list price and says so: it may differ from the bill, and
+    #: it goes back to nought on `/clear`. The page carries that caveat rather
+    #: than dropping the number, because an estimate you can see beats a bill
+    #: you cannot. `None` is "the status line did not say", which is not 0.
+    cost_usd: float | None = None
+    #: The claude.ai rate-limit windows, `{name: {used_pct, resets_at}}`.
+    #: Present only for Pro and Max subscribers, or behind a gateway that sets
+    #: a spend limit, and only after the first API response -- and Claude Code
+    #: drops a window once its reset has passed. So an empty map means "not
+    #: told", never "nothing used". `spend_limit` can read above 100.
+    limits: dict[str, dict[str, float]] = field(default_factory=dict)
     agent: str = ""
     version: str = ""
 
@@ -1052,6 +1064,11 @@ def row(session: Session) -> dict[str, Any]:
         "mine": bool(session.mine),
         "model": session.status.model,
         "context_pct": session.status.context_pct,
+        # What the session has spent, and how much of a rate-limit window it
+        # has used. Both move only when a status line lands, so neither makes
+        # a row differ by itself -- which is the rule this dict is built by.
+        "cost_usd": session.status.cost_usd,
+        "limits": session.status.limits,
         "end_reason": session.end_reason,
         "has_transcript": bool(session.transcript_path),
     }
@@ -3031,11 +3048,24 @@ def status_from_payload(payload: dict[str, Any], now: float | None = None) -> St
         value = payload.get(key)
         return value if isinstance(value, dict) else {}
 
+    # Named field by field, like `read_ask`: a status payload is large and
+    # growing, and a field nobody has read must not reach the page.
+    limits: dict[str, dict[str, float]] = {}
+    for window, one in nested("rate_limits").items():
+        if not isinstance(one, dict):
+            continue
+        used = opt_float(one.get("used_percentage"))
+        if used is None:
+            continue
+        limits[str(window)] = {"used_pct": used,
+                               "resets_at": to_float(one.get("resets_at"))}
     return Status(
         ts=now if now is not None else time.time(),
         name=str(payload.get("session_name") or ""),
         model=str(nested("model").get("display_name") or ""),
         context_pct=opt_float(nested("context_window").get("used_percentage")),
+        cost_usd=opt_float(nested("cost").get("total_cost_usd")),
+        limits=limits,
         agent=str(nested("agent").get("name") or ""),
         version=str(payload.get("version") or ""),
     )
@@ -3224,11 +3254,19 @@ def read_status(session_id: str) -> Status:
         return Status()
     if not isinstance(payload, dict):
         return Status()
+    kept = payload.get("limits")
     return Status(
         ts=to_float(payload.get("ts")),
         name=str(payload.get("name") or ""),
         model=str(payload.get("model") or ""),
         context_pct=opt_float(payload.get("context_pct")),
+        cost_usd=opt_float(payload.get("cost_usd")),
+        # Our own file, but it outlives the version that wrote it, so the
+        # shape is checked rather than trusted -- an older wostuast wrote no
+        # `limits` at all and a newer one must read that file, not fall over.
+        limits={str(name): {"used_pct": to_float(one.get("used_pct")),
+                            "resets_at": to_float(one.get("resets_at"))}
+                for name, one in (kept or {}).items() if isinstance(one, dict)},
         agent=str(payload.get("agent") or ""),
         version=str(payload.get("version") or ""),
     )
@@ -3269,6 +3307,17 @@ def safe_name(session_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:128] or "unknown"
 
 
+def money(dollars: float) -> str:
+    """What a session has spent, short enough for a status line.
+
+    Cents below ten dollars, because that is where the difference between one
+    prompt and the next shows; whole dollars above it, because by then the
+    cents are noise. It is Claude Code's own estimate at list price either
+    way -- see `Status.cost_usd`.
+    """
+    return f"${dollars:.2f}" if dollars < 10 else f"${dollars:.0f}"
+
+
 def status_line(status: Status, cwd: str) -> str:
     """The one line wostuast prints as the status line."""
     parts = [status.name or path_label(cwd)]
@@ -3278,6 +3327,8 @@ def status_line(status: Status, cwd: str) -> str:
         parts.append(status.model)
     if status.context_pct is not None:
         parts.append(f"{status.context_pct:.0f}% ctx")
+    if status.cost_usd is not None:
+        parts.append(money(status.cost_usd))
     return " · ".join(parts)
 
 
@@ -5154,6 +5205,9 @@ body.dragging { cursor: col-resize; user-select: none; }
   border: 1px solid var(--edge); overflow: hidden;
 }
 .ctx .fill { display: block; height: 100%; background: var(--working); }
+/* A caveat beside a number, or when a window resets. It is the smallest
+   thing in the panel because it is read once. */
+.sessionbody .aside { margin-left: 10px; color: var(--ink-faint); font-size: 11px; }
 .ctx.warm .fill { background: var(--needs); }
 .ctx.hot .fill { background: var(--hot); }
 .tabs {
@@ -5191,8 +5245,13 @@ body.dragging { cursor: col-resize; user-select: none; }
    where it is in view on every tab. The Session tab says it too, in a panel
    you have to go to; this is the one fact in that panel you want to notice
    rather than look up. */
-.ctxslot { margin-left: 12px; display: inline-flex; align-items: center; }
+.ctxslot { margin-left: 12px; display: inline-flex; align-items: center;
+  gap: 10px; }
 .ctxslot[hidden] { display: none; }
+/* An estimate, so it does not wear a state colour: the four this page spends
+   are about what an agent is doing, and this is about what it has cost. */
+.spent { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
+  cursor: help; }
 .live { margin-left: 12px; display: inline-flex; align-items: center;
   color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
 mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0 1px; }
@@ -6083,6 +6142,28 @@ function putFacts(pane, s) {
     put(list, "dt", null, "context used");
     putContext(put(list, "dd"), s.context_pct);
   }
+  if (s.cost_usd !== null && s.cost_usd !== undefined) {
+    put(list, "dt", null, "spent");
+    const cell = put(list, "dd", null, money(s.cost_usd));
+    put(cell, "span", "aside",
+        "estimated at list price \u00b7 starts again after /clear");
+  }
+  // One row per rate-limit window the status line told us about. Each is
+  // independently absent -- they appear only for a claude.ai Pro or Max
+  // subscription, or behind a gateway, and only after the first API response,
+  // and Claude Code drops a window once its reset has passed. So nothing here
+  // is drawn as a nought: an empty map means nobody said, not nothing used.
+  for (const [window, one] of Object.entries(s.limits || {})) {
+    put(list, "dt", null, LIMIT_WORDS[window] || window);
+    const cell = put(list, "dd");
+    // Above 100 behind a spend limit you have gone past, which is exactly
+    // when it must not be clamped away.
+    putContext(cell, one.used_pct).lastChild.textContent =
+      Math.round(one.used_pct) + "% used";
+    if (one.resets_at) {
+      put(cell, "span", "aside", "resets " + whenOf(one.resets_at));
+    }
+  }
   row("started", whenOf(s.since) + "  ·  " + ago(s.since) + " ago");
   row("session id", s.id);
   // The pane, and the one thing this page can do with it. `jump` used to sit
@@ -6119,6 +6200,13 @@ function putContext(parent, percent) {
   put(ctx, "span", null, pct + "% ctx");
   return ctx;
 }
+
+//: What each rate-limit window is called, in words. A name wostuast does not
+//: know is shown as the status line spelled it, rather than left out.
+const LIMIT_WORDS = {
+  five_hour: "5-hour limit", seven_day: "weekly limit",
+  spend_limit: "spend limit",
+};
 
 function putRename(pane, s) {
   const field = put(pane, "div", "field");
@@ -6890,17 +6978,40 @@ function drawContext() {
   const slot = $("ctxslot");
   if (!slot) return;
   const s = current();
-  slot.hidden = !hasContext(s);
+  const spent = s && s.cost_usd !== null && s.cost_usd !== undefined
+    ? money(s.cost_usd) : "";
+  slot.hidden = !hasContext(s) && !spent;
   if (slot.hidden) {
     slot.replaceChildren();
-    slot.dataset.pct = "";
+    slot.dataset.shows = "";
     return;
   }
-  const pct = String(Math.round(s.context_pct));
-  if (slot.dataset.pct === pct) return;   // a push a second, and it rarely moves
-  slot.dataset.pct = pct;
+  const shows = (hasContext(s) ? Math.round(s.context_pct) : "") + "\n" + spent;
+  if (slot.dataset.shows === shows) return;  // a push a second, rarely moved
+  slot.dataset.shows = shows;
   slot.replaceChildren();
-  putContext(slot, s.context_pct);
+  if (hasContext(s)) putContext(slot, s.context_pct);
+  if (spent) {
+    // Claude Code works this out on the client at list price and says so, and
+    // it goes back to nought on `/clear`. The caveat is worth carrying and is
+    // not worth the width of the strip, so it is on the number.
+    // Not `money`: that is the function two lines up, and a `const` of the
+    // same name here puts that call in the temporal dead zone -- a
+    // ReferenceError on every draw, from a name that reads fine.
+    const shown = put(slot, "span", "spent", spent);
+    shown.title = "What this session has spent, as Claude Code estimates it:"
+      + " list price, worked out in your terminal, and it may differ from"
+      + " your bill. It starts again at zero after /clear.";
+  }
+}
+
+// What a session has spent. Cents below ten dollars, because that is where
+// the difference between one prompt and the next shows; whole dollars above
+// it, because by then the cents are noise in a strip that has to stay short.
+// The daemon's `money` says the same thing for its own status line.
+function money(dollars) {
+  return dollars < 10 ? "$" + dollars.toFixed(2)
+                      : "$" + Math.round(dollars);
 }
 
 // --- the tab icon, drawn here so it follows the colours ---------------------

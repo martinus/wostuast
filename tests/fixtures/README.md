@@ -90,7 +90,32 @@ is up. That is what separates "the agent moved on" from "the other call
 finished" — see `_on_pre_tool`.
 
 `status.json` is one status line payload, in the shape the `statusLine`
-command receives on stdin.
+command receives on stdin. The numbers in it are invented; the field names are
+not. The fields wostuast reads or might read:
+
+| Field | Holds |
+| --- | --- |
+| `session_id`, `session_name` | the id, and the name `/rename` sets |
+| `model.display_name` | "Opus 5" |
+| `context_window.used_percentage` | how full the window is, 0 to 100 |
+| `cost.total_cost_usd` | what this session has spent, **estimated client-side at list price** — Claude Code says it may differ from the bill, and it resets to 0 on `/clear` |
+| `cost.total_duration_ms`, `cost.total_api_duration_ms` | wall-clock time, and time spent waiting on the API |
+| `cost.total_lines_added`, `cost.total_lines_removed` | lines changed |
+| `rate_limits.five_hour`, `rate_limits.seven_day` | `used_percentage` and `resets_at` for a claude.ai Pro or Max subscription |
+| `rate_limits.spend_limit` | the same two fields behind a Claude apps gateway; its percentage can go **above 100** |
+| `agent.name`, `version` | which agent, which Claude Code |
+
+**`cost` and `rate_limits` were missed once already, and the cost of missing
+them was a decision.** `PLAN.md` section 12 carried "money is in no payload" for
+a while, written from this fixture when this fixture had no `cost` in it — and
+issue #101 was closed down to one line on the strength of it. A reader with a
+status line on another machine said otherwise and was right. `rate_limits`
+appears only for claude.ai Pro and Max subscribers, or behind a gateway, and
+only after the first API response, and each window disappears once its
+`resets_at` passes — so its absence proves nothing about a payload either.
+The lesson is the one at the top of this file and in `CLAUDE.md`: a claim about
+a payload is worth what the sample behind it is worth, and one fixture is one
+sample.
 
 ## transcript.jsonl
 

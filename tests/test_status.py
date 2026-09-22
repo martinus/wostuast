@@ -51,7 +51,49 @@ def test_a_session_id_never_escapes_the_status_directory(ws):
 
 def test_the_printed_line_is_short_and_plain(ws, recorded_status):
     status = ws.status_from_payload(recorded_status, now=5.0)
-    assert ws.status_line(status, "/home/martin/oans/warmhare") == "warmhare · Opus 5 · 41% ctx"
+    assert ws.status_line(status, "/home/martin/oans/warmhare") == (
+        "warmhare · Opus 5 · 41% ctx · $1.83")
+
+
+def test_the_printed_line_leaves_out_what_the_payload_did_not_say(ws):
+    """`None` is "the status line did not say" and 0 is "it spent nothing".
+    A session on an API key gets no `cost` at all, and a line reading $0.00
+    for it would be a number nobody measured."""
+    quiet = ws.status_from_payload({"session_name": "warmhare"}, now=5.0)
+    assert quiet.cost_usd is None and quiet.limits == {}
+    assert ws.status_line(quiet, "/w/x") == "warmhare"
+    spent = ws.status_from_payload(
+        {"session_name": "warmhare", "cost": {"total_cost_usd": 0.0}}, now=5.0)
+    assert spent.cost_usd == 0.0
+    assert ws.status_line(spent, "/w/x") == "warmhare · $0.00"
+
+
+def test_money_keeps_the_cents_only_while_they_matter(ws):
+    """Below ten dollars the cents are the difference between one prompt and
+    the next. Above it they are noise in a strip that has to stay short."""
+    assert ws.money(0) == "$0.00"
+    assert ws.money(1.8342) == "$1.83"
+    assert ws.money(1.839) == "$1.84"
+    assert ws.money(9.99) == "$9.99"
+    assert ws.money(10) == "$10"
+    assert ws.money(1234.5) == "$1234"
+
+
+def test_the_rate_limit_windows_are_read_field_by_field(ws, recorded_status):
+    """A status payload is large and growing, so a field nobody has read must
+    not reach the page — the rule `read_ask` follows. And a window with no
+    percentage in it is not a window."""
+    status = ws.status_from_payload(recorded_status, now=5.0)
+    assert set(status.limits) == {"five_hour", "seven_day"}
+    assert status.limits["five_hour"] == {"used_pct": 23.5,
+                                          "resets_at": 1738425600}
+    odd = ws.status_from_payload({"rate_limits": {
+        "five_hour": {"used_percentage": 12.0, "resets_at": 7, "secret": "x"},
+        "seven_day": {"resets_at": 9},          # no percentage: not a window
+        "spend_limit": "not a dict",
+    }}, now=5.0)
+    assert set(odd.limits) == {"five_hour"}
+    assert set(odd.limits["five_hour"]) == {"used_pct", "resets_at"}
 
 
 def test_without_a_name_the_line_falls_back_to_the_directory(ws):
@@ -91,7 +133,7 @@ def test_status_command_stores_the_payload_and_prints_one_line(run_cli, tmp_path
                                                                recorded_status):
     done = run_cli(["status"], json.dumps(recorded_status))
     assert done.returncode == 0
-    assert done.stdout.strip() == "warmhare · Opus 5 · 41% ctx"
+    assert done.stdout.strip() == "warmhare · Opus 5 · 41% ctx · $1.83"
     stored = json.loads(
         (tmp_path / "state" / "status" / f"{recorded_status['session_id']}.json").read_text()
     )

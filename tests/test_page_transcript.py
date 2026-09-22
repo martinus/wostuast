@@ -1141,24 +1141,21 @@ def test_showing_thinking_says_what_it_did(page_at):
             page.wait_for_function(
                 "() => document.querySelectorAll('.turn.thinking').length === 1")
             assert page.locator(".turn.thinking").is_hidden()
-            # The key is bound to it, and what it does is visible.
+            # Every word the page passes to `note`, kept where the stream
+            # cannot repaint it. Reading `#live` after a keypress is a race —
+            # a push is allowed to take a passing word back — and asserting
+            # on the key rather than on `toggleThinking()` is the only way to
+            # hold that `t` is bound to the thing that speaks.
+            page.evaluate("""() => { window.__said = [];
+              const real = note;
+              note = (text) => { window.__said.push(text); real(text); }; }""")
+
             page.keyboard.press("t")
             page.wait_for_selector(".turn.thinking", state="visible")
             page.keyboard.press("t")
             page.wait_for_selector(".turn.thinking", state="hidden")
-
-            # And what it says. Read back inside the same `evaluate` that
-            # calls it: the stream repaints this slot on every push and is
-            # allowed to take the word back, so a separate wait is a test of
-            # the machine's load. There is no gap inside one call.
-            said = page.evaluate(
-                """() => { const out = [];
-                           toggleThinking();
-                           out.push(document.getElementById('live').textContent);
-                           toggleThinking();
-                           out.push(document.getElementById('live').textContent);
-                           return out; }""")
-            assert said == ["showing 1 thought", "hiding 1 thought"], said
+            assert page.evaluate("window.__said") == [
+                "showing 1 thought", "hiding 1 thought"]
         finally:
             browser.close()
 
@@ -1172,10 +1169,13 @@ def test_a_transcript_with_nothing_thought_aloud_says_so(page_at):
         try:
             wait_for_map(page)
             assert page.locator(".turn.thinking").count() == 0
-            page.keyboard.press("t")
-            page.wait_for_function(
-                """() => document.getElementById('live').innerText
-                          .includes('nothing was thought aloud')""")
+            # Read back inside the call that writes it: the stream repaints
+            # this slot on every push and is allowed to take the word back,
+            # so a separate wait tests the machine's load, not the page.
+            said = page.evaluate(
+                """() => { toggleThinking();
+                           return document.getElementById('live').textContent; }""")
+            assert "nothing was thought aloud" in said, said
         finally:
             browser.close()
 

@@ -15,6 +15,13 @@
   "output_style": {
     "name": "default"
   },
+  "cost": {
+    "total_cost_usd": 1.8342,
+    "total_duration_ms": 2730000,
+    "total_api_duration_ms": 411000,
+    "total_lines_added": 156,
+    "total_lines_removed": 23
+  },
   "context_window": {
     "total_input_tokens": 120000,
     "total_output_tokens": 8000,
@@ -27,5 +34,15 @@
     },
     "used_percentage": 41.0,
     "remaining_percentage": 59.0
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 23.5,
+      "resets_at": 1738425600
+    },
+    "seven_day": {
+      "used_percentage": 41.2,
+      "resets_at": 1738857600
+    }
   }
 }
