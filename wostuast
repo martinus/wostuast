@@ -4805,6 +4805,22 @@ PAGE = r"""<!doctype html>
      were looking for. */
   --narrow: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
 }
+/* A scrollbar is painted by the browser, not by this stylesheet, so it has to
+   be told which way round the page is -- without `color-scheme` it stays at
+   the system's, and a dark page carried a bright bar down every column.
+   `color-scheme` also puts the form controls right: the search box's clear
+   button and the send box's own scrollbar.
+
+   `scrollbar-color` then takes it from the system's idea of dark to this
+   page's: the thumb is the same line colour as every other edge here, and
+   the track is transparent so it shows whatever it is lying on -- the panel
+   in the sidebar, the page in a pane. It is inherited, so this is the only
+   place it is said. Both are needed: `scrollbar-color` is the exact hue, and
+   `color-scheme` is what a browser that does not take it falls back to, and
+   what the form controls read. */
+:root { color-scheme: dark; scrollbar-color: var(--edge-bright) transparent; }
+:root[data-theme="light"] { color-scheme: light; }
+
 /* Derived from the palette above, so they follow it into either theme and
    cannot be left behind at an old hue. The search hit takes the amber the
    background wants rather than the one a dot wants: white on the light
@@ -5122,6 +5138,14 @@ body.dragging { cursor: col-resize; user-select: none; }
 .tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
 .tab:disabled { color: var(--edge-bright); cursor: default; }
 .findhome { margin-left: auto; display: flex; align-items: center; }
+/* `display` above would otherwise beat the browser's own rule for `hidden`,
+   and the box would never go away -- the same line `.sendbar` carries, and
+   the third time this shape has caught something here. */
+.findhome[hidden] { display: none; }
+/* The `auto` above is what pushes both the box and the live slot to the far
+   end of the tab bar. With the box gone the slot has to take it over, or it
+   comes to rest against the last tab. */
+.findhome[hidden] + .live { margin-left: auto; }
 .find {
   width: 240px; height: 26px; padding: 0 10px; border-radius: 5px;
   border: 1px solid var(--edge); background: var(--raised); color: var(--ink);
@@ -9730,16 +9754,28 @@ function drawDiffCount() {
 
 // --- the tabs ---------------------------------------------------------------
 
+// `finds` is what the find box is for on that tab, and a tab that does not
+// use it says so with `null` -- the box then goes away rather than standing
+// there inviting a query nothing will answer. The Session tab is about one
+// session and has no list to narrow, and it was offering "find a file",
+// which is a promise about a tab one over.
+//
+// It lives here for the same reason `draw`, `load` and `poll` do: a new tab
+// is one entry. The placeholder used to be a ternary in `showTab` naming
+// three tabs, so the two it did not name got whatever the last arm said.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0,
-                splits: true },
-  files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true },
-  diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true },
+                splits: true, finds: "find a turn  /" },
+  files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true,
+           finds: "go to file  /" },
+  diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true,
+          finds: "find a file  /" },
   // No `load`: a review is written in this browser, so there is nothing to
   // fetch. `load()` draws for a tab that says so, which is the half an empty
   // loader forgot — and then switching here left the page on the tab before.
-  review: { draw: drawReview, load: null, poll: 0, splits: true },
-  session: { draw: drawSession, load: loadSession, poll: 4000 },
+  review: { draw: drawReview, load: null, poll: 0, splits: true,
+            finds: "find a comment  /" },
+  session: { draw: drawSession, load: loadSession, poll: 4000, finds: null },
 };
 
 // Which tab each number key picks. A key for a tab that is not built yet does
@@ -9781,9 +9817,12 @@ function showTab(name) {
   for (const button of document.querySelectorAll(".tab")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
-  $("find").placeholder = (name === "transcript" ? "find a turn  /"
-                          : name === "files" ? "go to file  /"
-                                             : "find a file  /");
+  // A tab that does not use the box does not show one. `findhome` is where
+  // the box lives when no split tab has claimed it, and hiding the home
+  // rather than the box means `homeFind` has somewhere to put it either way.
+  const finds = TABS[name].finds;
+  $("findhome").hidden = !finds;
+  if (finds) $("find").placeholder = finds;
   load();
   resubscribe();
 }
@@ -10156,7 +10195,14 @@ document.addEventListener("keydown", (press) => {
   const tag = (press.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea") return;   // typing, not commanding
   switch (press.key) {
-    case "/": $("find").focus(); break;
+    // Not on a tab that has no find box. This changes no behaviour -- a
+    // browser will not focus an element it is not rendering, so the key was
+    // already doing nothing there -- and it is here to say so rather than to
+    // rest on that. There is no test, because there is nothing to perturb.
+    case "/":
+      if (!TABS[state.tab].finds) return;
+      $("find").focus();
+      break;
     case "f": $("pick").focus(); break;
     case "r": showTab("review"); break;
     case "Enter": jumpToPane(); break;

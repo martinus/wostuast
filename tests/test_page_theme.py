@@ -14,6 +14,7 @@ from browser import (
     fresh_context,
     open_page,
     contrast,
+    rgb,
 )
 
 pytestmark = skip_without_browser
@@ -40,6 +41,47 @@ def test_both_themes_are_readable(page_at):
                 browser.close()
         assert seen["dark"][0] != seen["light"][0], "the light theme did not apply"
         assert seen["dark"][1] != seen["light"][1], "code would be unreadable"
+
+
+def test_the_scrollbars_belong_to_the_theme(page_at):
+    """A scrollbar is painted by the browser, not by this stylesheet, so
+    without being told which way round the page is it stays at the system's —
+    and a dark page carried a bright bar down every column. Measured before
+    the fix: `color-scheme: normal` and `scrollbar-color: auto`, in both.
+
+    Take either declaration out and one of these two goes back to what the
+    machine happens to be set to."""
+    with sync_playwright() as play:
+        seen = {}
+        for scheme in ("dark", "light"):
+            browser, page = open_page(play, page_at, scheme)
+            try:
+                seen[scheme] = page.evaluate("""() => {
+                  const root = getComputedStyle(document.documentElement);
+                  // Inherited, so a pane deep in the page has to have it too.
+                  const pane = getComputedStyle(
+                    document.querySelector('.turnbody'));
+                  // Through an element, so the variable comes back as the
+                  // browser resolves it rather than as the hex it is written.
+                  const probe = document.createElement('span');
+                  probe.style.color = 'var(--edge-bright)';
+                  document.body.appendChild(probe);
+                  const edge = getComputedStyle(probe).color;
+                  probe.remove();
+                  return {scheme: root.colorScheme, bar: pane.scrollbarColor,
+                          edge: edge};
+                }""")
+            finally:
+                browser.close()
+        assert seen["dark"]["scheme"] == "dark", seen
+        assert seen["light"]["scheme"] == "light", seen
+        # The thumb is the page's own line colour, not the system's grey, and
+        # it is a different one in each theme.
+        for scheme, one in seen.items():
+            assert one["bar"] != "auto", (scheme, one)
+            thumb = one["bar"].split(") ")[0] + ")"
+            assert rgb(thumb) == rgb(one["edge"]), (scheme, one)
+        assert seen["dark"]["bar"] != seen["light"]["bar"], seen
 
 
 def test_a_search_hit_can_be_read_in_both_themes(page_at):

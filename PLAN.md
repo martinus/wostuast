@@ -1083,6 +1083,8 @@ without opening it first.
 | A tool group sits with the words above it | The agent says what it is about to do and then does it, so the calls belong to the reply before them. The gaps were equal, measured, which reads as belonging to whatever comes next. |
 | The send box does not run under the map | It stands under the right half of a split tab, so it starts where that half starts. There is nothing to type into a column of round names. |
 | There is a way back to the end of a transcript | New blocks carry you along only while you are near the foot, which is right; but nothing said how to start again, and on a long transcript the scrollbar is a sliver. |
+| The scrollbars are the theme's | A scrollbar is painted by the browser, so a page with a light theme and a dark system showed one of each. `color-scheme` and `scrollbar-color` together: the first for the fallback and the form controls, the second for the exact hue. |
+| A tab that narrows nothing shows no find box | The Session tab is about one session and has no list. It was offering "find a file", which is a promise about the tab one over. |
 | Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
 | Nothing is vendored | `marked` and `highlight.js` are 157 KB against a 175 KB program. Carrying them would nearly double the file the install one-liner curls, and the page already fetches its fonts. |
 | Both are pinned by hash | Any script on this page can type into your terminal through `/send`. `integrity` means a CDN that has been tampered with gets you the fallback rather than other code. |

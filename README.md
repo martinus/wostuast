@@ -97,7 +97,7 @@ the tab, the open file, the place in it.
 | `j` `k` | move down and up the session list |
 | `n` | jump to the next session that needs you |
 | `f` | filter the session list |
-| `/` | find: a turn, or a file |
+| `/` | find, on any tab that has a list to narrow: a turn, a file, a comment |
 | `r` | the review you have written |
 | `1` – `5` | Transcript, Files, Diff, Review, Session |
 | `Enter` | jump to that agent's tmux pane |
