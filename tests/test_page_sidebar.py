@@ -175,13 +175,23 @@ def test_the_context_percent_is_a_bar(page_at):
         try:
             show_tab(page, "session")
             page.wait_for_selector(".sessionbody .ctx .bar")
-            # In the panel. The strip at the end of the tab row draws the
-            # same thing from the same builder, so `.ctx` alone finds two.
-            assert page.locator(".sessionbody .ctx .bar").count() == 1
-            width = page.evaluate(
-                "document.querySelector('.sessionbody .ctx .fill').style.width")
-            assert width == "41%"
-            assert "41% ctx" in page.locator(".sessionbody").inner_text()
+            # Named by its row, not counted: `putContext` builds the bar for
+            # the strip and for each rate-limit window too, so `.ctx` on its
+            # own finds several and none of them is this one.
+            seen = page.evaluate("""() => { let key = null;
+              for (const one of document.querySelectorAll('.sessionbody dl > *')) {
+                if (one.tagName === 'DT') { key = one.innerText; continue; }
+                if (key !== 'context used') continue;
+                const fill = one.querySelector('.ctx .bar .fill');
+                return {bars: one.querySelectorAll('.ctx .bar').length,
+                        width: fill && fill.style.width,
+                        text: one.innerText};
+              }
+              return null; }""")
+            assert seen, "no context row in the panel"
+            assert seen["bars"] == 1, seen
+            assert seen["width"] == "41%", seen
+            assert "41% ctx" in seen["text"], seen
         finally:
             browser.close()
 
@@ -668,5 +678,52 @@ def test_the_alert_panel_shuts_from_anywhere(page_at):
                     page.click("#bell")
                 page.wait_for_selector("#alerts", state="hidden")
                 assert page.get_attribute("#bell", "aria-expanded") == "false", shut
+        finally:
+            browser.close()
+
+
+def test_the_session_panel_names_each_rate_limit_window(page_at):
+    """They appear only for a claude.ai Pro or Max subscription, or behind a
+    gateway, and only after the first API response — and Claude Code drops a
+    window once its reset has passed. So each is drawn only when it was sent,
+    never as a nought."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody dl")
+            rows = page.evaluate(
+                """() => { const out = {}; let key = null;
+                     for (const one of document.querySelectorAll('.sessionbody dl > *')) {
+                       if (one.tagName === 'DT') key = one.innerText;
+                       else out[key] = one.innerText.replace(/\\s+/g, ' ');
+                     }
+                     return out; }""")
+            assert "$1.83" in rows["spent"], rows
+            assert "list price" in rows["spent"], rows
+            # Named in words, not as the payload spells them.
+            assert "24% used" in rows["5-hour limit"], rows
+            assert "resets" in rows["5-hour limit"], rows
+            assert "41% used" in rows["weekly limit"], rows
+        finally:
+            browser.close()
+
+
+def test_a_session_with_no_rate_limits_gets_no_rows_for_them(ws, served):
+    daemon, base = served
+    ws.append_event(conftest.event(
+        "SessionStart", pane="%7", pid=1, ts=time.time()))
+    ws.write_status("s1", ws.Status(ts=1.0, name="A session"))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody dl")
+            said = page.locator(".sessionbody dl").inner_text()
+            assert "limit" not in said, said
+            assert "spent" not in said, said
         finally:
             browser.close()

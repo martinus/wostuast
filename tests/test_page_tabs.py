@@ -364,3 +364,51 @@ def test_the_context_bar_does_not_touch_the_live_slot(page_at):
             assert "41% ctx" in page.locator("#ctxslot").inner_text()
         finally:
             browser.close()
+
+
+def test_the_strip_carries_what_this_session_has_spent(page_at):
+    """The status line has carried `cost.total_cost_usd` all along. This
+    repository said it did not, wrote that into PLAN.md section 12, and closed
+    #101 down to one line on the strength of it — see
+    `tests/fixtures/README.md`."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_selector("#ctxslot .spent")
+            for tab in ("transcript", "files", "diff", "review", "session"):
+                show_tab(page, tab)
+                seen = page.evaluate("""() => {
+                  const slot = document.getElementById('ctxslot');
+                  const spent = slot.querySelector('.spent');
+                  return {text: slot.innerText.replace(/\\s+/g, ' '),
+                          caveat: spent && spent.title};
+                }""")
+                assert "41% ctx" in seen["text"], (tab, seen)
+                assert "$1.83" in seen["text"], (tab, seen)
+                # An estimate at list price. Said on the number, because it is
+                # read once and the strip has no width for a sentence.
+                assert "estimate" in seen["caveat"], (tab, seen)
+                assert "/clear" in seen["caveat"], (tab, seen)
+        finally:
+            browser.close()
+
+
+def test_a_session_that_was_told_no_cost_shows_none(ws, served):
+    """`None` is "the status line did not say" and 0 is "it spent nothing".
+    A session on an API key gets no `cost` at all, and $0.00 for it would be a
+    number nobody measured."""
+    daemon, base = served
+    ws.append_event(conftest.event(
+        "SessionStart", pane="%7", pid=1, ts=time.time()))
+    ws.write_status("s1", ws.Status(ts=1.0, name="A session", context_pct=12.0))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            assert page.evaluate("state.sessions[0].cost_usd") is None
+            page.wait_for_selector("#ctxslot .ctx")      # context still shows
+            assert page.locator("#ctxslot .spent").count() == 0
+        finally:
+            browser.close()

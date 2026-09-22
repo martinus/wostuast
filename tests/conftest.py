@@ -210,8 +210,13 @@ def page_at(ws, tmp_path, monkeypatch, transcript_file):
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
                      "cwd": str(tmp_path), "pane": "%7", "pid": 1,
                      "ts": time.time(), "transcript_path": str(transcript)})
-    ws.write_status("s1", ws.Status(ts=1.0, name="A session", model="Opus 5",
-                                    context_pct=41.0))
+    ws.write_status("s1", ws.Status(
+        ts=1.0, name="A session", model="Opus 5", context_pct=41.0,
+        # A status line carries the spend and, for a claude.ai subscription,
+        # the rate-limit windows. The page draws both, so the fixture has both.
+        cost_usd=1.8342,
+        limits={"five_hour": {"used_pct": 23.5, "resets_at": 1738425600.0},
+                "seven_day": {"used_pct": 41.2, "resets_at": 1738857600.0}}))
 
     daemon = ws.Daemon()
     server = ws.make_server(daemon, 0)

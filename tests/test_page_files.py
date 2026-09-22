@@ -1116,6 +1116,9 @@ def test_an_open_folder_is_drawn_open(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "files")
+            # `show_tab` waits for the tab's frame; the tree under it arrives
+            # one fetch later, and the icon is inside the tree.
+            page.wait_for_selector(".filelist button.dir path")
             shut = page.eval_on_selector(
                 ".filelist button.dir path", "el => el.getAttribute('d')")
             page.click(".filelist button.dir:has(.name:text-is('deep'))")

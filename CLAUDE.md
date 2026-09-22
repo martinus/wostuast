@@ -220,6 +220,13 @@ drawn, which is what a loaded CI runner looks like. `wait_for_map(page, rows)`
 is the wait for the transcript; for anything else, wait for the element you
 are about to read.
 
+**To hold what a key *says*, spy on `note`, not on `#live`.** The slot is
+repainted on every push and the stream is allowed to take a passing word
+back, so reading it after a keypress is a race. Reassigning `note` in the
+page and keeping every word in an array holds both halves at once: that the
+key is bound to the thing that speaks, and what it said. Calling the function
+directly instead proves only the second, and then nothing guards the binding.
+
 **The live slot is repainted on every push, so read it in the same
 `evaluate` that writes it.** `note()` borrows the slot and the stream is
 allowed to take it back — that is what one painter means. A `wait_for_function`
@@ -1228,6 +1235,22 @@ things about it are worth knowing before they surprise you.
   decision, and a caller that fails `origin_ours` is told nothing it did not
   already know. The page raises a bar that only a reload clears, which is
   right anyway: after an upgrade its JavaScript is old too.
+- **The strip carries what the session has spent, and says it is an
+  estimate.** Claude Code works `cost.total_cost_usd` out on the client at
+  list price, says it may differ from the bill, and resets it to nought on
+  `/clear`. The caveat rides on the number as a `title`, because it is read
+  once and the strip has no width for a sentence. `None` is "the status line
+  did not say" and `0` is "it spent nothing": a session on an API key gets no
+  `cost` at all, and `$0.00` for it would be a number nobody measured — so
+  `drawContext` tests for null rather than defaulting. The rate-limit windows
+  go in the Session tab instead, where there is room to name the window and
+  when it resets; each is independently absent, and one that is missing is
+  drawn as nothing, never as nought.
+- **`money` is a name on both sides, and shadowing it is a `ReferenceError`.**
+  `drawContext` calls the page's `money()` and then builds an element for what
+  it returned. Naming that element `money` puts the call above it in the
+  temporal dead zone — a page that throws on every draw, from a line that
+  reads perfectly. Same scar as `matches` / `matching` / `hits`.
 - **The context bar is its own slot, beside `#live` and never in it.**
   `paintLive` is the one writer of that slot and three things already want it
   — what the stream is doing, something you asked for and did not get, and a
@@ -1281,6 +1304,17 @@ things about it are worth knowing before they surprise you.
 Hook and status line field names are in `tests/fixtures/README.md`. Need one
 that is not there? Record a real payload and add it to `tests/fixtures/`. Do not
 invent a name.
+
+**The status line carries money, and this file used to say it did not.** The
+payload has `cost.total_cost_usd`, `cost.total_duration_ms`,
+`cost.total_api_duration_ms`, the lines added and removed, and
+`rate_limits.five_hour` / `seven_day` / `spend_limit` with a used percentage
+and a reset time. `PLAN.md` section 12 asserted the opposite for a while, and
+an issue was closed down to one line on it. The assertion came from reading
+`tests/fixtures/status.json`, which at the time had no `cost` in it — **one
+fixture is one sample, and absence in it is not absence in the payload.** A
+reader whose own status line showed the spend is what corrected it. When the
+question is "does this payload carry X", the fixture can only say yes.
 
 **Recording one does not mean committing your conversation.** Both fixtures
 carry real field names in real shapes with invented text, because this
