@@ -417,8 +417,12 @@ def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
         try:
             page.wait_for_function(
                 "document.getElementById('live').textContent === 'live'")
+            # One question, not two: a push landing between an `evaluate` and
+            # an `inner_text` repaints the slot, and the word is gone before
+            # the assertion reads it.
             page.evaluate("note('review sent')")
-            assert "review sent" in page.locator("#live").inner_text()
+            page.wait_for_function(
+                "document.getElementById('live').textContent === 'review sent'")
             page.wait_for_function(
                 "document.getElementById('live').textContent === 'live'",
                 timeout=15000)
@@ -680,18 +684,39 @@ def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            said = page.evaluate("""() => [
-              glimpse("## A heading\\n\\nand then some"),
-              glimpse("\\n\\n- a bullet first"),
-              glimpse("**bold to start** and on"),
-              glimpse("`code` first"),
-              glimpse("x".repeat(80)),
-              glimpse(""),
-            ]""")
+            wait_for_map(page)          # the map has to exist to be measured
+            seen = page.evaluate("""() => ({
+              said: [
+                glimpse("## A heading\\n\\nand then some"),
+                glimpse("\\n\\n- a bullet first"),
+                glimpse("**bold to start** and on"),
+                glimpse("`code` first"),
+                glimpse("x".repeat(80)),
+                glimpse(""),
+                glimpse("y".repeat(400)),
+              ],
+              cap: GLIMPSE,
+              clips: getComputedStyle(
+                document.querySelector('.filelist.transcript .name')).textOverflow,
+            })""")
+            said = seen["said"]
             assert said[:4] == ["A heading", "a bullet first",
                                 "bold to start and on", "code first"]
-            assert len(said[4]) == 44 and said[4].endswith("…")
+            # A line the column has room for is handed over whole: the column
+            # is what clips, with an ellipsis, at whatever width it has been
+            # dragged to. 44 characters was narrower than the column at its
+            # default width, so every row ended in a "…" the column had room
+            # for and the number did not.
+            assert said[4] == "x" * 80
             assert said[5] == ""
+            assert seen["clips"] == "ellipsis", seen["clips"]
+            # And a reply of several kilobytes is still bounded, because every
+            # round puts one of these in the DOM. Measured: at the widest the
+            # column can be dragged the name box is 639 px, which holds 49 of
+            # the widest glyphs and 176 of the narrowest — so the cap has to
+            # clear 176 or it becomes the clip again.
+            assert seen["cap"] > 176, seen["cap"]
+            assert len(said[6]) == seen["cap"] and said[6].endswith("…")
         finally:
             browser.close()
 
@@ -1026,5 +1051,332 @@ def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
             assert not any("command-message" in one for one in seen["rows"]), seen
             # And a note is not a round and not a reply.
             assert not any("sweep" in one for one in seen["rows"]), seen
+        finally:
+            browser.close()
+
+
+# --- the way back to the end -------------------------------------------------
+
+def test_the_way_back_to_the_end_is_offered_only_when_it_would_do_something(page_at):
+    """A new block carries you along only while you are near the foot, which
+    is right — but once that stopped, nothing said how to start again, and on
+    a long transcript the scrollbar is a sliver."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            append_rounds(daemon, 12)
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.turnbody');
+                           return one.scrollHeight > one.clientHeight + 400; }""")
+            # It opens at the foot, so there is nowhere to go.
+            page.wait_for_selector(".tofoot", state="hidden")
+
+            page.eval_on_selector(".turnbody", "el => el.scrollTop = 0")
+            page.wait_for_selector(".tofoot", state="visible")
+            page.click(".tofoot")
+            page.wait_for_selector(".tofoot", state="hidden")
+            assert page.evaluate(
+                """() => { const one = document.querySelector('.turnbody');
+                    return one.scrollHeight - one.scrollTop - one.clientHeight; }"""
+            ) < 80
+        finally:
+            browser.close()
+
+
+# --- folding a round on the map ----------------------------------------------
+
+def test_a_round_folds_shut_from_its_icon_and_the_rest_of_the_row_still_goes(page_at):
+    """The row has two jobs. Folding on any click would mean you could not
+    read a round without closing it."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page, 2)
+            count = "document.querySelectorAll('.filelist.transcript button').length"
+            rows = "() => " + count
+            before = page.evaluate(rows)
+            assert before >= 2, before
+
+            page.click(".filelist.transcript button.dir >> nth=0 >> .icon")
+            page.wait_for_function("n => " + count + " < n", arg=before)
+            folded = page.evaluate(rows)
+
+            # The name still goes to that place, and does not unfold it.
+            page.click(".filelist.transcript button.dir >> nth=0 >> .name")
+            page.wait_for_selector(".turn.linked")
+            assert page.evaluate(rows) == folded
+
+            page.click(".filelist.transcript button.dir >> nth=0 >> .icon")
+            page.wait_for_function("n => " + count + " === n", arg=before)
+        finally:
+            browser.close()
+
+
+# --- what the agent was thinking ---------------------------------------------
+
+def test_showing_thinking_says_what_it_did(page_at):
+    """The key worked from the day it shipped and read as broken anyway: most
+    transcripts hold no thinking at all, so it changed nothing on screen and
+    nothing said why."""
+    daemon, path = page_at
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(json.dumps({
+            "type": "assistant", "timestamp": "2026-09-18T14:20:01.000Z",
+            "message": {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "Let me weigh this up.",
+                 "signature": "sig"},
+                {"type": "text", "text": "Right."}]}}) + "\n")
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                "() => document.querySelectorAll('.turn.thinking').length === 1")
+            assert page.locator(".turn.thinking").is_hidden()
+            page.keyboard.press("t")
+            page.wait_for_selector(".turn.thinking", state="visible")
+            assert "showing 1 thought" in page.locator("#live").inner_text()
+            page.keyboard.press("t")
+            page.wait_for_selector(".turn.thinking", state="hidden")
+            assert "hiding 1 thought" in page.locator("#live").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_transcript_with_nothing_thought_aloud_says_so(page_at):
+    """Nothing on screen changes, so the slot is the only thing that can say
+    the key was heard."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            assert page.locator(".turn.thinking").count() == 0
+            page.keyboard.press("t")
+            page.wait_for_function(
+                """() => document.getElementById('live').innerText
+                          .includes('nothing was thought aloud')""")
+        finally:
+            browser.close()
+
+
+# --- how the transcript is laid out ------------------------------------------
+
+def test_a_one_line_message_sits_in_the_middle_of_its_block(page_at):
+    """`.who` carries a name, a day, a time and a copy button — 71 px of them
+    — and a stretched bubble is as tall as that whatever is in it. One line
+    then sat 14 px below the top with 41 px under it."""
+    daemon, path = page_at
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(json.dumps({
+            "type": "user", "timestamp": "2026-09-18T14:20:00.000Z",
+            "message": {"role": "user", "content": "do the issues"}}) + "\n")
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn.mine .bubble')]
+                          .some((b) => b.textContent.includes('do the issues'))""")
+            seen = page.evaluate("""() => {
+              const box = [...document.querySelectorAll('.turn.mine .bubble')]
+                .find((b) => b.textContent.includes('do the issues'));
+              const range = document.createRange();
+              range.selectNodeContents(box);
+              const text = range.getBoundingClientRect();
+              const bubble = box.getBoundingClientRect();
+              return {above: text.top - bubble.top,
+                      below: bubble.bottom - text.bottom,
+                      who: box.parentElement.querySelector('.who')
+                              .getBoundingClientRect().height,
+                      bubble: bubble.height};
+            }""")
+            # Within a pixel: the glyph box is not the line box, and no amount
+            # of padding makes those two the same number.
+            assert abs(seen["above"] - seen["below"]) <= 2, seen
+            # And it is the column beside it that used to decide the height.
+            assert seen["bubble"] < seen["who"], seen
+        finally:
+            browser.close()
+
+
+def test_a_group_of_tool_calls_belongs_to_the_words_above_it(page_at):
+    """Measured, the gaps used to be 16 px above and 16 px below — exactly
+    equal, so the group read as belonging to neither, and to the reply below
+    it, which is the thing you next want to read."""
+    daemon, path = page_at
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(json.dumps({
+            "type": "assistant", "timestamp": "2026-09-18T14:20:01.000Z",
+            "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "First I will look around."}]}}) + "\n")
+        for n in range(3):
+            handle.write(json.dumps({
+                "type": "assistant", "timestamp": "2026-09-18T14:20:02.000Z",
+                "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": f"t{n}", "name": "Bash",
+                     "input": {"command": f"ls dir{n}"}}]}}) + "\n")
+        handle.write(json.dumps({
+            "type": "assistant", "timestamp": "2026-09-18T14:20:03.000Z",
+            "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Now I know what is there."}]}}) + "\n")
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turnbody .turn')]
+                    .some((t) => t.innerText.includes('Now I know'))""")
+            seen = page.evaluate("""() => {
+              const all = [...document.querySelectorAll('.turnbody .turn')];
+              const at = all.findIndex((t) => t.innerText.includes('ls dir0'));
+              const box = (n) => all[n].getBoundingClientRect();
+              return {above: box(at).top - box(at - 1).bottom,
+                      below: box(at + 3).top - box(at + 2).bottom};
+            }""")
+            assert seen["above"] < seen["below"], seen
+        finally:
+            browser.close()
+
+
+def test_the_send_box_starts_where_the_transcript_does(page_at):
+    """It stood under the map beside the transcript as well, which is a column
+    you never type into."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            wait_for_map(page)
+            seen = page.evaluate("""() => {
+              const box = (sel) =>
+                document.querySelector(sel).getBoundingClientRect();
+              return {bar: box('#sendbar').left, pane: box('.turnbody').left,
+                      side: box('.side').right};
+            }""")
+            assert abs(seen["bar"] - seen["pane"]) <= 1, seen
+            assert seen["bar"] > seen["side"], seen
+        finally:
+            browser.close()
+
+
+def test_a_rewritten_transcript_forgets_what_was_chosen_by_seq(page_at):
+    """`seq` is a place in one reading, not an identity. A transcript
+    rewritten under its own name counts from nought again, so the expanded
+    tool results, the folded rounds and the marked row all point at different
+    blocks. Three things keyed the same way, forgotten in one place."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            seen = page.evaluate("""() => {
+              state.turns.run = 4;
+              state.turns.open = new Set([2]);
+              state.turns.shut = new Set([0]);
+              state.turns.at = 2;
+              const same = (run) => {
+                forgetPlaces();     // what a run change calls
+                return [state.turns.open.size, state.turns.shut.size,
+                        state.turns.at];
+              };
+              return same();
+            }""")
+            assert seen == [0, 0, None], seen
+        finally:
+            browser.close()
+
+
+def test_a_reading_that_has_not_changed_forgets_nothing(page_at):
+    """Two things must not look like a rewrite. `-1` is "none held yet",
+    which is every first load — and `goTo` is set from the address bar before
+    the transcript is fetched, so forgetting there threw away the link the
+    page had just been opened on. And a session coming back keeps its place,
+    which is why `run` is one of the things `savePlace` writes down."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            seen = page.evaluate("""async () => {
+              const out = {};
+              // A first load, with a link pending from the address bar.
+              state.turns.run = -1;
+              state.turns.goTo = 2;
+              state.turns.open = new Set([1]);
+              await loadTranscript();
+              out.first = [state.turns.open.size, state.turns.run];
+
+              // The same reading again: nothing has been rewritten.
+              state.turns.open = new Set([1]);
+              state.turns.shut = new Set([0]);
+              await loadTranscript();
+              out.again = [state.turns.open.size, state.turns.shut.size];
+
+              // A reading that really did change.
+              state.turns.run = 99;
+              await loadTranscript();
+              out.rewritten = [state.turns.open.size, state.turns.shut.size,
+                               state.turns.at];
+              return out;
+            }""")
+            # The link survived the first load, whatever `run` came back.
+            assert seen["first"][0] == 1, seen
+            assert seen["again"] == [1, 1], seen
+            assert seen["rewritten"] == [0, 0, None], seen
+        finally:
+            browser.close()
+
+
+def test_a_round_on_the_map_says_whether_it_is_folded(page_at):
+    """A second target on a row is not something a reader can be expected to
+    find, and `.icon` is decoration everywhere else in this list."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            wait_for_map(page, 2)
+            row = ".filelist.transcript button.dir >> nth=0"
+            assert page.locator(row).get_attribute("aria-expanded") == "true"
+            assert "fold" in page.locator(row + " >> .icon").get_attribute("title")
+            page.click(row + " >> .icon")
+            page.wait_for_function(
+                """() => document.querySelector('.filelist.transcript button.dir')
+                          .getAttribute('aria-expanded') === 'false'""")
+            assert "open" in page.locator(row + " >> .icon").get_attribute("title")
+        finally:
+            browser.close()
+
+
+def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
+    """The stream and the fetch race, and on a busy machine the push wins.
+    `run` is then still -1 with nothing held, so replacing the blocks is
+    right and forgetting the reader's place is not — it threw away a link
+    the page had opened on whenever the two arrived in that order."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            # Exactly the state a push-before-fetch lands on: nothing held,
+            # and a place the address bar has already asked for.
+            page.evaluate("""() => {
+              state.turns.run = -1;
+              state.turns.at = 2;
+              state.turns.open = new Set([1]);
+            }""")
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write(json.dumps({
+                    "type": "assistant",
+                    "timestamp": "2026-09-18T14:30:00.000Z",
+                    "message": {"role": "assistant", "content": [
+                        {"type": "text", "text": "Pushed."}]}}) + "\n")
+            daemon.tick()
+            page.wait_for_function(
+                "() => state.turns.run !== -1")
+            assert page.evaluate("state.turns.at") == 2
+            assert page.evaluate("state.turns.open.size") == 1
         finally:
             browser.close()
