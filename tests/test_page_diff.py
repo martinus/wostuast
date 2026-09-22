@@ -5,6 +5,8 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 
+import time
+
 import pytest
 
 import conftest
@@ -23,12 +25,75 @@ def test_the_diff_tab_keeps_the_two_halves_apart(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "diff")
+            page.wait_for_selector(".diffhead")
             heads = page.eval_on_selector_all(
-                ".diffhead", "els => els.map(e => e.textContent)")
-            assert heads == ["main...HEAD", "not committed yet"]
+                ".diffhead", "els => els.map(e => e.firstChild.textContent)")
+            assert heads == ["committed on this branch", "not committed yet"]
             paths = page.eval_on_selector_all(
                 ".dfile .path", "els => els.map(e => e.textContent)")
             assert paths == ["code.py", "README.md"]
+        finally:
+            browser.close()
+
+
+def test_each_half_of_the_diff_says_what_it_is_a_diff_of(repo_page):
+    """The headings were `main...HEAD` and "not committed yet", which is
+    precise and only readable if you already know what three dots mean — so
+    nobody could tell whether the tab showed the last commit, the branch, the
+    worktree, or some of each. #103 opens on exactly that."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".diffhead .about")
+            said = page.eval_on_selector_all(
+                ".diffhead .about", "els => els.map(e => e.textContent)")
+            assert len(said) == 2, said
+            # The base is named, and so is what it does not include: the
+            # three dots are what nobody could read.
+            assert "main" in said[0] and "landed on main since" in said[0], said
+            assert "last commit" in said[1], said
+            # The list on the left says it too, where a heading has no room
+            # for a sentence.
+            titles = page.eval_on_selector_all(
+                ".filelist .head", "els => els.map(e => e.title)")
+            assert titles[0] == said[0] and titles[1] == said[1], titles
+        finally:
+            browser.close()
+
+
+def test_a_worktree_with_no_default_branch_says_why_there_is_one_half(ws, repo,
+                                                                     served,
+                                                                     tmp_path):
+    """Without a base the committed half is missing altogether, and the tab
+    simply showed less — which is the other half of not being able to tell
+    what it shows."""
+    import subprocess
+
+    # A repository whose branch is not main or master and which has no
+    # remote, so `diff_base` finds nothing at all.
+    subprocess.run(["git", "-C", str(repo), "branch", "-m", "scratch"],
+                   check=True, capture_output=True)
+    # A change to a tracked file: the uncommitted half draws a heading only
+    # when it has something under it, and a new file is untracked.
+    (repo / "README.md").write_text("# readme\n\nhello\n\nand more\n")
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(repo), pane="%7",
+                                   pid=1, ts=time.time()))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function("() => state.diff !== null")
+            assert page.evaluate("state.diff.base") == ""
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.diffbody .note')]
+                     .some((one) => one.textContent
+                       .includes('No default branch to compare against'))""")
+            heads = page.eval_on_selector_all(
+                ".diffhead", "els => els.map(e => e.firstChild.textContent)")
+            assert heads == ["not committed yet"], heads
         finally:
             browser.close()
 
