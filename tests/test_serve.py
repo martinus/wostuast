@@ -670,13 +670,84 @@ def test_sending_nothing_is_refused(in_tmux):
     assert seen == []
 
 
-def test_sending_more_than_fits_is_refused_not_cut(in_tmux):
-    """What arrives in the terminal must be what the user wrote, or nothing."""
+def test_sending_more_than_fits_is_refused_not_cut(ws, in_tmux):
+    """What arrives in the terminal must be what the user wrote, or nothing.
+
+    Over `SEND_MAX` and under `POST_MAX`, so it is this cap that refuses it:
+    it used to send 99,999 characters, which the body limit dropped one floor
+    earlier, and so this never reached the cap it is named after."""
+    daemon, base, seen = in_tmux
+    assert ws.SEND_MAX * 2 < ws.POST_MAX
+    status, body = post(f"{base}/api/session/s1/send",
+                        {"text": "x" * (ws.SEND_MAX * 2)}, token=daemon.token)
+    assert status == 400, (status, body)
+    assert str(ws.SEND_MAX) in body["error"]
+    assert seen == []
+
+
+
+def test_a_long_paste_goes_in(in_tmux):
+    """4,400 characters was refused by a cap of 4,000, which is less than one
+    long paste. Measured against tmux 3.4, the terminal takes four times
+    that."""
     daemon, base, seen = in_tmux
     status, body = post(f"{base}/api/session/s1/send",
-                        {"text": "x" * 99999}, token=daemon.token)
-    assert status == 400
+                        {"text": "x" * 4400}, token=daemon.token)
+    assert status == 200 and body["done"] is True
+    assert len(seen) == 2
+
+
+def test_the_cap_on_a_send_is_in_bytes(ws, in_tmux):
+    """It is what tmux counts: bisected against tmux 3.4, `send-keys -l`
+    takes 16,341 bytes of ASCII and 8,170 two-byte characters. A cap on
+    `len()` would let three times the bytes through in Japanese, and tmux
+    would refuse the lot -- silently, as far as the reader could see."""
+    daemon, base, seen = in_tmux
+    wide = "\u3042" * (ws.SEND_MAX // 3 + 1)         # 3 bytes each in UTF-8
+    assert len(wide) < ws.SEND_MAX                   # under a cap on len()
+    status, body = post(f"{base}/api/session/s1/send", {"text": wide},
+                        token=daemon.token)
+    assert status == 400, body
+    assert "bytes" in body["error"]
     assert seen == []
+
+
+def test_a_message_too_large_to_read_says_that(in_tmux):
+    """A body over `POST_MAX` is never read, so the route sees an empty one --
+    and refused it as "there is nothing to send", which is the opposite of
+    what happened."""
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send",
+                        {"text": "x" * (64 * 1024)}, token=daemon.token)
+    assert status == 413, (status, body)
+    assert "large" in body["error"]
+    assert seen == []
+
+
+def test_a_jump_tmux_refuses_says_so(ws, served, monkeypatch):
+    """The same silence `send` had: `done: false` carries no `error`, so the
+    page cleared the slot and the jump failed with nothing on screen."""
+    daemon, base = served
+    monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+    ws.append_event(event("SessionStart", pane="%7", pid=1))
+    daemon.store.refresh()
+    status, body = post(f"{base}/api/session/s1/jump", token=daemon.token)
+    assert status == 502
+    assert body["error"]
+
+
+def test_a_send_tmux_refuses_says_so(ws, served, monkeypatch):
+    """`done: false` carries no `error`, so the page cleared the slot and
+    wrote nothing into it: the reader asked for something, did not get it,
+    and was told nothing at all."""
+    daemon, base = served
+    monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+    ws.append_event(event("SessionStart", pane="%7", pid=1))
+    daemon.store.refresh()
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello"},
+                        token=daemon.token)
+    assert status == 502
+    assert body["error"]
 
 
 def test_a_session_that_is_over_is_not_sent_to(in_tmux):

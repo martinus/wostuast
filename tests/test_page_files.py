@@ -273,6 +273,9 @@ def test_touching_another_file_leaves_the_open_one_alone(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "files")
+            # `show_tab` waits for the tab's frame; the document inside it is
+            # one fetch further on, and `.prose` is null until it lands.
+            page.wait_for_selector(".filebody .prose")
             page.evaluate(
                 "window.__doc = document.querySelector('.filebody .prose')")
             (root / "NOTES.md").write_text("# Notes\n\ntouched again\n")
@@ -485,7 +488,12 @@ def test_only_the_rows_on_screen_are_built(big_page):
         browser, page = open_page(play, big_page)
         try:
             show_tab(page, "files")
-            # 5201 files, and a screenful of rows.
+            # 5201 files, and a screenful of rows. `show_tab` waits for the
+            # tab's frame; the count under the list arrives with the listing,
+            # one fetch later.
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.listnote');
+                           return one && one.innerText.includes('5201'); }""")
             assert "5201" in page.locator(".listnote").inner_text()
             built = page.locator(".filelist button").count()
             assert 0 < built <= 120, built

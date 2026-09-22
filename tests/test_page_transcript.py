@@ -15,6 +15,7 @@ from browser import (
     open_page,
     show_tab,
     wait_for_map,
+    wait_for_watching,
     daemon_transcript,
 )
 
@@ -122,6 +123,7 @@ def test_expanding_a_tool_result_leaves_the_rest_alone(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             page.evaluate("document.querySelector('.content').scrollTop = 0")
             page.evaluate("window.__first = document.querySelector('.turn')")
             before = page.evaluate("document.querySelector('.content').scrollTop")
@@ -147,6 +149,7 @@ def test_the_session_the_page_picks_for_you_is_watched(page_at, ws):
             # nought turns on a loaded CI runner, and then the push delivered
             # the whole transcript at once -- `assert 3 == (0 + 1)`.
             wait_for_map(page)
+            wait_for_watching(daemon)
             before = page.locator(".turn").count()
             assert page.locator(".row.chosen").count() == 1
 
@@ -156,8 +159,11 @@ def test_the_session_the_page_picks_for_you_is_watched(page_at, ws):
                     "message": {"role": "assistant", "content": [
                         {"type": "text", "text": "A brand new line."}]}}) + "\n")
             daemon.tick()
-            page.wait_for_timeout(1200)
-            assert page.locator(".turn").count() == before + 1
+            # For what the push carries, not for a length of time: a fixed
+            # wait on a loaded runner is a wait that runs out.
+            page.wait_for_function(
+                "n => document.querySelectorAll('.turn').length === n",
+                arg=before + 1)
             assert "A brand new line." in page.locator(".content").inner_text()
         finally:
             browser.close()
@@ -298,6 +304,11 @@ def test_keys_do_not_fire_while_typing_in_the_search_box(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            # The find box moves house when the transcript arrives and
+            # `split` claims it, and a box that moves loses the focus on it:
+            # the "j" then landed on the page as a key. Waiting for the map is
+            # waiting for that move to have happened.
+            wait_for_map(page)
             page.locator("#find").focus()
             page.keyboard.type("j")
             page.wait_for_timeout(150)
@@ -473,6 +484,7 @@ def test_a_reply_older_than_today_says_which_day_it_was(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             seen = page.evaluate("""() => {
               const was = state.skew;
               const ts = state.turns.blocks.find((one) => one && one.ts).ts;
@@ -531,6 +543,7 @@ def test_a_reply_is_a_link_you_can_open_in_another_tab(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            wait_for_map(page)
             links = page.eval_on_selector_all(
                 ".turn .self", "els => els.map((one) => one.getAttribute('href'))")
             assert links and all(one.startswith("#s1/") for one in links), links
@@ -633,6 +646,7 @@ def test_a_row_goes_to_its_place_in_the_transcript(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
+            wait_for_watching(daemon)
             append_rounds(daemon, 12)
             page.wait_for_function(
                 "document.querySelectorAll('.filelist.transcript button').length > 20")
@@ -846,9 +860,9 @@ def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
             browser.close()
 
 
-def test_at_most_forty_links_in_one_block(ws, page_at):
-    """A pattern that matches everything would otherwise build a link per
-    word. The cap is the daemon's number too."""
+def test_a_block_of_many_ticket_ids_is_linked_all_the_way_down(ws, page_at):
+    """A file of release notes went past the old cap of forty, and the links
+    simply stopped halfway with nothing saying why."""
     ws.links_path().parent.mkdir(parents=True, exist_ok=True)
     ws.links_path().write_text(json.dumps([
         {"match": r"T-(\d+)", "url": "https://tickets/$1"},
@@ -860,12 +874,44 @@ def test_at_most_forty_links_in_one_block(ws, page_at):
             page.wait_for_function("state.links.length === 1")
             made = page.evaluate("""() => {
               const box = document.createElement('div');
-              box.textContent = Array.from({length: 100},
+              box.textContent = Array.from({length: 400},
                                            (x, n) => 'T-' + n).join(' ');
               linkTickets(box);
               return box.querySelectorAll('a.ticket').length;
             }""")
-            assert made == 40, made
+            assert made == 400, made
+        finally:
+            browser.close()
+
+
+def test_there_is_still_a_cap_on_the_links_in_one_block(ws, page_at):
+    """A pattern that matches everything would otherwise build a link per
+    word, and every one of them is a DOM node on a page that redraws. The
+    number is the page's own and is sent nowhere."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"T-(\d+)", "url": "https://tickets/$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            seen = page.evaluate("""() => {
+              const box = document.createElement('div');
+              box.textContent = Array.from({length: 5000},
+                                           (x, n) => 'T-' + n).join(' ');
+              const at = performance.now();
+              linkTickets(box);
+              return [box.querySelectorAll('a.ticket').length,
+                      performance.now() - at];
+            }""")
+            made, took = seen
+            assert made == 500, made
+            # Ten times the old cap, on the worst text there is: every word a
+            # match. Measured so that raising the number again is a number
+            # somebody has looked at, not a guess.
+            assert took < 500, f"{took:.0f} ms to build {made} links"
         finally:
             browser.close()
 

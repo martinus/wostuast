@@ -211,12 +211,23 @@ is right only when proving something did **not** happen. Ask one question when a
 redraw could land between two: `wait_for_function("...length === 1")`, not
 `wait_for_selector` then `.count()`.
 
-**`open_page` returning is not the transcript arriving.** It waits for the
-first draw, and the first draw is the tab's frame — the map beside the
-transcript fills one fetch later. Abort `api/session/*/transcript` and the
-list is empty with the page otherwise drawn, which is what a loaded CI runner
-looks like: four tests read that list straight away and one of them went red
-the moment this file grew three more. `wait_for_map(page, rows)` is the wait.
+**`open_page` returning is not the transcript arriving, and `show_tab` is not
+the tab's content arriving.** Both wait for the frame — the map beside the
+transcript, and the document inside the Files tab, fill one fetch later.
+Abort `api/session/*/transcript` and the list is empty with the page otherwise
+drawn, which is what a loaded CI runner looks like. `wait_for_map(page, rows)`
+is the wait for the transcript; for anything else, wait for the element you
+are about to read.
+
+**This scar keeps coming back, so recognise its shape rather than its
+names.** It has been six tests over three sittings, and every one of them read
+`.turn`, `.prose`, `.who`, `state.turns.blocks` or the find box on the line
+after the page opened. Three symptoms, all of them "passes alone, red under
+load": an empty list read as "it drew nothing"; `null.isConnected` or
+`undefined.ts` thrown out of an `evaluate`; and a keystroke that went to the
+page instead of the find box, because `split` moves that box when the
+transcript lands and a box that moves loses the focus on it. Running the whole
+suite at `-n 12` three times over is what turns them up; once is not enough.
 
 **`main` is protected, and a push to it is refused.** A change lands through a
 pull request, with every job in `.github/workflows/tests.yml` green. A
@@ -320,10 +331,40 @@ things about it are worth knowing before they surprise you.
 - **Nothing can time a regular expression out in a browser.** `risky_pattern`
   spots the one shape that backtracks catastrophically — a quantifier inside
   a quantified group — and `LINKS_MAX` caps the links in one block, and that
-  is the whole of the defence. It is a heuristic; say so rather than implying
+  is the whole of the defence. **`LINKS_MAX` lives in the page and nowhere
+  else**: the daemon carried the same name and the same number and read it
+  nowhere, because the page is the only side that makes a link — a copy that
+  is not a second opinion is a second thing to forget. Raising it is a number
+  somebody has measured, not a guess:
+  `test_there_is_still_a_cap_on_the_links_in_one_block` builds 500 links out
+  of 5,000 matching words and asserts the time. It is a heuristic; say so rather than implying
   the page is safe from a pattern somebody writes.
 - **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
   of text with colours, never markup.
+- **What a `send` may be is counted in bytes, and tmux is what sets the
+  number.** Bisected against tmux 3.4: `send-keys -t %0 -l -- <text>` takes
+  16,341 bytes and refuses 16,342 with "command too long"; the same run with
+  `ä`, two bytes in UTF-8, stops at 8,170, and by session name rather than
+  pane id at 16,338 — the target comes out of the same budget. So a cap on
+  `len()` lets three times the bytes through in Japanese and tmux refuses the
+  lot. `SEND_MAX` is that cap and it is bytes; `test_the_cap_on_a_send_is_in_bytes`
+  holds it. A long message is refused, never cut, and never split across two
+  sends: a bracketed paste broken in half leaves the rest arriving as
+  keystrokes, which is the scar below.
+- **A verb tmux refused says so, and says only what it knows.** `send` and
+  `jump` both used to answer `{"done": false}` with no `error`, and `said`
+  clears the slot for an answer that carries none — so the reader asked for
+  something, did not get it, and read nothing at all. Every refusal on this
+  path carries a message. **`send`'s message does not claim nothing landed**:
+  `tmux_send` runs two commands, the text and then Enter, and a failure on
+  the second leaves the text sitting on the agent's prompt. "Nothing went in"
+  would send the reader back to type it again, and it would arrive twice.
+- **An empty body and a body that was refused is not the same answer.**
+  `asked()` never reads a body over `POST_MAX`, so the route sees `{}` — and
+  `send` refused it as "there is nothing to send", which is the opposite of
+  what happened. `too_big` is set beside it, and cleared at the top of
+  `asked()` rather than only set: with keep-alive one handler object serves
+  every request on a connection.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters, keeping tab and newline. "Below a space" includes the C1 block
   above `\x7f` — NEL and CSI are controls, and U+2028 is a line break that
