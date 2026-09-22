@@ -38,6 +38,7 @@ after the tests go red.
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
+| `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `BANDS`, `settled` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
@@ -639,6 +640,36 @@ things about it are worth knowing before they surprise you.
   under `ts > last_ts`, which is asked once, before `last_ts` moves. Two
   events in one instant cost the log the second of them and nothing else. The
   log is bounded (`SESSION_LOG_MAX`); the counts are the whole story.
+- **The log is never thrown away, so nothing may hold it whole.** Every
+  archive is kept (`archive_log`, `archived_events_paths`), and a year of
+  heavy use is a few hundred megabytes. Three things grew with it, measured on
+  a 200 MB log shaped like a year, 1,873 sessions: `Tail` read the whole rest
+  of a file in one `read()` and kept it twice over, 641 MB resident; the fold
+  built a `Session` for every one of those sessions and `visible()` forgot the
+  quiet ones only after it, 80 KB each; and `git_wanted` kept the directory
+  of every tree-touching event ever folded, so the first refresh ran git on a
+  year of worktrees, deleted ones included. Now `Tail.lines` reads
+  `TAIL_CHUNK` at a time, `fold` calls `forget_quiet` every `FORGET_EVERY` of
+  the *log's* clock, and `reload_git` asks only about a directory a shown
+  session is in: 28 MB, flat. **Forget by the last event, never the first**:
+  a session that started a year ago and is still going keeps where it
+  started, and the test that holds it moves the session's `cwd` after its
+  start, because every event carries one and a session forgotten and made
+  again would otherwise look exactly right. **An empty piece is not the end
+  of the file**: a line longer than `TAIL_CHUNK` gives nothing until one
+  ends it, so the end is the size the file had when the read began.
+  `test_a_big_log_is_read_a_piece_at_a_time` measures what is held with
+  `tracemalloc`; `test_the_first_read_holds_a_week_of_sessions_not_all_of_them`
+  and `test_git_is_asked_about_the_sessions_shown_and_no_others` hold the other
+  two.
+- **An archive's name is taken with `os.link`, never `os.replace`.** The next
+  number comes from a listing and is then used, and `os.replace` puts the log
+  on top of anything that landed on that name in between, silently — the scar
+  below, where a rename over the one archive lost every event ever recorded.
+  `os.link` refuses a taken name and costs one more try. The follower knows
+  the file that has just become an archive by its inode and hands its tail
+  over, place and all, because a tail that only knew names read all 20 MB of
+  it again on every rotation.
 - **`Tail` starting over is news the reader has to hear.** It restarts at
   offset 0 when the file shrinks or its inode changes, which is right — but a
   reader that only appends then drew the whole transcript a second time on top

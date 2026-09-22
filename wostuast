@@ -91,7 +91,17 @@ TICK = 1.0
 #: limit. Twenty updates is far more than a live page is ever behind by.
 CLIENT_BACKLOG = 20
 
+#: The live event log is moved aside as an archive when it passes this. No
+#: archive is ever deleted: the history is what the log is for, and a year of
+#: heavy use is a few hundred megabytes. See `archive_log`.
 EVENTS_MAX_BYTES = 20 * 1024 * 1024
+
+#: The most `Tail` reads in one go. It used to read the whole rest of a file,
+#: which on a 400 MB log held 821 MB at once, measured. A log that is never
+#: thrown away has to be read a piece at a time, and a megabyte is a few
+#: hundred events: large enough that the reads cost nothing, small enough
+#: that nobody notices it held.
+TAIL_CHUNK = 1024 * 1024
 
 #: How much of a session's own history the Session tab can show. The log is
 #: for reading, not for counting — `Session.counts` is the whole story and
@@ -99,6 +109,11 @@ EVENTS_MAX_BYTES = 20 * 1024 * 1024
 SESSION_LOG_MAX = 300
 LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
+
+#: How far the log's own clock moves between two looks, while folding, for
+#: sessions `SESSION_MAX_AGE` quiet. An hour of history is a few hundred
+#: events, and a look is one pass over a week of sessions.
+FORGET_EVERY = 3600.0
 RUN_TIMEOUT = 2.0
 
 #: Every state, in the order the sidebar shows them: the word and the colour.
@@ -188,9 +203,37 @@ def events_path() -> Path:
     return state_dir() / "events.jsonl"
 
 
-def rotated_events_path() -> Path:
-    """Where the log moves when it grows too big. It is still history."""
-    return state_dir() / "events.1.jsonl"
+#: An archive of the event log. The number counts up from 1, so the oldest
+#: has the lowest, and an `events.1.jsonl` from before archives were kept is
+#: simply the first of them.
+ARCHIVE_NAME = re.compile(r"\Aevents\.(\d+)\.jsonl\Z")
+
+
+def archived_events_paths() -> list[Path]:
+    """Every archive of the event log, oldest first.
+
+    By number and not by name: as text, `events.10` sorts before `events.9`,
+    and the tenth archive is where history would have started coming back in
+    the wrong order.
+    """
+    folder = state_dir()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    numbered = sorted((int(found.group(1)), name) for name in names
+                      if (found := ARCHIVE_NAME.match(name)))
+    return [folder / name for _, name in numbered]
+
+
+def event_files() -> list[Path]:
+    """The whole event log, oldest first: every archive, then the live file."""
+    return archived_events_paths() + [events_path()]
+
+
+def archive_number(path: Path) -> int:
+    found = ARCHIVE_NAME.match(path.name)
+    return int(found.group(1)) if found else 0
 
 
 def status_dir() -> Path:
@@ -387,7 +430,7 @@ def append_event(record: dict[str, Any]) -> None:
             if not still_the_file(handle, target):
                 continue      # someone rotated while we waited; open the new one
             if os.fstat(handle.fileno()).st_size > EVENTS_MAX_BYTES:
-                os.replace(target, rotated_events_path())
+                archive_log(target)
                 # The handle still points at the file we just renamed. Open the
                 # fresh one, so this event lands there rather than in the
                 # archive. It is created 0600, like every file we make.
@@ -400,10 +443,41 @@ def append_event(record: dict[str, Any]) -> None:
             return
 
 
+def archive_log(target: Path) -> None:
+    """Move the live log to the next archive number, and never over one.
+
+    The caller holds the log's lock, which is what keeps two hooks from
+    archiving the same file. The name is still worked out from a listing and
+    then used, and `os.replace` would silently put the log on top of anything
+    that landed on that name in between -- the scar `still_the_file` was
+    written for, when a rename over the one archive lost every event ever
+    recorded. `os.link` refuses a name that is taken, so a taken name costs
+    one more try and nothing else. A filesystem with no hard links is left
+    to `os.replace` on a name that was free when it was listed.
+    """
+    archives = archived_events_paths()
+    number = archive_number(archives[-1]) + 1 if archives else 1
+    for _ in range(1000):
+        archive = target.with_name(f"events.{number}.jsonl")
+        try:
+            os.link(target, archive)
+        except FileExistsError:
+            number += 1
+            continue
+        except OSError:
+            if archive.exists():
+                number += 1
+                continue
+            os.replace(target, archive)
+            return
+        os.unlink(target)
+        return
+
+
 def count_events() -> int:
     """How many lines the log holds. It counts newlines, it does not parse."""
     total = 0
-    for path in (rotated_events_path(), events_path()):
+    for path in event_files():
         try:
             with open(path, "rb") as handle:
                 total += sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
@@ -415,11 +489,11 @@ def count_events() -> int:
 def read_events() -> Iterator[dict[str, Any]]:
     """Read the whole log from the start, oldest file first.
 
-    The rotated file comes first because it holds the older half. Reading only
+    The archives come first because they hold the older events. Reading only
     the current file would lose the SessionStart of every session that began
     before the last rotation, and with it their cwd, pane and pid.
     """
-    for path in (rotated_events_path(), events_path()):
+    for path in event_files():
         yield from read_event_file(path)
 
 
@@ -445,9 +519,8 @@ def json_objects(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
 def read_event_file(target: Path) -> Iterator[dict[str, Any]]:
     """Read one log file from the start. A missing file is empty.
 
-    It streams the file line by line rather than going through `Tail`, which
-    reads the whole remainder at once: this one is used on a log that may be
-    20 MB, and only needs a line at a time.
+    It streams the file line by line: this one is used on a whole log, and
+    only needs a line at a time.
     """
     if not target.exists():
         return
@@ -478,60 +551,127 @@ class Tail:
     #: does not care, because `Store.apply` drops an event it has seen, but a
     #: transcript reader that only appends will draw the whole file twice.
     restarted: bool = False
+    #: Every byte this tail has read, restarts included. It is what the start
+    #: of `serve` reports, and a file read twice was parsed twice.
+    consumed: int = 0
 
     def read_new(self) -> list[bytes]:
+        """Every new line, as one list, for a caller that keeps them anyway."""
+        return list(self.lines())
+
+    def lines(self) -> Iterator[bytes]:
+        """Every new line, read `TAIL_CHUNK` at a time.
+
+        A piece holding no newline gives no line, and that is not the end:
+        a line longer than a piece is carried in `partial` until one ends it.
+        The end is the size the file had when this started, so a file that
+        grows while it is read cannot keep the reader here -- what arrives
+        later is the next call's. The file is asked about through the handle
+        it is read from, so a file renamed between the two is never read
+        with the other one's offset.
+        """
         self.restarted = False
         try:
-            info = self.path.stat()
+            handle = open(self.path, "rb")
         except OSError:
-            return []
-        key = (info.st_dev, info.st_ino)
-        if key != self.key:
-            started = self.key != (0, 0)     # not the first look at this name
-            self.key, self.offset, self.partial = key, 0, b""
-            self.restarted = started
-        elif info.st_size < self.offset:  # rewritten shorter, under the same name
-            self.offset, self.partial = 0, b""
-            self.restarted = True
-        if info.st_size == self.offset:
-            return []
-        try:
-            with open(self.path, "rb") as handle:
-                handle.seek(self.offset)
-                data = handle.read()
-        except OSError:
-            return []
-        self.offset += len(data)
-        head, newline, rest = (self.partial + data).rpartition(b"\n")
-        self.partial = rest
-        if not newline:
-            return []
-        return [line for line in head.split(b"\n") if line.strip()]
+            return
+        with handle:
+            try:
+                info = os.fstat(handle.fileno())
+            except OSError:
+                return
+            key = (info.st_dev, info.st_ino)
+            if key != self.key:
+                started = self.key != (0, 0)     # not the first look at this name
+                self.key, self.offset, self.partial = key, 0, b""
+                self.restarted = started
+            elif info.st_size < self.offset:  # rewritten shorter, under the same name
+                self.offset, self.partial = 0, b""
+                self.restarted = True
+            end = info.st_size
+            handle.seek(self.offset)
+            while self.offset < end:
+                try:
+                    data = handle.read(min(TAIL_CHUNK, end - self.offset))
+                except OSError:
+                    return
+                if not data:
+                    return
+                self.offset += len(data)
+                self.consumed += len(data)
+                head, newline, rest = (self.partial + data).rpartition(b"\n")
+                self.partial = rest
+                if newline:
+                    for line in head.split(b"\n"):
+                        if line.strip():
+                            yield line
 
 
 class EventFollower:
-    """Follows the event log, both files of it.
+    """Follows the event log: every archive, then the live file.
 
-    The hook rotates the log, not the daemon, so the file can be renamed under
-    the follower at any moment, and a daemon can start when a rotation has
-    already happened. One tail on each name covers both: the archive is read
-    whole on the first look and is quiet after that, and a rotation simply
-    looks like a new file under each name.
+    The hook rotates the log, not the daemon, so the live file can become an
+    archive under the follower at any moment, and a daemon can start after
+    any number of rotations. Each pass lists the archives -- one `listdir` --
+    and reads the ones it has not finished, oldest first, then the live file.
 
-    A rotation makes the archive tail read events it has already delivered.
-    That is safe because `Store.apply` ignores an event older than the session
-    it belongs to has already seen.
+    An archive is never written again once it has its name, so one read to
+    its end is the last. The live file that has just become an archive is
+    recognised by its inode and its tail is handed over with its place in
+    it: a tail that only knew names read all 20 MB again on every rotation.
+    When the rotation lands in the middle of a pass the hand-over is missed
+    and the archive is read from the top; `Store.apply` ignores an event
+    older than its session has seen, so a repeat is safe, and a loss is not.
     """
 
     def __init__(self) -> None:
-        self.older = Tail(rotated_events_path())
-        self.tail = Tail(events_path())
+        self.live = Tail(events_path())
+        self.archives: dict[Path, Tail] = {}
+        self.finished: set[Path] = set()
+        #: What has been read, for the start of `serve` to say: the events,
+        #: and the bytes of every archive already finished with.
+        self.events = 0
+        self.finished_bytes = 0
 
-    def new_lines(self) -> list[bytes]:
-        return self.older.read_new() + self.tail.read_new()
+    def archive_tail(self, path: Path) -> Tail:
+        """The tail for an archive: the live one, if this is the live file."""
+        try:
+            info = path.stat()
+        except OSError:
+            return Tail(path)
+        if (info.st_dev, info.st_ino) == self.live.key:
+            handed, self.live = self.live, Tail(events_path())
+            handed.path = path
+            return handed
+        return Tail(path)
+
+    def new_lines(self) -> Iterator[bytes]:
+        for path in archived_events_paths():
+            if path in self.finished:
+                continue
+            tail = self.archives.get(path)
+            if tail is None:
+                tail = self.archives[path] = self.archive_tail(path)
+            yield from tail.lines()
+            # Read to its end, and nothing will be added to it: the tail is
+            # done with, and only how much it read is kept.
+            self.finished.add(path)
+            del self.archives[path]
+            self.finished_bytes += tail.consumed
+        yield from self.live.lines()
 
     def new_events(self) -> Iterator[dict[str, Any]]:
-        yield from json_objects(self.new_lines())
+        for event in json_objects(self.new_lines()):
+            self.events += 1
+            yield event
+
+    def files_read(self) -> tuple[int, int]:
+        """How many files have been read from, and how many bytes."""
+        size = (self.finished_bytes + self.live.consumed
+                + sum(tail.consumed for tail in self.archives.values()))
+        count = (len(self.finished) + len(self.archives)
+                 + (1 if self.live.consumed else 0))
+        return count, size
 
 
 # --- session model: the state machine of section 4.3 -------------------------
@@ -811,6 +951,8 @@ class Store:
         self.git_wanted: set[str] = set()
         self.status_seen: dict[str, float] = {}
         self.liveness_checked = 0.0
+        #: Where the log's clock stood at the last look for quiet sessions.
+        self.forgot_at = 0.0
         import threading
 
         # The names the reader gave. Written by whichever thread took the
@@ -901,8 +1043,27 @@ class Store:
         return session
 
     def fold(self, events: Iterable[dict[str, Any]]) -> None:
+        """Fold events in, forgetting sessions a week quiet as the log goes by.
+
+        The log is never thrown away, so the first read is every session there
+        ever was. `visible()` forgets the quiet ones, but only after the fold:
+        measured on a year-shaped log, 1,873 sessions at about 80 KB each sat
+        in memory until then, and the number only grows. So the fold looks as
+        it goes -- by the time the log has reached, never the clock, because
+        `visible()` is the one that knows what now is. A session is judged by
+        its last event and never its first, so one that started a year ago
+        and is still going keeps where it started.
+
+        The log's clock is whatever the machine said when a hook ran, so it is
+        never taken past the real one: an event stamped a year ahead would
+        otherwise forget every session there is, on every start. The fold
+        never forgets more than `visible()` would.
+        """
         for event in events:
-            self.apply(event)
+            session = self.apply(event)
+            if session is not None and session.last_ts - self.forgot_at > FORGET_EVERY:
+                self.forgot_at = session.last_ts
+                self.forget_quiet(min(session.last_ts, time.time()))
 
     def follow(self) -> None:
         """Fold whatever has been appended since the last look."""
@@ -912,10 +1073,14 @@ class Store:
         """The sessions worth showing. A session too old to show is forgotten,
         not merely hidden: the daemon runs for days and everything hung off a
         session id, transcript readers included, would be kept with it."""
+        self.forget_quiet(now)
+        return list(self.sessions.values())
+
+    def forget_quiet(self, now: float) -> None:
+        """Forget every session that has said nothing for `SESSION_MAX_AGE`."""
         for session_id, session in list(self.sessions.items()):
             if now - session.last_ts > SESSION_MAX_AGE:
                 del self.sessions[session_id]
-        return list(self.sessions.values())
 
     def refresh(
         self, now: float | None = None, alive: Callable[[int], bool] | None = None
@@ -965,8 +1130,13 @@ class Store:
         """Read git for the directories that asked, and for any we have never
         read. Both are held to one run per directory per GIT_MIN_INTERVAL,
         because git status on a large worktree is not cheap."""
-        never_read = {s.cwd for s in sessions if s.cwd and s.cwd not in self.git_read}
-        asked = self.git_wanted | never_read
+        # Only for a session that is shown. Every tree-touching event puts its
+        # directory on `git_wanted`, and after a fold of the whole history the
+        # first refresh ran git on every worktree touched in a year, deleted
+        # ones included. A directory nobody shows is dropped from the list.
+        shown = {s.cwd for s in sessions if s.cwd}
+        never_read = {d for d in shown if d not in self.git_read}
+        asked = (self.git_wanted & shown) | never_read
         ready = {
             directory
             for directory in asked
@@ -3658,6 +3828,18 @@ def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: 
 # --- output helpers ----------------------------------------------------------
 
 
+def size_label(size: int) -> str:
+    """Bytes the way a person reads them. The page's `sizeOf` says the same,
+    with a gigabyte added: a log that is never thrown away reaches one."""
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{round(size / 1024)} KB"
+    if size < 1024 ** 3:
+        return f"{size / 1024 / 1024:.1f} MB"
+    return f"{size / 1024 ** 3:.1f} GB"
+
+
 def use_color() -> bool:
     """Colour only a real terminal, and never when NO_COLOR is set."""
     return not os.environ.get("NO_COLOR") and sys.stdout.isatty()
@@ -3994,6 +4176,27 @@ class Daemon:
             for session_id in list(self.transcripts):
                 if session_id not in self.store.sessions:
                     del self.transcripts[session_id]
+
+    def catch_up(self) -> str:
+        """Fold the whole history once, and say what that took.
+
+        This is the one read that grows with the log, because no archive is
+        ever thrown away, so the start of `serve` is where the reader learns
+        what it costs. It is the same fold the first tick would have done;
+        the tick then finds nothing it has not seen.
+        """
+        started = time.monotonic()
+        try:
+            self.store.follow()
+        except Exception as error:  # a bad first read must not stop the daemon
+            log(f"reading the event log failed: {error!r}")
+        took = time.monotonic() - started
+        follower = self.store.follower
+        files, size = follower.files_read()
+        spent = f"{took * 1000:.0f} ms" if took < 1 else f"{took:.1f} s"
+        return (f"read {follower.events:,} event{'s' if follower.events != 1 else ''}"
+                f" from {files} file{'s' if files != 1 else ''}"
+                f" ({size_label(size)}) in {spent}")
 
     def run(self) -> None:
         while not self.stopping.is_set():
@@ -4766,7 +4969,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     events = events_path()
     count = count_events()
-    report(events.exists(), f"event log {events} with {count} events",
+    held = [path for path in event_files() if path.exists()]
+    size = sum(path.stat().st_size for path in held)
+    report(events.exists(),
+           f"event log {events} with {count} events"
+           f" in {len(held)} file{'s' if len(held) != 1 else ''} ({size_label(size)})",
            f"no events yet at {events}; run a Claude Code session", fatal=False)
 
     path = settings_path()
@@ -4886,7 +5093,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         save_settings(path, settings, indent, newline)
     for line in changes or ["nothing to change"]:
         print(line)
-    print(f"the event log stays at {events_path()}")
+    print(f"the event log stays in {state_dir()}")
     if target.exists():
         print(f"remove the program yourself with: rm {target}")
     return 0
@@ -4912,11 +5119,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # never look like a file you never wrote.
     for why in load_links()[1]:
         print(f"links: {why}", file=sys.stderr)
-    # The first pass folds the whole log and runs git for every worktree, which
-    # on a busy machine takes a moment. It happens on the worker, so the page
-    # is served straight away rather than after it.
-    worker = threading.Thread(target=daemon.run, name="wostuast-refresh", daemon=True)
-    worker.start()
     print(f"wostuast is watching at {where}")
     print("it listens on this machine only. To read it from another computer,")
     print(f"  run: ssh -N -L {port}:{BIND_HOST}:{port} {os.environ.get('USER', 'you')}@this-machine")
@@ -4924,6 +5126,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if made:
         print(f"wrote an example {links_path()}; edit it to link your tickets.")
     print("press ctrl-c to stop.")
+
+    def watch() -> None:
+        print(daemon.catch_up(), flush=True)
+        daemon.run()
+
+    # The first pass folds the whole log and runs git for every worktree, which
+    # on a busy machine takes a moment. It happens on the worker, so the page
+    # is served straight away rather than after it -- and it starts after the
+    # lines above, so what it says about the log comes out below them rather
+    # than in the middle.
+    worker = threading.Thread(target=watch, name="wostuast-refresh", daemon=True)
+    worker.start()
     if args.open:
         open_browser(where)
     try:

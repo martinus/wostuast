@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 
 def test_it_reads_each_line_once(ws, tmp_path):
     path = tmp_path / "f.jsonl"
@@ -94,7 +96,7 @@ def test_nothing_is_lost_when_the_log_rotates_under_the_follower(ws, monkeypatch
     follower = ws.EventFollower()
     seen: list[int] = []
     written = 0
-    while not ws.rotated_events_path().exists():
+    while not ws.archived_events_paths():
         ws.append_event({"session_id": "s", "n": written, "pad": "x" * 60})
         written += 1
         seen += [e["n"] for e in follower.new_events()]
@@ -110,7 +112,7 @@ def test_events_written_between_polls_survive_a_rotation(ws, monkeypatch):
     ws.append_event({"session_id": "s", "n": 0, "pad": "x" * 60})
     assert [e["n"] for e in follower.new_events()] == [0]
     written = 1
-    while not ws.rotated_events_path().exists():
+    while not ws.archived_events_paths():
         ws.append_event({"session_id": "s", "n": written, "pad": "x" * 60})
         written += 1
         assert written < 200
@@ -124,7 +126,7 @@ def test_a_daemon_started_after_a_rotation_still_sees_the_history(ws, monkeypatc
     ws.append_event({"session_id": "s", "hook_event_name": "SessionStart",
                      "cwd": "/w/repo/dir", "pane": "%7", "pid": 1, "ts": 1000.0})
     n = 0
-    while not ws.rotated_events_path().exists():
+    while not ws.archived_events_paths():
         ws.append_event({"session_id": "s", "hook_event_name": "PreToolUse",
                          "tool_name": "Bash", "tool_input": {"command": "x" * 60},
                          "pid": 1, "ts": 1001.0 + n})
@@ -157,3 +159,66 @@ def test_broken_lines_do_not_stop_the_follower(ws):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"n": 1}\nrubbish\n[1,2]\n{"n": 2}\n')
     assert [e["n"] for e in ws.EventFollower().new_events()] == [1, 2]
+
+
+# --- a log that is never thrown away has to be read a piece at a time -------
+
+
+def held_at_most(read) -> tuple[int, int]:
+    """Run `read`, and say how many items it gave and the most memory it held
+    at any one moment. `tracemalloc` sees every bytes object `read()` makes."""
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        count = sum(1 for _ in read())
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    return count, peak
+
+
+def test_a_big_log_is_read_a_piece_at_a_time(ws, monkeypatch):
+    """`Tail` read the whole rest of a file in one `read()`, then split it and
+    kept both. Measured on a synthetic 400 MB log: 821 MB resident, for a
+    daemon that holds a few kilobytes per session. The log was capped at two
+    files of 20 MB, so nobody met it; keeping every archive is what makes it
+    a real bill, so the read is capped rather than the history."""
+    monkeypatch.setattr(ws, "TAIL_CHUNK", 64 * 1024, raising=False)
+    path = ws.events_path()
+    ws.private_dir(path.parent)
+    line = json.dumps({"session_id": "s", "pad": "x" * 500}) + "\n"
+    path.write_text(line * 8000)                 # about 4 MB
+
+    count, peak = held_at_most(ws.EventFollower().new_events)
+    assert count == 8000
+    assert peak < 1024 * 1024, f"held {peak:,} bytes at once for a 4 MB log"
+
+
+def test_a_line_longer_than_a_piece_is_still_read_whole(ws, tmp_path,
+                                                        monkeypatch):
+    """A piece that holds no newline gives no line, and an empty answer is
+    not the end of the file. Stopping there would leave a Write of a big file
+    unread until the next event came along to push it through."""
+    monkeypatch.setattr(ws, "TAIL_CHUNK", 1024, raising=False)
+    path = tmp_path / "f.jsonl"
+    long = b"y" * 5000
+    path.write_bytes(b"a\n" + long + b"\nb\n")
+    assert ws.Tail(path).read_new() == [b"a", long, b"b"]
+
+
+def test_a_rotation_between_two_reads_does_not_read_the_archive_again(
+        ws, monkeypatch):
+    """The live file becomes an archive under a new name, and a tail that
+    only knew names read all of it again: 20 MB parsed a second time on every
+    rotation. The follower knows the file by its inode and carries on."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    follower = ws.EventFollower()
+    seen: list[int] = []
+    written = 0
+    while len(ws.archived_events_paths()) < 3:
+        ws.append_event({"session_id": "s", "n": written, "pad": "x" * 60})
+        written += 1
+        seen += [e["n"] for e in follower.new_events()]
+        assert written < 500
+    assert seen == list(range(written)), "an event was lost or read twice"

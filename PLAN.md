@@ -134,9 +134,13 @@ one line to the events file:
   prompt, every command and every result.
 
 The events file is append-only. `wostuast serve` reads it from the start on
-launch, then follows it. Rotate when it passes 20 MB: rename to
-`events.1.jsonl`, start fresh. Sessions that ended more than 7 days ago are
-not shown.
+launch, then follows it, and says how many events, files and bytes it read and
+how long that took. Rotate when it passes 20 MB: rename to the next free
+`events.<n>.jsonl`, counting up from 1, and start fresh. No archive is ever
+deleted. The log is read a megabyte at a time, and the first read forgets a
+session as soon as the log's own clock is a week past its last event, so
+neither grows with the history. Sessions quiet for more than 7 days are not
+shown.
 
 ### 4.2 The status line
 
@@ -1090,6 +1094,9 @@ without opening it first.
 | A spend limit stops an agent with Escape, and that is not owning it | Goal 3 says nothing owns the agent process, and this file used that to refuse a spend limit outright. Killing a process is owning it; typing into a pane is what this program already does for jump and send. The refusal was too broad. Escape and not Ctrl-C, because Claude Code exits on a second Ctrl-C at an idle prompt and a turn can end while the key is in flight. The daemon enforces the limit, not the browser, because one that holds only while a tab is open is a promise that breaks when you shut the laptop. |
 | Money is in the status line, and this file said it was not | Written from `tests/fixtures/status.json` at a moment when that fixture had no `cost` in it, and #101 was closed down to one line on the strength of it. The payload carries `cost.total_cost_usd`, `cost.total_duration_ms`, `cost.total_api_duration_ms` and the lines added and removed; `rate_limits.five_hour`, `seven_day` and `spend_limit` carry the allowance, as a used percentage and a reset time. A reader whose status line shows the spend said so, and was right. It is written down here rather than quietly corrected, because the wrong version was believed and acted on — which is what this file's own rule about stale facts is about. |
 | The Diff tab explains itself rather than being renamed | #103 asked for a Git tab: commits on the left, a message above each one's files. The complaint it opens with is that nobody can tell what the diff shows, and that is a labelling fault — the two halves were already the right two halves, named in git's syntax. Saying it in words is the whole of that fix. The commit list is a real feature and a separate one, and it puts the review's anchor model in question: a comment anchored to a line of a commit is not a comment anchored to a line of the file, which is what the review is built on. |
+| Every archive of the event log is kept | The log kept two files and dropped the older one on the next rotation, which capped history at 40 MB — a few weeks of heavy use. Disk is cheap and history is what the log is for: a year of heavy use is a few hundred megabytes. Archives count up from 1, oldest lowest, and none is deleted. What that costs is reading, not storing, and the next row is that bill. |
+| The log is read a piece at a time, and the first read forgets as it goes | Measured on a 200 MB log shaped like a year of work, 1,873 sessions: 6.7 s and 641 MB resident before. Reading a megabyte at a time instead of the whole rest of the file: 169 MB. Forgetting sessions a week quiet during the fold rather than after it: 3.3 s and 28 MB, flat whatever the history's length. `serve` says what the first read cost, because it is the one cost that still grows. |
+| No SQLite | `sqlite3` is in the standard library and imports faster than `json`, so it is not a dependency problem. The write path is: one short-lived hook writing one row took 2 ms, and 32 at once took 20 ms median and 183 ms at worst, against 0.1 ms and 4 ms for an append under `flock` — on the one path that must never block. As an index only the daemon writes, it would buy a faster start and nothing the features need: a plain scan of 400 MB for a word takes 0.38 s, and a count is a fold. A checkpoint of the folded state would buy the same faster start without a schema, when the start is slow enough to matter. |
 | Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
 | Nothing is vendored | `marked` and `highlight.js` are 157 KB against a 175 KB program. Carrying them would nearly double the file the install one-liner curls, and the page already fetches its fonts. |
 | Both are pinned by hash | Any script on this page can type into your terminal through `/send`. `integrity` means a CDN that has been tampered with gets you the fallback rather than other code. |
