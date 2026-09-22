@@ -5,6 +5,8 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 
+import time
+
 import pytest
 
 import conftest
@@ -289,3 +291,76 @@ def test_the_live_slot_keeps_the_far_end_when_the_find_box_goes(page_at):
         finally:
             browser.close()
 
+
+
+# --- how full the window is ---------------------------------------------------
+
+
+def test_the_context_bar_stands_at_the_end_of_the_tab_row(page_at):
+    """It is in the Session tab too, in a panel you have to go to. This is the
+    one fact in that panel you want to notice rather than look up, so it is on
+    every tab — which is the whole of what #101 asked for that wostuast can
+    actually know."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_selector("#ctxslot .ctx")
+            for tab in ("transcript", "files", "diff", "review", "session"):
+                show_tab(page, tab)
+                seen = page.evaluate("""() => {
+                  const slot = document.getElementById('ctxslot');
+                  const bar = slot.querySelector('.bar .fill');
+                  const live = document.getElementById('live')
+                    .getBoundingClientRect();
+                  return {text: slot.innerText, hidden: slot.hidden,
+                          fill: bar && bar.style.width,
+                          leftOfLive: slot.getBoundingClientRect().right
+                                      <= live.left + 1};
+                }""")
+                assert seen["hidden"] is False, tab
+                assert "41% ctx" in seen["text"], (tab, seen)
+                assert seen["fill"] == "41%", (tab, seen)
+                assert seen["leftOfLive"], (tab, seen)
+        finally:
+            browser.close()
+
+
+def test_a_session_whose_status_line_is_quiet_has_no_context_bar(ws, served):
+    """`context_pct` is the one number only the status line carries, so a
+    session without one has nothing to draw and draws nothing — rather than a
+    bar at nought, which would read as an empty window."""
+    daemon, base = served
+    ws.append_event(conftest.event(
+        "SessionStart", pane="%7", pid=1, ts=time.time()))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            assert page.evaluate("state.sessions[0].context_pct") is None
+            assert page.is_hidden("#ctxslot")
+            assert page.evaluate(
+                "document.getElementById('ctxslot').innerText") == ""
+        finally:
+            browser.close()
+
+
+def test_the_context_bar_does_not_touch_the_live_slot(page_at):
+    """`paintLive` is the one writer of that slot and three things already
+    want it. A fourth would be the race that rule was written after."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_selector("#ctxslot .ctx")
+            page.wait_for_function(
+                "document.getElementById('live').textContent === 'live'")
+            page.evaluate("said({error: 'no pane for this session'})")
+            page.wait_for_function(
+                """() => document.getElementById('live').innerText
+                          .includes('no pane')""")
+            # The failure is in the slot, and the bar is still beside it.
+            assert "41% ctx" in page.locator("#ctxslot").inner_text()
+        finally:
+            browser.close()

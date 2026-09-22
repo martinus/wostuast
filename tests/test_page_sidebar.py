@@ -175,8 +175,11 @@ def test_the_context_percent_is_a_bar(page_at):
         try:
             show_tab(page, "session")
             page.wait_for_selector(".sessionbody .ctx .bar")
-            assert page.locator(".ctx .bar").count() == 1
-            width = page.evaluate("document.querySelector('.ctx .fill').style.width")
+            # In the panel. The strip at the end of the tab row draws the
+            # same thing from the same builder, so `.ctx` alone finds two.
+            assert page.locator(".sessionbody .ctx .bar").count() == 1
+            width = page.evaluate(
+                "document.querySelector('.sessionbody .ctx .fill').style.width")
             assert width == "41%"
             assert "41% ctx" in page.locator(".sessionbody").inner_text()
         finally:

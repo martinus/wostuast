@@ -5157,15 +5157,17 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 .tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
 .tab:disabled { color: var(--edge-bright); cursor: default; }
-.findhome { margin-left: auto; display: flex; align-items: center; }
+/* What holds the find box, the context bar and the live slot at the far end
+   of the tab row. It used to be a `margin-left: auto` on the find box, and
+   then a second rule to hand that `auto` to the live slot when the box was
+   hidden -- which broke the moment anything was put between the two. A
+   spacer belongs to none of them, so any of them can come and go. */
+.tabfill { flex-grow: 1; }
+.findhome { display: flex; align-items: center; }
 /* `display` above would otherwise beat the browser's own rule for `hidden`,
    and the box would never go away -- the same line `.sendbar` carries, and
    the third time this shape has caught something here. */
 .findhome[hidden] { display: none; }
-/* The `auto` above is what pushes both the box and the live slot to the far
-   end of the tab bar. With the box gone the slot has to take it over, or it
-   comes to rest against the last tab. */
-.findhome[hidden] + .live { margin-left: auto; }
 .find {
   width: 240px; height: 26px; padding: 0 10px; border-radius: 5px;
   border: 1px solid var(--edge); background: var(--raised); color: var(--ink);
@@ -5173,6 +5175,12 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 .find:focus { outline: none; border-color: var(--needs); }
 .find::placeholder { color: var(--ink-faint); }
+/* How full the chosen session's context window is, at the end of the tab row
+   where it is in view on every tab. The Session tab says it too, in a panel
+   you have to go to; this is the one fact in that panel you want to notice
+   rather than look up. */
+.ctxslot { margin-left: 12px; display: inline-flex; align-items: center; }
+.ctxslot[hidden] { display: none; }
 .live { margin-left: 12px; display: inline-flex; align-items: center;
   color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
 mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0 1px; }
@@ -5870,10 +5878,12 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button class="tab" role="tab" aria-selected="false" data-tab="review">4 Review<span
           class="badge" id="reviewcount" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="session">5 Session</button>
+        <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
                  autocomplete="off" spellcheck="false">
         </div>
+        <div class="ctxslot" id="ctxslot" hidden></div>
         <div class="live" id="live"></div>
       </div>
       <div class="content" id="content"></div>
@@ -6051,18 +6061,9 @@ function putFacts(pane, s) {
   if (s.ahead || s.behind) row("against upstream", "↑" + s.ahead + " ↓" + s.behind);
   row("changed files", s.dirty ? s.touched_files : "none");
   row("model", s.model);
-  if (s.context_pct !== null && s.context_pct !== undefined) {
-    // The bar, not a number: how full a context window is reads at a glance
-    // and does not at a count. It was the one thing in the old bar above the
-    // tabs that the chosen row does not say.
-    const pct = Math.round(s.context_pct);
+  if (hasContext(s)) {
     put(list, "dt", null, "context used");
-    const cell = put(list, "dd");
-    const ctx = put(cell, "span",
-                    "ctx" + (pct >= 85 ? " hot" : pct >= 60 ? " warm" : ""));
-    const bar = put(ctx, "span", "bar");
-    put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
-    put(ctx, "span", null, pct + "% ctx");
+    putContext(put(list, "dd"), s.context_pct);
   }
   row("started", whenOf(s.since) + "  ·  " + ago(s.since) + " ago");
   row("session id", s.id);
@@ -6078,6 +6079,27 @@ function putFacts(pane, s) {
     go.title = "put the cursor in that pane  ⏎";
     go.addEventListener("click", jumpToPane);
   }
+}
+
+// Whether the status line has told us how full the window is. It is the one
+// number here that only the status line carries, so a session whose status
+// line is not registered has none and nothing about it is drawn.
+function hasContext(s) {
+  return !!s && s.context_pct !== null && s.context_pct !== undefined;
+}
+
+// The bar, not a number: how full a context window is reads at a glance and
+// does not at a count. Two places want it -- the Session tab, and the strip
+// at the end of the tab row -- and they draw the same thing, so they build it
+// the same way.
+function putContext(parent, percent) {
+  const pct = Math.round(percent);
+  const ctx = put(parent, "span",
+                  "ctx" + (pct >= 85 ? " hot" : pct >= 60 ? " warm" : ""));
+  const bar = put(ctx, "span", "bar");
+  put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
+  put(ctx, "span", null, pct + "% ctx");
+  return ctx;
 }
 
 function putRename(pane, s) {
@@ -6826,6 +6848,7 @@ function drawHeader() {
   // so a fifth cannot forget it. It is the other thing that lives outside a
   // tab, and for the same reason: it belongs to the session, not to a tab.
   drawAsking();
+  drawContext();
   const s = current();
   const was = $("sendbar").hidden;
   $("sendbar").hidden = !s || !s.pane || state.tab !== "transcript"
@@ -6835,6 +6858,31 @@ function drawHeader() {
   // layout it has just made dirty. What is in the box cannot change without
   // the reader typing, and that has its own listener.
   if (was && !$("sendbar").hidden) fitSay();
+}
+
+// How full the chosen session's window is, in the strip at the end of the tab
+// row. It is drawn from `drawHeader`, so it arrives with everything else the
+// push carries and no fifth call site can forget it.
+//
+// It is its own element and not `#live`: `paintLive` is the one writer of
+// that slot and three things already want it -- what the stream is doing,
+// something you asked for and did not get, and a passing word over both. A
+// fourth would be the race that rule was written after.
+function drawContext() {
+  const slot = $("ctxslot");
+  if (!slot) return;
+  const s = current();
+  slot.hidden = !hasContext(s);
+  if (slot.hidden) {
+    slot.replaceChildren();
+    slot.dataset.pct = "";
+    return;
+  }
+  const pct = String(Math.round(s.context_pct));
+  if (slot.dataset.pct === pct) return;   // a push a second, and it rarely moves
+  slot.dataset.pct = pct;
+  slot.replaceChildren();
+  putContext(slot, s.context_pct);
 }
 
 // --- the tab icon, drawn here so it follows the colours ---------------------
@@ -8729,7 +8777,16 @@ function drawFiles(box) {
   // the scrollbar: asking the DOM from `showTab` and again from `savePlace`
   // meant two writers with different fallbacks, and the second one wrote the
   // outgoing session's place over the place just restored for the new one.
+  //
+  // Whose scrollbar, though. This node is built for one session and outlives
+  // the moment another is chosen -- leaving the Files tab does not rebuild
+  // it -- so a scroll event still queued when `choose` runs arrives after
+  // `usePlace` has put the new session's place back, and writes the old
+  // session's number over it. Caught as a test that only failed under load,
+  // which is what that ordering needs.
+  const mine = state.chosen;
   view.addEventListener("scroll", () => {
+    if (state.chosen !== mine) return;
     state.files.down = view.scrollTop;
     if (windowed) fillCode(view);
   });
