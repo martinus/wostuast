@@ -69,7 +69,7 @@ Nothing else writes to a terminal. Nothing owns the agent process.
 | `PLAN.md` | Goals, non-goals, design, milestones. |
 | `README.md` | What a user reads. Keep in step with the commands. |
 | `.claude/skills/issues/SKILL.md` | How to work the issue list: group, reproduce, ask, prove, review, merge on green, read the list again. Invoked as `/issues`, and by "do the issues". |
-| `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, plus one job with a browser. Both run `pytest -q -n auto`; neither names a test file, and it should stay that way — naming one broke the browser job the moment a file was renamed. |
+| `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, four sharded browser jobs, and an aggregator named `browser` that the branch rule requires. No job names a test file, and none may — naming one broke the browser job the moment a file was renamed, and the shards split on a hash of the test id for that reason. |
 
 ### Finding code in `wostuast`
 
@@ -161,8 +161,13 @@ pytest tests/test_state.py -q       # no browser, under a second
 Most of the suite drives a real browser, so it waits far more than it computes:
 four workers cut it to about a third, and the tests are safe in parallel —
 every daemon binds port 0, every fixture has its own `tmp_path`, and each worker
-launches a Chromium of its own. More workers than cores starts to time out
-rather than go faster. CI runs `-n auto` in both jobs.
+launches a Chromium of its own. **Oversubscribing the cores pays, up to about
+twice their number.** Measured on four cores over the whole suite: `-n 4` 110 s,
+`-n 6` 96 s, `-n 8` 88 s, `-n 12` 107 s. Nothing timed out at 8, which
+supersedes the older note here that more workers than cores only made things
+worse — it stopped being true as the suite grew. The tests that run no browser
+are the other shape, CPU-bound and slightly *slower* at `-n 8` (25.5 s against
+24.5 s), so CI runs the matrix at `-n auto` and the browser shards at `-n 8`.
 
 **What the suite does not cover.** It drives the happy path thoroughly, in a
 real browser. It says very little about what happens when something *fails*: of
@@ -234,7 +239,13 @@ things about it are worth knowing before they surprise you.
   can drift.** Add a Python version to `tests.yml` and its job is not required
   until you add it to the ruleset. Take one out and the ruleset waits for a
   check that will never report, and then nothing can be merged at all. Change
-  the matrix, change the ruleset.
+  the matrix, change the ruleset. **The browser shards are the exception, and
+  that is the whole reason the `browser` job exists**: it runs nothing, needs
+  the shards, and reports under the name the rule asks for, so the shards can
+  be renumbered without anyone touching the ruleset. It carries `if: always()`
+  because a job its `needs` skipped reports neither pass nor fail, and a
+  required check can read that as a pass — which would make a red shard
+  mergeable. The `pytest` matrix has no such cover.
 
 ## Rules, each one a bug that already happened
 
