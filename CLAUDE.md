@@ -220,6 +220,14 @@ drawn, which is what a loaded CI runner looks like. `wait_for_map(page, rows)`
 is the wait for the transcript; for anything else, wait for the element you
 are about to read.
 
+**The live slot is repainted on every push, so read it in the same
+`evaluate` that writes it.** `note()` borrows the slot and the stream is
+allowed to take it back — that is what one painter means. A `wait_for_function`
+asking whether the word is there can therefore run after a repaint and wait
+out its timeout, which is a test of the machine's load and not of the page.
+Writing and reading inside one `evaluate` has no gap in it: JavaScript is
+single-threaded and no push can land in the middle of the call.
+
 **This scar keeps coming back, so recognise its shape rather than its
 names.** It has been six tests over three sittings, and every one of them read
 `.turn`, `.prose`, `.who`, `state.turns.blocks` or the find box on the line
@@ -754,14 +762,23 @@ things about it are worth knowing before they surprise you.
   `test_what_a_session_keeps_is_what_comes_back` is what stops them drifting:
   a field saved and not put back is silent, and reads as the feature
   half-working.
-- **`state.files.down` has one writer, and it is the scrollbar.** The
-  `.filescroll` listener writes it as the reader moves, so `savePlace` reads
-  a field and never asks the DOM. It used to ask, and so did `showTab` — and
-  `choose` restores the place and *then* changes the tab, so `showTab`'s
-  query found the outgoing session's pane and wrote its place over the one
-  just restored. `drawFiles` puts the place back only once there is something
-  under the bar: the first draw after a session is chosen has no text yet,
-  and scrolling to nought there would be written straight back as the place.
+- **`state.files.down` has one writer, and it is *this session's*
+  scrollbar.** The `.filescroll` listener writes it as the reader moves, so
+  `savePlace` reads a field and never asks the DOM. It used to ask, and so did
+  `showTab` — and `choose` restores the place and *then* changes the tab, so
+  `showTab`'s query found the outgoing session's pane and wrote its place over
+  the one just restored. `drawFiles` puts the place back only once there is
+  something under the bar: the first draw after a session is chosen has no
+  text yet, and scrolling to nought there would be written straight back as
+  the place. **And the listener knows whose pane it is on**: `.filescroll` is
+  built for one session and outlives the moment another is chosen — leaving
+  the Files tab does not rebuild it — so a scroll event still queued when
+  `choose` runs arrives *after* `usePlace` and writes the old session's number
+  over the new one's. It captures `state.chosen` where it is attached and
+  writes nothing once that has moved. This only ever happens by itself on a
+  loaded machine, so
+  `test_a_scroll_left_over_from_another_session_is_not_its_place` dispatches
+  the event on purpose rather than waiting for one.
 - **A tab's state lives under its own name**, `state.files` and
   `state.turns`, each with one `blank…()` that builds an empty one. Choosing a session is then
   `state.files = blankFiles()` rather than eleven assignments that could
@@ -1202,6 +1219,17 @@ things about it are worth knowing before they surprise you.
   decision, and a caller that fails `origin_ours` is told nothing it did not
   already know. The page raises a bar that only a reload clears, which is
   right anyway: after an upgrade its JavaScript is old too.
+- **The context bar is its own slot, beside `#live` and never in it.**
+  `paintLive` is the one writer of that slot and three things already want it
+  — what the stream is doing, something you asked for and did not get, and a
+  passing word over both. A fourth would be the race that rule was written
+  after. `drawContext` is called from `drawHeader`, so it arrives with
+  everything else a push carries and no fifth call site can forget it, and it
+  redraws only when the number moves — the push is about once a second and
+  the number is not. `putContext` builds it for the strip and for the Session
+  tab, because they draw the same thing. A session whose status line is not
+  registered has no `context_pct` and gets no bar: nought would read as an
+  empty window rather than as no answer.
 - **`said` is the daemon's answer and it stays; `note` is our own word and it
   fades.** "Review sent" goes stale in four seconds. "That did not come from
   this page" is about something you asked for and did not get, and fading it

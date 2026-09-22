@@ -88,6 +88,9 @@ the tab, the open file, the place in it.
 | **Review** | The comments you have written, as one task to send. |
 | **Session** | Everything about this one: worktree, branch, model, context, pane, and its own event log. It is the only place a session is renamed. |
 
+How full the chosen session's context window is sits at the end of the tab row,
+so it is in view whichever tab you are on.
+
 ### Alerts
 
 The **alerts** button in the top strip opens two switches: be told when an

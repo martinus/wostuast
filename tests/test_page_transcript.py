@@ -417,12 +417,16 @@ def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
         try:
             page.wait_for_function(
                 "document.getElementById('live').textContent === 'live'")
-            # One question, not two: a push landing between an `evaluate` and
-            # an `inner_text` repaints the slot, and the word is gone before
-            # the assertion reads it.
-            page.evaluate("note('review sent')")
-            page.wait_for_function(
-                "document.getElementById('live').textContent === 'review sent'")
+            # Written and read back inside one `evaluate`, because there is
+            # no gap inside one: the stream repaints this slot on every push,
+            # and it really is allowed to take the word back — `paintLive` is
+            # one painter and the stream is one of the three things that want
+            # it. A second question from Python can land after that repaint,
+            # so asking twice tests the machine's load, not the page.
+            said = page.evaluate(
+                """() => { note('review sent');
+                           return document.getElementById('live').textContent; }""")
+            assert said == "review sent"
             page.wait_for_function(
                 "document.getElementById('live').textContent === 'live'",
                 timeout=15000)
@@ -1137,12 +1141,24 @@ def test_showing_thinking_says_what_it_did(page_at):
             page.wait_for_function(
                 "() => document.querySelectorAll('.turn.thinking').length === 1")
             assert page.locator(".turn.thinking").is_hidden()
+            # The key is bound to it, and what it does is visible.
             page.keyboard.press("t")
             page.wait_for_selector(".turn.thinking", state="visible")
-            assert "showing 1 thought" in page.locator("#live").inner_text()
             page.keyboard.press("t")
             page.wait_for_selector(".turn.thinking", state="hidden")
-            assert "hiding 1 thought" in page.locator("#live").inner_text()
+
+            # And what it says. Read back inside the same `evaluate` that
+            # calls it: the stream repaints this slot on every push and is
+            # allowed to take the word back, so a separate wait is a test of
+            # the machine's load. There is no gap inside one call.
+            said = page.evaluate(
+                """() => { const out = [];
+                           toggleThinking();
+                           out.push(document.getElementById('live').textContent);
+                           toggleThinking();
+                           out.push(document.getElementById('live').textContent);
+                           return out; }""")
+            assert said == ["showing 1 thought", "hiding 1 thought"], said
         finally:
             browser.close()
 

@@ -1585,3 +1585,33 @@ def test_the_go_to_list_is_wider_than_the_box_it_hangs_under(repo_page):
             assert seen["clipped"] is False, seen
         finally:
             browser.close()
+
+
+def test_a_scroll_left_over_from_another_session_is_not_its_place(two_repos):
+    """`.filescroll` is built for one session and outlives the moment another
+    is chosen — leaving the Files tab does not rebuild it. A scroll event
+    still queued when `choose` runs arrives after `usePlace` has put the new
+    session's place back, and wrote the old session's number over it.
+
+    Drive that ordering exactly, rather than waiting for a loaded machine to
+    produce it: the event is dispatched on the stale node after the switch."""
+    _, _, base = two_repos
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s1')")
+            show_tab(page, "files")
+            page.wait_for_selector(".filescroll")
+            seen = page.evaluate("""() => {
+              const view = document.querySelector('.filescroll');
+              view.scrollTop = 400;
+              // The node s1 was reading, kept exactly as the page keeps it.
+              choose('s2');
+              state.files.down = 77;          // what `usePlace` put back
+              view.dispatchEvent(new Event('scroll'));
+              return state.files.down;
+            }""")
+            assert seen == 77, seen
+        finally:
+            browser.close()
