@@ -580,3 +580,171 @@ def test_a_name_being_typed_survives_the_tab_redrawing(in_pane):
             assert page.input_value(".sessionbody .rename") == "half a name"
         finally:
             browser.close()
+
+
+# --- stopping an agent, and the limit that does it for you --------------------
+
+
+def test_the_stop_button_presses_escape_and_not_ctrl_c(in_pane):
+    """Escape stops the turn and keeps the work done so far. Ctrl-C into a
+    prompt that has just gone idle is one press away from ending the
+    session — see `tmux_interrupt`."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".sessionbody .verb")
+            seen.clear()
+            page.click(".sessionbody .verb:text-is('stop')")
+            page.wait_for_function(
+                "() => document.getElementById('live').innerText"
+                ".includes('Escape')")
+            assert seen == [["tmux", "send-keys", "-t", "%7", "Escape"]], seen
+        finally:
+            browser.close()
+
+
+def test_a_spend_limit_is_set_from_the_panel_and_comes_back(ws, in_pane):
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".limitbox")
+            assert page.input_value(".limitbox") == ""
+            seen.clear()
+            # Every limit this page asks for, kept where nothing repaints it.
+            # It must be one, for 12 — on `input` rather than `change` the
+            # box posts $1 on the way to $12, and a session already past a
+            # dollar is stopped by a number the reader was still typing.
+            page.evaluate("""() => { window.__asked = [];
+              const real = tell;
+              tell = (id, what, body) => {
+                if (what === 'limit') window.__asked.push(body.limit);
+                return real(id, what, body);
+              }; }""")
+            page.click(".limitbox")
+            page.type(".limitbox", "12", delay=40)
+            page.keyboard.press("Tab")           # `change`, not every keystroke
+            # The daemon has it first. Like a rename, setting one pushes
+            # nothing: the rows are built from the map on the next pass, so
+            # the browsers hear about it when that pass happens.
+            wait_until(lambda: ws.read_limits().get("s1", {}).get("limit") == 12.0)
+            assert seen == [], "setting a limit must write no terminal"
+            assert page.evaluate("window.__asked") == [12], \
+                page.evaluate("window.__asked")
+            daemon.tick()
+            page.wait_for_function(
+                "() => state.sessions[0].spend_limit === 12")
+            # And it says what it will *actually* do. This session's status
+            # line has sent no spend, so nothing could ever fire, and saying
+            # "Escape when the spend passes it" would be a promise this
+            # program cannot keep.
+            page.wait_for_function(
+                """() => document.querySelector('.limitrow')
+                     .innerText.includes('does not send the spend')""")
+
+            # With a spend, it promises what it can do.
+            daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=2.0)
+            daemon.tick()
+            page.wait_for_function(
+                """() => document.querySelector('.limitrow')
+                     .innerText.includes('Escape into this pane')""")
+
+            # Emptying it takes the limit away.
+            page.fill(".limitbox", "")
+            page.keyboard.press("Tab")
+            wait_until(lambda: ws.read_limits() == {})
+            daemon.tick()
+            page.wait_for_function("() => !state.sessions[0].spend_limit")
+        finally:
+            browser.close()
+
+
+def test_a_session_stopped_by_its_limit_says_so_where_you_would_look(ws, in_pane):
+    """"Why did my agent stop" is asked in front of this panel, not in the
+    pane — and raising the box is what lets it go again."""
+    daemon, base, seen = in_pane
+    ws.append_event(conftest.event("UserPromptSubmit", pane="%7",
+                                   prompt="go", ts=time.time()))
+    daemon.store.refresh()
+    daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=30.0)
+    daemon.store.set_limit("s1", 10.0)
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "session")
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.limitrow');
+                           return one && one.innerText.includes('stopped'); }""")
+            said = page.locator(".limitrow").inner_text()
+            assert "raise it to go on" in said, said
+            assert page.input_value(".limitbox") == "10"
+        finally:
+            browser.close()
+
+
+def wait_until(said, seconds=10):
+    """Wait for something the daemon knows, rather than for the page to be
+    told: a POST that writes no terminal pushes nothing, so the browser only
+    hears about it on the next pass."""
+    until = time.monotonic() + seconds
+    while time.monotonic() < until:
+        if said():
+            return
+        time.sleep(0.02)
+    raise AssertionError("the daemon never got it")
+
+
+def test_a_limit_being_typed_survives_the_panel_redrawing(in_pane):
+    """`rest` is rebuilt on every four-second poll. A rebuild under the hand
+    is worse here than for the name: the node is removed rather than blurred,
+    so `change` never fires and the number is not merely lost on screen — it
+    is never stored at all."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base_of(in_pane)))
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".limitbox")
+            page.click(".limitbox")
+            page.type(".limitbox", "25", delay=20)
+            # Whatever the poll brings, and a state change on top of it.
+            page.evaluate("""() => {
+              state.events = {counts: {Stop: 3}, events: [], at: state.events.at + 1};
+              draw();
+            }""")
+            page.wait_for_function(
+                """() => document.querySelector('.sessionbody .counts')
+                     .textContent.includes('3')""")
+            assert page.input_value(".limitbox") == "25"
+            assert page.evaluate(
+                "document.activeElement.className") == "limitbox"
+        finally:
+            browser.close()
+
+
+def test_a_limit_being_typed_survives_its_own_news(ws, in_pane):
+    """The narrow key keeps the poll's churn out, but the limit field has
+    news of its own — a status line that starts reporting a spend, or a limit
+    that has just fired. Without the focus guard that news rebuilds the box
+    under the hand, and the node is removed rather than blurred, so `change`
+    never fires and the number is gone."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "session")
+            page.wait_for_selector(".limitbox")
+            page.click(".limitbox")
+            page.type(".limitbox", "25", delay=20)
+            # Exactly what `limitKey` watches, arriving mid-word.
+            page.evaluate("""() => { state.sessions[0].cost_usd = 3.5;
+                                     draw(); }""")
+            page.wait_for_timeout(200)   # proving something did not happen
+            assert page.input_value(".limitbox") == "25"
+            assert page.evaluate(
+                "document.activeElement.className") == "limitbox"
+        finally:
+            browser.close()

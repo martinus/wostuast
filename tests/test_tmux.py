@@ -160,3 +160,30 @@ def test_a_line_of_only_control_characters_is_not_sent(ws):
     assert ws.tmux_send("%1", "\x1b\x07\x00",
                         runner=lambda cmd: said.append(cmd) or "") is False
     assert said == []
+
+
+# --- interrupt ----------------------------------------------------------------
+
+
+def test_interrupt_sends_escape_and_never_ctrl_c(ws, asked):
+    """Claude Code's own docs: Escape stops the current response or tool call
+    and "Claude keeps the work done so far"; Ctrl-C interrupts a running
+    operation, but "if nothing is running, the first press clears the prompt
+    input and a second press exits Claude Code".
+
+    A turn can end between deciding to stop a session and the key landing, so
+    Ctrl-C on an automatic limit is a race whose losing side is a session that
+    quit. Escape on an idle prompt does nothing."""
+    assert ws.tmux_interrupt("%7", runner=asked) is True
+    assert asked.seen == [["tmux", "send-keys", "-t", "%7", "Escape"]]
+    flat = " ".join(asked.seen[0])
+    assert "C-c" not in flat and "\x03" not in flat
+
+
+def test_interrupt_without_a_pane_runs_nothing(ws, asked):
+    assert ws.tmux_interrupt("", runner=asked) is False
+    assert asked.seen == []
+
+
+def test_interrupt_says_when_tmux_did_not_take_it(ws):
+    assert ws.tmux_interrupt("%7", runner=lambda args, **rest: None) is False

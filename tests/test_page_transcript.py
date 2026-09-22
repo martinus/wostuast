@@ -654,6 +654,11 @@ def test_a_row_goes_to_its_place_in_the_transcript(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
+            # The first fetch, then the stream, then the rounds. Without the
+            # first wait the fetch and the push interleave, and the page can
+            # end up having drawn the transcript it asked for over the one it
+            # was sent.
+            wait_for_map(page)
             wait_for_watching(daemon)
             append_rounds(daemon, 12)
             page.wait_for_function(

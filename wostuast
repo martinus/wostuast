@@ -213,6 +213,12 @@ def names_path() -> Path:
     return state_dir() / "names.json"
 
 
+def limits_path() -> Path:
+    """Where the spend limits live. Beside the names, and for the same reason:
+    both are what the reader told this program from the page."""
+    return state_dir() / "limits.json"
+
+
 def links_path() -> Path:
     """The reader's own autolinks: a ticket id in a transcript, turned into a
     link to wherever their tickets live.
@@ -817,6 +823,7 @@ class Store:
         # snapshot: one name was lost, and memory and the file disagreed
         # about which, so a restart silently swapped them.
         self.names: dict[str, str] = read_names()
+        self.limits: dict[str, dict[str, float]] = read_limits()
         self.naming = threading.Lock()
 
     def get(self, session_id: str) -> Session:
@@ -923,6 +930,14 @@ class Store:
         sessions = self.settle(moment, alive)
         self.reload_git(sessions, moment)
         rows = [row(session) for session in sort_sessions(sessions)]
+        # The limits are the page's, not the session's, so they are put on
+        # here rather than inside `row` -- the same shape as the names, which
+        # `settle` reads onto `session.mine` one call above.
+        for one in rows:
+            kept = self.limits.get(one["id"])
+            if kept:
+                one["spend_limit"] = kept["limit"]
+                one["limit_fired"] = kept["fired_at"]
         changed = rows != self.rows
         self.rows = rows
         return changed
@@ -978,6 +993,78 @@ class Store:
             one = facts.get(session.cwd)
             if one is not None and not one.failed:
                 session.git = one
+
+    def set_limit(self, session_id: str, limit: float) -> float:
+        """Set what a session may spend, or take the limit away with nought.
+
+        The map is replaced rather than edited, the trick `rename` plays and
+        for the same reason: the thread folding events reads it and must never
+        see a half-written one. Setting a limit clears `fired_at`, so raising
+        it after a stop is how an agent is let go again -- otherwise the limit
+        would fire on the next tick, for ever, and the session would be stuck.
+        """
+        with self.naming:
+            limits = dict(self.limits)
+            if limit > 0:
+                limits[session_id] = {"limit": limit, "fired_at": 0.0}
+            else:
+                limits.pop(session_id, None)
+            write_limits(limits)
+            self.limits = limits
+        return max(0.0, limit)
+
+    def over_limit(self, now: float | None = None) -> list[str]:
+        """The panes of sessions that have just gone past what they may spend.
+
+        Read on the fold thread, which is the one that may write `fired_at`.
+        Three guards, each of them a way this could be worse than no limit:
+
+        * **Only a session that is working.** Stopping an idle one is a
+          keystroke nobody asked for, and an Escape while a permission dialog
+          is up declines it -- which is a decision, and not this one's to make.
+        * **Once.** `fired_at` is stamped before the key goes out, so a
+          session over its limit is not stopped again on every tick a second
+          later. Raising the limit clears it.
+        * **Only a spend the status line actually gave us.** `None` is "not
+          told", and stopping an agent over a number nobody sent would be the
+          worst of the three.
+        """
+        moment = now if now is not None else time.time()
+        out: list[str] = []
+        # The whole of it under the lock, reading and writing the same
+        # snapshot. Deciding outside it and merging inside was a race with
+        # `set_limit`: a raise that landed in between was overwritten with the
+        # old number and a fresh `fired_at`, and the Escape went out anyway --
+        # so the reader's release was undone at the moment they made it.
+        with self.naming:
+            limits = dict(self.limits)
+            changed = False
+            for session_id, one in limits.items():
+                session = self.sessions.get(session_id)
+                spent = None if session is None else session.status.cost_usd
+                # Armed again once the spend is back under the limit. Without
+                # this one stop disarms it for the rest of the session, and
+                # `/clear` puts `cost.total_cost_usd` back to nought -- so the
+                # agent could then run without bound behind a box still
+                # showing a limit.
+                if one["fired_at"] and spent is not None and spent < one["limit"]:
+                    limits[session_id] = {"limit": one["limit"], "fired_at": 0.0}
+                    changed = True
+                    continue
+                if one["fired_at"]:
+                    continue
+                if session is None or session.state != "working" or not session.pane:
+                    continue
+                if spent is None or spent < one["limit"]:
+                    continue
+                limits[session_id] = {"limit": one["limit"], "fired_at": moment}
+                changed = True
+                out.append(session.pane)
+                session.last_event = f"stopped at its ${one['limit']:.2f} limit"
+            if changed:
+                write_limits(limits)
+                self.limits = limits
+        return out
 
     def rename(self, session_id: str, name: str) -> str:
         """Give a session a name, or take the name away when it is empty.
@@ -1069,6 +1156,10 @@ def row(session: Session) -> dict[str, Any]:
         # a row differ by itself -- which is the rule this dict is built by.
         "cost_usd": session.status.cost_usd,
         "limits": session.status.limits,
+        # What this session may spend, and whether that has already stopped
+        # it. Filled in by `rows`, from the map the page POSTs to.
+        "spend_limit": 0.0,
+        "limit_fired": 0.0,
         "end_reason": session.end_reason,
         "has_transcript": bool(session.transcript_path),
     }
@@ -2064,6 +2155,11 @@ TOKEN_MARK = "__WOSTUAST_TOKEN__"
 
 #: The most a POST body may be.
 POST_MAX = 64 * 1024
+
+#: The most a spend limit may be set to. Not a safety property -- it is a
+#: sanity bound on a number typed into a box, so a stray keypress cannot store
+#: something that reads as "no limit at all" while looking like one.
+LIMIT_MAX = 10_000.0
 
 #: The most text one `send` may type, **in bytes**. Longer is refused rather
 #: than cut: what arrives in the terminal must be what the user wrote, or
@@ -3225,6 +3321,36 @@ def read_links() -> list[dict[str, str]]:
     return load_links()[0]
 
 
+def read_limits() -> dict[str, dict[str, float]]:
+    """Every spend limit the reader has set, or an empty map.
+
+    `{session_id: {"limit": 10.0, "fired_at": 0.0}}`. It sits beside
+    `names.json` and is the same kind of thing: state this program keeps
+    because the page told it to, not a file anybody hand-edits. `links.json`
+    is the config file `PLAN.md` goal 4 allows one of, and this is not a
+    second one -- nothing here is typed into an editor, and wostuast could not
+    work the number out, because only you know what an agent is worth to you.
+    """
+    try:
+        payload = json.loads(limits_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, dict[str, float]] = {}
+    for key, one in payload.items():
+        if not isinstance(key, str) or not isinstance(one, dict):
+            continue
+        limit = to_float(one.get("limit"))
+        if limit > 0:
+            out[key] = {"limit": limit, "fired_at": to_float(one.get("fired_at"))}
+    return out
+
+
+def write_limits(limits: dict[str, dict[str, float]]) -> None:
+    write_atomic(limits_path(), json.dumps(limits), private=True)
+
+
 def read_names() -> dict[str, str]:
     """Every name the reader has given, or an empty map."""
     try:
@@ -3637,6 +3763,30 @@ def tmux_jump(pane: str, runner: Callable[..., str | None] | None = None,
     return moved
 
 
+def tmux_interrupt(pane: str,
+                   runner: Callable[..., str | None] | None = None) -> bool:
+    """Stop what an agent is doing, without ending it.
+
+    **Escape, never Ctrl-C.** Claude Code's own documentation: Escape stops
+    the current response or tool call mid-turn and "Claude keeps the work done
+    so far"; Ctrl-C "interrupts a running operation" but "if nothing is
+    running, the first press clears the prompt input and a second press exits
+    Claude Code". A turn can end between deciding to stop a session and the
+    key landing, so Ctrl-C on a limit is a race whose losing side is a session
+    that quit. Escape on an idle prompt does nothing.
+
+    It is a key name rather than literal text, so it is the shape of the
+    `Enter` press `tmux_send` already makes -- not something that could go
+    through `tmux_send`, which strips every byte below a space on purpose.
+    Measured: `send-keys -t <pane> C-c` puts 0x03 into a raw-mode app as a
+    keystroke it reads, not as a signal. Nothing here signals a process.
+    """
+    if not pane:
+        return False
+    runner = runner or run
+    return runner(["tmux", "send-keys", "-t", pane, "Escape"]) is not None
+
+
 def tmux_send(pane: str, text: str,
               runner: Callable[..., str | None] | None = None) -> bool:
     """Type text into a pane, then press Enter.
@@ -3811,7 +3961,23 @@ class Daemon:
 
     def tick(self) -> None:
         """One pass: fold new events, then tell the browsers what changed."""
-        if self.store.refresh():
+        moved = self.store.refresh()
+        # After the fold, so the spend being read is the one the newest status
+        # line gave; before the push, so the row the browsers get already says
+        # the session was stopped. It is the one thing this program does to a
+        # terminal that nobody pressed a button for, so it is guarded three
+        # ways in `over_limit` and it says so in the session's own log.
+        stopped = self.store.over_limit()
+        for pane in stopped:
+            tmux_interrupt(pane)
+        # A stop moves `fired_at` and the session's last event, and both are
+        # in the row -- so the rows are built again before they go out, or the
+        # browsers hear about it a tick late. Written as its own statement:
+        # `moved or self.store.refresh()` short-circuits, so on a tick that
+        # had already changed something the second read never ran at all.
+        if stopped:
+            moved = self.store.refresh() or moved
+        if moved:
             self.hub.send("sessions", self.sessions_payload())
         for session_id in self.hub.watchers():
             self.read_transcript(session_id)
@@ -4106,6 +4272,42 @@ class Serving:
         # show it without waiting for that.
         self.reply_json({"id": session_id, "name": given, "done": True})
 
+    def interrupt(self, session_id: str, body: dict[str, Any]) -> None:
+        """Stop what the agent is doing. Escape, not Ctrl-C: see
+        `tmux_interrupt` for why the other one can end a session."""
+        session = self.in_tmux(session_id)
+        if session is None:
+            return
+        if not tmux_interrupt(session.pane):
+            self.reply_json({"id": session_id,
+                             "error": "tmux would not take it"}, 502)
+            return
+        self.reply_json({"id": session_id, "done": True})
+
+    def limit(self, session_id: str, body: dict[str, Any]) -> None:
+        """Set what a session may spend before wostuast stops it.
+
+        It writes no terminal itself, like `name` -- but unlike `name` it is
+        what lets the daemon write one later, so it is the same POST with the
+        same token and origin behind it. Nought takes the limit away.
+        """
+        session = self.known(session_id)
+        if session is None:
+            return
+        asked = body.get("limit")
+        if not isinstance(asked, (int, float)) or asked != asked or asked < 0:
+            self.reply_json({"id": session_id,
+                             "error": "a limit is a number of dollars,"
+                                      " or nought for none"}, 400)
+            return
+        if asked > LIMIT_MAX:
+            self.reply_json({"id": session_id,
+                             "error": f"the most that can be set is"
+                                      f" ${LIMIT_MAX:.0f}"}, 400)
+            return
+        given = self.daemon.store.set_limit(session_id, float(asked))
+        self.reply_json({"id": session_id, "limit": given, "done": True})
+
     def send(self, session_id: str, body: dict[str, Any]) -> None:
         session = self.in_tmux(session_id)
         if session is None:
@@ -4328,7 +4530,9 @@ GET_VERBS: dict[str, Any] = {
 POST_VERBS: dict[str, Any] = {
     "jump": Serving.jump,
     "send": Serving.send,
+    "interrupt": Serving.interrupt,
     "name": Serving.name,
+    "limit": Serving.limit,
 }
 
 
@@ -5208,6 +5412,13 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* A caveat beside a number, or when a window resets. It is the smallest
    thing in the panel because it is read once. */
 .sessionbody .aside { margin-left: 10px; color: var(--ink-faint); font-size: 11px; }
+.limitrow { display: flex; align-items: baseline; }
+.limitbox {
+  width: 96px; padding: 2px 8px; border-radius: 5px;
+  border: 1px solid var(--edge); background: var(--bg); color: var(--ink);
+  font-family: var(--mono); font-size: 12px;
+}
+.limitbox:focus { outline: none; border-color: var(--needs); }
 .ctx.warm .fill { background: var(--needs); }
 .ctx.hot .fill { background: var(--hot); }
 .tabs {
@@ -6177,6 +6388,17 @@ function putFacts(pane, s) {
     go.style.marginLeft = "12px";
     go.title = "put the cursor in that pane  ⏎";
     go.addEventListener("click", jumpToPane);
+    // Escape, not Ctrl-C: see `tmux_interrupt`. It stops the turn and keeps
+    // the work, where Ctrl-C into a prompt that has just gone idle is one
+    // press away from ending the session.
+    const stop = put(where, "button", "verb quiet", "stop");
+    stop.type = "button";
+    stop.style.marginLeft = "8px";
+    stop.title = "press Escape in that pane: stops this turn, keeps the work";
+    stop.addEventListener("click", async () => {
+      said(await tell(s.id, "interrupt"));
+      if (!state.trouble) note("pressed Escape");
+    });
   }
 }
 
@@ -6199,6 +6421,57 @@ function putContext(parent, percent) {
   put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
   put(ctx, "span", null, pct + "% ctx");
   return ctx;
+}
+
+// What a session may spend before wostuast stops it, and the box that sets
+// it. The number is the reader's own -- only they know what an agent is worth
+// -- so the daemon keeps it beside the names rather than working it out.
+//
+// It is the one thing on this page that makes wostuast type into a terminal
+// with nobody watching, so the row says plainly what it will do, and says it
+// again once it has: a reader who comes back to a stopped agent must be able
+// to find out why from the page rather than from the pane.
+function putLimit(pane, s) {
+  const field = put(pane, "div", "field");
+  put(field, "div", "fieldname", "stop at");
+  const cell = put(field, "div", "limitrow");
+  const box = put(cell, "input", "limitbox");
+  box.type = "number";
+  box.min = "0";
+  box.step = "1";
+  box.placeholder = "no limit";
+  box.title = "Dollars. wostuast presses Escape in this pane once the spend"
+    + " passes it, which stops the turn and keeps the work done so far."
+    + " Empty or 0 means it never does.";
+  box.value = s.spend_limit ? String(s.spend_limit) : "";
+  box.addEventListener("change", () => setLimit(s.id, box.value));
+  // What it will actually do, which is not always what it was asked to do.
+  // `over_limit` skips a session with no pane and one whose status line has
+  // not sent a spend, so promising either reader that they are protected is
+  // the worst thing this box could say.
+  const blind = s.cost_usd === null || s.cost_usd === undefined;
+  if (s.limit_fired) {
+    // Said here and not only in the log, because "why did my agent stop" is
+    // asked in front of this panel. Raising the box is what lets it go again.
+    put(cell, "span", "aside",
+        "stopped " + ago(s.limit_fired) + " ago · raise it to go on");
+  } else if (!s.spend_limit) {
+    // Nothing promised, so nothing to warn about.
+  } else if (!s.pane) {
+    put(cell, "span", "aside",
+        "this session is not in tmux, so nothing can be pressed");
+  } else if (blind) {
+    put(cell, "span", "aside",
+        "its status line does not send the spend, so this cannot fire");
+  } else {
+    put(cell, "span", "aside", "Escape into this pane when the spend passes it");
+  }
+}
+
+async function setLimit(id, typed) {
+  const asked = Number(typed);
+  said(await tell(id, "limit",
+                  { limit: typed.trim() === "" || !(asked > 0) ? 0 : asked }));
 }
 
 //: What each rate-limit window is called, in words. A name wostuast does not
@@ -6275,13 +6548,31 @@ function drawSession(box) {
     // whenever it moves. A poll that redrew the box being typed in would take
     // the name with it, which is the rule the review keeps for its comments.
     put(body, "div", "namefield");
+    put(body, "div", "limitfield");
     put(body, "div", "rest");
   }
-  const [name, rest] = box.firstChild.children;
+  const [name, limit, rest] = box.firstChild.children;
   const s = current();
   if (fresh(box, "nameKey", s ? s.id : "none")) {
     name.replaceChildren();
     if (s) putRename(name, s);
+  }
+  // The other box on this panel, and it is kept for the same reason: `rest`
+  // is rebuilt on every four-second poll, and a rebuild under the hand takes
+  // what is in it -- worse here than for the name, because the node is
+  // removed rather than blurred, so `change` never fires and the number the
+  // reader typed is not merely lost on screen, it is never stored.
+  //
+  // Unlike the name it has news of its own -- a limit that has fired -- so
+  // its key carries that, and the redraw is skipped while the box has the
+  // focus. `writingIn` is the same instinct: ask the DOM, not a flag.
+  const limitKey = s ? JSON.stringify(
+    [s.id, s.spend_limit, s.limit_fired, s.pane,
+     s.cost_usd === null || s.cost_usd === undefined]) : "none";
+  if (!limit.contains(document.activeElement)
+      && fresh(box, "limitKey", limitKey)) {
+    limit.replaceChildren();
+    if (s) putLimit(limit, s);
   }
   if (!s) {
     if (!fresh(box, "bodyKey", "none")) return;

@@ -996,3 +996,148 @@ def test_a_resumed_session_starts_where_it_was_resumed(ws):
         event("SessionStart", cwd="/w/repo/other", source="resume", ts=1002.0),
     )
     assert session.place == "other"
+
+
+# --- a spend limit ------------------------------------------------------------
+
+
+def working(ws, store, spent, session_id="s1"):
+    """A session mid-turn, with the status line's idea of what it has spent."""
+    store.apply(dict(event("SessionStart", ts=1000.0), session_id=session_id))
+    store.apply(dict(event("UserPromptSubmit", ts=1001.0, prompt="go"),
+                     session_id=session_id))
+    session = store.sessions[session_id]
+    session.pane = "%7"
+    session.status = ws.Status(ts=1.0, cost_usd=spent)
+    assert session.state == "working"
+    return session
+
+
+def test_a_session_over_its_limit_is_stopped_once(ws):
+    """Fired again on every tick, the agent could never be let go: the key
+    would land a second later, and a second after that, for ever."""
+    store = ws.Store()
+    session = working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    assert store.over_limit(now=50.0) == ["%7"]
+    assert "stopped at its $10.00 limit" in session.last_event
+    # And not again, however far past it goes.
+    session.status = ws.Status(ts=2.0, cost_usd=99.0)
+    assert store.over_limit(now=51.0) == []
+
+
+def test_raising_the_limit_lets_the_session_go_again(ws):
+    """Otherwise a stopped session is stuck: the only way on would be to
+    delete a file nobody told you about."""
+    store = ws.Store()
+    working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    assert store.over_limit(now=50.0) == ["%7"]
+    store.set_limit("s1", 20.0)              # clears `fired_at`
+    assert store.over_limit(now=51.0) == []  # 12 is under 20
+    store.sessions["s1"].status = ws.Status(ts=2.0, cost_usd=25.0)
+    assert store.over_limit(now=52.0) == ["%7"]
+
+
+def test_only_a_working_session_is_stopped(ws):
+    """Escape into an idle prompt is a keystroke nobody asked for, and Escape
+    while a permission dialog is up declines it — which is a decision, and not
+    this one's to make."""
+    store = ws.Store()
+    session = working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    store.apply(event("Stop", ts=1002.0))
+    assert session.state == "done"
+    assert store.over_limit(now=50.0) == []
+
+
+def test_a_session_whose_spend_nobody_sent_is_not_stopped(ws):
+    """`None` is "the status line did not say". Stopping an agent over a
+    number nobody sent is the worst way this could go wrong."""
+    store = ws.Store()
+    working(ws, store, None)
+    store.set_limit("s1", 10.0)
+    assert store.over_limit(now=50.0) == []
+
+
+def test_a_session_with_no_pane_is_not_stopped(ws):
+    store = ws.Store()
+    session = working(ws, store, 12.0)
+    session.pane = ""
+    store.set_limit("s1", 10.0)
+    assert store.over_limit(now=50.0) == []
+
+
+def test_a_limit_survives_a_restart_and_nought_takes_it_away(ws):
+    store = ws.Store()
+    store.set_limit("s1", 7.5)
+    assert ws.read_limits() == {"s1": {"limit": 7.5, "fired_at": 0.0}}
+    assert ws.Store().limits == {"s1": {"limit": 7.5, "fired_at": 0.0}}
+    store.set_limit("s1", 0)
+    assert ws.read_limits() == {}
+
+
+def test_a_limits_file_with_rubbish_in_it_is_not_trusted(ws):
+    """Ours, but it outlives the version that wrote it."""
+    ws.limits_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.limits_path().write_text(
+        '{"a": {"limit": "lots"}, "b": 3, "c": {"limit": -1},'
+        ' "d": {"limit": 5, "fired_at": "soon"}}', encoding="utf-8")
+    assert ws.read_limits() == {"d": {"limit": 5.0, "fired_at": 0.0}}
+    ws.limits_path().write_text("not json", encoding="utf-8")
+    assert ws.read_limits() == {}
+
+
+def test_a_stopped_session_is_armed_again_when_the_spend_drops(ws):
+    """`/clear` puts `cost.total_cost_usd` back to nought. Without re-arming,
+    one stop disarms the limit for the rest of the session and the agent runs
+    without bound behind a box still showing a number."""
+    store = ws.Store()
+    session = working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    assert store.over_limit(now=50.0) == ["%7"]
+    assert store.limits["s1"]["fired_at"]
+
+    session.status = ws.Status(ts=2.0, cost_usd=0.0)      # /clear
+    assert store.over_limit(now=51.0) == []               # armed, not fired
+    assert store.limits["s1"]["fired_at"] == 0.0
+    session.status = ws.Status(ts=3.0, cost_usd=11.0)
+    assert store.over_limit(now=52.0) == ["%7"]
+
+
+def test_a_limit_raised_while_a_stop_is_being_decided_is_not_clobbered(ws):
+    """`over_limit` used to read the map outside the lock and merge under it,
+    so a raise that landed in between was overwritten with the old number and
+    a fresh `fired_at` — the reader's release undone at the moment they made
+    it. Both sides take `naming` now, so one waits for the other."""
+    import threading
+
+    store = ws.Store()
+    working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    held = threading.Event()
+    go = threading.Event()
+    real = ws.write_limits
+
+    def slow(limits):
+        real(limits)
+        if not held.is_set():
+            held.set()
+            go.wait(5)               # still inside `over_limit`'s lock
+
+    ws.write_limits = slow
+    try:
+        worker = threading.Thread(target=store.over_limit, args=(50.0,))
+        worker.start()
+        held.wait(5)
+        raiser = threading.Thread(target=store.set_limit, args=("s1", 50.0))
+        raiser.start()
+        raiser.join(0.3)
+        assert raiser.is_alive(), "the raise got in while the stop was writing"
+        go.set()
+        worker.join(5)
+        raiser.join(5)
+    finally:
+        ws.write_limits = real
+    # The raise is what stands, and it cleared the firing.
+    assert store.limits["s1"] == {"limit": 50.0, "fired_at": 0.0}
