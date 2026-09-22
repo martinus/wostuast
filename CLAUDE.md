@@ -38,6 +38,7 @@ after the tests go red.
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
 | `newRow`, `fillRow`, `BANDS`, `settled` | The sidebar |
+| `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
 | `putComment`, `anchorOf`, a review comment | The review |
@@ -1032,6 +1033,53 @@ things about it are worth knowing before they surprise you.
 - **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
   the agent's text and nothing else, so the map stays a map of the
   conversation.
+- **A `.turn` lays out from the top, not stretched.** `.who` carries a name,
+  a day, a time and a copy button — 71 px of them, measured — and a flex item
+  stretches to its row by default, so a one-line bubble was 71 px tall with
+  the text 14 px from the top and 41 px of nothing under it. It read as text
+  that is not centred; it was a block that is not the size of its contents.
+  `align-items: flex-start` on `.turn` is the whole fix, and
+  `test_a_one_line_message_sits_in_the_middle_of_its_block` compares the two
+  gaps rather than either number.
+- **A group of tool calls belongs to the words above it.** The agent says
+  what it is about to do and then does it. The gaps were 16 px above and
+  16 px below — exactly equal, measured — so the group read as belonging to
+  neither, and to the reply below it, which is the thing you next want to
+  read. They are 6 and 22 now. **The numbers in the CSS are not the gaps**:
+  the margins collapse against `.turn`'s own 22, so above is 22 + (−16) and
+  below is max(5, 22). Change one and measure it; do not read it off.
+- **The send box and the question bar start where the transcript does.**
+  Both stand under a split tab's right half, and both used to run the whole
+  width and under the map beside it — a column you never type into. One
+  `margin-left: calc(var(--side-w) + 5px)` does it, `--side-w` being the root
+  variable the map's own drag sets, and 5 px the grip. **By margin, not by
+  moving them into the pane**: the question bar holds picks that have not
+  been submitted and the send box holds what you are typing, and a node that
+  changes parents is a node that is rebuilt.
+- **The way back to the end of the transcript hangs off the content box.**
+  A new block carries you along only while `nearBottom`, which is right, and
+  nothing said how to start following again. `.tofoot` cannot live inside
+  `.turnbody`, whose children `drawTranscript` replaces wholesale, so it is a
+  child of the box `split` builds and outlives every redraw. **That is why
+  `split` returns `box.children[2]` and not `box.lastChild`** — the last child
+  is this button from the first draw onwards.
+- **`GLIMPSE` is not where the map's preview ends.** `.filelist .name` clips
+  with an ellipsis at whatever width the column has been dragged to;
+  `GLIMPSE` only bounds what goes into the DOM for a reply that may be
+  kilobytes long. It was 44, narrower than the column at its default width,
+  so every row ended in a "…" the column had room for and the number did not.
+- **A round on the map folds from its icon, and only from its icon.** The row
+  has two jobs: the whole of it goes to that place in the transcript, which is
+  what the map is for, and the icon alone folds. Folding on any click would
+  mean you could not read a round without closing it. `state.turns.shut` is
+  in `drawTurnList`'s redraw key — the shape of the conversation has not
+  changed when you fold one, only what is shown of it, so without it a click
+  redraws nothing — and in `savePlace`/`usePlace`, because it is a choice.
+- **`t` says what it did.** The key worked from the day it shipped and read
+  as broken anyway: most transcripts hold no thinking at all, so pressing it
+  changed nothing on screen and nothing said why. A key whose effect can be
+  invisible has to use the live slot; `toggleThinking` counts the blocks and
+  says so, including when there are none.
 - **A row of a list is one line, and `.filelist button` is a block.** The
   Diff tab's rows carry a second line of counts under the name, so a list
   whose rows are one line has to say so — `.fixed` does it for the file tree

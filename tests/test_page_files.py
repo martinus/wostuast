@@ -1510,6 +1510,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
                                           asText: true, down: 321});
               state.files.dirs = new Map([['a', true]]);
               state.turns.open = new Set([7]);
+              state.turns.shut = new Set([3]);
               state.turns.at = 12;
               state.turns.down = 654;
               state.diffOpen = new Map([['z.py', true]]);
@@ -1523,6 +1524,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
               state.turns = blankTurns();
               state.files = blankFiles();
               state.turns.open = new Set();
+              state.turns.shut = new Set();
               state.diffOpen = new Map();
               state.loose = null;
               usePlace('probe');
@@ -1530,6 +1532,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
               const after = {
                 tab: state.tab, turnAt: state.turns.at,
                 turnDown: state.turns.down, open: state.turns.open,
+                shut: state.turns.shut,
                 path: state.files.path, at: state.files.at,
                 asText: state.files.asText, down: state.files.down,
                 dirs: state.files.dirs,
@@ -1547,7 +1550,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
             }""")
             assert "tab" in seen["kept"], seen
             assert seen["back"] == [one for one in seen["kept"] if one != "tab"], seen
-            assert len(seen["kept"]) >= 9, seen
+            assert len(seen["kept"]) >= 10, seen
         finally:
             browser.close()
 

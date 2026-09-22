@@ -82,7 +82,7 @@ the tab, the open file, the place in it.
 
 | Tab | Holds |
 | --- | --- |
-| **Transcript** | What the agent said and did, with a map of the conversation beside it: a row per thing you typed and the replies under it. Click a row to go there. |
+| **Transcript** | What the agent said and did, with a map of the conversation beside it: a row per thing you typed and the replies under it. Click a row to go there, or its icon to fold the round away. Scrolled up? A **↓ latest** button takes you back to the end. |
 | **Files** | Every file in the worktree as a tree, with syntax highlighting, pictures shown as pictures, and go-to-file by scattered letters — `mbldr` finds `MetricBuilder.h`. An ignored directory an agent generated into is in the tree too; a folder with thousands of files in it is one row saying it is not listed. |
 | **Diff** | What the branch has committed against `origin/HEAD`, and what is not committed yet. |
 | **Review** | The comments you have written, as one task to send. |
@@ -102,7 +102,7 @@ the tab, the open file, the place in it.
 | `1` – `5` | Transcript, Files, Diff, Review, Session |
 | `Enter` | jump to that agent's tmux pane |
 | `s` | type into its terminal |
-| `t` | show or hide the agent's thinking |
+| `t` | show or hide the agent's thinking, and say how much there is |
 | `c` | colours: auto, light, dark |
 | `Esc` | clear a box, or close the help |
 
