@@ -5831,7 +5831,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .turn.mine .who { color: var(--mine); font-weight: 600; }
 .turn.mine .bubble {
   background: var(--mine-soft); border-color: transparent;
-  border-left: 3px solid var(--mine); border-radius: 0 6px 6px 0;
+  border-left: 3px solid var(--mine); border-radius: 6px;
   color: var(--ink-bright);
 }
 .prose { flex-grow: 1; line-height: 1.55; min-width: 0; }
@@ -6131,6 +6131,16 @@ body:not(.show-thinking) .thinking { display: none; }
 .filelist.transcript button {
   display: flex; align-items: center; gap: 5px;
 }
+/* The map names what stands beside it, so it is set like it: the same face,
+   size and line height as the transcript's text. It had the lists' condensed
+   face at 13 px and 7 px above and below each row, 29 px a row, and read as
+   a different page. 1 px keeps a hover from touching the text. The file
+   lists keep the condensed face: a path wants the width. */
+.filelist.transcript {
+  font-family: var(--sans); font-size: 14px; letter-spacing: normal;
+  line-height: 1.55;
+}
+.filelist.transcript button { padding-top: 1px; padding-bottom: 1px; }
 .filelist.transcript .name { flex-grow: 1; min-width: 0; }
 /* A round is yours, so it takes the one colour that means that. */
 .filelist.transcript button.dir .icon { color: var(--mine); }
@@ -8510,10 +8520,12 @@ function rounds() {
 //: The number has to clear what the widest possible column can show, or it
 //: is the clip again. Measured at `dragWidth`'s own cap of 700 px, where the
 //: name box is 639 px: 49 of the widest glyphs and **176 of the narrowest**.
-//: The list is a condensed sans, not a monospace, so the thin end is what
+//: The list was a condensed sans, not a monospace, so the thin end is what
 //: sets this -- a first guess of 120 from counting monospace characters
 //: would have clipped a line of narrow letters on a wide column, which is
-//: the bug this is fixing.
+//: the bug this is fixing. The map is set in the transcript's own face at
+//: 14 px now: the same family, not condensed and a size up, so no glyph is
+//: narrower than it was when this was measured, and 200 still clears.
 const GLIMPSE = 200;
 
 // The first line with anything on it, short enough to read at a glance.

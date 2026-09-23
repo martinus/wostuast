@@ -2,6 +2,7 @@
 
     python3 tests/shot.py CASE OUT.png [--width 1500] [--height 900]
                          [--thinking] [--light] [--hover WORDS] [--measure]
+                         [--part SELECTOR]
 
 This is the first thing to run on a report about how the page looks: build
 the case from the reader's screenshot, look at it, change the code, look
@@ -28,7 +29,9 @@ session's is. `result` answers the call just above it.
 `--measure` prints, for each block on screen, the gap from the bottom of
 what it shows -- its text, not its box -- to the top of the next block.
 `--hover WORDS` puts the pointer on the block holding WORDS first, which is
-what shows its copy button.
+what shows its copy button. `--part SELECTOR` is what the picture is of: the
+transcript pane unless it says otherwise, `#content` for the map beside it
+too, `body` for the whole page.
 """
 
 from __future__ import annotations
@@ -119,6 +122,7 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--light", action="store_true")
     ask.add_argument("--hover")
     ask.add_argument("--measure", action="store_true")
+    ask.add_argument("--part", default=".turnbody")
     said = ask.parse_args(argv)
 
     # Before anything is imported, so nothing can reach the reader's own
@@ -148,7 +152,7 @@ def main(argv: list[str]) -> int:
             page.wait_for_function("() => !document.getAnimations().length")
             if said.hover:
                 page.locator(".turnbody .turn", has_text=said.hover).hover()
-            page.locator(".turnbody").screenshot(path=said.out)
+            page.locator(said.part).first.screenshot(path=said.out)
             if said.measure:
                 print(f"{'box':>4} {'shows':>5} {'gap':>4}  block")
                 for one in page.evaluate(MEASURE):
