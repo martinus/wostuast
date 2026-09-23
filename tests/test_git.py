@@ -343,3 +343,118 @@ def test_a_detached_head_is_not_a_branch(ws, repo):
     facts = ws.git_facts(str(repo))
     assert facts.branch == ""
     assert facts.failed is False
+
+
+# --- one commit at a time ----------------------------------------------------
+
+
+def branch_of_three(repo):
+    """`main` with one commit, and a branch with two more on top of it."""
+    git(repo, "checkout", "-qb", "side")
+    (repo / "README.md").write_text("# readme\n\nhello\nsecond\n")
+    git(repo, "commit", "-qam", "two")
+    (repo / "c.txt").write_text("c\n")
+    git(repo, "add", "c.txt")
+    git(repo, "commit", "-qm", "three: add c")
+
+
+def test_the_diff_lists_the_branchs_own_commits_newest_first(ws, repo):
+    branch_of_three(repo)
+    report = ws.worktree_diff(str(repo))
+    assert [one.subject for one in report.commits] == ["three: add c", "two"]
+    assert report.recent is False
+    assert all(len(one.sha) >= 40 and one.author == "T" and one.when > 0
+               for one in report.commits)
+    # Everything is still what it was: both halves, with nothing picked.
+    assert report.of == ""
+    assert [one.name for one in report.sections] == ["committed", "uncommitted"]
+
+
+def test_one_commit_is_shown_against_its_parent_and_nothing_else(ws, repo):
+    branch_of_three(repo)
+    (repo / "README.md").write_text("# readme\n\nhello\nsecond\nthird\n")
+    (repo / "loose.txt").write_text("new\n")
+    two = ws.worktree_diff(str(repo)).commits[1]
+    report = ws.worktree_diff(str(repo), of=two.sha)
+    assert report.of == two.sha
+    assert [one.name for one in report.sections] == ["commit"]
+    files = report.sections[0].files
+    assert [one.path for one in files] == ["README.md"]
+    assert [line.text for line in files[0].hunks[0].lines
+            if line.kind == "added"] == ["second"]
+    # Not the uncommitted line, and not the untracked file: those are not
+    # this commit's.
+    assert report.untracked == []
+    # The map from this commit to the file on disk, for anchoring comments.
+    assert [one.path for one in report.since] == ["README.md"]
+    assert [line.text for line in report.since[0].hunks[0].lines
+            if line.kind == "added"] == ["third"]
+
+
+def test_a_commit_the_page_names_is_used_only_if_git_listed_it(ws, repo):
+    """The sha comes from the page, and the page is input. A name that is not
+    on the list goes to git never, and the report says it has gone -- which is
+    what an amend or a rebase looks like from the reader's chair."""
+    branch_of_three(repo)
+    asked = []
+    real = ws.run
+
+    def runner(args, **rest):
+        asked.append(list(args))
+        return real(args, **rest)
+
+    for wanted in ("--output=/tmp/x", "HEAD~1", "0" * 40):
+        asked.clear()
+        report = ws.worktree_diff(str(repo), runner=runner, of=wanted)
+        assert report.gone == wanted and report.of == ""
+        assert [one.name for one in report.sections] == [
+            "committed", "uncommitted"]
+        assert not any(wanted in arg for args in asked for arg in args), wanted
+
+
+def test_the_root_commit_is_shown_against_nothing(ws, repo):
+    """It has no parent to be measured against; the empty tree stands in."""
+    report = ws.worktree_diff(str(repo))
+    assert report.recent is True          # on main: nothing of its own
+    first = report.commits[-1]
+    assert first.parent == ""
+    shown = ws.worktree_diff(str(repo), of=first.sha)
+    assert shown.failed is False
+    assert [(one.path, one.status) for one in shown.sections[0].files] == [
+        ("README.md", "added")]
+
+
+def test_only_what_is_not_committed(ws, repo):
+    branch_of_three(repo)
+    (repo / "README.md").write_text("changed\n")
+    (repo / "loose.txt").write_text("new\n")
+    report = ws.worktree_diff(str(repo), of="uncommitted")
+    assert report.of == "uncommitted"
+    assert [one.name for one in report.sections] == ["uncommitted"]
+    assert report.untracked == ["loose.txt"]
+
+
+def test_a_commit_list_git_did_not_give_is_a_failure(ws, repo):
+    real = ws.run
+
+    def runner(args, **rest):
+        return None if "log" in args else real(args, **rest)
+
+    report = ws.worktree_diff(str(repo), runner=runner)
+    assert report.failed is True
+    assert report.commits == []
+
+
+def test_a_merge_is_shown_against_its_first_parent(ws, repo):
+    branch_of_three(repo)
+    git(repo, "checkout", "-q", "main")
+    (repo / "m.txt").write_text("m\n")
+    git(repo, "add", "m.txt")
+    git(repo, "commit", "-qm", "on main")
+    git(repo, "checkout", "-q", "side")
+    git(repo, "merge", "-q", "--no-edit", "main")
+    merge = ws.worktree_diff(str(repo)).commits[0]
+    assert merge.merge is True
+    shown = ws.worktree_diff(str(repo), of=merge.sha)
+    assert [one.path for one in shown.sections[0].files] == ["m.txt"]
+    assert "merge" in shown.sections[0].about

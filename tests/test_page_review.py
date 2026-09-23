@@ -914,7 +914,7 @@ def test_the_filter_narrows_what_is_shown_and_not_what_is_sent(repo_page):
 
 
 CLICK_COMMITTED = """(want) => {
-  const pane = document.querySelector('.diffbody');
+  const pane = document.querySelector('.diffscroll');
   let committed = false;
   for (const node of pane.children) {
     if (node.classList.contains('diffhead')) {
