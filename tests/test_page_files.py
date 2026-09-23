@@ -1518,6 +1518,8 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
               state.turns.down = 654;
               state.turns.run = 3;
               state.diffOpen = new Map([['z.py', true]]);
+              state.diffOf = 'abc123';
+              state.diffShut = new Set(['committed src']);
               state.loose = 'loose.txt';
               savePlace('probe');
               const kept = state.visits.get('probe');
@@ -1530,6 +1532,8 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
               state.turns.open = new Set();
               state.turns.shut = new Set();
               state.diffOpen = new Map();
+              state.diffOf = '';
+              state.diffShut = new Set();
               state.loose = null;
               usePlace('probe');
 
@@ -1541,6 +1545,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
                 asText: state.files.asText, down: state.files.down,
                 dirs: state.files.dirs,
                 diffOpen: state.diffOpen, loose: state.loose,
+                diffOf: state.diffOf, diffShut: state.diffShut,
               };
               const flat = (one) =>
                 (one instanceof Map || one instanceof Set)
@@ -1554,7 +1559,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
             }""")
             assert "tab" in seen["kept"], seen
             assert seen["back"] == [one for one in seen["kept"] if one != "tab"], seen
-            assert len(seen["kept"]) >= 11, seen
+            assert len(seen["kept"]) >= 13, seen
         finally:
             browser.close()
 

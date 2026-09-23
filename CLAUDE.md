@@ -43,6 +43,7 @@ after the tests go red.
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
+| `worktree_diff`'s `of`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
 | `putComment`, `anchorOf`, a review comment | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
@@ -123,6 +124,8 @@ This list exists because each entry was re-implemented once already.
 | a folder or a page icon | `putIcon(parent, "dir" \| "dirOpen" \| "file")` — SVG, so not `put` |
 | the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
+| a diff's files in the order its tree reads | `treeOrder(found, pathOf)` — folders first at every level |
+| which words of a changed line changed, and marking them | `wordDiff(was, now)` → two lists of runs or null, then `markWords(cell, runs)` |
 
 **Python helpers**: `path_label`, `clip`, `run` (subprocess with a timeout),
 `private_dir`/`private_file`, `safe_transcript`, `worktree_root`, `is_listed`,
@@ -782,7 +785,7 @@ request, then update it with that text, and read it back to check.
 - **A tab's empty state is inset by whatever its body does not inset**, and
   that is a wart, not a design. The Review tab's body has padding, the Files
   tab's children have it, the Diff tab's body has none at all — a diff's rows
-  run to the edge — so `.diffbody > .empty` brings its own. Three spellings of
+  run to the edge — so `.diffscroll > .empty` brings its own. Three spellings of
   one idea. One inset on `.empty` itself would be the mechanism; it is not
   done because two of the five empty states sit in `.content` rather than in a
   `*body` and would move with it. When a fourth spelling is needed, do that
@@ -816,7 +819,8 @@ request, then update it with that text, and read it back to check.
   box made the open file look like a new one — and in a windowed file that put
   the window back at the top, where the comment box it had just opened was not.
 - **One renderer for a line, in `fillDiffFile`.** The Files tab, the Diff tab
-  and an untracked file all go through it; a file being read is a hunk of
+  and an untracked file all go through it — `unifiedRow` and `pairRow` are
+  its two shapes, and `putLineReview` is the one place either puts a `+`; a file being read is a hunk of
   `plain` lines. That is what makes a review work in both tabs — line 42 has
   the same anchor either way — and why there are not three ways to draw a line
   that drift apart.
@@ -1094,6 +1098,49 @@ request, then update it with that text, and read it back to check.
   a `title`. **And when there is no base the committed half is missing
   altogether**, which used to look like a tab that simply had less in it: the
   pane says so, and names what git was asked for.
+- **A commit the page names is used only if `branch_commits` listed it.**
+  The sha arrives in `?of=` and the page is input, so `worktree_diff` looks
+  it up in its own list and hands git the listed one, never the string it
+  was sent. One that is not there — an agent amended or rebased — comes back
+  as `gone` with all changes, and the pane says why.
+  `test_a_commit_the_page_names_is_used_only_if_git_listed_it` sends
+  `--output=` and `HEAD~1` and asserts neither reaches an argv.
+- **One commit's comments go through `since`, as the committed half's go
+  through the uncommitted one.** The commit's new side is that commit, not
+  the disk, so its line numbers are not the file's. `since` is `git diff
+  <sha> -- <its files>` and `inWorktree` reads it when a commit is shown.
+  Only the commit's own files: the diff to the disk of a whole repository is
+  what every later commit cost. Drop it and a comment on `print(2)` anchors
+  to line 2 when fifty lines stand above it — the scar the committed half
+  already had.
+- **The picker is built once with the pane, and refilled only when the
+  commits change.** A `select` whose options are replaced closes if it is
+  open, and the tab polls every five seconds. `fresh(bar, "key", …)` guards
+  it. Picking and the column switch both rebuild the diff, so both refuse
+  while a comment box is open and say so (`busyWriting`) — a rebuild takes
+  what is typed, and a switch that silently did nothing reads as broken.
+- **The pane reads in the tree's order, not git's.** `treeOrder` puts
+  folders first at every level, and both the list and the pane go through
+  it, so the two read the same way down. git's order is plain path order,
+  which put `README.md` above `src/a.py` in the pane and below it in the
+  tree.
+- **The file clicked in the tree keeps the mark while it is on screen.**
+  `markDiffFile` marks the block under the top of the pane, and the last
+  file of a diff can never scroll to the top — there is nothing under it —
+  so a click on it marked the file above. `scroll.picked` wins until it
+  leaves the screen.
+- **A diff is painted one side of one hunk at a time, and the word marks go
+  back on after.** Each side of a hunk is text that makes sense in order;
+  the whole file is not available here, and a row on its own gets every
+  multi-line string wrong. Painting replaces what a cell holds, so
+  `paintDiff` calls `markWords` again from `cell.words`. Take that out and
+  the marks go the moment the colour arrives, which nothing but
+  `test_the_diff_is_painted_and_keeps_its_word_marks` would notice offline.
+- **Two columns wrap; one column scrolls.** A pair of halves cannot share a
+  sideways scrollbar, and two bars drift apart, so `.dlines.sides` hides the
+  overflow and the halves wrap. The `+` is on the new half only — a comment
+  is about the file as it is — and a side with no line is hatched, not
+  closed up, so the columns stay level.
 - **The two changed-file counts are about different things, and stay that
   way.** The sidebar's comes from `git status` in git's default untracked
   mode, which collapses a wholly-untracked directory into one entry; the

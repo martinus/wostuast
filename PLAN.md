@@ -479,8 +479,32 @@ file through the same route the Files tab uses and shows it as one added
 block. That is what the file is: an addition nobody has staged.
 
 Large diffs: collapse files over 500 lines, expand on click (`BIG_LINES`, and
-see 4.8.3). Diff lines are not painted; only a file being read is. The marker
-is its own span, so the same could be done here, but it has not been.
+see 4.8.3).
+
+**The tab reads like `delta` or a pull request.** Each file is a card with a
+sticky header. The code keeps its syntax colours; a tint behind the line says
+it was added or removed. Inside a changed line, the words that changed get a
+stronger tint. The highlighter gets one side of one hunk at a time, because
+that is text that makes sense in order. Two lines that have too little in
+common get no word marks: a line lit from end to end says nothing the tint
+does not.
+
+**One column or two.** A switch over the diff puts the old file beside the
+new one. It is kept in this browser, like the theme. Two columns wrap long
+lines, because two halves cannot share one sideways scrollbar. The `+` for a
+comment is on the new side only.
+
+**What the tab shows is picked in a box over the diff**: all changes (the
+two halves above), only what is not committed, or one commit. The commits
+are the branch's own (`base..HEAD`), newest first. On the default branch,
+where there are none, they are the last 30 commits of HEAD. The page names a
+commit by its sha, and the daemon uses it only if its own list holds it.
+A merge is shown against its first parent.
+
+**The list on the left is a tree**, one per half. Folders come first, then
+files, at every level, and the pane reads in the same order. A folder that
+holds only one other folder is one row. The icon's colour says what
+happened to the file.
 
 **The path above a file is a way back into the tree.** Each part of it is
 clickable, and a click opens the tree to that directory and moves the list to
@@ -1097,6 +1121,7 @@ without opening it first.
 | Every archive of the event log is kept | The log kept two files and dropped the older one on the next rotation, which capped history at 40 MB — a few weeks of heavy use. Disk is cheap and history is what the log is for: a year of heavy use is a few hundred megabytes. Archives count up from 1, oldest lowest, and none is deleted. What that costs is reading, not storing, and the next row is that bill. |
 | The log is read a piece at a time, and the first read forgets as it goes | Measured on a 200 MB log shaped like a year of work, 1,873 sessions: 6.7 s and 641 MB resident before. Reading a megabyte at a time instead of the whole rest of the file: 169 MB. Forgetting sessions a week quiet during the fold rather than after it: 3.3 s and 28 MB, flat whatever the history's length. `serve` says what the first read cost, because it is the one cost that still grows. |
 | No SQLite | `sqlite3` is in the standard library and imports faster than `json`, so it is not a dependency problem. The write path is: one short-lived hook writing one row took 2 ms, and 32 at once took 20 ms median and 183 ms at worst, against 0.1 ms and 4 ms for an append under `flock` — on the one path that must never block. As an index only the daemon writes, it would buy a faster start and nothing the features need: a plain scan of 400 MB for a word takes 0.38 s, and a count is a fold. A checkpoint of the folded state would buy the same faster start without a schema, when the start is slow enough to matter. |
+| The Diff tab can show one commit | #103 asked for it, and it was left out because a comment on a line of a commit is not a comment on a line of the file. The daemon now sends the map: `git diff <commit> -- <its files>`, from the commit to the disk. The page carries a comment's line through it, the same way the committed half is carried through the uncommitted one. A line that is gone from the file gets no `+`. |
 | Syntax highlighting is worth a second library | Reading code with no colour is the one place where "plain" costs more than it saves. |
 | Nothing is vendored | `marked` and `highlight.js` are 157 KB against a 175 KB program. Carrying them would nearly double the file the install one-liner curls, and the page already fetches its fonts. |
 | Both are pinned by hash | Any script on this page can type into your terminal through `/send`. `integrity` means a CDN that has been tampered with gets you the fallback rather than other code. |
