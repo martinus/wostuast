@@ -5730,6 +5730,20 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .who .self { color: inherit; text-decoration: none; }
 .who .self:hover { text-decoration: underline; }
 .who .day { color: var(--ink-faint); }
+/* The copy button stands on the time's line, left of it, not on a line of its
+   own under it. On its own line it made the column 55 px tall -- more than a
+   line of text (22) or a prompt's bubble (45) -- so the column set the height
+   of most turns, and the gap a reader saw was 32 px after a prompt and 59
+   after a one-line reply, where 22 and 26 were meant. "copy" and a time fit
+   the column's 64 px; "copied" hangs into the pane's gutter for a second. */
+.who .stamp { display: flex; justify-content: flex-end; align-items: baseline;
+  gap: 6px; }
+.who .stamp .copy { order: -1; margin-top: 0; }
+/* And whatever the column still has past the words -- the time under a
+   line of text, a day under a prompt -- may hang 10 px into the gap below.
+   10 and no more: the rule over the next prompt is 12 px down, and the next
+   turn's name 25. A call coming next allows more; see `next-tool`. */
+.turn:not(.toolrow) > .who { margin-bottom: -10px; }
 /* Copy the source of a reply. It is there when the pointer is on the turn,
    the way the `+` on a diff line is: a button beside every line of a
    transcript would be the loudest thing on the page. Keyboard focus shows it
@@ -5901,7 +5915,8 @@ body:not(.show-thinking) .turn.toolrow.past-words { margin-top: -16px; }
 body:not(.show-thinking) .turn.past-tool:not(.toolrow) { margin-top: 22px; }
 /* The 6 px above is from box to box, and the box of the words is not the
    words. `.who` holds a name, a time, a day when it was not today and the
-   copy button, 55 px of it on one day and 71 across two. It is the taller
+   copy button: 55 px on one day and 71 across two when this was written,
+   35 and 51 since the button moved onto the time's line. It is the taller
    part of any turn of one line, so it set the height: one line of text,
    then 39 px of nothing, then the calls -- more than the 22 below them, so
    the group read as the start of the reply after it. The measuring was box
@@ -8430,9 +8445,10 @@ function blockTurn(block, index) {
   if (block.ts) {
     const day = dayOf(block.ts);
     if (day) put(who, "div", "day", day);
-    put(who, "div", null, clock(block.ts));
   }
-  putCopy(who, block, mine);
+  // The copy button shares the time's line: see `.who .stamp`.
+  const stamp = block.ts ? put(who, "div", "stamp", clock(block.ts)) : who;
+  putCopy(stamp, block, mine);
   if (mine || aside || block.kind === "thinking") {
     linkTickets(put(node, "div", "bubble", block.text));
   } else {

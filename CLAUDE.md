@@ -1277,8 +1277,9 @@ request, then update it with that text, and read it back to check.
 - **Measure a gap from what the reader sees, not from the box.** Three
   rounds of this fix measured turn box to turn box, got 6 px each time, and
   the reader still saw 39. `.who` — a name, a time, the copy button, and a
-  day when it was not today — is 55 px on one day and 71 across two, and one
-  line of text is 22, so the column set the height of every one-line turn.
+  day when it was not today — was 55 px on one day and 71 across two, and
+  one line of text is 22, so the column set the height of every one-line
+  turn.
   When a call comes next, the column may run down beside it: the call's own
   `.who` is empty. `next-tool` says so while thoughts are hidden, and
   `markNext` sets it again on the block before when a block arrives, because
@@ -1290,6 +1291,19 @@ request, then update it with that text, and read it back to check.
   straight after a push waits for `document.getAnimations()` to be empty.
   `test_a_group_of_calls_sits_under_the_line_that_announced_it` measures from
   the text, and each of its five parts fails it.
+- **The copy button stands on the time's line, and a column may hang 10 px
+  past its turn.** On a line of its own the button made `.who` 55 px tall,
+  taller than a line of text (22) or a prompt's bubble (45), so the gap a
+  reader saw was 32 px after a prompt and 59 after a one-line reply before
+  a prompt, where 22 and 26 were meant. `.who .stamp` holds the time and the
+  button; the column is 35 px now, 51 with a day. What is still past the
+  words hangs into the gap: 10 px, because the rule over the next prompt is
+  12 px down (its `::before`, 26 − 14) and the next turn's name 25. More
+  than that runs the column into the rule. `next-tool` allows 36 where a
+  call comes next, whose column is empty.
+  `test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant`
+  measures from the bubble and the text, and fails with the button back on
+  its own line or with a larger overhang.
 - **The send box and the question bar start where the transcript does, and
   the map runs down beside them.** Both stand under a split tab's right
   half, and both used to run the whole width and under the map beside it — a
