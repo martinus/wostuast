@@ -502,6 +502,11 @@ commit by its sha, and the daemon uses it only if its own list holds it.
 A merge is shown against its first parent. A commit picked shows its whole
 message above its files: the subject is the line that says least.
 
+**Lines hidden between changes can be shown.** A band stands where git
+left lines out and says how many. It shows twenty more from either end, or
+all of them. The lines come from the same diff with the whole file as
+context, so they are the lines of the side the half shows.
+
 **The list on the left is a tree**, one per half. Folders come first, then
 files, at every level, and the pane reads in the same order. A folder that
 holds only one other folder is one row. The icon's colour says what

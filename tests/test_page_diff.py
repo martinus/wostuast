@@ -692,3 +692,122 @@ def test_a_diff_in_the_light_is_on_white_and_reads(repo_page):
             assert contrast(seen["ink"], seen["card"]) >= 4.5, seen
         finally:
             browser.close()
+
+
+# --- more of a file, between its changes ------------------------------------
+
+
+def long_change(root):
+    """A 120-line file, committed, then changed on disk at 30 and 90."""
+    rows = [f"line {n}" for n in range(1, 121)]
+    (root / "long.txt").write_text("\n".join(rows) + "\n")
+    conftest.git_in(root, "add", "long.txt")
+    conftest.git_in(root, "commit", "-qm", "long")
+    rows[29] = "changed 30"
+    rows[89] = "changed 90"
+    (root / "long.txt").write_text("\n".join(rows) + "\n")
+
+
+LONG = ".diffhead.uncommitted ~ .dfile:has(.path:text-is('long.txt'))"
+
+
+def shown_numbers(page):
+    """The new-side numbers of every row of the long file, in order."""
+    return page.eval_on_selector_all(
+        LONG + " .dline", """els => els.map(
+          (e) => e.querySelector('.ln').textContent.slice(5, 11).trim())
+          .filter(Boolean).map(Number)""")
+
+
+def test_a_band_says_how_many_lines_are_hidden_and_shows_them(repo_page):
+    """Bitbucket's way: a band where lines are hidden, twenty more from
+    either end, or all of them."""
+    root, _ = repo_page
+    long_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(LONG + " .hunk")
+            said = page.eval_on_selector_all(
+                LONG + " .hunk .hidden", "els => els.map(e => e.textContent)")
+            # 1-26 above the first change, 34-86 between, and whatever is
+            # after 93: git showed three lines, so nobody knows yet.
+            assert said == ["26 lines hidden", "53 lines hidden",
+                            "more of the file below"], said
+            assert shown_numbers(page)[:1] == [27]
+            # Up from the first change: the twenty lines just above it.
+            page.locator(LONG + " .hunk").first.locator(".grow").click()
+            page.wait_for_selector(LONG + " .dtext:text-is('line 7')")
+            numbers = shown_numbers(page)
+            assert numbers[:21] == list(range(7, 28)), numbers
+            # All of the middle: the two changes are one hunk now.
+            page.locator(LONG + " .hunk", has_text="53 lines hidden") \
+                .locator(".link").click()
+            page.wait_for_selector(LONG + " .dtext:text-is('line 60')")
+            numbers = shown_numbers(page)
+            assert numbers == list(range(7, 94)), numbers
+            # The whole file has arrived, so the end is known now.
+            tail = page.locator(LONG + " .hunk.tail .hidden").inner_text()
+            assert tail == "27 lines hidden", tail
+        finally:
+            browser.close()
+
+
+def test_a_shown_line_takes_a_comment_where_it_stands(repo_page):
+    root, _ = repo_page
+    long_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(LONG + " .hunk")
+            page.locator(LONG + " .hunk").first.locator(".grow").click()
+            row = page.locator(LONG + " .dline", has_text="line 10").first
+            row.wait_for()
+            row.locator(".addnote").click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            assert page.evaluate("state.writing") == "long.txt\n10"
+        finally:
+            browser.close()
+
+
+def test_shown_lines_come_again_from_the_file_as_it_now_is(repo_page):
+    """The whole file is kept against the hunks it came with. The agent
+    saves; lines kept from before would put old text between new changes."""
+    root, _ = repo_page
+    long_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(LONG + " .hunk")
+            page.locator(LONG + " .hunk").first.locator(".grow").click()
+            page.wait_for_selector(LONG + " .dtext:text-is('line 10')")
+            rows = (root / "long.txt").read_text().splitlines()
+            rows[11] = "twelve, changed while you read"
+            (root / "long.txt").write_text("\n".join(rows) + "\n")
+            page.evaluate("loadDiff()")
+            page.wait_for_selector(
+                LONG + " .dline.added .dtext:text-is('twelve, changed while you read')")
+            # Still shown, from the new whole file.
+            assert page.locator(LONG + " .dtext:text-is('line 10')").count() == 1
+        finally:
+            browser.close()
+
+
+def test_the_file_header_stands_on_the_diffs_own_ground(repo_page):
+    """It had a colour of its own, darker than the code under it, and read
+    as a bar rather than as the top of the file."""
+    for scheme in ("light", "dark"):
+        with sync_playwright() as play:
+            browser, page = open_page(play, repo_page, scheme=scheme)
+            try:
+                show_tab(page, "diff")
+                page.wait_for_selector(".dfile > .name")
+                card, head = page.evaluate("""() => [
+                  getComputedStyle(document.querySelector('.dfile')).backgroundColor,
+                  getComputedStyle(document.querySelector('.dfile > .name')).backgroundColor]""")
+                assert head == card, (scheme, head, card)
+            finally:
+                browser.close()
