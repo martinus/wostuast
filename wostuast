@@ -7527,8 +7527,30 @@ async function submitAsk(id, ask, box) {
 // transcripts hold no thinking at all, so pressing it changed nothing on
 // screen and nothing said why. A key that does something invisible is a key
 // that does nothing, as far as anyone pressing it can tell.
+// `t` shows the thoughts or hides them, and must not move the reader. The
+// pane kept its offset in pixels while blocks came and went above it, so the
+// view jumped -- reply 21, then thought 6, then reply 5 on three looks at one
+// place -- and it read as a switch that showed some messages and then others.
+// So the block at the top of the view is put back where it stood, measured
+// against a block that is there either way, and a reader at the foot stays
+// at the foot.
 function toggleThinking() {
+  const pane = state.tab === "transcript" && document.querySelector(".turnbody");
+  let foot = false, held = null, at = 0;
+  if (pane) {
+    foot = nearBottom(pane);
+    const top = pane.getBoundingClientRect().top;
+    held = [...pane.querySelectorAll(".turn:not(.thinking)")]
+      .find((one) => one.getBoundingClientRect().bottom > top);
+    if (held) at = held.getBoundingClientRect().top - top;
+  }
   const on = document.body.classList.toggle("show-thinking");
+  if (foot) {
+    pane.scrollTop = pane.scrollHeight;
+  } else if (held) {
+    pane.scrollTop += held.getBoundingClientRect().top
+      - pane.getBoundingClientRect().top - at;
+  }
   const many = state.turns.blocks.filter(
     (one) => one && one.kind === "thinking").length;
   note(!many ? "nothing was thought aloud in this transcript"
