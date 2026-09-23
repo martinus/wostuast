@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -1315,6 +1316,103 @@ def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
             # Shown, each thought is the words a call belongs to.
             assert max(shown[-7:-2:2]) < min(shown[-6:-1:2]), shown
             assert len(shown) > len(hidden), (hidden, shown)
+        finally:
+            browser.close()
+
+
+def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
+    """Measured from the text, not from the box around it. `.who` -- a name,
+    a time, the copy button -- is taller than one line of text, so it set the
+    height of the turn: the calls stood 39 px under the words that announced
+    them, and only 22 above the reply after them. Every test before this one
+    measured box to box and said 6.
+
+    The words and the calls arrive in two pushes, the way a live session
+    sends them, so the words are already drawn when the page learns that a
+    call comes next. And a column allowed to run down beside the calls must
+    not run into the next one, which is tested where it is longest: a day
+    line, one line of text, one call."""
+    daemon, path = page_at
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+
+    def said(kind, ts=now, **piece):
+        return json.dumps({
+            "type": "assistant", "timestamp": ts,
+            "message": {"role": "assistant",
+                        "content": [{"type": kind, **piece}]}}) + "\n"
+
+    def tick_until(words):
+        daemon.tick()
+        page.wait_for_function(
+            """(words) => [...document.querySelectorAll('.turnbody .turn')]
+                .some((t) => t.innerText.includes(words))""", arg=words)
+
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.set_viewport_size({"width": 1500, "height": 900})
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write(said("text", text="Now the tests for the split:"))
+            tick_until("the split")
+            with open(daemon_transcript(daemon), "a") as handle:
+                for n in range(3):
+                    handle.write(said("thinking", thinking=f"Now dir{n}."))
+                    handle.write(said("tool_use", id=f"t{n}", name="Bash",
+                                      input={"command": f"ls dir{n}"}))
+                handle.write(said("text", text="They all pass."))
+                old = "2026-09-18T14:30:00.000Z"
+                handle.write(said("text", ts=old, text="One more look."))
+                handle.write(said("tool_use", ts=old, id="t9", name="Bash",
+                                  input={"command": "ls again"}))
+                handle.write(said("text", ts=old, text="Done."))
+            tick_until("Done.")
+            # A block that has just arrived slides in, and while it moves it
+            # is a stacking context of its own: nothing inside it can stand
+            # over a later block, and it is 4 px from where it will rest.
+            page.wait_for_function("() => !document.getAnimations().length")
+            seen = """() => {
+              const shown = [...document.querySelectorAll('.turnbody .turn')]
+                .filter((t) => t.getClientRects().length);
+              const box = (one) => one.getBoundingClientRect();
+              const at = shown.findIndex((t) => t.innerText.includes('the split'));
+              const words = shown[at];
+              const calls = shown.slice(at + 1).filter(
+                (t) => t.classList.contains('toolrow')).slice(0, 3);
+              const reply = shown.find((t) => t.innerText.includes('all pass'));
+              // What each name column shows, top to bottom, and where the
+              // next one starts. The copy button is part of it, because a
+              // hover shows it.
+              const columns = shown.map((t) => t.querySelector('.who'))
+                .filter((who) => who.children.length);
+              const clash = columns.slice(1).map((who, n) =>
+                box(who.firstElementChild).top
+                  - box(columns[n].lastElementChild).bottom);
+              const copy = words.querySelector('.copy');
+              const c = box(copy);
+              // Over the whole button, not its middle: the middle can fall
+              // in the gap between two calls, and then nothing covers it.
+              const hit = [0.2, 0.5, 0.8].every((y) => [0.2, 0.5, 0.8].every(
+                (x) => copy.contains(document.elementFromPoint(
+                  c.left + c.width * x, c.top + c.height * y))));
+              // Thoughts shown, the block above the first call is a thought.
+              const over = shown[shown.indexOf(calls[0]) - 1];
+              return {
+                above: box(calls[0]).top - box(over.lastElementChild).bottom,
+                below: box(reply).top - box(calls[2]).bottom,
+                clash, copyHit: hit,
+              };
+            }"""
+            hidden = page.evaluate(seen)
+            assert hidden["above"] <= 8, hidden
+            assert hidden["below"] >= 20, hidden
+            assert min(hidden["clash"]) >= 0, hidden
+            assert hidden["copyHit"], hidden
+            page.evaluate("document.body.classList.add('show-thinking')")
+            shown = page.evaluate(seen)
+            assert shown["above"] <= 8, shown
+            assert min(shown["clash"]) >= 0, shown
         finally:
             browser.close()
 
