@@ -579,6 +579,15 @@ request, then update it with that text, and read it back to check.
   leaves a window in which the file already holds a prompt and anyone on the
   machine can read it, and that window does not close if the process dies in
   it. The log holds every prompt and every command an agent ran.
+- **The hooks and the status line run the installed copy, not the checkout,
+  and `serve` says when the two differ.** `install` copies this file to
+  `install_path()`. A reader who pulled and restarted `serve` had a page
+  that could show the session's spend, beside a status line — run by the
+  copy from the day before — that never wrote it down. The page showed no
+  cost and nothing said why; the reader's own status line printed the
+  number, so the payload plainly carried it. `install_behind` compares the
+  bytes; `serve` prints it on the way up and `doctor` counts it as a
+  problem. `test_doctor_and_serve_say_when_the_installed_copy_is_another_version`.
 - **`settings.json` is the user's file, not ours.** `install` touches our hooks
   and nothing else: its permissions are kept (a fresh temporary takes the
   umask, so 0600 came back 0644, on a file that can hold API keys), and the
@@ -1499,6 +1508,14 @@ request, then update it with that text, and read it back to check.
   tab, because they draw the same thing. A session whose status line is not
   registered has no `context_pct` and gets no bar: nought would read as an
   empty window rather than as no answer.
+- **A working stream says nothing.** The slot read "live" on every page all
+  day. A reader can see the page moving, so the word told nobody anything,
+  and a word that is always there is a word nobody reads — "reconnecting"
+  in the same place went unseen too. `state.live` still holds "live";
+  `paintLive` only does not paint it, so a test that wants to know the
+  stream is up asks `state.live`, not the slot.
+  `test_a_working_stream_says_nothing_and_a_lost_one_says_so` holds both
+  halves.
 - **`said` is the daemon's answer and it stays; `note` is our own word and it
   fades.** "Review sent" goes stale in four seconds. "That did not come from
   this page" is about something you asked for and did not get, and fading it
