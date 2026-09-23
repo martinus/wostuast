@@ -5860,10 +5860,20 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    what the arriving-block animation rests on. Grouping changes both. If the
    numbers here need touching again, measure them in a browser rather than
    reading them off; and if they need touching a third time, the wrapper is
-   the answer and this is what it costs. */
+   the answer and this is what it costs.
+
+   A hidden thinking block is still the sibling before the next block, and
+   `+` cannot step over it. An agent thinks between two calls, so the second
+   call read as the first one after some words, was pulled up 16 px, and was
+   drawn on top of the call above it. So after a hidden thought a call gets
+   no pull-up, and anything else gets the 22 px a group keeps below it. The
+   block before the thought decides nothing here, because `+` cannot see it. */
 .turn.toolrow { margin-bottom: 5px; }
 .turn:not(.toolrow) + .turn.toolrow { margin-top: -16px; }
 .turn.toolrow + .turn:not(.toolrow) { margin-top: 22px; }
+body:not(.show-thinking) .turn.thinking + .turn.toolrow { margin-top: 0; }
+body:not(.show-thinking) .turn.thinking + .turn:not(.toolrow):not(.mine) {
+  margin-top: 22px; }
 .tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono); font-size: 12px; color: var(--ink-mute); min-width: 0; }
 .tool { display: flex; gap: 8px; align-items: baseline; cursor: pointer;

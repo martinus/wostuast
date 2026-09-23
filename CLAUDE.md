@@ -1211,6 +1211,14 @@ things about it are worth knowing before they surprise you.
   read. They are 6 and 22 now. **The numbers in the CSS are not the gaps**:
   the margins collapse against `.turn`'s own 22, so above is 22 + (−16) and
   below is max(5, 22). Change one and measure it; do not read it off.
+- **A hidden thinking block is still a sibling.** `display: none` takes it
+  off the screen and not out of `+`, so a tool row after one matched
+  `.turn:not(.toolrow) + .turn.toolrow`, was pulled up 16 px, and was drawn
+  on top of the tool row above it. An agent thinks between two calls, so this
+  was the usual shape, not a corner. `body:not(.show-thinking) .turn.thinking
+  + ...` puts both margins back; any new rule that reads the block before
+  another has the same trap. `test_hidden_thinking_between_two_tool_calls_does_not_stack_them`
+  measures every gap with thinking hidden and shown.
 - **The send box and the question bar start where the transcript does.**
   Both stand under a split tab's right half, and both used to run the whole
   width and under the map beside it — a column you never type into. One
