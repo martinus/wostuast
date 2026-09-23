@@ -5732,6 +5732,7 @@ body.dragging { cursor: col-resize; user-select: none; }
    are about what an agent is doing, and this is about what it has cost. */
 .spent { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
   cursor: help; }
+.ctxslot .model { color: var(--ink-mute); font-size: 12px; white-space: nowrap; }
 .live { margin-left: 12px; display: inline-flex; align-items: center;
   color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
 mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0 1px; }
@@ -7659,16 +7660,23 @@ function drawContext() {
   const s = current();
   const spent = s && s.cost_usd !== null && s.cost_usd !== undefined
     ? money(s.cost_usd) : "";
-  slot.hidden = !hasContext(s) && !spent;
+  // Which model the session runs, left of the bar it fills. It changes
+  // with `/model` mid-session, and it is what the percentage is a
+  // percentage of, so it stands beside it rather than in the Session tab
+  // alone. The status line sends it; without one there is nothing to say.
+  const model = (s && s.model) || "";
+  slot.hidden = !hasContext(s) && !spent && !model;
   if (slot.hidden) {
     slot.replaceChildren();
     slot.dataset.shows = "";
     return;
   }
-  const shows = (hasContext(s) ? Math.round(s.context_pct) : "") + "\n" + spent;
+  const shows = [model, hasContext(s) ? Math.round(s.context_pct) : "", spent]
+    .join("\n");
   if (slot.dataset.shows === shows) return;  // a push a second, rarely moved
   slot.dataset.shows = shows;
   slot.replaceChildren();
+  if (model) put(slot, "span", "model", model);
   if (hasContext(s)) putContext(slot, s.context_pct);
   if (spent) {
     // Claude Code works this out on the client at list price and says so, and

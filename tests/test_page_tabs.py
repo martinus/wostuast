@@ -296,6 +296,26 @@ def test_the_live_slot_keeps_the_far_end_when_the_find_box_goes(page_at):
 # --- how full the window is ---------------------------------------------------
 
 
+def test_the_model_stands_left_of_the_context_bar(page_at):
+    """The percentage is a percentage of this model's window, and `/model`
+    changes it mid-session, so the name stands beside the bar it fills
+    rather than in the Session tab alone."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_selector("#ctxslot .model")
+            seen = page.evaluate("""() => {
+              const box = (sel) => document.querySelector(sel)
+                .getBoundingClientRect();
+              return {text: document.querySelector('#ctxslot .model').textContent,
+                      left: box('#ctxslot .model').right <= box('#ctxslot .ctx').left};
+            }""")
+            assert seen == {"text": "Opus 5", "left": True}, seen
+        finally:
+            browser.close()
+
+
 def test_the_context_bar_stands_at_the_end_of_the_tab_row(page_at):
     """It is in the Session tab too, in a panel you have to go to. This is the
     one fact in that panel you want to notice rather than look up, so it is on

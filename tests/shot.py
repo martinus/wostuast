@@ -89,6 +89,12 @@ def serve(lines: str, home: Path):
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
                      "cwd": str(home), "pane": "%7", "pid": 1,
                      "ts": time.time(), "transcript_path": str(transcript)})
+    # A status line, as a session with one registered has: the strip over
+    # the tabs is drawn from it, and a picture of the page without it is a
+    # picture of a page nobody runs.
+    ws.write_status("s1", ws.Status(ts=time.time(), name="a session",
+                                    model="Opus 5", context_pct=41.0,
+                                    cost_usd=1.8342))
     daemon = ws.Daemon()
     server = ws.make_server(daemon, 0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
