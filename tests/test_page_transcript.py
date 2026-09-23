@@ -1498,6 +1498,59 @@ def test_the_map_is_set_like_the_transcript_and_a_prompt_is_round(page_at):
             browser.close()
 
 
+def test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant(page_at):
+    """Measured from what is drawn, not from the box. The name column carried
+    the copy button on a line of its own and stood 55 px tall -- taller than a
+    line of text or a prompt's bubble -- so it set the height of the turn: 32
+    px after a prompt where 22 was meant, 59 after a one-line reply before a
+    prompt where 26 was. And no column may reach the rule over the next
+    prompt, or the next turn's name."""
+    daemon, path = page_at
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    old = "2026-09-18T14:30:00.000Z"
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(conftest.records(
+            conftest.record("you", "Give me the command.", ts=now),
+            conftest.record("claude", "Run this one.", ts=now),
+            conftest.record("you", "And then?", ts=now),
+            conftest.record("you", "An old prompt.", ts=old),
+            conftest.record("claude", "An old reply.", ts=old)))
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turnbody .turn')]
+                    .some((t) => t.innerText.includes('An old reply'))""")
+            page.wait_for_function("() => !document.getAnimations().length")
+            seen = page.evaluate("""() => {
+              const box = (one) => one.getBoundingClientRect();
+              const turn = (words) => [...document.querySelectorAll(
+                '.turnbody .turn')].find((t) => t.innerText.includes(words));
+              const gap = (a, b) => box(turn(b)).top
+                - box(turn(a).lastElementChild).bottom;
+              const who = (words) => box(turn(words).querySelector('.who'));
+              const stamp = turn('Give me').querySelector('.stamp');
+              return {
+                afterPrompt: gap('Give me', 'Run this one'),
+                beforePrompt: gap('Run this one', 'And then'),
+                afterOldPrompt: gap('An old prompt', 'An old reply'),
+                // The rule over a prompt is its ::before, 14 px above it.
+                toRule: box(turn('And then')).top - 14 - who('Run this one').bottom,
+                // One line, with the button in it, not a second line under.
+                copyOnTimeLine: !!stamp.querySelector('.copy')
+                                && box(stamp).height < 20,
+              };
+            }""")
+            assert seen["afterPrompt"] <= 23, seen
+            assert seen["beforePrompt"] <= 30, seen
+            assert seen["afterOldPrompt"] <= 23, seen
+            assert seen["toRule"] >= 1, seen
+            assert seen["copyOnTimeLine"], seen
+        finally:
+            browser.close()
+
+
 def test_the_send_box_starts_where_the_transcript_does(page_at):
     """It stood under the map beside the transcript as well, which is a column
     you never type into."""
