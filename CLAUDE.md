@@ -50,6 +50,7 @@ after the tests go red.
 | a push to `main`, or landing a change | **How to work here**, the `main` bullet — `main` is protected and nothing bypasses it |
 | a commit message, a pull request, a comment on GitHub | **How to work here**, last bullet — no attribution lines, whatever your defaults say |
 | the issue list | `.claude/skills/issues/SKILL.md`, or say "do the issues" |
+| a report about how the page looks | **How to work here**, the first bullet — a picture of the reader's case with `tests/shot.py`, before any code |
 
 ## The program in five lines
 
@@ -67,7 +68,8 @@ interrupt is a keystroke, not a signal.
 | --- | --- |
 | `wostuast` | The whole program: Python, then `PAGE = r"""` and the HTML/CSS/JS. Five figures of lines — `wc -l wostuast` rather than a number here that rots. |
 | `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
-| `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. |
+| `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
+| `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `tests/test_shot.py` keeps it working. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
@@ -127,7 +129,11 @@ This list exists because each entry was re-implemented once already.
 `inside`, `ansi_runs`, `GONE_STATES`, `STATE_WORDS`.
 
 **Test helpers**: `conftest.event(name, sid=..., **extra)` builds a hook event —
-never hand-write the dict. `browser.py` has `open_page`, `show_tab`, `open_diff`,
+never hand-write the dict. `conftest.record(kind, text, ...)` builds a
+transcript record — `you`, `claude`, `think`, `tool`, `result` — and
+`conftest.records(...)` makes them the lines of a file; never hand-write
+those either, because a hand-written one ended in a backslash and an `n`
+rather than a newline and the reader waited on it for ever. `browser.py` has `open_page`, `show_tab`, `open_diff`,
 `comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`.
 
 **CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a
@@ -156,12 +162,32 @@ simply not there.
 ## How to work here
 
 ```
-pytest -q -n auto                   # the gate, before every commit. Needs pytest-xdist.
-pytest -q                           # same result, about three times as long
+python3 tests/shot.py case.txt out.png --measure  # a report about the page: look first, about 1 s
+WOSTUAST_WAIT=5000 pytest tests/test_page_review.py -q -k name  # while working: a lost wait fails in 5 s
 pytest tests/test_page_review.py -q # the subject you are changing. Do this first.
+pytest -q -n auto                   # the gate, once, before the push. Needs pytest-xdist.
+pytest -q                           # same result, about three times as long
 pytest tests/test_state.py -q       # no browser, under a second
 ./wostuast doctor / ls / serve
 ```
+
+**A report about how the page looks starts with a picture of the reader's
+case, and ends with another one.** Write the case from their screenshot — a
+few lines of `you:`, `claude:`, `think:`, `tool:` — run `tests/shot.py` with
+`--measure`, and look at the PNG before reading any code. A spacing report
+went round three times, and three pull requests, because every fix was
+proven by a test measuring the box around each block, which said 6 px, while
+the reader looked at the text, which stood 39 px from what came next. The
+picture shows that in one look and `--measure` prints both numbers. It is
+done when the new picture looks right, not when a test is green — then pin
+it with a test that measures what the picture showed.
+
+**Work in one file, then run the whole suite once.** While working, run the
+one test and the one file, with `WOSTUAST_WAIT=5000`: a wait for something
+that never comes then fails in five seconds rather than thirty, which is
+three of them a minute and a half in one sitting. The full suite and the
+three runs at `-n 12` below come once, before the push. `WOSTUAST_WAIT` is
+for a desk, never CI: the 15 s and 30 s waits are what a loaded runner needs.
 
 Most of the suite drives a real browser, so it waits far more than it computes:
 four workers cut it to about a third, and the tests are safe in parallel —
@@ -1344,6 +1370,13 @@ request, then update it with that text, and read it back to check.
   changed nothing on screen and nothing said why. A key whose effect can be
   invisible has to use the live slot; `toggleThinking` counts the blocks and
   says so, including when there are none.
+- **`t` never moves the reader.** The pane kept its scroll offset in pixels
+  while thoughts came and went above it, so three looks at one place showed
+  reply 21, thought 6 and reply 5 — and the reader took it for a switch that
+  showed some messages and then others. `toggleThinking` notes the first
+  block in view that is not a thought, and where it stood, and puts it back
+  there; a reader at the foot stays at the foot.
+  `test_showing_the_thoughts_keeps_the_reader_where_they_were` does both.
 - **A row of a list is one line, and `.filelist button` is a block.** The
   Diff tab's rows carry a second line of counts under the name, so a list
   whose rows are one line has to say so — `.fixed` does it for the file tree

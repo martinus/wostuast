@@ -98,6 +98,47 @@ def event(name, sid="s1", **extra):
     return base
 
 
+#: Which input field each tool's one-line target is read from, so that a
+#: record built here draws the way a real one does (see `tool_target`).
+TARGET_FIELD = {"Read": "file_path", "Write": "file_path", "Edit": "file_path",
+                "MultiEdit": "file_path", "Grep": "pattern", "Glob": "pattern",
+                "Task": "description"}
+
+
+def record(kind, text="", ts="2026-09-18T14:00:00.000Z", tool="Bash",
+           tool_id="t1"):
+    """One transcript record, the way Claude Code writes it.
+
+    `kind` is "you", "claude", "think", "tool" or "result". A tool call puts
+    `text` in the field its tool reads its target from (`TARGET_FIELD`); a
+    result answers `tool_id`. Every test that wrote these by hand wrote the
+    same eight lines of JSON, and one of those copies ended in a backslash
+    and an "n" rather than a newline -- a line the reader waits on for ever,
+    which cost a 30 s timeout to find. Build them here; write them with
+    `records`.
+    """
+    if kind == "you":
+        return {"type": "user", "timestamp": ts,
+                "message": {"role": "user", "content": text}}
+    if kind == "result":
+        return {"type": "user", "timestamp": ts,
+                "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": tool_id,
+                     "content": text}]}}
+    piece = {"claude": {"type": "text", "text": text},
+             "think": {"type": "thinking", "thinking": text},
+             "tool": {"type": "tool_use", "id": tool_id, "name": tool,
+                      "input": {TARGET_FIELD.get(tool, "command"): text}},
+             }[kind]
+    return {"type": "assistant", "timestamp": ts,
+            "message": {"role": "assistant", "content": [piece]}}
+
+
+def records(*made):
+    """Records from `record`, as the lines of a transcript file."""
+    return "".join(json.dumps(one) + "\n" for one in made)
+
+
 @pytest.fixture
 def stub_git(ws, monkeypatch):
     """Answer for git and for liveness, so a test stays about its own subject."""

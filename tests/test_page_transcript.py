@@ -1275,20 +1275,17 @@ def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
     between saying what it will do and doing it."""
     daemon, path = page_at
 
-    def said(kind, **piece):
-        return json.dumps({
-            "type": "assistant", "timestamp": "2026-09-18T14:20:02.000Z",
-            "message": {"role": "assistant",
-                        "content": [{"type": kind, **piece}]}}) + "\n"
+    def said(kind, text, **rest):
+        return conftest.records(conftest.record(
+            kind, text, ts="2026-09-18T14:20:02.000Z", **rest))
 
     with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(said("text", text="First I will look around."))
+        handle.write(said("claude", "First I will look around."))
         for n in range(3):
-            handle.write(said("thinking", thinking=f"Now dir{n}."))
-            handle.write(said("tool_use", id=f"t{n}", name="Bash",
-                              input={"command": f"ls dir{n}"}))
-        handle.write(said("thinking", thinking="That is all of them."))
-        handle.write(said("text", text="Now I know what is there."))
+            handle.write(said("think", f"Now dir{n}."))
+            handle.write(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
+        handle.write(said("think", "That is all of them."))
+        handle.write(said("claude", "Now I know what is there."))
     daemon.tick()
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1335,11 +1332,8 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
     daemon, path = page_at
     now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
 
-    def said(kind, ts=now, **piece):
-        return json.dumps({
-            "type": "assistant", "timestamp": ts,
-            "message": {"role": "assistant",
-                        "content": [{"type": kind, **piece}]}}) + "\n"
+    def said(kind, text, ts=now, **rest):
+        return conftest.records(conftest.record(kind, text, ts=ts, **rest))
 
     def tick_until(words):
         daemon.tick()
@@ -1354,19 +1348,17 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
             wait_for_map(page)
             wait_for_watching(daemon)
             with open(daemon_transcript(daemon), "a") as handle:
-                handle.write(said("text", text="Now the tests for the split:"))
+                handle.write(said("claude", "Now the tests for the split:"))
             tick_until("the split")
             with open(daemon_transcript(daemon), "a") as handle:
                 for n in range(3):
-                    handle.write(said("thinking", thinking=f"Now dir{n}."))
-                    handle.write(said("tool_use", id=f"t{n}", name="Bash",
-                                      input={"command": f"ls dir{n}"}))
-                handle.write(said("text", text="They all pass."))
+                    handle.write(said("think", f"Now dir{n}."))
+                    handle.write(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
+                handle.write(said("claude", "They all pass."))
                 old = "2026-09-18T14:30:00.000Z"
-                handle.write(said("text", ts=old, text="One more look."))
-                handle.write(said("tool_use", ts=old, id="t9", name="Bash",
-                                  input={"command": "ls again"}))
-                handle.write(said("text", ts=old, text="Done."))
+                handle.write(said("claude", "One more look.", ts=old))
+                handle.write(said("tool", "ls again", ts=old, tool_id="t9"))
+                handle.write(said("claude", "Done.", ts=old))
             tick_until("Done.")
             # A block that has just arrived slides in, and while it moves it
             # is a stacking context of its own: nothing inside it can stand
@@ -1413,6 +1405,63 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
             shown = page.evaluate(seen)
             assert shown["above"] <= 8, shown
             assert min(shown["clash"]) >= 0, shown
+        finally:
+            browser.close()
+
+
+def test_showing_the_thoughts_keeps_the_reader_where_they_were(page_at):
+    """`t` shows the thoughts or hides them, and nothing else. The pane kept
+    its scroll offset in pixels while blocks appeared or went above it, so
+    the view jumped: at the foot of a transcript you read reply 21, one press
+    later thought 6, and a second press reply 5. It read as a switch that
+    showed some messages and then others. The block at the top of the view
+    stays there, and a reader at the foot stays at the foot."""
+    daemon, path = page_at
+    made = []
+    for n in range(40):
+        made += [conftest.record("claude", f"Reply number {n}."),
+                 conftest.record("think", f"Thought {n}.\nA second line.\n"
+                                          "And a third."),
+                 conftest.record("tool", f"ls {n}", tool_id=f"t{n}")]
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(conftest.records(*made))
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.set_viewport_size({"width": 1400, "height": 700})
+            wait_for_map(page, 40)
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turnbody .turn')]
+                    .some((t) => t.innerText.includes('Reply number 39'))""")
+            # What the reader sees: the first block, thoughts aside, whose
+            # bottom is inside the pane, and how far from the top it stands.
+            seen = """() => {
+              const pane = document.querySelector('.turnbody');
+              const top = pane.getBoundingClientRect().top;
+              const first = [...pane.querySelectorAll('.turn:not(.thinking)')]
+                .find((t) => t.getBoundingClientRect().bottom > top);
+              return {first: first.innerText.replace(/\\s+/g, ' ').slice(-20),
+                      at: Math.round(first.getBoundingClientRect().top - top),
+                      foot: pane.scrollHeight - pane.scrollTop
+                            - pane.clientHeight < 2};
+            }"""
+            for where in ("the middle", "the foot"):
+                page.evaluate(
+                    "(y) => { const p = document.querySelector('.turnbody');"
+                    " p.scrollTop = y === 'the foot' ? p.scrollHeight"
+                    " : p.scrollHeight / 2; }", where)
+                before = page.evaluate(seen)
+                for press in ("shown", "hidden"):
+                    page.keyboard.press("t")
+                    now = page.evaluate(seen)
+                    if where == "the foot":
+                        assert now["foot"], (where, press, before, now)
+                    else:
+                        assert now["first"] == before["first"], (where, press,
+                                                                 before, now)
+                        assert abs(now["at"] - before["at"]) <= 1, (
+                            where, press, before, now)
         finally:
             browser.close()
 

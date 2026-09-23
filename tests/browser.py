@@ -65,6 +65,14 @@ def sync_playwright():
 
 MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
 
+#: How long any wait may take, in milliseconds, when `WOSTUAST_WAIT` says.
+#: Unset, Playwright's own 30 s stands, and the waits here keep their 15 s:
+#: a loaded CI runner needs them. Set it while working on one test --
+#: `WOSTUAST_WAIT=5000 pytest tests/test_page_x.py -k name` -- and a wait
+#: for something that never comes fails in five seconds, not thirty. Three of
+#: those cost a minute and a half in one sitting.
+WAIT = int(os.environ.get("WOSTUAST_WAIT") or 0) or None
+
 # What each tab has drawn once its first answer has arrived. Waiting for the
 # thing itself beats sleeping for long enough: it is both quicker and surer.
 # The transcript shares the box with the two split tabs, so "the box has a
@@ -94,6 +102,8 @@ def fresh_context(play, scheme="dark", with_marked=True):
     """
     context = play.new_context(viewport={"width": 1440, "height": 900},
                                color_scheme=scheme)
+    if WAIT:
+        context.set_default_timeout(WAIT)
     context.route("**/marked.min.js", lambda route: route.fulfill(
         path=str(MARKED), content_type="application/javascript",
         headers={"access-control-allow-origin": "*"})
@@ -110,12 +120,12 @@ def open_page(play, where, scheme="dark", with_marked=True):
     browser = fresh_context(play, scheme, with_marked)
     page = browser.new_page()
     page.goto(url, wait_until="domcontentloaded")
-    page.wait_for_selector(".row", timeout=15000)
+    page.wait_for_selector(".row", timeout=WAIT or 15000)
     # Wait for the first draw rather than for a length of time.
     ready = "document.querySelector('#content > *') !== null"
     if with_marked:
         ready = "!!window.marked && " + ready
-    page.wait_for_function(ready, timeout=15000)
+    page.wait_for_function(ready, timeout=WAIT or 15000)
     return browser, page
 
 def wait_for_map(page, rows=1):
@@ -127,12 +137,12 @@ def wait_for_map(page, rows=1):
     an empty list as "the list drew nothing"."""
     page.wait_for_function(
         "n => document.querySelectorAll("
-        "'.filelist.transcript button').length >= n", arg=rows, timeout=15000)
+        "'.filelist.transcript button').length >= n", arg=rows, timeout=WAIT or 15000)
 
 def show_tab(page, name):
     """Open a tab and wait for its first answer, not for a fixed time."""
     page.click(f".tab[data-tab='{name}']")
-    page.wait_for_selector(DRAWN[name], timeout=15000)
+    page.wait_for_selector(DRAWN[name], timeout=WAIT or 15000)
 
 def rgb(text):
     """The three numbers out of a computed `rgb(r, g, b)` or `rgba(...)`."""
