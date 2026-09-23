@@ -1136,6 +1136,16 @@ request, then update it with that text, and read it back to check.
   `paintDiff` calls `markWords` again from `cell.words`. Take that out and
   the marks go the moment the colour arrives, which nothing but
   `test_the_diff_is_painted_and_keeps_its_word_marks` would notice offline.
+- **A diff stands on `--sheet`, not on `--code`, and it is white in the
+  light.** On the code ground, `#eceae3`, an unchanged line stood at a
+  contrast of 4.29 — under the 4.5 body text needs — and the card read as a
+  brown box darker than the page around it. `--code` stays what it is for a
+  code block inside prose. `test_a_diff_in_the_light_is_on_white_and_reads`.
+- **A commit picked shows its whole message, and only that commit's is
+  asked for.** `DiffReport.body` is `git show -s --format=%b` for the one
+  commit shown, not a field of every `Commit`: a hundred bodies on every
+  poll would be sent for the one being read. It is drawn `pre-wrap` in the
+  fixed face, because a git body is wrapped by hand.
 - **Two columns wrap; one column scrolls.** A pair of halves cannot share a
   sideways scrollbar, and two bars drift apart, so `.dlines.sides` hides the
   overflow and the halves wrap. The `+` is on the new half only — a comment

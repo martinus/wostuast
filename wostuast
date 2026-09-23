@@ -3093,6 +3093,10 @@ class DiffReport:
     #: A comment belongs to a line of the file as it is now, and this is the
     #: map there -- what the uncommitted section is for the committed one.
     since: list[DiffFile] = field(default_factory=list)
+    #: The commit message under its subject, for the commit shown. Asked
+    #: for that one commit only: a hundred bodies on every poll would be
+    #: sent for the one the reader is looking at.
+    body: str = ""
 
 
 #: What git writes after a backslash inside a quoted path. Anything else it
@@ -3308,6 +3312,11 @@ COMMITS_SHOWN = 100
 #: With no commit of its own on the branch, this many of HEAD's last ones.
 COMMITS_RECENT = 30
 
+#: The most of a commit message's body the Diff tab is sent. A body is prose
+#: somebody wrote; one longer than this is a pasted log, and the page is not
+#: the place to read it.
+COMMIT_BODY_MAX = 20_000
+
 #: Between the fields of one commit, and after each commit, in `git log`.
 #: Neither can be in a name or a subject a person typed.
 LOG_FIELD = "\x1f"
@@ -3409,6 +3418,10 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
             if not parent:
                 report.failed = True
                 return report
+            body = runner(["git", "-C", root, "show", "-s", "--no-color",
+                           "--no-show-signature", "--format=%b", one.sha])
+            report.failed = report.failed or body is None
+            report.body = (body or "").strip()[:COMMIT_BODY_MAX]
             files = section(
                 "commit", one.subject or one.short,
                 f"what {'merge' if one.merge else 'commit'} {one.short}"
@@ -5433,6 +5446,9 @@ PAGE = r"""<!doctype html>
      whole of what says a line went or came, under code in its own colours. */
   --add-line: #15301f; --add-word: #22683a;
   --cut-line: #3a1a1d; --cut-word: #7d2b31;
+  /* What a diff is drawn on, and its file's header. In the dark the code's
+     own ground; in the light, white -- see the light block for why. */
+  --sheet: #0f1014; --sheet-head: #1f2129;
   /* Your words. Not a state colour: nothing on this page means "you" except
      this, and amber is spoken for. */
   --mine: #8aa4d0; --mine-soft: rgba(138,164,208,.10);
@@ -5503,6 +5519,10 @@ PAGE = r"""<!doctype html>
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
   --add-line: #dcf2e1; --add-word: #a8dcb5;
   --cut-line: #fbe4e1; --cut-word: #f1b4ad;
+  /* White, not the code ground: on #eceae3 the unchanged lines stood at a
+     contrast of 4.29, under the 4.5 a page's body text needs, and the card
+     read as a brown box darker than the page around it. */
+  --sheet: #ffffff; --sheet-head: #f3f2ee;
   --mine: #3c5a8c; --mine-soft: rgba(60,90,140,.09);
   --code: #eceae3; --code-ink: #33363d;
   --hot: #b2452a;
@@ -6442,6 +6462,15 @@ body:not(.show-thinking) .thinking { display: none; }
   text-transform: none; letter-spacing: 0; font-size: 13.5px;
   color: var(--ink-bright);
 }
+/* The rest of the commit message, under its subject, as it was written:
+   git bodies are wrapped by hand, and lists and paragraphs are made of
+   blank lines and dashes, so the lines are kept and the face is fixed. */
+.diffhead .message {
+  margin: 10px 0 4px; max-width: 80ch; white-space: pre-wrap;
+  overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.55; letter-spacing: 0; text-transform: none;
+  color: var(--ink-soft);
+}
 .diffhead .sha {
   margin-left: 10px; font-family: var(--mono); text-transform: none;
   letter-spacing: 0; color: var(--ink-mute);
@@ -6452,13 +6481,13 @@ body:not(.show-thinking) .thinking { display: none; }
    against the pane. */
 .dfile {
   margin: 10px 16px 0; border: 1px solid var(--edge); border-radius: 8px;
-  overflow: clip; background: var(--code);
+  overflow: clip; background: var(--sheet);
 }
 /* Sticky, so a file three screens long still says which file it is. */
 .dfile > .name {
   position: sticky; top: 0; z-index: 2;
   display: flex; gap: 10px; align-items: baseline; width: 100%;
-  padding: 9px 16px; background: var(--raised); border: 0;
+  padding: 9px 16px; background: var(--sheet-head); border: 0;
   border-bottom: 1px solid var(--edge); font: inherit;
   color: var(--ink-bright); text-align: left; cursor: pointer;
 }
@@ -10648,6 +10677,9 @@ function drawDiff(box) {
       put(head, "span", "about", section.about
           + (one && one.when ? ", " + ago(one.when) + " ago" : ""));
     }
+    // The whole message, not only its subject: the why of a commit is in
+    // the body, and a subject alone is the one line that says least.
+    if (one && report.body) put(head, "div", "message", report.body);
     // `at_commit`: the new side is a commit and not the file on disk, so a
     // comment's line is carried through to where it stands now. The daemon
     // says so, because it is the one that knows what each half is a diff of.
