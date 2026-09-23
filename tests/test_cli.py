@@ -103,6 +103,45 @@ def test_doctor_is_happy_after_install(ws, tmp_path, monkeypatch, capsys):
     assert code == 0
 
 
+def test_doctor_and_serve_say_when_the_installed_copy_is_another_version(
+        ws, tmp_path, monkeypatch, capsys):
+    """The hooks and the status line run the installed copy, not the checkout
+    `serve` runs from. A reader who pulled and restarted `serve` had a page
+    that could show the session's spend and a status line, run by the copy
+    from the day before, that never wrote it down -- and nothing said why."""
+    target = tmp_path / "bin" / "wostuast"
+    monkeypatch.setattr(ws, "install_path", lambda: target)
+    assert ws.install_behind() == ""            # nothing installed, nothing to say
+    ws.cmd_install(None)
+    assert ws.install_behind() == ""            # the same bytes
+    capsys.readouterr()
+
+    target.write_text(target.read_text() + "\n# an older one\n")
+    behind = ws.install_behind()
+    assert str(target) in behind and "install" in behind
+    code = ws.cmd_doctor(None)
+    out = capsys.readouterr().out
+    assert behind in out
+    assert code == 1
+
+    # `serve` says it on the way up, where the reader is looking. The server
+    # stops at once, the way ctrl-c stops it.
+    class Stops:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Stops())
+    monkeypatch.setattr(ws, "write_example_links", lambda: False)
+    assert ws.cmd_serve(type("Args", (), {"port": 0, "open": False})()) == 0
+    assert behind in capsys.readouterr().err
+
+
 def test_the_table_pads_every_column_but_the_last(ws):
     rows = [("", ["a", "bbb", "x"]), ("", ["cccc", "d", "y"])]
     assert ws.table(rows, color=False) == "a     bbb  x\ncccc  d    y"

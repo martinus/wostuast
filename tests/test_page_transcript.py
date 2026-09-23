@@ -409,6 +409,25 @@ def test_expanding_a_tool_result_keeps_the_search_highlighted(page_at):
             browser.close()
 
 
+def test_a_working_stream_says_nothing_and_a_lost_one_says_so(page_at):
+    """The slot read "live" on every page all day. A reader can see the page
+    moving, so the word told nobody anything -- and a word that is always
+    there is a word nobody reads, so "reconnecting" in the same place went
+    unseen too. A working stream is silent; a lost one speaks."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.wait_for_function("state.live === 'live'")
+            assert page.locator("#live").inner_text() == ""
+            # What the page does when the stream drops, read in the same
+            # evaluate that causes it: a push cannot land in between.
+            said = page.evaluate("""() => { state.stream.onerror();
+                return document.getElementById('live').textContent; }""")
+            assert said == "reconnecting"
+        finally:
+            browser.close()
+
+
 def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
     """The slot says whether the stream is live. A passing word borrows it
     for four seconds and has to give it back — it used to assign itself
@@ -417,7 +436,7 @@ def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
         browser, page = open_page(play, page_at)
         try:
             page.wait_for_function(
-                "document.getElementById('live').textContent === 'live'")
+                "state.live === 'live' && document.getElementById('live').textContent === ''")
             # Written and read back inside one `evaluate`, because there is
             # no gap inside one: the stream repaints this slot on every push,
             # and it really is allowed to take the word back — `paintLive` is
@@ -429,7 +448,7 @@ def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
                            return document.getElementById('live').textContent; }""")
             assert said == "review sent"
             page.wait_for_function(
-                "document.getElementById('live').textContent === 'live'",
+                "state.live === 'live' && document.getElementById('live').textContent === ''",
                 timeout=15000)
         finally:
             browser.close()
@@ -443,14 +462,14 @@ def test_a_failure_in_the_live_slot_stays_there(page_at):
         browser, page = open_page(play, page_at)
         try:
             page.wait_for_function(
-                "document.getElementById('live').textContent === 'live'")
+                "state.live === 'live' && document.getElementById('live').textContent === ''")
             page.evaluate("said({error: 'no pane for this session'})")
             assert "no pane" in page.locator("#live").inner_text()
             page.wait_for_timeout(4500)     # proving it did NOT go away
             assert "no pane" in page.locator("#live").inner_text()
             # The next thing that works gives the slot back.
             page.evaluate("said({done: true})")
-            assert page.locator("#live").inner_text() == "live"
+            assert page.locator("#live").inner_text() == ""
         finally:
             browser.close()
 
@@ -465,7 +484,7 @@ def test_a_push_from_the_daemon_does_not_wipe_a_failure(ws, page_at):
         browser, page = open_page(play, path)
         try:
             page.wait_for_function(
-                "document.getElementById('live').textContent === 'live'")
+                "state.live === 'live' && document.getElementById('live').textContent === ''")
             page.evaluate("said({error: 'no pane for this session'})")
             assert "no pane" in page.locator("#live").inner_text()
 
@@ -475,7 +494,7 @@ def test_a_push_from_the_daemon_does_not_wipe_a_failure(ws, page_at):
             assert "no pane" in page.locator("#live").inner_text()
             # And the stream's own word is not lost either: it is underneath.
             page.evaluate("said({done: true})")
-            assert page.locator("#live").inner_text() == "live"
+            assert page.locator("#live").inner_text() == ""
         finally:
             browser.close()
 

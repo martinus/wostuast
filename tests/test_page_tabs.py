@@ -355,7 +355,7 @@ def test_the_context_bar_does_not_touch_the_live_slot(page_at):
         try:
             page.wait_for_selector("#ctxslot .ctx")
             page.wait_for_function(
-                "document.getElementById('live').textContent === 'live'")
+                "state.live === 'live' && document.getElementById('live').textContent === ''")
             page.evaluate("said({error: 'no pane for this session'})")
             page.wait_for_function(
                 """() => document.getElementById('live').innerText

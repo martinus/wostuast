@@ -5010,12 +5010,39 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                "; ".join(trouble), fatal=False)
     report(install_path().exists(), f"installed at {install_path()}",
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
+    behind = install_behind()
+    report(not behind, "the installed copy is this version", behind)
 
     print("wostuast doctor")
     print("\n".join(lines))
     print()
     print("all good." if problems == 0 else f"{problems} problem(s) to fix.")
     return 1 if problems else 0
+
+
+def install_behind() -> str:
+    """Why the installed copy is not this one, or "" when it is.
+
+    `install` copies this file to `install_path()`, and the hooks and the
+    status line run that copy -- not the checkout `serve` was started from.
+    A reader who pulled and restarted `serve` had a page that knew about the
+    session's spend and a status line, run by the copy from the day before,
+    that never wrote it down: the page showed no cost, and nothing said why.
+    Nothing is wrong when there is no copy to compare, when this *is* the
+    copy, or when the two hold the same bytes.
+    """
+    here = Path(__file__).resolve() if "__file__" in globals() else None
+    target = install_path()
+    try:
+        if here is None or here == target.resolve():
+            return ""
+        if target.read_bytes() == here.read_bytes():
+            return ""
+    except OSError:
+        return ""
+    return (f"{target} is not this version ({here}). The hooks and the status"
+            f" line run {target}, so what this version records is not"
+            f" recorded; run `{here} install`")
 
 
 def self_source() -> str:
@@ -5119,6 +5146,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # never look like a file you never wrote.
     for why in load_links()[1]:
         print(f"links: {why}", file=sys.stderr)
+    # The same kind of silence: a page that knows about a field the status
+    # line has not been writing shows nothing, and looks as if it never could.
+    behind = install_behind()
+    if behind:
+        print(f"install: {behind}", file=sys.stderr)
     print(f"wostuast is watching at {where}")
     print("it listens on this machine only. To read it from another computer,")
     print(f"  run: ssh -N -L {port}:{BIND_HOST}:{port} {os.environ.get('USER', 'you')}@this-machine")
@@ -6958,8 +6990,15 @@ function said(answer) {
 // get, and a passing word that borrows the slot over both.
 //
 // One painter, because four writers raced for it.
+//
+// A stream that is working says nothing. The slot read "live" on every page
+// all day, which is the one thing a reader never needs told -- they can see
+// the page moving -- and a word that is always there is a word nobody reads,
+// so "reconnecting" in the same place went unseen too. `state.live` still
+// holds "live"; it is only not painted.
 function paintLive(borrowed) {
-  $("live").textContent = borrowed || state.trouble || state.live || "";
+  const stream = state.live === "live" ? "" : state.live;
+  $("live").textContent = borrowed || state.trouble || stream || "";
 }
 
 // Our own word about what just happened -- "review sent", "pressed 2, 1".
