@@ -216,6 +216,14 @@ is right only when proving something did **not** happen. Ask one question when a
 redraw could land between two: `wait_for_function("...length === 1")`, not
 `wait_for_selector` then `.count()`.
 
+**A change a stream test expects goes out after the first event, never
+after a sleep.** `test_a_change_is_pushed` made its change from a thread
+0.3 s after it started to connect. On a loaded CI runner the stream opened
+after the push: it began on the new state, and the read waited for a second
+event that never came. `read_events(..., then=change)` runs the change once
+the first event is in, and `stream` joins the hub before it writes that
+event, so nothing pushed after it is lost.
+
 **`open_page` returning is not the transcript arriving, and `show_tab` is not
 the tab's content arriving.** Both wait for the frame — the map beside the
 transcript, and the document inside the Files tab, fill one fetch later.
