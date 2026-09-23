@@ -1264,6 +1264,52 @@ def test_a_group_of_tool_calls_belongs_to_the_words_above_it(page_at):
             browser.close()
 
 
+def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
+    """A thinking block is hidden, but CSS still counts it as the sibling
+    before the next block. So a tool row after one read as "the first call
+    after some words" and was pulled up 16 px, onto the tool row above it:
+    two commands drawn on top of each other. It is the usual shape, too --
+    an agent thinks between calls."""
+    daemon, path = page_at
+
+    def said(kind, **piece):
+        return json.dumps({
+            "type": "assistant", "timestamp": "2026-09-18T14:20:02.000Z",
+            "message": {"role": "assistant",
+                        "content": [{"type": kind, **piece}]}}) + "\n"
+
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(said("text", text="First I will look around."))
+        for n in range(3):
+            handle.write(said("tool_use", id=f"t{n}", name="Bash",
+                              input={"command": f"ls dir{n}"}))
+            handle.write(said("thinking", thinking=f"Now dir{n + 1}."))
+        handle.write(said("text", text="Now I know what is there."))
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turnbody .turn')]
+                    .some((t) => t.innerText.includes('Now I know'))""")
+            gaps = """() => {
+              const shown = [...document.querySelectorAll('.turnbody .turn')]
+                .filter((t) => t.getClientRects().length)
+                .map((t) => t.getBoundingClientRect());
+              return shown.slice(1).map((box, n) => box.top - shown[n].bottom);
+            }"""
+            hidden = page.evaluate(gaps)
+            assert min(hidden) >= 0, hidden
+            # And the group still stands apart from the reply below it.
+            assert hidden[-1] > max(hidden[-3:-1]), hidden
+            page.evaluate("document.body.classList.add('show-thinking')")
+            shown = page.evaluate(gaps)
+            assert min(shown) >= 0, shown
+            assert len(shown) > len(hidden), (hidden, shown)
+        finally:
+            browser.close()
+
+
 def test_the_send_box_starts_where_the_transcript_does(page_at):
     """It stood under the map beside the transcript as well, which is a column
     you never type into."""
