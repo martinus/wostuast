@@ -1338,10 +1338,20 @@ request, then update it with that text, and read it back to check.
   so every row ended in a "…" the column had room for and the number did not.
   **It has to clear what the widest possible column can show**, or it is the
   clip again. Measured at `dragWidth`'s cap of 700 px, where the name box is
-  639 px: 49 of the widest glyphs and 176 of the narrowest. The list is a
+  639 px: 49 of the widest glyphs and 176 of the narrowest. The list was a
   condensed sans, so the thin end sets it — a number reasoned out from
   monospace character widths came to 120 and would have clipped a line of
   narrow letters, which is the bug being fixed. Measure it; do not divide.
+  The map now wears the transcript's face at 14 px, which is wider in every
+  glyph, so the measurement still holds; a narrower face would not.
+- **The map is set like the transcript beside it.** The same face, size and
+  line height as `.prose`, and 1 px above and below a row, so a row comes
+  about every line. It had the file lists' condensed face at 13 px and a row
+  every 29 px, and read as a different page. The file lists keep the
+  condensed face, because a path wants the width.
+  `test_the_map_is_set_like_the_transcript_and_a_prompt_is_round` compares
+  the computed styles, not the numbers, so a change to the transcript's type
+  carries the map with it or fails.
 - **A round on the map folds from its icon, and only from its icon.** The row
   has two jobs: the whole of it goes to that place in the transcript, which is
   what the map is for, and the icon alone folds. Folding on any click would

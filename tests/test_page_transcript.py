@@ -1466,6 +1466,38 @@ def test_showing_the_thoughts_keeps_the_reader_where_they_were(page_at):
             browser.close()
 
 
+def test_the_map_is_set_like_the_transcript_and_a_prompt_is_round(page_at):
+    """The map names what stands beside it, so it wears the same type: face,
+    size and line height. It had the lists' condensed face at 13 px and a row
+    every 29 px, and read as a different page. And a prompt's bubble is
+    rounded at all four corners -- it was square on the left, by the rail."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            wait_for_map(page)
+            seen = page.evaluate("""() => {
+              const style = (sel) => getComputedStyle(document.querySelector(sel));
+              const text = style('.turnbody .prose'), row = style(
+                '.filelist.transcript button');
+              const rows = [...document.querySelectorAll(
+                '.filelist.transcript button')].map((b) => b.getBoundingClientRect());
+              const bubble = style('.turn.mine .bubble');
+              return {
+                text: [text.fontFamily, text.fontSize, text.lineHeight],
+                row: [row.fontFamily, row.fontSize, row.lineHeight],
+                pitch: rows[1].top - rows[0].top,
+                line: parseFloat(text.lineHeight),
+                corners: [bubble.borderTopLeftRadius, bubble.borderBottomLeftRadius,
+                          bubble.borderTopRightRadius, bubble.borderBottomRightRadius],
+              };
+            }""")
+            assert seen["row"] == seen["text"], seen
+            assert seen["pitch"] <= seen["line"] + 4, seen
+            assert "0px" not in seen["corners"], seen
+        finally:
+            browser.close()
+
+
 def test_the_send_box_starts_where_the_transcript_does(page_at):
     """It stood under the map beside the transcript as well, which is a column
     you never type into."""
