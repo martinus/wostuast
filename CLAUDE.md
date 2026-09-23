@@ -1212,13 +1212,17 @@ things about it are worth knowing before they surprise you.
   the margins collapse against `.turn`'s own 22, so above is 22 + (−16) and
   below is max(5, 22). Change one and measure it; do not read it off.
 - **A hidden thinking block is still a sibling.** `display: none` takes it
-  off the screen and not out of `+`, so a tool row after one matched
-  `.turn:not(.toolrow) + .turn.toolrow`, was pulled up 16 px, and was drawn
-  on top of the tool row above it. An agent thinks between two calls, so this
-  was the usual shape, not a corner. `body:not(.show-thinking) .turn.thinking
-  + ...` puts both margins back; any new rule that reads the block before
-  another has the same trap. `test_hidden_thinking_between_two_tool_calls_does_not_stack_them`
-  measures every gap with thinking hidden and shown.
+  off the screen and not out of `+`. An agent thinks between two calls, and
+  between saying what it will do and doing it. With `+` alone, a call after
+  a thought was pulled up 16 px onto the call above it. The first fix only
+  looked at the thought, and put a call 22 px under the words it belonged
+  to. The block that decides is the one *before* the thought, and CSS cannot
+  find it: `pastThought` does, and `blockNode` marks each turn `past-tool` or
+  `past-words`. With thinking hidden the CSS reads those classes; with it
+  shown, `+` is right, because the thought is then the block before. A
+  wrapper per run of calls would not help: the thoughts stand between the
+  calls. `test_hidden_thinking_between_two_tool_calls_does_not_stack_them`
+  measures the gaps in both modes, and each of the four rules fails it.
 - **The send box and the question bar start where the transcript does.**
   Both stand under a split tab's right half, and both used to run the whole
   width and under the map beside it — a column you never type into. One
