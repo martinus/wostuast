@@ -3312,6 +3312,14 @@ COMMITS_SHOWN = 100
 #: With no commit of its own on the branch, this many of HEAD's last ones.
 COMMITS_RECENT = 30
 
+#: Lines of context around a change. git's own default, passed explicitly so a
+#: reader's `diff.context` cannot change what the page counts on.
+DIFF_CONTEXT = 3
+
+#: Context for a file shown whole: more lines than any file here has, so
+#: git's answer holds every line of the file between the changes.
+WHOLE_CONTEXT = 1_000_000
+
 #: The most of a commit message's body the Diff tab is sent. A body is prose
 #: somebody wrote; one longer than this is a pasted log, and the page is not
 #: the place to read it.
@@ -3395,7 +3403,10 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         return report
 
     def section(name: str, title: str, about: str, *args: str) -> list[DiffFile]:
-        text, cut = git_diff(root, args, runner)
+        # Three lines of context, said rather than assumed: the page reads
+        # fewer than three after the last change as the end of the file, and
+        # a reader's `diff.context` would otherwise move that line.
+        text, cut = git_diff(root, [*args, f"-U{DIFF_CONTEXT}"], runner)
         report.cut = report.cut or cut
         report.failed = report.failed or text is None
         files = parse_diff(text or "")
@@ -3451,6 +3462,68 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     report.failed = report.failed or loose is None
     report.untracked = (loose or [])[:UNTRACKED_SHOWN]
     return report
+
+
+@dataclass
+class WholeFile:
+    """One file of one half of the Diff tab, with every line of it.
+
+    What the page shows between two changes when the reader asks for more.
+    It is the same diff with all of the file as context, so it has the lines
+    of the same side the half shows -- HEAD for the branch's work, a commit
+    for one commit, the disk for what is not committed -- and no second way
+    to read a file at a revision is needed.
+    """
+
+    file: DiffFile | None = None
+    cut: bool = False
+    failed: bool = False
+
+
+def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
+                    of: str = "",
+                    runner: Callable[..., str | None] = run) -> WholeFile:
+    """One file's diff in one section, with the whole file as context.
+
+    `section`, `path` and `of` come from the page. The section picks the
+    arguments from a fixed list; a commit is used only when `branch_commits`
+    lists it, as in `worktree_diff`; and the paths go to git as literal
+    pathspecs after `--`, so a name is only ever a name inside the
+    repository, never an option and never a pattern.
+    """
+    found = WholeFile()
+    root = worktree_root(cwd, runner)
+    if not root or not path:
+        return found
+    base = diff_base(root, runner) if section in ("committed", "commit") else ""
+    if section == "uncommitted":
+        spec = ["HEAD"]
+    elif section == "committed" and base:
+        spec = [base + "...HEAD"]
+    elif section == "commit":
+        commits, _ = branch_commits(root, base, runner)
+        one = next((each for each in commits or [] if each.sha == of), None)
+        if one is None:
+            found.failed = commits is None
+            return found
+        parent = one.parent or empty_tree(root, runner)
+        if not parent:
+            found.failed = True
+            return found
+        spec = [parent, one.sha]
+    else:
+        return found
+    # Both names of a renamed file, or git sees one added and nothing else.
+    names = [path] + ([old_path] if old_path and old_path != path else [])
+    text, found.cut = git_diff(
+        root, [*spec, f"-U{WHOLE_CONTEXT}", "--",
+               *(":(literal)" + name for name in names)], runner)
+    if text is None:
+        found.failed = True
+        return found
+    found.file = next((each for each in parse_diff(text)
+                       if each.path == path), None)
+    return found
 
 
 # --- status: the status line payload, which carries name and context ---------
@@ -4844,6 +4917,19 @@ class Serving:
         self.reply_json(dict(asdict(worktree_diff(session.cwd, of=of)),
                              id=session_id))
 
+    def whole(self, session_id: str, query: dict[str, list[str]]) -> None:
+        """One file of the Diff tab with every line of it, for showing the
+        lines between two changes. See `whole_file_diff`."""
+        session = self.known(session_id)
+        if session is None:
+            return
+        def arg(name: str) -> str:
+            return query.get(name, [""])[0]
+
+        found = whole_file_diff(session.cwd, arg("section"), arg("path"),
+                                arg("old"), arg("of"))
+        self.reply_json(dict(asdict(found), id=session_id))
+
     def stream(self, watching: str) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -4876,6 +4962,7 @@ GET_VERBS: dict[str, Any] = {
     "file": Serving.file,
     "raw": Serving.raw,
     "diff": Serving.diff,
+    "whole": Serving.whole,
 }
 
 # Two of these write to a terminal, and they are the reason every POST carries
@@ -5446,9 +5533,9 @@ PAGE = r"""<!doctype html>
      whole of what says a line went or came, under code in its own colours. */
   --add-line: #15301f; --add-word: #22683a;
   --cut-line: #3a1a1d; --cut-word: #7d2b31;
-  /* What a diff is drawn on, and its file's header. In the dark the code's
-     own ground; in the light, white -- see the light block for why. */
-  --sheet: #0f1014; --sheet-head: #1f2129;
+  /* What a diff is drawn on, its file's header included. In the dark the
+     code's own ground; in the light, white -- see the light block for why. */
+  --sheet: #0f1014;
   /* Your words. Not a state colour: nothing on this page means "you" except
      this, and amber is spoken for. */
   --mine: #8aa4d0; --mine-soft: rgba(138,164,208,.10);
@@ -5522,7 +5609,7 @@ PAGE = r"""<!doctype html>
   /* White, not the code ground: on #eceae3 the unchanged lines stood at a
      contrast of 4.29, under the 4.5 a page's body text needs, and the card
      read as a brown box darker than the page around it. */
-  --sheet: #ffffff; --sheet-head: #f3f2ee;
+  --sheet: #ffffff;
   --mine: #3c5a8c; --mine-soft: rgba(60,90,140,.09);
   --code: #eceae3; --code-ink: #33363d;
   --hot: #b2452a;
@@ -6487,7 +6574,7 @@ body:not(.show-thinking) .thinking { display: none; }
 .dfile > .name {
   position: sticky; top: 0; z-index: 2;
   display: flex; gap: 10px; align-items: baseline; width: 100%;
-  padding: 9px 16px; background: var(--sheet-head); border: 0;
+  padding: 9px 16px; background: var(--sheet); border: 0;
   border-bottom: 1px solid var(--edge); font: inherit;
   color: var(--ink-bright); text-align: left; cursor: pointer;
 }
@@ -6509,6 +6596,17 @@ body:not(.show-thinking) .thinking { display: none; }
   white-space: pre; overflow-x: auto;
 }
 .hunk .ctx { margin-left: 14px; color: var(--ink-soft); }
+/* Where lines are hidden: the buttons that show them, then how many. */
+.hunk { display: flex; align-items: center; }
+.hunk .more { display: inline-flex; gap: 4px; margin-right: 12px; }
+.hunk .grow {
+  width: 24px; height: 18px; padding: 0; border-radius: 4px;
+  border: 1px solid var(--edge-bright); background: var(--sheet);
+  color: var(--ink-mute); font: inherit; line-height: 16px; cursor: pointer;
+}
+.hunk .grow:hover { border-color: var(--done); color: var(--done); }
+.hunk .hidden { margin-left: auto; padding-left: 14px; color: var(--ink-mute); }
+.hunk .link { margin: 0 0 0 10px; }
 /* What makes a row a row of code. It belongs here and not on a tab's own
    container: it used to sit on `.diffbody`, so the moment the Files tab drew
    the same rows they came out in the proportional face, with the gutter's
@@ -6868,6 +6966,10 @@ const state = {
   diffOf: "",
   diffGone: false,      // the commit picked went away; the tab says so
   diffShut: new Set(),  // folders in the Diff tab's tree the reader shut
+  // Lines the reader asked to see between the changes, as `[from, to]` runs
+  // by `moreKey`, and the whole files fetched to show them. See `withMore`.
+  diffMore: new Map(),
+  diffWhole: new Map(),
   sides: "unified",     // one column or two; see `recallSides`
   // What the Session tab shows: how many of each event, and the last few of
   // them. `at` moves when an answer arrives, which is what the tab redraws on.
@@ -10685,7 +10787,8 @@ function drawDiff(box) {
     // says so, because it is the one that knows what each half is a diff of.
     for (const { one: file } of files) {
       scroll.blocks.set(section.name + "\n" + file.path,
-                        drawDiffFile(scroll, file, section.at_commit));
+                        drawDiffFile(scroll, file, section.at_commit,
+                                     section.name));
     }
   }
   const loose = found.loose;
@@ -10803,7 +10906,7 @@ async function chooseUntracked(path) {
   draw();
 }
 
-function drawDiffFile(pane, one, atHead = false) {
+function drawDiffFile(pane, one, atHead = false, section = "") {
   const node = put(pane, "div", "dfile");
   const head = put(node, "button", "name");
   head.type = "button";
@@ -10829,12 +10932,14 @@ function drawDiffFile(pane, one, atHead = false) {
   const chose = state.diffOpen.get(one.path);
   let open = chose === undefined ? size <= BIG_LINES : chose;
   const mark = () => { why.textContent = size + " lines" + (open ? "" : ", hidden"); };
-  if (open) fillDiffFile(body, one, atHead);
+  // With whatever the reader asked to see between the changes.
+  const fill = () => fillDiffFile(body, withMore(one, section), atHead);
+  if (open) fill();
   mark();
   head.addEventListener("click", () => {
     open = !open;
     state.diffOpen.set(one.path, open);
-    if (open) fillDiffFile(body, one, atHead); else body.replaceChildren();
+    if (open) fill(); else body.replaceChildren();
     mark();
   });
   return node;
@@ -10880,11 +10985,18 @@ const SIGN = { added: "+", removed: "\u2212", context: " " };
 // hunk sits inside -- `void usage() {`. The numbers are git's shorthand and
 // the rows already carry them, so they stand back; the function is what a
 // reader looks for, so it stands forward.
-function putHunkHead(body, header) {
+function putHunkHead(body, hunk, file) {
   const head = put(body, "div", "hunk");
-  const found = /^(@@ [^@]* @@)(.*)$/.exec(header);
-  put(head, "span", "at", found ? found[1] : header);
+  // Lines hidden above this change, and a way to show them. A file drawn
+  // other than by `withMore` -- an untracked one, a file being read -- has
+  // no `gapFrom`, and nothing is hidden in it.
+  const found = /^(@@ [^@]* @@)(.*)$/.exec(hunk.header);
+  put(head, "span", "at", found ? found[1] : hunk.header);
   if (found && found[2].trim()) put(head, "span", "ctx", found[2].trim());
+  if (hunk.gapFrom !== undefined && hunk.gapTo >= hunk.gapFrom) {
+    putMore(head, file, hunk.gapFrom, hunk.gapTo,
+            { up: true, down: hunk.gapFrom > 1 });
+  }
 }
 
 function fillDiffFile(body, one, atHead = false) {
@@ -10903,7 +11015,7 @@ function fillDiffFile(body, one, atHead = false) {
   // which words changed.
   const hunks = [];
   walkHunks(one, (hunk) => {
-    const held = { header: hunk.header, rows: [] };
+    const held = { hunk, rows: [] };
     hunks.push(held);
     return held;
   }, (line, old, now, held) => held.rows.push({ line, old, now }));
@@ -10914,7 +11026,7 @@ function fillDiffFile(body, one, atHead = false) {
   // `paintDiff`.
   const painting = [];
   for (const hunk of hunks) {
-    if (hunk.header) putHunkHead(body, hunk.header);
+    if (hunk.hunk.header) putHunkHead(body, hunk.hunk, one);
     const lines = put(body, "div", sides ? "dlines sides" : "dlines");
     const side = { was: [], now: [] };
     painting.push(side);
@@ -10937,6 +11049,12 @@ function fillDiffFile(body, one, atHead = false) {
     for (const row of hunk.rows) {
       unifiedRow(lines, one, row, atHead, marks.get(row) || null, side);
     }
+  }
+  // The lines after the last change, when there are any or might be.
+  if (one.tail === null || one.tail > 0) {
+    putMore(put(body, "div", "hunk tail"), one, one.after,
+            one.tail === null ? null : one.after + one.tail - 1,
+            { up: false, down: true });
   }
   paintDiff(body, one.path, painting);
 }
@@ -11206,6 +11324,189 @@ function linesOf(text) {
 function asLines(path, lines, from = 1) {
   return { path, hunks: [{ header: "", from,
     lines: lines.map((one) => ({ kind: "plain", text: one })) }] };
+}
+
+// --- more of a file, between its changes -------------------------------------
+//
+// git shows three lines either side of a change and hides the rest. A band
+// stands where lines are hidden, says how many, and shows them twenty at a
+// time from either end -- or all of them, on a shift-click or on "show all".
+// The lines come from the same diff with the whole file as context
+// (`whole` on the daemon), so they are the lines of the side the half shows:
+// HEAD for the branch's work, the commit for one commit, the disk for what is
+// not committed.
+
+const MORE_STEP = 20;
+
+// What the reader asked to see, and what arrived for it, by what is shown,
+// the half and the file: one commit's line 40 is not another's.
+function moreKey(section, path) {
+  return state.diffOf + "\n" + section + "\n" + path;
+}
+
+// A file's hunks as text, to tell whether the whole file that arrived still
+// belongs to the diff on screen. The agent saves; a stale whole file would
+// put yesterday's lines between today's changes.
+function hunkSig(one) {
+  return JSON.stringify(one.hunks);
+}
+
+function isShown(ranges, line) {
+  return !!ranges && ranges.some(([from, to]) => from <= line && line <= to);
+}
+
+// The file as it is drawn: git's hunks, or -- once the reader has asked for
+// more and the whole file has arrived -- its lines with the asked-for ones
+// between them. Each hunk says which lines stand hidden above it
+// (`gapFrom`..`gapTo`, new-side numbers) and the file says how many are
+// hidden below its last change: `tail`, which is null when nobody knows yet.
+function withMore(one, section) {
+  const key = moreKey(section, one.path);
+  const more = state.diffMore.get(key);
+  let whole = state.diffWhole.get(key);
+  if (whole && !whole.asking && whole.sig !== hunkSig(one)) {
+    state.diffWhole.delete(key);
+    whole = undefined;
+  }
+  if (!whole && more && more.length) fetchWhole(one, section);  // draws again
+  const usable = whole && whole.file;
+  // Every row with its numbers, and null where rows are hidden.
+  const rows = [];
+  // What git named at the top of each of its hunks -- the function a hunk
+  // sits in -- by the new-side line the hunk starts at.
+  const named = new Map();
+  for (const hunk of one.hunks) {
+    const found = HUNK_AT.exec(hunk.header);
+    if (found) named.set(Number(found[2]), hunk.header.slice(found[0].length));
+  }
+  if (usable) {
+    const shown = new Set();
+    walkHunks(one, null, (line, old, now) => {
+      if (line.kind !== "removed") shown.add(now);
+    });
+    walkHunks(usable, null, (line, old, now) => {
+      rows.push(line.kind !== "context" || shown.has(now) || isShown(more, now)
+        ? { line, old, now } : null);
+    });
+  } else {
+    walkHunks(one, () => rows.push(null),
+              (line, old, now) => rows.push({ line, old, now }));
+  }
+  const groups = [];
+  let group = null;
+  let after = 1;             // the new-side line a hidden run would start at
+  for (const row of rows) {
+    if (!row) { group = null; continue; }
+    if (!group) groups.push(group = { rows: [], gapFrom: after, gapTo: row.now - 1 });
+    group.rows.push(row);
+    after = row.now + (row.line.kind === "removed" ? 0 : 1);
+  }
+  const hunks = groups.map(({ rows: held, gapFrom, gapTo }) => {
+    const first = held[0];
+    const olds = held.filter((row) => row.line.kind !== "added").length;
+    const news = held.filter((row) => row.line.kind !== "removed").length;
+    const name = held.map((row) => named.get(row.now))
+      .find((text) => text !== undefined) || "";
+    return { header: "@@ -" + first.old + "," + olds + " +" + first.now + ","
+               + news + " @@" + name,
+             lines: held.map((row) => row.line), gapFrom, gapTo };
+  });
+  let tail = null;
+  if (usable) {
+    let last = 0;
+    walkHunks(usable, null, (line, old, now) => {
+      if (line.kind !== "removed") last = now;
+    });
+    tail = Math.max(0, last - after + 1);
+  } else if (one.status !== "modified" && one.status !== "renamed") {
+    tail = 0;                // an added or deleted file is all there
+  } else {
+    // git shows three lines after a change when the file has them, so fewer
+    // means the file ended. Exactly three may be the end or may not be.
+    const lines = (one.hunks[one.hunks.length - 1] || { lines: [] }).lines;
+    let trailing = 0;
+    for (let at = lines.length - 1; at >= 0 && lines[at].kind === "context"; at -= 1) {
+      trailing += 1;
+    }
+    tail = trailing < DIFF_CONTEXT ? 0 : null;
+  }
+  return Object.assign({}, one, { hunks, tail, after, section });
+}
+
+// Three lines, which is what the daemon asks git for (`DIFF_CONTEXT`).
+const DIFF_CONTEXT = 3;
+
+// The whole file for one half, once, and a draw when it lands. A failure is
+// kept too, so a git that does not answer is not asked again on every draw;
+// the diff moving on clears it with everything else.
+async function fetchWhole(one, section) {
+  const key = moreKey(section, one.path);
+  const held = { sig: hunkSig(one), file: null, asking: true };
+  state.diffWhole.set(key, held);
+  const want = state.chosen;
+  const body = await ask(want, "whole", "?" + new URLSearchParams({
+    section, path: one.path, old: one.old_path || "", of: state.diffOf }));
+  if (state.chosen !== want || state.diffWhole.get(key) !== held) return;
+  held.asking = false;
+  held.file = body && !body.cut && !body.failed ? body.file : null;
+  if (!held.file) {
+    note(body && body.cut ? "This file is too long to show whole."
+         : "git did not answer, so those lines stay hidden.");
+  }
+  state.diffAt += 1;
+  draw();
+}
+
+// Show the lines `from`..`to` (new-side numbers; `to` may be Infinity) of a
+// file drawn by `withMore`. A choice, so it is kept by `savePlace`.
+function revealLines(file, from, to) {
+  if (busyWriting()) return;
+  const key = moreKey(file.section, file.path);
+  const ranges = state.diffMore.get(key) || [];
+  ranges.push([from, to]);
+  state.diffMore.set(key, ranges);
+  state.diffAt += 1;
+  draw();
+}
+
+// The buttons on a band. `up` shows the lines just above the change below,
+// `down` the lines just under the change above; a run of twenty or fewer is
+// one button. `to` is null when the run's end is not known -- the lines
+// after the last change, before the whole file has arrived.
+function putMore(band, file, from, to, { up, down }) {
+  const count = to === null ? null : to - from + 1;
+  // The buttons lead the band, where the eye starts; the count ends it.
+  const tools = put(band, "span", "more");
+  band.prepend(tools);
+  const all = (event) => event.shiftKey ? [from, to === null ? Infinity : to] : null;
+  const button = (word, title, range) => {
+    const one = put(tools, "button", "grow", word);
+    one.type = "button";
+    one.title = title + (count !== null && count > MORE_STEP
+      ? " (shift-click for all " + count + ")" : "");
+    one.addEventListener("click", (event) =>
+      revealLines(file, ...(all(event) || range)));
+  };
+  if (count !== null && count <= MORE_STEP) {
+    button("↕", "show the " + count + " hidden line" + (count === 1 ? "" : "s"),
+           [from, to]);
+  } else {
+    if (down) {
+      button("↓", "show " + MORE_STEP + " more lines after the change above",
+             [from, from + MORE_STEP - 1]);
+    }
+    if (up) {
+      button("↑", "show " + MORE_STEP + " more lines before the change below",
+             [to - MORE_STEP + 1, to]);
+    }
+  }
+  put(band, "span", "hidden", count === null ? "more of the file below"
+      : count + (count === 1 ? " line hidden" : " lines hidden"));
+  if (count !== null && count > MORE_STEP) {
+    const every = put(band, "button", "link", "show all");
+    every.type = "button";
+    every.addEventListener("click", () => revealLines(file, from, to));
+  }
 }
 
 // --- the review ---------------------------------------------------------------
@@ -11819,6 +12120,7 @@ function savePlace(id) {
     diffOpen: new Map(state.diffOpen),
     diffOf: state.diffOf,
     diffShut: new Set(state.diffShut),
+    diffMore: new Map([...state.diffMore].map(([key, runs]) => [key, runs.slice()])),
     loose: state.loose,
   });
   // A session that has gone from the list will not be chosen again, so its
@@ -11848,6 +12150,7 @@ function usePlace(id) {
   state.diffOpen = new Map(kept.diffOpen);
   state.diffOf = kept.diffOf;
   state.diffShut = new Set(kept.diffShut);
+  state.diffMore = new Map([...kept.diffMore].map(([key, runs]) => [key, runs.slice()]));
   state.loose = kept.loose;
   return kept;
 }
@@ -11870,6 +12173,8 @@ function choose(id) {
   state.diffOf = "";
   state.diffGone = false;
   state.diffShut = new Set();
+  state.diffMore = new Map();
+  state.diffWhole = new Map();
   state.events = { counts: {}, events: [], at: 0 };
   state.diffOpen.clear();
   recallReview(id);

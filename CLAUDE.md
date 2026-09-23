@@ -1136,8 +1136,29 @@ request, then update it with that text, and read it back to check.
   `paintDiff` calls `markWords` again from `cell.words`. Take that out and
   the marks go the moment the colour arrives, which nothing but
   `test_the_diff_is_painted_and_keeps_its_word_marks` would notice offline.
+- **Lines hidden between changes come from the same diff with the whole
+  file as context, never from reading the file.** `whole_file_diff` is the
+  section's own `git diff` with `-U1000000` and the path as a literal
+  pathspec after `--`, so the lines are the side the half shows — HEAD for
+  the branch's work, the commit for one commit, the disk for what is not
+  committed — and the section picks its arguments from three fixed ones.
+  Reading the file from disk would put the disk's lines into the committed
+  half, which is HEAD's. A commit is used only when `branch_commits` lists
+  it, as everywhere else. `test_a_whole_file_is_every_line_of_the_side_the_half_shows`.
+- **What the reader revealed is kept as line numbers, and the whole file
+  against the hunks it came with.** `state.diffMore` holds `[from, to]`
+  runs by `moreKey` — what is shown, the half, the path — because one
+  commit's line 40 is not another's. `state.diffWhole` keeps each whole file
+  with `hunkSig` of the diff it belongs to, and `withMore` drops it the
+  moment the hunks move: the agent saves, and a kept file would put old
+  lines between new changes. `test_shown_lines_come_again_from_the_file_as_it_now_is`.
+- **Every diff asks git for `-U3` out loud.** The page reads fewer than
+  three lines after the last change as the end of the file and offers no
+  more below it; a reader's `diff.context` would move that line and hide
+  the offer on every file. `DIFF_CONTEXT` is the number on both sides.
 - **A diff stands on `--sheet`, not on `--code`, and it is white in the
-  light.** On the code ground, `#eceae3`, an unchanged line stood at a
+  light.** Its file header stands on it too: a colour of its own, darker
+  than the code, read as a bar rather than the top of the file. On the code ground, `#eceae3`, an unchanged line stood at a
   contrast of 4.29 — under the 4.5 body text needs — and the card read as a
   brown box darker than the page around it. `--code` stays what it is for a
   code block inside prose. `test_a_diff_in_the_light_is_on_white_and_reads`.

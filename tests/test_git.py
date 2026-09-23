@@ -472,3 +472,85 @@ def test_one_commit_carries_its_whole_message(ws, repo):
                           "- a list\n- kept as lines")
     # Only for the commit shown: everything else is not one commit.
     assert report.body == ""
+
+
+# --- more of a file, between its changes ------------------------------------
+
+
+def long_file(repo, name="long.txt", lines=120):
+    (repo / name).write_text("".join(f"line {n}\n" for n in range(1, lines + 1)))
+    git(repo, "add", name)
+    git(repo, "commit", "-qm", "long")
+
+
+def change(repo, name, *numbers):
+    rows = (repo / name).read_text().splitlines()
+    for number in numbers:
+        rows[number - 1] = f"changed {number}"
+    (repo / name).write_text("\n".join(rows) + "\n")
+
+
+def test_a_whole_file_is_every_line_of_the_side_the_half_shows(ws, repo):
+    """The committed half's new side is HEAD, so its whole file is HEAD's,
+    not the disk's; the uncommitted half's is the disk's."""
+    git(repo, "checkout", "-qb", "side")
+    long_file(repo)
+    change(repo, "long.txt", 30)
+    git(repo, "commit", "-qam", "thirty")
+    change(repo, "long.txt", 90)
+    committed = ws.whole_file_diff(str(repo), "committed", "long.txt")
+    lines = [line for hunk in committed.file.hunks for line in hunk.lines]
+    assert len([one for one in lines if one.kind != "removed"]) == 120
+    texts = [one.text for one in lines if one.kind != "removed"]
+    assert "changed 30" in texts and "line 90" in texts   # HEAD, not the disk
+    uncommitted = ws.whole_file_diff(str(repo), "uncommitted", "long.txt")
+    texts = [one.text for hunk in uncommitted.file.hunks for one in hunk.lines
+             if one.kind != "removed"]
+    assert "changed 90" in texts and len(texts) == 120
+
+
+def test_a_whole_file_of_one_commit_asks_git_only_for_a_listed_one(ws, repo):
+    git(repo, "checkout", "-qb", "side")
+    long_file(repo)
+    sha = ws.worktree_diff(str(repo)).commits[0].sha
+    assert ws.whole_file_diff(str(repo), "commit", "long.txt", of=sha).file
+    asked = []
+    real = ws.run
+
+    def runner(args, **rest):
+        asked.append(list(args))
+        return real(args, **rest)
+
+    for wanted in ("HEAD~1", "--output=/tmp/x", "0" * 40):
+        asked.clear()
+        found = ws.whole_file_diff(str(repo), "commit", "long.txt", of=wanted,
+                                   runner=runner)
+        assert found.file is None
+        assert not any(wanted in arg for args in asked for arg in args), wanted
+    # A section that is not one of the three is refused before git is asked.
+    asked.clear()
+    assert ws.whole_file_diff(str(repo), "--cached", "long.txt",
+                              runner=runner).file is None
+    assert not any("diff" in args for args in asked)
+
+
+def test_a_renamed_file_is_whole_only_with_both_names(ws, repo):
+    long_file(repo)
+    git(repo, "mv", "long.txt", "moved.txt")
+    change(repo, "moved.txt", 60)
+    git(repo, "add", "-A")
+    found = ws.whole_file_diff(str(repo), "uncommitted", "moved.txt",
+                               old_path="long.txt")
+    assert found.file is not None and found.file.status == "renamed"
+    assert sum(len(hunk.lines) for hunk in found.file.hunks) == 121
+
+
+def test_the_diff_says_three_lines_of_context_whatever_the_reader_set(ws, repo):
+    """The page reads fewer than three lines after the last change as the
+    end of the file. A reader's `diff.context = 1` would have made every
+    file look as though it ended one line after its last change."""
+    long_file(repo)
+    git(repo, "config", "diff.context", "1")
+    change(repo, "long.txt", 50)
+    lines = ws.worktree_diff(str(repo)).sections[-1].files[0].hunks[0].lines
+    assert [one.kind for one in lines].count("context") == 6
