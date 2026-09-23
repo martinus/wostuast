@@ -1457,11 +1457,12 @@ request, then update it with that text, and read it back to check.
   block in view that is not a thought, and where it stood, and puts it back
   there; a reader at the foot stays at the foot.
   `test_showing_the_thoughts_keeps_the_reader_where_they_were` does both.
-- **A row of a list is one line, and `.filelist button` is a block.** The
-  Diff tab's rows carry a second line of counts under the name, so a list
-  whose rows are one line has to say so — `.fixed` does it for the file tree
-  and `.filelist.transcript` does it for the map. Without it the icon sits
-  on a line of its own above the text, which is how the map first shipped.
+- **A row of a list is one line, and `.filelist button` is a block.** A
+  list whose rows are one line says so in the one rule that groups them —
+  `.fixed` for the file tree, `.diff` for the Diff tab's tree, `.transcript`
+  for the map. Without it the icon sits on a line of its own above the text,
+  which is how the map first shipped. The Diff tab's tree was a third copy
+  of the rule before it joined the group; a fourth list joins it too.
 - **The find box narrows the list, never the transcript.** Taking turns out
   of the transcript took the conversation around a hit with them, which is
   what you were reading it for. `shownRounds` filters the left bar;

@@ -3049,6 +3049,9 @@ class DiffSection:
     #: the last commit, the branch, the worktree, or some of each.
     about: str = ""
     files: list[DiffFile] = field(default_factory=list)
+    #: The new side is a commit rather than the files on disk, so a comment's
+    #: line has to be carried through to where it stands in the file now.
+    at_commit: bool = False
 
 
 @dataclass
@@ -3388,7 +3391,8 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         report.failed = report.failed or text is None
         files = parse_diff(text or "")
         report.sections.append(
-            DiffSection(name=name, title=title, about=about, files=files))
+            DiffSection(name=name, title=title, about=about, files=files,
+                        at_commit=name != "uncommitted"))
         return files
 
     report.base = diff_base(root, runner)
@@ -3405,11 +3409,11 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
             if not parent:
                 report.failed = True
                 return report
-            what = "merge" if one.merge else "commit"
             files = section(
                 "commit", one.subject or one.short,
-                f"what {what} {one.short} by {one.author} changed"
-                + (", against its first parent" if what == "merge" else ""),
+                f"what {'merge' if one.merge else 'commit'} {one.short}"
+                f" by {one.author} changed"
+                + (", against its first parent" if one.merge else ""),
                 parent, one.sha)
             # Only the files this commit touched, so the map costs what the
             # commit costs and not what every later commit does.
@@ -6209,14 +6213,21 @@ body:not(.show-thinking) .thinking { display: none; }
   background: none; border: 0; border-left: 2px solid transparent;
   font: inherit; color: var(--ink-soft); cursor: pointer;
 }
-/* The Files list is one height per row, which is what lets it build only the
-   rows on screen and stand two spacers in for the rest. The Diff list is not:
-   its rows carry a second line of counts. */
-.filelist.fixed button {
-  height: 28px; padding: 6px 14px; line-height: 16px;
+/* A row that is one line: icon, then what it says, then anything at its
+   end. `.filelist button` is a block, so each list whose rows are one line
+   says so here -- the file tree, the Diff tab's tree, and the transcript's
+   map. Without it the icon sat on a line of its own above the text, which
+   is how the map first shipped. One rule, so a fourth list joins it rather
+   than copying it. */
+.filelist.fixed button, .filelist.diff button, .filelist.transcript button {
   display: flex; align-items: center; gap: 5px;
 }
-.filelist.fixed .name { flex-grow: 1; min-width: 0; }
+.filelist.fixed .name, .filelist.diff .name, .filelist.transcript .name {
+  flex-grow: 1; min-width: 0;
+}
+/* The Files list is one height per row, which is what lets it build only the
+   rows on screen and stand two spacers in for the rest. */
+.filelist.fixed button { height: 28px; padding: 6px 14px; line-height: 16px; }
 /* Beside every name, so a file and a folder are told apart without reading
    either. It sits on the text baseline, which is where the eye expects it. */
 .filelist .icon {
@@ -6272,8 +6283,13 @@ body:not(.show-thinking) .thinking { display: none; }
    look like one. It is drawn as diff rows, so it shares their ramp too. */
 .code { color: var(--code-ink); }
 /* Which line this was. Numbers are not the content, here or in a diff, so
-   they are faint and they are not copied with it. */
-.dline .ln { color: var(--ink-faint); user-select: none; }
+   they are faint and they are not copied with it. The gutter ends in a rule,
+   as delta draws it -- a shadow and not a border, so it takes no width and a
+   windowed file's grid is the grid it was. */
+.dline .ln {
+  color: var(--ink-faint); user-select: none;
+  display: inline-block; margin-right: 6px; box-shadow: inset -1px 0 var(--edge);
+}
 /* Our colours, not the highlighter's: its stylesheets are not fetched. */
 .hljs-comment, .hljs-quote { color: var(--syn-com); font-style: italic; }
 .hljs-keyword, .hljs-literal, .hljs-selector-tag,
@@ -6316,13 +6332,6 @@ body:not(.show-thinking) .thinking { display: none; }
 }
 /* The map of the conversation. Same rows as the file tree, because they are
    the same thing: a list on the left that names what is on the right. */
-/* The row is a line: icon, then what it says. `.filelist button` is a block,
-   because the Diff tab's rows carry a second line of counts under the name --
-   so a row that is one line has to say so, the way `.fixed` does for the file
-   tree. Without this the icon sat on a line of its own above the text. */
-.filelist.transcript button {
-  display: flex; align-items: center; gap: 5px;
-}
 /* The map names what stands beside it, so it is set like it: the same face,
    size and line height as the transcript's text. It had the lists' condensed
    face at 13 px and 7 px above and below each row, 29 px a row, and read as
@@ -6333,7 +6342,6 @@ body:not(.show-thinking) .thinking { display: none; }
   line-height: 1.55;
 }
 .filelist.transcript button { padding-top: 1px; padding-bottom: 1px; }
-.filelist.transcript .name { flex-grow: 1; min-width: 0; }
 /* A round is yours, so it takes the one colour that means that. */
 .filelist.transcript button.dir .icon { color: var(--mine); }
 /* The padding is on the children of the scroller, so a branch added to
@@ -6506,15 +6514,9 @@ body:not(.show-thinking) .thinking { display: none; }
 .dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
 .dline { position: relative; }
 .dline.context { color: var(--ink-mute); }
-/* The gutter ends in a rule, as delta draws it: numbers on one side, code on
-   the other. A shadow and not a border, so it takes no width and a windowed
-   file's grid is the grid it was. */
-.dline .ln {
-  display: inline-block; margin-right: 6px; box-shadow: inset -1px 0 var(--edge);
-}
 .dline .sign { color: var(--ink-faint); }
-.dline.added .sign, .dline.added .ln { color: var(--working); }
-.dline.removed .sign, .dline.removed .ln { color: var(--hot); }
+.dline.added .sign, .dline.added .ln, .half.added .ln { color: var(--working); }
+.dline.removed .sign, .dline.removed .ln, .half.removed .ln { color: var(--hot); }
 /* Which words changed, inside a line that did. */
 .dline .wd { border-radius: 2px; }
 .dline.added .wd, .half.added .wd { background: var(--add-word); }
@@ -6534,10 +6536,6 @@ body:not(.show-thinking) .thinking { display: none; }
 .half.was { box-shadow: inset -1px 0 var(--edge); }
 .half .ln { min-width: 6ch; padding-right: 8px; text-align: right; margin-right: 8px; }
 .half .dtext { min-width: 0; overflow-wrap: anywhere; padding-right: 12px; }
-.half.removed { background: var(--cut-line); }
-.half.added { background: var(--add-line); }
-.half.removed .ln { color: var(--hot); }
-.half.added .ln { color: var(--working); }
 .half.context { color: var(--ink-mute); }
 /* Nothing on this side: more came than went, or the other way round. Hatched,
    so it reads as "no line here" and not as a blank line. */
@@ -6626,8 +6624,8 @@ body:not(.show-thinking) .thinking { display: none; }
 /* The tint says a line came or went; the text keeps the code's own colours,
    the way delta and a pull request draw it. Green and red text on green and
    red was one signal said twice, and it took the syntax colours away. */
-.dline.added { background: var(--add-line); }
-.dline.removed { background: var(--cut-line); }
+.dline.added, .half.added { background: var(--add-line); }
+.dline.removed, .half.removed { background: var(--cut-line); }
 /* What happened to a file, in the colour of what happened. Modified is blue
    and not amber: amber on this page means an agent is waiting on you. */
 .dfile .what.added, .filelist.diff button.added .icon,
@@ -6638,12 +6636,8 @@ body:not(.show-thinking) .thinking { display: none; }
   color: var(--done);
 }
 .filelist.diff button.deleted .name { text-decoration: line-through; }
-/* The Diff tab's list is a tree now, one line a row, the count at its end. */
-.filelist.diff button {
-  display: flex; align-items: center; gap: 5px;
-  padding-top: 4px; padding-bottom: 4px;
-}
-.filelist.diff .name { flex-grow: 1; min-width: 0; }
+/* The Diff tab's tree: a little tighter than a block row, the count at its end. */
+.filelist.diff button { padding-top: 4px; padding-bottom: 4px; }
 .filelist.diff .counts { margin: 0 0 0 8px; flex-shrink: 0; }
 .note {
   padding: 14px 20px; font-family: var(--mono); font-size: 12px;
@@ -8584,19 +8578,26 @@ async function paintLines(box, path, text, sniffed) {
   if (!lib || !box.isConnected || box.dataset.path !== want) return;
   const language = languageOf(path, text, sniffed);
   if (!language || !lib.getLanguage(language)) return;
+  const rows = box.querySelectorAll(".dline > .dtext");
+  const lines = paintedLines(lib, language, text, rows.length);
+  if (lines) rows.forEach((row, at) => row.replaceChildren(lines[at]));
+}
+
+// Some text, highlighted and cut into one fragment per line -- or null when
+// the language throws, or when the answer does not have the `want` lines the
+// caller is about to colour. Colour on the wrong lines is worse than none.
+// The Files tab paints a whole file through here, the Diff tab one side of
+// one hunk.
+function paintedLines(lib, language, text, want) {
   let lines;
   try {
     const done = lib.highlight(text, { language, ignoreIllegals: true });
     lines = cutIntoLines(paintedInto(document.createElement("template"),
                                      done.value));
   } catch (error) {
-    return;                     // a language that throws leaves the plain text
+    return null;                // a language that throws leaves the plain text
   }
-  const rows = box.querySelectorAll(".dline > .dtext");
-  // Only when the two agree. A highlighter that returned a different number of
-  // lines than the file has would otherwise put the colour on the wrong ones.
-  if (rows.length !== lines.length) return;
-  rows.forEach((row, at) => row.replaceChildren(lines[at]));
+  return lines.length === want ? lines : null;
 }
 
 // Onto the clipboard, with the old way behind it. A loopback origin counts
@@ -10330,8 +10331,7 @@ function keepSides(next) {
   if (state.sides === next || busyWriting()) return;
   state.sides = next;
   try { localStorage.setItem(SIDES_KEY, next); } catch (error) { }
-  state.diffAt += 1;
-  draw();
+  draw();                           // `sides` is in the body's redraw key
 }
 
 // What the tab shows: everything, what is not committed, or one commit. The
@@ -10388,9 +10388,14 @@ function commitsOf(report) {
   return (report && report.commits) || [];
 }
 
+// Where the picked commit stands in the list, newest first; -1 for none.
+function commitAt(commits) {
+  return commits.findIndex((one) => one.sha === state.diffOf);
+}
+
 function stepCommit(by) {
   const commits = commitsOf(state.diff);
-  const at = commits.findIndex((one) => one.sha === state.diffOf);
+  const at = commitAt(commits);
   const next = commits[at + by];
   if (at >= 0 && next) pickDiff(next.sha);
 }
@@ -10425,7 +10430,7 @@ function fillDiffBar(bar) {
     }
   }
   pick.value = state.diffOf;
-  const at = commits.findIndex((one) => one.sha === state.diffOf);
+  const at = commitAt(commits);
   const [older, newer] = bar.querySelectorAll(".step");
   older.disabled = at < 0 || at + 1 >= commits.length;
   newer.disabled = at <= 0;
@@ -10488,7 +10493,7 @@ function putDiffTree(list, section, found, pathOf, fill) {
       row.addEventListener("click", () => {
         if (state.diffShut.has(key)) state.diffShut.delete(key);
         else state.diffShut.add(key);
-        drawDiffList(list);
+        drawDiffList(list);         // from the last draw's `diffShown`
       });
       if (open) walk(one, full, depth + 1);
     }
@@ -10507,20 +10512,33 @@ function putDiffTree(list, section, found, pathOf, fill) {
   walk(root, "", 0);
 }
 
-// The list on the left, on its own: folding a folder redraws the tree and
-// leaves the diff beside it where it was.
-function drawDiffList(list) {
-  const report = state.diff || { sections: [], untracked: [] };
-  const top = list.scrollTop;
-  list.replaceChildren();
+// What the tab shows: each section's files that the find box lets through,
+// in the tree's order, the untracked names the same way, and the commit when
+// one is picked. Worked out once a draw -- the list and the pane both read
+// it, and two copies of the arithmetic would be two orders that can drift.
+function diffShown(report) {
+  const sections = [];
   for (const section of report.sections) {
     const files = treeOrder(hits(section.files || [], (file) => file.path),
                             (hit) => hit.one.path);
-    if (!files.length) continue;
+    if (files.length) sections.push({ section, files });
+  }
+  const loose = treeOrder(hits(report.untracked || [], (name) => name),
+                          (hit) => hit.one);
+  return { sections, loose, commit: commitShown(report) };
+}
+
+// The list on the left, on its own: folding a folder redraws the tree from
+// what the last draw worked out, and leaves the diff beside it where it was.
+function drawDiffList(list, shown = list.shown) {
+  list.shown = shown;
+  const top = list.scrollTop;
+  list.replaceChildren();
+  for (const { section, files } of shown.sections) {
     // A commit's subject is a sentence somebody wrote, and the list's heads
     // are labels in capitals; the pane beside it carries the sentence.
-    const shown = section.name === "commit" ? commitShown(report) : null;
-    put(list, "div", "head", shown ? "commit " + shown.short : section.title)
+    put(list, "div", "head",
+        shown.commit ? "commit " + shown.commit.short : section.title)
       .title = section.about || "";
     putDiffTree(list, section.name, files, (hit) => hit.one.path, (row, hit) => {
       const one = hit.one;
@@ -10534,17 +10552,18 @@ function drawDiffList(list) {
       row.addEventListener("click", () => goToDiffFile(row.dataset.key));
     });
   }
-  const loose = treeOrder(hits(report.untracked || [], (name) => name),
-                          (hit) => hit.one);
-  if (loose.length) {
+  if (shown.loose.length) {
     put(list, "div", "head", "untracked");
-    putDiffTree(list, "untracked", loose, (hit) => hit.one, (row, hit) => {
+    putDiffTree(list, "untracked", shown.loose, (hit) => hit.one, (row, hit) => {
       row.classList.add("untracked");
       row.addEventListener("click", () => chooseUntracked(hit.one));
     });
   }
   list.scrollTop = top;
-  markDiffFile();
+  // In the next frame, when the pane beside it is built and laid out once:
+  // asking where its blocks stand now would lay out the whole diff twice.
+  list.marked = undefined;
+  requestAnimationFrame(markDiffFile);
 }
 
 function goToDiffFile(key) {
@@ -10578,12 +10597,11 @@ function markDiffFile() {
   } else {
     scroll.picked = null;
   }
-  for (const row of list.querySelectorAll("button.chosen")) {
-    if (row.dataset.key !== here) row.classList.remove("chosen");
-  }
-  if (here === null) return;
+  // Most scroll frames stay inside one file, and then nothing moves.
+  if (list.marked === here) return;
+  list.marked = here;
   for (const row of list.querySelectorAll("button[data-key]")) {
-    if (row.dataset.key === here) row.classList.add("chosen");
+    row.classList.toggle("chosen", row.dataset.key === here);
   }
 }
 
@@ -10599,46 +10617,46 @@ function drawDiff(box) {
   if (holdingText(box)) return;
   if (!fresh(box, "bodyKey", state.diffAt + "\n" + state.find + "\n"
              + state.sides)) return;
-  const place = scroll.scrollTop;
-  scroll.replaceChildren();
-  // Every block by the key its row in the list carries, in the order they
-  // stand, which is what `markDiffFile` walks.
-  scroll.blocks = new Map();
-
   const report = state.diff || { sections: [], untracked: [] };
   // A file the agent has since committed is no longer untracked, so the pick
   // goes with it rather than pointing at a section that no longer names it.
   if (state.loose && !(report.untracked || []).includes(state.loose)) {
     state.loose = null;
   }
+  const found = diffShown(report);
+  // Both places are read before either column is rebuilt, while nothing on
+  // the page needs laying out again to answer.
+  const place = scroll.scrollTop;
+  drawDiffList(list, found);
+  scroll.replaceChildren();
+  // Every block by the key its row in the list carries, in the order they
+  // stand, which is what `markDiffFile` walks.
+  scroll.blocks = new Map();
+
   if (state.diffGone) {
     put(scroll, "div", "note", "The commit you picked is no longer on this"
         + " branch. It was probably amended or rebased away, so this shows"
         + " all changes.");
   }
   let shown = 0;
-  for (const section of report.sections) {
-    const files = treeOrder(hits(section.files || [], (file) => file.path),
-                            (hit) => hit.one.path);
-    if (!files.length) continue;
+  const one = found.commit;
+  for (const { section, files } of found.sections) {
     shown += files.length;
     const head = put(scroll, "div", "diffhead " + section.name, section.title);
-    const one = section.name === "commit" ? commitShown(report) : null;
     if (one) put(head, "span", "sha", one.short);
     if (section.about) {
       put(head, "span", "about", section.about
           + (one && one.when ? ", " + ago(one.when) + " ago" : ""));
     }
+    // `at_commit`: the new side is a commit and not the file on disk, so a
+    // comment's line is carried through to where it stands now. The daemon
+    // says so, because it is the one that knows what each half is a diff of.
     for (const { one: file } of files) {
-      // The new side of these is a commit and not the file on disk, so a
-      // comment's line is carried through to where it stands now.
-      const mapped = section.name === "committed" || section.name === "commit";
       scroll.blocks.set(section.name + "\n" + file.path,
-                        drawDiffFile(scroll, file, mapped));
+                        drawDiffFile(scroll, file, section.at_commit));
     }
   }
-  const loose = treeOrder(hits(report.untracked || [], (name) => name),
-                          (hit) => hit.one);
+  const loose = found.loose;
   let picked = null;
   if (state.loose) {
     picked = drawLooseFile(scroll, state.loose);
@@ -10735,7 +10753,7 @@ function drawLooseFile(pane, path) {
 }
 
 async function chooseUntracked(path) {
-  if (state.loose === path) return;
+  if (state.loose === path || busyWriting()) return;
   state.loose = path;
   state.looseText = null;
   state.looseBinary = false;
@@ -10824,7 +10842,7 @@ function walkHunks(one, onHunk, onLine) {
 // tab draws through here for it, so a file gets the numbers, the `+` and the
 // comments the diff already had, and a comment on line 42 lands on the same
 // anchor whichever tab it was written in.
-const SIGN = { added: "+", removed: "−", context: " " };
+const SIGN = { added: "+", removed: "\u2212", context: " " };
 
 // A hunk's header is git's `@@ -33,7 +34,7 @@` and then, often, the line the
 // hunk sits inside -- `void usage() {`. The numbers are git's shorthand and
@@ -10838,6 +10856,16 @@ function putHunkHead(body, header) {
 }
 
 function fillDiffFile(body, one, atHead = false) {
+  // A file being read is all `plain` lines, drawn one column and painted by
+  // the Files tab itself. It goes straight through: this runs on every
+  // window move of a long file, and the pairing below is for a diff.
+  const reading = (one.hunks || []).every((hunk) => hunk.lines.every(
+    (line) => line.kind === "plain"));
+  if (reading) {
+    walkHunks(one, () => put(body, "div", "dlines"), (line, old, now, lines) =>
+      unifiedRow(lines, one, { line, old, now }, atHead, null));
+    return;
+  }
   // Walked first and drawn second: a row beside a row needs the whole run of
   // removed and added lines before it can pair them, and so does marking
   // which words changed.
@@ -10847,120 +10875,132 @@ function fillDiffFile(body, one, atHead = false) {
     hunks.push(held);
     return held;
   }, (line, old, now, held) => held.rows.push({ line, old, now }));
-  const reading = hunks.every((hunk) => hunk.rows.every(
-    (row) => row.line.kind === "plain"));
-  const sides = !reading && state.sides === "split";
+  const sides = state.sides === "split";
   // What each side of each hunk says, in order, with the node that shows each
-  // line -- or none, for a line the reader sees on the other side only. It is
-  // what the highlighter is handed; see `paintDiff`.
+  // line -- or none, for a line the reader sees on the other side only -- and
+  // the words to mark in it. It is what the highlighter is handed; see
+  // `paintDiff`.
   const painting = [];
-
   for (const hunk of hunks) {
     if (hunk.header) putHunkHead(body, hunk.header);
     const lines = put(body, "div", sides ? "dlines sides" : "dlines");
-    const was = [];
-    const now = [];
-    painting.push({ was, now });
-    const draw = (row, words) => {
-      if (row.line.kind === "plain" || !sides) {
-        const cell = unifiedRow(lines, one, row, atHead, words);
-        if (row.line.kind !== "added") was.push({ text: row.line.text,
-          cell: row.line.kind === "removed" ? cell : null });
-        if (row.line.kind !== "removed") now.push({ text: row.line.text, cell });
+    const side = { was: [], now: [] };
+    painting.push(side);
+    const pairs = pairsOf(hunk.rows);
+    if (sides) {
+      for (const [left, right, words] of pairs) {
+        pairRow(lines, one, left, right, atHead, words, side);
       }
-    };
-    let at = 0;
-    while (at < hunk.rows.length) {
-      const row = hunk.rows[at];
-      if (row.line.kind === "plain" || row.line.kind === "context") {
-        if (sides) {
-          const [left, right] = pairRow(lines, one, row, row, atHead, null);
-          was.push({ text: row.line.text, cell: left });
-          now.push({ text: row.line.text, cell: right });
-        } else {
-          draw(row, null);
-        }
-        at += 1;
-        continue;
-      }
-      // One run of change: every line up to the next that did not change.
-      const run = [];
-      while (at < hunk.rows.length && hunk.rows[at].line.kind !== "context") {
-        run.push(hunk.rows[at]);
-        at += 1;
-      }
-      const cut = run.filter((one) => one.line.kind === "removed");
-      const add = run.filter((one) => one.line.kind === "added");
-      const words = new Map();
-      for (let pair = 0; pair < Math.min(cut.length, add.length); pair += 1) {
-        const found = wordDiff(cut[pair].line.text, add[pair].line.text);
-        if (!found) continue;
-        words.set(cut[pair], found[0]);
-        words.set(add[pair], found[1]);
-      }
-      if (!sides) {
-        for (const one of run) draw(one, words.get(one));
-        continue;
-      }
-      for (let pair = 0; pair < Math.max(cut.length, add.length); pair += 1) {
-        const left = cut[pair] || null;
-        const right = add[pair] || null;
-        const [was1, now1] = pairRow(lines, one, left, right, atHead,
-                                     [words.get(left), words.get(right)]);
-        if (left) was.push({ text: left.line.text, cell: was1 });
-        if (right) now.push({ text: right.line.text, cell: now1 });
-      }
+      continue;
+    }
+    // One column keeps git's order -- a run's removed lines, then its added
+    // ones -- and takes only the words from the pairs. Drawn pair by pair,
+    // the old and new lines alternated, which no diff reader draws.
+    const marks = new Map();
+    for (const [left, right, words] of pairs) {
+      if (left === right) continue;
+      if (left) marks.set(left, words[0]);
+      if (right) marks.set(right, words[1]);
+    }
+    for (const row of hunk.rows) {
+      unifiedRow(lines, one, row, atHead, marks.get(row) || null, side);
     }
   }
-  if (!reading) paintDiff(body, one.path, painting);
+  paintDiff(body, one.path, painting);
+}
+
+// A hunk's rows as the pairs two columns show: a line that did not change is
+// the same row on both sides, and a run of change pairs its removed lines
+// with its added ones in order, with the words that changed in each. A run
+// with more of one than the other has pairs with nothing on one side.
+//
+// One column walks the same pairs, so the two layouts cannot disagree about
+// which words changed.
+function pairsOf(rows) {
+  const pairs = [];
+  let at = 0;
+  while (at < rows.length) {
+    if (rows[at].line.kind === "context") {
+      pairs.push([rows[at], rows[at], [null, null]]);
+      at += 1;
+      continue;
+    }
+    const cut = [];
+    const add = [];
+    for (; at < rows.length && rows[at].line.kind !== "context"; at += 1) {
+      (rows[at].line.kind === "removed" ? cut : add).push(rows[at]);
+    }
+    for (let pair = 0; pair < Math.max(cut.length, add.length); pair += 1) {
+      const left = cut[pair] || null;
+      const right = add[pair] || null;
+      const words = left && right
+        ? wordDiff(left.line.text, right.line.text) : null;
+      pairs.push([left, right, words || [null, null]]);
+    }
+  }
+  return pairs;
+}
+
+// The line a cell shows, kept for the painter: in the side it belongs to,
+// or in both for a line one column shows once.
+function paints(side, row, cell, words) {
+  if (row.line.kind !== "added") {
+    side.was.push({ text: row.line.text, words,
+                    cell: row.line.kind === "removed" ? cell : null });
+  }
+  if (row.line.kind !== "removed") {
+    side.now.push({ text: row.line.text, words, cell });
+  }
 }
 
 // One row of one column: the numbers, the marker, the line, and the `+` a
 // comment starts from. The shape every test of the Files tab reads, and the
 // diff's own shape until the reader asks for two columns.
-function unifiedRow(lines, one, { line, old, now }, atHead, words) {
-  const row = put(lines, "div", "dline " + line.kind);
+function unifiedRow(lines, one, row, atHead, words, side) {
+  const { line, old, now } = row;
+  const node = put(lines, "div", "dline " + line.kind);
   // The numbers in one span, lined up with spaces. The row is already
   // `white-space: pre` in a monospace face, so they stay in column
   // without a flex box and three elements around every line — a diff of
   // twelve thousand lines is the difference between 24,000 nodes and
   // 84,000. A removed line has no number on the new side and an added one
   // has none on the old side, so that side is left blank.
-  put(row, "span", "ln", line.kind === "plain"
+  put(node, "span", "ln", line.kind === "plain"
       ? String(now).padStart(6) + "  "
       : (line.kind === "added" ? "" : String(old)).padStart(5) +
         (line.kind === "removed" ? "" : String(now)).padStart(6) + "  ");
   // The marker is its own span so that what follows it is exactly the
   // line, which is what the highlighter is given and what it paints.
-  if (SIGN[line.kind]) put(row, "span", "sign", SIGN[line.kind]);
-  const cell = put(row, "span", "dtext", line.text);
-  if (words) markWords(cell, cell.words = words);
-  putLineReview(lines, row, one, line, now, atHead);
-  return cell;
+  if (SIGN[line.kind]) put(node, "span", "sign", SIGN[line.kind]);
+  const cell = put(node, "span", "dtext", line.text);
+  markWords(cell, words);
+  if (side) paints(side, row, cell, words);
+  putLineReview(lines, node, one, line, now, atHead);
 }
 
 // One row of two columns: the old file on the left and the new one on the
 // right, a changed line beside what it became. A side with no line -- more
 // was added than removed -- is left empty rather than closed up, so the two
 // columns stay level all the way down.
-function pairRow(lines, one, left, right, atHead, words) {
+function pairRow(lines, one, left, right, atHead, words, side) {
   const kind = !left ? "added" : !right ? "removed"
     : left === right ? "context" : "changed";
   const row = put(lines, "div", "dline pair " + kind);
-  const half = (side, held, sideWords) => {
-    const cell = put(row, "span", "half " + side + " "
+  const half = (name, held, sideWords) => {
+    const cell = put(row, "span", "half " + name + " "
                      + (held ? held.line.kind : "none"));
-    put(cell, "span", "ln", held ? String(side === "was" ? held.old : held.now)
+    put(cell, "span", "ln", held ? String(name === "was" ? held.old : held.now)
                                  : "");
     const text = put(cell, "span", "dtext", held ? held.line.text : "");
-    if (held && sideWords) markWords(text, text.words = sideWords);
+    markWords(text, sideWords);
     return [cell, text];
   };
-  const [, was] = half("was", left, words && words[0]);
-  const [cell, now] = half("now", right, words && words[1]);
+  const [, was] = half("was", left, words[0]);
+  const [cell, now] = half("now", right, words[1]);
+  if (left) side.was.push({ text: left.line.text, cell: was, words: words[0] });
+  if (right) side.now.push({ text: right.line.text, cell: now, words: words[1] });
   // The `+` goes on the new side: a comment is about the file as it is.
   if (right) putLineReview(lines, cell, one, right.line, right.now, atHead);
-  return [left ? was : null, right ? now : null];
 }
 
 // A comment under its line, or the `+` that starts one. A line that is no
@@ -10983,8 +11023,10 @@ function putLineReview(lines, where, one, line, now, atHead) {
 //
 // A word is a run of letters and digits, a run of spaces, or one other
 // character, and the answer is their longest common run: the textbook table,
-// which is fine for a line and would not be for a file. Past `WORDS_MAX`
-// characters it is not asked at all.
+// which is fine for a line and would not be for a file. What the two lines
+// share at either end is taken off first, so the table is the size of the
+// change and not of the line -- most edits are a word or two in the middle.
+// Past `WORDS_MAX` characters it is not asked at all.
 const WORDS_MAX = 400;
 const WORD = /\w+|\s+|[^\w\s]/g;
 
@@ -10992,37 +11034,45 @@ function wordDiff(was, now) {
   if (was.length > WORDS_MAX || now.length > WORDS_MAX || was === now) return null;
   const a = was.match(WORD) || [];
   const b = now.match(WORD) || [];
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head
+         && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail += 1;
+  const count = (words) => words.reduce(
+    (sum, word) => sum + (word.trim() ? word.length : 0), 0);
+  let same = count(a.slice(0, head)) + count(a.slice(a.length - tail));
+  const x0 = a.slice(0, head).join("").length;
+  const y0 = b.slice(0, head).join("").length;
+  const midA = a.slice(head, a.length - tail);
+  const midB = b.slice(head, b.length - tail);
   const table = [];
-  for (let i = 0; i <= a.length; i += 1) table.push(new Uint16Array(b.length + 1));
-  for (let i = a.length - 1; i >= 0; i -= 1) {
-    for (let j = b.length - 1; j >= 0; j -= 1) {
-      table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1
+  for (let i = 0; i <= midA.length; i += 1) table.push(new Uint16Array(midB.length + 1));
+  for (let i = midA.length - 1; i >= 0; i -= 1) {
+    for (let j = midB.length - 1; j >= 0; j -= 1) {
+      table[i][j] = midA[i] === midB[j] ? table[i + 1][j + 1] + 1
         : Math.max(table[i + 1][j], table[i][j + 1]);
     }
   }
   const cut = [];
   const add = [];
-  let same = 0;                     // characters in common, not counting spaces
   let i = 0;
   let j = 0;
-  let x = 0;                        // where we are in each line, in characters
-  let y = 0;
-  const grow = (runs, from, to) => {
-    const last = runs[runs.length - 1];
-    if (last && last[1] === from) last[1] = to; else runs.push([from, to]);
-  };
-  while (i < a.length || j < b.length) {
-    if (i < a.length && j < b.length && a[i] === b[j]) {
-      if (a[i].trim()) same += a[i].length;
-      x += a[i].length;
-      y += b[j].length;
+  let x = x0;                       // where we are in each line, in characters
+  let y = y0;
+  while (i < midA.length || j < midB.length) {
+    if (i < midA.length && j < midB.length && midA[i] === midB[j]) {
+      if (midA[i].trim()) same += midA[i].length;
+      x += midA[i].length;
+      y += midB[j].length;
       i += 1;
       j += 1;
-    } else if (j >= b.length || (i < a.length && table[i + 1][j] >= table[i][j + 1])) {
-      grow(cut, x, x += a[i].length);
+    } else if (j >= midB.length
+               || (i < midA.length && table[i + 1][j] >= table[i][j + 1])) {
+      cut.push([x, x += midA[i].length]);
       i += 1;
     } else {
-      grow(add, y, y += b[j].length);
+      add.push([y, y += midB[j].length]);
       j += 1;
     }
   }
@@ -11032,8 +11082,8 @@ function wordDiff(was, now) {
   return [closeGaps(was, cut), closeGaps(now, add)];
 }
 
-// Two changed words with only a space between them are one change: lit apart
-// they read as two, with an unlit gap that changed nothing.
+// Two changed words with nothing or only a space between them are one
+// change: lit apart they read as two, with an unlit gap that changed nothing.
 function closeGaps(text, runs) {
   const out = [];
   for (const run of runs) {
@@ -11046,18 +11096,14 @@ function closeGaps(text, runs) {
 
 // Wraps the characters in `runs` in `.wd`, across whatever spans are already
 // in the cell. Run once on the plain text, and again after the highlighter
-// has replaced it, which is why the runs are kept on the cell.
+// has replaced it -- the runs travel with the line to `paintDiff`.
 function markWords(cell, runs) {
   if (!runs || !runs.length) return;
-  const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-  const texts = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node);
-  let at = 0;
-  let next = 0;
-  for (const text of texts) {
+  let at = 0;                      // characters before this text node
+  let next = 0;                    // the first run not yet finished
+  overText(cell, (data) => {
     const start = at;
-    const end = at + text.data.length;
-    at = end;
+    const end = at += data.length;
     const pieces = [];
     let done = start;
     while (next < runs.length && runs[next][0] < end) {
@@ -11068,16 +11114,16 @@ function markWords(cell, runs) {
       done = Math.max(done, to);
       if (runs[next][1] <= end) next += 1; else break;
     }
-    if (!pieces.some((piece) => piece[2])) continue;
+    if (!pieces.some((piece) => piece[2])) return null;
     if (done < end) pieces.push([done, end, false]);
     const made = document.createDocumentFragment();
     for (const [from, to, lit] of pieces) {
-      const words = document.createTextNode(text.data.slice(from - start, to - start));
+      const words = document.createTextNode(data.slice(from - start, to - start));
       if (lit) put(made, "span", "wd").appendChild(words);
       else made.appendChild(words);
     }
-    text.replaceWith(made);
-  }
+    return made;
+  });
 }
 
 // Colour for a diff, one side of one hunk at a time. The highlighter wants
@@ -11086,31 +11132,32 @@ function markWords(cell, runs) {
 // would get every multi-line string and comment wrong. The text is on the
 // page before this starts, so a missing highlighter costs colour and nothing
 // else.
+//
+// A file longer than `CODE_WHOLE` lines is left unpainted, as it is on the
+// Files tab and for the same measured reason. Each file waits its turn
+// behind a timer, so a diff of many files hands the browser back between
+// them rather than painting all of them in one block.
 async function paintDiff(body, path, painting) {
   const lib = await hljsReady();
-  if (!lib || !body.isConnected) return;
+  const size = painting.reduce(
+    (sum, hunk) => sum + Math.max(hunk.was.length, hunk.now.length), 0);
+  if (!lib || size > CODE_WHOLE) return;
+  await new Promise((go) => setTimeout(go));
+  if (!body.isConnected) return;
   const first = (painting[0] && painting[0].now[0]) || { text: "" };
   const language = languageOf(path, first.text, null);
   if (!language || !lib.getLanguage(language)) return;
   for (const hunk of painting) {
     for (const side of [hunk.was, hunk.now]) {
       if (!side.some((one) => one.cell)) continue;
-      let lines;
-      try {
-        const done = lib.highlight(side.map((one) => one.text).join("\n"),
-                                   { language, ignoreIllegals: true });
-        lines = cutIntoLines(paintedInto(document.createElement("template"),
-                                         done.value));
-      } catch (error) {
-        continue;                 // a language that throws leaves the text
-      }
-      // Only when the two agree, as on the Files tab: colour on the wrong
-      // line is worse than none.
-      if (lines.length !== side.length) continue;
+      const lines = paintedLines(lib, language,
+                                 side.map((one) => one.text).join("\n"),
+                                 side.length);
+      if (!lines) continue;
       side.forEach((one, at) => {
         if (!one.cell || !one.cell.isConnected) return;
         one.cell.replaceChildren(lines[at]);
-        markWords(one.cell, one.cell.words);
+        markWords(one.cell, one.words);
       });
     }
   }

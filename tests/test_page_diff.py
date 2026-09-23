@@ -624,3 +624,22 @@ def test_the_list_is_a_tree_and_the_pane_reads_in_its_order(repo_page):
             page.wait_for_selector(".filelist.diff button.chosen[data-key$='zz.txt']")
         finally:
             browser.close()
+
+
+def test_one_column_shows_a_runs_removed_lines_before_its_added_ones(repo_page):
+    """git's own order, and every diff reader's. Pairing lines for the word
+    marks once drew them old, new, old, new -- the picture showed it at a
+    glance, and no test did."""
+    root, _ = repo_page
+    (root / "code.py").write_text("print(10)\nprint(20)\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".diffhead.uncommitted ~ .dfile .dline")
+            kinds = page.eval_on_selector_all(
+                ".diffhead.uncommitted ~ .dfile:has(.path:text-is('code.py')) .dline",
+                "els => els.map(e => e.className.replace('dline ', ''))")
+            assert kinds == ["removed", "removed", "added", "added"], kinds
+        finally:
+            browser.close()
