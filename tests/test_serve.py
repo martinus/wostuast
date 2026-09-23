@@ -127,8 +127,16 @@ def test_an_unknown_session_does_not_crash(served):
 # --- the live stream ---------------------------------------------------------
 
 
-def read_events(url, count, timeout=10):
-    """Read `count` server-sent events off the stream."""
+def read_events(url, count, timeout=10, then=None):
+    """Read `count` server-sent events off the stream.
+
+    `then` runs once the first event is in, and that is the only safe moment
+    to make a change the stream should carry. The stream joins the hub before
+    it writes its first event, so after that event nothing pushed is lost.
+    A change made from a thread after a fixed sleep raced the connection: on
+    a loaded runner the stream opened after the push, already showed the new
+    state, and the read waited for a second event that never came.
+    """
     got = []
     with urllib.request.urlopen(url, timeout=timeout) as response:
         kind, data = "", ""
@@ -142,6 +150,8 @@ def read_events(url, count, timeout=10):
             elif line.strip() == "" and kind:
                 got.append((kind, json.loads(data)))
                 kind, data = "", ""
+                if then and len(got) == 1:
+                    then()
     return got
 
 
@@ -160,12 +170,10 @@ def test_a_change_is_pushed(ws, served):
     daemon.store.refresh()
 
     def later():
-        time.sleep(0.3)
         ws.append_event(event("Stop", ts=time.time()))
         daemon.tick()
 
-    threading.Thread(target=later, daemon=True).start()
-    got = read_events(f"{base}/api/events", 2)
+    got = read_events(f"{base}/api/events", 2, then=later)
     assert [kind for kind, _ in got] == ["sessions", "sessions"]
     assert got[1][1]["sessions"][0]["state"] == "done"
 
@@ -177,7 +185,6 @@ def test_a_transcript_change_reaches_only_its_watcher(ws, served, transcript_fil
     daemon.store.refresh()
 
     def later():
-        time.sleep(0.3)
         with open(path, "a") as handle:
             handle.write(json.dumps({
                 "type": "assistant", "timestamp": "2026-09-18T14:00:00.000Z",
@@ -185,8 +192,7 @@ def test_a_transcript_change_reaches_only_its_watcher(ws, served, transcript_fil
                             "content": [{"type": "text", "text": "a line"}]}}) + "\n")
         daemon.tick()
 
-    threading.Thread(target=later, daemon=True).start()
-    got = read_events(f"{base}/api/events?watch=s1", 2)
+    got = read_events(f"{base}/api/events?watch=s1", 2, then=later)
     assert got[1][0] == "transcript"
     assert got[1][1]["blocks"][0]["text"] == "a line"
 
