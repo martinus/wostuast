@@ -1508,6 +1508,11 @@ request, then update it with that text, and read it back to check.
   tab, because they draw the same thing. A session whose status line is not
   registered has no `context_pct` and gets no bar: nought would read as an
   empty window rather than as no answer.
+  **The model stands left of the bar**, because the percentage is a
+  percentage of that model's window and `/model` changes it mid-session.
+  It is part of the same redraw key. `tests/shot.py` writes a status line
+  for its session, so a picture of the strip has all three in it.
+  `test_the_model_stands_left_of_the_context_bar`.
 - **A working stream says nothing.** The slot read "live" on every page all
   day. A reader can see the page moving, so the word told nobody anything,
   and a word that is always there is a word nobody reads — "reconnecting"
