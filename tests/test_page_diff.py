@@ -16,6 +16,8 @@ from browser import (
     open_page,
     show_tab,
     numbers,
+    rgb,
+    contrast,
 )
 
 pytestmark = skip_without_browser
@@ -641,5 +643,52 @@ def test_one_column_shows_a_runs_removed_lines_before_its_added_ones(repo_page):
                 ".diffhead.uncommitted ~ .dfile:has(.path:text-is('code.py')) .dline",
                 "els => els.map(e => e.className.replace('dline ', ''))")
             assert kinds == ["removed", "removed", "added", "added"], kinds
+        finally:
+            browser.close()
+
+
+def test_one_commit_shows_its_whole_message(repo_page):
+    root, _ = repo_page
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+    conftest.git_in(root, "commit", "-qam", "Print three",
+                    "-m", "Two was not enough.\n\n- one\n- two")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function("(state.diff || {}).commits?.length === 2")
+            pick(page, page.evaluate("state.diff.commits[0].sha"))
+            head = page.locator(".diffhead.commit")
+            assert head.evaluate("e => e.firstChild.textContent") == "Print three"
+            # As it was written: the lines and the blank line between them.
+            assert head.locator(".message").evaluate("e => e.textContent") == \
+                "Two was not enough.\n\n- one\n- two"
+            assert head.locator(".message").evaluate(
+                "e => getComputedStyle(e).whiteSpace") == "pre-wrap"
+            # And not over all changes, which is no one commit.
+            pick(page, "")
+            assert page.locator(".diffhead .message").count() == 0
+        finally:
+            browser.close()
+
+
+def test_a_diff_in_the_light_is_on_white_and_reads(repo_page):
+    """On the code ground, #eceae3, an unchanged line stood at 4.29 against
+    its background: under the 4.5 body text needs, and a brown box darker
+    than the page it sat on. The card is white in the light now."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page, scheme="light")
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dfile .dline.context")
+            seen = page.evaluate("""() => {
+              const card = document.querySelector('.dfile');
+              const line = document.querySelector('.dfile .dline.context');
+              return { card: getComputedStyle(card).backgroundColor,
+                       ink: getComputedStyle(line).color,
+                       page: getComputedStyle(document.body).backgroundColor };
+            }""")
+            assert rgb(seen["card"]) == [255, 255, 255], seen
+            assert contrast(seen["ink"], seen["card"]) >= 4.5, seen
         finally:
             browser.close()

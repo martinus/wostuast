@@ -499,7 +499,8 @@ two halves above), only what is not committed, or one commit. The commits
 are the branch's own (`base..HEAD`), newest first. On the default branch,
 where there are none, they are the last 30 commits of HEAD. The page names a
 commit by its sha, and the daemon uses it only if its own list holds it.
-A merge is shown against its first parent.
+A merge is shown against its first parent. A commit picked shows its whole
+message above its files: the subject is the line that says least.
 
 **The list on the left is a tree**, one per half. Folders come first, then
 files, at every level, and the pane reads in the same order. A folder that

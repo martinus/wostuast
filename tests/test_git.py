@@ -458,3 +458,17 @@ def test_a_merge_is_shown_against_its_first_parent(ws, repo):
     shown = ws.worktree_diff(str(repo), of=merge.sha)
     assert [one.path for one in shown.sections[0].files] == ["m.txt"]
     assert "merge" in shown.sections[0].about
+
+
+def test_one_commit_carries_its_whole_message(ws, repo):
+    """The subject is the line that says least; the why is in the body."""
+    git(repo, "checkout", "-qb", "side")
+    (repo / "README.md").write_text("changed\n")
+    git(repo, "commit", "-qam", "Change the readme",
+        "-m", "Because the old one said nothing.\n\n- a list\n- kept as lines")
+    report = ws.worktree_diff(str(repo))
+    shown = ws.worktree_diff(str(repo), of=report.commits[0].sha)
+    assert shown.body == ("Because the old one said nothing.\n\n"
+                          "- a list\n- kept as lines")
+    # Only for the commit shown: everything else is not one commit.
+    assert report.body == ""
