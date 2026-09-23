@@ -1223,14 +1223,30 @@ things about it are worth knowing before they surprise you.
   wrapper per run of calls would not help: the thoughts stand between the
   calls. `test_hidden_thinking_between_two_tool_calls_does_not_stack_them`
   measures the gaps in both modes, and each of the four rules fails it.
-- **The send box and the question bar start where the transcript does.**
-  Both stand under a split tab's right half, and both used to run the whole
-  width and under the map beside it — a column you never type into. One
-  `margin-left: calc(var(--side-w) + 5px)` does it, `--side-w` being the root
-  variable the map's own drag sets, and 5 px the grip. **By margin, not by
-  moving them into the pane**: the question bar holds picks that have not
-  been submitted and the send box holds what you are typing, and a node that
-  changes parents is a node that is rebuilt.
+- **The send box and the question bar start where the transcript does, and
+  the map runs down beside them.** Both stand under a split tab's right
+  half, and both used to run the whole width and under the map beside it — a
+  column you never type into. A `margin-left` fixed that and left the map
+  and its grip stopping short above them, with an empty corner under the map
+  that nothing could drag. Now `.main` is a grid whose columns are the split
+  tab's own — `--side-w`, `--grip-w`, the rest. `.content` spans every row
+  under the tabs; the two bars take the third column of the last two rows,
+  over it; and `.content.split` hands those rows and columns to its children
+  with `subgrid`, so the map and the grip span every row and the pane only
+  the first. **By the grid, not by moving them into the pane**: the question
+  bar holds picks that have not been submitted and the send box holds what
+  you are typing, and a node that changes parents is a node that is rebuilt.
+  Two things this costs, both of them bugs that happened on the way in:
+  - **The bars carry `position: relative`.** `.content.split` is positioned,
+    and a positioned box paints over every sibling that is not, so it sat on
+    top of both bars and took every click on an answer and into the box.
+  - **`.tofoot` is a grid item in the pane's cell, not `position: absolute`
+    against the box.** The box now runs down behind the send box, and an
+    absolute child with a grid area was measured from the whole box, not
+    the area — the box is a subgrid, and Chromium did not honour it.
+  `test_the_map_and_its_grip_run_down_beside_the_send_box` holds the layout
+  and the button; the question and send-box tests in `test_page_act.py` are
+  what catch the clicks.
 - **The way back to the end of the transcript hangs off the content box, and
   `split` builds it.** A new block carries you along only while `nearBottom`,
   which is right, and nothing said how to start following again. `.tofoot`

@@ -16,6 +16,7 @@ from browser import (
     open_page,
     show_tab,
     base_of,
+    wait_for_map,
 )
 
 pytestmark = skip_without_browser
@@ -94,11 +95,70 @@ def test_an_open_question_stands_at_the_foot_of_the_transcript(ws, in_pane):
             where = page.evaluate("""() => {
               const box = (id) =>
                 document.getElementById(id).getBoundingClientRect();
-              return [box('content').bottom, box('asking').top,
+              const pane = document.querySelector('.turnbody')
+                .getBoundingClientRect();
+              return [pane.bottom, box('asking').top,
                       box('asking').bottom, box('sendbar').top];
             }""")
             assert where[0] <= where[1] + 1, where
             assert where[2] <= where[3] + 1, where
+        finally:
+            browser.close()
+
+
+def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
+    """The send box and the question bar stand under the transcript, not
+    under the whole tab. The grip that sizes the map stopped where they
+    began, so it read as a bar that ends for no reason -- and the corner
+    under the map was empty space you could not drag."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .askopt")
+            wait_for_map(page)
+            where = page.evaluate("""() => {
+              const box = (one) => one.getBoundingClientRect();
+              const content = document.getElementById('content');
+              return {grip: box(content.querySelector(':scope > .grip')),
+                      side: box(content.querySelector(':scope > .side')),
+                      pane: box(content.querySelector('.turnbody')),
+                      asking: box(document.getElementById('asking')),
+                      send: box(document.getElementById('sendbar'))};
+            }""")
+            grip, side, send = where["grip"], where["side"], where["send"]
+            assert abs(grip["bottom"] - send["bottom"]) <= 1, where
+            assert abs(side["bottom"] - send["bottom"]) <= 1, where
+            # And neither bar runs under the map or over the transcript.
+            assert send["left"] >= grip["right"] - 1, where
+            assert where["asking"]["left"] >= grip["right"] - 1, where
+            assert where["pane"]["bottom"] <= where["asking"]["top"] + 1, where
+            # The box runs down under both bars now, and the way back to the
+            # foot of the transcript is measured from the pane, not the box:
+            # from the box it would stand behind the send box.
+            foot = page.evaluate("""() => {
+              const button = document.querySelector('.tofoot');
+              button.hidden = false;
+              const at = button.getBoundingClientRect();
+              button.hidden = true;
+              return at;
+            }""")
+            assert where["pane"]["top"] < foot["top"], (foot, where)
+            assert foot["bottom"] <= where["pane"]["bottom"], (foot, where)
+            # The grip still drags, and it drags from the part that is new.
+            before = side["width"]
+            page.mouse.move(grip["left"] + 2, send["top"] + 5)
+            page.mouse.down()
+            page.mouse.move(grip["left"] + 62, send["top"] + 5, steps=4)
+            page.mouse.up()
+            after = page.evaluate("""() => document.querySelector(
+                '#content > .side').getBoundingClientRect().width""")
+            assert abs(after - before - 60) <= 2, (before, after)
+            left = page.evaluate(
+                "() => document.getElementById('sendbar')"
+                ".getBoundingClientRect().left")
+            assert abs(left - send["left"] - 60) <= 2, (send, left)
         finally:
             browser.close()
 
