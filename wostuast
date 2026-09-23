@@ -5899,6 +5899,26 @@ body.show-thinking .turn:not(.toolrow) + .turn.toolrow { margin-top: -16px; }
 body.show-thinking .turn.toolrow + .turn:not(.toolrow) { margin-top: 22px; }
 body:not(.show-thinking) .turn.toolrow.past-words { margin-top: -16px; }
 body:not(.show-thinking) .turn.past-tool:not(.toolrow) { margin-top: 22px; }
+/* The 6 px above is from box to box, and the box of the words is not the
+   words. `.who` holds a name, a time, a day when it was not today and the
+   copy button, 55 px of it on one day and 71 across two. It is the taller
+   part of any turn of one line, so it set the height: one line of text,
+   then 39 px of nothing, then the calls -- more than the 22 below them, so
+   the group read as the start of the reply after it. The measuring was box
+   to box and said 6 the whole time.
+   When calls come next, the column may run down beside them: their own
+   `.who` is empty, so there is nothing there to collide with. Not all the
+   way down. The shortest group is one call, 14 px, and the next turn's name
+   starts 22 + 3 px after it, so 36 px of the column may hang past the box
+   and no more. That covers one day's column over one line of text, and
+   leaves a gap under a column that also carries a day.
+   `z-index`, because the calls are later siblings and positioned: without
+   it they cover the copy button, and a click on it goes to them. Thoughts
+   shown, `+` finds the next block; hidden, the page does (`next-tool`). */
+body.show-thinking .turn:not(.toolrow):has(+ .turn.toolrow) > .who,
+body:not(.show-thinking) .turn.next-tool:not(.toolrow) > .who {
+  margin-bottom: -36px; position: relative; z-index: 1;
+}
 .tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono); font-size: 12px; color: var(--ink-mute); min-width: 0; }
 .tool { display: flex; gap: 8px; align-items: baseline; cursor: pointer;
@@ -8310,13 +8330,15 @@ function landOnBlock(box) {
 // Rebuilding the lot re-ran marked over the whole history on every update, and
 // restarted the slide-in of every turn each time one line arrived.
 
-// What the block before this one is, once thoughts are hidden: "tool",
-// "words", or "" for a divider or nothing at all. The CSS reads it, because
-// `+` sees a hidden thought as the block before (see `.turn.toolrow`).
-// It looks back only, so a block arriving never changes one drawn before it.
-function pastThought(index) {
-  for (let at = index - 1; at >= 0; at -= 1) {
-    const one = state.turns.blocks[at];
+// The block before this one, or with `step` 1 the block after it, once
+// thoughts are hidden: "tool", "words", or "" for a divider or nothing at
+// all. The CSS reads it, because `+` sees a hidden thought as the block
+// before (see `.turn.toolrow`). Looking back, a block arriving never changes
+// the answer; looking on, it does, and `patchTranscript` asks again.
+function pastThought(index, step = -1) {
+  const blocks = state.turns.blocks;
+  for (let at = index + step; at >= 0 && at < blocks.length; at += step) {
+    const one = blocks[at];
     if (!one || one.kind === "thinking") continue;
     return one.kind === "tool" ? "tool" : one.kind === "divider" ? "" : "words";
   }
@@ -8327,7 +8349,20 @@ function blockNode(block, index) {
   const past = pastThought(index);
   const node = blockTurn(block, index);
   if (past && node.classList.contains("turn")) node.classList.add("past-" + past);
+  if (pastThought(index, 1) === "tool") node.classList.add("next-tool");
   return node;
+}
+
+// A block arriving is news for the block before it, thoughts left out:
+// whether a call comes next is what lets its name column run down beside it.
+function markNext(index) {
+  for (let at = index - 1; at >= 0; at -= 1) {
+    const one = state.turns.blocks[at];
+    if (!one || one.kind === "thinking") continue;
+    const node = state.turns.nodes[at];
+    if (node) node.classList.toggle("next-tool", pastThought(at, 1) === "tool");
+    return;
+  }
 }
 
 function blockTurn(block, index) {
@@ -8726,6 +8761,7 @@ function patchTranscript(indexes) {
       state.turns.nodes[index] = node;
       pane.appendChild(node);
     }
+    markNext(index);
   }
   if (!landOnBlock(pane) && stick) pane.scrollTop = pane.scrollHeight;
   // A block arriving makes the transcript taller, so a reader who was at the

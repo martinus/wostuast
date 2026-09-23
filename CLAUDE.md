@@ -1248,6 +1248,22 @@ request, then update it with that text, and read it back to check.
   wrapper per run of calls would not help: the thoughts stand between the
   calls. `test_hidden_thinking_between_two_tool_calls_does_not_stack_them`
   measures the gaps in both modes, and each of the four rules fails it.
+- **Measure a gap from what the reader sees, not from the box.** Three
+  rounds of this fix measured turn box to turn box, got 6 px each time, and
+  the reader still saw 39. `.who` — a name, a time, the copy button, and a
+  day when it was not today — is 55 px on one day and 71 across two, and one
+  line of text is 22, so the column set the height of every one-line turn.
+  When a call comes next, the column may run down beside it: the call's own
+  `.who` is empty. `next-tool` says so while thoughts are hidden, and
+  `markNext` sets it again on the block before when a block arrives, because
+  that answer looks forward and a later push changes it. The overhang is
+  capped at 36 px, which is what one call and the gap after it can hold;
+  more ran the column into the next turn's name. It carries `z-index`, or the
+  calls — later, positioned siblings — cover the copy button. And a block
+  sliding in is a stacking context for 0.15 s, so a test that measures
+  straight after a push waits for `document.getAnimations()` to be empty.
+  `test_a_group_of_calls_sits_under_the_line_that_announced_it` measures from
+  the text, and each of its five parts fails it.
 - **The send box and the question bar start where the transcript does, and
   the map runs down beside them.** Both stand under a split tab's right
   half, and both used to run the whole width and under the map beside it — a
