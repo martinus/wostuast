@@ -5521,7 +5521,29 @@ body.dragging { cursor: col-resize; user-select: none; }
 .hints b { color: var(--ink-soft); font-weight: 500; }
 
 /* main */
-.main { flex-grow: 1; display: flex; flex-direction: column; min-width: 0; }
+/* A grid, so that a split tab's map and its grip can run down beside the
+   question bar and the send box, which stand under the transcript alone.
+   The columns are the split tab's own: the map, the grip, the rest. A tab
+   that is not split spans all three, and the tab bar always does.
+   `.content` spans every row under the tabs and the two bars take the
+   right-hand column of the last two, over it. A split tab hands those rows
+   and columns to its own children with `subgrid` (see `.content.split`), so
+   the transcript ends where the question bar starts and the map does not.
+   The two bars are hidden on every other tab, and a row nothing is in is
+   nought tall. */
+.main {
+  flex-grow: 1; min-width: 0; display: grid;
+  grid-template-columns: var(--side-w, 268px) var(--grip-w) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+.main > .tabs, .main > .content { grid-column: 1 / -1; }
+.main > .content { grid-row: 2 / -1; }
+/* `relative` so they paint over the box they stand on. `.content.split` is
+   positioned, for its "latest" button, and a positioned box paints over
+   every sibling that is not -- so every click on an answer or into the
+   send box went to the box under it. */
+.main > .asking { grid-row: 3; grid-column: 3; position: relative; }
+.main > .sendbar { grid-row: 4; grid-column: 3; position: relative; }
 /* The Session tab: everything about the one that is open, and the only place
    it is named. There used to be a bar above every tab saying some of this,
    which said again what the chosen row already says and cost 56 pixels of
@@ -5588,15 +5610,15 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 /* Both of these stand under the transcript, and the transcript is the right
    half of a split tab -- so they start where it starts rather than running
-   the whole width and under the map beside it. `--side-w` is on the root, set
-   by the same drag that sizes the map, and 5 px is the grip between them.
-   They are shown on the Transcript tab and nowhere else, so this is never
-   measured against a column that is not there.
+   the whole width and under the map beside it. `.main`'s grid puts them in
+   its third column, which is the transcript's, and the map and its grip run
+   down beside them. They are shown on the Transcript tab and nowhere else.
 
-   By margin and not by moving them into the pane: the question bar holds
+   By the grid and not by moving them into the pane: the question bar holds
    picks that have not been submitted and the send box holds what you are
-   typing, and a node that changes parents is a node that is rebuilt. */
-.sendbar, .asking { margin-left: calc(var(--side-w, 268px) + var(--grip-w)); }
+   typing, and a node that changes parents is a node that is rebuilt. They
+   were indented by a margin before, which put them in the right place and
+   left the grip stopping short above them. */
 .sendbar {
   flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
@@ -5859,21 +5881,24 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    `state.turns.nodes`, which is the only place a block is ever new and so is
    what the arriving-block animation rests on. Grouping changes both. If the
    numbers here need touching again, measure them in a browser rather than
-   reading them off; and if they need touching a third time, the wrapper is
-   the answer and this is what it costs.
+   reading them off.
 
    A hidden thinking block is still the sibling before the next block, and
-   `+` cannot step over it. An agent thinks between two calls, so the second
-   call read as the first one after some words, was pulled up 16 px, and was
-   drawn on top of the call above it. So after a hidden thought a call gets
-   no pull-up, and anything else gets the 22 px a group keeps below it. The
-   block before the thought decides nothing here, because `+` cannot see it. */
+   `+` cannot step over it. An agent thinks between two calls, and between
+   saying what it will do and doing it. So with `+` alone a call after a
+   thought was pulled up onto the call above it, and a fix that only looked
+   at the thought put a call 22 px under the words it belonged to. The
+   block that decides is the one before the thought, and only the page can
+   find it: `blockNode` marks each turn `past-tool` or `past-words` by the
+   block before it once thoughts are left out (`pastThought`). `+` still
+   decides while thoughts are shown, because then the thought is that block.
+   A wrapper around each run of calls would not have helped: the thoughts
+   stand between the calls, not inside a run of them. */
 .turn.toolrow { margin-bottom: 5px; }
-.turn:not(.toolrow) + .turn.toolrow { margin-top: -16px; }
-.turn.toolrow + .turn:not(.toolrow) { margin-top: 22px; }
-body:not(.show-thinking) .turn.thinking + .turn.toolrow { margin-top: 0; }
-body:not(.show-thinking) .turn.thinking + .turn:not(.toolrow):not(.mine) {
-  margin-top: 22px; }
+body.show-thinking .turn:not(.toolrow) + .turn.toolrow { margin-top: -16px; }
+body.show-thinking .turn.toolrow + .turn:not(.toolrow) { margin-top: 22px; }
+body:not(.show-thinking) .turn.toolrow.past-words { margin-top: -16px; }
+body:not(.show-thinking) .turn.past-tool:not(.toolrow) { margin-top: 22px; }
 .tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono); font-size: 12px; color: var(--ink-mute); min-width: 0; }
 .tool { display: flex; gap: 8px; align-items: baseline; cursor: pointer;
@@ -5904,8 +5929,18 @@ body:not(.show-thinking) .thinking { display: none; }
 
 /* files and diff: a list on the left, what it names on the right */
 /* `relative` for the Transcript tab's "latest" button, which is the one
-   thing on a split tab that stands over the pane rather than in it. */
-.content.split { padding: 0; overflow: hidden; display: flex; position: relative; }
+   thing on a split tab that stands over the pane rather than in it.
+   `subgrid` takes `.main`'s columns and rows: the map and the grip span
+   every row, down beside the question bar and the send box, and the pane
+   is the first row only, so it ends where they begin. */
+.content.split {
+  padding: 0; overflow: hidden; position: relative; display: grid;
+  grid-template-columns: subgrid; grid-template-rows: subgrid;
+}
+.content.split > .side, .content.split > .grip { grid-row: 1 / -1; }
+.content.split > .side { grid-column: 1; }
+.content.split > .grip { grid-column: 2; }
+.content.split > :nth-child(3) { grid-row: 1; grid-column: 3; min-height: 0; }
 .side {
   width: var(--side-w, 268px); flex-shrink: 0; display: flex;
   flex-direction: column; min-height: 0;
@@ -6057,8 +6092,14 @@ body:not(.show-thinking) .thinking { display: none; }
    here is only what makes it float. It needs no `[hidden]` rule of its own
    the way `.sendbar` does: `.verb` sets no `display`, so nothing beats the
    browser's own rule for the attribute. */
+/* A grid item in the pane's own cell, over the pane, at its foot. Not
+   `position: absolute` against the box: the box runs down under the
+   question bar and the send box, so its foot is behind them. An absolute
+   child with a grid area is meant to be measured from that area, and
+   Chromium measured it from the whole box -- the box is a subgrid. */
 .tofoot {
-  position: absolute; right: 22px; bottom: 16px; z-index: 4;
+  grid-row: 1; grid-column: 3; align-self: end; justify-self: end;
+  margin: 0 22px 16px 0; position: relative; z-index: 4;
   border-radius: 13px; box-shadow: 0 2px 8px var(--shadow);
 }
 /* The map of the conversation. Same rows as the file tree, because they are
@@ -8269,7 +8310,27 @@ function landOnBlock(box) {
 // Rebuilding the lot re-ran marked over the whole history on every update, and
 // restarted the slide-in of every turn each time one line arrived.
 
+// What the block before this one is, once thoughts are hidden: "tool",
+// "words", or "" for a divider or nothing at all. The CSS reads it, because
+// `+` sees a hidden thought as the block before (see `.turn.toolrow`).
+// It looks back only, so a block arriving never changes one drawn before it.
+function pastThought(index) {
+  for (let at = index - 1; at >= 0; at -= 1) {
+    const one = state.turns.blocks[at];
+    if (!one || one.kind === "thinking") continue;
+    return one.kind === "tool" ? "tool" : one.kind === "divider" ? "" : "words";
+  }
+  return "";
+}
+
 function blockNode(block, index) {
+  const past = pastThought(index);
+  const node = blockTurn(block, index);
+  if (past && node.classList.contains("turn")) node.classList.add("past-" + past);
+  return node;
+}
+
+function blockTurn(block, index) {
   if (block.kind === "divider") {
     const node = document.createElement("div");
     node.className = "divider";

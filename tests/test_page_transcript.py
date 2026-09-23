@@ -1268,8 +1268,10 @@ def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
     """A thinking block is hidden, but CSS still counts it as the sibling
     before the next block. So a tool row after one read as "the first call
     after some words" and was pulled up 16 px, onto the tool row above it:
-    two commands drawn on top of each other. It is the usual shape, too --
-    an agent thinks between calls."""
+    two commands drawn on top of each other. The first fix went the other
+    way: a call after words and a thought lost its pull-up, and stood 22 px
+    under the words it belonged to. An agent thinks between calls, and
+    between saying what it will do and doing it."""
     daemon, path = page_at
 
     def said(kind, **piece):
@@ -1281,9 +1283,10 @@ def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
     with open(daemon_transcript(daemon), "a") as handle:
         handle.write(said("text", text="First I will look around."))
         for n in range(3):
+            handle.write(said("thinking", thinking=f"Now dir{n}."))
             handle.write(said("tool_use", id=f"t{n}", name="Bash",
                               input={"command": f"ls dir{n}"}))
-            handle.write(said("thinking", thinking=f"Now dir{n + 1}."))
+        handle.write(said("thinking", thinking="That is all of them."))
         handle.write(said("text", text="Now I know what is there."))
     daemon.tick()
     with sync_playwright() as play:
@@ -1300,11 +1303,17 @@ def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
             }"""
             hidden = page.evaluate(gaps)
             assert min(hidden) >= 0, hidden
-            # And the group still stands apart from the reply below it.
-            assert hidden[-1] > max(hidden[-3:-1]), hidden
+            # The words, the three calls, the reply: the group sits under
+            # the words that said what it would do, and apart from the reply
+            # below it -- the same gaps as with no thought between them.
+            above, *between, below = hidden[-4:]
+            assert above < below, hidden
+            assert max(between) < below, hidden
             page.evaluate("document.body.classList.add('show-thinking')")
             shown = page.evaluate(gaps)
             assert min(shown) >= 0, shown
+            # Shown, each thought is the words a call belongs to.
+            assert max(shown[-7:-2:2]) < min(shown[-6:-1:2]), shown
             assert len(shown) > len(hidden), (hidden, shown)
         finally:
             browser.close()
