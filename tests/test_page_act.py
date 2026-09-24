@@ -1054,6 +1054,95 @@ def test_a_spend_limit_is_set_from_the_panel_and_comes_back(ws, in_pane):
             browser.close()
 
 
+def test_a_limit_typed_after_another_session_is_chosen_is_that_sessions(
+        ws, in_pane, tmp_path):
+    """The box kept the focus when an alert or a link chose another session,
+    so it was never rebuilt: the panel stood over the old session's box, and
+    a number typed to protect the new one set the old one's limit."""
+    daemon, base, seen = in_pane
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(tmp_path),
+                                   pane="%9", pid=2, ts=time.time()))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("document.querySelectorAll('.row').length === 2")
+            # Both seen on the Session tab, so each comes back to it.
+            for one in ("s2", "s1"):
+                page.evaluate(f"choose('{one}')")
+                show_tab(page, "session")
+                page.wait_for_function(
+                    "(id) => { const one = document.querySelector('.limitfield');"
+                    "          return one && one.dataset.id === id; }", arg=one)
+            page.click(".limitbox")
+            page.keyboard.type("7")
+            # An alert clicked: `choose` runs with the focus where it was.
+            page.evaluate("choose('s2')")
+            page.wait_for_function(
+                "() => { const one = document.querySelector('.limitfield');"
+                "        return one && one.dataset.id === 's2'; }")
+            page.click(".limitbox")
+            page.keyboard.type("9")
+            page.keyboard.press("Tab")
+            wait_until(lambda: ws.read_limits().get("s2", {}).get("limit") == 9.0)
+            # What was typed for s1 was typed in s1's own box, and stays s1's.
+            assert ws.read_limits().get("s1", {"limit": 7.0})["limit"] == 7.0, \
+                ws.read_limits()
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("typed", ["10e", "-5"])
+def test_a_limit_the_box_cannot_read_leaves_the_limit_standing(ws, in_pane, typed):
+    """A number box reads `10e` as empty, and empty means "no limit": one slip
+    of the hand took the limit away and the panel went quiet about it. A
+    negative number did the same through `!(asked > 0)`."""
+    daemon, base, seen = in_pane
+    daemon.store.set_limit("s1", 10.0)
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "session")
+            page.wait_for_function(
+                "() => { const box = document.querySelector('.limitbox');"
+                "        return box && box.value === '10'; }")
+            page.click(".limitbox", click_count=3)
+            page.keyboard.type(typed)
+            page.keyboard.press("Tab")
+            page.wait_for_function(
+                "() => state.trouble.includes('a limit is a number of dollars')")
+            assert page.input_value(".limitbox") == "10"
+            assert ws.read_limits()["s1"]["limit"] == 10.0
+        finally:
+            browser.close()
+
+
+def test_an_escape_tmux_refused_is_not_called_a_stop(ws, in_pane, monkeypatch):
+    """The panel said "stopped · raise it to go on" over an agent still
+    spending, because the key that would have stopped it never landed."""
+    daemon, base, seen = in_pane
+    monkeypatch.setattr(ws, "tmux_interrupt", lambda pane: False)
+    ws.append_event(conftest.event("UserPromptSubmit", pane="%7",
+                                   prompt="go", ts=time.time()))
+    daemon.store.refresh()
+    daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=30.0)
+    daemon.store.set_limit("s1", 10.0)
+    daemon.tick()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "session")
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.limitrow');
+                           return one && one.innerText.includes('refused'); }""")
+            said = page.locator(".limitrow").inner_text()
+            assert "stopped" not in said, said
+            assert "tried again" in said, said
+        finally:
+            browser.close()
+
+
 def test_a_session_stopped_by_its_limit_says_so_where_you_would_look(ws, in_pane):
     """"Why did my agent stop" is asked in front of this panel, not in the
     pane — and raising the box is what lets it go again."""
