@@ -571,3 +571,23 @@ def test_the_diff_says_three_lines_of_context_whatever_the_reader_set(ws, repo):
     change(repo, "long.txt", 50)
     lines = ws.worktree_diff(str(repo)).sections[-1].files[0].hunks[0].lines
     assert [one.kind for one in lines].count("context") == 6
+
+
+def test_a_row_says_whether_git_has_answered_for_it(ws, repo, monkeypatch):
+    """Before git answered -- a first read not yet run, or a `status` that
+    always passes its timeout -- the row went out with no branch and clean,
+    and the Session tab said "not in a repository" and "changed files: none"
+    as facts."""
+    store = ws.Store()
+    session = ws.Session(session_id="s1", cwd=str(repo))
+    store.sessions["s1"] = session
+    assert ws.row(session)["git_known"] is False
+    monkeypatch.setattr(ws, "git_facts_many",
+                        lambda dirs: {d: ws.GitFacts(failed=True) for d in dirs})
+    store.reload_git([session], 1000.0)
+    assert ws.row(session)["git_known"] is False
+    monkeypatch.setattr(ws, "git_facts_many",
+                        lambda dirs: {d: ws.GitFacts(repo="myrepo", branch="main")
+                                      for d in dirs})
+    store.reload_git([session], 1000.0 + ws.GIT_MIN_INTERVAL)
+    assert ws.row(session)["git_known"] is True

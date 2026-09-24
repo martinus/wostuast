@@ -1131,6 +1131,10 @@ update the comment with its own text, and read it back.
   on a change: every handler assigns a state whether or not it is a new one,
   and `_on_pre_tool` writes "working" on every tool call. `_bury` is the one
   place outside `apply` that stamps it, because nothing reports being dead.
+  **And once for a session nothing has stamped**: `SessionStart` is done to
+  done, so `settled` fell back to the last event, and an idle notification
+  moved a row that had not changed.
+  `test_a_session_that_never_changed_state_keeps_its_place`.
   The worktree is the tiebreaker only. Sorting on `label` is still wrong, for
   the reason it always was: the name arrives from the status line a second
   after the session starts, and `/rename` changes it later.
@@ -1156,7 +1160,14 @@ update the comment with its own text, and read it back.
   written **on every pass whatever the switches say**: ticking the box while
   an agent is working still tells you when it stops, and a session that
   reached `done` while nobody was listening is already at `done` rather than
-  a change waiting to be announced. `waiting` is the same promise for amber.
+  a change waiting to be announced. `waiting` is the same promise for amber
+  -- **whenever the needs-you alert is not sent**, not only while alerts are
+  not allowed: filled on that path alone, ticking the one switch back on
+  said every row that had gone amber meanwhile
+  (`test_turning_needs_you_on_brings_no_backlog`). **And every alert says
+  `renotify`**: one tag per session means a second alert replaces the
+  first, and a replacement makes no sound and shows no banner unless it
+  asks to (`test_every_alert_makes_itself_heard`).
   A test that only turns the switch on *after* a turn ends proves neither —
   it passes with the recording moved inside the switch. The one that bites
   ticks the box mid-turn.
@@ -1551,7 +1562,14 @@ update the comment with its own text, and read it back.
   column to the left, at a cost of 56 pixels on every tab. What it said that
   the row does not is in the tab: the whole path, the context bar, the counts,
   and the session's own event log. `drawHeader` is what is left, and all it
-  does now is the send box.
+  does now is the send box. **It says only what git said**: before git
+  answered, the facts are the empty default, and "not in a repository" and
+  "changed files: none" were drawn over them. `Session.git_known` goes on
+  the row (`test_a_row_says_whether_git_has_answered_for_it`,
+  `test_the_session_tab_does_not_say_what_git_has_not_said`). **"started"
+  is `Session.started`, the first event**: it read `since`, the last one,
+  and said "0s ago" for a session two hours old
+  (`test_started_is_when_the_session_began`).
 - **The name box is built once and the rest is rebuilt around it.**
   `drawSession` keeps two children for this reason: the panel is polled, and a
   rebuild under a box being typed in takes what is in it — the rule the review
@@ -2023,6 +2041,10 @@ update the comment with its own text, and read it back.
   the thing that lasted least. **CI caught that**, not the browser tests I
   had just written: the assertion was three lines below a
   `wait_for_timeout(4500)` and passed locally because nothing was pushing.
+  **`paintLive` is called whatever the find box holds.** Both stream
+  handlers skipped it while it held text, a guard with nothing left to
+  guard: a drop said nothing, and a reconnect left "reconnecting" standing
+  over a working page.
 - **No JavaScript library is vendored.** `marked` and `highlight.js` are fetched
   through the one `fetchScript`, each pinned by the hash of its bytes, with
   `crossorigin` so the browser checks it. Any script on this page can POST to

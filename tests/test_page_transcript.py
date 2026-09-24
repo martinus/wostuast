@@ -424,6 +424,14 @@ def test_a_working_stream_says_nothing_and_a_lost_one_says_so(page_at):
             said = page.evaluate("""() => { state.stream.onerror();
                 return document.getElementById('live').textContent; }""")
             assert said == "reconnecting"
+            # And with words in the find box too: both painters skipped the
+            # slot then, so a drop said nothing and a reconnect left
+            # "reconnecting" standing over a working page.
+            said = page.evaluate("""() => { state.find = 'x';
+                document.getElementById('live').textContent = '';
+                state.stream.onerror();
+                return document.getElementById('live').textContent; }""")
+            assert said == "reconnecting"
         finally:
             browser.close()
 
