@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import time
 
 import pytest
@@ -513,3 +514,22 @@ def test_a_rotation_never_writes_over_an_archive(ws, monkeypatch):
 
     assert (folder / "events.1.jsonl").read_text() == "KEEP ME\n"
     assert (folder / "events.2.jsonl").read_text().startswith("x" * 200)
+
+
+def test_a_temporary_left_by_a_writer_that_died_is_not_trusted(ws, tmp_path):
+    """The temporary is made 0600 with `O_EXCL`, so a stale one of the same
+    name -- a writer killed between the write and the rename, whose pid and
+    thread came round again -- would refuse every write, or, opened with
+    `O_TRUNC` instead, keep its old 0644 and hold the new text at it."""
+    import stat
+    import threading
+
+    target = tmp_path / "settings.json"
+    stale = target.with_name(
+        f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    stale.write_text("old")
+    stale.chmod(0o644)
+    ws.write_atomic(target, "new", private=True)
+    assert target.read_text() == "new"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert not stale.exists()

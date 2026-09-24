@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -305,6 +306,61 @@ def test_install_leaves_the_settings_file_at_its_own_permissions(ws, tmp_path,
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert ws.cmd_uninstall(None) == 0
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_a_settings_file_that_is_a_link_stays_a_link(ws, tmp_path, monkeypatch):
+    """Dotfile managers keep `settings.json` as a link into a repository. The
+    rename landed on the link itself: after `install` it was a plain file,
+    the repository never had the hooks, and an edit made there no longer
+    reached Claude Code."""
+    kept = tmp_path / "dotfiles" / "settings.json"
+    kept.parent.mkdir()
+    kept.write_text(json.dumps(FOREIGN, indent=2) + "\n")
+    path = ws.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(kept)
+    monkeypatch.setattr(ws, "install_path", lambda: tmp_path / "bin" / "wostuast")
+
+    assert ws.cmd_install(None) == 0
+    assert path.is_symlink() and path.resolve() == kept.resolve()
+    assert "hooks" in json.loads(kept.read_text())
+    assert ws.cmd_uninstall(None) == 0
+    assert path.is_symlink()
+    assert json.loads(kept.read_text()) == FOREIGN
+    assert list(path.parent.glob("*.tmp")) == []
+
+
+def test_the_settings_are_never_on_disk_where_others_can_read_them(
+        ws, tmp_path, monkeypatch):
+    """The temporary was written first and made 0600 after, so for a moment a
+    0644 copy of a file that can hold API keys stood in `~/.claude`, which is
+    not private -- and for good, if `install` died in that moment. The mode
+    belongs at creation, the rule `open_private` keeps for the state
+    directory."""
+    import stat
+
+    path = ws.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(FOREIGN, indent=2) + "\n")
+    path.chmod(0o600)
+    monkeypatch.setattr(ws, "install_path", lambda: tmp_path / "bin" / "wostuast")
+    seen = []
+    real = os.fsync
+
+    def look(fd):
+        # Every temporary holds its whole text by the time it is synced.
+        for one in path.parent.glob("*.tmp"):
+            seen.append(stat.S_IMODE(one.stat().st_mode))
+        return real(fd)
+
+    monkeypatch.setattr(os, "fsync", look)
+    monkeypatch.setattr(type(path), "chmod", lambda self, mode: None)
+    was = os.umask(0o022)
+    try:
+        assert ws.cmd_install(None) == 0
+    finally:
+        os.umask(was)
+    assert seen and all(mode & 0o077 == 0 for mode in seen), [oct(m) for m in seen]
 
 
 def test_uninstall_keeps_an_empty_group_of_the_users(ws):
