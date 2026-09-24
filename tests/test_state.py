@@ -422,6 +422,22 @@ def asked(**extra):
     ]
 
 
+def test_a_session_that_dies_on_its_question_forgets_it(ws):
+    """Every change of state clears the attention, and the one made where
+    nothing reports it did not: an agent killed at its question kept the
+    question, with buttons whose keys went into whatever ran in the pane
+    next. `_bury`."""
+    store = ws.Store()
+    for one in asked():
+        store.apply(one)
+    store.settle(1010.0, alive=lambda pid: False)
+    session = store.sessions["s1"]
+    assert session.state == "dead"
+    assert session.asking is None
+    assert session.reason == ""
+    assert session.attention_since == 0.0
+
+
 def test_a_question_is_kept_whole_enough_to_answer(ws):
     """The row said `AskUserQuestion {"questions": [{"question": "Approve …`
     -- the catch-all summary, clipped at eighty characters. Everything a

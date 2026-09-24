@@ -42,7 +42,7 @@ after the tests go red.
 | `cmd_hook`, anything on the hook path | Safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | **Do not guess payload fields**, and `tests/fixtures/README.md` |
 | `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | **Decisions without a scar behind them** |
-| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
+| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending` | Safety: the token, localhost, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
 | `set_limit`, `over_limit`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
@@ -436,6 +436,26 @@ update the comment with its own text, and read it back.
   port unasked, and the effect here is `tmux send-keys` into a live terminal.
   `allowed()` wants three things to agree: Host, an Origin that is ours when
   there is one, and the token printed into the page.
+- **No page of ours inside another page.** Framed by another origin, the
+  page is still our origin and holds the token, so every POST it makes
+  passes `allowed()` -- and an invisible frame over a decoy turned two clicks
+  into an Escape in an agent's pane, shown with a real browser. The token and
+  the Origin check stop another site's *requests*; only `X-Frame-Options:
+  DENY` and `frame-ancestors 'none'`, which `reply` sends on every answer,
+  stop its *clicks*. `test_the_page_cannot_be_framed`.
+- **One send at a time, per session.** `tmux send-keys` takes long enough to
+  press twice in, and a double-click on the review's send, or a second Enter
+  in the send box, typed the text into the pane twice -- on two HTTP threads
+  the text and the Enter of each can even interleave into one prompt.
+  `sending` holds the sessions a send is on its way to, and `submitReview`
+  and `sendTyped` both go through it, as `submitAsk` always disabled its
+  button. **The send box empties the moment the text goes**, and a refusal
+  puts it back in front of whatever was typed since. Clearing on the answer
+  took the words typed while the send was on its way, which had gone
+  nowhere; and a box still holding the sent text, edited meanwhile, sent it
+  a second time. `test_a_double_click_sends_a_review_once`,
+  `test_enter_twice_sends_once_and_keeps_what_came_after`,
+  `test_a_refused_send_comes_back_in_front_of_what_was_typed_since`.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 is not enough —
   a site can point its own name at 127.0.0.1. `Serving.ours()` checks Host, and
   a request without one is refused: an empty Host used to pass, which made the
@@ -798,7 +818,14 @@ update the comment with its own text, and read it back.
 - **A state change clears the attention with it.** Every handler that sets a
   state calls `_clear_attention` — `SessionStart` did not, so a session killed
   at its dialog and resumed came back "ready" with the old permission question
-  under it. And the wait clock only starts when the wait does: a second
+  under it. **`_bury` is a change of state too**: nothing reports a death,
+  so it is the one made outside the handlers, and it kept the question, with
+  its buttons, whose keys went into whatever the pane ran next -- `2 1 Enter`
+  into a new agent submits "21". `answer` refuses a session in
+  `GONE_STATES` as well, for whatever a row still carries.
+  `test_a_session_that_dies_on_its_question_forgets_it`,
+  `test_no_answer_goes_to_a_session_that_is_over`.
+  **And the wait clock only starts when the wait does**: a second
   notification about the same dialog moved it, so a row that had waited a
   minute said it had waited none.
 - **Folding an event twice must change nothing.** Handlers assign, never
@@ -1599,6 +1626,13 @@ update the comment with its own text, and read it back.
   `run !== -1` — "none held yet" is every first load, and `goTo` is set from
   the address bar before that load, so forgetting there threw away the link
   the page had just been opened on.
+- **Enter jumps, except on a button a keyboard reached.** The keys handler
+  jumped to the pane from wherever the focus was, so a keyboard could press
+  nothing on the page. But a click leaves the focus on the button it pressed,
+  and Enter there has always been the jump key. `:focus-visible` cannot tell
+  the two apart: a key pressed on a clicked button turns it on before the
+  handler runs. `focusedByKey` can: Tab sets it, a pointer press clears it.
+  `test_enter_on_a_button_reached_by_keyboard_presses_it` holds both halves.
 - **`t` says what it did.** The key worked from the day it shipped and read
   as broken anyway: most transcripts hold no thinking at all, so pressing it
   changed nothing on screen and nothing said why. A key whose effect can be
@@ -1727,7 +1761,10 @@ update the comment with its own text, and read it back.
   fades.** "Review sent" goes stale in four seconds. "That did not come from
   this page" is about something you asked for and did not get, and fading it
   left a strip reading "live" over a page where nothing worked — which is
-  exactly how the restart above went unexplained.
+  exactly how the restart above went unexplained. **So a send that worked
+  calls `said` before its `note`**: the note only borrowed the slot, and when
+  it faded the refusal before it came back over a review that had gone
+  through. `test_a_review_that_goes_through_clears_an_earlier_refusal`.
 - **One painter for the live slot, and three things that want it.**
   `state.live` is what the stream is doing, `state.trouble` is something you
   asked for and did not get, and `note` borrows the slot over both for four

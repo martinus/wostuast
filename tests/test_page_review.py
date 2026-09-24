@@ -316,6 +316,59 @@ def test_submitting_sends_it_and_empties_the_review(repo_page):
             browser.close()
 
 
+def stub_send(page, answers, delay=0):
+    """`/send` answered from a list, one per call, after `delay` ms; every
+    text sent is kept in `window.__sent`."""
+    page.evaluate("""([answers, delay]) => {
+      window.__sent = [];
+      const real = window.fetch;
+      window.fetch = (url, opts) => {
+        if (String(url).endsWith("/send")) {
+          window.__sent.push(JSON.parse(opts.body).text);
+          const body = answers[Math.min(window.__sent.length, answers.length) - 1];
+          return new Promise((done) => setTimeout(
+            () => done(new Response(JSON.stringify(body))), delay));
+        }
+        return real(url, opts);
+      };
+    }""", [answers, delay])
+
+
+def test_a_double_click_sends_a_review_once(repo_page):
+    """`tmux send-keys` takes long enough to click twice in, and the second
+    click typed the whole review into the pane a second time."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "change this please")
+            stub_send(page, [{"done": True}], delay=400)
+            show_tab(page, "review")
+            page.dblclick(".reviewbody .verb.submit")
+            page.wait_for_function("state.review.comments.length === 0")
+            page.wait_for_timeout(300)
+            assert page.evaluate("window.__sent.length") == 1
+        finally:
+            browser.close()
+
+
+def test_a_review_that_goes_through_clears_an_earlier_refusal(repo_page):
+    """The success only borrowed the slot for four seconds, so the refusal
+    before it came back over a review that had been sent."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "change this please")
+            stub_send(page, [{"error": "that is too many bytes"}, {"done": True}])
+            show_tab(page, "review")
+            page.click(".reviewbody .verb.submit")
+            page.wait_for_function("state.trouble === 'that is too many bytes'")
+            page.click(".reviewbody .verb.submit")
+            page.wait_for_function("state.review.comments.length === 0")
+            assert page.evaluate("state.trouble") == ""
+        finally:
+            browser.close()
+
+
 def test_leaving_the_tab_keeps_what_was_typed(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)

@@ -677,6 +677,48 @@ def test_sending_nothing_is_refused(in_tmux):
     assert seen == []
 
 
+def test_a_send_of_nothing_but_controls_is_nothing(in_tmux):
+    """`tmux_send` takes the controls out, so text made of nothing else is
+    nothing to send. It was refused as "tmux did not answer ... the text may
+    be on the prompt", which sent the reader to look for text that was never
+    typed, from a tmux that was never asked."""
+    daemon, base, seen = in_tmux
+    status, body = post(f"{base}/api/session/s1/send",
+                        {"text": "\x1b\x07\x1b"}, token=daemon.token)
+    assert (status, body["error"]) == (400, "there is nothing to send")
+    assert seen == []
+
+
+def test_no_answer_goes_to_a_session_that_is_over(ws, in_tmux):
+    """A session that is over has a pane that has moved on. Even a row that
+    still carries the question must not press its keys there."""
+    daemon, base, seen = in_tmux
+    ws.append_event(event("PreToolUse", tool_name="AskUserQuestion",
+                          tool_use_id="toolu_q", tool_input={"questions": [
+                              {"question": "Which?", "header": "H",
+                               "multiSelect": False,
+                               "options": [{"label": "a"}, {"label": "b"}]}]}))
+    daemon.store.refresh()
+    session = daemon.store.sessions["s1"]
+    assert session.asking
+    session.state = "dead"          # the row, as a burial that kept it
+    status, body = post(f"{base}/api/session/s1/answer",
+                        {"ask": "toolu_q", "picks": [[1]]}, token=daemon.token)
+    assert (status, body["error"]) == (409, "this session is over")
+    assert seen == []
+
+
+def test_the_page_cannot_be_framed(served):
+    """Framed by another origin, the page is still ours and holds the token,
+    so its POSTs pass every check -- and two clicks on a decoy over an
+    invisible frame sent Escape into a pane. Only a header stops a frame."""
+    _, base = served
+    with urllib.request.urlopen(f"{base}/", timeout=5) as response:
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in response.headers[
+            "Content-Security-Policy"]
+
+
 def test_sending_more_than_fits_is_refused_not_cut(ws, in_tmux):
     """What arrives in the terminal must be what the user wrote, or nothing.
 
