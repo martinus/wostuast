@@ -1205,6 +1205,38 @@ def test_a_tick_stops_a_session_that_has_gone_over(ws, served, monkeypatch):
     assert seen == []                      # once, not on every tick
 
 
+def test_an_escape_tmux_refused_is_not_a_stop(ws, served, monkeypatch):
+    """It was recorded and shown as a stop all the same, and never tried
+    again: the agent went on spending behind a page that said it had been
+    stopped. A refusal says so, and is tried again after `LIMIT_RETRY`."""
+    daemon, base = served
+    seen = []
+    monkeypatch.setattr(ws, "run", lambda args, **rest: seen.append(list(args)))
+    now = time.time()
+    ws.append_event(event("SessionStart", pane="%7", pid=1, ts=now))
+    ws.append_event(event("UserPromptSubmit", pane="%7", prompt="go", ts=now + 1))
+    daemon.store.refresh()
+    daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=30.0)
+    daemon.store.set_limit("s1", 10.0)
+
+    daemon.tick()
+    assert ["tmux", "send-keys", "-t", "%7", "Escape"] in seen
+    said = [one for one in daemon.store.rows if one["id"] == "s1"][0]
+    assert not said["limit_fired"] and said["limit_refused"]
+    assert "could not stop" in said["last_event"]
+
+    seen.clear()
+    daemon.tick()
+    assert seen == []                      # not at once, and not every tick
+
+    monkeypatch.setattr(ws, "LIMIT_RETRY", 0.0)
+    daemon.tick()
+    assert seen == []                      # nor before it has spent more
+    daemon.store.sessions["s1"].status = ws.Status(ts=2.0, cost_usd=31.0)
+    daemon.tick()
+    assert ["tmux", "send-keys", "-t", "%7", "Escape"] in seen
+
+
 # --- answering a question -----------------------------------------------------
 
 TWO = {"questions": [

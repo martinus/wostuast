@@ -44,7 +44,7 @@ after the tests go red.
 | `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | **Decisions without a scar behind them** |
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending` | Safety: the token, localhost, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
-| `set_limit`, `over_limit`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
+| `set_limit`, `over_limit`, `limit_refused`, `LIMIT_RETRY`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
@@ -593,6 +593,52 @@ update the comment with its own text, and read it back.
   with `set_limit`: a raise that lands in between is overwritten with the old
   number and a fresh `fired_at`, and the Escape goes out anyway — the
   reader's release undone at the moment they made it.
+- **An Escape tmux refused is not a stop.** `over_limit` stamps `fired_at`
+  before the key goes out, and the tick threw away what `tmux_interrupt`
+  answered — so a closed pane, another tmux socket or a timed-out `run` left
+  a row saying "stopped · raise it to go on" over an agent still spending,
+  and the once-only guard meant nothing tried again. `limit_refused` puts
+  `fired_at` back to nought, stamps `refused_at`, says so in the session's
+  log, and the panel says it will try again. **Not on every tick**: a tmux
+  that refuses once a second is asked once a second for ever, so the next
+  try waits `LIMIT_RETRY`, and `refused_at` is kept in `limits.json` so a
+  restart does not forget the wait. **And not until the agent has spent
+  more** (`refused_spend`): `run` gives None for a `send-keys` that timed
+  out as well as for one refused, and a timed-out key may have landed. An
+  agent stopped by Escape fires no hook that says so, so the row still reads
+  "working", and a second Escape went into a prompt nobody was at. A stopped
+  agent spends nothing; a spend that has grown is the proof. **A refusal
+  answers only its own stop**: the key goes out of the lock, so
+  `over_limit` hands back the `fired_at` it stamped and `limit_refused`
+  does nothing when a `set_limit` has moved it since — or a raise came back
+  as "could not stop at its $20.00 limit" with the spend at 12. **And the
+  spend dropping below the limit forgets a refusal**, as it re-arms a stop,
+  or the panel said "tmux refused" for ever after a `/clear`.
+  `test_an_escape_tmux_refused_is_not_a_stop`,
+  `test_a_refused_escape_waits_and_is_tried_again_across_a_restart`,
+  `test_a_refused_escape_is_not_pressed_again_into_an_agent_it_stopped`,
+  `test_a_refusal_after_the_limit_was_raised_is_not_written_over_it`,
+  `test_a_refusal_is_forgotten_when_the_spend_drops_below_the_limit`,
+  `test_an_escape_tmux_refused_is_not_called_a_stop`.
+- **The limit box is kept while it has the focus only while it is still this
+  session's box.** An alert clicked or a link followed runs `choose` with the
+  focus where it was, so the skip kept the old session's box under the new
+  session's panel, and a number typed there to protect the new session set
+  the old one's limit. `limitfield`'s `dataset.id` says whose box it is; a
+  box that is not the chosen session's is rebuilt. **What was half typed in
+  it is put back first** (`dataset.stood`), never stored: a number is given
+  by Enter, Tab or a click away, and an alert that changed the page is none
+  of those — "7" on the way to "75" would stop that agent at seven dollars,
+  which is the `input` scar below by another road. Chromium commits a
+  focused box that is removed, so the value has to go back before it goes.
+  `test_a_limit_typed_after_another_session_is_chosen_is_that_sessions`.
+- **A number the box cannot read is refused, never read as "no limit".** A
+  number input reads `10e`, `1e` or a lone `-` as the empty string, and empty
+  means "take the limit away" — one slip of the hand removed the limit and
+  the panel went quiet. A negative number did the same through
+  `!(asked > 0)`. `box.validity.badInput` and a sign check refuse both,
+  `said` says why, and the box goes back to the limit that stands.
+  `test_a_limit_the_box_cannot_read_leaves_the_limit_standing`.
 - **The limit is armed again when the spend drops below it.** `/clear` puts
   `cost.total_cost_usd` back to nought, so without this one stop disarms the
   limit for the rest of the session and the agent runs without bound behind a
