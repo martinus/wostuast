@@ -68,9 +68,32 @@ conversation turn. Address the message above as you continue this turn.
 </system-reminder>
 ```
 
-Header and footer read off a real transcript. A build that writes it as an
-`attachment` record instead is ignored by the Transcript tab, which reads
-`user` and `assistant` only. `read_user_text` keeps the middle.
+Header and footer read off a real transcript. `read_user_text` keeps the
+middle.
+
+**2.1.276 to 2.1.281 write it as an `attachment` record instead**, and no
+`user` record follows. Shape, read off a real transcript:
+
+```
+{"type": "attachment", "timestamp": "…", "rendered": [...],
+ "attachment": {"type": "queued_command", "prompt": "<the words>",
+                "commandMode": "prompt", "origin": {"kind": "human"},
+                "timestamp": "…", "source_uuid": "…"}}
+```
+
+`prompt` is a string, or a list of content pieces when an image came with
+it. `origin.kind` is `human` for the reader, and `peer` for another session's
+message, which also carries `isMeta: true`. `commandMode` is
+`task-notification` for a background task's news, with no `origin`. Only
+`queued_command` is read; every other attachment is left out. The records
+around it are `queue-operation` lines: an `enqueue`, then a `remove`.
+
+### A `user` record Claude Code wrote itself
+
+`isMeta: true` on a `user` record means the harness wrote it: a Stop hook's
+answer (`Stop hook feedback:`), a whole skill's body (`Base directory for
+this skill:`), `Continue from where you left off.`, an image's caption. It
+is drawn as a note, never as a prompt.
 
 ### Two calls at once
 
@@ -168,7 +191,8 @@ characters in the one this was read from. It is a `user` record and it is not
 a prompt — drawing it as one put that much machine text in the transcript as
 though the reader had typed it.
 
-Other line types appear and are ignored: `queue-operation`, `attachment`,
+Other line types appear and are ignored: `queue-operation`, an `attachment`
+that is not a `queued_command`,
 `mode`, `last-prompt`, `atis-latch`, `cost-state`, `permission-mode`,
 `ai-title`, `pr-link`, `bridge-session`, `file-history-snapshot` and
 `file-history-delta`. A `system` record other than a compact boundary is
