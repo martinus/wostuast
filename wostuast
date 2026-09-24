@@ -877,40 +877,52 @@ ASK_MAX = 8
 PREVIEW_UNREAD = 2000
 
 
+def preview_kind(preview: Any) -> str | None:
+    """What Claude Code draws for one option's `preview`, by its own rules
+    (`pU` and `b2` in its bundle, 2.1.281).
+
+    - "" -- nothing: the option has no preview, or only blanks;
+    - "full" -- the text, in a box beside the options;
+    - "withheld" -- the box, with a sentence in place of the text, because
+      the text is longer than `PREVIEW_UNREAD`.
+
+    None when the answer hangs on how wide an invisible character is -- an
+    escape, a format character, U+FFFD, which it drops. Nothing here can
+    measure that the way a terminal does, so it is not guessed.
+    """
+    import unicodedata      # here, not at the top: the hook never asks
+    if preview is None:
+        return ""
+    if not isinstance(preview, str):
+        return None
+    # Its length is JavaScript's, which counts an emoji twice.
+    if len(preview.encode("utf-16-le", "surrogatepass")) // 2 > PREVIEW_UNREAD:
+        return "withheld"
+    if not preview.strip():
+        return ""
+    if (all(ch.isprintable() or ch in "\t\n\r" for ch in preview)
+            and any(ch != "\ufffd" and unicodedata.category(ch)[0] not in "CMZ"
+                    for ch in preview)):
+        return "full"
+    return None
+
+
 def shows_preview(options: list[Any]) -> bool | None:
     """Whether Claude Code draws a single-choice question beside a preview.
 
-    It does when any option carries a `preview` it can show, and that
-    question takes other keys: a digit only moves the cursor there, and
-    Enter answers. Measured against 2.1.281 in tmux; the test for "can show"
-    is its own (`pU` in its bundle): longer than `PREVIEW_UNREAD`, or
-    something left once escapes and blanks are taken out. A screen reader
-    turns the layout off, which nothing in the payload says.
+    It does when any option carries a preview it draws (`preview_kind`), and
+    that question takes other keys: a digit only moves the cursor there, and
+    Enter answers. Measured against 2.1.281 in tmux. A screen reader turns
+    the layout off, which nothing in the payload says.
 
-    None when the answer hangs on how wide an invisible character is. The
-    keys would be a guess then, and the question is left to the terminal.
+    None when one option's preview cannot be told. The keys would be a guess
+    then, and the question is left to the terminal.
     """
-    import unicodedata      # here, not at the top: the hook never asks
-    shown = False
-    for choice in options:
-        preview = choice.get("preview") if isinstance(choice, dict) else None
-        if preview is None:
-            continue
-        if not isinstance(preview, str):
-            return None
-        # Its length is JavaScript's, which counts an emoji twice.
-        if len(preview.encode("utf-16-le", "surrogatepass")) // 2 > PREVIEW_UNREAD:
-            shown = True
-        elif not preview.strip():
-            continue
-        elif (all(ch.isprintable() or ch in "\t\n\r" for ch in preview)
-              and any(ch != "\ufffd"
-                      and unicodedata.category(ch)[0] not in "CMZ"
-                      for ch in preview)):
-            shown = True
-        else:
-            return None
-    return shown
+    kinds = [preview_kind(choice.get("preview") if isinstance(choice, dict)
+                          else None) for choice in options]
+    if None in kinds:
+        return None
+    return any(kinds)
 
 
 def read_ask(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -946,21 +958,27 @@ def read_ask(event: dict[str, Any]) -> dict[str, Any] | None:
             continue
         given = one.get("options") or []
         whole = whole and len(given) <= ASK_MAX
+        many = bool(one.get("multiSelect"))
         options = []
         for choice in given[:ASK_MAX]:
             if not isinstance(choice, dict):
                 whole = False
                 continue
+            # A multiple-choice question is never drawn beside a preview,
+            # so its previews are not sent: the page shows what the dialog
+            # shows. The text is not `clip`ped, which folds the lines of a
+            # code box into one; a "full" one is short enough already.
+            kind = "" if many else preview_kind(choice.get("preview"))
             options.append({
                 "label": clip(str(choice.get("label") or ""), ASK_TEXT_MAX),
                 "description": clip(str(choice.get("description") or ""),
                                     ASK_TEXT_MAX),
+                "preview": choice["preview"] if kind == "full" else "",
+                "withheld": kind == "withheld",
             })
         if not options:
             whole = False
             continue        # nothing to pick, so nothing to draw
-        many = bool(one.get("multiSelect"))
-        # A multiple-choice question is never drawn beside a preview.
         preview = False if many else shows_preview(given)
         whole = whole and preview is not None
         questions.append({
@@ -6346,6 +6364,23 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .asklabel { font-size: 13px; font-weight: 600; }
 .askwhy { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 .asknote { margin-top: 8px; font-size: 11px; color: var(--ink-faint); }
+/* The box Claude Code draws beside a question's options. It wears the code
+   block's ground and ink, because it is usually code, and keeps every line
+   and every space: a layout drawn in text is nothing without them, so it
+   scrolls sideways rather than wrapping. Its height is capped, or one long
+   sketch would push the submit out of the bar. */
+.askbeside { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.askbeside > .askopts { flex: 1 1 260px; min-width: 0; }
+/* It wraps under the options where the two will not fit side by side. */
+.askbeside > .askpreview { flex: 1 1 340px; min-width: 0; }
+.askprevhead { margin-bottom: 4px; font-size: 11px; color: var(--ink-faint); }
+.askprevbody {
+  margin: 0; padding: 10px 14px; max-height: 16em; overflow: auto;
+  border-radius: 6px; background: var(--code); border: 1px solid var(--edge);
+  color: var(--code-ink); font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.5; white-space: pre;
+}
+.askprevbody.none { color: var(--ink-faint); font-style: italic; }
 /* A file of the reader's own that wostuast cannot use. Not an error of the
    program's, so it does not shout -- but it has to be visible, because the
    only other sign is links that never appear. */
@@ -8126,7 +8161,11 @@ function drawAsking() {
     if (one.header) put(block, "div", "askhead", one.header);
     put(block, "p", "askwhat", one.question);
     if (one.many) put(block, "div", "asknote", "pick as many as apply");
-    const list = put(block, "div", "askopts");
+    // Beside the options, as the dialog draws it: under them, the box stood
+    // below the bar's fold, and a preview you have to scroll to is one you
+    // choose without.
+    const body = one.preview ? put(block, "div", "askbeside") : block;
+    const list = put(body, "div", "askopts");
     one.options.forEach((option, at) => {
       const button = put(list, "button", "askopt");
       button.type = "button";
@@ -8148,6 +8187,17 @@ function drawAsking() {
         paintPicks(box, ask);
       });
     });
+    // Claude Code draws this question beside a box, and the box shows the
+    // preview of the option under its cursor -- a code sketch, a layout,
+    // often the thing the choice is about. The options alone left the
+    // reader choosing without it. Here the box follows the pick, which
+    // types nothing, so clicking through the options is how to read them;
+    // before a pick it shows the first, where the dialog's cursor starts.
+    if (one.preview) {
+      const pane = put(body, "div", "askpreview");
+      put(pane, "div", "askprevhead");
+      put(pane, "pre", "askprevbody");
+    }
   });
   const foot = put(box, "div", "asksend");
   const send = put(foot, "button", "verb");
@@ -8168,6 +8218,16 @@ function paintPicks(box, ask) {
       button.classList.toggle("chosen", on);
       if (ask.questions[which].many) button.setAttribute("aria-pressed", String(on));
     });
+    const pane = block.querySelector(".askpreview");
+    if (!pane) return;
+    const at = picked[which].length ? picked[which][0] : 0;
+    const option = ask.questions[which].options[at];
+    pane.querySelector(".askprevhead").textContent =
+      "preview of " + (at + 1) + ". " + option.label;
+    const body = pane.querySelector(".askprevbody");
+    // `textContent`, never markup: an agent wrote this.
+    body.textContent = previewText(option);
+    body.classList.toggle("none", !option.preview);
   });
   const ready = picked.every((at) => at.length > 0);
   const send = box.querySelector(".asksend .verb");
@@ -8193,6 +8253,21 @@ function paintPicks(box, ask) {
     : ready
     ? "presses " + askKeys(ask, picked).map((keys) => keys.join(" ")).join(", then ")
     : (picked.length > 1 ? "pick an answer to each" : "pick an answer");
+}
+
+// What the preview box says for one option, in Claude Code's own words where
+// it has some. Its box renders the preview as Markdown, so a sketch wrapped
+// in one code fence shows there without the fence; here the fence comes off
+// the same way, and anything else stands as written, with its lines and its
+// indentation -- which is what a layout drawn in text needs.
+function previewText(option) {
+  if (option.withheld) {
+    return "(preview cannot be shown in full \u2014 compare the option " +
+      "labels and descriptions instead)";
+  }
+  if (!option.preview) return "No preview available";
+  const fenced = /^\s*```[^\n]*\n([\s\S]*?)\n```\s*$/.exec(option.preview);
+  return fenced ? fenced[1] : option.preview;
 }
 
 // The keys that answer a question, grouped by question, for saying before
