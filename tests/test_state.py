@@ -515,9 +515,11 @@ def test_only_what_is_drawn_is_kept(ws):
             "options": [{"label": "yes", "description": "d",
                          "preview": "also new"}]}]}))
     one = session.asking["questions"][0]
-    assert sorted(one) == ["header", "many", "options", "question"]
+    assert sorted(one) == ["header", "many", "options", "preview", "question"]
     assert sorted(one["options"][0]) == ["description", "label"]
     assert one["many"] is True
+    # Whether a preview changes the keys goes to the page; its text does not.
+    assert one["preview"] is False
 
 
 def test_the_late_notification_does_not_undo_it(ws):

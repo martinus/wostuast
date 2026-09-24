@@ -217,6 +217,53 @@ def test_the_keys_that_answer_each_shape_of_question(ws):
         ["2", "2", "3", "Tab", "1", "Enter"], "")
 
 
+def beside(many=False, n=3, preview="if (ok) {\n    parse();\n}\n"):
+    """A question with a preview on its first option only, as an agent
+    writes one: the rest of the options have none."""
+    asked = one(many, n)
+    asked["options"][0]["preview"] = preview
+    return asked
+
+
+def test_a_question_beside_a_preview_takes_enter_after_its_digit(ws):
+    """Measured against Claude Code 2.1.281 in tmux, with a fake API asking.
+    One option with a preview puts the whole question beside a preview box,
+    and there a digit only moves the cursor: `3` alone left the reader's
+    answer under the cursor and nothing sent. Enter answers and moves on.
+    A multiple-choice question is never drawn that way, preview or not."""
+    assert ws.ask_keys(ask_of(ws, beside()), [[3]]) == (["3", "Enter"], "")
+    assert ws.ask_keys(ask_of(ws, beside(), one(False)), [[2], [3]]) == (
+        ["2", "Enter", "3", "Enter"], "")
+    assert ws.ask_keys(ask_of(ws, one(False), beside()), [[1], [3]]) == (
+        ["1", "3", "Enter", "Enter"], "")
+    assert ws.ask_keys(ask_of(ws, beside(many=True)), [[1, 3]]) == (
+        ["1", "3", "Tab", "Enter"], "")
+    # So its preview is never looked at, and cannot make it unanswerable.
+    assert ask_of(ws, beside(many=True, preview="\x1b[1m"))["answerable"]
+
+
+@_pytest.mark.parametrize("preview, keys", [
+    ("", ["2"]),                     # blank: Claude Code draws no box
+    (" \n\t ", ["2"]),
+    ("x" * 2001, ["2", "Enter"]),    # too long to read, still a box
+    ("\U000e0001" * 1001, ["2", "Enter"]),  # 2002 long, as JavaScript counts
+    (" " * 1999 + "\u200b", []),       # 2000 is not over it
+    ("x\r\ny", ["2", "Enter"]),
+    ("\x1b[31mred\x1b[0m", []),      # an escape: its width is a guess
+    ("\u200b", []),                  # nothing visible, or is there
+    ("\ufffd", []),                  # Claude Code drops this one
+    (["not", "text"], []),
+])
+def test_a_preview_is_read_as_claude_code_reads_it(ws, preview, keys):
+    """Claude Code's own test for a preview it can show (`pU`): something
+    left once escapes, blanks and U+FFFD are taken out. Where that hangs on
+    the width of a character nobody can see, the keys would be a guess, so
+    the question is left to the terminal."""
+    ask = ask_of(ws, beside(preview=preview))
+    assert ws.ask_keys(ask, [[2]])[0] == keys
+    assert ask["answerable"] is bool(keys)
+
+
 @_pytest.mark.parametrize("picks", [
     None, [], [[1], [1]], [[]], [["1"]], [[True]], [[0]], [[4]], [[1, 1]],
     [[1, 2]],                   # two answers to a single-choice question

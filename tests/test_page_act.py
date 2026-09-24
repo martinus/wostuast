@@ -360,11 +360,17 @@ def test_the_page_says_the_keys_the_daemon_presses(ws, in_pane):
         {"question": "Size?", "header": "S", "multiSelect": False,
          "options": [{"label": "S"}, {"label": "L"}]},
     ]}
+    beside = {"questions": [dict(ASKED["questions"][0], options=[
+        dict(ASKED["questions"][0]["options"][0], preview="if (ok) {\n}"),
+        *ASKED["questions"][0]["options"][1:]])]}
     cases = [
         (MANY, [[4, 1]]),
         (ASKED, [[2], [1]]),
         ({"questions": [ASKED["questions"][0]]}, [[3]]),
         (mixed, [[2], [2, 4], [1]]),
+        (beside, [[3]]),
+        ({"questions": [*beside["questions"], *mixed["questions"]]},
+         [[1], [2], [1, 2], [2]]),
     ]
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
