@@ -735,6 +735,9 @@ def test_an_origin_head_that_points_nowhere_is_not_the_base(ws, seeded, tmp_path
     git(clone, "symbolic-ref", "refs/remotes/origin/HEAD",
         "refs/remotes/origin/master")
     assert ws.diff_base(str(clone)) == ("origin/main", False)
+    # A clone carries no identity of its own, and CI has no global one.
+    git(clone, "config", "user.email", "t@example.com")
+    git(clone, "config", "user.name", "t")
     git(clone, "checkout", "-qb", "feat")
     (clone / "x.txt").write_text("x\n")
     git(clone, "add", ".")
