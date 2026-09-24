@@ -700,21 +700,147 @@ def test_a_directory_without_git_has_no_untracked_files(ws, tmp_path):
 
 
 def test_the_base_falls_back_to_main(ws, seeded):
-    assert ws.diff_base(str(seeded)) == "main"
+    assert ws.diff_base(str(seeded)) == ("main", False)
 
 
 def test_the_base_is_what_the_remote_says(ws, seeded, tmp_path):
     clone = tmp_path / "clone"
     subprocess.run(["git", "clone", "-q", str(seeded), str(clone)], check=True,
                    capture_output=True)
-    assert ws.diff_base(str(clone)) == "origin/main"
+    assert ws.diff_base(str(clone)) == ("origin/main", False)
 
 
 def test_a_repository_without_a_base_says_so(ws, tmp_path):
     root = tmp_path / "fresh"
     root.mkdir()
     git(root, "init", "-q", "-b", "wip")
-    assert ws.diff_base(str(root)) == ""
+    assert ws.diff_base(str(root)) == ("", False)
+
+
+def test_an_origin_head_that_points_nowhere_is_not_the_base(ws, seeded, tmp_path):
+    """The remote renamed its default branch and `fetch --prune` took the
+    old one away: `origin/HEAD` still names `origin/master`, which is gone,
+    and `symbolic-ref` prints it all the same. Taken as the base, every
+    diff and log against it failed, and the tab said "git did not answer"
+    for ever with `origin/main` right there."""
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(seeded), str(clone)], check=True,
+                   capture_output=True)
+    # A default branch that is none of the usual names is still the answer.
+    git(clone, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+    git(clone, "symbolic-ref", "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/trunk")
+    assert ws.diff_base(str(clone)) == ("origin/trunk", False)
+    git(clone, "update-ref", "-d", "refs/remotes/origin/trunk")
+    git(clone, "symbolic-ref", "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/master")
+    assert ws.diff_base(str(clone)) == ("origin/main", False)
+    # A clone carries no identity of its own, and CI has no global one.
+    git(clone, "config", "user.email", "t@example.com")
+    git(clone, "config", "user.name", "t")
+    git(clone, "checkout", "-qb", "feat")
+    (clone / "x.txt").write_text("x\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-qm", "x")
+    report = ws.worktree_diff(str(clone))
+    assert report.failed is False and report.base == "origin/main"
+    assert [one.subject for one in report.commits] == ["x"]
+
+
+def test_a_base_git_could_not_look_for_is_not_no_base(ws, seeded):
+    """`for-each-ref` giving nothing because it failed was read as "no such
+    names": the committed half went, the page said there was no default
+    branch, and nothing said git had not answered."""
+    def broken(args, **rest):
+        return None if "for-each-ref" in args else ws.run(args, **rest)
+
+    assert ws.diff_base(str(seeded), runner=broken) == ("", True)
+    assert ws.worktree_diff(str(seeded), runner=broken).failed is True
+
+
+def test_a_root_git_could_not_find_is_not_an_empty_worktree(ws, seeded):
+    """With `--show-toplevel` timed out the report came back empty and
+    unfailed, and the page said nothing had changed. `worktree_files` asks
+    `git_answers` at that door already."""
+    def stalled(args, **rest):
+        return None
+    report = ws.worktree_diff(str(seeded), runner=stalled)
+    assert report.failed is True
+    # And a directory that simply is not a repository is still an answer.
+    assert ws.worktree_diff(str(seeded.parent)).failed is False
+
+
+def test_a_repository_with_no_commit_yet_shows_what_is_staged(ws, tmp_path):
+    """With no HEAD, `git log HEAD` and `git diff HEAD` fail -- which is git
+    answering "there is no commit", not failing to answer. The tab said git
+    did not answer on every poll, and the staged files were in neither list:
+    not in the diff, and not untracked, because they are in the index."""
+    root = tmp_path / "fresh"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    (root / "main.py").write_text("print(1)\n")
+    git(root, "add", "main.py")
+    report = ws.worktree_diff(str(root))
+    assert report.failed is False
+    uncommitted = [one for one in report.sections if one.name == "uncommitted"][0]
+    assert [(one.path, one.status) for one in uncommitted.files] == [
+        ("main.py", "added")]
+    whole = ws.whole_file_diff(str(root), "uncommitted", "main.py")
+    assert whole.failed is False and whole.file is not None
+
+
+def test_a_carriage_return_inside_a_line_stays_in_that_line(ws, seeded):
+    """`subprocess.run(text=True)` reads with universal newlines, so a lone
+    CR became a line break before `parse_diff` saw it -- the form-feed scar,
+    by another road. Every line after it was numbered one too high, and the
+    Files tab, which reads the bytes, disagreed."""
+    (seeded / "cr.txt").write_bytes(b"a\nb = 1\r c = 2\nc\nd\ne\ng\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "cr")
+    (seeded / "cr.txt").write_bytes(b"a\nb = 1\r c = 2\nc\nd\ne\nG\n")
+    report = ws.worktree_diff(str(seeded))
+    one = [f for f in report.sections[-1].files if f.path == "cr.txt"][0]
+    kinds = [line.kind for hunk in one.hunks for line in hunk.lines]
+    assert kinds.count("added") == 1 and kinds.count("removed") == 1
+    # Line 6 on disk, counted from the hunk's own header.
+    start = int(one.hunks[0].header.split("+")[1].split(",")[0])
+    before = [line.kind for line in one.hunks[0].lines].index("added")
+    olds = [line for line in one.hunks[0].lines[:before] if line.kind != "added"]
+    assert start + len([l for l in olds if l.kind == "context"]) == 6
+
+
+def test_a_name_with_a_space_is_the_name_the_files_tab_lists(ws, seeded):
+    """git writes a TAB after a `---`/`+++` name that holds a space, for GNU
+    patch. It stayed on the path, so the Diff tab said `foo bar.txt\\t` and
+    the Files tab `foo bar.txt`: one line with two anchors, and no hidden
+    lines to show."""
+    (seeded / "foo bar.txt").write_text("one\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "space")
+    (seeded / "foo bar.txt").write_text("two\n")
+    report = ws.worktree_diff(str(seeded))
+    assert [one.path for one in report.sections[-1].files] == ["foo bar.txt"]
+    assert report.sections[-1].files[0].status == "modified"
+    assert ws.whole_file_diff(str(seeded), "uncommitted", "foo bar.txt").file
+
+
+def test_a_folder_ending_in_b_does_not_make_a_rename(ws, seeded):
+    """A binary change and a mode change have no `---`/`+++` lines, so the
+    path is what the `diff --git` line gives -- and splitting it at the last
+    ` b/` read `a/Plan b/logo.png b/Plan b/logo.png` as a rename to
+    `logo.png`, at the root."""
+    (seeded / "Plan b").mkdir()
+    (seeded / "Plan b" / "logo.png").write_bytes(b"\x89PNG\x00\x01")
+    (seeded / "Plan b" / "run.sh").write_text("echo\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "plan b")
+    (seeded / "Plan b" / "logo.png").write_bytes(b"\x89PNG\x00\x02")
+    (seeded / "Plan b" / "run.sh").chmod(0o755)
+    report = ws.worktree_diff(str(seeded))
+    got = sorted((one.path, one.old_path, one.status)
+                 for one in report.sections[-1].files)
+    assert got == [("Plan b/logo.png", "Plan b/logo.png", "modified"),
+                   ("Plan b/run.sh", "Plan b/run.sh", "modified")], got
 
 
 def test_the_branch_work_and_the_uncommitted_work_are_apart(ws, seeded):

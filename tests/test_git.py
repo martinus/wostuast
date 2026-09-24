@@ -63,7 +63,24 @@ def test_a_missing_directory_gives_empty_facts(ws):
 
 def test_a_failing_git_never_raises(ws):
     facts = ws.git_facts("/tmp", runner=lambda *a, **k: None)
-    assert facts == ws.GitFacts()
+    assert (facts.repo, facts.branch) == ("", "")
+
+
+def test_a_git_that_does_not_answer_at_all_has_failed(ws, repo):
+    """Every call timed out, so `paths` was None and `failed = bool(paths)`
+    said the directory was simply not a repository. `reload_git` wrote the
+    empty facts over the known ones and did not ask again, so an idle row
+    lost its repository and branch until the next tool call."""
+    facts = ws.git_facts(str(repo), runner=lambda *a, **k: None)
+    assert facts.failed is True
+    # The name alone went missing when `status` answered and `rev-parse`
+    # did not -- and `status` answering says this is a repository.
+    real = ws.run
+
+    def runner(args, **rest):
+        return None if "rev-parse" in args else real(args, **rest)
+
+    assert ws.git_facts(str(repo), runner=runner).failed is True
 
 
 def test_the_label_drops_a_repeated_repository_name(ws):
