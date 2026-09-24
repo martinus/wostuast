@@ -872,6 +872,46 @@ def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
 ASK_TEXT_MAX = 2000
 ASK_MAX = 8
 
+#: Claude Code keeps a preview longer than this without looking at it, and
+#: still draws the question beside a box for it.
+PREVIEW_UNREAD = 2000
+
+
+def shows_preview(options: list[Any]) -> bool | None:
+    """Whether Claude Code draws a single-choice question beside a preview.
+
+    It does when any option carries a `preview` it can show, and that
+    question takes other keys: a digit only moves the cursor there, and
+    Enter answers. Measured against 2.1.281 in tmux; the test for "can show"
+    is its own (`pU` in its bundle): longer than `PREVIEW_UNREAD`, or
+    something left once escapes and blanks are taken out. A screen reader
+    turns the layout off, which nothing in the payload says.
+
+    None when the answer hangs on how wide an invisible character is. The
+    keys would be a guess then, and the question is left to the terminal.
+    """
+    import unicodedata      # here, not at the top: the hook never asks
+    shown = False
+    for choice in options:
+        preview = choice.get("preview") if isinstance(choice, dict) else None
+        if preview is None:
+            continue
+        if not isinstance(preview, str):
+            return None
+        # Its length is JavaScript's, which counts an emoji twice.
+        if len(preview.encode("utf-16-le", "surrogatepass")) // 2 > PREVIEW_UNREAD:
+            shown = True
+        elif not preview.strip():
+            continue
+        elif (all(ch.isprintable() or ch in "\t\n\r" for ch in preview)
+              and any(ch != "\ufffd"
+                      and unicodedata.category(ch)[0] not in "CMZ"
+                      for ch in preview)):
+            shown = True
+        else:
+            return None
+    return shown
+
 
 def read_ask(event: dict[str, Any]) -> dict[str, Any] | None:
     """The question an agent is waiting on, in the shape the page draws.
@@ -919,10 +959,15 @@ def read_ask(event: dict[str, Any]) -> dict[str, Any] | None:
         if not options:
             whole = False
             continue        # nothing to pick, so nothing to draw
+        many = bool(one.get("multiSelect"))
+        # A multiple-choice question is never drawn beside a preview.
+        preview = False if many else shows_preview(given)
+        whole = whole and preview is not None
         questions.append({
             "question": clip(str(one.get("question") or ""), ASK_TEXT_MAX),
             "header": clip(str(one.get("header") or ""), 80),
-            "many": bool(one.get("multiSelect")),
+            "many": many,
+            "preview": bool(preview),
             "options": options,
         })
     if not questions:
@@ -943,6 +988,9 @@ def ask_keys(ask: dict[str, Any], picks: Any) -> tuple[list[str], str]:
 
     - a single-choice question takes its digit, and the digit alone answers
       it and moves on -- an Enter after it lands on the next question;
+    - a single-choice question drawn beside a preview (`shows_preview`)
+      takes its digit, which only moves the cursor there, and then Enter,
+      which answers it and moves on;
     - a multiple-choice question takes one digit per option, each ticking
       that option, and then Tab, which moves on;
     - after the last question stands a review with "Submit answers" under
@@ -972,6 +1020,8 @@ def ask_keys(ask: dict[str, Any], picks: Any) -> tuple[list[str], str]:
             keys += [str(number) for number in sorted(chosen)] + ["Tab"]
         elif len(chosen) == 1:
             keys.append(str(chosen[0]))
+            if one.get("preview"):
+                keys.append("Enter")
         else:
             return [], "that question takes one answer"
     if len(questions) > 1 or questions[0].get("many"):
@@ -8151,14 +8201,16 @@ function paintPicks(box, ask) {
 // and `test_the_page_says_the_keys_the_daemon_presses` holds the two together.
 //
 // Claude Code's own dialog, measured: a single-choice question takes its
-// digit, which answers and moves on; a multiple-choice one takes a digit per
-// option and then Tab; a review follows the last question and takes Enter --
-// except after one single-choice question, which has no review.
+// digit, which answers and moves on -- but beside a preview the digit only
+// moves the cursor, and Enter answers; a multiple-choice one takes a digit
+// per option and then Tab; a review follows the last question and takes
+// Enter -- except after one single-choice question, which has no review.
 function askKeys(ask, picked) {
   const keys = ask.questions.map((one, which) => {
     const numbers = picked[which].map((at) => at + 1).sort((a, b) => a - b)
       .map(String);
-    return one.many ? numbers.concat("Tab") : numbers;
+    if (one.many) return numbers.concat("Tab");
+    return one.preview ? numbers.concat("Enter") : numbers;
   });
   if (ask.questions.length > 1 || ask.questions[0].many) keys.push(["Enter"]);
   return keys;

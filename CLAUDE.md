@@ -34,7 +34,7 @@ after the tests go red.
 | `cmd_hook`, anything on the hook path | Safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | **Do not guess payload fields**, and `tests/fixtures/README.md` |
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
-| `answer`, `ask_keys`, `tmux_keys`, `askKeys`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
+| `answer`, `ask_keys`, `shows_preview`, `tmux_keys`, `askKeys`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
 | `set_limit`, `over_limit`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
@@ -697,7 +697,14 @@ request, then update it with that text, and read it back to check.
   takes as no key at all, measured -- the ticks were lost and it moved on.
   **An ask the daemon could not keep whole is not answered** (`answerable`):
   keys go by position, so a question or option left out would move every
-  key after it. When Claude Code changes its dialog, measure it again the
+  key after it. **A single-choice question with a `preview` on any option
+  is another dialog**: the options stand beside a box, a digit only moves
+  the cursor, and Enter answers and moves on. The page pressed `3` alone
+  there, so the reader's answer sat under the cursor and nothing was sent.
+  `shows_preview` is Claude Code's own test for a preview it draws (its
+  `pU`), and where that hangs on the width of an invisible character the
+  ask is not answerable, because the keys would be a guess. A screen reader
+  turns the layout off, and nothing in the payload says so. When Claude Code changes its dialog, measure it again the
   same way; do not read the new keys off the minified source, where Tab is
   bound twice and which binding wins is not written down.
 - **A call starting clears the attention; a call finishing only clears its
