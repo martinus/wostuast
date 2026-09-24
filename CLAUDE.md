@@ -1355,6 +1355,21 @@ request, then update it with that text, and read it back to check.
   The header must open the record and the footer must be there, or a person
   quoting the wrapper to ask about it -- which is how this was reported --
   gets their question answered with its own quotation.
+- **Pasted text comes off Claude Code's paste tags, by Claude Code's own
+  rules.** A Claude Code that keeps a paste apart from what was typed writes
+  it into the record after the typed text as two newlines,
+  `<pasted_content id="1da8">`, the text, and `</pasted_content id="1da8">`
+  -- and its own screen takes them off again. This page drew them, so every
+  review sent from here came back as a block of tags under two empty lines,
+  and the map named the round after the tag: a review has newlines, so it
+  is always a paste. `unwrap_pastes` is a port of the reader in its bundle
+  (`Pct`): four lowercase hex digits, the same on both tags, each tag on its
+  own line, up to two newlines either side belonging to the wrapper, and
+  anything else left as typed -- a person asking about the tag types one.
+  It runs first in `read_user_text`, so a paste inside a queued message
+  comes off too. Measured on 2.1.281, which does not wrap on this machine:
+  a feature switch decides, so the shape comes from its source and the
+  reader's record, not from a run here.
 - **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
   the agent's text and nothing else, so the map stays a map of the
   conversation.

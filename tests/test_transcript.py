@@ -487,3 +487,66 @@ def test_a_real_prompt_is_left_alone(ws, tmp_path):
     reader = ws.Transcript(str(tmp_path / "t.jsonl"))
     one, = reader.add(user_record("Do the thing, please."))
     assert (one.kind, one.text) == ("prompt", "Do the thing, please.")
+
+
+# --- text that was pasted rather than typed ---------------------------------
+
+#: A review sent from the Review tab, as the reader's Claude Code wrote it:
+#: every review has newlines, so every one is a paste, and a Claude Code that
+#: keeps pastes apart writes it after the (empty) typed text, two newlines,
+#: and a tag. The shape is from 2.1.281's own source, `icn` and `tLt`.
+REVIEW = "# Task: review\n\nWhen you are done, write one short entry.\n\n" \
+         "## native/log.0.log:1\n\n> 2026-09-23 07:37:45.749 UTC info\n\n" \
+         "remove the untracked files"
+
+
+def pasted(body, paste_id="1da8"):
+    return (f'<pasted_content id="{paste_id}">\n{body}\n'
+            f'</pasted_content id="{paste_id}">\n')
+
+
+def test_a_pasted_review_is_drawn_without_its_tags(ws, tmp_path):
+    """It came back as `<pasted_content id="1da8">`, the review, and the
+    closing tag, under two empty lines. Claude Code's own screen takes the
+    tags off; this page did not."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(user_record("\n\n" + pasted(REVIEW)))
+    assert one.kind == "prompt"
+    assert one.text == REVIEW
+
+
+def test_a_paste_stands_as_its_own_paragraph_among_typed_words(ws, tmp_path):
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(user_record(
+        "look at this\n\n" + pasted("line one\nline two", "0a0b")
+        + "\nand fix it"))
+    assert one.text == "look at this\n\nline one\nline two\n\nand fix it"
+    two, = reader.add(user_record(
+        pasted("first", "aaaa") + pasted("second", "bbbb")))
+    assert two.text == "first\n\nsecond"
+
+
+def test_a_paste_inside_a_queued_message_comes_off_too(ws, tmp_path):
+    """The two wrappers meet: a review sent while the agent works is a
+    paste inside a queued message."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(user_record(QUEUED.replace(
+        "Is there a way to keep the corpus out of it?",
+        pasted("the review\nin two lines"))))
+    assert one.kind == "prompt"
+    assert "pasted_content" not in one.text
+    assert one.text.endswith("the review\nin two lines")
+
+
+@pytest.mark.parametrize("text", [
+    '<pasted_content id="1DA8">\nx\n</pasted_content id="1DA8">',   # not its id
+    '<pasted_content id="1da">\nx\n</pasted_content id="1da">',
+    '<pasted_content id="1da8">x</pasted_content id="1da8">',        # not its lines
+    '<pasted_content id="1da8">\nx with no closing tag',
+    '<pasted_content id="1da8">\nx\n</pasted_content id="2db9">',    # not its pair
+])
+def test_what_is_not_claude_codes_paste_is_left_as_it_was_typed(ws, text):
+    """Somebody asking about this very tag types one, and that is a prompt.
+    Only the exact shape Claude Code writes -- the rules of its own reader
+    -- comes off."""
+    assert ws.unwrap_pastes(text) == text

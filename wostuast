@@ -1897,6 +1897,72 @@ def strip_reminder(text: str) -> str:
     return body
 
 
+#: How Claude Code marks text that was pasted rather than typed. Measured
+#: from 2.1.281's own source: the id is four lowercase hex digits, the same
+#: on both tags, and each tag ends its line.
+PASTE_OPEN = '<pasted_content id="'
+PASTE_ID = re.compile(r"[0-9a-f]{4}")
+
+
+def unwrap_pastes(text: str) -> str:
+    """The prompt as it was meant, with Claude Code's paste tags taken off.
+
+    Claude Code may keep a paste apart from what was typed and write it into
+    the record as `<pasted_content id="1da8">`, the text, then
+    `</pasted_content id="1da8">`, after the typed text and two newlines. It
+    takes them off again when it shows the prompt; this page did not, so a
+    review sent from here came back as a block of tags led by two empty
+    lines. Every review is a paste, because it has newlines in it.
+
+    The rules are Claude Code's own (`Pct` in its bundle), so this reads a
+    record the way its own screen does: a tag with an id that is not four
+    hex digits, or with no closing tag, is left as text, and up to two
+    newlines either side of a paste belong to the wrapper.
+    """
+    if PASTE_OPEN not in text:
+        return text
+    pieces: list[str] = []
+    done = 0            # where the text not yet taken starts
+    look = 0            # where to look for the next opening tag
+    while True:
+        at = text.find(PASTE_OPEN, look)
+        if at == -1:
+            break
+        name = at + len(PASTE_OPEN)
+        paste_id = text[name:name + 4]
+        if not PASTE_ID.fullmatch(paste_id) or not text.startswith('">\n', name + 4):
+            look = name
+            continue
+        body = name + 4 + 3
+        closer = f'</pasted_content id="{paste_id}">'
+        end = text.find("\n" + closer, body - 1)
+        if end == -1:
+            break
+        before = at
+        for _ in range(2):
+            if before > done and text[before - 1] == "\n":
+                before -= 1
+        pieces.append(text[done:before])
+        pieces.append(text[body:end])
+        done = end + 1 + len(closer)
+        for _ in range(2):
+            if text[done:done + 1] == "\n":
+                done += 1
+        look = done
+    pieces.append(text[done:])
+    # A paste stands apart from what was typed around it, as a paragraph of
+    # its own -- Claude Code's screen draws it that way, and run together
+    # with the typed words it would read as one sentence.
+    joined = ""
+    for piece in pieces:
+        if not piece:
+            continue
+        if joined and not joined.endswith("\n") and not piece.startswith("\n"):
+            joined += "\n\n"
+        joined += piece
+    return joined
+
+
 def read_user_text(text: str) -> tuple[str, str]:
     """What a `user` record really is: a prompt, a note, or nothing to show.
 
@@ -1912,7 +1978,11 @@ def read_user_text(text: str) -> tuple[str, str]:
     footer, and inside a `<system-reminder>`. The words are the reader's own,
     so the wrapper comes off and the prompt is drawn like any other --
     **before** the reminder is stripped, or the message would go with it.
+
+    Pasted text comes off its tags first of all (`unwrap_pastes`): a paste
+    can be all of a prompt, or sit inside a queued one.
     """
+    text = unwrap_pastes(text)
     inside = QUEUED.search(strip_reminder(text))
     if inside:
         return "prompt", inside.group(1).strip()
