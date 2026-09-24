@@ -106,8 +106,8 @@ not. The fields wostuast reads or might read:
 | `agent.name`, `version` | which agent, which Claude Code |
 
 **`cost` and `rate_limits` were missed once already, and the cost of missing
-them was a decision.** `PLAN.md` section 12 carried "money is in no payload" for
-a while, written from this fixture when this fixture had no `cost` in it — and
+them was a decision.** The design brief this repository used to carry said "money is in no
+payload" for a while, written from this fixture when this fixture had no `cost` in it — and
 issue #101 was closed down to one line on the strength of it. A reader with a
 status line on another machine said otherwise and was right. `rate_limits`
 appears only for claude.ai Pro and Max subscribers, or behind a gateway, and

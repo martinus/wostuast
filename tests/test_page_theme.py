@@ -20,7 +20,7 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_both_themes_are_readable(page_at):
-    """PLAN.md section 5.2 asks for a light theme from the start."""
+    """Both themes are the same variables on another ground, and both read."""
     with sync_playwright() as play:
         seen = {}
         for scheme in ("dark", "light"):

@@ -80,7 +80,8 @@ WRITING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"}
 PROMPT_WIDTH = 500
 
 #: Loopback only, always. The page can reach the tmux verbs, so this port must
-#: never be offered to the network. See PLAN.md section 4.4.1.
+#: never be offered to the network. CLAUDE.md: "The daemon answers on
+#: localhost only".
 BIND_HOST = "127.0.0.1"
 DEFAULT_PORT = 7331
 
@@ -267,7 +268,7 @@ def links_path() -> Path:
     link to wherever their tickets live.
 
     Yours, on your machine, across every session. It is not a settings file --
-    `PLAN.md` rules those out -- it is a list of two-field entries, and the
+    goal 4 in CLAUDE.md rules those out -- it is a list of two-field entries, and the
     page works without it. `doctor` says what is wrong with a bad one.
     """
     return state_dir() / "links.json"
@@ -3113,7 +3114,8 @@ def worktree_target(
     name git itself offers, and the file it points at has to stay inside the
     worktree once every link is followed. Those two checks together cover
     `..`, an absolute path and a symbolic link out of the tree, without having
-    to guess at each of them. See PLAN.md section 4.4.1.
+    to guess at each of them. CLAUDE.md: "A path out of the page is input
+    too".
 
     Both readers come through here, so neither can be given one check and not
     the other.
@@ -3913,7 +3915,7 @@ def read_limits() -> dict[str, dict[str, float]]:
     `{session_id: {"limit": 10.0, "fired_at": 0.0}}`. It sits beside
     `names.json` and is the same kind of thing: state this program keeps
     because the page told it to, not a file anybody hand-edits. `links.json`
-    is the config file `PLAN.md` goal 4 allows one of, and this is not a
+    is the config file goal 4 in CLAUDE.md allows one of, and this is not a
     second one -- nothing here is typed into an editor, and wostuast could not
     work the number out, because only you know what an agent is worth to you.
     """
@@ -3989,8 +3991,7 @@ def inside(root: Path | str, path: Path | str) -> Path | None:
 
     Resolving first is the whole point: it follows every symbolic link and
     flattens every `..`, so one comparison answers a question that a pattern
-    over the raw text can only guess at. This is the check PLAN.md section
-    4.4.1 rule 4 asks for, and both callers share it so it cannot drift.
+    over the raw text can only guess at. Both callers share it so it cannot drift.
     """
     try:
         top = Path(root).resolve()
@@ -4006,7 +4007,7 @@ def safe_transcript(path: str) -> Path | None:
     The path arrives in an event, so it is input, not fact. Anything able to
     write the log could otherwise name any file on the machine and the daemon
     would serve it. A transcript lives under the Claude config directory and
-    ends in .jsonl; nothing else is opened. PLAN.md section 4.4.1.
+    ends in .jsonl; nothing else is opened.
     """
     if not path:
         return None
@@ -4336,7 +4337,7 @@ def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
 # --- tmux: the verbs, and nothing else ----------------------------------------
 
 # wostuast reads; the user types. These are the only commands it runs: jump,
-# send, interrupt, and the keys that answer a question. See PLAN.md 4.5.
+# send, interrupt, and the keys that answer a question.
 #
 # `runner` is looked up when the verb is called, not when it is defined. A
 # default of `run` is bound once, at import, and then no test of the route
@@ -4530,7 +4531,7 @@ class Daemon:
         self.files = Files()
         # Any site can send this daemon a POST; only a page that has read this
         # token can send one that acts. It is made here and printed into the
-        # page, and it lives as long as the daemon does. See PLAN.md 4.4.1.
+        # page, and it lives as long as the daemon does.
         self.token = secrets.token_urlsafe(32)
         self.transcripts: dict[str, Transcript] = {}
         self.lock = threading.Lock()
@@ -5227,7 +5228,7 @@ GET_VERBS: dict[str, Any] = {
 
 # Four of these reach a terminal -- jump, send, interrupt and answer -- and they
 # are the reason every POST carries a token. There will never be another tmux
-# verb without PLAN.md section 4.5 saying so. `name` and `limit` are not
+# verb without asking first (CLAUDE.md, **Shape**). `name` and `limit` are not
 # ones: they write files of ours and touch no terminal, but they arrive the
 # same way and are checked the same way.
 POST_VERBS: dict[str, Any] = {
@@ -5757,7 +5758,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 #: pinned by the hash of their bytes, and the page works without either.
 #: Neither is trusted: marked does not sanitize, so its output is scrubbed to
 #: an allowlist, and every value that came from an agent is set with
-#: textContent. See PLAN.md sections 4.4.1 and 5.2.
+#: textContent. CLAUDE.md: "The page never trusts what an agent wrote".
 PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -5952,7 +5953,7 @@ body {
 }
 /* Paths are long and no width chosen here is right for every repository, so
    both column edges are draggable. The alternative is a config option, which
-   PLAN.md prefers to delete. */
+   goal 4 in CLAUDE.md rules out. */
 .grip {
   flex-shrink: 0; width: var(--grip-w); cursor: col-resize;
   background: var(--edge);
@@ -7256,7 +7257,7 @@ const state = {
   events: { counts: {}, events: [], at: 0 },
   diffOpen: new Map(),  // diff files the reader opened or shut by hand
   // The review being written. It lives in this browser and nowhere else
-  // until it is sent. See PLAN.md section 4.9 and `blankReview`.
+  // until it is sent. See `blankReview`.
   review: null,         // set below, because it is built in one place
   writing: null,        // the anchor of the comment box that is open, if any
   pruned: false,        // whether the stored reviews have been swept once
@@ -8117,7 +8118,7 @@ function current() {
 // The question an agent is waiting on: at the foot of the transcript, over
 // the send box.
 //
-// It is not the bar `PLAN.md` took away, and that is the point. That one
+// It is not the header bar that was taken away, and that is the point. That one
 // stood over every tab saying the branch, the pane, the model and the state,
 // all of which the chosen row says one column to the left, and it cost 56
 // pixels on every tab for ever. This stands in one place, for as long as one
@@ -8479,8 +8480,8 @@ function drawIcon(state_) {
 // you do not.
 //
 // Both live in this browser, like the theme: they are about this screen, and
-// `PLAN.md` rules out a config file for anything wostuast could work out or
-// that is the same for everybody.
+// goal 4 in CLAUDE.md rules out a config file for anything wostuast could
+// work out or that is the same for everybody.
 
 const waiting = new Set();
 
@@ -10578,8 +10579,8 @@ function blankFiles() {
 // Two choices the reader makes about reading, not about a session: how wide a
 // tab is, and whether a long line wraps. They live in this browser, like the
 // theme, because they are about this screen and these eyes. No config file:
-// `PLAN.md` rules one out, and a control you can see beats a setting you
-// cannot.
+// goal 4 in CLAUDE.md rules one out, and a control you can see beats a
+// setting you cannot.
 
 const TAB_WIDTHS = [2, 4, 8];
 const READING_KEY = "wostuast-reading";
@@ -11862,7 +11863,7 @@ function putMore(band, file, from, to, { up, down }) {
 //
 // A comment is one note on one place: a line of the diff, or a file. The place
 // is written down rather than pointed at, because the diff is rebuilt whenever
-// the agent saves anything and a node does not survive that. See PLAN.md 4.9.
+// the agent saves anything and a node does not survive that.
 
 // What a comment is anchored to, as one string, so that finding it again is a
 // lookup rather than a search with four fields in it. A removed line has a

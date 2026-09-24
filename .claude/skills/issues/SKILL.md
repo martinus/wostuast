@@ -17,8 +17,7 @@ the moment CI is green**, and only then. Nothing else is relaxed.
 **This file is the order of the work. `CLAUDE.md` is the rules.** Where it
 answers a question, it answers it here too, and it is not restated below —
 one rule in two files is two rules that drift, which is a scar this
-repository already carries about a list kept in two languages. `PLAN.md`
-wins over both.
+repository already carries about a list kept in two languages.
 
 ## One pass
 
@@ -55,13 +54,14 @@ Two or three options, each carrying its real cost, one marked recommended.
 A design question answered after the code is written is a question you
 answered yourself.
 
-**Ask one level up when the request fights `PLAN.md`.** "Where should
-`links.json` live" hid the question that mattered — whether a config file may
-exist at all — and the plan had said no. If a goal has to bend, that is the
-question, and the plan gets amended in the same PR.
+**Ask one level up when the request fights a goal or a non-goal** (`CLAUDE.md`,
+**Goals and non-goals**). "Where should `links.json` live" hid the question
+that mattered — whether a config file may exist at all — and goal 4 had said
+no. If a goal has to bend, that is the question, and the goal is rewritten in
+the same PR.
 
 Stop and ask for: a new file outside `wostuast` and `tests/`, a dependency, a
-tmux verb beyond jump and send, anything that changes what the token or the
+new tmux verb (there are four: jump, send, interrupt, answer), anything that changes what the token or the
 scrub protects, and any choice where two readings lead to different work.
 
 Decide everything else yourself and say what you decided.
@@ -80,8 +80,7 @@ run.
 
 | Where | What |
 | --- | --- |
-| `CLAUDE.md` | a rule the next agent needs, in the shape its header sets |
-| `PLAN.md` §12 | a decision, and what earned it its exception |
+| `CLAUDE.md` | a rule the next agent needs, in the shape its header sets; a decision with no scar behind it goes in **Decisions without a scar behind them** |
 | `tests/fixtures/README.md` | a payload shape, read off a real payload |
 | `README.md` | anything a reader of the program sees |
 

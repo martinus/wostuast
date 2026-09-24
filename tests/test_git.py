@@ -254,8 +254,8 @@ def test_the_diff_cap_counts_bytes(ws, monkeypatch):
 def test_a_failed_status_is_not_a_clean_repository(ws, repo, monkeypatch):
     """The two used to be byte-identical: a `status` that timed out gave the
     same empty facts as a repository with nothing to report, minus the branch
-    name. `status` runs under a two second timeout, which PLAN 4.7 already
-    records as measured too short on a large worktree."""
+    name. `status` runs under a two second timeout, which was measured too short
+    on a large worktree."""
     real = ws.run
 
     def runner(args, **rest):

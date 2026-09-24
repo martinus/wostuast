@@ -40,9 +40,10 @@ repository: fifty-odd thousand files cost 1.7 MB once and 200 bytes on every
 check after it, and a build directory of a hundred thousand objects is one row
 that says so rather than a wait.
 
-**It never owns the agent.** tmux does. wostuast reads; exactly two things go
-back to the terminal, jump and send, and it never answers a permission prompt
-for you.
+**It never owns the agent.** tmux does. wostuast reads; four things go back to
+the terminal, all as keys typed into the agent's pane: jump, send, stop (an
+Escape), and the answer to a question it asked. It never answers a permission
+prompt for you.
 
 **One file, no dependencies.** Python 3.10+, standard library only. `curl` it
 and run it. The recording side is a hook that appends one JSON line and exits,
@@ -189,9 +190,9 @@ one command, and it shows you your own.
 
 ## Status
 
-All seven milestones of [`PLAN.md`](PLAN.md) are done, and `PLAN.md` is the
-complete brief — the design, the reasoning and what was deliberately left out.
-[`CLAUDE.md`](CLAUDE.md) says how to work in this repository.
+All seven planned milestones are done. [`CLAUDE.md`](CLAUDE.md) holds the
+design, the reasoning, what was left out on purpose, and how to work in this
+repository.
 
 ## License
 

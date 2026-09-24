@@ -740,7 +740,7 @@ def test_a_new_name_from_the_status_line_reaches_the_row(ws):
 
 
 def test_an_auth_notification_does_not_strand_the_row_amber(ws):
-    """`PLAN.md` 4.3 says plainly that `auth_success` is not needs-you. An
+    """`auth_success` is not needs-you (CLAUDE.md: "Amber means one thing"). An
     older Claude Code sends no `notification_type`, and the fallback took
     anything that was not the idle message for a permission prompt.
 
