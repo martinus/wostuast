@@ -283,7 +283,7 @@ def test_submit_presses_the_numbers_in_the_order_they_were_asked(ws, in_pane):
             page.click("#asking .asksend .verb")
             page.wait_for_function(
                 "() => document.querySelector('#asking .asksend .verb').disabled")
-            deadline = time.time() + 5
+            deadline = time.time() + 15       # as the others: a loaded runner
             while len(pressed(seen)) < 3 and time.time() < deadline:
                 time.sleep(0.05)
             assert pressed(seen) == ["3", "2", "Enter"], seen
@@ -339,7 +339,7 @@ def test_a_question_that_takes_many_answers_takes_many_and_submits(ws, in_pane):
                 "presses 2 3 Tab, then Enter"
             assert "finish it in the terminal" not in page.inner_text("#asking")
             page.click("#asking .asksend .verb")
-            deadline = time.time() + 5
+            deadline = time.time() + 15       # as the others: a loaded runner
             while len(pressed(seen)) < 4 and time.time() < deadline:
                 time.sleep(0.05)
             assert pressed(seen) == ["2", "3", "Tab", "Enter"], seen

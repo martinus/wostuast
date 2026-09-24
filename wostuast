@@ -3703,7 +3703,8 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
 
     `origin/HEAD` is only ever a name to prefer, never taken on its word: a
     remote that renamed its default branch leaves it naming a branch that is
-    gone. A git that cannot rank falls back to the usual names.
+    gone. A git that cannot rank falls back to the usual names, and so does
+    one that could not say which branch HEAD is.
     """
     choice = BaseChoice()
     listing = runner(["git", "-C", cwd, "for-each-ref",
@@ -3721,8 +3722,22 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
     head = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
                     "refs/remotes/origin/HEAD"]) or "").strip()
     head = head if head in refs else ""
-    current = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
-                       "HEAD"]) or "").strip()
+    named = runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
+                    "HEAD"])
+    # None is a detached HEAD, and a git that timed out too. Only the second
+    # loses the branch's own name, which is what keeps its copy on a remote
+    # out: that copy lacks only the commits not pushed yet, so it ranked
+    # first, and one unpushed commit read as the whole of the branch's work.
+    # `--abbrev-ref` says `HEAD` for a detached one and fails only when git
+    # does -- asked only then, so a branch never pays for it.
+    lost = False
+    if named is None:
+        again = runner(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
+        if again is None:
+            lost = True
+        elif again.strip() != "HEAD":
+            named = again
+    current = (named or "").strip()
     prefer = ([head] if head else []) + [one for one in BASE_NAMES if one != head]
     default = next((one for one in prefer if one in refs), "")
     at = (runner(["git", "-C", cwd, "rev-parse", "--verify", "--quiet", "HEAD"])
@@ -3747,7 +3762,7 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
             if len(ranks) > 64:
                 ranks.clear()
             ranks[key] = counts
-    if counts:
+    if counts and not lost:
         ranked: list[tuple[int, int, int, str]] = []
         for name, full in refs.items():
             if name not in counts:
@@ -10869,17 +10884,11 @@ function drawFiles(box) {
   // session is chosen, so its place was never kept and a windowed file
   // never filled.
   if (!fresh(box, "bodyKey", state.chosen + "\n" + state.files.path + "\n"
-                           + state.files.mtime + "\n" + state.files.asText)) {
+                           + state.files.mtime + "\n" + state.files.asText
+                           + "\n" + state.files.read + "\n"
+                           + (state.files.read ? "" : state.files.trouble))) {
     return;
   }
-  // Where the reader will be. A line that was asked for wins over the place
-  // they were in: they asked to be somewhere else.
-  const wanted = state.files.goToLine;
-  state.files.goToLine = 0;
-  // Where the reader is in this file, whether they scrolled there a moment
-  // ago or left it on their last visit to this session. `forgetFile` puts it
-  // back to nought, which is what makes a different file open at its top.
-  const place = wanted ? 0 : state.files.down;
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
   if (!state.files.path) {
@@ -10892,6 +10901,26 @@ function drawFiles(box) {
       : "This worktree holds no file that git knows about.");
     return;
   }
+  // Nothing read yet: the header says where the file is, and the body says
+  // it is reading, or why it could not. Before the line asked for is taken
+  // below -- it is for the text, which has not come yet.
+  if (!state.files.read) {
+    putWhere(pane, state.files.path);
+    const empty = put(put(pane, "div", "filescroll"), "div", "empty");
+    put(empty, "p", null, state.files.trouble
+      ? "Could not read " + state.files.path + ": " + state.files.trouble
+        + ". It is asked for again in a few seconds."
+      : "reading…");
+    return;
+  }
+  // Where the reader will be. A line that was asked for wins over the place
+  // they were in: they asked to be somewhere else.
+  const wanted = state.files.goToLine;
+  state.files.goToLine = 0;
+  // Where the reader is in this file, whether they scrolled there a moment
+  // ago or left it on their last visit to this session. `forgetFile` puts it
+  // back to nought, which is what makes a different file open at its top.
+  const place = wanted ? 0 : state.files.down;
   const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
   // Split once. The header wants to know how long the file is and so does the
   // body, and two copies of that arithmetic are two copies that can drift —
@@ -11102,6 +11131,12 @@ function blankFiles() {
     lang: "",           // what `file` made of it, when the name said nothing
     mtime: 0,           // which version of that text is loaded
     size: 0,            // its bytes on disk, which the decoded text does not say
+    // Whether any answer for this file has landed. Not `mtime`, which a
+    // file can really have as nought. Until one lands the pane says it is
+    // reading, or why it could not -- `trouble` -- and never draws the empty
+    // text above as the file: that read as a file with nothing in it.
+    read: false,
+    trouble: "",
     // Markdown reads as Markdown, which has no lines to comment on. This
     // turns it back into the rows every other file gets. It is remembered
     // across files, because a reader who wants to review one document
@@ -11313,6 +11348,8 @@ function forgetFile(path) {
   state.files.lang = "";
   state.files.mtime = 0;
   state.files.size = 0;
+  state.files.read = false;
+  state.files.trouble = "";
 }
 
 function chooseFile(path) {
@@ -13390,7 +13427,7 @@ async function loadFiles() {
     // labelled as another. The session is not the only thing that can move.
     const wanted = state.files.path;
     const body = await ask(want, "file", "?path=" + encodeURIComponent(wanted));
-    if (!body || state.chosen !== want || state.files.path !== wanted) return;
+    if (state.chosen !== want || state.files.path !== wanted) return;
     // Only a file whose mtime moved is drawn again, so the tab keeps your
     // place in a file the agent has not touched.
     //
@@ -13398,8 +13435,16 @@ async function loadFiles() {
     // when git did not list the name -- which a timed-out `ls-files` says
     // too -- and it was drawn as line 1 of the file, with a `+` that would
     // anchor a comment to the real line 1. What is shown stays; a file that
-    // really went is taken away by the listing.
-    if (!body.missing && body.mtime !== state.files.mtime) {
+    // really went is taken away by the listing. **With nothing shown yet it
+    // is said**: a refused first read drew the header over an empty body,
+    // a file with nothing in it, for as long as the refusal lasted; and a
+    // fetch that failed drew nothing, so the file before stood under the
+    // name just picked.
+    state.files.trouble = !body ? "the daemon did not answer"
+                        : body.missing ? body.missing : "";
+    if (body && !body.missing
+        && (!state.files.read || body.mtime !== state.files.mtime)) {
+      state.files.read = true;
       state.files.text = body.text || "";
       state.files.binary = !!body.binary;
       state.files.shown = body.shown || "";

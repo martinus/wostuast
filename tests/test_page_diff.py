@@ -924,11 +924,11 @@ def test_an_untracked_file_git_would_not_list_is_not_its_one_line(
             browser.close()
 
 
-def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page, served,
-                                                            ws, monkeypatch):
-    """The daemon finds the branch a worktree was cut from; the reader can
-    say otherwise, and that stays with this checkout in this browser."""
-    root, path = repo_page
+def backport_on_page(repo_page, served, ws, monkeypatch):
+    """The fixture's repository as a backport: `release` cut from main with
+    a commit of its own, and `fix` cut from it. The daemon finds `release`;
+    against `main`, the release's own commit shows as the branch's."""
+    root, _ = repo_page
     daemon, _ = served
     # The fixture's git gives no worktree root; a real one does.
     monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
@@ -945,6 +945,15 @@ def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page, served,
     (root / "fix.txt").write_text("the fix\n")
     git(root, "add", ".")
     git(root, "commit", "-qm", "the fix")
+    return daemon
+
+
+def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page, served,
+                                                            ws, monkeypatch):
+    """The daemon finds the branch a worktree was cut from; the reader can
+    say otherwise, and that stays with this checkout in this browser."""
+    root, path = repo_page
+    daemon = backport_on_page(repo_page, served, ws, monkeypatch)
     committed = ".diffhead.committed ~ .dfile .path"
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -975,6 +984,45 @@ def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page, served,
             show_tab(page, "diff")
             page.wait_for_function(
                 "() => document.querySelector('.pickbase').value === 'main'")
+        finally:
+            browser.close()
+
+
+def test_a_diff_asked_for_before_the_base_was_picked_does_not_land(
+        repo_page, served, ws, monkeypatch):
+    """A poll asks for the diff with the base found; the reader picks
+    another while it is out, and that pick's answer comes first. The late
+    answer is for a base nobody wants now, and drawn it put the release's
+    diff under a picker that says `main`."""
+    root, path = repo_page
+    backport_on_page(repo_page, served, ws, monkeypatch)
+    committed = ".diffhead.committed ~ .dfile .path"
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.pickbase');
+                           return one && one.options[0].textContent.includes('release'); }""")
+            held = []
+            page.route("**/diff*", lambda route: held.append(route)
+                       if "base=" not in route.request.url and not held
+                       else route.continue_())
+            # A poll, with no pick. Not awaited: its promise waits on the
+            # request held here, and `evaluate` would wait with it.
+            page.evaluate("() => { load(); }")
+            for _ in range(300):
+                if held:
+                    break
+                page.wait_for_timeout(20)
+            page.select_option(".pickbase", "main")
+            page.wait_for_function(
+                f"() => [...document.querySelectorAll('{committed}')]"
+                ".some((one) => one.textContent === 'hotfix.txt')")
+            held[0].continue_()
+            page.wait_for_timeout(700)       # proving the late answer did not land
+            assert page.evaluate("state.diff.base") == "main"
+            assert "hotfix.txt" in page.locator(committed).all_inner_texts()
         finally:
             browser.close()
 

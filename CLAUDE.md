@@ -363,7 +363,12 @@ Keep the breaks list in the scratchpad; it is about one fix.
 for what the page has drawn, never for a number of seconds; `wait_for_timeout`
 is right only when proving something did **not** happen. Ask one question when a
 redraw could land between two: `wait_for_function("...length === 1")`, not
-`wait_for_selector` then `.count()`.
+`wait_for_selector` then `.count()`. **`evaluate` waits for a promise it is
+handed**: `page.evaluate("load()")` with the request held by a route never
+returned, and the test hung past every timeout, because `evaluate` has
+none. Call it without returning it: `"() => { load(); }"`. And one route
+handler that holds the first request and answers the rest, never
+`unroute` with one held — it answers the held one itself.
 
 **A change a stream test expects goes out after the first event, never
 after a sleep.** `test_a_change_is_pushed` made its change from a thread
@@ -1427,7 +1432,13 @@ update the comment with its own text, and read it back.
   set, and only a listing that did not fail may say a file has gone. And a
   `missing` answer for the open file -- what a timed-out `is_listed` says
   too -- is never written in as its text: it was drawn as line 1, with a `+`
-  that would anchor a comment to the real line 1.
+  that would anchor a comment to the real line 1. **With nothing read yet
+  it is said** (`state.files.read`, `state.files.trouble`): a refused first
+  read drew the header over an empty body, which is a file with nothing in
+  it, for as long as the refusal lasted, and a fetch that failed drew
+  nothing, so the file before stood under the name just picked. The line a
+  goTo asked for is kept until the text comes.
+  `test_a_first_read_that_failed_says_so_and_is_not_the_file`,
   `test_a_listing_git_failed_on_keeps_the_open_file`,
   `test_a_file_read_git_failed_on_is_not_drawn_as_its_text`; `reload_git` puts a failed directory back on the
   list rather than over what it already knew.
@@ -2248,7 +2259,13 @@ it. The reason is the part to weigh before undoing one.
   nought missing and won, with nothing to show. The default stays, so an
   agent on the default branch with everything pushed is measured against
   it and the picker lists the last `COMMITS_RECENT` of HEAD, because those
-  are what it did. The branch's own copy on a remote is left out by name.
+  are what it did. The branch's own copy on a remote is left out by name,
+  **so a git that cannot say the name does not rank**: `symbolic-ref HEAD`
+  gives None for a timeout as for a detached HEAD, and with the name lost
+  the copy lacked only the commits not pushed yet and won.
+  `rev-parse --abbrev-ref HEAD`, asked only then, says `HEAD` for a
+  detached one; when it fails too, the usual names stand in.
+  `test_a_branch_git_could_not_name_is_not_measured_against_its_own_copy`.
   `origin/HEAD` is only a name to prefer, never taken on its word: a remote
   that renamed its default branch leaves it naming a branch `fetch --prune`
   took away (`test_an_origin_head_that_points_nowhere_is_not_the_base`). A
@@ -2274,7 +2291,11 @@ it. The reason is the part to weigh before undoing one.
   The page asks for a whole file against `state.diff.base`, the base the
   diff was drawn on, never the pick: with nothing picked the daemon would
   find one again, and a different answer drew another base's lines between
-  these hunks. `test_a_base_the_page_names_is_used_only_if_git_listed_it`,
+  these hunks. **An answer for a base the reader has moved from does not
+  land**: `loadDiff` drops it when `recallBase()` has changed while it was
+  out, or a poll's late answer put the found base's diff under a picker
+  naming another. `test_a_diff_asked_for_before_the_base_was_picked_does_not_land`,
+  `test_a_base_the_page_names_is_used_only_if_git_listed_it`,
   `test_a_pick_stands_when_the_ranking_cannot_be_counted`,
   `test_the_base_can_be_picked_and_is_kept_for_the_worktree`,
   `test_a_whole_file_is_asked_for_against_the_base_the_diff_was_drawn_on`.
