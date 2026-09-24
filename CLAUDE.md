@@ -1010,6 +1010,16 @@ update the comment with its own text, and read it back.
   height of the pane, beside a line that never scrolls. Everything that
   scrolls the file scrolls `.filescroll`: `fillCode`, `lineTop`, `showLine`,
   and the place a redraw puts back.
+- **The file body's redraw key holds the session.** Two sessions in one
+  worktree land on the same file with the same mtime, and a key of the path
+  and the mtime alone kept the first one's `.filescroll` for the second --
+  whose listener writes nothing once another session is chosen. Its place
+  was never kept, and a windowed file never filled: blank space.
+  `test_two_sessions_on_one_file_each_get_their_own_scroller`.
+- **A comment's box is its line, not rows.** `lineAt` counted the pixels of
+  a tall comment as rows, so a reader scrolled into one taller than eight
+  rows got a window that began past the screen and saw nothing.
+  `test_a_tall_comment_in_a_windowed_file_is_a_line_not_rows`.
 - **`.filescroll` is built with the file, so a different file starts at its
   top.** The pane used to be the scroller and outlived the file in it, so the
   next file opened wherever the last one had been read to. `same` is the other
@@ -1270,7 +1280,9 @@ update the comment with its own text, and read it back.
   directory holding nothing is a directory nothing above would create, and a
   folder the reader cannot see is the same silence as one that says nothing.
   Its row carries `.toobig` and does not open — a folder that opens onto
-  nothing reads as broken.
+  nothing reads as broken. Its title promises nothing more: "opening one in
+  it still works" was said, and no name in it is sent, so none can be found
+  or kept open.
 - **One listing per worktree, and the page holds the names.** `Files` keeps it
   for `LIST_FRESH` and serves a stale one while re-reading behind. Names go with
   a tag; a listing that has not moved answers without them — 1733 KB against
@@ -1329,7 +1341,15 @@ update the comment with its own text, and read it back.
   `sniff_language` returns `None` for "it did not answer" and `""` for "it
   answered, and not with something we paint", and only the second is kept.
   `GitFacts.failed`, `Worktree.failed` and `DiffReport.failed` are how each
-  answer says which it is; `reload_git` puts a failed directory back on the
+  answer says which it is. **On the page too**: `loadFiles` took a failed
+  listing's short names as fact and closed the open file, its place and a
+  comment half written on it; now the names held stand while `failed` is
+  set, and only a listing that did not fail may say a file has gone. And a
+  `missing` answer for the open file -- what a timed-out `is_listed` says
+  too -- is never written in as its text: it was drawn as line 1, with a `+`
+  that would anchor a comment to the real line 1.
+  `test_a_listing_git_failed_on_keeps_the_open_file`,
+  `test_a_file_read_git_failed_on_is_not_drawn_as_its_text`; `reload_git` puts a failed directory back on the
   list rather than over what it already knew.
 - **`run` gives None for "the command failed" and for "it could not run".**
   Outside a repository git *fails*, so an empty answer is not by itself a
