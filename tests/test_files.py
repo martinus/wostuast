@@ -1265,3 +1265,68 @@ def test_a_log_git_failed_on_is_not_a_commit_gone(ws, seeded):
     report = ws.worktree_diff(str(seeded), runner=broken, of=sha)
     assert report.failed is True
     assert report.gone == ""
+
+
+def backport(seeded):
+    """`release` cut from main, each moved on, and `fix` cut from release.
+    The release branch carries a commit main does not, which is what makes
+    main the wrong base: against it, that commit reads as the agent's."""
+    git(seeded, "branch", "release")
+    (seeded / "later.txt").write_text("on main after the release\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "main moves on")
+    git(seeded, "checkout", "-q", "release")
+    (seeded / "hotfix.txt").write_text("only on the release branch\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "release hotfix")
+    git(seeded, "checkout", "-qb", "fix", "release")
+    (seeded / "fix.txt").write_text("the backported fix\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "the fix")
+
+
+def test_a_backport_is_measured_against_the_branch_it_was_cut_from(ws, seeded):
+    """Measured against `main`, a branch cut from a release branch showed
+    every commit the release lacks as though the agent had made it."""
+    backport(seeded)
+    report = ws.worktree_diff(str(seeded))
+    assert report.base == "release" and report.base_auto == "release"
+    assert [one.subject for one in report.commits] == ["the fix"]
+    committed = [one for one in report.sections if one.name == "committed"][0]
+    assert [one.path for one in committed.files] == ["fix.txt"]
+    assert report.bases[:2] == ["release", "main"], report.bases
+    # Picked by the reader, main shows the release's own commit too.
+    against_main = ws.worktree_diff(str(seeded), base="main")
+    assert [one.subject for one in against_main.commits] == [
+        "the fix", "release hotfix"]
+
+
+def test_a_base_the_page_names_is_used_only_if_git_listed_it(ws, seeded):
+    """The pick arrives in `?base=` and the page is input: a name git did
+    not list never reaches an argv."""
+    backport(seeded)
+    assert ws.worktree_diff(str(seeded), base="main").base == "main"
+    seen = []
+
+    def spy(args, **rest):
+        seen.append(list(args))
+        return ws.run(args, **rest)
+
+    for asked in ("--output=/tmp/x", "HEAD~1", "release;rm"):
+        report = ws.worktree_diff(str(seeded), runner=spy, base=asked)
+        assert report.base == "release", asked
+        assert not any(asked in part for argv in seen for part in argv), asked
+
+
+def test_a_git_that_cannot_rank_falls_back_to_the_usual_names(ws, seeded):
+    """`%(ahead-behind)` needs git 2.41. Before that the base is what it
+    always was: `origin/HEAD` if it points at something, then the usual
+    names."""
+    backport(seeded)
+
+    def old(args, **rest):
+        if any("ahead-behind" in part for part in args):
+            return None
+        return ws.run(args, **rest)
+
+    assert ws.diff_base(str(seeded), runner=old) == ("main", False)

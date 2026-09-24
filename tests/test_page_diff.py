@@ -922,3 +922,38 @@ def test_an_untracked_file_git_would_not_list_is_not_its_one_line(
             assert untracked_block(page).locator(".dline").count() == 0
         finally:
             browser.close()
+
+
+def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page):
+    """The daemon finds the branch a worktree was cut from; the reader can
+    say otherwise, and that stays with this checkout in this browser."""
+    root, path = repo_page
+    git = conftest.git_in
+    git(root, "stash", "-q", "-u")
+    git(root, "checkout", "-qb", "release", "main")
+    (root / "hotfix.txt").write_text("only on the release branch\n")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "release hotfix")
+    git(root, "checkout", "-qb", "fix")
+    (root / "fix.txt").write_text("the fix\n")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "the fix")
+    committed = ".diffhead.committed ~ .dfile .path"
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function(
+                """() => { const one = document.querySelector('.pickbase');
+                           return one && one.options[0].textContent.includes('release'); }""")
+            assert page.locator(committed).all_inner_texts() == ["fix.txt"]
+            page.select_option(".pickbase", "main")
+            page.wait_for_function(
+                "() => [...document.querySelectorAll('.diffhead.committed ~ .dfile .path')]"
+                ".some((one) => one.textContent === 'hotfix.txt')")
+            page.reload()
+            show_tab(page, "diff")
+            page.wait_for_function(
+                "() => document.querySelector('.pickbase').value === 'main'")
+        finally:
+            browser.close()

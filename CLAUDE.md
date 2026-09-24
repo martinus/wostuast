@@ -55,7 +55,7 @@ after the tests go red.
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
-| `worktree_diff`'s `of`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
+| `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
 | `putComment`, `anchorOf`, a review comment | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
@@ -2165,16 +2165,31 @@ it. The reason is the part to weigh before undoing one.
 
 **Git**
 
-- **A branch's work is measured against `origin/HEAD`** -- when it points
-  at something: a remote that renamed its default branch leaves it naming a
-  branch `fetch --prune` took away, and `symbolic-ref` prints it anyway, so
-  `for-each-ref` is asked about it with the fallbacks
-  (`test_an_origin_head_that_points_nowhere_is_not_the_base`) -- and when
-  the remote never said, against the usual names in turn; with none, the Diff tab shows
-  only what is not committed and says so. With no base, or no commits past
-  it — an agent working on the default branch — the picker lists the last
-  `COMMITS_RECENT` of HEAD instead, because those are what it did.
-  `diff_base`, `branch_commits`.
+- **A branch's work is measured against the branch it was cut from, found
+  by counting.** A backport is cut from a release branch and goes back into
+  it, and measured against `origin/HEAD` it showed every commit the release
+  carries and main does not as the agent's. `pick_base` ranks every branch
+  in one git run, `%(ahead-behind:HEAD)` (git 2.41): the fewest of HEAD's
+  commits it lacks, then the fewest it has that HEAD lacks, then
+  `origin/HEAD` and `BASE_NAMES`. The branch itself and its copy on a remote
+  are left out, unless it is one of those names: an agent working on the
+  default branch is measured against it, and the picker then lists the last
+  `COMMITS_RECENT` of HEAD, because those are what it did. `origin/HEAD` is
+  only a name to prefer, never taken on its word: a remote that renamed its
+  default branch leaves it naming a branch `fetch --prune` took away, and
+  `symbolic-ref` prints it anyway
+  (`test_an_origin_head_that_points_nowhere_is_not_the_base`). A git too
+  old to rank falls back to those names in turn; with none, the Diff tab
+  shows only what is not committed and says so.
+  `test_a_backport_is_measured_against_the_branch_it_was_cut_from`,
+  `test_a_git_that_cannot_rank_falls_back_to_the_usual_names`.
+- **And the reader can pick it**, in the Diff tab's second `select`, kept in
+  this browser per worktree (`BASE_KEY`, `recallBase`) -- it is about that
+  checkout, not a session, and not a config file. It goes as `?base=` to
+  the `diff` and `whole` routes, and **is used only if `pick_base` listed
+  that exact name**, like a commit in `?of=`: the page is input.
+  `test_a_base_the_page_names_is_used_only_if_git_listed_it`,
+  `test_the_base_can_be_picked_and_is_kept_for_the_worktree`.
 
 ## Do not guess payload fields
 
