@@ -1265,3 +1265,172 @@ def test_a_log_git_failed_on_is_not_a_commit_gone(ws, seeded):
     report = ws.worktree_diff(str(seeded), runner=broken, of=sha)
     assert report.failed is True
     assert report.gone == ""
+
+
+def backport(seeded):
+    """`release` cut from main, each moved on, and `fix` cut from release.
+    The release branch carries a commit main does not, which is what makes
+    main the wrong base: against it, that commit reads as the agent's."""
+    git(seeded, "branch", "release")
+    (seeded / "later.txt").write_text("on main after the release\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "main moves on")
+    git(seeded, "checkout", "-q", "release")
+    (seeded / "hotfix.txt").write_text("only on the release branch\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "release hotfix")
+    git(seeded, "checkout", "-qb", "fix", "release")
+    (seeded / "fix.txt").write_text("the backported fix\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "the fix")
+
+
+def test_a_backport_is_measured_against_the_branch_it_was_cut_from(ws, seeded):
+    """Measured against `main`, a branch cut from a release branch showed
+    every commit the release lacks as though the agent had made it."""
+    backport(seeded)
+    report = ws.worktree_diff(str(seeded))
+    assert report.base == "release" and report.base_auto == "release"
+    assert [one.subject for one in report.commits] == ["the fix"]
+    committed = [one for one in report.sections if one.name == "committed"][0]
+    assert [one.path for one in committed.files] == ["fix.txt"]
+    assert report.bases[:2] == ["release", "main"], report.bases
+    # Picked by the reader, main shows the release's own commit too.
+    against_main = ws.worktree_diff(str(seeded), base="main")
+    assert [one.subject for one in against_main.commits] == [
+        "the fix", "release hotfix"]
+
+
+def test_a_base_the_page_names_is_used_only_if_git_listed_it(ws, seeded):
+    """The pick arrives in `?base=` and the page is input: a name git did
+    not list never reaches an argv."""
+    backport(seeded)
+    assert ws.worktree_diff(str(seeded), base="main").base == "main"
+    seen = []
+
+    def spy(args, **rest):
+        seen.append(list(args))
+        return ws.run(args, **rest)
+
+    for asked in ("--output=/tmp/x", "HEAD~1", "release;rm"):
+        report = ws.worktree_diff(str(seeded), runner=spy, base=asked)
+        assert report.base == "release", asked
+        assert not any(asked in part for argv in seen for part in argv), asked
+
+
+def test_a_git_that_cannot_rank_falls_back_to_the_usual_names(ws, seeded):
+    """`%(ahead-behind)` needs git 2.41. Before that the base is what it
+    always was: `origin/HEAD` if it points at something, then the usual
+    names."""
+    backport(seeded)
+
+    def old(args, **rest):
+        if any("ahead-behind" in part for part in args):
+            return None
+        return ws.run(args, **rest)
+
+    assert ws.diff_base(str(seeded), runner=old) == ("main", False)
+
+
+def feature(seeded, name="feature"):
+    """A branch with one commit of its own, cut from main."""
+    git(seeded, "checkout", "-qb", name)
+    (seeded / f"{name}.txt").write_text("work\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", f"{name} work")
+
+
+@pytest.mark.parametrize("layout", ["child", "backup", "detached"])
+def test_a_branch_that_holds_all_of_head_is_never_the_base(ws, seeded, layout):
+    """Every ref holding all of HEAD counted nought of HEAD's commits missing
+    and won: a child branch cut from this one, a backup, and a detached
+    HEAD's own branch. There is nowhere for the work to go there, and the
+    committed half came back empty."""
+    feature(seeded)
+    if layout == "child":
+        git(seeded, "branch", "child")
+    elif layout == "backup":
+        git(seeded, "branch", "backup")
+    else:
+        git(seeded, "checkout", "-q", "--detach")
+    report = ws.worktree_diff(str(seeded))
+    assert report.base == "main", report.bases
+    assert [one.subject for one in report.commits] == ["feature work"]
+
+
+def test_unpushed_work_on_main_is_measured_against_the_remote(ws, seeded,
+                                                              tmp_path):
+    """Local `main` is always nought against itself, so it beat `origin/main`
+    and the commits not pushed yet were never shown as the agent's."""
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(seeded), str(clone)], check=True,
+                   capture_output=True)
+    git(clone, "config", "user.email", "t@example.com")
+    git(clone, "config", "user.name", "t")
+    (clone / "new.txt").write_text("not pushed\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-qm", "not pushed")
+    report = ws.worktree_diff(str(clone))
+    assert report.base == "origin/main" and not report.recent
+    assert [one.subject for one in report.commits] == ["not pushed"]
+
+
+def test_a_branch_cut_at_the_same_point_is_not_named_over_main(ws, seeded):
+    """Ranked by what it has that HEAD lacks, a colleague's branch cut at the
+    same point beat main, which had moved on further: the diff was right and
+    the heading named the colleague's branch."""
+    git(seeded, "branch", "bob")
+    feature(seeded)
+    git(seeded, "checkout", "-q", "bob")
+    (seeded / "bob.txt").write_text("bob\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "bob")
+    git(seeded, "checkout", "-q", "main")
+    for n in range(3):
+        (seeded / f"m{n}.txt").write_text("m\n")
+        git(seeded, "add", ".")
+        git(seeded, "commit", "-qm", f"main {n}")
+    git(seeded, "checkout", "-q", "feature")
+    assert ws.worktree_diff(str(seeded)).base == "main"
+
+
+def test_the_ranking_is_counted_once_while_nothing_moves(ws, seeded):
+    """Counting walks history, and the Diff tab polls: on a large repository
+    it took most of two seconds, every five. Kept under HEAD and the refs,
+    it is counted again only when one of them moves."""
+    feature(seeded)
+    counted = []
+
+    def spy(args, **rest):
+        if any("ahead-behind" in part for part in args):
+            counted.append(1)
+        return ws.run(args, **rest)
+
+    ranks = {}
+    ws.worktree_diff(str(seeded), runner=spy, ranks=ranks)
+    ws.worktree_diff(str(seeded), runner=spy, ranks=ranks)
+    assert len(counted) == 1
+    (seeded / "more.txt").write_text("more\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "more")
+    ws.worktree_diff(str(seeded), runner=spy, ranks=ranks)
+    assert len(counted) == 2
+
+
+def test_a_pick_stands_when_the_ranking_cannot_be_counted(ws, seeded,
+                                                         monkeypatch):
+    """A ranking that timed out fell back to the usual names, and a pick of
+    `release` then matched nothing and was dropped. The pick is checked
+    against the listing, which is cheap, and is always on the list."""
+    backport(seeded)
+
+    def slow(args, **rest):
+        if any("ahead-behind" in part for part in args):
+            return None                     # as a timeout does
+        return ws.run(args, **rest)
+
+    report = ws.worktree_diff(str(seeded), runner=slow, base="release")
+    assert report.base == "release" and "release" in report.bases
+    monkeypatch.setattr(ws, "BASES_OFFERED", 1)
+    report = ws.worktree_diff(str(seeded), base="main")
+    assert report.bases == ["release", "main"]
