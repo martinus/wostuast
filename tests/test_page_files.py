@@ -1692,6 +1692,58 @@ def test_a_file_read_git_failed_on_is_not_drawn_as_its_text(ws, repo_page,
             browser.close()
 
 
+
+def test_a_first_read_that_failed_says_so_and_is_not_the_file(ws, repo_page,
+                                                               monkeypatch):
+    """With nothing read yet, a refused read drew the header over an empty
+    body -- a file with nothing in it -- for as long as the refusal lasted,
+    and a fetch that failed drew nothing at all, so the file before stood
+    under the name just picked. Both now say why, and the text comes once
+    the read works."""
+    repo, path = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            open_file(page, "code.py")
+            body = ".filebody .filescroll"
+            # A refused read: what a timed-out `is_listed` answers too.
+            refusing = [True]
+            listed = ws.is_listed
+            monkeypatch.setattr(ws, "is_listed", lambda *a, **k:
+                                not refusing[0] and listed(*a, **k))
+            page.click(".filelist button:has-text('README.md')")
+            page.wait_for_function(
+                f"(document.querySelector('{body}') || {{}}).textContent"
+                " === 'Could not read README.md: that file is not in this"
+                " worktree. It is asked for again in a few seconds.'")
+            assert page.locator(".filebody .crumbs").inner_text() == "README.md"
+            refusing[0] = False
+            page.wait_for_selector(f"{body} h1:has-text('The readme')")
+            # A fetch that failed: the file before must not stand in its place.
+            # Held first, with a push's redraw landing while it is out, so the
+            # pane says "reading…" before the failure has to replace it.
+            # One handler: `unroute` would answer a held request itself.
+            held = []
+            page.route("**/file?*", lambda route: route.abort() if held
+                       else held.append(route))
+            page.click(".filelist button:has-text('code.py')")
+            for _ in range(300):
+                if held:
+                    break
+                page.wait_for_timeout(20)
+            page.evaluate("draw()")
+            assert page.locator(body).inner_text() == "reading…"
+            held[0].abort()
+            page.wait_for_function(
+                f"(document.querySelector('{body}') || {{}}).textContent"
+                " === 'Could not read code.py: the daemon did not answer."
+                " It is asked for again in a few seconds.'")
+            assert "The readme" not in page.locator(".filebody").inner_text()
+            page.unroute("**/file?*")
+            page.wait_for_selector(f"{body} .dline:has-text('print(2)')")
+        finally:
+            browser.close()
+
 def test_a_tall_comment_in_a_windowed_file_is_a_line_not_rows(page_at):
     """`lineAt` counted the pixels of a comment's box as rows, so a reader
     scrolled into a comment taller than eight rows got a window that started

@@ -432,6 +432,13 @@ def test_a_working_stream_says_nothing_and_a_lost_one_says_so(page_at):
                 state.stream.onerror();
                 return document.getElementById('live').textContent; }""")
             assert said == "reconnecting"
+            # And the reconnect, for real: a new stream's first `sessions`
+            # clears the word with the find box still holding text.
+            page.evaluate("""() => { state.stream.close(); state.stream = null;
+                state.streamUrl = ''; resubscribe(); }""")
+            page.wait_for_function(
+                "state.live === 'live' && state.find === 'x'"
+                " && document.getElementById('live').textContent === ''")
         finally:
             browser.close()
 

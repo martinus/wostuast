@@ -1375,6 +1375,45 @@ def test_unpushed_work_on_main_is_measured_against_the_remote(ws, seeded,
     assert [one.subject for one in report.commits] == ["not pushed"]
 
 
+
+def test_a_branch_git_could_not_name_is_not_measured_against_its_own_copy(
+        ws, seeded, tmp_path):
+    """The branch's own copy on a remote is left out by the branch's name,
+    and `symbolic-ref HEAD` gives None for a git that timed out as it does
+    for a detached HEAD. With the name lost, `origin/feature` lacked only
+    the commit not pushed yet, ranked first, and the Diff tab showed that
+    one commit as the whole of the branch's work."""
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(seeded), str(clone)], check=True,
+                   capture_output=True)
+    git(clone, "config", "user.email", "t@example.com")
+    git(clone, "config", "user.name", "t")
+    feature(clone)
+    git(clone, "push", "-q", "origin", "feature")
+    (clone / "later.txt").write_text("not pushed\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-qm", "not pushed")
+
+    def stalling(*which):
+        def runner(args, **rest):
+            if any(args[-len(one):] == list(one) for one in which):
+                return None                 # as a timeout does
+            return ws.run(args, **rest)
+        return runner
+
+    named = ("symbolic-ref", "--quiet", "--short", "HEAD")
+    abbrev = ("rev-parse", "--abbrev-ref", "HEAD")
+    # One call stalled: the other one names the branch.
+    # Both stalled: nothing names it, and the usual names stand in.
+    for runner in (stalling(named), stalling(named, abbrev)):
+        report = ws.worktree_diff(str(clone), runner=runner)
+        assert report.base in ("main", "origin/main"), report.bases
+        assert [one.subject for one in report.commits] == ["not pushed",
+                                                           "feature work"]
+    # A detached HEAD really has no branch, and is still measured by count.
+    git(clone, "checkout", "-q", "--detach")
+    assert ws.worktree_diff(str(clone)).base == "origin/feature"
+
 def test_a_branch_cut_at_the_same_point_is_not_named_over_main(ws, seeded):
     """Ranked by what it has that HEAD lacks, a colleague's branch cut at the
     same point beat main, which had moved on further: the diff was right and
