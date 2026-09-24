@@ -411,7 +411,7 @@ def test_a_transcript_emptied_under_its_name_reaches_the_watchers(
     daemon.hub.send = lambda name, body, **rest: sent.append((name, body))
     path.write_text("")                   # same inode, nothing left in it
 
-    blocks, run = daemon.read_transcript("s1")
+    blocks, run, _ = daemon.read_transcript("s1")
     assert blocks == []
     assert sent and sent[0][1]["run"] == run
     assert sent[0][1]["blocks"] == []

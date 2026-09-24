@@ -264,6 +264,13 @@ worse — it stopped being true as the suite grew. The tests that run no browser
 are the other shape, CPU-bound and slightly *slower* at `-n 8` (25.5 s against
 24.5 s), so CI runs the matrix at `-n auto` and the browser shards at `-n 8`.
 
+**A test that commits in a clone gives the clone an identity.** CI has no
+global git identity, and `git clone` does not carry the `user.email` the
+`repo` fixture sets locally, so a commit there fails with status 128 in CI
+and passes on any desk that has one. Run the suite once with
+`GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1` when a test commits
+somewhere new.
+
 **What the suite does not cover.** It drives the happy path thoroughly, in a
 real browser. It says very little about what happens when something *fails*: of
 the eight issues a full-file review filed, three were "a failed git call renders
@@ -1799,6 +1806,48 @@ update the comment with its own text, and read it back.
   what you were reading it for. `shownRounds` filters the left bar;
   `markHits` still marks what matched where it stands, because a hit you
   scroll past unmarked is a hit you miss.
+- **A transcript fetch merges what was pushed while it was out.** The
+  daemon takes the GET's snapshot under its lock and writes the answer after
+  letting go, so a tick can push the next block first, and a push is small
+  and wins. `loadTranscript` put the older snapshot in place wholesale: the
+  block was gone, the next one landed after a hole, and a text block is
+  never pushed twice. `state.turns.early` keeps the pushes that land while
+  a fetch is out, and they go over the snapshot by `seq`. **The list is the
+  fetch's ticket, and only the newest fetch lands**: two were out after a
+  quick Transcript-Session-Transcript, the pushes went into the second one's
+  list, and the first, answering last, put its older snapshot back. **A push
+  from another `run` makes the snapshot stale**, and it is asked for again:
+  the transcript was rewritten while the answer was out, and put in place
+  the answer showed a reading the file no longer held.
+  `test_a_block_pushed_while_the_transcript_is_fetched_is_kept`,
+  `test_only_the_newest_transcript_fetch_lands`,
+  `test_a_fetch_older_than_a_pushed_reading_is_asked_again`.
+- **A stream opens by saying which `version` of the transcript the daemon
+  holds.** A tick between a fetch's snapshot and the stream joining the hub
+  sends to nobody, and so does one while a dropped stream reconnects, or
+  one into a stream the browser closed and the hub has not noticed yet --
+  `wait_for_watching` exists in the tests for exactly that gap.
+  `Serving.stream` sends it (`transcript_held`) after joining, so what is
+  read after it is pushed and what was read before it is counted; the page
+  fetches when it holds less, or keeps it in `state.turns.told` for the
+  fetch that is out. **`version` and never a count of blocks**: a tool
+  result is written into its call's block, so the count stays still and a
+  result read with no stream open was never asked for. `Transcript.version`
+  moves on every read that changed something, and every push and answer
+  carries it. `test_a_block_read_while_no_stream_was_open_is_fetched`,
+  `test_a_tool_result_read_while_no_stream_was_open_is_fetched`.
+- **A failed transcript fetch is not an empty transcript.** `ask` gives
+  null, and the page drew "Nothing in this transcript yet.", forgot the
+  reader's places, and asked no more, because the tab polls nothing. Now
+  what is held stays, an empty tab says it could not read the transcript,
+  and it asks again after `TRANSCRIPT_RETRY` -- **one timer**,
+  `state.transcriptRetry`, cleared by every fetch: each tab switch into a
+  failing fetch started a loop of its own, and when the daemon came back
+  each asked for the whole transcript at once
+  (`test_failing_fetches_keep_one_retry_not_one_each`). **And a push with nothing held
+  is placed by `seq`**: it carries only the blocks that changed, and
+  assigned whole it put block 3 at index 0 as though it were the lot.
+  `test_a_transcript_fetch_that_fails_keeps_what_is_held`.
 - **`drawTranscript` has no redraw key, on purpose.** The live path is
   `patchTranscript`, which appends. Getting to a full draw means a tab
   switch, a session, or a keystroke in the find box, and every one of those
@@ -1811,6 +1860,19 @@ update the comment with its own text, and read it back.
   would write that down as the place the reader was. The listener is attached
   once per pane, guarded by `pane.dataset.watched`, because `drawTranscript`
   runs many times over one pane and `split` only rebuilds it on a tab change.
+  **It writes only for the session whose blocks the pane holds**
+  (`pane.dataset.session`): `choose` leaves the last session's blocks in
+  place until the new ones land, and a scroll in between -- one the browser
+  fires itself when the send box goes and the pane grows -- became the new
+  session's place. The `.filescroll` scar, repeated without its guard.
+  **An empty draw claims no session**: it takes the last session's scrolled
+  blocks away, the bar falls to nought, and that scroll became the place
+  of a session whose fetch had failed.
+  `test_a_scroll_left_over_from_another_transcript_is_not_its_place`,
+  `test_a_failed_fetch_does_not_take_a_sessions_place`.
+  **`null` is "no place kept", and nought is the very top**: one number for
+  both threw a reader at the top to the foot on every key typed in the find
+  box. `test_the_top_of_the_transcript_is_a_place_too`.
 - **The search redraws the whole tab, so it has to put the reader back.**
   `drawTranscript` ends at the foot of the transcript, which is where a
   session with no kept place belongs — the last thing the agent said is the
