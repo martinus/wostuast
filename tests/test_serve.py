@@ -1104,3 +1104,72 @@ def test_a_tick_stops_a_session_that_has_gone_over(ws, served, monkeypatch):
     seen.clear()
     daemon.tick()
     assert seen == []                      # once, not on every tick
+
+
+# --- answering a question -----------------------------------------------------
+
+TWO = {"questions": [
+    {"question": "Colour?", "header": "C", "multiSelect": False,
+     "options": [{"label": "Red"}, {"label": "Green"}]},
+    {"question": "Labels?", "header": "L", "multiSelect": True,
+     "options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]},
+]}
+
+
+def asking(ws, daemon, tool_use_id="toolu_two"):
+    ws.append_event(event("PreToolUse", tool_name="AskUserQuestion",
+                          tool_input=TWO, tool_use_id=tool_use_id, pane="%7"))
+    daemon.store.refresh()
+
+
+def test_an_answer_presses_the_keys_the_question_takes(ws, in_tmux, monkeypatch):
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    daemon, base, seen = in_tmux
+    asking(ws, daemon)
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_two", "picks": [[2], [3, 1]]},
+                        token=daemon.token)
+    assert status == 200 and body["keys"] == ["2", "1", "3", "Tab", "Enter"], body
+    assert [one[-1] for one in seen] == ["2", "1", "3", "Tab", "Enter"]
+
+
+def test_an_answer_for_a_question_no_longer_waiting_presses_nothing(
+        ws, in_tmux, monkeypatch):
+    """Its numbers would land on a question nobody read -- or on the agent's
+    prompt, once the question has been answered in the terminal."""
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    daemon, base, seen = in_tmux
+    asking(ws, daemon)
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_old", "picks": [[1], [1]]},
+                        token=daemon.token)
+    assert status == 409 and "no longer waiting" in body["error"]
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_two", "picks": [[1], [9]]},
+                        token=daemon.token)
+    assert status == 400 and body["error"]
+    # And like every verb that types, it wants the token.
+    status, _ = post(base + "/api/session/s1/answer",
+                     {"ask": "toolu_two", "picks": [[1], [1]]})
+    assert status == 403
+    assert seen == []
+
+
+def test_an_answer_tmux_cut_short_says_how_far_it_got(ws, served, monkeypatch):
+    """Some keys may have landed. "Nothing went in" would send the reader
+    back to answer again, on top of half an answer."""
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    calls = []
+
+    def runner(args, **rest):
+        calls.append(args)
+        return None if len(calls) == 3 else ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="%7", pid=1))
+    asking(ws, daemon)
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_two", "picks": [[1], [1, 2]]},
+                        token=daemon.token)
+    assert status == 502 and "2 of 5" in body["error"], body

@@ -187,3 +187,87 @@ def test_interrupt_without_a_pane_runs_nothing(ws, asked):
 
 def test_interrupt_says_when_tmux_did_not_take_it(ws):
     assert ws.tmux_interrupt("%7", runner=lambda args, **rest: None) is False
+
+
+# --- answering a question in the agent's own dialog --------------------------
+
+import pytest as _pytest  # noqa: E402
+
+
+def ask_of(ws, *questions):
+    return ws.read_ask({"tool_name": "AskUserQuestion", "tool_use_id": "q",
+                        "tool_input": {"questions": list(questions)}})
+
+
+def one(many, n=3):
+    return {"question": "Q?", "header": "H", "multiSelect": many,
+            "options": [{"label": f"o{k}", "description": ""} for k in range(n)]}
+
+
+def test_the_keys_that_answer_each_shape_of_question(ws):
+    """Measured against Claude Code 2.1.281 in tmux, with a fake API asking:
+    one single-choice question is answered by its digit and has no review;
+    anything else ends on a review that takes Enter; a multiple-choice
+    question takes a digit per option and Tab."""
+    assert ws.ask_keys(ask_of(ws, one(False)), [[2]]) == (["2"], "")
+    assert ws.ask_keys(ask_of(ws, one(True)), [[3, 1]]) == (
+        ["1", "3", "Tab", "Enter"], "")
+    assert ws.ask_keys(ask_of(ws, one(False), one(True), one(False)),
+                       [[2], [2, 3], [1]]) == (
+        ["2", "2", "3", "Tab", "1", "Enter"], "")
+
+
+@_pytest.mark.parametrize("picks", [
+    None, [], [[1], [1]], [[]], [["1"]], [[True]], [[0]], [[4]], [[1, 1]],
+    [[1, 2]],                   # two answers to a single-choice question
+    [[1.0]],
+])
+def test_picks_that_answer_nothing_are_refused(ws, picks):
+    keys, why = ws.ask_keys(ask_of(ws, one(False)), picks)
+    assert keys == [] and why, picks
+
+
+def test_a_question_that_could_not_be_kept_whole_is_not_answered(ws):
+    """Keys go by position: a question or an option left out of what the
+    page was sent would move every key after it onto the wrong answer."""
+    too_many = one(False, n=ws.ASK_MAX + 1)
+    ask = ask_of(ws, too_many)
+    assert ask["answerable"] is False
+    assert ws.ask_keys(ask, [[1]])[0] == []
+    broken = ask_of(ws, one(False), "not a question")
+    assert broken["answerable"] is False
+    assert ask_of(ws, one(False), one(True))["answerable"] is True
+
+
+def test_keys_go_one_command_each_and_only_the_answer_keys(ws, monkeypatch):
+    """`24` in one read is not two ticks, measured: nothing was ticked and
+    the dialog moved on without them. And nothing but a digit, Tab or Enter
+    is ever pressed through here."""
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    seen = []
+
+    def runner(args, **rest):
+        seen.append(list(args))
+        return ""
+
+    assert ws.tmux_keys("%3", ["2", "4", "Tab", "Enter"], runner=runner) == 4
+    assert seen == [["tmux", "send-keys", "-t", "%3", "-l", "--", "2"],
+                    ["tmux", "send-keys", "-t", "%3", "-l", "--", "4"],
+                    ["tmux", "send-keys", "-t", "%3", "Tab"],
+                    ["tmux", "send-keys", "-t", "%3", "Enter"]]
+    seen.clear()
+    for bad in (["24"], ["C-c"], ["Escape"], ["-l"], ["2", "x"]):
+        assert ws.tmux_keys("%3", bad, runner=runner) == 0
+    assert seen == []
+
+
+def test_a_key_tmux_refused_stops_the_rest(ws, monkeypatch):
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    calls = []
+
+    def runner(args, **rest):
+        calls.append(args[-1])
+        return None if len(calls) == 2 else ""
+
+    assert ws.tmux_keys("%3", ["1", "2", "Tab", "Enter"], runner=runner) == 1
+    assert calls == ["1", "2"]

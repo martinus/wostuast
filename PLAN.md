@@ -305,9 +305,10 @@ terminal, so the page is not an ordinary local page.
 
 ### 4.5 The tmux verbs
 
-Only two tmux commands exist in the code. Each takes the pane id from the
-session. There were three: `capture-pane`, which fed the Peek tab, went
-with it.
+Only two tmux commands exist in the code, `select-window`/`select-pane` and
+`send-keys`, and four verbs use them. Each takes the pane id from the
+session. There was a third command: `capture-pane`, which fed the Peek tab,
+went with it.
 
 A session can also be **named from the page**, which is not a tmux verb: it
 writes a file of ours and touches no terminal. Claude Code names a session from
@@ -321,6 +322,8 @@ It arrives as a POST and is checked like every other one.
 | Verb | Command | Notes |
 | --- | --- | --- |
 | jump | `tmux select-window -t <pane>` then `tmux select-pane -t <pane>` | Then run `$WOSTUAST_FOCUS` if set (a user command that raises the terminal window, e.g. a KWin script). |
+| interrupt | `tmux send-keys -t <pane> Escape` | Escape and never Ctrl-C: Escape stops a turn and keeps the work; Ctrl-C on an idle prompt starts to quit. |
+| answer | `tmux send-keys -t <pane> -l -- <digit>`, `Tab` or `Enter`, one key per command | Answers the question the agent is waiting on in its own dialog. The page sends the option numbers picked, never keys; the daemon checks them against the question it holds and works the keys out: a single-choice question takes its digit, which answers and moves on; a multiple-choice question takes a digit per option and then Tab; a review with "Submit answers" follows the last question, and takes Enter -- except after one single-choice question, which has none. Measured against Claude Code 2.1.281 in tmux. One key per command, with a pause, because two digits arriving in one read are no key at all. |
 | send | `tmux send-keys -t <pane> -l -- "<text>"` then `tmux send-keys -t <pane> Enter` | Escape nothing yourself; `-l` sends literally. Empty text is rejected. Control characters are stripped, keeping tab and newline: a paste ends at `ESC [ 2 0 1 ~`, and a review quotes lines an agent wrote. Text with a newline in it is wrapped in the bracketed paste markers, because a newline typed into a terminal *is* Enter: measured against a real shell, a two-line message ran its first line and left the second on the prompt. One line is sent as it always was, so a program that does not understand the markers never sees them. |
 
 If `pane` is empty, hide the verbs for that session and show "not in tmux".
