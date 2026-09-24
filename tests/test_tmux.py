@@ -264,6 +264,23 @@ def test_a_preview_is_read_as_claude_code_reads_it(ws, preview, keys):
     assert ask["answerable"] is bool(keys)
 
 
+def test_a_preview_goes_to_the_page_as_the_dialog_draws_it(ws):
+    """The page shows the box Claude Code draws, so it is sent what that box
+    holds: the text whole -- `clip` folds every line of a code box into one
+    -- or, past `PREVIEW_UNREAD`, only that it was withheld. A preview the
+    dialog does not draw is not sent: blank, or on a multiple-choice
+    question, which never stands beside a box."""
+    code = "if (ok) {\n    parse();\n}\n"
+    asked = one(False, n=4)
+    for choice, preview in zip(asked["options"], [code, "x" * 2001, " \n "]):
+        choice["preview"] = preview
+    got = [(o["preview"], o["withheld"])
+           for o in ask_of(ws, asked)["questions"][0]["options"]]
+    assert got == [(code, False), ("", True), ("", False), ("", False)]
+    many = ask_of(ws, beside(many=True, preview=code))["questions"][0]
+    assert [o["preview"] for o in many["options"]] == ["", "", ""]
+
+
 @_pytest.mark.parametrize("picks", [
     None, [], [[1], [1]], [[]], [["1"]], [[True]], [[0]], [[4]], [[1, 1]],
     [[1, 2]],                   # two answers to a single-choice question

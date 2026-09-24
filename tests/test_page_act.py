@@ -347,6 +347,83 @@ def test_a_question_that_takes_many_answers_takes_many_and_submits(ws, in_pane):
             browser.close()
 
 
+SKETCH = "if (ok) {\n    parse();   // the indentation is the point\n}"
+BESIDE = {"questions": [
+    {"question": "How should the fix be scoped?", "header": "Scope",
+     "multiSelect": False, "options": [
+         {"label": "Narrow it", "description": "More state.",
+          "preview": SKETCH},
+         {"label": "Keep it", "description": "One marker.",
+          "preview": "x" * 2001},
+         {"label": "Drop it", "description": "Close the PR."},
+         {"label": "Fenced", "description": "As an agent writes it.",
+          "preview": "```cpp\nint x = 1;\n```"},
+         {"label": "Markup", "description": "An agent wrote this.",
+          "preview": "<img src=x onerror=\"window.hit=1\">"},
+     ]},
+    {"question": "Which checks?", "header": "Checks", "multiSelect": True,
+     "options": [{"label": "Lint", "description": "", "preview": SKETCH},
+                 {"label": "Tests", "description": ""}]},
+]}
+
+
+def test_the_preview_stands_beside_the_options_and_follows_the_pick(
+        ws, in_pane):
+    """Claude Code draws a box beside the options with the preview of the
+    one under its cursor, and the page showed none of it: the reader chose
+    without the code the choice was about. The box follows the pick, which
+    types nothing, and says what the dialog says when there is nothing to
+    show. It is text, never markup, because an agent wrote it."""
+    daemon, base, seen = in_pane
+    asking_many(ws, daemon, BESIDE)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.set_viewport_size({"width": 1600, "height": 1000})
+            page.wait_for_selector("#asking .askpreview")
+
+            def shown():
+                return page.evaluate("""() => {
+                  const pane = document.querySelector('#asking .askpreview');
+                  const body = pane.querySelector('.askprevbody');
+                  return [pane.querySelector('.askprevhead').textContent,
+                          body.textContent, body.classList.contains('none')];
+                }""")
+
+            # Before a pick, the first: where the dialog's cursor starts.
+            assert shown() == ["preview of 1. Narrow it", SKETCH, False]
+            page.click(option(1, 2))
+            assert shown() == [
+                "preview of 2. Keep it",
+                "(preview cannot be shown in full \u2014 compare the option "
+                "labels and descriptions instead)", True]
+            page.click(option(1, 3))
+            assert shown() == ["preview of 3. Drop it",
+                               "No preview available", True]
+            page.click(option(1, 4))
+            assert shown()[1] == "int x = 1;"
+            page.click(option(1, 5))
+            assert shown()[1] == BESIDE["questions"][0]["options"][4]["preview"]
+            assert page.evaluate(
+                "() => !document.querySelector('#asking img') && !window.hit")
+            # Beside the options, not under them, where it stood below the
+            # bar's fold.
+            side = page.evaluate("""() => {
+              const opts = document.querySelector('#asking .askbeside .askopts')
+                .getBoundingClientRect();
+              const pane = document.querySelector('#asking .askpreview')
+                .getBoundingClientRect();
+              return pane.left >= opts.right && pane.top < opts.bottom;
+            }""")
+            assert side
+            # A multiple-choice question never stands beside a box.
+            assert page.locator("#asking .askpreview").count() == 1
+            assert page.locator(
+                "#asking .askone:nth-child(2) .askpreview").count() == 0
+        finally:
+            browser.close()
+
+
 def test_the_page_says_the_keys_the_daemon_presses(ws, in_pane):
     """The keys are worked out twice: on the page, to say them before they
     are pressed, and in the daemon, which presses its own. Change the rule in

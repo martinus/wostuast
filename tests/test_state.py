@@ -516,10 +516,13 @@ def test_only_what_is_drawn_is_kept(ws):
                          "preview": "also new"}]}]}))
     one = session.asking["questions"][0]
     assert sorted(one) == ["header", "many", "options", "preview", "question"]
-    assert sorted(one["options"][0]) == ["description", "label"]
+    assert sorted(one["options"][0]) == [
+        "description", "label", "preview", "withheld"]
     assert one["many"] is True
-    # Whether a preview changes the keys goes to the page; its text does not.
+    # A multiple-choice question is never drawn beside a preview, so its
+    # preview is not sent: the page shows what the dialog shows.
     assert one["preview"] is False
+    assert one["options"][0]["preview"] == ""
 
 
 def test_the_late_notification_does_not_undo_it(ws):
