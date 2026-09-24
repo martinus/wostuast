@@ -2434,7 +2434,11 @@ class Transcript:
 def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT) -> str | None:
     """Run a command and return its stdout, unchanged. None on any failure.
 
-    It does not strip: `tmux capture-pane` needs its blank lines kept.
+    It does not strip, and it does not translate: read as bytes and decoded
+    here. `text=True` reads with universal newlines, which turned a lone CR
+    inside a line of a diff into a line break before `parse_diff` saw it --
+    every line after it counted one too high, and the Files tab, which reads
+    the bytes, disagreed. The form-feed scar, by another road.
     """
     import subprocess
 
@@ -2443,8 +2447,6 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
             list(args),
             cwd=cwd or None,
             capture_output=True,
-            text=True,
-            errors="replace",  # a pane or a diff may hold bytes that are not UTF-8
             timeout=timeout,
             check=False,
         )
@@ -2452,7 +2454,8 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
         return None
     if done.returncode != 0:
         return None
-    return done.stdout
+    # A diff may hold bytes that are not UTF-8.
+    return done.stdout.decode("utf-8", "replace")
 
 
 def parse_status_branch(header: str) -> tuple[str, int, int]:
@@ -2525,11 +2528,18 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         facts.repo = repo_name(paths.splitlines()[0])
 
     status = git("status", "--porcelain", "--branch")
+    if not paths:
+        # Neither `rev-parse` answered. Outside a repository that is the
+        # answer; on a stalled machine it is not one, and taken for one it
+        # wrote empty facts over known ones and was not asked again. `status`
+        # answering says this is a repository, so then it is a failure too.
+        facts.failed = status is not None or not git_answers(runner)
+        return facts
     if status is None:
         # `--show-toplevel` answered, so this is a repository and git was
         # asked about it and did not answer. The call has a two second
         # timeout, and `status` on a very large worktree can pass it.
-        facts.failed = bool(paths)
+        facts.failed = True
         return facts
     lines = status.splitlines()
     if lines and lines[0].startswith("## "):
@@ -3507,6 +3517,16 @@ def diff_header_paths(line: str) -> tuple[str, str]:
     `b/`, so that is looked for first.
     """
     rest = line[len("diff --git "):]
+    # Not a rename, so both sides are one name, and the line splits in the
+    # middle. The search for ` b/` below found the last one, and a folder
+    # named `Plan b` put it inside the name: a binary or a mode change, which
+    # has no `---`/`+++` to put it right, came out as a rename to `logo.png`.
+    half = len(rest) // 2
+    if len(rest) % 2 and rest[half] == " ":
+        old, new = rest[:half], rest[half + 1:]
+        if (old.lstrip('"')[:2], new.lstrip('"')[:2]) == ("a/", "b/") and \
+                diff_side(old) == diff_side(new):
+            return diff_side(old), diff_side(new)
     at = rest.rfind(' "b/')
     if at == -1:
         at = rest.rfind(" b/")
@@ -3572,9 +3592,14 @@ def parse_diff(text: str) -> list[DiffFile]:
                 hunk.lines.append(DiffLine("context", line[1:]))
             # anything else is `\\ No newline at end of file`
         elif line.startswith("--- "):
-            current.old_path = diff_side(line[4:])
+            # git ends a name holding a space with a TAB here, for GNU patch.
+            # Kept, the Diff tab's `foo bar.txt\t` was not the Files tab's
+            # `foo bar.txt`: one line, two anchors. A name that really ends
+            # in a tab is quoted, so this one is always git's.
+            current.old_path = diff_side(line[4:].removesuffix("\t"))
         elif line.startswith("+++ "):
-            current.path = diff_side(line[4:])   # empty means the file is gone
+            # Empty means the file is gone.
+            current.path = diff_side(line[4:].removesuffix("\t"))
         elif line.startswith("rename from "):
             current.old_path = unquote_path(line[len("rename from "):])
         elif line.startswith("rename to "):
@@ -3609,20 +3634,33 @@ def diff_base(cwd: str, runner: Callable[..., str | None] = run) -> str:
 
     Two git runs, never five: `for-each-ref` answers for every fallback name at
     once, and the order the answers are read in is ours, not git's.
+
+    **`origin/HEAD` is asked about in the same run**, because it can point
+    nowhere: a remote that renamed its default branch, then `fetch --prune`,
+    leaves it naming `origin/master`, which is gone, and `symbolic-ref`
+    prints it all the same. Taken as the base, every log and diff against it
+    failed on every poll. `for-each-ref` lists only what exists.
+
+    The second value is whether git failed to answer. "No such names" and
+    "git did not answer" are opposite answers, and the page says the first
+    as a fact.
     """
     head = runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
                    "refs/remotes/origin/HEAD"])
-    if head and head.strip():
-        return head.strip()
+    head = (head or "").strip()
     found = runner(["git", "-C", cwd, "for-each-ref", "--format=%(refname:short)",
+                    *([f"refs/remotes/{head}"] if head else []),
                     *(f"refs/{where}/{name}"
                       for where in ("remotes/origin", "heads")
                       for name in ("main", "master"))])
-    have = set((found or "").split())
-    for name in ("origin/main", "origin/master", "main", "master"):
+    if found is None:
+        return "", True
+    have = set(found.split())
+    for name in ([head] if head else []) + ["origin/main", "origin/master",
+                                            "main", "master"]:
         if name in have:
-            return name
-    return ""
+            return name, False
+    return "", False
 
 
 def git_diff(
@@ -3726,6 +3764,13 @@ def branch_commits(
     return (None if out is None else read_commits(out)), True
 
 
+def has_head(root: str, runner: Callable[..., str | None] = run) -> bool:
+    """Whether the repository has a commit yet. `git init` leaves it without
+    one, and everything asked of `HEAD` fails until the first commit."""
+    return runner(["git", "-C", root, "rev-parse", "--verify", "--quiet",
+                   "HEAD"]) is not None
+
+
 def empty_tree(root: str, runner: Callable[..., str | None] = run) -> str:
     """The tree with nothing in it, which a root commit is measured against.
 
@@ -3752,6 +3797,9 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     report = DiffReport()
     root = worktree_root(cwd, runner)
     if not root:
+        # Not a repository, or git did not answer; `worktree_files` asks the
+        # same at the same door. Unasked, a timeout read as "nothing changed".
+        report.failed = not git_answers(runner)
         return report
 
     def section(name: str, title: str, about: str, *args: str) -> list[DiffFile]:
@@ -3767,9 +3815,15 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
                         at_commit=name != "uncommitted"))
         return files
 
-    report.base = diff_base(root, runner)
+    report.base, lost = diff_base(root, runner)
     commits, report.recent = branch_commits(root, report.base, runner)
-    report.failed = commits is None
+    # A repository with no commit yet has no HEAD, so the log fails: git
+    # answering "there is none", not failing to answer. Asked only on the
+    # failure path, so a repository with commits never pays for it.
+    unborn = commits is None and not has_head(root, runner) and git_answers(runner)
+    if unborn:
+        commits = []
+    report.failed = lost or commits is None
     report.commits = commits or []
     if of and of != "uncommitted":
         one = next((each for each in report.commits if each.sha == of), None)
@@ -3802,14 +3856,18 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
             return report
     if of == "uncommitted":
         report.of = of
-    elif report.base:
+    elif report.base and not unborn:
         section("committed", "committed on this branch",
                 f"every commit this branch has that {report.base} has not"
                 f" \u2014 and nothing that landed on {report.base} since",
                 report.base + "...HEAD")
+    # With no commit, against the empty tree: the staged files are in the
+    # index, so they are not untracked, and `HEAD` is not there to diff to.
     section("uncommitted", "not committed yet",
-            "what the files on disk hold that the last commit does not",
-            "HEAD")
+            "what the files on disk hold that the last commit does not"
+            if not unborn else "every file git has been given, as there is"
+            " no commit yet",
+            empty_tree(root, runner) if unborn else "HEAD")
     loose = untracked_files(root, runner)
     report.failed = report.failed or loose is None
     report.untracked = (loose or [])[:UNTRACKED_SHOWN]
@@ -3844,12 +3902,21 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
     repository, never an option and never a pattern.
     """
     found = WholeFile()
-    root = worktree_root(cwd, runner)
-    if not root or not path:
+    if not path:
         return found
-    base = diff_base(root, runner) if section in ("committed", "commit") else ""
+    root = worktree_root(cwd, runner)
+    if not root:
+        found.failed = not git_answers(runner)
+        return found
+    base, lost = (diff_base(root, runner) if section in ("committed", "commit")
+                  else ("", False))
+    if lost:
+        found.failed = True
+        return found
     if section == "uncommitted":
-        spec = ["HEAD"]
+        # Before the first commit there is no HEAD, and `worktree_diff`
+        # showed this half against the empty tree.
+        spec = ["HEAD" if has_head(root, runner) else empty_tree(root, runner)]
     elif section == "committed" and base:
         spec = [base + "...HEAD"]
     elif section == "commit":

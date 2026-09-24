@@ -1203,6 +1203,14 @@ update the comment with its own text, and read it back.
 - **Inside a hunk, the first character of a line is the only thing that matters.**
   Removing `-- a comment` writes `--- a comment`; read as a header it renamed the
   file and swallowed the hunk. Only `diff --git` and `@@` may start something new.
+- **`run` reads bytes and decodes them itself; it never reads text.**
+  `subprocess.run(text=True)` reads with universal newlines, so a lone CR
+  inside a line of a diff -- `b = 1\r c = 2` -- became a line break before
+  `parse_diff` saw it: the hunk header grew a false context line, every line
+  after it was numbered one too high, and the Files tab, which reads the
+  bytes, disagreed. The scar below, by another road. A CRLF file's diff lines
+  now end in `\r`, as the Files tab's always did.
+  `test_a_carriage_return_inside_a_line_stays_in_that_line`.
 - **Split a diff on `\n`, never with `splitlines()`.** It also breaks on a form
   feed, a vertical tab, `\x1c`-`\x1e` and `\u0085`, all legal inside a source
   line and none of them escaped by git — it only quotes paths. One form feed
@@ -1214,6 +1222,16 @@ update the comment with its own text, and read it back.
   inside the quotes. `we"ird.txt` came out mangled, a plain edit read as a
   rename, and the name did not match what `ls-files -z` gives the Files tab —
   so one line had two anchors. `unquote_path` is the one place that undoes it.
+  **And a name holding a space ends in a TAB** on the `---` and `+++` lines
+  -- git adds it for GNU patch, unquoted -- so `foo bar.txt\t` was the Diff
+  tab's name and `foo bar.txt` the Files tab's. `parse_diff` takes one
+  trailing tab off; a name that really ends in one is quoted, so the one
+  outside the quotes is always git's.
+  `test_a_name_with_a_space_is_the_name_the_files_tab_lists`. **A `diff
+  --git` line that is not a rename splits in the middle**: a binary or a mode
+  change has no `---`/`+++` to put the name right, and the last ` b/` in
+  `a/Plan b/logo.png b/Plan b/logo.png` made it a rename to `logo.png`.
+  `diff_header_paths`, `test_a_folder_ending_in_b_does_not_make_a_rename`.
 - **A cut goes back to the last newline, and the cap counts bytes.** A cut
   inside a `diff --git` line parsed as a file that does not exist, reported as
   a rename. `run` returns text, so a cap on `len()` counts code points and let
@@ -1312,7 +1330,23 @@ update the comment with its own text, and read it back.
   the same directory (`git_facts` knows it is a repository because
   `rev-parse` answered), or `git_answers()`, which asks `git --version` — it
   cannot fail inside a working git, and stalls on the same stalled machine.
-  Only in the failure path, so a repository never pays for it.
+  Only in the failure path, so a repository never pays for it. **Every door
+  that reads an empty answer asks**: `worktree_files` did, and
+  `worktree_diff`, `whole_file_diff` and `git_facts` did not -- a timed-out
+  `--show-toplevel` came back as a worktree with nothing changed, and a
+  stalled `git_facts` wrote empty facts over the known ones. `diff_base`
+  returns whether `for-each-ref` failed beside the base, because "no such
+  names" is said on the page as a fact.
+  `test_a_root_git_could_not_find_is_not_an_empty_worktree`,
+  `test_a_base_git_could_not_look_for_is_not_no_base`,
+  `test_a_git_that_does_not_answer_at_all_has_failed`.
+- **A repository with no commit yet is an answer, not a failure.** `git init`
+  leaves no HEAD, so `git log HEAD` and `git diff HEAD` fail, and the tab
+  said git did not answer on every poll -- while the staged files were in
+  neither list, being in the index and so not untracked. `has_head` is asked
+  only when the log failed, and the uncommitted half is then measured
+  against `empty_tree`, in `whole_file_diff` too.
+  `test_a_repository_with_no_commit_yet_shows_what_is_staged`.
 - **The Diff tab says what each half is a diff of, in words.** The headings
   were `origin/main...HEAD` and "not committed yet" — precise, and readable
   only if you already know what three dots mean, so nobody could tell whether
@@ -1986,8 +2020,12 @@ it. The reason is the part to weigh before undoing one.
 
 **Git**
 
-- **A branch's work is measured against `origin/HEAD`**, and when the remote
-  never said, against the usual names in turn; with none, the Diff tab shows
+- **A branch's work is measured against `origin/HEAD`** -- when it points
+  at something: a remote that renamed its default branch leaves it naming a
+  branch `fetch --prune` took away, and `symbolic-ref` prints it anyway, so
+  `for-each-ref` is asked about it with the fallbacks
+  (`test_an_origin_head_that_points_nowhere_is_not_the_base`) -- and when
+  the remote never said, against the usual names in turn; with none, the Diff tab shows
   only what is not committed and says so. With no base, or no commits past
   it — an agent working on the default branch — the picker lists the last
   `COMMITS_RECENT` of HEAD instead, because those are what it did.
