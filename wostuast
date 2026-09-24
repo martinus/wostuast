@@ -63,6 +63,11 @@ ATTENTION_NOTIFICATIONS = frozenset({"permission_prompt", "elicitation_dialog"})
 #: It must never hold Claude Code, whatever goes wrong underneath it.
 HOOK_TIMEOUT = 5
 
+#: The deadline over logging a hook's or the status line's failure. Short,
+#: because Claude Code is already waiting, and the failure being logged may be
+#: a filesystem that is not answering.
+LOG_TIMEOUT = 1
+
 #: A directory's git facts are read again when an event asks for it, but never
 #: more often than this. git status on a large worktree is not cheap.
 GIT_MIN_INTERVAL = 10.0
@@ -958,6 +963,9 @@ def read_ask(event: dict[str, Any]) -> dict[str, Any] | None:
             whole = False
             continue
         given = one.get("options") or []
+        if not isinstance(given, list):
+            whole = False           # a number or an object is no list of options
+            continue
         whole = whole and len(given) <= ASK_MAX
         many = bool(one.get("multiSelect"))
         options = []
@@ -1186,7 +1194,16 @@ class Store:
         never forgets more than `visible()` would.
         """
         for event in events:
-            session = self.apply(event)
+            # One event that raises costs itself and nothing else. The
+            # follower has already counted the whole piece of the log as
+            # read, so an exception leaving here threw away every event after
+            # it in that piece -- up to a megabyte of sessions, for good, and
+            # again on every start.
+            try:
+                session = self.apply(event)
+            except Exception as error:
+                log(f"an event could not be folded: {error!r}")
+                continue
             if session is not None and session.last_ts - self.forgot_at > FORGET_EVERY:
                 self.forgot_at = session.last_ts
                 self.forget_quiet(min(session.last_ts, time.time()))
@@ -4586,11 +4603,16 @@ class Daemon:
             run = reader.run
             fresh = run != reader.run_sent   # a reading nobody has been told of
             reader.run_sent = run
-        if changed or fresh:
-            self.hub.send("transcript",
-                          {"id": session_id, "run": run,
-                           "blocks": blocks_json(changed)},
-                          session_id=session_id)
+            # Told under the lock, so the pushes leave in the order they were
+            # read. Outside it, a request thread could read and push block 2
+            # while the tick still held block 1, and the page, which patches
+            # by index, never drew block 1 at all. `send` only queues, so
+            # nothing here waits on a socket.
+            if changed or fresh:
+                self.hub.send("transcript",
+                              {"id": session_id, "run": run,
+                               "blocks": blocks_json(changed)},
+                              session_id=session_id)
         return blocks, run
 
     def sessions_payload(self) -> dict[str, Any]:
@@ -4722,7 +4744,12 @@ class Serving:
         self.wfile.write(body)
 
     def reply_json(self, data: Any, code: int = 200) -> None:
-        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        # "replace", because a lone surrogate is reachable: Claude Code cuts a
+        # string between the halves of an emoji and writes the escape, and
+        # json.loads makes it a real one. A strict encode refused the whole
+        # answer, so one such line took a session's transcript down for good.
+        body = json.dumps(data, ensure_ascii=False, default=str).encode(
+            "utf-8", "replace")
         self.reply(code, body, "application/json; charset=utf-8")
 
     def ours(self) -> bool:
@@ -5230,7 +5257,10 @@ class Serving:
                     message = client.queue.get(timeout=15.0)
                 except client.empty:
                     message = ": still here\n\n"  # a comment keeps it open
-                self.wfile.write(message.encode("utf-8"))
+                # "replace", as in `reply_json`: a strict encode raised a
+                # ValueError none of the handlers below catch, and `guarded`
+                # then wrote a whole HTTP 500 into the open stream.
+                self.wfile.write(message.encode("utf-8", "replace"))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
@@ -5350,10 +5380,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
         append_event(record)
         stand_down()
     except BaseException as error:  # a hook must never block Claude Code
-        # The deadline stays armed over the logging. `log` opens and writes a
+        # A deadline stays armed over the logging. `log` opens and writes a
         # file, and the failure being logged may be that the filesystem is not
         # answering — cancelling the alarm first and then writing is how a hook
         # holds Claude Code for ever, which is the one thing it may not do.
+        # Armed again, and not merely left: an alarm fires once, so when the
+        # failure *is* the timeout, nothing was armed at all.
+        give_up_after(LOG_TIMEOUT)
         try:
             log(f"hook failed: {error!r}")
         except BaseException:
@@ -5382,8 +5415,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         write_status(str(payload.get("session_id") or ""), status)
         stand_down()
     except BaseException as error:
+        # The same as the hook's: a fresh deadline over the logging, which
+        # the failure may be about. Cancelling first left none at all.
+        give_up_after(LOG_TIMEOUT)
+        try:
+            log(f"status failed: {error!r}")
+        except BaseException:
+            pass
         stand_down()
-        log(f"status failed: {error!r}")
         payload = {}
 
     then = getattr(args, "then", None)

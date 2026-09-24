@@ -438,6 +438,33 @@ def test_a_session_that_dies_on_its_question_forgets_it(ws):
     assert session.attention_since == 0.0
 
 
+def test_one_event_that_cannot_be_folded_costs_only_itself(ws):
+    """The follower counts a whole piece of the log as read before it hands
+    out a line, so an exception leaving the fold threw away every event
+    after it in that piece -- up to a megabyte of sessions -- on every start.
+    `Store.fold` catches per event."""
+    bad = event("PreToolUse", tool_name="AskUserQuestion", tool_use_id="q",
+                tool_input={"questions": [{"question": "q", "options": 3}]})
+    store = ws.Store()
+    store.apply = (lambda real: lambda one: (_ for _ in ()).throw(
+        RuntimeError("boom")) if one is bad else real(one))(store.apply)
+    later = [dict(event("SessionStart", ts=1001.0 + n), session_id=f"s{n}")
+             for n in range(3)]
+    store.fold([bad, *later])
+    assert sorted(store.sessions) == ["s0", "s1", "s2"]
+
+
+@pytest.mark.parametrize("options", [3, {"a": 1}, True, "abc"])
+def test_options_that_are_not_a_list_are_not_answered(ws, options):
+    """`read_ask` called `len()` and a slice on them, and raised inside the
+    fold. A question it cannot read whole is shown and not answered."""
+    ask = ws.read_ask({"tool_name": "AskUserQuestion", "tool_use_id": "q",
+                       "tool_input": {"questions": [
+                           {"question": "q", "options": options},
+                           {"question": "r", "options": [{"label": "a"}]}]}})
+    assert ask is not None and ask["answerable"] is False
+
+
 def test_a_question_is_kept_whole_enough_to_answer(ws):
     """The row said `AskUserQuestion {"questions": [{"question": "Approve …`
     -- the catch-all summary, clipped at eighty characters. Everything a

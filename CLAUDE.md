@@ -432,6 +432,10 @@ update the comment with its own text, and read it back.
   every wait at once, including a stdin that never closes — **and it stays
   armed over the logging on the way out.** `log` opens and writes a file, and
   the failure being logged may be that the filesystem is not answering.
+  **Armed again, not merely left**: an alarm fires once, so when the failure
+  *is* the timeout nothing was armed at all, and the status line cancelled
+  its alarm before it logged. Both arm `LOG_TIMEOUT` over the logging.
+  `test_a_failure_is_logged_under_a_deadline_even_after_a_timeout`.
 - **Every POST carries a token.** A cross-origin `fetch` may POST to a loopback
   port unasked, and the effect here is `tmux send-keys` into a live terminal.
   `allowed()` wants three things to agree: Host, an Origin that is ours when
@@ -694,6 +698,12 @@ update the comment with its own text, and read it back.
   string, so reachable in a tool response — makes a strict UTF-8 encoder
   refuse the whole line. Surrogates are replaced; a `SessionStart` lost that
   way costs the session its cwd, pane and pid for good.
+  **And a transcript carries them too**, where no hook replaces them:
+  `json.loads` turns the escape Claude Code wrote into a real one, and a
+  strict encode refused the whole answer -- the transcript answered 500 on
+  every request, and a push wrote an HTTP 500 into the middle of the stream.
+  Everything that leaves the daemon encodes with `"replace"`: `reply_json`
+  and `stream`. `test_a_lone_surrogate_in_a_transcript_breaks_nothing`.
   Never write the escape for one in source, not even in a comment: in a normal
   string it is the character, and Python 3.13 will not put a module holding one
   in a bytecode cache. CI was green on four versions and red on the fifth, over
@@ -856,6 +866,11 @@ update the comment with its own text, and read it back.
   again would otherwise look exactly right. **An empty piece is not the end
   of the file**: a line longer than `TAIL_CHUNK` gives nothing until one
   ends it, so the end is the size the file had when the read began.
+  **One event that raises costs only itself**: `Tail.lines` counts the
+  whole piece as read before it hands out a line, so an exception leaving
+  the fold threw away every event after it in that piece, on every start.
+  `Store.fold` catches per event and logs it.
+  `test_one_event_that_cannot_be_folded_costs_only_itself`.
   `test_a_big_log_is_read_a_piece_at_a_time` measures what is held with
   `tracemalloc`; `test_the_first_read_holds_a_week_of_sessions_not_all_of_them`
   and `test_git_is_asked_about_the_sessions_shown_and_no_others` hold the other
@@ -1419,7 +1434,11 @@ update the comment with its own text, and read it back.
   entry, not six edits. The daemon pushes the transcript and nothing else; it
   does not know which tab a browser is on, and that is why `Hub` stays small.
 - **One lock around the transcript readers.** Two `read_new` calls at once move
-  the byte offset twice, which looks like a shrinking file.
+  the byte offset twice, which looks like a shrinking file. **The push goes
+  out under it too**: sent after the lock let go, a request thread's block 2
+  could overtake the tick's block 1, and the page, which patches by index,
+  never drew block 1. `Hub.send` only queues, so nothing waits on a socket
+  there. `test_a_transcript_push_leaves_under_the_lock`.
 - **There is one find box, and it must leave before its parent is cleared.** On a
   split tab it lives inside the content box, so a tab that empties that box
   destroys it and `$("find")` is null — `showTab` then throws before `load` and

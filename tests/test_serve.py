@@ -155,6 +155,62 @@ def read_events(url, count, timeout=10, then=None):
     return got
 
 
+def test_a_lone_surrogate_in_a_transcript_breaks_nothing(ws, served,
+                                                        transcript_file):
+    """Claude Code cuts a string between the halves of an emoji and writes
+    the escape; json.loads makes it a real lone surrogate, and a strict
+    encode refused the whole answer. The transcript answered 500 on every
+    request, and a push wrote an HTTP 500 into the middle of the stream.
+    Build one with `chr`, never with its escape in source."""
+    daemon, base = served
+    cut = "cut here: " + chr(0xD83D)
+    path = transcript_file("s1", [
+        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
+         "message": {"role": "user", "content": cut}}])
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    with urllib.request.urlopen(f"{base}/api/session/s1/transcript",
+                                timeout=5) as answer:
+        assert answer.status == 200
+        assert json.loads(answer.read())["blocks"]
+
+    def later():
+        with path.open("a") as out:
+            out.write(json.dumps(
+                {"type": "user", "timestamp": "2026-09-18T14:03:00.000Z",
+                 "message": {"role": "user", "content": "again " + chr(0xD83D)}})
+                + "\n")
+        daemon.tick()
+
+    got = read_events(f"{base}/api/events?watch=s1", 2, then=later)
+    kinds = [kind for kind, _ in got]
+    assert "transcript" in kinds, got
+
+
+def test_a_transcript_push_leaves_under_the_lock(ws, served, transcript_file,
+                                                 monkeypatch):
+    """A push made after the lock let go could overtake one read before it,
+    and the page, which patches by index, then never drew the earlier
+    block. Pushed under the lock, the order sent is the order read."""
+    daemon, base = served
+    path = transcript_file("s1", [
+        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
+         "message": {"role": "user", "content": "go"}}])
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    held = []
+    real = daemon.hub.send
+
+    def spy(kind, data, session_id=""):
+        if kind == "transcript":
+            held.append(daemon.lock.locked())
+        real(kind, data, session_id=session_id)
+
+    monkeypatch.setattr(daemon.hub, "send", spy)
+    daemon.read_transcript("s1")
+    assert held == [True]
+
+
 def test_the_stream_opens_with_the_current_sessions(ws, served):
     daemon, base = served
     ws.append_event(event("UserPromptSubmit", prompt="go"))
