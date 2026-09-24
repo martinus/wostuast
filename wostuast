@@ -766,6 +766,10 @@ class Session:
     #: state over and over and only a change is a change.
     state_since: float = 0.0
     last_ts: float = 0.0
+    #: When the session began: its first event. The Session tab's "started"
+    #: row read `since`, the last event, and said "0s ago" for a session two
+    #: hours old that had just been sent a prompt.
+    started: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
     last_tool: str = ""
@@ -792,6 +796,10 @@ class Session:
     end_reason: str = ""
     last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
+    #: Whether git has answered for this session at all. Until it has, the
+    #: facts above are the empty default, and the Session tab said "not in a
+    #: repository" and "changed files: none" as facts.
+    git_known: bool = False
     status: Status = field(default_factory=Status)
 
     #: A name the reader gave this session on the page. It wins over the one
@@ -1152,6 +1160,8 @@ class Store:
         fresh = bool(ts) and ts > session.last_ts
         if ts > session.last_ts:
             session.last_ts = ts
+        if ts and (not session.started or ts < session.started):
+            session.started = ts
         for key in ("cwd", "transcript_path"):
             value = event.get(key)
             if value:
@@ -1179,7 +1189,11 @@ class Store:
         # new one -- `_on_pre_tool` writes "working" on every tool call -- and
         # moving this each time would put the list back to sorting by the last
         # event, which is what it must not do.
-        if session.state != was:
+        #
+        # And once, for a session nothing has stamped yet: `SessionStart` is
+        # done to done, so `settled` fell back to the last event, and an idle
+        # notification moved a row that had not changed at all.
+        if session.state != was or not session.state_since:
             session.state_since = ts or session.last_ts
 
         if fresh and name:
@@ -1326,6 +1340,7 @@ class Store:
             one = facts.get(session.cwd)
             if one is not None and not one.failed:
                 session.git = one
+                session.git_known = True
 
     def set_limit(self, session_id: str, limit: float) -> float:
         """Set what a session may spend, or take the limit away with nought.
@@ -1523,6 +1538,8 @@ def row(session: Session) -> dict[str, Any]:
         "last_tool": session.last_tool,
         "last_prompt": session.last_prompt,
         "since": round(session.since, 3),
+        "started": round(session.started, 3),
+        "git_known": session.git_known,
         "name": session.mine or session.status.name,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -2575,6 +2592,7 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
     facts = git_facts_many([session.cwd for session in sessions])
     for session in sessions:
         session.git = facts.get(session.cwd, GitFacts())
+        session.git_known = not session.git.failed
 
 
 # --- files and diffs: what the worktree holds --------------------------------
@@ -7664,9 +7682,15 @@ function putFacts(pane, s) {
   row("state", s.state_word, "word " + s.state);
   row("worktree", s.cwd);
   row("repository", s.repo);
-  row("branch", s.branch || "not in a repository");
-  if (s.ahead || s.behind) row("against upstream", "↑" + s.ahead + " ↓" + s.behind);
-  row("changed files", s.dirty ? s.touched_files : "none");
+  // Only what git said. Before it has answered the facts are the empty
+  // default, and "not in a repository" and "none" were drawn over them.
+  if (s.git_known) {
+    row("branch", s.branch || "not in a repository");
+    if (s.ahead || s.behind) row("against upstream", "↑" + s.ahead + " ↓" + s.behind);
+    row("changed files", s.dirty ? s.touched_files : "none");
+  } else {
+    row("branch", "git has not answered yet");
+  }
   row("model", s.model);
   if (hasContext(s)) {
     put(list, "dt", null, "context used");
@@ -7694,7 +7718,7 @@ function putFacts(pane, s) {
       put(cell, "span", "aside", "resets " + whenOf(one.resets_at));
     }
   }
-  row("started", whenOf(s.since) + "  ·  " + ago(s.since) + " ago");
+  if (s.started) row("started", whenOf(s.started) + "  ·  " + ago(s.started) + " ago");
   row("session id", s.id);
   // The pane, and the one thing this page can do with it. `jump` used to sit
   // in the bar above every tab; it belongs beside the pane it is about.
@@ -8944,10 +8968,11 @@ function notifyAbout(sessions) {
   const live = new Set(sessions.map((one) => one.id));
   for (const id of [...before.keys()]) if (!live.has(id)) before.delete(id);
 
-  if (!on) {
-    for (const id of now) waiting.add(id);   // do not shout about a backlog later
-    return;
-  }
+  // Do not shout about a backlog later: an amber row that nobody was told
+  // about -- alerts not allowed, or this one switched off -- is not news
+  // when the switch comes on.
+  if (!on || !want.needs) for (const id of now) waiting.add(id);
+  if (!on) return;
   for (const session of sessions) {
     if (want.needs && session.state === "needs_you" && !waiting.has(session.id)) {
       waiting.add(session.id);
@@ -8970,6 +8995,10 @@ function tellAbout(session, title, body) {
     const note = new Notification(title, {
       body: body,
       tag: "wostuast-" + session.id,
+      // One tag per session, so a second alert replaces the first -- and a
+      // replacement makes no sound and shows no banner unless it says so.
+      // An agent that stopped on a second question went unsaid.
+      renotify: true,
     });
     note.onclick = () => { window.focus(); choose(session.id); note.close(); };
   } catch (error) {
@@ -13245,7 +13274,7 @@ function resubscribe() {
     drawSessions();
     drawHeader();
     state.live = "live";
-    if (!state.find) paintLive();
+    paintLive();
   });
 
   stream.addEventListener("transcript", (message) => {
@@ -13296,7 +13325,7 @@ function resubscribe() {
   stream.onerror = () => {
     document.body.classList.add("offline");
     state.live = "reconnecting";
-    if (!state.find) paintLive();
+    paintLive();
   };
 }
 

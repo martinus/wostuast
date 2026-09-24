@@ -727,3 +727,74 @@ def test_a_session_with_no_rate_limits_gets_no_rows_for_them(ws, served):
             assert "spent" not in said, said
         finally:
             browser.close()
+
+
+def test_every_alert_makes_itself_heard(page_at):
+    """One tag per session, so a second alert replaces the first -- and with
+    `renotify` left false a replacement makes no sound and shows no banner.
+    An agent that stopped on a second question was never said."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            got = page.evaluate("""() => {
+              let options = null;
+              window.Notification = function (title, given) { options = given; };
+              tellAbout({ id: 's1', label: 'x' }, 'x needs you', 'why');
+              return options;
+            }""")
+            assert got["tag"] == "wostuast-s1" and got["renotify"] is True, got
+        finally:
+            browser.close()
+
+
+def test_turning_needs_you_on_brings_no_backlog(ws, page_at):
+    """`waiting` was filled only while alerts were not allowed at all, not
+    while this one switch was off -- so ticking it again said every session
+    that had gone amber meanwhile, as though it had just happened."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            page.click("#bell")
+            page.click("#alertneeds")
+            page.wait_for_function("!document.getElementById('alertneeds').checked")
+            now = time.time()
+            ws.append_event(conftest.event(
+                "PermissionRequest", tool_name="Bash",
+                tool_input={"command": "rm -rf build"}, ts=now))
+            daemon.tick()
+            page.wait_for_function(
+                "() => state.sessions[0].state === 'needs_you'")
+            page.click("#alertneeds")
+            page.wait_for_function("document.getElementById('alertneeds').checked")
+            # A pass that really happens: a second session changes the list.
+            ws.append_event(conftest.event("SessionStart", sid="s2", ts=now + 1,
+                                           pane="%9"))
+            daemon.tick()
+            page.wait_for_function("state.sessions.length === 2")
+            assert page.evaluate("window.__told.length") == 0
+        finally:
+            browser.close()
+
+
+def test_the_session_tab_does_not_say_what_git_has_not_said(page_at):
+    """Before git answered, "not in a repository" and "changed files: none"
+    were drawn as facts."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            said = page.evaluate("""() => {
+              const box = document.createElement('div');
+              putFacts(box, { ...state.sessions[0], git_known: false,
+                              branch: '', dirty: false, repo: '' });
+              return box.innerText;
+            }""")
+            assert "not in a repository" not in said, said
+            assert "none" not in said, said
+            assert "git has not answered" in said, said
+        finally:
+            browser.close()

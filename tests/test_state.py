@@ -1382,3 +1382,30 @@ def test_one_event_from_a_wrong_clock_does_not_forget_everything(ws):
                 event("SessionStart", session_id="ahead", ts=now + 365 * DAY),
                 event("Stop", session_id="ahead", ts=now + 365 * DAY + 1)])
     assert "today" in store.sessions
+
+
+def test_a_session_that_never_changed_state_keeps_its_place(ws):
+    """`settled` fell back to the last event while nothing had stamped
+    `state_since`, and `SessionStart` is done to done, which stamps nothing.
+    So an idle notification moved a row that had not changed at all."""
+    store = ws.Store()
+    store.apply(dict(event("SessionStart", ts=1.0), session_id="a"))
+    store.apply(dict(event("SessionStart", ts=10.0), session_id="b"))
+    order = lambda: [one.session_id for one in ws.sort_sessions(
+        list(store.sessions.values()))]
+    assert order() == ["b", "a"]
+    store.apply(dict(event("Notification", ts=61.0,
+                           notification_type="idle_prompt",
+                           message="Claude is waiting for your input"),
+                     session_id="a"))
+    assert order() == ["b", "a"]
+    assert store.sessions["a"].settled == 1.0
+
+
+def test_started_is_when_the_session_began(ws):
+    """The Session tab's "started" row read `since`, the last event -- so it
+    said "0s ago" for a session two hours old that had just been sent a
+    prompt."""
+    session = fold(ws, event("SessionStart", ts=1000.0),
+                   event("UserPromptSubmit", prompt="go", ts=8200.0))
+    assert ws.row(session)["started"] == 1000.0
