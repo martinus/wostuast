@@ -1824,9 +1824,15 @@ def mark_dead(
 
 def _bury(session: Session, moment: float, why: str) -> None:
     """Dead, and stamped with when. Nothing reports this state, so it is the
-    one place outside `Store.apply` that `state_since` has to move."""
+    one place outside `Store.apply` that `state_since` has to move.
+
+    And it clears the attention, like every other change of state. It did
+    not, so an agent that died on its question kept the question, with its
+    buttons, and the answer's keys went into whatever the pane held next --
+    a shell, or a new agent, where `2 1 Enter` submits "21"."""
     if session.state != "dead":
         session.state_since = moment
+        _clear_attention(session)
     session.state = "dead"
     if not session.end_reason:
         session.end_reason = why
@@ -4702,6 +4708,13 @@ class Serving:
         # read a file called `a.png` as something else entirely, on the origin
         # that holds the token.
         self.send_header("X-Content-Type-Options", "nosniff")
+        # No page of ours inside another page. Framed by another origin, this
+        # page is still our origin, with our token, so every check a POST
+        # passes it passes -- and an invisible frame over a decoy turned two
+        # clicks into an Escape in an agent's pane. The token and the Origin
+        # check stop another site's requests; only this stops its clicks.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         # No Access-Control-Allow-Origin, ever. Another site may send a
         # request here, but without this header it cannot read the answer.
         self.send_header("Cache-Control", cache)
@@ -4948,6 +4961,13 @@ class Serving:
         session = self.in_tmux(session_id)
         if session is None:
             return
+        # Its pane has moved on: the agent that asked is gone, and the keys
+        # would land in whatever runs there now. `_bury` clears the question
+        # too; this is the half that holds whatever a row still carries.
+        if session.state in GONE_STATES:
+            self.reply_json({"id": session_id,
+                             "error": "this session is over"}, 409)
+            return
         ask = session.asking
         # An ask with no id could be matched by anything that sends none.
         if not ask or not ask["id"] or body.get("ask") != ask["id"]:
@@ -5004,7 +5024,10 @@ class Serving:
             return
         text = body.get("text")
         text = text if isinstance(text, str) else ""
-        if not text.strip():
+        # What `tmux_send` would type, not what arrived: it takes the controls
+        # out, and a paste of nothing else was refused as "tmux did not
+        # answer", although tmux was never asked.
+        if not CONTROL_CHARS.sub("", text).strip():
             self.reply_json({"id": session_id,
                              "error": "there is nothing to send"}, 400)
             return
@@ -8316,6 +8339,7 @@ async function submitAsk(id, ask, box) {
     send.disabled = false;
     return;
   }
+  said(answer);              // an earlier refusal is no longer news
   note("pressed " + (answer.keys || []).join(" "));
 }
 
@@ -12304,13 +12328,31 @@ function goToComment(anchor) {
   showTab("files");
 }
 
+// The sessions a send is on its way to. `tmux send-keys` takes long enough to
+// press twice in: a double-click on the review's send, or a second Enter in
+// the send box, typed the whole text into the pane a second time -- and on
+// two HTTP threads the text and the Enter of each can interleave into one
+// prompt. `submitAsk` has disabled its button while it waits from the start.
+const sending = new Set();
+
 async function submitReview() {
   const id = state.chosen;
-  const answer = await tell(id, "send", { text: reviewText() });
+  if (sending.has(id)) return;
+  sending.add(id);
+  let answer;
+  try {
+    answer = await tell(id, "send", { text: reviewText() });
+  } finally {
+    sending.delete(id);
+  }
   if (!answer || answer.error) {
     said({ error: (answer && answer.error) || "it was not sent" });
     return;
   }
+  // It worked, so an earlier refusal is no longer news. Without this the
+  // note faded and the old "that is too many bytes" came back over a review
+  // that had gone through.
+  said(answer);
   // `tmux send-keys` takes long enough to press `j` in, and everything below
   // works on whatever is current: it wiped the new session's draft and
   // removed its key from storage. The review that was sent is the one to
@@ -12803,6 +12845,15 @@ function nextNeedsYou() {
   choose(waiting[(at + 1) % waiting.length].id);
 }
 
+// How the focus got where it is: Tab moves it by keyboard, a pointer by
+// hand. Read by the keys below, to leave Enter to a button a keyboard
+// reached. Capture, so this is known before anything acts on the press.
+let focusedByKey = false;
+document.addEventListener("pointerdown", () => { focusedByKey = false; }, true);
+document.addEventListener("keydown", (press) => {
+  if (press.key === "Tab") focusedByKey = true;
+}, true);
+
 document.addEventListener("keydown", (press) => {
   const help = $("help");
   if (press.key === "Escape") {
@@ -12817,6 +12868,16 @@ document.addEventListener("keydown", (press) => {
   // A `select` is typing too: a letter picks the option that starts with it,
   // and the Diff tab's commit picker is one.
   if (tag === "input" || tag === "textarea" || tag === "select") return;
+  // A control reached with the keyboard keeps its own Enter: that is how a
+  // keyboard presses a button, and jumping instead left nothing on the page
+  // that Enter could press. After a click the focus sits on the button too,
+  // and there Enter still jumps, as it always has. `:focus-visible` cannot
+  // tell the two apart here: a key pressed on a clicked button turns it on
+  // before this handler runs.
+  if (press.key === "Enter" && focusedByKey
+      && press.target.closest && press.target.closest("button, a, summary")) {
+    return;
+  }
   switch (press.key) {
     // Not on a tab that has no find box. This changes no behaviour -- a
     // browser will not focus an element it is not rendering, so the key was
@@ -12889,12 +12950,25 @@ async function jumpToPane() {
 async function sendTyped() {
   const box = $("say");
   const text = box.value;
-  if (!state.chosen || !text.trim()) return;
-  const answer = await tell(state.chosen, "send", { text });
+  const id = state.chosen;
+  if (!id || !text.trim() || sending.has(id)) return;
+  sending.add(id);
+  // Out of the box the moment it goes, and back in front of whatever was
+  // typed since if it did not. Clearing on the answer took the words typed
+  // while the send was on its way, which had gone nowhere; and a box still
+  // holding the sent text, edited meanwhile, sent it a second time.
+  box.value = "";
+  fitSay();                    // back to one line, whatever it had grown to
+  let answer;
+  try {
+    answer = await tell(id, "send", { text });
+  } finally {
+    sending.delete(id);
+  }
   said(answer);
-  if (answer && answer.done) {
-    box.value = "";
-    fitSay();                  // back to one line, whatever it had grown to
+  if (!answer || !answer.done) {
+    box.value = text + box.value;
+    fitSay();
   }
 }
 

@@ -550,7 +550,13 @@ def test_a_restarted_daemon_says_so_and_keeps_saying_it(ws, in_pane):
         try:
             page.fill("#say", "before the restart")
             page.press("#say", "Enter")
-            page.wait_for_function("document.getElementById('say').value === ''")
+            # The box empties as the text goes, so an empty box is not the
+            # answer. The keys reaching the pane, and the send's lock let
+            # go, are.
+            deadline = time.time() + 15
+            while not any("-l" in one for one in seen) and time.time() < deadline:
+                time.sleep(0.05)
+            page.wait_for_function("sending.size === 0")
 
             daemon.token = "the token a restarted serve would make"
 
@@ -702,6 +708,105 @@ def test_shift_and_enter_writes_a_second_line(in_pane):
             page.wait_for_timeout(500)
             assert seen[0][-1] == ("\x1b[200~first line\nsecond line\x1b[201~")
             assert page.input_value("#say") == ""
+        finally:
+            browser.close()
+
+
+def test_enter_twice_sends_once_and_keeps_what_came_after(in_pane):
+    """A second Enter before the daemon answered typed the prompt into the
+    pane twice, and the answer then cleared whatever had been typed since,
+    which had gone nowhere."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.evaluate("""() => {
+              const real = window.fetch;
+              window.fetch = (url, opts) => String(url).endsWith("/send")
+                ? new Promise((done) => setTimeout(
+                    () => done(real(url, opts)), 3000))
+                : real(url, opts);
+            }""")
+            page.click("#say")
+            page.keyboard.type("run the tests")
+            page.keyboard.press("Enter")
+            page.keyboard.press("Enter")
+            # New words and a third Enter while the first send is on its way:
+            # two sends at once can interleave their text and Enter commands
+            # into one prompt, so this one waits in the box.
+            page.keyboard.type(" and then")
+            page.keyboard.press("Enter")
+            page.wait_for_function(
+                "document.getElementById('say').value === ' and then'")
+
+            def typed():
+                return [one for one in seen if "-l" in one]
+
+            # Wait for the send to land, then long enough for a second one.
+            deadline = time.time() + 15
+            while not typed() and time.time() < deadline:
+                time.sleep(0.05)
+            page.wait_for_timeout(600)
+            assert typed() == [["tmux", "send-keys", "-t", "%7", "-l", "--",
+                                "run the tests"]], seen
+        finally:
+            browser.close()
+
+
+def test_a_refused_send_comes_back_in_front_of_what_was_typed_since(
+        ws, in_pane, monkeypatch):
+    """The text leaves the box as it goes. When tmux refuses it, it comes
+    back, and what was typed while it was on its way stays after it."""
+    daemon, base, seen = in_pane
+    monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.evaluate("""() => {
+              const real = window.fetch;
+              window.fetch = (url, opts) => String(url).endsWith("/send")
+                ? new Promise((done) => setTimeout(
+                    () => done(real(url, opts)), 400))
+                : real(url, opts);
+            }""")
+            page.click("#say")
+            page.keyboard.type("please work")
+            page.keyboard.press("Enter")
+            page.keyboard.type(" and more")
+            page.wait_for_function("document.getElementById('say').value"
+                                   " === 'please work and more'")
+        finally:
+            browser.close()
+
+
+def test_enter_on_a_button_reached_by_keyboard_presses_it(in_pane):
+    """Enter jumped to the pane from wherever the focus was, so a keyboard
+    could press nothing on the page. After a click it still jumps: the click
+    leaves the focus on the button, and Enter then is the jump key."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.focus(".tab[data-tab='review']")
+            page.keyboard.press("Shift+Tab")
+            page.keyboard.press("Tab")
+            assert page.evaluate(
+                "document.activeElement.matches('.tab[data-tab=review]')")
+            page.keyboard.press("Enter")
+            page.wait_for_function("state.tab === 'review'")
+            page.wait_for_timeout(300)
+            assert not [one for one in seen if "select-window" in one], seen
+
+            # A click leaves the focus on the tab it pressed, but not
+            # `:focus-visible`: Enter there is still the jump key.
+            page.click(".tab[data-tab='files']")
+            assert page.evaluate("document.activeElement.matches('.tab')")
+            page.keyboard.press("Enter")
+            deadline = time.time() + 15
+            while (["tmux", "select-window", "-t", "%7"] not in seen
+                   and time.time() < deadline):
+                time.sleep(0.05)
+            assert ["tmux", "select-window", "-t", "%7"] in seen
         finally:
             browser.close()
 
