@@ -10495,8 +10495,10 @@ function drawRow(list, row) {
     // is a fact about this folder, and the question it answers -- "where is
     // the rest of it?" -- is asked here.
     put(button, "span", "toobig", "not listed");
+    // It promised "opening one in it still works", which nothing on the
+    // page could do: no name in it is sent, so none can be found or kept.
     button.title = row.path + " holds more than " + state.files.ignoredMax
-                 + " files, so it is left out. Opening one in it still works.";
+                 + " files, so it is left out.";
   }
   button.addEventListener("click", () => {
     if (!dir) { chooseFile(row.path); return; }
@@ -10592,13 +10594,18 @@ function heightOf(tall, n) {
 
 // Which line stands `y` pixels down. The plain rows are arithmetic; only the
 // few that carry a comment have to be counted one at a time.
+//
+// A `y` inside a comment's box is that comment's line. The box's pixels were
+// counted as rows, so a reader scrolled into a comment taller than eight rows
+// got a window that began past what was on screen, and saw nothing at all.
 function lineAt(tall, y) {
   let line = 0;
   let top = 0;
   for (const [where, extra] of tall) {
-    const step = (where - line + 1) * CODE_H + extra;
-    if (top + step > y) break;
-    top += step;
+    const rows = (where - line + 1) * CODE_H;
+    if (top + rows > y) break;
+    if (top + rows + extra > y) return where;
+    top += rows + extra;
     line = where + 1;
   }
   return line + Math.max(0, Math.floor((y - top) / CODE_H));
@@ -10685,8 +10692,15 @@ function drawFiles(box) {
   goToInList(list);
 
   if (holdingText(box)) return;
-  if (!fresh(box, "bodyKey", state.files.path + "\n" + state.files.mtime
-                           + "\n" + state.files.asText)) return;
+  // The session is part of it. Two sessions in one worktree land on the
+  // same file with the same mtime, and without it the second kept the
+  // first one's `.filescroll` -- whose listener writes nothing once another
+  // session is chosen, so its place was never kept and a windowed file
+  // never filled.
+  if (!fresh(box, "bodyKey", state.chosen + "\n" + state.files.path + "\n"
+                           + state.files.mtime + "\n" + state.files.asText)) {
+    return;
+  }
   // Where the reader will be. A line that was asked for wins over the place
   // they were in: they asked to be somewhere else.
   const wanted = state.files.goToLine;
@@ -13039,7 +13053,13 @@ async function loadFiles() {
   const body = await ask(want, "files",
                          "?have=" + encodeURIComponent(state.files.tag));
   if (!body || state.chosen !== want) return;
-  state.files.tag = body.tag || "";
+  // A listing git failed on is short or empty, and taken as fact it closed
+  // the open file, lost its place and a comment half written on it. The
+  // names held stand until git answers; only a listing that did not fail
+  // may say a file has gone. With nothing held yet, what came is better
+  // than nothing.
+  const stands = body.failed && state.files.names.length > 0;
+  if (!stands) state.files.tag = body.tag || "";
   state.files.changed = new Map(Object.entries(body.changed || {}));
   state.files.total = body.total || 0;
   state.files.cut = !!body.cut;
@@ -13054,11 +13074,12 @@ async function loadFiles() {
   // No `names` means the tag we sent still stands, so the ones we hold do too.
   // NUL separates them: it is the only character a file name cannot hold, and
   // an empty listing splits to one empty string rather than to none.
-  if (body.names !== undefined) {
+  const named = body.names !== undefined && !stands;
+  if (named) {
     state.files.names = body.names ? body.names.split("\0") : [];
     state.files.known = new Set(state.files.names);   // built once, asked every poll
   }
-  if (body.names !== undefined || moved) {
+  if (named || moved) {
     state.files.tree = buildTree(state.files.names, state.files.skipped);
     // Everything the reader can go to, files and the directories holding
     // them, built here for the same reason the tree is: fifty thousand names
@@ -13067,7 +13088,8 @@ async function loadFiles() {
       [...state.files.tree.keys()].filter(Boolean));
   }
   state.files.marked = dirsWithChanges(state.files.changed);
-  if (!state.files.known.has(state.files.path)) {
+  if (!state.files.known.has(state.files.path)
+      && !(body.failed && state.files.path)) {
     // The first file the reader will see, from the one place that decides
     // what that order is. It runs when the open file has gone, not per poll.
     const first = listRows().find((row) => !row.dir);
@@ -13084,8 +13106,14 @@ async function loadFiles() {
     if (!body || state.chosen !== want || state.files.path !== wanted) return;
     // Only a file whose mtime moved is drawn again, so the tab keeps your
     // place in a file the agent has not touched.
-    if (body.mtime !== state.files.mtime) {
-      state.files.text = body.text || body.missing || "";
+    //
+    // A `missing` answer is not the file's text. It is what the route says
+    // when git did not list the name -- which a timed-out `ls-files` says
+    // too -- and it was drawn as line 1 of the file, with a `+` that would
+    // anchor a comment to the real line 1. What is shown stays; a file that
+    // really went is taken away by the listing.
+    if (!body.missing && body.mtime !== state.files.mtime) {
+      state.files.text = body.text || "";
       state.files.binary = !!body.binary;
       state.files.shown = body.shown || "";
       state.files.oversize = !!body.oversize;

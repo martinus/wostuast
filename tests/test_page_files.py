@@ -61,6 +61,11 @@ def test_a_generated_directory_is_in_the_tree_and_its_build_root_is_not(
             assert page.locator(
                 ".filelist button:has-text('_build_root_c2') .toobig"
             ).inner_text() == "not listed"
+            # And it promises nothing the page cannot do: no name in it can
+            # be found or kept open, so "opening one still works" was false.
+            title = page.locator(
+                ".filelist button:has-text('_build_root_c2')").get_attribute("title")
+            assert "still works" not in title, title
             # And it does not open onto nothing.
             page.click(".filelist button:has-text('_build_root_c2')")
             assert page.locator(".filelist button:has-text('o1.o')").count() == 0
@@ -1624,5 +1629,111 @@ def test_a_scroll_left_over_from_another_session_is_not_its_place(two_repos):
               return state.files.down;
             }""")
             assert seen == 77, seen
+        finally:
+            browser.close()
+
+
+def test_a_listing_git_failed_on_keeps_the_open_file(ws, repo_page, monkeypatch):
+    """`ls-files` timing out gave a short or empty listing with `failed` set,
+    and the page took it as fact: the open file was not in it, so it was
+    closed, its place went, and a comment half written on it went with the
+    rebuild. When git answered again the first file of the tree opened."""
+    repo, path = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            open_file(page, "code.py")
+            page.evaluate("state.files.down = 7")
+            real = ws.git_names
+            monkeypatch.setattr(ws, "git_names", lambda *a, **k: None)
+            # The daemon keeps a listing for `LIST_FRESH` and reads behind it.
+            page.wait_for_function("state.files.failed === true", timeout=20000)
+            assert page.evaluate("[state.files.path, state.files.down]") == [
+                "code.py", 7]
+            assert page.evaluate("state.files.known.has('code.py')")
+            # A session chosen again holds its open file and no names yet --
+            # `usePlace` puts back the choice, never the listing. A first
+            # listing that failed must not close it either.
+            page.evaluate("""() => { state.files.names = [];
+                                     state.files.known = new Set();
+                                     state.files.tag = ''; }""")
+            page.wait_for_function("state.files.tag !== ''", timeout=20000)
+            assert page.evaluate("state.files.path") == "code.py"
+            monkeypatch.setattr(ws, "git_names", real)
+            page.wait_for_function("state.files.failed === false", timeout=20000)
+            assert page.evaluate("state.files.path") == "code.py"
+        finally:
+            browser.close()
+
+
+def test_a_file_read_git_failed_on_is_not_drawn_as_its_text(ws, repo_page,
+                                                             monkeypatch):
+    """`is_listed` timing out made the route say "that file is not in this
+    worktree", and the page drew the sentence as line 1 of the file, with a
+    `+` beside it that would anchor a comment to the real line 1."""
+    repo, path = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            open_file(page, "code.py")
+            asked = []
+            page.on("request", lambda one: asked.append(one.url)
+                    if "/file?" in one.url else None)
+            monkeypatch.setattr(ws, "is_listed", lambda *a, **k: False)
+            for _ in range(300):                 # two answers, so one refused
+                if len(asked) >= 2:
+                    break
+                page.wait_for_timeout(50)
+            page.wait_for_timeout(300)
+            shown = page.locator(".filebody .code").inner_text()
+            assert "not in this worktree" not in shown, shown
+            assert "print(1)" in shown, shown
+        finally:
+            browser.close()
+
+
+def test_a_tall_comment_in_a_windowed_file_is_a_line_not_rows(page_at):
+    """`lineAt` counted the pixels of a comment's box as rows, so a reader
+    scrolled into a comment taller than eight rows got a window that started
+    past what was on screen: nothing at all was drawn there."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            got = page.evaluate("""() => {
+              const tall = [[100, 1138]];
+              const into = 101 * CODE_H + 500;      // half way down the box
+              return [lineAt(tall, into), lineAt(tall, 101 * CODE_H + 1138 + 2),
+                      lineAt(tall, 50 * CODE_H + 3)];
+            }""")
+            assert got == [100, 101, 50], got
+        finally:
+            browser.close()
+
+
+def test_two_sessions_on_one_file_each_get_their_own_scroller(repo_page, served,
+                                                              ws):
+    """The body's redraw key held the path and the mtime and no session, so a
+    second session on the same file kept the first one's `.filescroll` --
+    whose listener writes nothing once another session is chosen. Its place
+    was never kept, and a windowed file never filled: blank space."""
+    repo, path = repo_page
+    daemon, _ = served
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(repo),
+                                   ts=time.time()))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s1')")
+            open_file(page, "code.py")
+            rebuilt = page.evaluate("""() => {
+              const before = document.querySelector('.filescroll');
+              state.chosen = 's2';
+              draw();
+              return document.querySelector('.filescroll') !== before;
+            }""")
+            assert rebuilt
         finally:
             browser.close()
