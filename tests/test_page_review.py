@@ -1270,3 +1270,37 @@ def test_the_box_keeps_its_own_buttons_under_the_field_on_the_right(repo_page):
             assert abs(seen["gap"]) < 4, seen
         finally:
             browser.close()
+
+
+def test_a_second_window_takes_up_what_the_first_one_kept(page_at):
+    """A draft lives in this browser, and two windows on one session each
+    held it in memory with nothing to tell one about the other. A review
+    sent from one came back on the other's next keystroke, which wrote its
+    stale copy -- sent comments and all -- over the storage the first had
+    just cleared."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, first = open_page(play, path)
+        try:
+            second = first.context.new_page()
+            second.goto(path, wait_until="domcontentloaded")
+            second.wait_for_selector(".row")
+            second.wait_for_function("state.chosen === 's1'")
+            first.evaluate("""() => {
+              state.review.comments.push(
+                { anchor: 'code.py\\n1', note: "first window's note", quote: 'x' });
+              keepReview();
+            }""")
+            second.wait_for_function("state.review.comments.length === 1")
+            first.evaluate("() => { state.review = blankReview(); keepReview(); }")
+            second.wait_for_function("state.review.comments.length === 0")
+            # And its next keystroke writes nothing that was sent.
+            second.evaluate("() => { state.review.task = 'x'; keepReview(); }")
+            # Storage reaches another window a moment later, not at once.
+            first.wait_for_function(
+                "localStorage.getItem(REVIEW_KEY + 's1') !== null")
+            kept = first.evaluate(
+                "JSON.parse(localStorage.getItem(REVIEW_KEY + 's1'))")
+            assert kept["comments"] == [], kept
+        finally:
+            browser.close()

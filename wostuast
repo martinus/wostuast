@@ -12383,6 +12383,22 @@ function keepReview() {
   } catch (error) { }      // a private window, or the quota; the page goes on
 }
 
+// Another window of this browser kept, or sent, this session's review. Each
+// window holds the draft in memory, and nothing told one about the other: a
+// review sent from one came back on the other's next keystroke, which wrote
+// its stale copy -- sent comments and all -- over the storage the first had
+// just cleared, ready to be sent a second time. So a change there is taken
+// up here. The tab is drawn again only when nothing is being typed into it,
+// because a rebuild under the hand takes what is typed.
+window.addEventListener("storage", (event) => {
+  if (!state.chosen || event.key !== REVIEW_KEY + state.chosen) return;
+  recallReview(state.chosen);
+  drawReviewCount();
+  const typing = document.activeElement
+    && document.activeElement.matches("textarea, input");
+  if (state.tab === "review" && !typing) draw();
+});
+
 function recallReview(id) {
   state.review = blankReview();
   let held = null;
