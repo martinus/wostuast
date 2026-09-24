@@ -345,7 +345,12 @@ def write_atomic(path: Path, text: str, private: bool = False,
     its own.
 
     `mode` keeps a file's own permissions: a new file takes the umask, which
-    for `settings.json` meant 0600 came back 0644. `sync` puts the bytes and
+    for `settings.json` meant 0600 came back 0644. **The temporary is made
+    0600 and widened after**, never made at the umask and narrowed after:
+    written first and chmodded second, it stood at 0644 holding the whole of
+    `settings.json`, API keys and all, in a directory that is not private --
+    and stayed that way if the process died in between. `open_private` is
+    the same rule for an append. `sync` puts the bytes and
     then the rename on the disk, which costs a wait — the status line writes on
     every redraw, so it is asked for rather than given.
     """
@@ -358,11 +363,17 @@ def write_atomic(path: Path, text: str, private: bool = False,
     temporary = path.with_name(
         f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        temporary.write_text(text, encoding="utf-8")
-        if private:
-            temporary.chmod(0o600)
-        elif mode is not None:
-            temporary.chmod(mode)
+        # A stale temporary of this name, left by a writer that died, keeps
+        # its own mode through `O_TRUNC`; gone first, the mode below holds.
+        temporary.unlink(missing_ok=True)
+        narrow = private or mode is not None
+        with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                               0o600 if narrow else 0o666),
+                       "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if narrow:
+            # Exact, whatever the umask took away at creation.
+            temporary.chmod(0o600 if private else mode)
         if sync:
             with open(temporary, "rb") as handle:
                 os.fsync(handle.fileno())
@@ -4317,6 +4328,10 @@ def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: 
     import stat
 
     text = json.dumps(data, indent=indent, ensure_ascii=False)
+    # A link is written through, not over. Dotfile managers keep this file as
+    # a link into a repository, and the rename landed on the link itself: it
+    # came back a plain file, and the repository never had the hooks.
+    path = path.resolve()
     try:
         mode: int | None = stat.S_IMODE(path.stat().st_mode)
     except OSError:

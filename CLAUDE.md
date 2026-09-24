@@ -39,6 +39,7 @@ after the tests go red.
 | About to touch | Read |
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** — a feature that needs a non-goal is left out |
+| `install`, `save_settings`, `write_atomic` | Safety: `settings.json` is the user's file, not ours |
 | `cmd_hook`, anything on the hook path | Safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | **Do not guess payload fields**, and `tests/fixtures/README.md` |
 | `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | **Decisions without a scar behind them** |
@@ -728,7 +729,20 @@ update the comment with its own text, and read it back.
   umask, so 0600 came back 0644, on a file that can hold API keys), and the
   write is fsynced, file and directory — Claude Code will not start without
   it. `uninstall` leaves a group it took nothing out of exactly as it was,
-  including an empty one the user put there.
+  including an empty one the user put there. **A link is written through,
+  not over**: dotfile managers keep this file as a link into a repository,
+  and the rename replaced the link with a plain file, so the repository
+  never had the hooks and its later edits never reached Claude Code.
+  `save_settings` resolves the path first, so the temporary and the rename
+  are beside the real file. **And the temporary is 0600 from the moment it
+  exists**: `write_atomic` wrote it at the umask and narrowed it after, so
+  a 0644 copy of a file holding API keys stood in `~/.claude`, which is not
+  private -- for good, if `install` died in between. The rule
+  `open_private` keeps for an append; a stale temporary of the same name is
+  unlinked first, because `O_TRUNC` would keep its mode.
+  `test_a_settings_file_that_is_a_link_stays_a_link`,
+  `test_the_settings_are_never_on_disk_where_others_can_read_them`,
+  `test_a_temporary_left_by_a_writer_that_died_is_not_trusted`.
 - **Anything printed to a terminal is scrubbed, like anything sent to one.**
   `ls`'s last column is a `Notification` message or a tool summary — text an
   agent wrote. `table` takes the control characters out, in the one place a
