@@ -1703,7 +1703,200 @@ def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
             daemon.tick()
             page.wait_for_function(
                 "() => state.turns.run !== -1")
+            # At its own `seq`, not packed at nought: a push carries only the
+            # blocks that changed.
+            assert page.evaluate(
+                "state.turns.blocks.findIndex(b => b && b.text === 'Pushed.')") > 0
             assert page.evaluate("state.turns.at") == 2
             assert page.evaluate("state.turns.open.size") == 1
+        finally:
+            browser.close()
+
+
+# --- the fetch and the stream race ---------------------------------------------
+
+
+def hold_next_transcript(page):
+    """Hold the next transcript request, and hand back the route once the
+    page has asked. The answer is built when `fetch()` is called on it, which
+    is the moment the daemon takes its snapshot."""
+    held = []
+    page.route("**/transcript", lambda route: held.append(route))
+    return held
+
+
+def wait_for_request(page, held):
+    for _ in range(500):
+        if held:
+            return held[0]
+        page.wait_for_timeout(20)
+    raise AssertionError("the page never asked for the transcript")
+
+
+def test_a_block_pushed_while_the_transcript_is_fetched_is_kept(page_at):
+    """The daemon takes the GET's snapshot, lets go of its lock, and writes
+    the answer; a tick in between pushes the next block, and a push is small
+    and gets there first. `loadTranscript` then put the older snapshot in
+    place wholesale: the block was gone, the next one landed after a hole,
+    and a text block is never pushed twice."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            show_tab(page, "session")
+            held = hold_next_transcript(page)
+            page.click('.tab[data-tab="transcript"]')
+            route = wait_for_request(page, held)
+            answer = route.fetch()                   # the snapshot, taken now
+            count = page.evaluate("state.turns.blocks.length")
+            append_blocks(daemon, ["Pushed while the answer was on its way."])
+            page.wait_for_function(f"state.turns.blocks.length > {count}")
+            route.fulfill(response=answer)
+            page.unroute("**/transcript")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn')].some(
+                     one => one.innerText.includes('on its way'))""")
+            assert page.evaluate(
+                "state.turns.blocks.every(Boolean)"), "a hole in the blocks"
+        finally:
+            browser.close()
+
+
+def test_a_transcript_fetch_that_fails_keeps_what_is_held(page_at):
+    """`ask` gives null for a fetch that failed, and the page drew that as
+    "Nothing in this transcript yet.", forgot the reader's places, and asked
+    no more -- the tab polls nothing. The next push, carrying only the block
+    that changed, was then put at index 0 as though it were the whole."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            before = page.evaluate("document.querySelectorAll('.turn').length")
+            page.evaluate("state.turns.open = new Set([1])")
+            show_tab(page, "session")
+            page.route("**/transcript", lambda route: route.abort())
+            page.click('.tab[data-tab="transcript"]')
+            page.wait_for_timeout(300)             # the failed answer is in
+            page.unroute("**/transcript")
+            assert page.evaluate(
+                "document.querySelectorAll('.turn').length") == before
+            assert page.evaluate("state.turns.open.size") == 1
+            # It asks again by itself: the tab polls nothing.
+            page.wait_for_function("state.turns.failed === false")
+            # With nothing held, it says it could not read it -- not that
+            # there is nothing.
+            said = page.evaluate("""() => {
+              const blocks = state.turns.blocks;
+              state.turns.blocks = []; state.turns.failed = true; draw();
+              const text = document.querySelector('.turnbody').innerText;
+              state.turns.blocks = blocks; state.turns.failed = false; draw();
+              return text;
+            }""")
+            assert "could not be read" in said, said
+            # And a push lands at its own place.
+            count = page.evaluate("state.turns.blocks.length")
+            append_blocks(daemon, ["After the failure."])
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn')].some(
+                     one => one.innerText.includes('After the failure.'))""")
+            assert page.evaluate(
+                f"state.turns.blocks[{count}].text") == "After the failure."
+        finally:
+            browser.close()
+
+
+def test_a_block_read_while_no_stream_was_open_is_fetched(page_at):
+    """A tick between the fetch's snapshot and the stream joining the hub
+    sends to nobody, and so does one while a dropped stream reconnects. The
+    stream now opens by saying how long the transcript is, and the page
+    fetches what it is missing."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            page.evaluate("""() => { state.stream.close(); state.stream = null;
+                                     state.streamUrl = ''; }""")
+            append_blocks(daemon, ["Said while nobody listened."])
+            page.evaluate("resubscribe()")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn')].some(
+                     one => one.innerText.includes('nobody listened'))""")
+
+            # And when the stream says so while a fetch is on its way, the
+            # fetch's older snapshot is not the last word.
+            show_tab(page, "session")
+            held = hold_next_transcript(page)
+            page.click('.tab[data-tab="transcript"]')
+            route = wait_for_request(page, held)
+            answer = route.fetch()                   # the snapshot, taken now
+            page.evaluate("""() => { state.stream.close(); state.stream = null;
+                                     state.streamUrl = ''; }""")
+            append_blocks(daemon, ["Said while the fetch was out."])
+            page.evaluate("resubscribe()")
+            page.wait_for_function("state.turns.told !== null")
+            route.fulfill(response=answer)
+            page.unroute("**/transcript")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn')].some(
+                     one => one.innerText.includes('the fetch was out'))""")
+        finally:
+            browser.close()
+
+
+def test_a_scroll_left_over_from_another_transcript_is_not_its_place(pair_at):
+    """`.turnbody` keeps the last session's blocks until the new ones land,
+    and its listener wrote any scroll into the new session's place -- one
+    the browser fires itself when the send box goes away and the pane grows.
+    The `.filescroll` scar, without its guard."""
+    daemon, path = pair_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("document.querySelectorAll('.row').length === 2")
+            page.evaluate("choose('s1')")
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            append_blocks(daemon, [f"line {n}" for n in range(60)])
+            page.wait_for_function(
+                "document.querySelectorAll('.turn').length > 50")
+            down = page.evaluate("""() => {
+              choose('s2');
+              const pane = document.querySelector('.turnbody');
+              pane.scrollTop = 40;
+              pane.dispatchEvent(new Event('scroll'));
+              return [pane.scrollTop, state.turns.down];
+            }""")
+            assert down[0] == 40, "the pane did not scroll, so this proves nothing"
+            assert down[1] in (None, 0), down
+        finally:
+            browser.close()
+
+
+def test_the_top_of_the_transcript_is_a_place_too(page_at):
+    """`down` was 0 both for "no place kept" and for "at the very top", and a
+    draw reads the first as "go to the foot". A reader at the top was thrown
+    to the foot on every key typed in the find box."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
+            page.wait_for_function(
+                "document.querySelectorAll('.turn').length > 50")
+            page.evaluate("""() => {
+              const pane = document.querySelector('.turnbody');
+              pane.scrollTop = 0;
+              pane.dispatchEvent(new Event('scroll'));
+            }""")
+            page.fill("#find", "pytest")
+            page.wait_for_function("document.querySelectorAll('mark').length > 0")
+            assert page.evaluate(
+                "document.querySelector('.turnbody').scrollTop") == 0
         finally:
             browser.close()

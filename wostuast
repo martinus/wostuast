@@ -4822,6 +4822,19 @@ class Daemon:
                               session_id=session_id)
         return blocks, run
 
+    def transcript_held(self, session_id: str) -> tuple[int, int] | None:
+        """Which reading of a session's transcript the daemon holds, and how
+        many blocks are in it -- read under the lock, nothing new read.
+
+        A stream opens on this. A tick between a fetch's snapshot and the
+        stream joining the hub sends to nobody, and so does one while a
+        dropped stream reconnects; told the length it has missed, the page
+        asks for the rest.
+        """
+        with self.lock:
+            reader = self.transcripts.get(session_id)
+            return None if reader is None else (reader.run, len(reader.blocks))
+
     def sessions_payload(self) -> dict[str, Any]:
         return {"now": time.time(), "sessions": self.store.rows}
 
@@ -5461,6 +5474,14 @@ class Serving:
         try:
             first = json.dumps(self.daemon.sessions_payload(), default=str)
             self.wfile.write(f"event: sessions\ndata: {first}\n\n".encode("utf-8"))
+            # After joining the hub, so a block read after this is pushed to
+            # this stream and one read before it is counted here.
+            held = self.daemon.transcript_held(watching) if watching else None
+            if held is not None:
+                opening = json.dumps({"id": watching, "run": held[0],
+                                      "length": held[1]})
+                self.wfile.write(
+                    f"event: transcript\ndata: {opening}\n\n".encode("utf-8"))
             self.wfile.flush()
             while not self.daemon.stopping.is_set():
                 try:
@@ -9819,10 +9840,17 @@ function drawTranscript(box) {
   // back to nought, and the listener below would write that down as the
   // place the reader was.
   const place = state.turns.down;
+  // Whose blocks these are. `choose` does not rebuild the pane, which holds
+  // the last session's until the new fetch lands, and a scroll in between --
+  // one the browser fires itself when the send box goes and the pane grows --
+  // was written into the new session's place. The `.filescroll` scar.
+  pane.dataset.session = state.chosen || "";
   if (!pane.dataset.watched) {
     pane.dataset.watched = "1";
     pane.addEventListener("scroll", () => {
-      state.turns.down = pane.scrollTop;
+      if (pane.dataset.session === (state.chosen || "")) {
+        state.turns.down = pane.scrollTop;
+      }
       showToFoot(foot, pane);
     });
   }
@@ -9830,7 +9858,9 @@ function drawTranscript(box) {
   state.turns.nodes = [];
   if (!state.turns.blocks.length) {
     const empty = put(pane, "div", "empty");
-    put(empty, "p", null, "Nothing in this transcript yet.");
+    put(empty, "p", null, state.turns.failed
+      ? "The transcript could not be read. It is asked for again."
+      : "Nothing in this transcript yet.");
   } else {
     for (let index = 0; index < state.turns.blocks.length; index += 1) {
       const block = state.turns.blocks[index];
@@ -9843,7 +9873,10 @@ function drawTranscript(box) {
     // Where the reader was, or the foot of it. A transcript is read from the
     // bottom -- the last thing the agent said is the thing you came for --
     // so that is where a session with no kept place lands.
-    if (!landOnBlock(pane)) pane.scrollTop = place || pane.scrollHeight;
+    // `null` is "no place kept"; nought is the very top, and a place too.
+    if (!landOnBlock(pane)) {
+      pane.scrollTop = place ?? pane.scrollHeight;
+    }
   }
   showToFoot(foot, pane);
 }
@@ -10826,7 +10859,10 @@ function blankTurns() {
     shut: new Set(),    // rounds the reader folded shut on the map
     goTo: null,         // a block a link asked for, until it is on screen
     at: null,           // the block the list marks: the last place you went
-    down: 0,            // how far down the transcript you were
+    down: null,         // how far down the transcript you were; null is none
+    early: null,        // pushes that land while a fetch is on its way
+    told: null,         // how long the stream said the transcript is, meanwhile
+    failed: false,      // the last fetch failed; "nothing yet" would lie
   };
 }
 
@@ -12912,18 +12948,51 @@ function forgetPlaces() {
   state.turns.goTo = null;
 }
 
+//: How long a transcript fetch that failed waits before it asks again. The
+//: tab polls nothing -- the transcript is pushed -- so nothing else would.
+const TRANSCRIPT_RETRY = 2000;
+
 async function loadTranscript() {
   const want = state.chosen;
+  // What is pushed while this is on its way. The daemon takes the snapshot
+  // under its lock and writes the answer after letting go, so a tick can push
+  // the next block first -- and the push is small, and wins. Putting the older
+  // snapshot in place wholesale lost that block for good: the next one landed
+  // after a hole, and a text block is never pushed again.
+  const early = [];
+  state.turns.early = early;
   const body = await ask(want, "transcript");
   if (state.chosen !== want) return;        // the reader moved on while we waited
-  state.turns.blocks = (body && body.blocks) || [];
-  const run = body && body.run !== undefined ? body.run : -1;
+  if (state.turns.early === early) state.turns.early = null;
+  if (!body || (body.error && !body.blocks)) {
+    // A failed fetch is not an empty transcript. It was drawn as one, the
+    // reader's places were forgotten, and nothing asked again. What is held
+    // is drawn, and with nothing held the tab says it could not read it.
+    state.turns.failed = true;
+    draw();
+    setTimeout(() => {
+      if (state.chosen === want && state.tab === "transcript") loadTranscript();
+    }, TRANSCRIPT_RETRY);
+    return;
+  }
+  state.turns.failed = false;
+  const blocks = body.blocks || [];
+  const run = body.run !== undefined ? body.run : -1;
+  for (const pushed of early) {
+    if (pushed.run !== run) continue;
+    for (const block of pushed.blocks || []) blocks[block.seq] = block;
+  }
+  state.turns.blocks = blocks;
   // Only a reading replacing another one. `-1` is "none held yet", which is
   // every first load -- and `goTo` is set from the address bar before this
   // runs, so forgetting there would throw away the link the page opened on.
   if (state.turns.run !== -1 && run !== state.turns.run) forgetPlaces();
   state.turns.run = run;
   draw();
+  // The stream opened while this was on its way and said how much there is.
+  const told = state.turns.told;
+  state.turns.told = null;
+  if (told && told.run === run && told.length > blocks.length) loadTranscript();
 }
 
 async function loadFiles() {
@@ -13074,6 +13143,17 @@ function resubscribe() {
   stream.addEventListener("transcript", (message) => {
     const body = JSON.parse(message.data);
     if (body.id !== state.chosen) return;
+    // A stream opens by saying how long the transcript is. Blocks read while
+    // no stream was open -- between a fetch's snapshot and this stream
+    // joining, or while a dropped one reconnected -- were sent to nobody.
+    if (body.length !== undefined) {
+      if (state.tab !== "transcript") return;   // fetched when it is shown
+      if (state.turns.early) { state.turns.told = body; return; }
+      if (body.run !== state.turns.run
+          || body.length > state.turns.blocks.length) loadTranscript();
+      return;
+    }
+    if (state.turns.early) state.turns.early.push(body);
     // A transcript can be rewritten under its own name, and then `seq` counts
     // from nought again. Patching by index would write the new blocks over the
     // head of the old ones and leave the old tail hanging below, so a new
@@ -13087,7 +13167,11 @@ function resubscribe() {
       // enough to reverse those two.
       const held = state.turns.run !== -1;
       state.turns.run = body.run;
-      state.turns.blocks = body.blocks || [];
+      // By `seq`, never packed from nought. A push carries only the blocks
+      // that changed; with nothing held (a fetch still on its way, or one
+      // that failed) block 3 was put at index 0 as though it were the whole.
+      state.turns.blocks = [];
+      mergeBlocks(body.blocks || []);
       state.turns.nodes = [];
       if (held) forgetPlaces();
       draw();
