@@ -3832,6 +3832,11 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     report.failed = lost or commits is None
     report.commits = commits or []
     if of and of != "uncommitted":
+        if commits is None:
+            # git did not answer, so nothing is known about the commit --
+            # least of all that it is gone. Taken for gone, the pane said it
+            # was "probably amended or rebased away" and dropped the pick.
+            return report
         one = next((each for each in report.commits if each.sha == of), None)
         if one is None:
             report.gone = of
@@ -7543,6 +7548,8 @@ const state = {
   looseFound: {},       // the whole answer for it, for `putMedia`
   goTo: false,          // and whether the pane still has to move to it
   looseText: null,      // null while it is being read
+  looseAsking: null,    // the path a read is out for, so a poll asks once
+  looseTrouble: "",     // why it is not read yet, when a read failed
   looseBinary: false,
   diff: null,
   // What the Diff tab shows: "" for all changes, "uncommitted", or one
@@ -11576,7 +11583,7 @@ function drawLooseFile(pane, path) {
   put(head, "span", "path", path);
   const body = put(node, "div", "dbody");
   if (state.looseText === null) {
-    put(body, "div", "note", "reading…");
+    put(body, "div", "note", state.looseTrouble || "reading…");
     return node;
   }
   if (state.looseBinary) {
@@ -11614,15 +11621,34 @@ async function chooseUntracked(path) {
   state.looseText = null;
   state.looseBinary = false;
   state.looseFound = {};
+  state.looseTrouble = "";
   state.goTo = true;            // until the block is on screen with the file
   state.diffAt += 1;            // the body key has to move for the redraw
   draw();
+  await readLoose(path);
+}
+
+// Read the untracked file picked. Only an answer with text in it is the
+// file: a fetch that failed was drawn as "This file is empty.", and a
+// `missing` answer -- which a timed-out `is_listed` gives too -- as the
+// file's one added line, with a `+` on it. Both were kept, and a click on
+// the name did nothing, so the failure stayed on screen as the content.
+// Now the text stays unread, the block says so, and the next poll asks
+// again; a file that really went leaves `untracked` and is let go.
+async function readLoose(path) {
   const want = state.chosen;
+  state.looseAsking = path;
   const body = await ask(want, "file", "?path=" + encodeURIComponent(path));
   if (state.chosen !== want || state.loose !== path) return;
-  state.looseText = body ? (body.text || body.missing || "") : "";
-  state.looseBinary = !!(body && body.binary);
-  state.looseFound = body || {};   // what `putMedia` needs, if it is a picture
+  state.looseAsking = null;
+  if (!body || (body.text === undefined && !body.binary)) {
+    state.looseTrouble = "This file could not be read. It is asked for again.";
+  } else {
+    state.looseTrouble = "";
+    state.looseText = body.text || "";
+    state.looseBinary = !!body.binary;
+    state.looseFound = body;   // what `putMedia` needs, if it is a picture
+  }
   state.diffAt += 1;
   draw();
 }
@@ -11650,7 +11676,11 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
   // `drawDiff` rebuilds this pane whenever the agent saves anything, so what
   // the reader opened has to live outside the node, the way the transcript's
   // expanded tool rows do. `BIG_LINES` only decides a file nobody has touched.
-  const chose = state.diffOpen.get(one.path);
+  // By what is shown, the half and the path, as `moreKey` is: by the path
+  // alone, opening a long file in one half opened it in the other on the
+  // next save, and the choice followed the reader to every commit picked.
+  const openKey = moreKey(section, one.path);
+  const chose = state.diffOpen.get(openKey);
   let open = chose === undefined ? size <= BIG_LINES : chose;
   const mark = () => { why.textContent = size + " lines" + (open ? "" : ", hidden"); };
   // With whatever the reader asked to see between the changes.
@@ -11659,7 +11689,7 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
   mark();
   head.addEventListener("click", () => {
     open = !open;
-    state.diffOpen.set(one.path, open);
+    state.diffOpen.set(openKey, open);
     if (open) fill(); else body.replaceChildren();
     mark();
   });
@@ -12183,6 +12213,11 @@ async function fetchWhole(one, section) {
 function revealLines(file, from, to) {
   if (busyWriting()) return;
   const key = moreKey(file.section, file.path);
+  // A whole file that failed, or came back cut, is kept so a draw does not
+  // ask git again -- but a click is the reader asking. Kept through it,
+  // every later click added a range, drew, and showed and said nothing.
+  const whole = state.diffWhole.get(key);
+  if (whole && !whole.asking && !whole.file) state.diffWhole.delete(key);
   const ranges = state.diffMore.get(key) || [];
   ranges.push([from, to]);
   state.diffMore.set(key, ranges);
@@ -12906,6 +12941,8 @@ function choose(id) {
   state.loose = null;
   state.looseFound = {};
   state.looseText = null;
+  state.looseAsking = null;
+  state.looseTrouble = "";
   state.looseBinary = false;
   state.goTo = false;
   state.diff = null;
@@ -13139,9 +13176,12 @@ async function loadDiff() {
     // A session that has gone answers with an error, not a report. Drawing
     // that as if it were one is how the tab used to go blank and stay blank.
     if (!body.sections) return;
+    // git did not answer about a picked commit: the diff held stands, and
+    // the pick with it, until it does.
+    if (body.failed && of && !body.sections.length) { draw(); return; }
     // The commit picked is not on the branch any more. What came back is
     // everything, so that is what is shown, and the pane says why.
-    if (body.gone && body.gone === of) {
+    if (body.gone && body.gone === of && !body.failed) {
       state.diffOf = "";
       state.diffGone = true;
     }
@@ -13150,6 +13190,11 @@ async function loadDiff() {
     state.diffAt += 1;
   }
   draw();
+  // An untracked file picked and not read: coming back to the session puts
+  // the pick back and not the text, and a read that failed is tried again.
+  if (state.loose && state.looseText === null && state.looseAsking !== state.loose) {
+    readLoose(state.loose);
+  }
 }
 
 // Every block carries its place in the transcript, so a block that arrives

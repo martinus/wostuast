@@ -1387,7 +1387,11 @@ update the comment with its own text, and read it back.
   The sha arrives in `?of=` and the page is input, so `worktree_diff` looks
   it up in its own list and hands git the listed one, never the string it
   was sent. One that is not there — an agent amended or rebased — comes back
-  as `gone` with all changes, and the pane says why.
+  as `gone` with all changes, and the pane says why. **A log git failed on
+  is not a commit gone**: the list was empty, the sha not in it, and the
+  pane said "probably amended or rebased away" and dropped the pick. It
+  returns `failed` with no section, and the page keeps the diff it holds
+  (`test_a_log_git_failed_on_is_not_a_commit_gone`).
   `test_a_commit_the_page_names_is_used_only_if_git_listed_it` sends
   `--output=` and `HEAD~1` and asserts neither reaches an argv.
 - **One commit's comments go through `since`, as the committed half's go
@@ -1437,6 +1441,10 @@ update the comment with its own text, and read it back.
   with `hunkSig` of the diff it belongs to, and `withMore` drops it the
   moment the hunks move: the agent saves, and a kept file would put old
   lines between new changes. `test_shown_lines_come_again_from_the_file_as_it_now_is`.
+  **A whole file that failed, or came back cut, is kept against draws but
+  not against a click**: kept through one, every later click on a band
+  added a range, drew, and showed and said nothing. `revealLines` lets it
+  go. `test_a_whole_file_that_failed_is_asked_for_again_on_a_click`.
 - **Every diff asks git for `-U3` out loud.** The page reads fewer than
   three lines after the last change as the end of the file and offers no
   more below it; a reader's `diff.context` would move that line and hide
@@ -1472,6 +1480,17 @@ update the comment with its own text, and read it back.
 - **`drawLooseFile` builds a synthetic file object.** Everything `fillDiffFile`
   reads must be in it. `path` was missing, so every untracked file's comments
   anchored to `undefined`.
+- **An untracked file's text is read by `readLoose`, and only text is its
+  text.** A fetch that failed was drawn as "This file is empty.", and a
+  `missing` answer -- a timed-out `is_listed` gives one -- as the file's one
+  added line, with a `+`. Both were kept, and a click on the name did
+  nothing, it being the name already picked. And coming back to a session
+  put the pick back and not the text, and nothing asked for it: "reading…"
+  for ever. Now an unread file says why, and `loadDiff` asks again on every
+  poll until it is read; one that really went leaves `untracked` and is let
+  go. `test_an_untracked_file_is_read_again_when_its_session_comes_back`,
+  `test_an_untracked_file_that_could_not_be_read_says_so`,
+  `test_an_untracked_file_git_would_not_list_is_not_its_one_line`.
 
 ### The review
 
@@ -1519,6 +1538,10 @@ update the comment with its own text, and read it back.
 - **What the reader opened lives outside the node.** `state.diffOpen`, like the
   transcript's `state.open`. A `let open` inside `drawDiffFile` was thrown away
   on every rebuild, so a big file snapped shut each time the agent saved.
+  **It is keyed by `moreKey`**, what is shown, the half and the path: by the
+  path alone, a file shut in one half shut in the other on the next save,
+  and the choice followed the reader to every commit picked.
+  `test_a_file_shut_in_one_half_stays_open_in_the_other`.
 - **An async answer belongs to the session that asked.** `submitReview` blanked
   whatever review was current when `tmux send-keys` returned, and removed its
   key from storage. The sent review is cleared by its own id.
