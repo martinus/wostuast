@@ -159,6 +159,24 @@ def test_subagent_stop_keeps_the_state(ws):
     assert session.last_event == "Explore finished"
 
 
+def test_a_compaction_in_the_middle_of_a_turn_does_not_end_it(ws):
+    """An auto compaction fires `SessionStart` with `source=compact` and the
+    turn goes on. It set "done", so the row moved to ready, the page said the
+    agent had finished, and a spend limit could not fire until the next
+    tool call."""
+    session = fold(
+        ws,
+        event("UserPromptSubmit", prompt="x"),
+        event("PreCompact", trigger="auto", ts=1500.0),
+        event("SessionStart", source="compact", ts=1501.0),
+    )
+    assert session.state == "working"
+    # At the prompt, a /compact leaves it ready, as it was.
+    session = fold(ws, event("Stop", ts=1400.0),
+                   event("SessionStart", source="compact", ts=1501.0))
+    assert session.state == "done"
+
+
 def test_pre_compact_keeps_the_state_and_is_remembered(ws):
     session = fold(
         ws,
@@ -516,6 +534,42 @@ def test_another_call_finishing_does_not_take_the_question_away(ws):
     )
     assert session.asking is not None
     assert session.state == "needs_you"
+
+
+def test_another_call_before_the_dialog_does_not_take_the_question_away(ws):
+    """The dialog comes about ninety milliseconds after the ask's own
+    `PreToolUse`, and another call of the same batch can finish, or start,
+    in between. Either wiped the question: the row went amber saying
+    "asks: …" with no bar to answer it, and `answer` refused."""
+    bash = {"command": "ls"}
+    ask, shown = asked()
+    finishing = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input=bash,
+              tool_use_id="b1", ts=999.0),
+        ask,
+        event("PostToolUse", tool_name="Bash", tool_input=bash,
+              tool_use_id="b1", ts=1000.05),
+        shown,
+    )
+    assert finishing.state == "needs_you"
+    assert finishing.asking and finishing.asking["id"] == "toolu_q1"
+    starting = fold(
+        ws,
+        ask,
+        event("PreToolUse", tool_name="Read", tool_input={"file_path": "a"},
+              tool_use_id="r1", ts=1000.05),
+        shown,
+    )
+    assert starting.asking and starting.asking["id"] == "toolu_q1"
+    failing = fold(
+        ws,
+        ask,
+        event("PostToolUseFailure", tool_name="Bash", tool_input=bash,
+              tool_use_id="b1", ts=1000.05),
+        shown,
+    )
+    assert failing.asking and failing.asking["id"] == "toolu_q1"
 
 
 def test_the_question_goes_when_the_agent_moves_on(ws):

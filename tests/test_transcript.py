@@ -393,6 +393,60 @@ def test_the_harness_speaking_is_a_note_and_not_your_prompt(ws, tmp_path):
     assert "the repo sweep is in." in two.text
 
 
+def test_a_message_queued_while_the_agent_works_is_drawn(ws, tmp_path):
+    """2.1.276 to 2.1.281 write a message typed into a busy agent as an
+    `attachment` record, and no `user` record follows it -- read on this
+    machine: eighteen queued prompts, none of them anywhere else. `add` read
+    `user` and `assistant` only, so the page showed the agent answering a
+    message that was not on it."""
+    from conftest import record
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(record("queued", "and keep the old name as an alias"))
+    assert (one.kind, one.text) == ("prompt", "and keep the old name as an alias")
+    assert one.ts > 0
+    # Another session's message, and a background task's news, are shown,
+    # and never in the reader's rail.
+    two, = reader.add(record("peer", "the sweep is done"))
+    assert two.kind == "note"
+    # By its origin alone, too: `isMeta` is not promised on every build.
+    unmarked = record("peer", "the sweep is done")
+    del unmarked["attachment"]["isMeta"]
+    assert [one.kind for one in reader.add(unmarked)] == ["note"]
+    three, = reader.add(record(
+        "task", "<task-notification>Build finished</task-notification>"))
+    assert (three.kind, three.text) == ("note", "Build finished")
+    # A paste typed into a busy agent is a list of pieces.
+    four, = reader.add({"type": "attachment", "timestamp": "2026-09-18T14:00:00Z",
+                        "attachment": {"type": "queued_command",
+                                       "commandMode": "prompt",
+                                       "origin": {"kind": "human"},
+                                       "prompt": [{"type": "text", "text": "see"},
+                                                  {"type": "image"}]}})
+    assert (four.kind, four.text) == ("prompt", "see")
+    # Every other attachment stays out.
+    assert reader.add({"type": "attachment",
+                       "attachment": {"type": "todo_reminder", "prompt": "x"}}) == []
+
+
+def test_what_claude_code_wrote_itself_is_never_your_prompt(ws, tmp_path):
+    """`isMeta` marks a `user` record the harness wrote: a Stop hook's
+    answer, a whole skill's body, "Continue from where you left off.". Each
+    wore the reader's rail and opened a round on the map, named after it."""
+    from conftest import record
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    for said in ("Stop hook feedback:\n[~/.claude/check.sh]: commit first",
+                 "Continue from where you left off.",
+                 "Base directory for this skill: /x\n\n# Do the thing"):
+        one, = reader.add(record("meta", said))
+        assert one.kind == "note", said
+    assert reader.add(record("meta", "<system-reminder>x</system-reminder>")) == []
+    # Claude Code writes both shapes of content, and an image's caption comes
+    # as pieces.
+    pieces = record("meta", "")
+    pieces["message"]["content"] = [{"type": "text", "text": "[Image: a.png]"}]
+    assert [one.kind for one in reader.add(pieces)] == ["note"]
+
+
 #: What Claude Code writes when a message arrives while the agent is working
 #: -- which is every message this page sends to a busy agent, so it is the
 #: shape a reader of this program meets most. Header and footer verbatim from

@@ -49,6 +49,7 @@ after the tests go red.
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
+| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `BANDS`, `settled` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
@@ -800,6 +801,14 @@ update the comment with its own text, and read it back.
   says *this* question was answered. A `PostToolUse` for another call is not
   an answer -- two calls really do overlap -- and this stale question has
   buttons on it, which type a number into a terminal that has moved on.
+  **Nor is another call of the same batch before the dialog is up.** The
+  `PermissionRequest` comes about ninety milliseconds after the ask's own
+  `PreToolUse`, and another call finishing, failing or starting in between
+  ran `_clear_attention` or overwrote `asking` with `None`: the row went
+  amber saying "asks: …" over no bar, and `answer` refused. `_on_pre_tool`
+  and `_on_tool_failed` hold the ask across it; a call starting *after* the
+  dialog is still the agent moving on.
+  `test_another_call_before_the_dialog_does_not_take_the_question_away`.
 - **The question bar belongs to the Transcript tab, at its foot.** It is not
   the header bar that was taken away: that one stood over every tab saying the
   branch, the pane, the model and the state, all of which the chosen row says
@@ -895,6 +904,12 @@ update the comment with its own text, and read it back.
   `GONE_STATES` as well, for whatever a row still carries.
   `test_a_session_that_dies_on_its_question_forgets_it`,
   `test_no_answer_goes_to_a_session_that_is_over`.
+  **A compaction is the exception**: an auto compaction fires
+  `SessionStart` with `source=compact` in the middle of a turn, and the
+  agent goes on. Setting "done" moved the row to ready, fired "has
+  finished", and kept a spend limit from firing until the next tool call.
+  `_on_session_start` keeps "working" for it.
+  `test_a_compaction_in_the_middle_of_a_turn_does_not_end_it`.
   **And the wait clock only starts when the wait does**: a second
   notification about the same dialog moved it, so a row that had waited a
   minute said it had waited none.
@@ -1560,6 +1575,21 @@ update the comment with its own text, and read it back.
   comes off too. Measured on 2.1.281, which does not wrap on this machine:
   a feature switch decides, so the shape comes from its source and the
   reader's record, not from a run here.
+- **A message queued while the agent works is an `attachment`, and it is
+  read.** 2.1.276 to 2.1.281 write it as a `queued_command` attachment and
+  no `user` record follows -- counted on a real machine: eighteen queued
+  prompts, not one anywhere else. `Transcript.add` read `user` and
+  `assistant` only, so the page showed the agent answering words that were
+  not on it, and this page's own send box is how most of them are typed.
+  `add_queued` reads it through `read_user_text`; `origin.kind` human is a
+  prompt, a peer's message or a task's news a note, and every other
+  attachment stays out. `test_a_message_queued_while_the_agent_works_is_drawn`.
+- **`isMeta` is Claude Code speaking, never the reader.** A Stop hook's
+  answer, a whole skill's body, "Continue from where you left off.", an
+  image's caption: each came as a `user` record with `isMeta`, wore the
+  reader's rail, and opened a round on the map named after it. `user_block`
+  turns what would be a prompt into a note, for a string and for pieces
+  alike. `test_what_claude_code_wrote_itself_is_never_your_prompt`.
 - **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
   the agent's text and nothing else, so the map stays a map of the
   conversation.

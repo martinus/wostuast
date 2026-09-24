@@ -1568,10 +1568,17 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     # came back reading "ready" with "permission: Bash rm -rf ~" under it, and
     # a wait that had started before the agent died. `source=compact` reaches
     # here mid-session and left the same.
-    _clear_attention(session)
-    session.state = "done"
-    session.end_reason = ""
+    #
+    # **Except that a compaction does not end a turn.** An auto compaction
+    # fires this with `source=compact` in the middle of one, and the agent
+    # goes on: "done" moved the row to ready, told the page the agent had
+    # finished, and kept a spend limit from firing until the next tool call.
+    # A `/compact` typed at the prompt finds the session ready already.
     source = str(event.get("source") or "")
+    working = source == "compact" and session.state == "working"
+    _clear_attention(session)
+    session.state = "working" if working else "done"
+    session.end_reason = ""
     session.last_event = f"started ({source})" if source else "started"
 
 
@@ -1613,6 +1620,12 @@ def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
         str(event.get("tool_name") or ""), event.get("tool_input"), session.cwd
     )
     starting = str(event.get("hook_event_name") or "") == "PreToolUse"
+    # The ask, and whether its dialog is up yet. Another call of the same
+    # batch can start or finish in the ninety milliseconds between the ask's
+    # own `PreToolUse` and its `PermissionRequest`; the clear below took the
+    # question with it, and the row went amber over no bar to answer it.
+    ask = session.asking
+    shown = bool(session.asked_about)
     if starting or not session.asked_about or session.asked_about == summary:
         # The state goes with the attention. A row that stays amber because
         # the dialog is still up must not also say it is working.
@@ -1623,13 +1636,17 @@ def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
     session.last_event = session.last_tool
     if starting:
         # After the clear above, or the ask would be wiped by its own call
-        # starting. It is None for every tool but this one.
-        session.asking = read_ask(event)
-    elif (session.asking
-          and str(event.get("tool_use_id") or "") == session.asking["id"]):
+        # starting. It is None for every tool but this one -- and another
+        # call starting before the ask's dialog is up is the same batch, not
+        # the agent moving on past it.
+        mine = read_ask(event)
+        session.asking = mine if mine is not None or shown else ask
+    elif ask and str(event.get("tool_use_id") or "") == ask["id"]:
         # This exact question was answered. Not "a call finished": two calls
         # really do overlap, and the other one finishing is not an answer.
         session.asking = None
+    else:
+        session.asking = ask
 
 
 def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -1645,10 +1662,14 @@ def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
     name = str(event.get("tool_name") or "")
     summary = tool_summary(name, event.get("tool_input"), session.cwd) if name else "tool"
     # A call finishing, so the same pairing `_on_pre_tool` does: a failure of
-    # the other call is not an answer to the question this one is asking.
+    # the other call is not an answer to the question this one is asking --
+    # nor to the ask whose dialog is not up yet, which the clear would take.
+    ask = session.asking
     if not session.asked_about or session.asked_about == summary:
         _clear_attention(session)
         session.state = "working"
+        if ask and str(event.get("tool_use_id") or "") != ask["id"]:
+            session.asking = ask
     if event.get("is_interrupt"):
         session.last_event = f"{summary} interrupted"
     else:
@@ -2281,6 +2302,8 @@ class Transcript:
             if str(record.get("subtype") or "") != "compact_boundary":
                 return []
             return [self.keep(Block(kind="divider", text="context compacted"))]
+        if kind == "attachment":
+            return self.add_queued(record)
         if kind not in ("user", "assistant"):
             return []
         if record.get("isCompactSummary"):
@@ -2301,10 +2324,8 @@ class Transcript:
             if not content.strip():
                 return []
             if kind == "user":
-                mine, text = read_user_text(content)
-                if not mine:
-                    return []
-                return [self.keep(Block(kind=mine, ts=ts, text=text))]
+                block = self.user_block(content, ts, bool(record.get("isMeta")))
+                return [block] if block else []
             return [self.keep(Block(kind="text", ts=ts, text=content))]
         if not isinstance(content, list):
             return []
@@ -2313,12 +2334,60 @@ class Transcript:
         for piece in content:
             if not isinstance(piece, dict):
                 continue
-            block = self.add_piece(kind, piece, ts)
+            block = self.add_piece(kind, piece, ts, bool(record.get("isMeta")))
             if block is not None:
                 touched.append(block)
         return touched
 
-    def add_piece(self, role: str, piece: dict[str, Any], ts: float) -> Block | None:
+    def user_block(self, text: str, ts: float, theirs: bool) -> Block | None:
+        """Words in a `user` record, read for what they are, and kept.
+
+        `theirs` is words nobody typed: an `isMeta` record, which is Claude
+        Code speaking -- a Stop hook's answer, a whole skill's body,
+        "Continue from where you left off." -- or another session's message.
+        Each wore the reader's rail and opened a round on the map named after
+        it. Shown, because it is what happened; never as a prompt.
+        """
+        mine, text = read_user_text(text)
+        if not mine:
+            return None
+        if theirs and mine == "prompt":
+            mine = "note"
+        return self.keep(Block(kind=mine, ts=ts, text=text))
+
+    def add_queued(self, record: dict[str, Any]) -> list[Block]:
+        """A message that arrived while the agent was working.
+
+        2.1.276 to 2.1.281 write it as an `attachment` of type
+        `queued_command`, and no `user` record follows -- read on a real
+        machine, where eighteen queued prompts were nowhere else. It is the
+        message this page sends to a busy agent, so leaving it out showed the
+        agent answering words that were not on the page. The reader's own
+        (`origin` human, or none) is a prompt; another session's, and a
+        background task's news, are notes. Every other attachment is the
+        harness talking to the agent, and stays out.
+        """
+        attachment = record.get("attachment")
+        if (not isinstance(attachment, dict)
+                or attachment.get("type") != "queued_command"):
+            return []
+        said = attachment.get("prompt")
+        if isinstance(said, list):
+            said = "\n".join(str(one.get("text") or "") for one in said
+                              if isinstance(one, dict) and one.get("type") == "text")
+        if not isinstance(said, str) or not said.strip():
+            return []
+        origin = attachment.get("origin")
+        theirs = (attachment.get("commandMode") != "prompt"
+                  or bool(attachment.get("isMeta"))
+                  or (isinstance(origin, dict)
+                      and origin.get("kind") not in (None, "human")))
+        ts = parse_timestamp(attachment.get("timestamp") or record.get("timestamp"))
+        block = self.user_block(said, ts, theirs)
+        return [block] if block else []
+
+    def add_piece(self, role: str, piece: dict[str, Any], ts: float,
+                  theirs: bool = False) -> Block | None:
         kind = str(piece.get("type") or "")
         if kind == "text":
             text = str(piece.get("text") or "")
@@ -2327,10 +2396,7 @@ class Transcript:
             if role == "user":
                 # The same reading as a record whose content is one string:
                 # Claude Code writes both shapes.
-                mine, text = read_user_text(text)
-                if not mine:
-                    return None
-                block = Block(kind=mine, ts=ts, text=text)
+                return self.user_block(text, ts, theirs)
             else:
                 block = Block(kind="text", ts=ts, text=text)
         elif kind == "thinking":

@@ -109,7 +109,9 @@ def record(kind, text="", ts="2026-09-18T14:00:00.000Z", tool="Bash",
            tool_id="t1"):
     """One transcript record, the way Claude Code writes it.
 
-    `kind` is "you", "claude", "think", "tool" or "result". A tool call puts
+    `kind` is "you", "claude", "think", "tool" or "result"; "meta" is a
+    `user` record Claude Code wrote itself, and "queued", "peer" and "task"
+    are what arrives while the agent is working. A tool call puts
     `text` in the field its tool reads its target from (`TARGET_FIELD`); a
     result answers `tool_id`. Every test that wrote these by hand wrote the
     same eight lines of JSON, and one of those copies ended in a backslash
@@ -120,6 +122,24 @@ def record(kind, text="", ts="2026-09-18T14:00:00.000Z", tool="Bash",
     if kind == "you":
         return {"type": "user", "timestamp": ts,
                 "message": {"role": "user", "content": text}}
+    if kind == "meta":
+        # Claude Code's own words in a `user` record: a Stop hook's answer, a
+        # skill's body, "Continue from where you left off."
+        return {"type": "user", "timestamp": ts, "isMeta": True,
+                "message": {"role": "user", "content": text}}
+    if kind in ("queued", "peer", "task"):
+        # A message that arrived while the agent was working. 2.1.276 to
+        # 2.1.281 write it here and nowhere else: no `user` record follows.
+        attachment = {"type": "queued_command", "prompt": text,
+                      "commandMode": "task-notification" if kind == "task"
+                      else "prompt",
+                      "timestamp": ts}
+        if kind == "queued":
+            attachment["origin"] = {"kind": "human"}
+        elif kind == "peer":
+            attachment["origin"] = {"kind": "peer", "from": "a1"}
+            attachment["isMeta"] = True
+        return {"type": "attachment", "timestamp": ts, "attachment": attachment}
     if kind == "result":
         return {"type": "user", "timestamp": ts,
                 "message": {"role": "user", "content": [
