@@ -403,7 +403,11 @@ after the page opened. Three symptoms, all of them "passes alone, red under
 load": an empty list read as "it drew nothing"; `null.isConnected` or
 `undefined.ts` thrown out of an `evaluate`; and a keystroke that went to the
 page instead of the find box, because `split` moves that box when the
-transcript lands and a box that moves loses the focus on it. Running the test
+transcript lands and a box that moves loses the focus on it. A fourth: a fixture's
+clock read after the page opened. `ago` counts seconds only for an age's
+first minute, a loaded CI runner took longer than that to open the page,
+and `test_a_row_is_not_rebuilt_every_second` read "1min" twice — so it
+starts the count itself with a fresh event. Running the test
 files you changed at `-n 12` three times over is what turns them up; once
 is not enough.
 
