@@ -320,7 +320,7 @@ def test_a_new_reader_for_one_session_is_a_new_reading(ws, served, tmp_path,
     ws.append_event(conftest.event("SessionStart", sid="s1", cwd="/w/one",
                                    transcript_path=str(first), ts=time.time()))
     daemon.store.refresh()
-    blocks, run = daemon.read_transcript("s1")
+    blocks, run, _ = daemon.read_transcript("s1")
     assert [b.text for b in blocks] == ["one"]
 
     second = transcript_file("s2-elsewhere", [
@@ -329,7 +329,7 @@ def test_a_new_reader_for_one_session_is_a_new_reading(ws, served, tmp_path,
                                    transcript_path=str(second),
                                    ts=time.time() + 1))
     daemon.store.refresh()
-    blocks, later = daemon.read_transcript("s1")
+    blocks, later, _ = daemon.read_transcript("s1")
     assert [b.text for b in blocks] == ["two"]
     assert later > run
 
