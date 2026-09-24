@@ -21,13 +21,23 @@ from browser import (
 
 pytestmark = skip_without_browser
 
-def test_a_row_is_not_rebuilt_every_second(page_at):
+def test_a_row_is_not_rebuilt_every_second(page_at, ws, tmp_path):
     """The ages advance once a second. Rebuilding the rows to do it restarted
     the needs-you pulse before it could finish a cycle, and threw away the
     dot's colour transition. Only the age text may change."""
+    daemon, _ = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
+            # An age counts seconds only for its first minute, and a loaded
+            # CI runner took longer than that to open the page: the fixture's
+            # event read "1min" twice. A fresh `Stop` starts the count again
+            # and leaves the session where it was, so the row stays in place.
+            ws.append_event(conftest.event("Stop", sid="s1", cwd=str(tmp_path),
+                                           pane="%7", pid=1, ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                r"/^\d+s$/.test(document.querySelector('.row .age').textContent)")
             page.evaluate("window.__dot = document.querySelector('.row .dot')")
             first = page.locator(".row .age").first.inner_text()
             page.wait_for_timeout(2400)

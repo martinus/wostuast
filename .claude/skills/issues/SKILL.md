@@ -74,7 +74,8 @@ rules for it. Read that row before editing, not after the tests go red.
 Every test proved by perturbation — `CLAUDE.md` **How to work here** says how
 and why. The part that catches people: read the count pytest prints, not the
 colour. A test run under a `-k` that never selected it is a test you have not
-run.
+run. `tests/perturb.py` runs each break against only the tests it names and
+prints one line a break; its last line is the count to read.
 
 ### 5. Write the scar down in the same commit
 
@@ -85,7 +86,9 @@ run.
 | `README.md` | anything a reader of the program sees |
 
 The rule and the code that keeps it land together, or the rule is not true
-yet. Add the symbol to `CLAUDE.md`'s **Where to look** table if the rule is
+yet. **Grep `CLAUDE.md` for the symbol before adding a bullet**: the same
+kind of bug again goes into the bullet that already holds it, as its header
+says. Add the symbol to `CLAUDE.md`'s **Where to look** table if the rule is
 about code an agent would go looking for.
 
 ### 6. Review it when review is worth it
@@ -101,15 +104,19 @@ Judgement, not ceremony. A two-line fix needs neither.
 
 Fix what they find before the PR goes up. Say which you ran.
 
-### 7. Full suite, then push, then watch CI
+### 7. The changed files under load, then push, then watch CI
 
-`pytest -q -n auto`, whole, every time. Green locally is **not** the gate; CI
-is. It has caught two races no local run could: a browser test that only
-fails on a loaded runner, and a failure message wiped by a push a quiet
-machine never sends.
+`CLAUDE.md`, **How to work here**, "Before the push", is the list: the test
+files you changed, three times at `-n 12`; every test with no browser; the
+whole suite only when a shared part changed. Run them in the background and
+write the rule and the pull request's text meanwhile. Green locally is
+**not** the gate; CI is. It has caught two races no local run could: a
+browser test that only fails on a loaded runner, and a failure message
+wiped by a push a quiet machine never sends.
 
 A red CI on a PR you opened is work now, not news. Re-diagnose and push again
-until it is green.
+until it is green. While CI runs, read the next issue and reproduce it —
+reading only, the branch stays as CI saw it.
 
 ### 8. Merge, reset, and read the list again
 
@@ -119,6 +126,37 @@ you. The next pass starts from the list as it is now, not the list you
 sorted an hour ago.
 
 Stop watching the merged PR and cancel any check-in you armed for it.
+
+## The pull request loop
+
+The same calls every time. Each of these went wrong at least once, and a
+wrong one costs a round trip, not a thought. Owner `martinus` and repo
+`wostuast` go in separate fields — `martinus/wostuast` as the repo asked
+for `martinus/martinus/wostuast`.
+
+1. **Push**: `git push -u origin <branch>`.
+2. **Create**: `create_pull_request` with head `<branch>`, base `main`, and
+   the body. The server adds a footer and a session link to it.
+3. **Take the footer off**: `update_pull_request` with the very same body,
+   then `pull_request_read` method `get`, and read the body back. `CLAUDE.md`
+   says why, in its last bullet of **How to work here**.
+4. **Watch**: `subscribe_pr_activity`, and a `send_later` about six minutes
+   out, because a green run may send no event.
+5. **Read CI**: `pull_request_read` method `get_check_runs`. Done means every
+   run completed and none failed, `browser` among them. For a red one:
+   `actions_list` method `list_workflow_jobs` with the run id as
+   `resource_id`, then `get_job_logs` with `job_id`, `return_content: true`,
+   `tail_lines`. Every `actions_*` method takes its id as `resource_id`,
+   and refuses without it.
+6. **Merge**: `merge_pull_request` with `merge_method: "merge"`,
+   `commit_title: "Merge pull request #<n> from martinus/<branch>"`, and
+   `expectedHeadSha` from `git rev-parse HEAD` — all 40 characters; a short
+   sha is refused. A 409 "Head branch was modified" means the head is not
+   the one CI checked: read the checks again on the new head, never force.
+7. **Let go**: `delete_trigger` the check-in, `unsubscribe_pr_activity`.
+8. **Back onto main**: `git fetch origin main && git checkout -B <branch>
+   origin/main`, then `git push -u origin <branch>`. The merge commit holds
+   the branch's head, so this is a fast-forward and needs no force.
 
 ## While looping
 

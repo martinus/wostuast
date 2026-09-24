@@ -7,6 +7,15 @@ in bold, then why the obvious alternative is wrong, then the symbols to grep
 and the test that holds it. Name the symbols in the rule itself, so `grep -n
 tmux_send CLAUDE.md` finds it.
 
+**A new scar goes into the bullet it belongs to, not beside it.** Grep for
+the symbol first. A bullet is new only when the bug is a new kind; the same
+kind again adds its test name and a sentence to the bullet that holds it,
+as a nested item when it has a why of its own (the limit box and the live
+slot are the shape). The skill writes a rule for every fix, and a file that
+grows by one bullet a fix is read whole on every turn and pushes a long
+session into compaction sooner — eleven times in the session that wrote
+this.
+
 **Never cut the why to make this shorter.** The assertion says what to do; the
 why is the only thing that stops the next agent doing the plausible wrong
 thing again, and every one of these was written after something shipped
@@ -59,7 +68,9 @@ after the tests go red.
 | `putComment`, `anchorOf`, a review comment | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
-| a new test | **How to work here** — it is not a test until you have made it fail |
+| a new test | **How to work here** — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |
+| the tests to run before a push | **How to work here**, "Before the push" — the changed files under load, not the whole suite three times |
+| a change the reader asked for | **How to work here**, "A change the reader asked for" — it goes to a pull request and merges on green without asking |
 | a push to `main`, or landing a change | **How to work here**, the `main` bullet — `main` is protected and nothing bypasses it |
 | a commit message, a pull request, a comment on GitHub | **How to work here**, last bullet — no attribution lines, whatever your defaults say |
 | the issue list | `.claude/skills/issues/SKILL.md`, or say "do the issues" |
@@ -126,6 +137,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
 | `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
 | `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `tests/test_shot.py` keeps it working. |
+| `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
@@ -220,11 +232,13 @@ simply not there.
 
 ```
 python3 tests/shot.py case.txt out.png --measure  # a report about the page: look first, about 1 s
-WOSTUAST_WAIT=5000 pytest tests/test_page_review.py -q -k name  # while working: a lost wait fails in 5 s
-pytest tests/test_page_review.py -q # the subject you are changing. Do this first.
-pytest -q -n auto                   # the gate, once, before the push. Needs pytest-xdist.
-pytest -q                           # same result, about three times as long
-pytest tests/test_state.py -q       # no browser, under a second
+WOSTUAST_WAIT=5000 python3 -m pytest tests/test_page_review.py -q -k name  # while working: a lost wait fails in 5 s
+python3 -m pytest tests/test_page_review.py -q  # the subject you are changing. Do this first.
+python3 tests/perturb.py breaks.json            # prove the new tests: each break runs only the tests it names
+# before the push, both of these; run them in the background and write the rule meanwhile:
+for i in 1 2 3; do python3 -m pytest -q -n 12 tests/test_page_review.py; done  # the test files you changed, under load
+python3 -m pytest -q -n auto --ignore-glob='tests/test_page_*'   # every test that drives no browser
+python3 -m pytest -q -n auto          # the whole suite: only when a shared part changed (below). Needs pytest-xdist.
 ./wostuast doctor / ls / serve
 ```
 
@@ -244,14 +258,44 @@ proven by a test measuring the box around each block, which said 6 px, while
 the reader looked at the text, which stood 39 px from what came next. The
 picture shows that in one look and `--measure` prints both numbers. It is
 done when the new picture looks right, not when a test is green — then pin
-it with a test that measures what the picture showed.
+it with a test that measures what the picture showed. **Send the reader the
+picture, and wait for their yes, before the pull request.** `SendUserFile`
+the PNG, beside the old one. The spacing fix was merged before the reader
+had looked, and came back as "I'm running the latest pushed branch, and the
+spacing is still not ok": a round of review, CI and merge for a question
+one picture answers.
 
-**Work in one file, then run the whole suite once.** While working, run the
-one test and the one file, with `WOSTUAST_WAIT=5000`: a wait for something
-that never comes then fails in five seconds rather than thirty, which is
-three of them a minute and a half in one sitting. The full suite and the
-three runs at `-n 12` below come once, before the push. `WOSTUAST_WAIT` is
-for a desk, never CI: the 15 s and 30 s waits are what a loaded runner needs.
+**Work in one file.** While working, run the one test and the one file,
+with `WOSTUAST_WAIT=5000`: a wait for something that never comes then fails
+in five seconds rather than thirty, which is three of them a minute and a
+half in one sitting. `WOSTUAST_WAIT` is for a desk, never CI: the 15 s and
+30 s waits are what a loaded runner needs.
+
+**Before the push, run what you changed under load, and let CI run the
+rest.** CI runs the whole suite on every push, sharded, and CI is the gate.
+Measured over the 104 pull requests of one session: a local run of the
+whole suite took 130–180 s on four cores, and the rule this replaces — once
+at `-n auto`, then twice at `-n 12` — cost about seven minutes a pull
+request, half its time from the first edit to the merge. CI came back red
+on four of those 104. What the whole-suite runs did catch was a test that
+fails only under load, and the changed test files alone at `-n 12` failed
+the same way: the load is twelve browsers at once, not the length of the
+suite. So before a push:
+
+- the test files you changed or added, three times at `-n 12`;
+- every test that drives no browser, once;
+- the whole suite, once, only when a shared part changed: `conftest.py`,
+  `browser.py`, `split`, `draw`, `showTab`, `paintLive`, the stream, a CSS
+  rule every tab wears, or anything that runs on every push or poll.
+
+A red CI after that is still work now, and it costs one push; the old rule
+paid seven minutes on every pull request to save it.
+
+**Run a long thing in the background, and work while it runs.** A loop of
+`until grep …; sleep` holds the turn, does nothing else, and is killed at
+the tool's time limit — eight commands ended that way in that session. `run_in_background` wakes
+you when it ends. Meanwhile write the rule for this file and the pull
+request's text; while CI runs, reproduce the next issue, reading only.
 
 Most of the suite drives a real browser, so it waits far more than it computes:
 four workers cut it to about a third, and the tests are safe in parallel —
@@ -307,6 +351,14 @@ is about and watch it fail. Two have slipped through here:
 Ask what single change should make this test go red. If that change is not the
 one you make, the test is about something else than you think.
 
+**`tests/perturb.py` does the breaking.** Each break in its JSON list names
+the tests it should turn red, and only those run: the whole file for each
+break cost 7 to 40 s a break, and one fix had twelve breaks. It puts the
+file back after each, and on Ctrl-C. Read its last line, not its exit
+status alone: `GREEN` is a break no test saw, and "nothing ran" is a
+selection that matched no test, which passes for proof if nobody reads it.
+Keep the breaks list in the scratchpad; it is about one fix.
+
 **Playwright.** A hover-only control (`.plus`) needs `click(force=True)`. Wait
 for what the page has drawn, never for a number of seconds; `wait_for_timeout`
 is right only when proving something did **not** happen. Ask one question when a
@@ -351,8 +403,25 @@ after the page opened. Three symptoms, all of them "passes alone, red under
 load": an empty list read as "it drew nothing"; `null.isConnected` or
 `undefined.ts` thrown out of an `evaluate`; and a keystroke that went to the
 page instead of the find box, because `split` moves that box when the
-transcript lands and a box that moves loses the focus on it. Running the whole
-suite at `-n 12` three times over is what turns them up; once is not enough.
+transcript lands and a box that moves loses the focus on it. A fourth: a fixture's
+clock read after the page opened. `ago` counts seconds only for an age's
+first minute, a loaded CI runner took longer than that to open the page,
+and `test_a_row_is_not_rebuilt_every_second` read "1min" twice — so it
+starts the count itself with a fresh event. Running the test
+files you changed at `-n 12` three times over is what turns them up; once
+is not enough.
+
+**A change the reader asked for goes to a pull request and is merged on
+green, without asking.** The reader typed some form of "create a PR, watch
+it and merge when green" more than thirty times in one session, ten of them
+as "yes" to being asked. Ask first only for: a design choice with two readings, anything
+under **Safety**, a file outside `wostuast` and `tests/`, a dependency, or
+a tmux verb beyond the four. A change to how the page looks goes after the
+reader's yes on the picture (above). Then it is the issue loop's merge:
+one subject, one pull request, CI green, merge, the branch back onto
+`main` — `.claude/skills/issues/SKILL.md`, **The pull request loop**, has
+the exact calls. A question — "can we", "should we", "why" — is not a
+request for a change: answer it, and offer the change in a line.
 
 **`main` is protected, and a push to it is refused.** A change lands through a
 pull request, with every job in `.github/workflows/tests.yml` green. A
@@ -558,6 +627,10 @@ update the comment with its own text, and read it back.
   be deleting a file nobody told you about. The page says it in the Session
   panel, beside the box that set it, because "why did my agent stop" is asked
   there and not in the pane.
+  **And it is armed again when the spend drops below it**: `/clear` puts
+  `cost.total_cost_usd` back to nought, so without this one stop disarms the
+  limit for the rest of the session and the agent runs without bound behind a
+  box still showing a number. Only `set_limit` used to clear `fired_at`.
 - **A control that cannot work is disabled where it stands, and says why.**
   Everything on this page works with no tmux — the log, the sidebar, all five
   tabs, alerts, the spend on the strip. The five things that do not are the
@@ -583,20 +656,46 @@ update the comment with its own text, and read it back.
   already changed something the second read never ran and the browsers heard
   about the stop a tick late. `test_a_tick_stops_a_session_that_has_gone_over`
   reads the row, not just the tmux call, for exactly this.
-- **The limit box listens for `change`, never `input`.** On `input` the box
-  posts $1 on the way to $12, and a session already past a dollar is stopped
-  by a number the reader was still typing. The test spies on `tell` and
-  asserts one call.
-- **The limit box lives in `drawSession`'s kept half, and it is guarded
-  twice.** `rest` is rebuilt on every four-second poll, and a rebuild under
-  the hand is worse here than for the name: the node is *removed* rather than
-  blurred, so `change` never fires and the number is not merely lost on
-  screen, it is never stored. So it sits in its own part with its own narrow
-  key — that is what keeps the poll's churn out. **And the key is skipped
-  while the box has the focus**, because unlike the name this field has news
-  of its own: a status line that starts reporting a spend, or a limit that
-  has just fired, arriving mid-word. Two tests, because the two guards fail
-  differently.
+- **The limit box is typed into while the page redraws under it, and a
+  half-typed number must never become a limit.** Five guards, each a scar:
+  - **It listens for `change`, never `input`.** On `input` the box
+    posts $1 on the way to $12, and a session already past a dollar is stopped
+    by a number the reader was still typing. The test spies on `tell` and
+    asserts one call.
+  - **It lives in `drawSession`'s kept half, and it is guarded
+    twice.** `rest` is rebuilt on every four-second poll, and a rebuild under
+    the hand is worse here than for the name: the node is *removed* rather than
+    blurred, so `change` never fires and the number is not merely lost on
+    screen, it is never stored. So it sits in its own part with its own narrow
+    key — that is what keeps the poll's churn out. **And the key is skipped
+    while the box has the focus**, because unlike the name this field has news
+    of its own: a status line that starts reporting a spend, or a limit that
+    has just fired, arriving mid-word. Two tests, because the two guards fail
+    differently.
+  - **It is kept while it has the focus only while it is still this
+    session's box.** An alert clicked or a link followed runs `choose` with the
+    focus where it was, so the skip kept the old session's box under the new
+    session's panel, and a number typed there to protect the new session set
+    the old one's limit. `limitfield`'s `dataset.id` says whose box it is; a
+    box that is not the chosen session's is rebuilt. **What was half typed in
+    it is put back first** (`dataset.stood`), never stored: a number is given
+    by Enter, Tab or a click away, and an alert that changed the page is none
+    of those — "7" on the way to "75" would stop that agent at seven dollars,
+    which is the `change` scar above by another road. Chromium commits a
+    focused box that is removed, so the value has to go back before it goes.
+    `test_a_limit_typed_after_another_session_is_chosen_is_that_sessions`.
+  - **A number it cannot read is refused, never read as "no limit".** A
+    number input reads `10e`, `1e` or a lone `-` as the empty string, and empty
+    means "take the limit away" — one slip of the hand removed the limit and
+    the panel went quiet. A negative number did the same through
+    `!(asked > 0)`. `box.validity.badInput` and a sign check refuse both,
+    `said` says why, and the box goes back to the limit that stands.
+    `test_a_limit_the_box_cannot_read_leaves_the_limit_standing`.
+  - **It says what it will *actually* do.** `over_limit` skips a session
+    with no pane and one whose status line has sent no spend, so "Escape into
+    this pane when the spend passes it" is a promise this program cannot keep
+    for either — and a reader told they are protected when they are not is the
+    worst thing this feature could do. Each case says which it is.
 - **`over_limit` decides and writes inside one lock.** Reading the map
   outside `naming` and merging `limits.update(fired)` inside it is a race
   with `set_limit`: a raise that lands in between is overwritten with the old
@@ -629,34 +728,6 @@ update the comment with its own text, and read it back.
   `test_a_refusal_after_the_limit_was_raised_is_not_written_over_it`,
   `test_a_refusal_is_forgotten_when_the_spend_drops_below_the_limit`,
   `test_an_escape_tmux_refused_is_not_called_a_stop`.
-- **The limit box is kept while it has the focus only while it is still this
-  session's box.** An alert clicked or a link followed runs `choose` with the
-  focus where it was, so the skip kept the old session's box under the new
-  session's panel, and a number typed there to protect the new session set
-  the old one's limit. `limitfield`'s `dataset.id` says whose box it is; a
-  box that is not the chosen session's is rebuilt. **What was half typed in
-  it is put back first** (`dataset.stood`), never stored: a number is given
-  by Enter, Tab or a click away, and an alert that changed the page is none
-  of those — "7" on the way to "75" would stop that agent at seven dollars,
-  which is the `input` scar below by another road. Chromium commits a
-  focused box that is removed, so the value has to go back before it goes.
-  `test_a_limit_typed_after_another_session_is_chosen_is_that_sessions`.
-- **A number the box cannot read is refused, never read as "no limit".** A
-  number input reads `10e`, `1e` or a lone `-` as the empty string, and empty
-  means "take the limit away" — one slip of the hand removed the limit and
-  the panel went quiet. A negative number did the same through
-  `!(asked > 0)`. `box.validity.badInput` and a sign check refuse both,
-  `said` says why, and the box goes back to the limit that stands.
-  `test_a_limit_the_box_cannot_read_leaves_the_limit_standing`.
-- **The limit is armed again when the spend drops below it.** `/clear` puts
-  `cost.total_cost_usd` back to nought, so without this one stop disarms the
-  limit for the rest of the session and the agent runs without bound behind a
-  box still showing a number. Only `set_limit` used to clear `fired_at`.
-- **The box says what it will *actually* do.** `over_limit` skips a session
-  with no pane and one whose status line has sent no spend, so "Escape into
-  this pane when the spend passes it" is a promise this program cannot keep
-  for either — and a reader told they are protected when they are not is the
-  worst thing this feature could do. Each case says which it is.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters, keeping tab and newline. "Below a space" includes the C1 block
   above `\x7f` — NEL and CSI are controls, and U+2028 is a line break that
@@ -817,11 +888,9 @@ update the comment with its own text, and read it back.
   dialog is still the agent moving on.
   `test_another_call_before_the_dialog_does_not_take_the_question_away`.
 - **The question bar belongs to the Transcript tab, at its foot.** It is not
-  the header bar that was taken away: that one stood over every tab saying the
-  branch, the pane, the model and the state, all of which the chosen row says
-  one column to the left, at 56 px on every tab for ever. This stands in one
-  place, over the send box, because the transcript ends at its foot and
-  answering is sending. The row still goes amber from any tab, which is what
+  the header bar that was taken away (the Session tab's bullet says why that
+  went): this stands in one place, over the send box, because the
+  transcript ends at its foot and answering is sending. The row still goes amber from any tab, which is what
   the row is for. It reads `state.tab`, like the send box, because it is
   chrome outside the content box and is drawn after `showTab` has set the
   name. `drawAsking` is called from `drawHeader`, so a fifth call site cannot
@@ -2033,22 +2102,6 @@ update the comment with its own text, and read it back.
   It is part of the same redraw key. `tests/shot.py` writes a status line
   for its session, so a picture of the strip has all three in it.
   `test_the_model_stands_left_of_the_context_bar`.
-- **A working stream says nothing.** The slot read "live" on every page all
-  day. A reader can see the page moving, so the word told nobody anything,
-  and a word that is always there is a word nobody reads — "reconnecting"
-  in the same place went unseen too. `state.live` still holds "live";
-  `paintLive` only does not paint it, so a test that wants to know the
-  stream is up asks `state.live`, not the slot.
-  `test_a_working_stream_says_nothing_and_a_lost_one_says_so` holds both
-  halves.
-- **`said` is the daemon's answer and it stays; `note` is our own word and it
-  fades.** "Review sent" goes stale in four seconds. "That did not come from
-  this page" is about something you asked for and did not get, and fading it
-  left a strip reading "live" over a page where nothing worked — which is
-  exactly how the restart above went unexplained. **So a send that worked
-  calls `said` before its `note`**: the note only borrowed the slot, and when
-  it faded the refusal before it came back over a review that had gone
-  through. `test_a_review_that_goes_through_clears_an_earlier_refusal`.
 - **One painter for the live slot, and three things that want it.**
   `state.live` is what the stream is doing, `state.trouble` is something you
   asked for and did not get, and `note` borrows the slot over both for four
@@ -2062,7 +2115,23 @@ update the comment with its own text, and read it back.
   **`paintLive` is called whatever the find box holds.** Both stream
   handlers skipped it while it held text, a guard with nothing left to
   guard: a drop said nothing, and a reconnect left "reconnecting" standing
-  over a working page.
+  over a working page. Two more rules for the slot:
+  - **A working stream says nothing.** The slot read "live" on every page all
+    day. A reader can see the page moving, so the word told nobody anything,
+    and a word that is always there is a word nobody reads — "reconnecting"
+    in the same place went unseen too. `state.live` still holds "live";
+    `paintLive` only does not paint it, so a test that wants to know the
+    stream is up asks `state.live`, not the slot.
+    `test_a_working_stream_says_nothing_and_a_lost_one_says_so` holds both
+    halves.
+  - **`said` is the daemon's answer and it stays; `note` is our own word and it
+    fades.** "Review sent" goes stale in four seconds. "That did not come from
+    this page" is about something you asked for and did not get, and fading it
+    left a strip reading "live" over a page where nothing worked — which is
+    exactly how a restarted `serve` went unexplained. **So a send that worked
+    calls `said` before its `note`**: the note only borrowed the slot, and when
+    it faded the refusal before it came back over a review that had gone
+    through. `test_a_review_that_goes_through_clears_an_earlier_refusal`.
 - **No JavaScript library is vendored.** `marked` and `highlight.js` are fetched
   through the one `fetchScript`, each pinned by the hash of its bytes, with
   `crossorigin` so the browser checks it. Any script on this page can POST to
@@ -2227,6 +2296,14 @@ an issue was closed down to one line on it. The assertion came from reading
 fixture is one sample, and absence in it is not absence in the payload.** A
 reader whose own status line showed the spend is what corrected it. When the
 question is "does this payload carry X", the fixture can only say yes.
+
+**A report that carries a payload becomes a fixture before the fix.**
+Answering a question came back three times and the paste tags twice, each
+first fixed against a shape guessed from the reader's words. Copy the record
+out of the report, put invented text in place of theirs, keep every field
+name and every level of nesting, save it under `tests/fixtures/`, and write
+the failing test against it first. A report with no payload: ask for one
+before building — the reader has sent them when asked.
 
 **Recording one does not mean committing your conversation.** Both fixtures
 carry real field names in real shapes with invented text, because this
