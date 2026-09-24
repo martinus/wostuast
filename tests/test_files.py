@@ -1247,3 +1247,21 @@ def test_a_picture_too_big_to_show_is_not_read(ws, seeded, monkeypatch):
     assert ws.read_worktree_bytes(str(seeded), "logo.png") is None
     monkeypatch.setattr(ws, "SHOWN_MAX_BYTES", 4096)
     assert ws.read_worktree_bytes(str(seeded), "logo.png") is not None
+
+
+def test_a_log_git_failed_on_is_not_a_commit_gone(ws, seeded):
+    """`branch_commits` giving None emptied the list, the picked sha was not
+    in it, and the report said `gone`: the pane read "probably amended or
+    rebased away", and the pick was dropped for good."""
+    git(seeded, "checkout", "-qb", "feat")
+    (seeded / "x.txt").write_text("x\n")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "x")
+    sha = ws.worktree_diff(str(seeded)).commits[0].sha
+
+    def broken(args, **rest):
+        return None if "log" in args else ws.run(args, **rest)
+
+    report = ws.worktree_diff(str(seeded), runner=broken, of=sha)
+    assert report.failed is True
+    assert report.gone == ""

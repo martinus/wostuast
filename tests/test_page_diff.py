@@ -811,3 +811,114 @@ def test_the_file_header_stands_on_the_diffs_own_ground(repo_page):
                 assert head == card, (scheme, head, card)
             finally:
                 browser.close()
+
+
+# --- a failure, or a choice, that outlived what it was about -----------------
+
+
+def untracked_block(page):
+    return page.locator(".dfile:has(.what:text-is('untracked'))")
+
+
+def test_an_untracked_file_is_read_again_when_its_session_comes_back(
+        repo_page, served, ws):
+    """The pick came back with the session and the text did not, and
+    nothing asked for it: "reading…" for ever, and a click on the name did
+    nothing, because it was the name already picked."""
+    repo, path = repo_page
+    daemon, _ = served
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(repo),
+                                   ts=time.time()))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s1')")
+            show_tab(page, "diff")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_selector(".dfile .dtext:text-is('# Notes')")
+            page.evaluate("choose('s2')")
+            page.evaluate("choose('s1')")
+            page.wait_for_selector(".dfile .dtext:text-is('# Notes')")
+        finally:
+            browser.close()
+
+
+def test_an_untracked_file_that_could_not_be_read_says_so(repo_page):
+    """A failed fetch was drawn as "This file is empty.", and it was kept:
+    the failure stayed on screen as the file's content."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.route("**/file?*", lambda route: route.abort())
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.dfile')].some(
+                     one => one.innerText.includes('could not be read'))""")
+            assert "empty" not in untracked_block(page).inner_text()
+            page.unroute("**/file?*")
+            # The next poll asks again.
+            page.wait_for_selector(".dfile .dtext:text-is('# Notes')")
+        finally:
+            browser.close()
+
+
+def test_a_whole_file_that_failed_is_asked_for_again_on_a_click(repo_page):
+    """The failure was kept so a draw would not ask git again -- and so every
+    later click on the band added a range, drew, and showed nothing."""
+    root, _ = repo_page
+    long_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(LONG + " .hunk")
+            page.route("**/whole?*", lambda route: route.abort())
+            page.locator(LONG + " .hunk").first.locator(".grow").click()
+            page.wait_for_function(
+                "[...state.diffWhole.values()].some(w => !w.asking && !w.file)")
+            page.unroute("**/whole?*")
+            page.locator(LONG + " .hunk").first.locator(".grow").click()
+            page.wait_for_selector(LONG + " .dtext:text-is('line 7')")
+        finally:
+            browser.close()
+
+
+def test_a_file_shut_in_one_half_stays_open_in_the_other(repo_page):
+    """The choice was kept by the path alone, so shutting a file in the
+    committed half shut it in the uncommitted half too, on the next save."""
+    root, _ = repo_page
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+    committed = ".diffhead.committed ~ .dfile:has(.path:text-is('code.py'))"
+    loose = ".diffhead.uncommitted ~ .dfile:has(.path:text-is('code.py'))"
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(loose + " .dline")
+            page.locator(committed).first.locator(".name").click()
+            page.evaluate("state.diffAt += 1; draw()")    # the agent saved
+            page.wait_for_selector(loose + " .dline")
+            assert page.locator(committed).first.locator(".dline").count() == 0
+        finally:
+            browser.close()
+
+
+def test_an_untracked_file_git_would_not_list_is_not_its_one_line(
+        repo_page, ws, monkeypatch):
+    """`is_listed` timing out makes the route answer `missing`, and the page
+    drew that sentence as the file's one added line, with a `+` on it."""
+    monkeypatch.setattr(ws, "is_listed", lambda *a, **k: False)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.click(".filelist button:has-text('NOTES.md')")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.dfile')].some(
+                     one => one.innerText.includes('could not be read'))""")
+            assert untracked_block(page).locator(".dline").count() == 0
+        finally:
+            browser.close()
