@@ -924,10 +924,17 @@ def test_an_untracked_file_git_would_not_list_is_not_its_one_line(
             browser.close()
 
 
-def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page):
+def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page, served,
+                                                            ws, monkeypatch):
     """The daemon finds the branch a worktree was cut from; the reader can
     say otherwise, and that stays with this checkout in this browser."""
     root, path = repo_page
+    daemon, _ = served
+    # The fixture's git gives no worktree root; a real one does.
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: ws.GitFacts(repo="repo", branch="fix", root=str(root)) for d in dirs})
+    daemon.store.git_read.clear()
+    daemon.tick()
     git = conftest.git_in
     git(root, "stash", "-q", "-u")
     git(root, "checkout", "-qb", "release", "main")
@@ -955,5 +962,41 @@ def test_the_base_can_be_picked_and_is_kept_for_the_worktree(repo_page):
             show_tab(page, "diff")
             page.wait_for_function(
                 "() => document.querySelector('.pickbase').value === 'main'")
+            # Kept for the worktree, not for the directory the agent is in:
+            # a `cd src` made a pick keyed on `cwd` look as if never made.
+            (root / "src").mkdir()
+            ws.append_event(conftest.event(
+                "PreToolUse", cwd=str(root / "src"), tool_name="Bash",
+                tool_input={"command": "ls"}, ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                "() => state.sessions[0].cwd.endsWith('/src')")
+            page.reload()
+            show_tab(page, "diff")
+            page.wait_for_function(
+                "() => document.querySelector('.pickbase').value === 'main'")
+        finally:
+            browser.close()
+
+
+def test_a_whole_file_is_asked_for_against_the_base_the_diff_was_drawn_on(
+        repo_page):
+    """With nothing picked the page sent no base, and the daemon found one
+    again for the whole file; a different answer drew another base's lines
+    between these hunks."""
+    root, _ = repo_page
+    long_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(LONG + " .hunk")
+            asked = []
+            page.on("request", lambda one: asked.append(one.url)
+                    if "/whole?" in one.url else None)
+            page.locator(LONG + " .hunk").first.locator(".grow").click()
+            page.wait_for_selector(LONG + " .dtext:text-is('line 7')")
+            base = page.evaluate("state.diff.base")
+            assert base and any("base=" + base in url for url in asked), asked
         finally:
             browser.close()

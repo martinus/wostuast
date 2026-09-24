@@ -2168,28 +2168,47 @@ it. The reason is the part to weigh before undoing one.
 - **A branch's work is measured against the branch it was cut from, found
   by counting.** A backport is cut from a release branch and goes back into
   it, and measured against `origin/HEAD` it showed every commit the release
-  carries and main does not as the agent's. `pick_base` ranks every branch
-  in one git run, `%(ahead-behind:HEAD)` (git 2.41): the fewest of HEAD's
-  commits it lacks, then the fewest it has that HEAD lacks, then
-  `origin/HEAD` and `BASE_NAMES`. The branch itself and its copy on a remote
-  are left out, unless it is one of those names: an agent working on the
-  default branch is measured against it, and the picker then lists the last
-  `COMMITS_RECENT` of HEAD, because those are what it did. `origin/HEAD` is
-  only a name to prefer, never taken on its word: a remote that renamed its
-  default branch leaves it naming a branch `fetch --prune` took away, and
-  `symbolic-ref` prints it anyway
-  (`test_an_origin_head_that_points_nowhere_is_not_the_base`). A git too
-  old to rank falls back to those names in turn; with none, the Diff tab
-  shows only what is not committed and says so.
+  carries and main does not as the agent's. `pick_base` counts every branch
+  against HEAD, `%(ahead-behind:HEAD)` (git 2.41), and ranks by the fewest
+  of HEAD's commits it lacks, then `origin/HEAD` and `BASE_NAMES`, then the
+  fewest it has that HEAD lacks -- in that order, or a colleague's branch
+  cut at the same point was named over main, which had moved on further.
+  **A branch holding all of HEAD is never the base**, the default one
+  aside: a child branch, a backup, a detached HEAD's own branch, a copy
+  under another name, local `main` ahead of `origin/main` each counted
+  nought missing and won, with nothing to show. The default stays, so an
+  agent on the default branch with everything pushed is measured against
+  it and the picker lists the last `COMMITS_RECENT` of HEAD, because those
+  are what it did. The branch's own copy on a remote is left out by name.
+  `origin/HEAD` is only a name to prefer, never taken on its word: a remote
+  that renamed its default branch leaves it naming a branch `fetch --prune`
+  took away (`test_an_origin_head_that_points_nowhere_is_not_the_base`). A
+  git that cannot count falls back to those names in turn; with none, the
+  Diff tab shows only what is not committed and says so.
   `test_a_backport_is_measured_against_the_branch_it_was_cut_from`,
+  `test_a_branch_that_holds_all_of_head_is_never_the_base`,
+  `test_unpushed_work_on_main_is_measured_against_the_remote`,
+  `test_a_branch_cut_at_the_same_point_is_not_named_over_main`,
   `test_a_git_that_cannot_rank_falls_back_to_the_usual_names`.
+- **The count is kept, because it walks history.** Measured on 150,000
+  commits and 3,000 branches: 1.3 to 1.6 s, against `RUN_TIMEOUT`'s two,
+  on every five-second poll. `Daemon.ranks` keeps it under HEAD and a
+  listing of every ref with its commit, which is cheap, so it is counted
+  again only when one moves, and under `DIFF_TIMEOUT`.
+  `test_the_ranking_is_counted_once_while_nothing_moves`.
 - **And the reader can pick it**, in the Diff tab's second `select`, kept in
-  this browser per worktree (`BASE_KEY`, `recallBase`) -- it is about that
-  checkout, not a session, and not a config file. It goes as `?base=` to
-  the `diff` and `whole` routes, and **is used only if `pick_base` listed
-  that exact name**, like a commit in `?of=`: the page is input.
-  `test_a_base_the_page_names_is_used_only_if_git_listed_it`,
-  `test_the_base_can_be_picked_and_is_kept_for_the_worktree`.
+  this browser for the worktree (`BASE_KEY`, `recallBase`, `baseHome`) --
+  keyed on `GitFacts.root`, never `cwd`, which moves with every `cd` the
+  agent makes. It goes as `?base=` and **is used only if git listed that
+  exact name**, checked against the cheap listing and not the count, so a
+  count git could not finish never drops it; a pick is always on the list.
+  The page asks for a whole file against `state.diff.base`, the base the
+  diff was drawn on, never the pick: with nothing picked the daemon would
+  find one again, and a different answer drew another base's lines between
+  these hunks. `test_a_base_the_page_names_is_used_only_if_git_listed_it`,
+  `test_a_pick_stands_when_the_ranking_cannot_be_counted`,
+  `test_the_base_can_be_picked_and_is_kept_for_the_worktree`,
+  `test_a_whole_file_is_asked_for_against_the_base_the_diff_was_drawn_on`.
 
 ## Do not guess payload fields
 

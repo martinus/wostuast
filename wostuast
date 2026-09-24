@@ -712,6 +712,9 @@ class GitFacts:
     behind: int = 0
     dirty: bool = False
     touched_files: int = 0
+    #: The top of the worktree. The page keys what belongs to a checkout on
+    #: it -- the Diff tab's base -- because `cwd` moves with every `cd`.
+    root: str = ""
     #: git did not answer about a directory that is a repository. Empty facts
     #: read as a clean repository with no branch, which is a real state and
     #: not this one — and they used to be remembered as the answer.
@@ -1525,6 +1528,7 @@ def row(session: Session) -> dict[str, Any]:
         "pane": session.pane,
         "repo": facts.repo,
         "branch": facts.branch,
+        "root": facts.root,
         "ahead": facts.ahead,
         "behind": facts.behind,
         "dirty": facts.dirty,
@@ -2549,6 +2553,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         paths = git("rev-parse", "--show-toplevel")
     if paths:
         facts.repo = repo_name(paths.splitlines()[0])
+        facts.root = paths.splitlines()[-1]
 
     status = git("status", "--porcelain", "--branch")
     if not paths:
@@ -3670,82 +3675,110 @@ class BaseChoice:
 
 
 def pick_base(cwd: str, runner: Callable[..., str | None] = run,
-              wanted: str = "") -> BaseChoice:
+              wanted: str = "", ranks: dict[Any, Any] | None = None) -> BaseChoice:
     """The commit a branch's own work is measured against.
 
     **The branch it was cut from, found by counting.** A backport is cut
     from a release branch and goes back into it, so measured against
     `origin/HEAD` it showed every commit the release lacks. Every branch is
-    ranked in one git run (`%(ahead-behind:HEAD)`, git 2.41): the fewest of
-    HEAD's commits it lacks, then the fewest it has that HEAD lacks, then
-    `origin/HEAD` and the usual names. The branch itself and its own copy on
-    a remote are left out -- unless it is one of the usual names, because an
-    agent working on the default branch is measured against that, and shown
-    its recent commits.
+    counted against HEAD (`%(ahead-behind:HEAD)`, git 2.41) and ranked: the
+    fewest of HEAD's commits it lacks, then `origin/HEAD` and the usual
+    names, then the fewest it has that HEAD lacks -- so a colleague's branch
+    cut at the same point is not named over the default branch.
+
+    **A branch that holds all of HEAD is never the base**, the default one
+    aside: a child branch, a backup, a detached HEAD's own branch, a copy
+    pushed under another name, local `main` ahead of `origin/main`. There is
+    nowhere for the work to go there, and each won the ranking with nothing
+    to show. The default branch stays, because an agent working on it with
+    everything pushed is measured against it, and shown its recent commits.
+    The branch's own copy on a remote is left out by name.
+
+    **The ranking is kept** in `ranks`, the daemon's, under HEAD and a
+    listing of every ref with its commit: the listing is cheap and the count
+    walks history, which on a large repository took most of two seconds on
+    every poll. A pick (`wanted`, from the page) is checked against the
+    listing, never against the ranking, so a ranking git could not finish
+    never drops it; and it is used only when git listed that exact name.
 
     `origin/HEAD` is only ever a name to prefer, never taken on its word: a
-    remote that renamed its default branch, then `fetch --prune`, leaves it
-    naming a branch that is gone, and `symbolic-ref` prints it all the same.
-
-    `wanted` is the reader's pick, from the page, so it is used only when git
-    listed that exact name. A git too old to rank falls back to the usual
-    names in turn.
+    remote that renamed its default branch leaves it naming a branch that is
+    gone. A git that cannot rank falls back to the usual names.
     """
     choice = BaseChoice()
-    head = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
-                    "refs/remotes/origin/HEAD"]) or "").strip()
-    current = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
-                       "HEAD"]) or "").strip()
-    prefer = ([head] if head else []) + list(BASE_NAMES)
-    counted = runner(["git", "-C", cwd, "for-each-ref",
-                      "--format=%(refname)%09%(refname:short)%09%(ahead-behind:HEAD)",
+    listing = runner(["git", "-C", cwd, "for-each-ref",
+                      "--format=%(refname)%09%(refname:short)%09%(objectname)",
                       "refs/remotes/", "refs/heads/"])
-    if counted is not None:
-        ranked: list[tuple[int, int, int, str]] = []
-        for line in counted.splitlines():
-            full, _, rest = line.partition("\t")
-            name, _, counts = rest.partition("\t")
-            numbers = counts.split()
-            if not name or len(numbers) != 2 or full.endswith("/HEAD"):
-                continue
-            branch = (full.split("/", 3)[3] if full.startswith("refs/remotes/")
-                      and full.count("/") >= 3 else name)
-            if current and branch == current and name not in prefer:
-                continue
-            try:
-                ahead, behind = int(numbers[0]), int(numbers[1])
-            except ValueError:
-                continue
-            place = prefer.index(name) if name in prefer else len(prefer)
-            ranked.append((behind, ahead, place, name))
-        ranked.sort()
-        names = [one[3] for one in ranked]
-        choice.detected = names[0] if names else ""
-        choice.offered = names[:BASES_OFFERED]
-        choice.name = wanted if wanted and wanted in names else choice.detected
-        return choice
-    # A git before 2.41 cannot rank, or git did not answer: the usual names,
-    # asked of `for-each-ref`, which lists only what exists.
-    found = runner(["git", "-C", cwd, "for-each-ref", "--format=%(refname:short)",
-                    *([f"refs/remotes/{head}"] if head else []),
-                    *(f"refs/{where}/{name}"
-                      for where in ("remotes/origin", "heads")
-                      for name in ("main", "master"))])
-    if found is None:
+    if listing is None:
         choice.failed = True
         return choice
-    have = set(found.split())
-    names = [name for name in prefer if name in have]
+    refs: dict[str, str] = {}
+    for line in listing.splitlines():
+        full, _, rest = line.partition("\t")
+        name = rest.partition("\t")[0]
+        if name and not full.endswith("/HEAD"):
+            refs[name] = full
+    head = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
+                    "refs/remotes/origin/HEAD"]) or "").strip()
+    head = head if head in refs else ""
+    current = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
+                       "HEAD"]) or "").strip()
+    prefer = ([head] if head else []) + [one for one in BASE_NAMES if one != head]
+    default = next((one for one in prefer if one in refs), "")
+    at = (runner(["git", "-C", cwd, "rev-parse", "--verify", "--quiet", "HEAD"])
+          or "").strip()
+    key = (cwd, at, current, hash(listing))
+    if ranks is not None and key in ranks:
+        counts = ranks[key]
+    else:
+        counts = None
+        counted = runner(["git", "-C", cwd, "for-each-ref",
+                          "--format=%(refname:short)%09%(ahead-behind:HEAD)",
+                          "refs/remotes/", "refs/heads/"],
+                         timeout=DIFF_TIMEOUT) if at else None
+        if counted is not None:
+            counts = {}
+            for line in counted.splitlines():
+                name, _, both = line.partition("\t")
+                numbers = both.split()
+                if len(numbers) == 2 and numbers[0].isdigit() and numbers[1].isdigit():
+                    counts[name] = (int(numbers[0]), int(numbers[1]))
+        if ranks is not None:
+            if len(ranks) > 64:
+                ranks.clear()
+            ranks[key] = counts
+    if counts:
+        ranked: list[tuple[int, int, int, str]] = []
+        for name, full in refs.items():
+            if name not in counts:
+                continue
+            ahead, behind = counts[name]
+            branch = (full.split("/", 3)[3] if full.startswith("refs/remotes/")
+                      and full.count("/") >= 3 else name)
+            if name != default and (behind == 0 or (current and branch == current)):
+                continue
+            place = prefer.index(name) if name in prefer else len(prefer)
+            ranked.append((behind, place, ahead, name))
+        ranked.sort()
+        names = [one[3] for one in ranked]
+    else:
+        names = [one for one in prefer if one in refs]
     choice.detected = names[0] if names else ""
-    choice.offered = names
-    choice.name = wanted if wanted and wanted in names else choice.detected
+    choice.offered = names[:BASES_OFFERED]
+    if wanted and wanted in refs:
+        choice.name = wanted
+        if wanted not in choice.offered:
+            choice.offered.append(wanted)     # picked, so it is on the list
+    else:
+        choice.name = choice.detected
     return choice
 
 
 def diff_base(cwd: str, runner: Callable[..., str | None] = run,
-              wanted: str = "") -> tuple[str, bool]:
+              wanted: str = "", ranks: dict[Any, Any] | None = None
+              ) -> tuple[str, bool]:
     """The base `pick_base` chose, and whether git failed to answer."""
-    choice = pick_base(cwd, runner, wanted)
+    choice = pick_base(cwd, runner, wanted, ranks)
     return choice.name, choice.failed
 
 
@@ -3867,7 +3900,8 @@ def empty_tree(root: str, runner: Callable[..., str | None] = run) -> str:
 
 
 def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
-                  of: str = "", base: str = "") -> DiffReport:
+                  of: str = "", base: str = "",
+                  ranks: dict[Any, Any] | None = None) -> DiffReport:
     """What this worktree has changed, in two parts, or one commit of it.
 
     Committed: `git diff <base>...HEAD`, the branch's own work. The three dots
@@ -3901,7 +3935,7 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
                         at_commit=name != "uncommitted"))
         return files
 
-    choice = pick_base(root, runner, base)
+    choice = pick_base(root, runner, base, ranks)
     report.base, lost = choice.name, choice.failed
     report.base_auto, report.bases = choice.detected, choice.offered
     commits, report.recent = branch_commits(root, report.base, runner)
@@ -3986,7 +4020,8 @@ class WholeFile:
 def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
                     of: str = "",
                     runner: Callable[..., str | None] = run,
-                    base: str = "") -> WholeFile:
+                    base: str = "",
+                    ranks: dict[Any, Any] | None = None) -> WholeFile:
     """One file's diff in one section, with the whole file as context.
 
     `section`, `path` and `of` come from the page. The section picks the
@@ -4002,7 +4037,7 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
     if not root:
         found.failed = not git_answers(runner)
         return found
-    base, lost = (diff_base(root, runner, base)
+    base, lost = (diff_base(root, runner, base, ranks)
                   if section in ("committed", "commit") else ("", False))
     if lost:
         found.failed = True
@@ -4853,6 +4888,9 @@ class Daemon:
         self.store = Store()
         self.hub = Hub()
         self.files = Files()
+        #: `pick_base`'s ranking of every branch, by worktree, HEAD and the
+        #: refs as they stand. Counting walks history, and the Diff tab polls.
+        self.ranks: dict[Any, Any] = {}
         # Any site can send this daemon a POST; only a page that has read this
         # token can send one that acts. It is made here and printed into the
         # page, and it lives as long as the daemon does.
@@ -5548,7 +5586,8 @@ class Serving:
         of = query.get("of", [""])[0]
         # The base the reader picked, used only if git lists that name.
         base = query.get("base", [""])[0]
-        self.reply_json(dict(asdict(worktree_diff(session.cwd, of=of, base=base)),
+        self.reply_json(dict(asdict(worktree_diff(session.cwd, of=of, base=base,
+                                                  ranks=self.daemon.ranks)),
                              id=session_id))
 
     def whole(self, session_id: str, query: dict[str, list[str]]) -> None:
@@ -5561,7 +5600,8 @@ class Serving:
             return query.get(name, [""])[0]
 
         found = whole_file_diff(session.cwd, arg("section"), arg("path"),
-                                arg("old"), arg("of"), base=arg("base"))
+                                arg("old"), arg("of"), base=arg("base"),
+                                ranks=self.daemon.ranks)
         self.reply_json(dict(asdict(found), id=session_id))
 
     def stream(self, watching: str) -> None:
@@ -11325,24 +11365,30 @@ function keepSides(next) {
 // uses it only if git lists that name. Empty is "what the daemon found".
 const BASE_KEY = "wostuast-base\n";
 
+// The worktree's top, as git gave it; `cwd` moves with every `cd` the agent
+// makes, and a pick keyed on it looked as if it had never been made.
+function baseHome(s) {
+  return s ? s.root || s.cwd || "" : "";
+}
+
 function recallBase() {
-  const s = current();
-  if (!s || !s.cwd) return "";
+  const home = baseHome(current());
+  if (!home) return "";
   try {
-    const held = localStorage.getItem(BASE_KEY + s.cwd);
+    const held = localStorage.getItem(BASE_KEY + home);
     return typeof held === "string" ? held : "";
   } catch (error) { return ""; }
 }
 
 function keepBase(name) {
-  const s = current();
-  if (!s || !s.cwd || name === recallBase() || busyWriting()) {
+  const home = baseHome(current());
+  if (!home || name === recallBase() || busyWriting()) {
     draw();                         // puts the picker back to what is shown
     return;
   }
   try {
-    if (name) localStorage.setItem(BASE_KEY + s.cwd, name);
-    else localStorage.removeItem(BASE_KEY + s.cwd);
+    if (name) localStorage.setItem(BASE_KEY + home, name);
+    else localStorage.removeItem(BASE_KEY + home);
   } catch (error) { }
   // Another base is another list of commits, so a picked one may not be on
   // it; and everything the reader revealed was counted against the old one.
@@ -12381,7 +12427,10 @@ async function fetchWhole(one, section) {
   const want = state.chosen;
   const body = await ask(want, "whole", "?" + new URLSearchParams({
     section, path: one.path, old: one.old_path || "", of: state.diffOf,
-    base: recallBase() }));
+    // The base this diff was drawn against, not the pick: with nothing
+    // picked the daemon would find one again, and a different answer would
+    // be a whole file against another base, drawn between these hunks.
+    base: (state.diff && state.diff.base) || "" }));
   if (state.chosen !== want || state.diffWhole.get(key) !== held) return;
   held.asking = false;
   held.file = body && !body.cut && !body.failed ? body.file : null;
@@ -13374,7 +13423,8 @@ async function loadDiff() {
   if (base) query.set("base", base);
   const raw = await ask(want, "diff",
                         query.toString() ? "?" + query.toString() : "", true);
-  if (raw === null || state.chosen !== want || state.diffOf !== of) return;
+  if (raw === null || state.chosen !== want || state.diffOf !== of
+      || recallBase() !== base) return;
   if (raw !== state.diffRaw) {
     let body = null;
     try { body = JSON.parse(raw); } catch (error) { return; }
