@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
+import io
+import json
 import time
 
 import pytest
-
-import json
 
 
 def test_append_and_read_round_trip(ws):
@@ -135,7 +136,40 @@ def test_the_hook_cancels_the_deadline_even_when_it_fails(ws, monkeypatch):
 
     monkeypatch.setattr(ws, "read_stdin_json", explode)
     assert ws.cmd_hook(None) == 0
-    assert calls == ["arm", "cancel"]
+    # Armed again for the logging, which the failure may be about.
+    assert calls == ["arm", "arm", "cancel"]
+
+
+@pytest.mark.parametrize("which", ["hook", "status"])
+def test_a_failure_is_logged_under_a_deadline_even_after_a_timeout(
+        ws, monkeypatch, which):
+    """An alarm fires once. When the failure is the timeout itself, nothing
+    was armed over the logging -- and the status line cancelled its alarm
+    before it logged, so it logged with none even after a quick failure.
+    `log` writes a file, and the filesystem may be what is not answering."""
+    import signal
+
+    def timed_out(*args, **kwargs):
+        signal.alarm(0)                  # the alarm has fired: it is spent
+        raise TimeoutError("gave up")
+
+    monkeypatch.setattr(ws, "read_stdin_json", timed_out)
+    monkeypatch.setattr(ws.sys, "stdin", io.StringIO('{"session_id": "s1"}'))
+    monkeypatch.setattr(ws, "write_status", timed_out)
+    armed = []
+
+    def spy(text):
+        left = signal.alarm(0)
+        signal.alarm(left)
+        armed.append(left)
+
+    monkeypatch.setattr(ws, "log", spy)
+    if which == "hook":
+        assert ws.cmd_hook(None) == 0
+    else:
+        ws.cmd_status(argparse.Namespace())
+    assert armed and armed[0] > 0, armed
+    assert signal.alarm(0) == 0          # and nothing is left armed after
 
 
 def fill_until_one_rotation(ws, make_event):
