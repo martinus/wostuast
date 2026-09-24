@@ -1,4 +1,4 @@
-"""The three tmux verbs, and the send box.
+"""The tmux verbs, the send box, and answering a question.
 
 See tests/browser.py for the shared browser and the helpers."""
 
@@ -232,7 +232,8 @@ def test_submit_waits_until_every_question_is_answered(ws, in_pane):
             assert not page.locator("#asking .asksend .verb").is_disabled()
             # And it says what it will do before it is pressed. These are
             # keystrokes into a live terminal.
-            assert page.inner_text("#asking .asksays") == "presses 2, then 1"
+            assert page.inner_text("#asking .asksays") == \
+                "presses 2, then 1, then Enter"
         finally:
             browser.close()
 
@@ -260,9 +261,17 @@ def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
             browser.close()
 
 
+def pressed(seen):
+    """The keys that reached the pane, in order: a digit, `Tab`, `Enter`."""
+    return [one[-1] for one in seen if one[:2] == ["tmux", "send-keys"]]
+
+
 def test_submit_presses_the_numbers_in_the_order_they_were_asked(ws, in_pane):
-    """A keystroke, not a paste: `tmux_send` sends one line literally and
-    then presses Enter, which is exactly what a finger would do."""
+    """Measured in Claude Code's own dialog: a digit answers a single-choice
+    question *and moves on*, so the Enter this used to press after every
+    number answered the next question with whatever sat under the cursor --
+    and on the review, `2` is Cancel. One Enter, at the end, on "Submit
+    answers"."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
     with sync_playwright() as play:
@@ -272,14 +281,103 @@ def test_submit_presses_the_numbers_in_the_order_they_were_asked(ws, in_pane):
             page.click(option(1, 3))
             page.click(option(2, 2))
             page.click("#asking .asksend .verb")
-            page.wait_for_timeout(700)
-            typed = [one[-1] for one in seen
-                     if "send-keys" in one and "-l" in one]
-            assert typed == ["3", "2"], seen
-            assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+            page.wait_for_function(
+                "() => document.querySelector('#asking .asksend .verb').disabled")
+            deadline = time.time() + 5
+            while len(pressed(seen)) < 3 and time.time() < deadline:
+                time.sleep(0.05)
+            assert pressed(seen) == ["3", "2", "Enter"], seen
+            # A digit goes as the character, never as a key name.
+            assert ["tmux", "send-keys", "-t", "%7", "-l", "--", "3"] in seen
             # No paste markers: a chooser reads keys, and a paste is not one.
             assert not [one for one in seen
                         if any("200~" in str(part) for part in one)]
+        finally:
+            browser.close()
+
+
+#: One question that takes more than one answer, as the reader met it.
+MANY = {"questions": [
+    {"question": "Which of the remaining backport labels apply?",
+     "header": "Labels", "multiSelect": True,
+     "options": [
+         {"label": "HardeningBackport", "description": "If a train is hardening."},
+         {"label": "RolloutHotfix", "description": "A hotfix is recommended."},
+         {"label": "RolloutBlocker", "description": "Rollout must stop."},
+         {"label": "None", "description": "Leave the labels."},
+     ]},
+]}
+
+
+def asking_many(ws, daemon, asked=MANY):
+    ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
+                     "tool_name": "AskUserQuestion", "tool_input": asked,
+                     "tool_use_id": "toolu_many", "ts": time.time()})
+    daemon.store.refresh()
+
+
+def test_a_question_that_takes_many_answers_takes_many_and_submits(ws, in_pane):
+    """It let you pick one and said to finish in the terminal; its submit
+    pressed that one number and Enter, and in a multiple-choice dialog Enter
+    ticks whatever is under the cursor -- so it ticked a second option and
+    submitted nothing. Measured: a digit per option, Tab, then Enter on
+    "Submit answers"."""
+    daemon, base, seen = in_pane
+    asking_many(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            page.click(option(1, 3))
+            page.click(option(1, 2))
+            page.click(option(1, 4))
+            page.click(option(1, 4))            # and untick one again
+            chosen = page.eval_on_selector_all(
+                "#asking .askopt", "els => els.map(e => e.getAttribute('aria-pressed'))")
+            assert chosen == ["false", "true", "true", "false"], chosen
+            assert page.inner_text("#asking .asksays") == \
+                "presses 2 3 Tab, then Enter"
+            assert "finish it in the terminal" not in page.inner_text("#asking")
+            page.click("#asking .asksend .verb")
+            deadline = time.time() + 5
+            while len(pressed(seen)) < 4 and time.time() < deadline:
+                time.sleep(0.05)
+            assert pressed(seen) == ["2", "3", "Tab", "Enter"], seen
+        finally:
+            browser.close()
+
+
+def test_the_page_says_the_keys_the_daemon_presses(ws, in_pane):
+    """The keys are worked out twice: on the page, to say them before they
+    are pressed, and in the daemon, which presses its own. Change the rule in
+    one and not the other and the reader is told one thing while another
+    lands in their terminal."""
+    daemon, base, seen = in_pane
+    mixed = {"questions": [
+        {"question": "Colour?", "header": "C", "multiSelect": False,
+         "options": [{"label": "Red"}, {"label": "Green"}]},
+        MANY["questions"][0],
+        {"question": "Size?", "header": "S", "multiSelect": False,
+         "options": [{"label": "S"}, {"label": "L"}]},
+    ]}
+    cases = [
+        (MANY, [[4, 1]]),
+        (ASKED, [[2], [1]]),
+        ({"questions": [ASKED["questions"][0]]}, [[3]]),
+        (mixed, [[2], [2, 4], [1]]),
+    ]
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            for asked, picks in cases:
+                ask = ws.read_ask({"tool_name": "AskUserQuestion",
+                                   "tool_input": asked, "tool_use_id": "x"})
+                keys, why = ws.ask_keys(ask, picks)
+                assert not why, why
+                shown = page.evaluate(
+                    "([ask, picks]) => askKeys(ask, picks.map("
+                    "(one) => one.map((n) => n - 1))).flat()", [ask, picks])
+                assert shown == keys, (asked, picks, shown, keys)
         finally:
             browser.close()
 

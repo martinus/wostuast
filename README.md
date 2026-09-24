@@ -23,8 +23,9 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 by state, most urgent first, newest inside each group. The browser tab title
 and icon say it too, so a background tab still tells you. When an agent stops
 to ask you something, the question and every answer stand at the foot of the
-transcript: pick one, change your mind, and press submit — wostuast presses
-those numbers in its terminal, and says which before you press it.
+transcript: pick an answer — or tick several, where the question takes
+more than one — change your mind, and press submit. wostuast presses the
+keys in its terminal, and says which before you press it.
 
 **You review its work like a pull request.** Hover any line — in the diff or in
 a file you are reading — click the `+`, write what you want changed. The

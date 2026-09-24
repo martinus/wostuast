@@ -34,6 +34,7 @@ after the tests go red.
 | `cmd_hook`, anything on the hook path | Safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | **Do not guess payload fields**, and `tests/fixtures/README.md` |
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
+| `answer`, `ask_keys`, `tmux_keys`, `askKeys`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
 | `set_limit`, `over_limit`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
@@ -59,8 +60,9 @@ Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/eve
 `wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
 SSE. The page shows a session list and five tabs: Transcript, Files, Diff,
 Review, Session.
-Three things go back to the terminal, all through tmux: jump, send and
-interrupt. Nothing else writes to a terminal. Nothing owns the agent process —
+Four things go back to the terminal, all through tmux: jump, send,
+interrupt, and the keys that answer a question. Nothing else writes to a
+terminal. Nothing owns the agent process —
 interrupt is a keystroke, not a signal.
 
 ## Layout
@@ -660,8 +662,9 @@ request, then update it with that text, and read it back to check.
   forget it.
 - **Picking types nothing; submit does.** A click that went straight into a
   terminal was a click you could not take back, on a page you may have opened
-  on a phone in a pocket. `state.picked` holds one index per question **with
-  the ask's id**, so a pick made for one question is never submitted for the
+  on a phone in a pocket. `state.picked` holds the indexes picked for each
+  question -- one for a single-choice question, any number for a
+  multiple-choice one -- **with the ask's id**, so a pick made for one question is never submitted for the
   next, and it survives a look at another tab -- the bar is built again when
   it comes back, and half an answer lost that way is a page you cannot trust
   with the other half. `paintPicks` is everything that changes on a click, so
@@ -670,12 +673,33 @@ request, then update it with that text, and read it back to check.
   because the agent asks them one after the other.
 - **A button that types into a terminal says what it types, before it is
   pressed.** Each option carries its number, and the submit says `presses 2,
-  then 1`. `submitAsk` sends exactly those, in order, through the one road
-  this page has: `tell(id, "send", ...)`, which is `tmux_send`, which sends
-  one line literally and then presses Enter -- a keystroke, not a paste. No
-  new verb and no new route. **It does not clear the question**: that happens
-  when the daemon sees the `PostToolUse`, because clearing on the click would
-  hide a question a missed keystroke left standing.
+  then 2 4 Tab, then Enter` -- `askKeys` on the page, which is only the
+  preview. **The page sends picks, never keys**: `submitAsk` posts the
+  option numbers to `answer`, and the daemon works the keys out from the
+  question it holds (`ask_keys`) and presses those (`tmux_keys`): digits,
+  Tab and Enter and nothing else, refused for an ask id that is no longer
+  the one waiting. `test_the_page_says_the_keys_the_daemon_presses` holds
+  the preview and the presses together. **It does not clear the question**:
+  that happens when the daemon sees the `PostToolUse`, because clearing on
+  the click would hide a question a missed keystroke left standing.
+- **The keys are Claude Code's dialog's, measured, and never a finger's
+  guess.** Against 2.1.281 in tmux, with a fake Messages API asking: a digit
+  answers a single-choice question **and moves on**; a multiple-choice
+  question takes a digit per option, each a tick, and then Tab; after the
+  last question a review stands with "Submit answers" under the cursor and
+  takes Enter -- except after one single-choice question, which has none,
+  where an Enter would land on the agent's prompt. This page used to send
+  each number through `send`, which presses Enter after it: the Enter
+  answered the next question with the option under the cursor, `2` on the
+  review is Cancel, and a multiple-choice question ticked a second option
+  and was never submitted. **One key per tmux command, with `KEY_GAP`
+  between**: `24` written at once arrives as one read, which the dialog
+  takes as no key at all, measured -- the ticks were lost and it moved on.
+  **An ask the daemon could not keep whole is not answered** (`answerable`):
+  keys go by position, so a question or option left out would move every
+  key after it. When Claude Code changes its dialog, measure it again the
+  same way; do not read the new keys off the minified source, where Tab is
+  bound twice and which binding wins is not written down.
 - **A call starting clears the attention; a call finishing only clears its
   own.** Claude Code runs two tools at once now and then — one of 233 calls on
   a real machine started while another was still open, both of them `Bash`.
