@@ -1125,7 +1125,7 @@ def test_the_way_back_to_the_end_is_offered_only_when_it_would_do_something(page
 
 # --- folding a round on the map ----------------------------------------------
 
-def test_a_round_folds_shut_from_its_icon_and_the_rest_of_the_row_still_goes(page_at):
+def test_a_round_folds_shut_from_its_chevron_and_the_rest_of_the_row_still_goes(page_at):
     """The row has two jobs. Folding on any click would mean you could not
     read a round without closing it."""
     daemon, path = page_at
@@ -1138,7 +1138,7 @@ def test_a_round_folds_shut_from_its_icon_and_the_rest_of_the_row_still_goes(pag
             before = page.evaluate(rows)
             assert before >= 2, before
 
-            page.click(".filelist.transcript button.dir >> nth=0 >> .icon")
+            page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
             page.wait_for_function("n => " + count + " < n", arg=before)
             folded = page.evaluate(rows)
 
@@ -1147,7 +1147,7 @@ def test_a_round_folds_shut_from_its_icon_and_the_rest_of_the_row_still_goes(pag
             page.wait_for_selector(".turn.linked")
             assert page.evaluate(rows) == folded
 
-            page.click(".filelist.transcript button.dir >> nth=0 >> .icon")
+            page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
             page.wait_for_function("n => " + count + " === n", arg=before)
         finally:
             browser.close()
@@ -1674,12 +1674,12 @@ def test_a_round_on_the_map_says_whether_it_is_folded(page_at):
             wait_for_map(page, 2)
             row = ".filelist.transcript button.dir >> nth=0"
             assert page.locator(row).get_attribute("aria-expanded") == "true"
-            assert "fold" in page.locator(row + " >> .icon").get_attribute("title")
-            page.click(row + " >> .icon")
+            assert "fold" in page.locator(row + " >> .fold").get_attribute("title")
+            page.click(row + " >> .fold")
             page.wait_for_function(
                 """() => document.querySelector('.filelist.transcript button.dir')
                           .getAttribute('aria-expanded') === 'false'""")
-            assert "open" in page.locator(row + " >> .icon").get_attribute("title")
+            assert "open" in page.locator(row + " >> .fold").get_attribute("title")
         finally:
             browser.close()
 
@@ -2096,5 +2096,36 @@ def test_a_failed_fetch_does_not_take_a_sessions_place(page_at, ws,
             page.wait_for_function("state.turns.failed === false")
             page.wait_for_function(
                 "document.querySelector('.turnbody').scrollTop === 600")
+        finally:
+            browser.close()
+
+
+def test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt(page_at):
+    """A folder and a page said "a round holds replies", which is the list's
+    shape and not what a row is. A prompt wears a person, a reply a robot,
+    and the chevron that folds hangs in front, one tree step wide -- so the
+    robot stands exactly under the person it answers."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page, 2)
+            got = page.evaluate("""() => {
+              const rows = [...document.querySelectorAll('.filelist.transcript button')];
+              const icon = (row) => row.querySelector('.icon:not(.fold)');
+              const prompt = rows.find((row) => row.classList.contains('dir'));
+              const reply = rows.find((row) => !row.classList.contains('dir'));
+              return {
+                prompt: icon(prompt).querySelector('path').getAttribute('d'),
+                reply: icon(reply).querySelector('path').getAttribute('d'),
+                fold: !!prompt.querySelector('.fold') && !reply.querySelector('.fold'),
+                person: ICONS.person, robot: ICONS.robot,
+                lined: icon(prompt).getBoundingClientRect().left
+                       - icon(reply).getBoundingClientRect().left,
+              };
+            }""")
+            assert got["prompt"] == got["person"] and got["reply"] == got["robot"]
+            assert got["fold"]
+            assert abs(got["lined"]) < 0.5, got["lined"]
         finally:
             browser.close()

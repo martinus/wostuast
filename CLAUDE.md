@@ -1822,18 +1822,28 @@ update the comment with its own text, and read it back.
   `test_the_map_is_set_like_the_transcript_and_a_prompt_is_round` compares
   the computed styles, not the numbers, so a change to the transcript's type
   carries the map with it or fails.
-- **A round on the map folds from its icon, and only from its icon.** The row
-  has two jobs: the whole of it goes to that place in the transcript, which is
-  what the map is for, and the icon alone folds. Folding on any click would
-  mean you could not read a round without closing it. `state.turns.shut` is
-  in `drawTurnList`'s redraw key — the shape of the conversation has not
-  changed when you fold one, only what is shown of it, so without it a click
-  redraws nothing — and in `savePlace`/`usePlace`, because it is a choice.
-  **A second target on a row has to say so**: nothing else in this list has
-  two, so the round carries `aria-expanded` and the icon its own `title`, and
-  the icon alone changes colour under the pointer. It carries no `cursor`,
-  because the row is a button and already sets one. There is no keyboard
-  route to folding yet, and that is a gap, not a decision.
+- **A round on the map folds from its chevron, and only from its chevron.**
+  The row has two jobs: the whole of it goes to that place in the transcript,
+  which is what the map is for, and the chevron alone folds. Folding on any
+  click would mean you could not read a round without closing it.
+  `state.turns.shut` is in `drawTurnList`'s redraw key — the shape of the
+  conversation has not changed when you fold one, only what is shown of it,
+  so without it a click redraws nothing — and in `savePlace`/`usePlace`,
+  because it is a choice. **A second target on a row has to say so**:
+  nothing else in this list has two, so the round carries `aria-expanded`
+  and the chevron its own `title`, turns down while the round is open, and
+  alone changes colour under the pointer. It carries no `cursor`, because
+  the row is a button and already sets one. There is no keyboard route to
+  folding yet, and that is a gap, not a decision.
+- **The map's icons say who spoke; the chevron says what folds.** A folder
+  and a page said "a round holds replies", which is the list's shape and not
+  what a row is, so a prompt is `ICONS.person` and a reply `ICONS.robot`.
+  The fold moved to `ICONS.chevron` so that the icon saying who spoke is not
+  also a button. **The chevron and its gap are one tree step, 13 px**
+  (`margin-right: -5px` on `.fold`), so a reply's robot stands exactly under
+  the person it answers; measured, not eyeballed. The chevron stays
+  `--ink-faint`, which takes a rule as specific as the one colouring the
+  person, or it turns `--mine` with it.
 - **Everything keyed on `seq` is forgotten together, in `forgetPlaces`.**
   `seq` is a place in one reading, not an identity, so a transcript rewritten
   under its own name leaves `state.turns.open`, `state.turns.shut` and

@@ -6951,13 +6951,13 @@ body:not(.show-thinking) .thinking { display: none; }
    the shape of the tree is read before any of its names are. A file's icon
    stays quiet: there are far more of them, and they are not the shape. */
 .filelist button.dir .icon { color: var(--folder); }
-/* On the map a round's icon is a second target -- the row goes to that place
-   in the transcript, the icon folds it away -- so it has to say so. Nothing
-   else in this list has two, which is why this is the transcript's rule and
-   not the list's. No `cursor` here: the row is a button and already sets
-   one, so a second declaration would say nothing. The colour under the
-   pointer is the part that separates the icon from the rest of the row. */
-.filelist.transcript button.dir .icon:hover { color: var(--needs); }
+/* On the map a round's chevron is a second target -- the row goes to that
+   place in the transcript, the chevron folds it away -- so it has to say so.
+   Nothing else in this list has two, which is why this is the transcript's
+   rule and not the list's. No `cursor` here: the row is a button and already
+   sets one, so a second declaration would say nothing. The colour under the
+   pointer is the part that separates it from the rest of the row. */
+
 .filelist button:hover .icon { color: inherit; }
 .filelist button.dir:hover .icon { color: var(--folder); }
 .filelist button.dir { color: var(--ink); }
@@ -7055,8 +7055,17 @@ body:not(.show-thinking) .thinking { display: none; }
   line-height: 1.55;
 }
 .filelist.transcript button { padding-top: 1px; padding-bottom: 1px; }
-/* A round is yours, so it takes the one colour that means that. */
+/* A round is yours, so its person takes the one colour that means that.
+   The chevron stays quiet, and turns down while the round is open. */
 .filelist.transcript button.dir .icon { color: var(--mine); }
+.filelist.transcript button.dir .icon.fold { color: var(--ink-faint); }
+.filelist.transcript button.dir .icon.fold:hover { color: var(--needs); }
+.filelist.transcript button[aria-expanded="true"] .fold { transform: rotate(90deg); }
+/* The chevron and the gap after it are one tree step, 13 px, so the person
+   stands exactly where a reply's robot does: the reply lines up under what
+   it answers. The chevron's own box is blank on its right, so taking the
+   gap back does not crowd the person. */
+.filelist.transcript .fold { margin-right: -5px; }
 /* The padding is on the children of the scroller, so a branch added to
    `drawFiles` later cannot quietly lose its gutter, and so the header --
    which is not one of them -- keeps running to the pane's edges. */
@@ -8190,6 +8199,18 @@ const ICONS = {
   // and reaches 0.6 past the line. At 13.5 the last tenth of it fell outside
   // the box, and an `svg` clips to its viewport.
   file: "M3.5 1.5h4.7L11.5 5v8.4h-8zM8 1.7V5h3.3",
+  // Who spoke, on the transcript's map: the reader, and the agent. A folder
+  // and a page said "a round holds replies", which is the shape of the list
+  // and not what a row is. Both closed, for the reason `dirOpen` is.
+  person: "M4.6 4.3a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0z"
+          + "M2.2 12.8c.4-2.7 2.4-4.3 4.8-4.3s4.4 1.6 4.8 4.3z",
+  robot: "M3.8 4.6h6.4a1.8 1.8 0 0 1 1.8 1.8v4.2a1.8 1.8 0 0 1-1.8 1.8H3.8"
+         + "a1.8 1.8 0 0 1-1.8-1.8V6.4a1.8 1.8 0 0 1 1.8-1.8z"
+         + "M7 4.6V2.6M5.2 7.6v1.2M8.8 7.6v1.2M5.6 10.2h2.8",
+  // What folds a round, pointing right; `aria-expanded` turns it down. It
+  // is the second target on a round's row, and a shape of its own, so the
+  // icon that says who spoke is not also a button.
+  chevron: "M5.4 3.6L8.8 7l-3.4 3.4",
 };
 
 function putIcon(parent, kind) {
@@ -9797,17 +9818,22 @@ function putTurnRow(list, seq, text, mine) {
   const button = putListRow(list, { dir: mine, open: mine && !shut,
                                     depth: mine ? 0 : 1,
                                     chosen: seq === state.turns.at,
-                                    title: text });
+                                    title: text,
+                                    icon: mine ? "person" : "robot" });
   if (mine) {
     // Said out loud, because a second target on a row nothing else on this
     // page has two of is not something a reader can be expected to find.
+    // The chevron hangs in front of the person, so a reply's robot, one
+    // step in, stands under the person it answers.
     button.setAttribute("aria-expanded", String(!shut));
-    button.firstChild.setAttribute(
-      "title", shut ? "open this round" : "fold this round away");
+    const fold = putIcon(button, "chevron");
+    fold.classList.add("fold");
+    fold.setAttribute("title", shut ? "open this round" : "fold this round away");
+    button.insertBefore(fold, button.firstChild);
   }
   putName(button, text, []);
   button.addEventListener("click", (press) => {
-    if (mine && press.target.closest(".icon")) {
+    if (mine && press.target.closest(".fold")) {
       if (shut) state.turns.shut.delete(seq); else state.turns.shut.add(seq);
       redrawMap();
       return;
@@ -10491,14 +10517,14 @@ function fillList(list) {
 // a file one level deeper then lined up exactly with the folder above it,
 // which is the one thing a tree must never do. The open folder icon says what
 // the triangle said.
-function putListRow(list, { dir, open, chosen, touched, depth, title }) {
+function putListRow(list, { dir, open, chosen, touched, depth, title, icon }) {
   const button = put(list, "button",
                      (dir ? "dir" : "") + (chosen ? " chosen" : "")
                      + (touched ? " touched" : "") + (open ? " open" : ""));
   button.type = "button";
   button.title = title;
   button.style.paddingLeft = (14 + depth * 13) + "px";   // the tree's step
-  putIcon(button, dir ? (open ? "dirOpen" : "dir") : "file");
+  putIcon(button, icon || (dir ? (open ? "dirOpen" : "dir") : "file"));
   return button;
 }
 
