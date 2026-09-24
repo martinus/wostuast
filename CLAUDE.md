@@ -1581,7 +1581,15 @@ update the comment with its own text, and read it back.
   is being typed with it, and move the code the comment is about.
 - **The draft lives in the browser.** A review is yours until you submit it, and
   the daemon serves every browser the same page. `recallReview` checks the shape
-  of what comes back: storage is not a place to trust blindly.
+  of what comes back: storage is not a place to trust blindly. **Two windows
+  of one browser share it, so each listens for the other's `storage`
+  event**: each held the draft in memory, and a review sent from one came
+  back on the other's next keystroke, which wrote its stale copy -- sent
+  comments and all -- over the storage the first had just cleared. The tab
+  is drawn again only when nothing is being typed into it. A test of two
+  windows waits for a write to arrive: `localStorage` reaches another
+  renderer a moment later, not at once.
+  `test_a_second_window_takes_up_what_the_first_one_kept`.
 - **The preview cannot be skipped**, and it is not editable. A quoted line is
   text an agent wrote, about to be pasted into a terminal. One text, one place it
   comes from.
