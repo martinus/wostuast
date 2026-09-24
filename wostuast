@@ -64,8 +64,11 @@ ATTENTION_NOTIFICATIONS = frozenset({"permission_prompt", "elicitation_dialog"})
 HOOK_TIMEOUT = 5
 
 #: How long a spend limit whose Escape tmux refused waits before it is tried
-#: again. Only while the agent is still working: if a timed-out key did land,
-#: the turn ends and no second Escape goes out.
+#: again -- and it is tried only once the agent has spent more since. A
+#: `send-keys` that timed out may have landed all the same, and an agent
+#: stopped by it fires no hook that says so: the row still reads "working".
+#: A stopped agent spends nothing, so a spend that has grown is the proof it
+#: is still going.
 LIMIT_RETRY = 30.0
 
 #: The deadline over logging a hook's or the status line's failure. Short,
@@ -1332,9 +1335,9 @@ class Store:
             self.limits = limits
         return max(0.0, limit)
 
-    def over_limit(self, now: float | None = None) -> list[tuple[str, str]]:
+    def over_limit(self, now: float | None = None) -> list[tuple[str, str, float]]:
         """The sessions that have just gone past what they may spend, with
-        their panes.
+        their panes and the `fired_at` stamped for each.
 
         Read on the fold thread, which is the one that may write `fired_at`.
         Three guards, each of them a way this could be worse than no limit:
@@ -1346,13 +1349,13 @@ class Store:
           session over its limit is not stopped again on every tick a second
           later. Raising the limit clears it. An Escape tmux refused did not
           stop anything, so `limit_refused` puts `fired_at` back, and the
-          next try waits `LIMIT_RETRY`.
+          next try waits `LIMIT_RETRY` and a spend that has grown since.
         * **Only a spend the status line actually gave us.** `None` is "not
           told", and stopping an agent over a number nobody sent would be the
           worst of the three.
         """
         moment = now if now is not None else time.time()
-        out: list[tuple[str, str]] = []
+        out: list[tuple[str, str, float]] = []
         # The whole of it under the lock, reading and writing the same
         # snapshot. Deciding outside it and merging inside was a race with
         # `set_limit`: a raise that landed in between was overwritten with the
@@ -1368,14 +1371,20 @@ class Store:
                 # this one stop disarms it for the rest of the session, and
                 # `/clear` puts `cost.total_cost_usd` back to nought -- so the
                 # agent could then run without bound behind a box still
-                # showing a limit.
-                if one["fired_at"] and spent is not None and spent < one["limit"]:
+                # showing a limit. A refusal is forgotten the same way, or
+                # the panel says "tmux refused" for ever over a session that
+                # is under its limit.
+                if ((one["fired_at"] or one.get("refused_at"))
+                        and spent is not None and spent < one["limit"]):
                     limits[session_id] = {"limit": one["limit"], "fired_at": 0.0}
                     changed = True
                     continue
                 if one["fired_at"]:
                     continue
-                if moment - one.get("refused_at", 0.0) < LIMIT_RETRY:
+                if one.get("refused_at") and (
+                        moment - one["refused_at"] < LIMIT_RETRY
+                        or spent is None
+                        or spent <= one.get("refused_spend", 0.0)):
                     continue
                 if session is None or session.state != "working" or not session.pane:
                     continue
@@ -1383,14 +1392,15 @@ class Store:
                     continue
                 limits[session_id] = {"limit": one["limit"], "fired_at": moment}
                 changed = True
-                out.append((session_id, session.pane))
+                out.append((session_id, session.pane, moment))
                 session.last_event = f"stopped at its ${one['limit']:.2f} limit"
             if changed:
                 write_limits(limits)
                 self.limits = limits
         return out
 
-    def limit_refused(self, session_id: str, now: float | None = None) -> None:
+    def limit_refused(self, session_id: str, fired_at: float,
+                      now: float | None = None) -> None:
         """tmux did not take the Escape, so the session was not stopped.
 
         It used to be recorded, and shown, as a stop all the same: `fired_at`
@@ -1398,19 +1408,27 @@ class Store:
         so the agent went on spending behind a page that said it had been
         stopped, the one thing a reader must never be told falsely. `fired_at`
         goes back to nought, `refused_at` says why, and `over_limit` tries
-        again after `LIMIT_RETRY`.
+        again after `LIMIT_RETRY`, once the spend has grown past
+        `refused_spend`.
+
+        Only for the stop it is about: the key went out of the lock, and a
+        `set_limit` in between has already said what stands. Written over
+        it, a raise to a number the spend was under came back as "could not
+        stop at its $20.00 limit", and held the next real stop back.
         """
         moment = now if now is not None else time.time()
         with self.naming:
             one = self.limits.get(session_id)
-            if not one:
+            if not one or one["fired_at"] != fired_at:
                 return
+            session = self.sessions.get(session_id)
+            spent = None if session is None else session.status.cost_usd
             limits = dict(self.limits)
             limits[session_id] = {"limit": one["limit"], "fired_at": 0.0,
-                                  "refused_at": moment}
+                                  "refused_at": moment,
+                                  "refused_spend": spent or 0.0}
             write_limits(limits)
             self.limits = limits
-            session = self.sessions.get(session_id)
             if session is not None:
                 session.last_event = (f"could not stop at its ${one['limit']:.2f}"
                                       " limit: tmux refused the key")
@@ -3995,6 +4013,7 @@ def read_limits() -> dict[str, dict[str, float]]:
             refused = to_float(one.get("refused_at"))
             if refused > 0:
                 out[key]["refused_at"] = refused
+                out[key]["refused_spend"] = to_float(one.get("refused_spend"))
     return out
 
 
@@ -4667,11 +4686,11 @@ class Daemon:
         # terminal that nobody pressed a button for, so it is guarded three
         # ways in `over_limit` and it says so in the session's own log.
         stopped = self.store.over_limit()
-        for session_id, pane in stopped:
+        for session_id, pane, fired_at in stopped:
             # A key tmux refused stopped nothing, and says so: on the row, in
             # the panel, and by being tried again.
             if not tmux_interrupt(pane):
-                self.store.limit_refused(session_id)
+                self.store.limit_refused(session_id, fired_at)
         # A stop moves `fired_at` and the session's last event, and both are
         # in the row -- so the rows are built again before they go out, or the
         # browsers hear about it a tick late. Written as its own statement:
@@ -7557,6 +7576,7 @@ function putLimit(pane, s) {
     + " passes it, which stops the turn and keeps the work done so far."
     + " Empty or 0 means it never does.";
   box.value = s.spend_limit ? String(s.spend_limit) : "";
+  box.dataset.stood = box.value;
   box.addEventListener("change", () => {
     // A number box reads "" for anything it cannot parse -- "10e", a lone
     // "-" -- and "" means "no limit", so a slip of the finger took a limit
@@ -7708,11 +7728,18 @@ function drawSession(box) {
   // Skipped while the box has the focus -- but only while it is still this
   // session's box. Another session chosen with the focus left in it (an
   // alert clicked, a link followed) kept the old box, and a number typed
-  // there set the old session's limit under the new one's name.
+  // there set the old session's limit under the new one's name. What was
+  // half typed in the old box is put back, not stored: a number is given by
+  // Enter, Tab or a click away, never by an alert that changed the page --
+  // "7" on the way to "75" would stop that agent at seven dollars.
   const mine = limit.dataset.id === (s ? s.id : "none");
   if (!(mine && limit.contains(document.activeElement))
       && fresh(box, "limitKey", limitKey)) {
-    if (limit.contains(document.activeElement)) document.activeElement.blur();
+    const typing = limit.querySelector(".limitbox");
+    if (typing && typing === document.activeElement) {
+      typing.value = typing.dataset.stood;
+      typing.blur();
+    }
     limit.replaceChildren();
     limit.dataset.id = s ? s.id : "none";
     if (s) putLimit(limit, s);

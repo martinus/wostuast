@@ -1067,7 +1067,7 @@ def test_a_session_over_its_limit_is_stopped_once(ws):
     store = ws.Store()
     session = working(ws, store, 12.0)
     store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7")]
+    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
     assert "stopped at its $10.00 limit" in session.last_event
     # And not again, however far past it goes.
     session.status = ws.Status(ts=2.0, cost_usd=99.0)
@@ -1080,11 +1080,11 @@ def test_raising_the_limit_lets_the_session_go_again(ws):
     store = ws.Store()
     working(ws, store, 12.0)
     store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7")]
+    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
     store.set_limit("s1", 20.0)              # clears `fired_at`
     assert store.over_limit(now=51.0) == []  # 12 is under 20
     store.sessions["s1"].status = ws.Status(ts=2.0, cost_usd=25.0)
-    assert store.over_limit(now=52.0) == [("s1", "%7")]
+    assert store.over_limit(now=52.0) == [("s1", "%7", 52.0)]
 
 
 def test_a_refused_escape_waits_and_is_tried_again_across_a_restart(ws):
@@ -1095,15 +1095,64 @@ def test_a_refused_escape_waits_and_is_tried_again_across_a_restart(ws):
     store = ws.Store()
     working(ws, store, 12.0)
     store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7")]
-    store.limit_refused("s1", now=50.0)
+    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
+    store.limit_refused("s1", 50.0, now=50.0)
     assert ws.read_limits()["s1"] == {"limit": 10.0, "fired_at": 0.0,
-                                      "refused_at": 50.0}
+                                      "refused_at": 50.0, "refused_spend": 12.0}
     assert "could not stop" in store.sessions["s1"].last_event
     again = ws.Store()
-    working(ws, again, 12.0)
+    session = working(ws, again, 13.0)
     assert again.over_limit(now=50.0 + ws.LIMIT_RETRY - 1) == []
-    assert again.over_limit(now=50.0 + ws.LIMIT_RETRY) == [("s1", "%7")]
+    assert again.over_limit(now=50.0 + ws.LIMIT_RETRY) == [
+        ("s1", "%7", 50.0 + ws.LIMIT_RETRY)]
+    assert session.last_event.startswith("stopped")
+
+
+def test_a_refused_escape_is_not_pressed_again_into_an_agent_it_stopped(ws):
+    """`run` gives None for a `send-keys` that timed out, and the key may
+    have landed all the same. An agent stopped by an Escape fires no hook
+    that says so, so the row still reads "working" -- and a second Escape
+    after `LIMIT_RETRY` went into a prompt nobody was at. A stopped agent
+    spends nothing: only a spend that has grown is tried again."""
+    store = ws.Store()
+    session = working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
+    store.limit_refused("s1", 50.0, now=50.0)
+    assert store.over_limit(now=50.0 + ws.LIMIT_RETRY * 10) == []
+    session.status = ws.Status(ts=2.0, cost_usd=12.5)
+    assert store.over_limit(now=50.0 + ws.LIMIT_RETRY * 10) == [
+        ("s1", "%7", 50.0 + ws.LIMIT_RETRY * 10)]
+
+
+def test_a_refusal_after_the_limit_was_raised_is_not_written_over_it(ws):
+    """The key goes out of the lock, so a raise can land between the stop and
+    its refusal. Written over it, the panel said "could not stop at its
+    $20.00 limit" with the spend at 12, and the next real stop waited."""
+    store = ws.Store()
+    session = working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
+    store.set_limit("s1", 20.0)
+    store.limit_refused("s1", 50.0, now=51.0)
+    assert store.limits["s1"] == {"limit": 20.0, "fired_at": 0.0}
+    assert "could not stop" not in session.last_event
+    session.status = ws.Status(ts=2.0, cost_usd=25.0)
+    assert store.over_limit(now=52.0) == [("s1", "%7", 52.0)]
+
+
+def test_a_refusal_is_forgotten_when_the_spend_drops_below_the_limit(ws):
+    """`/clear` puts the spend back to nought. The refusal stayed, and the
+    panel said "tmux refused the Escape" for ever over a session under its
+    limit."""
+    store = ws.Store()
+    session = working(ws, store, 12.0)
+    store.set_limit("s1", 10.0)
+    store.over_limit(now=50.0)
+    store.limit_refused("s1", 50.0, now=50.0)
+    session.status = ws.Status(ts=2.0, cost_usd=0.0)
+    assert store.over_limit(now=51.0) == []
+    assert store.limits["s1"] == {"limit": 10.0, "fired_at": 0.0}
 
 
 def test_only_a_working_session_is_stopped(ws):
@@ -1162,14 +1211,14 @@ def test_a_stopped_session_is_armed_again_when_the_spend_drops(ws):
     store = ws.Store()
     session = working(ws, store, 12.0)
     store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7")]
+    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
     assert store.limits["s1"]["fired_at"]
 
     session.status = ws.Status(ts=2.0, cost_usd=0.0)      # /clear
     assert store.over_limit(now=51.0) == []               # armed, not fired
     assert store.limits["s1"]["fired_at"] == 0.0
     session.status = ws.Status(ts=3.0, cost_usd=11.0)
-    assert store.over_limit(now=52.0) == [("s1", "%7")]
+    assert store.over_limit(now=52.0) == [("s1", "%7", 52.0)]
 
 
 def test_a_limit_raised_while_a_stop_is_being_decided_is_not_clobbered(ws):

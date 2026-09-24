@@ -602,19 +602,36 @@ update the comment with its own text, and read it back.
   log, and the panel says it will try again. **Not on every tick**: a tmux
   that refuses once a second is asked once a second for ever, so the next
   try waits `LIMIT_RETRY`, and `refused_at` is kept in `limits.json` so a
-  restart does not forget the wait. `over_limit` returns the session with
-  the pane, because the tick has to know whose key failed.
+  restart does not forget the wait. **And not until the agent has spent
+  more** (`refused_spend`): `run` gives None for a `send-keys` that timed
+  out as well as for one refused, and a timed-out key may have landed. An
+  agent stopped by Escape fires no hook that says so, so the row still reads
+  "working", and a second Escape went into a prompt nobody was at. A stopped
+  agent spends nothing; a spend that has grown is the proof. **A refusal
+  answers only its own stop**: the key goes out of the lock, so
+  `over_limit` hands back the `fired_at` it stamped and `limit_refused`
+  does nothing when a `set_limit` has moved it since — or a raise came back
+  as "could not stop at its $20.00 limit" with the spend at 12. **And the
+  spend dropping below the limit forgets a refusal**, as it re-arms a stop,
+  or the panel said "tmux refused" for ever after a `/clear`.
   `test_an_escape_tmux_refused_is_not_a_stop`,
   `test_a_refused_escape_waits_and_is_tried_again_across_a_restart`,
+  `test_a_refused_escape_is_not_pressed_again_into_an_agent_it_stopped`,
+  `test_a_refusal_after_the_limit_was_raised_is_not_written_over_it`,
+  `test_a_refusal_is_forgotten_when_the_spend_drops_below_the_limit`,
   `test_an_escape_tmux_refused_is_not_called_a_stop`.
 - **The limit box is kept while it has the focus only while it is still this
   session's box.** An alert clicked or a link followed runs `choose` with the
   focus where it was, so the skip kept the old session's box under the new
   session's panel, and a number typed there to protect the new session set
   the old one's limit. `limitfield`'s `dataset.id` says whose box it is; a
-  box that is not the chosen session's is blurred and rebuilt. Blurring it
-  fires `change`, which stores what was typed for the session it was typed
-  for. `test_a_limit_typed_after_another_session_is_chosen_is_that_sessions`.
+  box that is not the chosen session's is rebuilt. **What was half typed in
+  it is put back first** (`dataset.stood`), never stored: a number is given
+  by Enter, Tab or a click away, and an alert that changed the page is none
+  of those — "7" on the way to "75" would stop that agent at seven dollars,
+  which is the `input` scar below by another road. Chromium commits a
+  focused box that is removed, so the value has to go back before it goes.
+  `test_a_limit_typed_after_another_session_is_chosen_is_that_sessions`.
 - **A number the box cannot read is refused, never read as "no limit".** A
   number input reads `10e`, `1e` or a lone `-` as the empty string, and empty
   means "take the limit away" — one slip of the hand removed the limit and

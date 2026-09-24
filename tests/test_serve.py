@@ -1231,6 +1231,9 @@ def test_an_escape_tmux_refused_is_not_a_stop(ws, served, monkeypatch):
 
     monkeypatch.setattr(ws, "LIMIT_RETRY", 0.0)
     daemon.tick()
+    assert seen == []                      # nor before it has spent more
+    daemon.store.sessions["s1"].status = ws.Status(ts=2.0, cost_usd=31.0)
+    daemon.tick()
     assert ["tmux", "send-keys", "-t", "%7", "Escape"] in seen
 
 

@@ -1085,9 +1085,10 @@ def test_a_limit_typed_after_another_session_is_chosen_is_that_sessions(
             page.keyboard.type("9")
             page.keyboard.press("Tab")
             wait_until(lambda: ws.read_limits().get("s2", {}).get("limit") == 9.0)
-            # What was typed for s1 was typed in s1's own box, and stays s1's.
-            assert ws.read_limits().get("s1", {"limit": 7.0})["limit"] == 7.0, \
-                ws.read_limits()
+            # And the 7 half typed in s1's box was never given: no Enter, no
+            # Tab, no click away. Stored, it would stop s1 at seven dollars
+            # on the way to seventy-five.
+            assert "s1" not in ws.read_limits(), ws.read_limits()
         finally:
             browser.close()
 
