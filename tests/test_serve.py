@@ -26,7 +26,7 @@ def get(url, timeout=5):
         return response.status, json.loads(response.read())
 
 
-# --- the rules from PLAN.md section 4.4 and 4.4.1 ---------------------------
+# --- the rules for the HTTP surface: CLAUDE.md, the Safety section ----------
 
 
 def test_it_listens_on_loopback_only(ws):
@@ -530,8 +530,9 @@ def test_a_new_file_moves_the_tag(repo_session):
 
 # --- the tmux verbs over HTTP -----------------------------------------------
 
-# Every POST here types into a terminal, which is why PLAN.md section 4.4.1
-# gives them a token and an Origin check. These tests are that rule.
+# Every POST here types into a terminal, which is why each carries a token and
+# an Origin check (CLAUDE.md: "Every POST carries a token"). These tests are
+# that rule.
 
 
 def post(url, body=None, token=None, origin=None, timeout=5):

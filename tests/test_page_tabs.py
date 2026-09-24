@@ -388,7 +388,7 @@ def test_the_context_bar_does_not_touch_the_live_slot(page_at):
 
 def test_the_strip_carries_what_this_session_has_spent(page_at):
     """The status line has carried `cost.total_cost_usd` all along. This
-    repository said it did not, wrote that into PLAN.md section 12, and closed
+    repository said it did not, wrote that into its design brief, and closed
     #101 down to one line on the strength of it — see
     `tests/fixtures/README.md`."""
     _, path = page_at

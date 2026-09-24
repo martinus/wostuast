@@ -1,4 +1,4 @@
-"""Reviewing a diff and sending it to the agent (PLAN.md 4.9).
+"""Reviewing a diff and sending it to the agent (CLAUDE.md, **The review**).
 
 See tests/browser.py for the shared browser and the helpers."""
 

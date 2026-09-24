@@ -20,9 +20,16 @@ not that**: "2,500 lines took 144 ms" records an experiment somebody ran, and
 it stays true. The rotting kind describes this repository as it is today —
 how long the program is, how long the suite takes.
 
-`PLAN.md` is the brief and wins where the two disagree. Read it when the
-question is *what* or *why* — the goals, the non-goals, and section 12, which
-is the decision log. This file is *where* and *how*.
+**This is the only design document, and it has no senior.** There was a
+`PLAN.md`: the brief the program was built from, which said it won where the
+two disagreed. It was deleted once all seven milestones were done, because
+parts of it had gone false and a false brief that outranks the rules is worse
+than none. What still held moved here: **Goals and non-goals**, and
+**Decisions without a scar behind them**. `git show d440d2f:PLAN.md` prints
+the old text. It is history and never authority: an old commit, issue or
+comment that cites a section of `PLAN.md` is answered by this file, and
+where this file and the tests disagree, the tests are right and this file is
+fixed in the same commit.
 
 ## Where to look
 
@@ -31,8 +38,10 @@ after the tests go red.
 
 | About to touch | Read |
 | --- | --- |
+| a new feature, or a request that bends what the program is | **Goals and non-goals** — a feature that needs a non-goal is left out |
 | `cmd_hook`, anything on the hook path | Safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | **Do not guess payload fields**, and `tests/fixtures/README.md` |
+| `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | **Decisions without a scar behind them** |
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving` | Safety: the token, localhost, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
 | `set_limit`, `over_limit`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
@@ -65,6 +74,48 @@ interrupt, and the keys that answer a question. Nothing else writes to a
 terminal. Nothing owns the agent process —
 interrupt is a keystroke, not a signal.
 
+## Goals and non-goals
+
+Every feature is judged against these. When a request fights one, the
+question to ask is whether the goal bends — ask that, one level up, before
+building anything. A goal that bends is rewritten here in the same PR.
+
+**Goals.** The numbers are cited elsewhere; keep them.
+
+1. Answer "who needs me?" in one glance, from another window or another room.
+2. Render what an agent writes as real Markdown: the transcript, plan files,
+   specs.
+3. Show a worktree's changes without opening an editor.
+4. Stay small: one Python file, the standard library, no daemon needed to
+   *record* events, no config file needed to run, a one-line install and a
+   one-line uninstall. `links.json` is the one optional file, and **Shape**
+   says what it took to earn that.
+5. Look good enough that a screenshot would sell it. None ships: see
+   `README.md`, "No screenshots".
+
+**Non-goals. If a feature needs one of these, leave the feature out.**
+
+- **Owning the agent process.** Nothing here spawns, wraps or kills it; tmux
+  owns the PTY. Typing into a pane is not owning it, which is why jump, send,
+  interrupt, the answer keys and the spend limit's Escape are allowed and a
+  signal is not.
+- **A terminal emulator** (no xterm.js). A Peek tab showed a still capture of
+  the pane for two milestones and was removed: the tmux window it copied was
+  always one keystroke away. `capture-pane` went with it.
+- **Approving a permission prompt from the browser.** No approve button, ever:
+  approving without seeing the pane is how directories get deleted. Answering
+  an `AskUserQuestion` is not this: it is the agent's own question, and the
+  page types nothing until the reader submits.
+- **Agent-to-agent messaging, teams, orchestration, cache telemetry.** Showing
+  the spend the status line sends, and a limit on it, is in; accounting is out.
+- **Knowing a worktree layout.** A session is an agent standing in a
+  directory, nothing more. No dependency on `gra`.
+- **Electron, Tauri, React, or any build step**, a Python dependency outside
+  the standard library, or a JavaScript library vendored into the file.
+- **A review that goes anywhere but the agent.** No GitHub API, no pull
+  request, no posting. It is pasted into the pane of the agent standing in
+  that worktree, and the reader reads every byte of it first.
+
 ## Layout
 
 | Path | What it holds |
@@ -76,7 +127,6 @@ interrupt is a keystroke, not a signal.
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
-| `PLAN.md` | Goals, non-goals, design, milestones. |
 | `README.md` | What a user reads. Keep in step with the commands. |
 | `.claude/skills/issues/SKILL.md` | How to work the issue list: group, reproduce, ask, prove, review, merge on green, read the list again. Invoked as `/issues`, and by "do the issues". |
 | `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, four sharded browser jobs, and an aggregator named `browser` that the branch rule requires. No job names a test file, and none may — naming one broke the browser job the moment a file was renamed, and the shards split on a hash of the test id for that reason. |
@@ -87,8 +137,8 @@ Every section starts `# --- name: one line ---` (Python) or `// --- name ---`
 (page). `grep -n "^# --- \|^// --- " wostuast` prints the whole map in one go.
 Do that before grepping for a symbol.
 
-Python: constants · log · event log · following files · **session model
-(PLAN 4.3)** · transcript · git facts · **files and diffs** · status ·
+Python: constants · log · event log · following files · **session model** ·
+transcript · git facts · **files and diffs** · status ·
 settings.json · output helpers · ansi · **tmux verbs** · **the daemon** ·
 commands · command line · the page.
 
@@ -175,6 +225,13 @@ pytest -q                           # same result, about three times as long
 pytest tests/test_state.py -q       # no browser, under a second
 ./wostuast doctor / ls / serve
 ```
+
+**A browser test that skips has not run.** When the `pytest` on the PATH
+belongs to another interpreter — a `uv tool` or `pipx` install — every page
+test skips with "playwright is not installed", and a skip prints as an `s`
+in a line of dots, not as an `F`. A perturbation run through it proves
+nothing. `python3 -m pytest` runs the interpreter that has Playwright; read
+the count of passed tests, and run with `-rs` when any skipped.
 
 **A report about how the page looks starts with a picture of the reader's
 case, and ends with another one.** Write the case from their screenshot — a
@@ -340,15 +397,16 @@ update the comment with its own text, and read it back.
 ### Shape
 
 - **One file, at the root.** The install one-liner curls that exact path, and a
-  split needs a build step, which `PLAN.md` rules out. Page, CSS and JS are
+  split needs a build step, which the non-goals rule out. Page, CSS and JS are
   string constants at the end of it.
 - **Standard library only.** Python 3.10+. No pip install.
 - **The `__main__` guard stays last**, after `PAGE`. Before it, running as a
   script started the daemon and `PAGE` was never assigned.
 - **Ask first** before adding a dependency, a file outside `wostuast` and
-  `tests/`, or a tmux command beyond jump and send.
+  `tests/`, or a tmux command beyond the three the four verbs run:
+  `select-window`, `select-pane` and `send-keys`.
 - **Prefer deleting a feature over adding a config option.** `links.json` is
-  the one exception PLAN.md goal 4 allows, and the test it passed is the test
+  the one exception goal 4 allows, and the test it passed is the test
   for a second one: if wostuast could work the answer out, it must, and if the
   answer is the same for everybody, it is not a setting. A choice about *this
   screen* — theme, tab width, wrap, column widths — goes in `localStorage`
@@ -480,7 +538,7 @@ update the comment with its own text, and read it back.
   not acting**: the question bar and the limit box both stay where they are,
   because the panel is where you go to find out what a session is. It is the
   press that is refused. Grep `canType` and `box.disabled`.
-- **`limits.json` is not a second config file.** `PLAN.md` goal 4 allows one,
+- **`limits.json` is not a second config file.** Goal 4 allows one,
   `links.json`, because a human writes it in an editor. This is written by the
   page through a POST and read by the daemon, which is what `names.json`
   already is. **The daemon enforces it, not the browser**: a limit that holds
@@ -653,7 +711,7 @@ update the comment with its own text, and read it back.
   an answer -- two calls really do overlap -- and this stale question has
   buttons on it, which type a number into a terminal that has moved on.
 - **The question bar belongs to the Transcript tab, at its foot.** It is not
-  the bar `PLAN.md` took away: that one stood over every tab saying the
+  the header bar that was taken away: that one stood over every tab saying the
   branch, the pane, the model and the state, all of which the chosen row says
   one column to the left, at 56 px on every tab for ever. This stands in one
   place, over the send box, because the transcript ends at its foot and
@@ -848,13 +906,12 @@ update the comment with its own text, and read it back.
   courtesy on top of that.
 - **How a file is drawn is the reader's, and lives in this browser.** Tab width
   and wrap are about this screen and these eyes, not about a session, so they
-  go in `localStorage` like the theme — not a config option, which `PLAN.md`
+  go in `localStorage` like the theme — not a config option, which goal 4
   rules out anyway. Both live on the root element, so the cascade obeys them and **neither
   control rebuilds anything** — `redrawCode` clears the key that guards an
   open comment box, so a preference that redrew took half a written comment
   with it. `recallReading` checks the shape of what comes back.
-- **`BIG_LINES` and `CODE_WHOLE` answer one question in two shapes** (PLAN
-  4.8.3). The Diff tab closes a long file; the Files tab windows one. A diff
+- **`BIG_LINES` and `CODE_WHOLE` answer one question in two shapes**. The Diff tab closes a long file; the Files tab windows one. A diff
   stacks many files of differing height in one pane, so it has no grid for a
   scrollbar to be read against. Do not quietly make either into the other.
 - **`CODE_H` is the row height in pixels and `.dlines` must set the same
@@ -887,7 +944,7 @@ update the comment with its own text, and read it back.
   path with its mtime and size. **`is_listed` is never cached**: it is the
   check that git still offers this name, and a remembered yes would let a file
   be read after it was taken out of the tree.
-- **What language is this? Three questions, most certain first** (PLAN 4.8.1):
+- **What language is this? Three questions, most certain first**:
   the name, then the shebang, then `file` on the daemon — asked only when the
   first two came up empty, so a suffix never pays for a subprocess. `file` is
   the third and last command this program runs, after git and tmux.
@@ -1326,9 +1383,10 @@ update the comment with its own text, and read it back.
   the trick `rows` plays: the HTTP thread writes, the fold thread reads. It
   pushes nothing — the rows are built from the names every pass, so the next
   one differs and goes out on its own.
-- **Never write to the terminal** except through the two tmux verbs.
-  `tmux_jump` and `tmux_send` look `run` up when called rather than
-  taking it as a default, so a test can put a fake tmux in its place.
+- **Never write to the terminal** except through the four tmux verbs:
+  `tmux_jump`, `tmux_send`, `tmux_interrupt` and `tmux_keys`. Each looks
+  `run` up when called rather than taking it as a default, so a test can
+  put a fake tmux in its place.
 - **The Files and Diff tabs poll from the browser, and only while on screen.**
   `TABS` holds one entry per tab — draw, load, interval — so a new tab is one
   entry, not six edits. The daemon pushes the transcript and nothing else; it
@@ -1687,7 +1745,7 @@ update the comment with its own text, and read it back.
   as text, without `highlight.js` code has no colour. Tests hold both fallbacks,
   and `tests/fixtures/marked.min.js` is what the page tests serve, so no test
   needs a network.
-- **Motion** (PLAN 5.2): a dot fades on a state change, a *new* transcript block
+- **Motion**: a dot fades on a state change, a *new* transcript block
   slides in 4 px, the needs-you ring pulses. Nothing else moves. "New" means
   arriving in `patchTranscript` — never a redraw. One `prefers-reduced-motion`
   block turns all of it off.
@@ -1702,6 +1760,93 @@ update the comment with its own text, and read it back.
 - A comment says *why*, especially why the obvious simpler thing is wrong. The
   long comments here are load-bearing; do not tidy them away.
 
+## Decisions without a scar behind them
+
+Each of these was chosen, not learned the hard way, so nothing above holds
+it. The reason is the part to weigh before undoing one.
+
+**Recording**
+
+- **A hook appends to a file; it never makes a request.** The daemon need
+  not be running for events to be kept, the hook stays a one-liner with no
+  network in it, and the file is the history. `$TMUX_PANE` from the hook's
+  environment is the pane, so there is no tmux discovery code at all.
+- **The agent's pid is found by walking up from `$PPID` to the nearest
+  ancestor named `claude`.** `$PPID` itself is the shell Claude Code runs a
+  hook through, which dies with the hook: taking it for the agent showed
+  every live session as killed seconds after it started. The raw one is kept
+  as `shell_pid`, because the log keeps what it is given. `agent_pid`.
+- **Two events announce a permission dialog, and both are listened to.**
+  `PermissionRequest` fires as the dialog appears. `Notification` says the
+  same, but only once you have been idle six seconds, checked on a
+  six-second timer, so up to twelve seconds late — measured: the row still
+  read `working` three seconds after the dialog was up.
+- **What no hook reports is not guessed.** Nothing fires when a dialog is
+  answered Yes, so an approved `cmake --build` leaves the row amber until its
+  `PostToolUse`, for as long as the build runs. Saying No fires nothing at
+  all. The row is left saying what is known; the pane is what settles it. Do
+  not invent an event that does not exist.
+- **The status line writes one small file per session, and never the log.**
+  It runs on every redraw, so an append would flood the log with nothing
+  new. `install` never replaces a status line the user already has: it
+  prints the line to add instead. Without one, sessions have no name, no
+  context and no spend, and everything else works. `cmd_status`.
+
+**Serving**
+
+- **Polling, not inotify.** No dependency, and the scale is tens of files.
+  The daemon polls the log and the transcripts; the Files and Diff tabs poll
+  from the browser, and only while on screen.
+- **Port 7331**, on 127.0.0.1 only (`DEFAULT_PORT`, `BIND_HOST`).
+- **No SQLite.** `sqlite3` is in the standard library and imports faster
+  than `json`, so it is not a dependency question. The write path is: one
+  short-lived hook writing one row took 2 ms, and 32 at once 20 ms median
+  and 183 ms at worst, against 0.1 ms and 4 ms for an append under `flock` —
+  on the one path that must never block. As an index only the daemon writes,
+  it would buy a faster start and nothing a feature needs: a plain scan of
+  400 MB for a word takes 0.38 s. A checkpoint of the folded state buys the
+  same faster start without a schema, when the start is slow enough to
+  matter.
+
+**The page**
+
+- **Markdown renders in the browser; the diff parser is our own.** The
+  standard library has no Markdown renderer, and the browser is the best one
+  available. A diff is small to parse and is drawn in our own shapes.
+- **Syntax highlighting earned a second library.** Code with no colour is the
+  one place where plain costs more than it saves. `highlight.js` is asked for
+  when the first file that is not Markdown opens or the Diff tab first draws
+  a diff, never on load, so a day of reading transcripts never fetches it.
+  `hljsReady`.
+- **A path is found by scattered letters; text is found as typed.** A path is
+  a handle half remembered. Prose is read, so a search over it means what was
+  typed. `fuzzy`, `findPath`, `matches`.
+- **A long list builds only the rows on screen.** Every row is one height,
+  so where the reader is is arithmetic; ten thousand matches then cost the
+  same as ten, and no answer is cut to stay quick.
+- **Column widths are the reader's.** Both edges drag, the width is kept in
+  this browser, and a double-click puts it back. The alternative was a config
+  option.
+- **The look: a sibling of tmux — dark, quiet, precise.** IBM Plex Mono for
+  chrome and code, Plex Sans for prose, Plex Sans Condensed for file names,
+  which are long (`--mono`, `--sans`, `--narrow`), each with a system
+  fallback so the page reads offline. No emoji anywhere. Icons are inline
+  stroke SVG in `ICONS`. Amber (`--needs`) is the colour of "needs you", and
+  the light theme is the same variables on a light ground.
+- **A review is written on the page and sent as one message.** The
+  alternative is what this tool replaced: read here, switch to the terminal,
+  retype from memory. One message reaches the agent as one thought rather
+  than four interruptions.
+
+**Git**
+
+- **A branch's work is measured against `origin/HEAD`**, and when the remote
+  never said, against the usual names in turn; with none, the Diff tab shows
+  only what is not committed and says so. With no base, or no commits past
+  it — an agent working on the default branch — the picker lists the last
+  `COMMITS_RECENT` of HEAD instead, because those are what it did.
+  `diff_base`, `branch_commits`.
+
 ## Do not guess payload fields
 
 Hook and status line field names are in `tests/fixtures/README.md`. Need one
@@ -1712,7 +1857,8 @@ invent a name.
 payload has `cost.total_cost_usd`, `cost.total_duration_ms`,
 `cost.total_api_duration_ms`, the lines added and removed, and
 `rate_limits.five_hour` / `seven_day` / `spend_limit` with a used percentage
-and a reset time. `PLAN.md` section 12 asserted the opposite for a while, and
+and a reset time. The design brief this repository used to carry asserted the opposite for a
+while, and
 an issue was closed down to one line on it. The assertion came from reading
 `tests/fixtures/status.json`, which at the time had no `cost` in it — **one
 fixture is one sample, and absence in it is not absence in the payload.** A
@@ -1731,22 +1877,11 @@ carrying the whole summary — which went into the transcript as a prompt,
 because it is a `user` record. A claim about a payload is worth what the
 sample behind it is worth.
 
-## Milestones
+## Status
 
-`PLAN.md` section 9. Commit at the end of each, leave a working tool behind.
-
-1. **Record** — done. `hook`, `status`, `install`, `uninstall`, `doctor`, `ls`.
-2. **Watch** — done. `serve`, sidebar, Transcript tab, live over SSE.
-3. **Read** — done. Files tab and Diff tab.
-4. **Fit** — done. Both worktree tabs on a real repository: correct, fast, room, read.
-5. **Act** — done. jump, send. Attention arrived early, in milestone 2.
-   Peek was part of this and was removed once it had earned nothing.
-6. **Shine** — done. Light theme, motion, empty states, keyboard help, README.
-   No screenshots; `PLAN.md` section 9 says why.
-7. **Review** — done. Comment on a diff line or a file, submit the whole review
-   to the agent as one message. `PLAN.md` 4.9 is the spec. Stages: mark, send, keep.
-
-Nothing is planned past 7. Candidates, not committed: collision watch (two
-agents editing the same file in different worktrees — the daemon already caches
-a changed-file map per worktree), and something over the event log, which is a
-local history of every prompt and tool call nobody is reading yet.
+All seven milestones are done: record, watch, read, fit, act, shine, review.
+Nothing is planned. Candidates, not committed: collision watch (two agents
+editing the same file in different worktrees — the daemon already caches a
+changed-file map per worktree), and something over the event log, which is a
+local history of every prompt and tool call nobody is reading yet. A new
+feature starts at **Goals and non-goals**.

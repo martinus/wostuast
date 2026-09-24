@@ -38,7 +38,7 @@ def test_a_row_is_not_rebuilt_every_second(page_at):
 
 
 def test_a_row_keeps_its_dot_when_the_state_changes(page_at, ws):
-    """PLAN.md section 5.2: a row that changes state fades its dot. A fade
+    """A row that changes state fades its dot (CLAUDE.md, **Motion**). A fade
     needs the same dot on both sides of the change, and the sidebar used to be
     rebuilt whole, so the one change the fade is for was the one that threw it
     away."""

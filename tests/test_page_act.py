@@ -164,7 +164,7 @@ def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
 
 
 def test_a_question_belongs_to_the_transcript_and_no_other_tab(ws, in_pane):
-    """It is not the bar over every tab that `PLAN.md` took away. The row
+    """It is not the header bar over every tab that was taken away. The row
     still goes amber wherever you are, which is what the row is for; this is
     the answer to "what is it asking", and that is asked here."""
     daemon, base, seen = in_pane
@@ -506,8 +506,8 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
 
 
 def test_a_session_with_no_question_shows_no_bar(ws, in_pane):
-    """It is the bar `PLAN.md` took away. It comes back for one thing only,
-    and it costs nothing the rest of the time."""
+    """It is not the header bar that was taken away. It stands for one thing
+    only, and it costs nothing the rest of the time."""
     daemon, base, seen = in_pane
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
