@@ -253,6 +253,36 @@ def test_a_transcript_change_reaches_only_its_watcher(ws, served, transcript_fil
     assert got[1][1]["blocks"][0]["text"] == "a line"
 
 
+def test_a_stream_decides_its_opening_before_it_says_anything(
+        ws, served, transcript_file, monkeypatch):
+    """The stream wrote `sessions` and only then asked whether it held a
+    transcript to open on. The socket is not buffered, so a reader that saw
+    `sessions` made its change -- a tick that starts reading the transcript
+    -- inside that gap, and got an opening in front of the block it waited
+    for. It failed CI by chance; a slow `transcript_held` is the gap held
+    open on purpose."""
+    daemon, base = served
+    path = transcript_file("s1")
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    asked = daemon.transcript_held
+
+    def slow(session_id):
+        time.sleep(0.3)
+        return asked(session_id)
+
+    monkeypatch.setattr(daemon, "transcript_held", slow)
+
+    def later():
+        with open(path, "a") as handle:
+            handle.write(json.dumps(conftest.record("claude", "a line")) + "\n")
+        daemon.tick()
+
+    got = read_events(f"{base}/api/events?watch=s1", 2, then=later)
+    assert got[1][0] == "transcript" and "opening" not in got[1][1], got[1]
+    assert got[1][1]["blocks"][0]["text"] == "a line"
+
+
 def test_a_client_that_watches_nothing_gets_no_transcript(ws, served, transcript_file):
     daemon, base = served
     ws.append_event(event("SessionStart", transcript_path=str(transcript_file("s1"))))

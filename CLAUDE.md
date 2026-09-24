@@ -1993,7 +1993,13 @@ update the comment with its own text, and read it back.
   result is written into its call's block, so the count stays still and a
   result read with no stream open was never asked for. `Transcript.version`
   moves on every read that changed something, and every push and answer
-  carries it. `test_a_block_read_while_no_stream_was_open_is_fetched`,
+  carries it. **The opening is decided before anything is written, and
+  both go in one write**: the socket is not buffered, so a reader that saw
+  `sessions` could make its change -- a tick that starts reading the
+  transcript -- before the stream asked, and got an opening it would not
+  have got a moment earlier, in front of the block it waited for. CI red
+  by chance, once. `test_a_stream_decides_its_opening_before_it_says_anything`,
+  `test_a_block_read_while_no_stream_was_open_is_fetched`,
   `test_a_tool_result_read_while_no_stream_was_open_is_fetched`.
 - **A failed transcript fetch is not an empty transcript.** `ask` gives
   null, and the page drew "Nothing in this transcript yet.", forgot the

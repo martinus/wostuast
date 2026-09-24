@@ -5628,15 +5628,21 @@ class Serving:
         client = self.daemon.hub.add(watching)
         try:
             first = json.dumps(self.daemon.sessions_payload(), default=str)
-            self.wfile.write(f"event: sessions\ndata: {first}\n\n".encode("utf-8"))
             # After joining the hub, so a block read after this is pushed to
-            # this stream and one read before it is counted here.
+            # this stream and one read before it is counted here. **Decided
+            # before anything is written, and written in one go**: the socket
+            # is not buffered, so a reader that saw `sessions` could make a
+            # change -- a tick that starts reading the transcript -- before
+            # this asked, and then got an opening it would not have got a
+            # moment earlier, in front of the block it was waiting for.
             held = self.daemon.transcript_held(watching) if watching else None
+            opening = ""
             if held is not None:
-                opening = json.dumps({"id": watching, "run": held[0],
-                                      "version": held[1], "opening": True})
-                self.wfile.write(
-                    f"event: transcript\ndata: {opening}\n\n".encode("utf-8"))
+                told = json.dumps({"id": watching, "run": held[0],
+                                   "version": held[1], "opening": True})
+                opening = f"event: transcript\ndata: {told}\n\n"
+            self.wfile.write(
+                (f"event: sessions\ndata: {first}\n\n" + opening).encode("utf-8"))
             self.wfile.flush()
             while not self.daemon.stopping.is_set():
                 try:
