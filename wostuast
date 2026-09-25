@@ -8040,6 +8040,7 @@ async function keepRename(box, id = state.chosen) {
   const s = state.sessions.find((one) => one.id === id);
   if (s) {
     s.name = (answer && answer.name) || "";
+    s.mine = Boolean(s.name);
     s.label = s.name ? s.name + " \u00b7 " + s.place : s.place;
   }
   drawHeader();
@@ -8742,27 +8743,28 @@ function newRow(id) {
 
 // A row says what nothing else on the page says: the name you know the
 // session by, the repository and the branch, what git counts, and how long
-// ago. Not the state: the dot's colour and the group the row stands in say
-// it already, and a word at the top and "waiting for input" at the foot said
-// it a third and a fourth time. The word stays in the history, where "ended"
-// and "killed" share one group and one grey. Not the worktree's own folder
-// either (`agent/richpalm`): the reader never needed it, and the find box
-// still searches it.
+// ago. The name is one you gave it, and until you do, its repository and
+// worktree (`agent/richpalm`) -- never the title Claude Code writes from the
+// first prompt, which `/rename` does not reach and which went stale beside
+// the branch. The Session tab still shows that one.
+// Not the state: the dot's colour and the group the row stands in say it
+// already, and a word at the top and "waiting for input" at the foot said it
+// a third and a fourth time. The word stays in the history, where "ended"
+// and "killed" share one group and one grey.
 function fillRow(row, s) {
   const [one, two, three] = row.children;
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
   one.children[0].className = "dot " + s.state;
-  // A repository, or the folder when there is none, or when git has not
-  // answered yet. It leads the row only when the session has no name.
-  const where = s.repo || s.place;
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
   if (!one.children[1].querySelector("input")) {
-    one.children[1].textContent = s.name || where || s.id.slice(0, 8);
+    one.children[1].textContent = rowName(s);
   }
   one.children[2].textContent = isGone(s) ? s.state_word : "";
   two.replaceChildren();
-  if (s.name && where) put(two, "span", "repo", where);
+  // The repository, when a name of yours has taken the place of the one
+  // that holds it. The folder stands in outside a repository.
+  if (s.mine && (s.repo || s.place)) put(two, "span", "repo", s.repo || s.place);
   if (s.branch) put(two, "span", "branch", s.branch);
   if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
   if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
@@ -8776,10 +8778,14 @@ function fillRow(row, s) {
   ages.push([three.children[1], s.since]);
 }
 
+function rowName(s) {
+  return (s.mine && s.name) || s.place || s.id.slice(0, 8);
+}
+
 // Renaming where the name stands, by a double-click or `e`. The Session tab
 // has a box for it too, and it is one tab away from every row -- a name you
 // change when you think of it is a name you have. Enter keeps it, an empty
-// name gives the session back the one Claude Code sent, and Escape or a
+// name gives the session back its repository and worktree, and Escape or a
 // click elsewhere keeps the old one.
 function renameRow(row) {
   const id = row.dataset.id;
@@ -8793,7 +8799,7 @@ function renameRow(row) {
   box.spellcheck = false;
   box.placeholder = "a name  \u00b7  enter to keep";
   box.setAttribute("aria-label", "a name for this session");
-  box.value = s.name || "";
+  box.value = rowName(s);
   slot.replaceChildren(box);
   const close = () => {
     if (!box.isConnected) return;
@@ -8805,7 +8811,9 @@ function renameRow(row) {
     press.stopPropagation();           // a letter is a name, not a key
     if (press.key === "Enter") {
       press.preventDefault();
-      keepRename(box, id);
+      // Enter on the name it came with is not a name chosen: kept, it would
+      // stop following the worktree for good.
+      if (s.mine || box.value !== rowName(s)) keepRename(box, id);
       close();
     } else if (press.key === "Escape") {
       press.preventDefault();
