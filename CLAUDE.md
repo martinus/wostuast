@@ -54,6 +54,7 @@ after the tests go red.
 | `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | **Decisions without a scar behind them** |
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending` | Safety: the token, localhost, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
+| `decline`, `read_permission`, `call_answered`, `drawPermission`, `Session.permission`, `Declined` | Safety: a No is Escape, and the reason waits for proof |
 | `set_limit`, `over_limit`, `limit_refused`, `LIMIT_RETRY`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
@@ -83,7 +84,8 @@ Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/eve
 SSE. The page shows a session list and five tabs: Transcript, Files, Diff,
 Review, Session.
 Four things go back to the terminal, all through tmux: jump, send,
-interrupt, and the keys that answer a question. Nothing else writes to a
+interrupt, and the keys that answer a question. A No to a permission dialog
+is two of them: an interrupt, then a send. Nothing else writes to a
 terminal. Nothing owns the agent process —
 interrupt is a keystroke, not a signal.
 
@@ -116,9 +118,14 @@ building anything. A goal that bends is rewritten here in the same PR.
   the pane for two milestones and was removed: the tmux window it copied was
   always one keystroke away. `capture-pane` went with it.
 - **Approving a permission prompt from the browser.** No approve button, ever:
-  approving without seeing the pane is how directories get deleted. Answering
-  an `AskUserQuestion` is not this: it is the agent's own question, and the
-  page types nothing until the reader submits.
+  approving without seeing the pane is how directories get deleted. And a
+  dialog carries no id, so nothing can prove which one a press lands on.
+  **Saying No is allowed, and nothing else is**: a wrong No is undone by
+  saying what to do instead, a wrong Yes is not. The reader asked for this
+  in so many words, with the options laid out, and this bullet was
+  rewritten in the same PR. Answering an `AskUserQuestion` is not this: it
+  is the agent's own question, and the page types nothing until the reader
+  submits.
 - **Agent-to-agent messaging, teams, orchestration, cache telemetry.** Showing
   the spend the status line sends, and a limit on it, is in; accounting is out.
 - **Knowing a worktree layout.** A session is an agent standing in a
@@ -619,6 +626,41 @@ update the comment with its own text, and read it back.
   which strips every byte below a space on purpose. Measured: `send-keys C-c`
   puts 0x03 into a raw-mode app as a keystroke it reads, not as a signal.
   `test_interrupt_sends_escape_and_never_ctrl_c` holds it.
+- **A No is Escape, and the reason is typed only once the transcript shows
+  the dialog closed.** Measured against 2.1.282 in tmux, with a fake
+  Messages API asking: Escape declines every permission dialog, where the
+  number of "No" is 4 on a command and 3 on a file -- so a digit would be a
+  guess. The agent then gets Claude Code's own "the user doesn't want to
+  proceed", and whatever is typed next arrives in the same message, which
+  is Claude Code's own way to say what to do instead. **But the cursor
+  starts on "1. Yes", and a digit picks an option**, so a reason typed into
+  a dialog still up can approve what was declined. Measured: Escape with
+  the reason straight after is read in one burst as an Alt key, and the
+  dialog stayed up. A pause does not fix it, because a busy Claude Code
+  reads a burst. So `decline` presses Escape, then waits `DECLINE_WAIT` for
+  the call's own result in the transcript (`call_answered`, through
+  `Block.answered`, because a result can be empty) and types the reason
+  only after. No proof, no reason, and no "declined" either: the page says
+  the dialog was not seen to close. A dialog whose call cannot be named --
+  two open calls reading the same -- gets Escape and no reason box. **A
+  call that already has its result is refused**: the row stays amber after
+  a Yes in the terminal, because no hook says Yes, and an Escape would stop
+  whatever the agent went on to do. **An approved call still running cannot
+  be told from a dialog still up** -- its result comes when it ends -- so
+  there the Escape stops it, and the page says that before every press.
+  **One decline at a time**: the page's `sending` guard, which the send box
+  shares, and `Daemon.declining` for a second tab. A reason half written is
+  kept across a look at another tab (`state.declineWhy`), as the question
+  bar keeps its picks.
+  `test_a_decline_is_escape_then_the_reason_once_the_dialog_closed`,
+  `test_a_reason_is_never_typed_into_a_dialog_not_seen_to_close`,
+  `test_a_request_with_no_call_gets_escape_and_no_reason`,
+  `test_a_request_answered_in_the_terminal_is_not_declined`,
+  `test_a_decline_for_another_dialog_presses_nothing`,
+  `test_a_decline_not_seen_to_close_does_not_say_declined`,
+  `test_one_decline_at_a_time_per_session`,
+  `test_a_no_waits_for_a_send_already_on_its_way`,
+  `test_a_reason_half_written_survives_a_look_at_another_tab`.
 - **A spend limit is the one thing here that types with nobody watching, so
   it is guarded three ways and says so afterwards.** `over_limit` fires only
   for a session that is **working** (Escape into an idle prompt is a keystroke
@@ -892,6 +934,24 @@ update the comment with its own text, and read it back.
   and `_on_tool_failed` hold the ask across it; a call starting *after* the
   dialog is still the agent moving on.
   `test_another_call_before_the_dialog_does_not_take_the_question_away`.
+- **`Session.permission` is the dialog whole, for the page, and it goes
+  with the attention.** The row said it clipped to one line; a request is
+  judged on all of it, so `read_permission` sends every field of the input
+  (past `PERMISSION_SHOWN` it is withheld and the page points at the pane).
+  Its `key` is the moment the dialog came up, so a No meant for one dialog
+  is refused once another is up. Its `call` comes from `Session.calls`, the
+  calls started and not finished, matched by `tool_summary` -- the
+  `PermissionRequest` carries no id -- and it is empty when two match.
+  `calls` is cleared at a turn's end and a new prompt, because a call
+  declined in the terminal never reports back, and left there it made the
+  next same call two matches. **The daemon writes a `Declined` record of
+  its own** into the event log once the transcript shows the decline, and
+  `_on_declined` ends the wait for that one dialog: saying No fires no
+  hook, and the row stayed amber over an agent back at its prompt.
+  `test_a_permission_request_reaches_the_page_whole`,
+  `test_a_request_two_open_calls_could_be_has_no_call`,
+  `test_a_decline_seen_in_the_transcript_ends_the_wait`,
+  `test_a_permission_is_read_whole_and_declined_with_a_reason`.
 - **The question bar belongs to the Transcript tab, at its foot.** It is not
   the header bar that was taken away (the Session tab's bullet says why that
   went): this stands in one place, over the send box, because the
@@ -1735,7 +1795,12 @@ update the comment with its own text, and read it back.
   `note`, which is shown but never wears the reader's rail. **A record is
   only read as a command when there is nothing else on it**: a prompt really
   can hold `<command-name>` in it, because somebody asking about this very
-  feature types one.
+  feature types one. **Nor is an interrupt**: every Escape that stops a turn
+  makes Claude Code write `[Request interrupted by user]`, or `... for tool
+  use]` after a declined dialog, as a `user` record -- and every decline
+  from the page drew it as a prompt and named a round after it.
+  `INTERRUPTED` makes the whole record, exactly, a note.
+  `test_an_interrupt_claude_code_wrote_is_a_note_not_your_prompt`.
 - **A message sent to a busy agent comes back wrapped, and the wrapper is not
   yours.** Claude Code queues it into the running turn and writes a header
   (`The user sent a new message while you were working:`), the words typed,
@@ -2196,7 +2261,9 @@ it. The reason is the part to weigh before undoing one.
   answered Yes, so an approved `cmake --build` leaves the row amber until its
   `PostToolUse`, for as long as the build runs. Saying No fires nothing at
   all. The row is left saying what is known; the pane is what settles it. Do
-  not invent an event that does not exist.
+  not invent an event that does not exist. **The one record of our own is
+  `Declined`**, and it is not a guess: the page pressed the Escape, and the
+  transcript showed the call rejected before it was written.
 - **The status line writes one small file per session, and never the log.**
   It runs on every redraw, so an append would flood the log with nothing
   new. `install` never replaces a status line the user already has: it
