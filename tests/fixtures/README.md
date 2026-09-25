@@ -95,6 +95,21 @@ answer (`Stop hook feedback:`), a whole skill's body (`Base directory for
 this skill:`), `Continue from where you left off.`, an image's caption. It
 is drawn as a note, never as a prompt.
 
+### A command run with `!`
+
+`bash_mode.jsonl`, read off Claude Code 2.1.282 with invented text. Typing
+`!git up` writes two `user` records, neither `isMeta`:
+
+| Line | `message.content`, a plain string |
+| --- | --- |
+| the command | `<bash-input>git up</bash-input>`, exactly as typed, nothing escaped |
+| its output | `<bash-stdout>...</bash-stdout><bash-stderr>...</bash-stderr>` |
+
+The output has `<`, `>` and `&` written as `&lt;`, `&gt;` and `&amp;`, and
+quotes left as they are. In the run this was read from, what the command
+wrote to stderr was inside `<bash-stdout>`, and `<bash-stderr>` was empty.
+The second line carries `turnOrigin: "human"`; the first does not.
+
 ### Two calls at once
 
 Claude Code runs tools in parallel now and then. Measured on a real event log:

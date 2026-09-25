@@ -59,7 +59,7 @@ after the tests go red.
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
-| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
+| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `putShell` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
@@ -1837,6 +1837,20 @@ update the comment with its own text, and read it back.
   from the page drew it as a prompt and named a round after it.
   `INTERRUPTED` makes the whole record, exactly, a note.
   `test_an_interrupt_claude_code_wrote_is_a_note_not_your_prompt`.
+  - **A `!` command is two records, and one block.** `!git up` writes
+    `<bash-input>git up</bash-input>`, then
+    `<bash-stdout>...</bash-stdout><bash-stderr>...</bash-stderr>` with `<`,
+    `>` and `&` as HTML entities; neither is `isMeta`, so both were drawn
+    as prompts, tags and `-&gt;` and all. `BASH_INPUT` makes a `shell`
+    block, and `shell_output` puts what it printed into that block -- only
+    one not yet answered, or two runs of one command merge -- with
+    `html.unescape`, which is exact because the `&` was escaped too. Only
+    a record that is the tag and nothing else, like `<command-name>`. The
+    page draws it on the reader's rail in the fixed face, the output as
+    text and `white-space: pre`, and the map names the round `! git up`.
+    Measured on 2.1.282, `tests/fixtures/bash_mode.jsonl`.
+    `test_a_command_run_with_a_bang_is_one_block_with_its_output`,
+    `test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face`.
 - **A message sent to a busy agent comes back wrapped, and the wrapper is not
   yours.** Claude Code queues it into the running turn and writes a header
   (`The user sent a new message while you were working:`), the words typed,
