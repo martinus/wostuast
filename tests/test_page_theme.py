@@ -15,6 +15,7 @@ from browser import (
     open_page,
     contrast,
     rgb,
+    wait_for_map,
 )
 
 pytestmark = skip_without_browser
@@ -56,6 +57,10 @@ def test_the_scrollbars_belong_to_the_theme(page_at):
         for scheme in ("dark", "light"):
             browser, page = open_page(play, page_at, scheme)
             try:
+                # `open_page` waits for the frame, not the transcript: on a
+                # loaded machine `.turnbody` was not there yet and the read
+                # below threw on null.
+                wait_for_map(page)
                 seen[scheme] = page.evaluate("""() => {
                   const root = getComputedStyle(document.documentElement);
                   // Inherited, so a pane deep in the page has to have it too.

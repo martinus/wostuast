@@ -1675,8 +1675,21 @@ update the comment with its own text, and read it back.
 - **A commit picked shows its whole message, and only that commit's is
   asked for.** `DiffReport.body` is `git show -s --format=%b` for the one
   commit shown, not a field of every `Commit`: a hundred bodies on every
-  poll would be sent for the one being read. It is drawn `pre-wrap` in the
-  fixed face, because a git body is wrapped by hand.
+  poll would be sent for the one being read. **A paragraph's lines are
+  joined (`reflow`) and the window wraps them**: a git body is wrapped by
+  hand at about 72 columns, and drawn as it stood, in a box 80 characters
+  wide, it broke there whatever the window. A list item, an indented line
+  and a trailer (`Refs: OA-1`) keep their own line, because there the break
+  is the meaning; it stays `pre-wrap` in the fixed face for them. The whole
+  heading goes through `linkTickets`, so a ticket in the subject is a link
+  too. `test_a_commit_message_wraps_at_the_window_and_links_its_tickets`.
+- **The pickers say what they hold, in the narrow face.** "all changes"
+  carries the count of the branch's own commits -- not the recent ones on
+  the default branch, which are no part of it. "against" stands beside the
+  branch picker, not in each option, and the branch picker does not shrink:
+  "against main" was cut to "against ma", and a branch name is read whole
+  where a commit subject can be cut and still be known.
+  `test_the_pickers_say_how_many_commits_and_stand_apart_from_against`.
 - **Two columns wrap; one column scrolls.** A pair of halves cannot share a
   sideways scrollbar, and two bars drift apart, so `.dlines.sides` hides the
   overflow and the halves wrap. The `+` is on the new half only — a comment
