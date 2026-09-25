@@ -8861,9 +8861,11 @@ function fillRow(row, s) {
   if (s.behind) put(counts, "span", "ahead", "↓" + s.behind);
   if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
   else if (s.branch) put(counts, "span", "clean", "✓ clean");
-  // A ready session's reason is the state again ("waiting for input",
-  // "stopped"), so it says nothing and the age stands alone.
-  const said = s.state === "done" ? "" : (s.reason || s.last_event || "");
+  // Only while the session is doing something or waiting on you. A ready
+  // session's reason is the state again ("waiting for input", "stopped"),
+  // and a finished one's is "ended (logout)" under the word "ended".
+  const said = s.state === "done" || isGone(s)
+    ? "" : (s.reason || s.last_event || "");
   three.children[0].textContent = said;
   three.hidden = !said;
   // Beside the name, at the right: "how long has this needed me?" is read
