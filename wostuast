@@ -7644,15 +7644,21 @@ body:not(.show-thinking) .thinking { display: none; }
   flex-shrink: 0; display: flex; align-items: center; gap: 8px;
   padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--edge);
 }
+/* The narrow face, as file names wear: branch names and commit subjects
+   are long, and a picker that shows more of one is read, not opened. */
 .pickof, .pickbase {
   min-width: 0; max-width: 52ch; height: 26px; padding: 0 8px;
   border-radius: 5px; border: 1px solid var(--edge-bright);
-  background: var(--raised); color: var(--ink); font-family: var(--mono);
-  font-size: 12px; cursor: pointer;
+  background: var(--raised); color: var(--ink); font-family: var(--narrow);
+  font-size: 13px; cursor: pointer;
 }
+.baseword { color: var(--ink-faint); font-family: var(--mono); font-size: 12px; }
+.baseword[hidden] { display: none; }
 .pickof:focus, .pickbase:focus { outline: none; border-color: var(--needs); }
-/* What the branch's work is measured against: a name, so it is kept short. */
-.pickbase { max-width: 28ch; }
+/* What the branch's work is measured against: a name, short, and read
+   whole -- so it does not shrink, and the commit picker, whose subject can
+   be cut and still be known, takes what room is left. */
+.pickbase { max-width: 36ch; flex-shrink: 0; }
 /* One control in two halves, so it reads as a choice and not two actions. */
 .diffbar .sides { margin-left: auto; display: flex; flex-shrink: 0; }
 .diffbar .sides .verb:first-child { border-radius: 5px 0 0 5px; }
@@ -7710,7 +7716,7 @@ body:not(.show-thinking) .thinking { display: none; }
    git bodies are wrapped by hand, and lists and paragraphs are made of
    blank lines and dashes, so the lines are kept and the face is fixed. */
 .diffhead .message {
-  margin: 10px 0 4px; max-width: 80ch; white-space: pre-wrap;
+  margin: 10px 0 4px; white-space: pre-wrap;
   overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px;
   line-height: 1.55; letter-spacing: 0; text-transform: none;
   color: var(--ink-soft);
@@ -12175,6 +12181,9 @@ function putDiffBar(pane) {
   const pick = put(bar, "select", "pickof");
   pick.title = "what this tab shows";
   pick.addEventListener("change", () => pickDiff(pick.value));
+  // The word stands outside the picker, so the picker holds only names and
+  // has their room: "against main" was cut to "against ma".
+  put(bar, "span", "baseword", "against");
   const base = put(bar, "select", "pickbase");
   base.title = "what this branch's work is measured against";
   base.addEventListener("change", () => keepBase(base.value));
@@ -12235,7 +12244,11 @@ function fillDiffBar(bar) {
       one.value = value;
       return one;
     };
-    option(pick, "", "all changes");
+    // How many commits "all changes" holds, which is the branch's own and
+    // not the last few on the default branch: those are no part of it.
+    const own = report.recent ? 0 : commits.length;
+    option(pick, "", "all changes" + (own ? " (" + own + " commit"
+                                       + (own === 1 ? "" : "s") + ")" : ""));
     option(pick, "uncommitted", "not committed yet");
     if (commits.length) {
       const group = put(pick, "optgroup");
@@ -12263,17 +12276,18 @@ function fillDiffBar(bar) {
       const one = put(base, "option", null, text);
       one.value = value;
     };
-    option("", report.base_auto ? "against " + report.base_auto + " (found)"
+    option("", report.base_auto ? report.base_auto + " (found)"
                                 : "no branch to compare against");
     for (const name of offered) {
-      if (name !== report.base_auto) option(name, "against " + name);
+      if (name !== report.base_auto) option(name, name);
     }
     // Picked, and not on the list any more: said, rather than silently
     // shown as the one found.
-    if (wanted && !offered.includes(wanted)) option(wanted, "against " + wanted + " (gone)");
+    if (wanted && !offered.includes(wanted)) option(wanted, wanted + " (gone)");
   }
   base.value = wanted;
   base.hidden = !offered.length && !wanted;
+  bar.querySelector(".baseword").hidden = base.hidden;
   const at = commitAt(commits);
   const [older, newer] = bar.querySelectorAll(".step");
   older.disabled = at < 0 || at + 1 >= commits.length;
@@ -12281,6 +12295,23 @@ function fillDiffBar(bar) {
   for (const button of bar.querySelectorAll(".sides button")) {
     button.setAttribute("aria-pressed", String(button.dataset.sides === state.sides));
   }
+}
+
+// A commit message is wrapped by hand at about 72 columns, and drawn as it
+// stood it broke there whatever the width of the window -- lines cut short.
+// A paragraph's lines are joined, so the window wraps them; a line that
+// starts a list item, is indented, or is a trailer (`Refs: OA-1`) keeps its
+// own line, because there the break is the meaning.
+function reflow(text) {
+  return String(text).split(/\n{2,}/).map((para) => {
+    const out = [];
+    for (const line of para.split("\n")) {
+      const own = /^(\s|[-*+]\s|\d+[.)]\s|[A-Za-z][\w-]*: )/.test(line);
+      if (out.length && !own) out[out.length - 1] += " " + line.trim();
+      else out.push(line);
+    }
+    return out.join("\n");
+  }).join("\n\n");
 }
 
 // A diff's files in the order its tree reads: at each level the folders
@@ -12494,7 +12525,9 @@ function drawDiff(box) {
     }
     // The whole message, not only its subject: the why of a commit is in
     // the body, and a subject alone is the one line that says least.
-    if (one && report.body) put(head, "div", "message", report.body);
+    if (one && report.body) put(head, "div", "message", reflow(report.body));
+    // The reader's ticket links, in the subject and the message alike.
+    linkTickets(head);
     // `at_commit`: the new side is a commit and not the file on disk, so a
     // comment's line is carried through to where it stands now. The daemon
     // says so, because it is the one that knows what each half is a diff of.

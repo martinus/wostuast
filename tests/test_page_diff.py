@@ -1048,3 +1048,90 @@ def test_a_whole_file_is_asked_for_against_the_base_the_diff_was_drawn_on(
             assert base and any("base=" + base in url for url in asked), asked
         finally:
             browser.close()
+
+
+def test_a_commit_message_wraps_at_the_window_and_links_its_tickets(repo_page, ws):
+    """git wraps a message by hand at about 72 columns, and the tab drew it
+    as it stood in a box 80 characters wide: lines cut short whatever the
+    window. A paragraph's lines are joined now, so the window wraps them; a
+    list item and a trailer keep their own lines. And the reader's ticket
+    links reach the subject and the message, as they reach the transcript."""
+    import json
+    root, _ = repo_page
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps(
+        [{"match": "OA-(\\d+)", "url": "https://tickets.example.com/OA-$1"}]))
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+    conftest.git_in(root, "commit", "-qam", "OA-12: print three", "-m",
+                    "Two was not enough, and the reader asked for a third\n"
+                    "one, which OA-13 needs as well.\n\n- one\n- two\n\n"
+                    "Reviewed-by: someone\nRefs: OA-12")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function("(state.diff || {}).commits?.length === 2")
+            page.wait_for_function("state.links.length === 1")
+            pick(page, page.evaluate("state.diff.commits[0].sha"))
+            head = page.locator(".diffhead.commit")
+            message = head.locator(".message")
+            assert message.evaluate("e => e.textContent") == (
+                "Two was not enough, and the reader asked for a third one,"
+                " which OA-13 needs as well.\n\n- one\n- two\n\n"
+                "Reviewed-by: someone\nRefs: OA-12")
+            assert message.evaluate("e => getComputedStyle(e).maxWidth") == "none"
+            links = head.locator("a").evaluate_all(
+                "els => els.map((a) => [a.textContent, a.href])")
+            assert links == [
+                ["OA-12", "https://tickets.example.com/OA-12"],
+                ["OA-13", "https://tickets.example.com/OA-13"],
+                ["OA-12", "https://tickets.example.com/OA-12"]], links
+        finally:
+            browser.close()
+
+
+def test_the_pickers_say_how_many_commits_and_stand_apart_from_against(repo_page):
+    """"all changes" said nothing of what it held, and "against" stood inside
+    the branch picker and took its room: "against main" was cut to
+    "against ma". The count is the branch's own commits; the word stands
+    beside the picker; both wear the narrow face, as file names do."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            # Narrow enough that the bar cannot hold both pickers whole.
+            page.set_viewport_size({"width": 900, "height": 700})
+            show_tab(page, "diff")
+            page.wait_for_function("(state.diff || {}).commits?.length === 1")
+            page.wait_for_function(
+                "document.querySelector('.pickbase').options.length > 0")
+            out = page.evaluate("""() => {
+              const bar = document.querySelector('.diffbar');
+              const word = bar.querySelector('.baseword');
+              const base = bar.querySelector('.pickbase');
+              const narrow = getComputedStyle(document.documentElement)
+                .getPropertyValue('--narrow').trim();
+              // As wide as its own content: the branch name is read whole,
+              // and the commit picker gives way instead.
+              const clone = base.cloneNode(true);
+              clone.style.cssText = 'position: absolute; visibility: hidden';
+              bar.appendChild(clone);
+              const whole = clone.getBoundingClientRect().width;
+              clone.remove();
+              return {all: bar.querySelector('.pickof').options[0].textContent,
+                      cut: whole - base.getBoundingClientRect().width,
+                      word: word.textContent, shown: !word.hidden,
+                      before: word.nextElementSibling === base,
+                      names: [...base.options].map((one) => one.textContent),
+                      font: [getComputedStyle(base).fontFamily,
+                             getComputedStyle(bar.querySelector('.pickof')).fontFamily],
+                      narrow};
+            }""")
+            assert out["all"] == "all changes (1 commit)", out
+            assert out["cut"] < 1, out
+            assert out["word"] == "against" and out["shown"] and out["before"], out
+            assert out["names"] and not any(
+                one.startswith("against") for one in out["names"]), out
+            same = [one.replace('"', "'") for one in [*out["font"], out["narrow"]]]
+            assert same[0] == same[1] == same[2], out
+        finally:
+            browser.close()
