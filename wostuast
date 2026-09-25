@@ -2113,9 +2113,11 @@ class Block:
     """One thing the Transcript tab shows, in the order it happened."""
 
     seq: int = -1               # its place in the transcript, and its identity
-    #: prompt, text, thinking, tool, divider, note. A `note` is a `user`
-    #: record the harness wrote -- a task finishing, another session's
-    #: message -- so it is shown but never as something the reader typed.
+    #: prompt, text, thinking, tool, divider, note, shell. A `note` is a
+    #: `user` record the harness wrote -- a task finishing, another session's
+    #: message -- so it is shown but never as something the reader typed. A
+    #: `shell` is a command the reader ran with `!`: `text` is the command
+    #: and `result` what it printed.
     kind: str = "text"
     ts: float = 0.0
     text: str = ""              # prompt and assistant text, as Markdown
@@ -2145,6 +2147,15 @@ class Block:
 MACHINE_TAG = re.compile(
     r"<(command-name|command-message|command-args|local-command-stdout"
     r"|local-command-caveat|system-reminder)>.*?</\1>", re.S)
+#: A command the reader ran with `!` in Claude Code. Measured on 2.1.282:
+#: two `user` records, neither `isMeta`, so both were drawn as prompts, tags
+#: and all. The first is `<bash-input>git up</bash-input>`, as typed. The
+#: second is `<bash-stdout>...</bash-stdout><bash-stderr>...</bash-stderr>`,
+#: with `<`, `>` and `&` written as HTML entities and quotes left alone --
+#: and stderr, in that run, inside stdout. `tests/fixtures/bash_mode.jsonl`.
+BASH_INPUT = re.compile(r"\s*<bash-input>(.*?)</bash-input>\s*", re.S)
+BASH_OUTPUT = re.compile(r"\s*<bash-stdout>(.*?)</bash-stdout>\s*"
+                         r"(?:<bash-stderr>(.*?)</bash-stderr>\s*)?", re.S)
 COMMAND_NAME = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
 COMMAND_ARGS = re.compile(r"<command-args>\s*(.*?)\s*</command-args>", re.S)
 TASK_NOTE = re.compile(r"^<task-notification>\s*(.*?)\s*</task-notification>$",
@@ -2477,12 +2488,40 @@ class Transcript:
         Each wore the reader's rail and opened a round on the map named after
         it. Shown, because it is what happened; never as a prompt.
         """
+        # Only a record that is the tag and nothing else: a person asking
+        # about bash mode can type `<bash-input>` into a prompt.
+        command = BASH_INPUT.fullmatch(text)
+        if command:
+            return self.keep(Block(kind="shell", ts=ts, text=command.group(1).strip()))
+        printed = BASH_OUTPUT.fullmatch(text)
+        if printed:
+            return self.shell_output(printed, ts)
         mine, text = read_user_text(text)
         if not mine:
             return None
         if theirs and mine == "prompt":
             mine = "note"
         return self.keep(Block(kind=mine, ts=ts, text=text))
+
+    def shell_output(self, printed: re.Match[str], ts: float) -> Block:
+        """What a `!` command printed, into the block of the command.
+
+        It comes as the record after the command's, and a command and what
+        it printed are one thing to read, as a terminal shows them. With no
+        command before it -- a transcript read from the middle -- it stands
+        alone. Claude Code wrote `<`, `>` and `&` as entities, `&` too, so
+        `html.unescape` gives back exactly what was printed.
+        """
+        import html
+
+        said = "\n".join(html.unescape(part).rstrip("\n")
+                         for part in printed.groups() if part and part.strip())
+        block = self.blocks[-1] if self.blocks else None
+        if block is None or block.kind != "shell" or block.answered:
+            block = self.keep(Block(kind="shell", ts=ts))
+        block.result = said
+        block.answered = True
+        return block
 
     def add_queued(self, record: dict[str, Any]) -> list[Block]:
         """A message that arrived while the agent was working.
@@ -7190,6 +7229,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   border-left: 3px solid var(--mine); border-radius: 6px;
   color: var(--ink-bright);
 }
+/* A `!` command: the reader's rail, a terminal's face. The output keeps its
+   columns and scrolls sideways rather than folding them. */
+.turn.mine .bubble.shell { font-family: var(--mono); font-size: 13px; }
+.bubble.shell .command { font-weight: 600; }
+.bubble.shell .output {
+  margin: 6px 0 0; font: inherit; font-weight: 400; color: var(--ink-soft);
+  white-space: pre; overflow-x: auto;
+}
 .prose { flex-grow: 1; line-height: 1.55; min-width: 0; }
 /* One of the reader's own autolinks. It sits inside an agent's words, so it
    is underlined rather than coloured: a colour here would compete with the
@@ -10286,7 +10333,9 @@ function blockTurn(block, index) {
     drawTool(tools, block, index);
     return node;
   }
-  const mine = block.kind === "prompt";
+  // A `!` command is the reader's too: they typed it.
+  const shell = block.kind === "shell";
+  const mine = block.kind === "prompt" || shell;
   // Something the harness said, not the reader and not the agent.
   const aside = block.kind === "note";
   const node = document.createElement("div");
@@ -10308,12 +10357,23 @@ function blockTurn(block, index) {
   // The copy button shares the time's line: see `.who .stamp`.
   const stamp = block.ts ? put(who, "div", "stamp", clock(block.ts)) : who;
   putCopy(stamp, block, mine);
-  if (mine || aside || block.kind === "thinking") {
+  if (shell) {
+    putShell(node, block);
+  } else if (mine || aside || block.kind === "thinking") {
     linkTickets(put(node, "div", "bubble", block.text));
   } else {
     markdown(node, block.text);
   }
   return node;
+}
+
+// A command the reader ran with `!`, and what it printed, in the fixed face,
+// as a terminal shows them. Text and never markup: a program wrote the
+// output, and `<draft>` in a branch name is a branch name.
+function putShell(node, block) {
+  const bubble = put(node, "div", "bubble shell");
+  put(bubble, "div", "command", "! " + block.text);
+  if (block.result) put(bubble, "pre", "output", block.result);
 }
 
 // The Markdown an agent wrote, as it wrote it. The page shows it drawn; this
@@ -10377,6 +10437,8 @@ function rounds() {
     if (!block) continue;
     if (block.kind === "prompt") {
       out.push(here = { seq: at, text: block.text, replies: [] });
+    } else if (block.kind === "shell") {      // typed too, with its `!`
+      out.push(here = { seq: at, text: "! " + block.text, replies: [] });
     } else if (block.kind === "text") {   // a `note` is neither, by design
       if (!here) out.push(here = { seq: at, text: "", replies: [] });
       here.replies.push({ seq: at, text: block.text });
