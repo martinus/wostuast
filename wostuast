@@ -719,6 +719,9 @@ class GitFacts:
     #: The top of the worktree. The page keys what belongs to a checkout on
     #: it -- the Diff tab's base -- because `cwd` moves with every `cd`.
     root: str = ""
+    #: Where the repository is fetched from, for the row's hover: `origin`,
+    #: or the first remote there is. Any user and password taken out.
+    remote: str = ""
     #: git did not answer about a directory that is a repository. Empty facts
     #: read as a clean repository with no branch, which is a real state and
     #: not this one — and they used to be remembered as the answer.
@@ -1539,6 +1542,8 @@ def row(session: Session) -> dict[str, Any]:
         # in `src` is still in `richpalm`; until then, where it started.
         "worktree": os.path.basename(
             (facts.root or session.home or session.cwd).rstrip("/")),
+        "worktree_path": facts.root or session.home or session.cwd,
+        "remote": facts.remote,
         "state": session.state,
         "state_word": STATE_WORDS.get(session.state, session.state),
         "cwd": session.cwd,
@@ -2608,6 +2613,50 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
     return branch.strip(), ahead, behind
 
 
+def remote_url(git_dir: str) -> str:
+    """Where the repository is fetched from, read from its config file.
+
+    Read and not asked: `git config` would be a third git run for every
+    worktree on every poll, for a line that almost never changes, and the
+    common directory `git_facts` already has is where the file is. The
+    older git that gives the top level instead has it under `.git`. What
+    git would add -- `include`, `insteadOf` -- is not followed; this is a
+    hover, and a hover that shows the file's own line is still true.
+
+    A URL can carry a user and a token (`https://me:ghp_x@host/r.git`), and
+    it is going to a page, so the part before the `@` of a URL is taken
+    out. The `git@host:path` shape holds no secret and is left as it is.
+    """
+    import configparser
+    import urllib.parse
+
+    base = git_dir.strip().rstrip("/")
+    if not base:
+        return ""
+    parser = configparser.RawConfigParser(strict=False, interpolation=None)
+    for where in (os.path.join(base, "config"), os.path.join(base, ".git", "config")):
+        if os.path.isfile(where):
+            try:
+                parser.read(where, encoding="utf-8")
+            except (OSError, UnicodeDecodeError, configparser.Error):
+                return ""
+            break
+    remotes = [name for name in parser.sections()
+               if name.startswith('remote "') and parser.has_option(name, "url")]
+    if not remotes:
+        return ""
+    chosen = 'remote "origin"' if 'remote "origin"' in remotes else remotes[0]
+    url = parser.get(chosen, "url").strip()
+    if "://" in url:
+        try:
+            parts = urllib.parse.urlsplit(url)
+        except ValueError:
+            return ""
+        host = parts.netloc.rpartition("@")[2]
+        url = urllib.parse.urlunsplit(parts._replace(netloc=host))
+    return url
+
+
 def repo_name(git_dir: str) -> str:
     """The name of the repository that owns a git directory.
 
@@ -2653,6 +2702,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     if paths:
         facts.repo = repo_name(paths.splitlines()[0])
         facts.root = paths.splitlines()[-1]
+        facts.remote = remote_url(paths.splitlines()[0])
 
     status = git("status", "--porcelain", "--branch")
     if not paths:
@@ -6751,6 +6801,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row .line2[hidden] { display: none; }
 .row .line2 > * { flex-shrink: 0; }
 .row .line2 .branch { flex-shrink: 1; }
+.row .line2 .gitstate { display: flex; gap: 10px; margin-left: auto; }
 /* The reason gives way; the age never does. "How long has this needed me?" is
    the question the sidebar exists to answer. */
 .row .line3 {
@@ -8790,21 +8841,25 @@ function fillRow(row, s) {
   // branch and what git counts, and what it is doing. A row not renamed
   // says its repository twice, and a row that is always one shape is read
   // faster than one that saves a word.
-  const fact = (line, cls, icon, text) => {
+  const fact = (line, cls, icon, text, title) => {
     const part = put(line, "span", cls);
     putIcon(part, icon);
     put(part, "span", "text", text);
+    part.title = title;
   };
   where.replaceChildren();
-  if (s.repo) fact(where, "repo", "repo", s.repo);
-  if (s.worktree) fact(where, "worktree", "dir", s.worktree);
+  if (s.repo) fact(where, "repo", "repo", s.repo, s.remote || "no remote");
+  if (s.worktree) fact(where, "worktree", "dir", s.worktree, s.worktree_path || "");
   two.replaceChildren();
   two.hidden = !s.branch;
-  if (s.branch) fact(two, "branch", "branch", s.branch);
-  if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
-  if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
-  if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
-  else if (s.branch) put(two, "span", "clean", "✓ clean");
+  if (s.branch) fact(two, "branch", "branch", s.branch, s.branch);
+  // What git counts, at the right edge, so the counts of every row stand in
+  // one column however long each branch is.
+  const counts = put(two, "span", "gitstate");
+  if (s.ahead) put(counts, "span", "ahead", "↑" + s.ahead);
+  if (s.behind) put(counts, "span", "ahead", "↓" + s.behind);
+  if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
+  else if (s.branch) put(counts, "span", "clean", "✓ clean");
   // A ready session's reason is the state again ("waiting for input",
   // "stopped"), so it says nothing and the age stands alone.
   three.children[0].textContent =
