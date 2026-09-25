@@ -252,6 +252,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>r</kbd> | Open the review you wrote |
 | <kbd>1</kbd> – <kbd>5</kbd> | Transcript, Files, Diff, Review, Session |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
 | <kbd>s</kbd> | Type into the agent's terminal |
 | <kbd>t</kbd> | Show or hide the agent's thinking, and say how much there is |
 | <kbd>c</kbd> | Colours: auto, light, dark (the last button in the tab row does the same) |

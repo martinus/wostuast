@@ -1376,3 +1376,47 @@ def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
             assert not [one for one in seen if one[-1] == "Escape"], seen
         finally:
             browser.close()
+
+
+def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
+    """Ctrl+Enter presses the box's own button: the send box left it out on
+    purpose and sent nothing, and the reason for a No had only its button.
+    And a button beside one of these boxes is as tall as its first line --
+    it was 26 px beside a box of 32, bottoms aligned, and the tops read as a
+    mistake."""
+    daemon, base, seen = in_pane
+    # A dialog whose call the page can name, or it offers no reason. Before
+    # the page opens: `now_permission` folds the events itself, so no tick
+    # after it has anything new to push.
+    path = daemon.store.sessions["s1"].transcript_path
+    with open(path, "a") as handle:
+        handle.write(conftest.records(conftest.record("tool", BUILD, tool_id="toolu_b1")))
+    now_permission(ws, daemon)
+    level = """(sel) => { const box = document.querySelector(sel);
+      const a = box.getBoundingClientRect();
+      const b = box.nextElementSibling.getBoundingClientRect();
+      return [Math.abs(a.top - b.top), Math.abs(a.bottom - b.bottom)]; }"""
+
+    def pressed(check):
+        deadline = time.time() + 15
+        while not any(check(one) for one in seen) and time.time() < deadline:
+            time.sleep(0.05)
+        return any(check(one) for one in seen)
+
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#sendbar:not([hidden])")
+            assert max(page.evaluate(level, "#say")) < 1
+            page.click("#say")
+            page.keyboard.type("hello there")
+            page.keyboard.press("Control+Enter")
+            assert pressed(lambda one: "hello there" in one), seen
+
+            page.wait_for_selector("#asking:not([hidden]) .permwhy")
+            assert max(page.evaluate(level, "#asking .permwhy")) < 1
+            page.fill("#asking .permwhy", "no thanks")
+            page.press("#asking .permwhy", "Control+Enter")
+            assert pressed(lambda one: one[-1] == "Escape"), seen
+        finally:
+            browser.close()

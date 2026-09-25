@@ -7022,6 +7022,15 @@ body.dragging { cursor: col-resize; user-select: none; }
   word-wrap: break-word;
 }
 .say:focus { outline: none; border-color: var(--needs); }
+/* The button beside a box is as tall as the box's first line, so the two
+   stand level: it was 26 px beside a box of 32, bottoms aligned, and the
+   tops read as a mistake. The box grows upward as lines are typed, and the
+   button stays on its last line. One line is 18 + 12 of padding + 2 of
+   border: 32, whether `fitSay` sized the box or it took its own height --
+   the reason for a No does, and at `line-height: 1.5` it stood 1.5 px
+   taller than its button. */
+.say { line-height: 18px; min-height: 32px; }
+.say + .verb { height: 32px; }
 .say::placeholder { color: var(--ink-faint); }
 
 .ctx { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -8790,6 +8799,21 @@ function putIcon(parent, kind) {
   return svg;
 }
 
+// Ctrl+Enter (Cmd+Enter on a Mac) in a box presses its button, in every box
+// that sends or keeps something, so the one key works wherever the reader
+// is typing. It presses the button and nothing else, so whatever the button
+// checks first is checked -- and a disabled button ignores `click()`, as a
+// press on it does. `button` may be a function, for a box whose button is
+// built after it.
+function submitOnCtrlEnter(box, button) {
+  box.addEventListener("keydown", (press) => {
+    if (press.key !== "Enter" || !(press.ctrlKey || press.metaKey)) return;
+    press.preventDefault();
+    const target = typeof button === "function" ? button() : button;
+    if (target) target.click();
+  });
+}
+
 // Everything below comes from an agent. It is never trusted as HTML.
 function put(parent, tag, cls, text) {
   const node = document.createElement(tag);
@@ -9304,6 +9328,7 @@ function drawPermission(box, s, permission) {
   no.type = "button";
   no.textContent = "no";
   no.addEventListener("click", () => submitDecline(s.id, permission, box));
+  submitOnCtrlEnter(why, no);
   put(foot, "span", "asksays");
   paintDecline(box, s, permission);
 }
@@ -13457,6 +13482,7 @@ function putCommentBox(parent, anchor, quoted) {
   const save = put(row, "button", "verb", "save");
   save.type = "button";
   save.addEventListener("click", () => writeComment(anchor, quoted, area.value));
+  submitOnCtrlEnter(area, save);
   area.addEventListener("keydown", (press) => {
     if (press.key === "Escape") { state.writing = null; redrawCode(); }
   });
@@ -13630,6 +13656,9 @@ function putField(parent, which, label, value, hint, rows) {
   area.rows = rows;
   area.spellcheck = false;
   area.dataset.which = which;
+  // The review goes to the agent from here too, through its own button: the
+  // message it sends stands on this tab, and the button is what reads it.
+  submitOnCtrlEnter(area, () => document.querySelector("button.submit"));
   return area;
 }
 
@@ -14472,8 +14501,8 @@ $("say").addEventListener("keydown", (press) => {
   }
   // Enter sends. Shift and Enter is how you write a second line, which is
   // what every chat box does and what a prompt with a plan in it needs.
-  if (press.key === "Enter" && !press.shiftKey && !press.ctrlKey
-      && !press.altKey && !press.metaKey) {
+  // Ctrl+Enter sends too, as it does in every other box on this page.
+  if (press.key === "Enter" && !press.shiftKey && !press.altKey) {
     press.preventDefault();
     sendTyped();
   }

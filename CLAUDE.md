@@ -419,7 +419,12 @@ transcript lands and a box that moves loses the focus on it. A fourth: a fixture
 clock read after the page opened. `ago` counts seconds only for an age's
 first minute, a loaded CI runner took longer than that to open the page,
 and `test_a_row_is_not_rebuilt_every_second` read "1min" twice — so it
-starts the count itself with a fresh event. Running the test
+starts the count itself with a fresh event. A fifth: a pane that still
+holds the last session's drawing of the same file. After `choose`, the
+Files tab shows the old session's scroller until the new text lands, so
+`open_file` found lines and returned, and a scroll went to a scroller
+whose listener belongs to another session -- 4 runs in 10 red at `-n 12`.
+Wait for `.filescroll[data-drawn="<session>"]`. Running the test
 files you changed at `-n 12` three times over is what turns them up; once
 is not enough.
 
@@ -2077,6 +2082,19 @@ update the comment with its own text, and read it back.
   `run !== -1` — "none held yet" is every first load, and `goTo` is set from
   the address bar before that load, so forgetting there threw away the link
   the page had just been opened on.
+- **Ctrl+Enter presses the button of the box it is typed in**, in every box
+  that keeps or sends something: the send box, a review comment, the reason
+  for a No, and the Review tab's two boxes. The comment box had Escape and
+  nothing else, and the send box left Ctrl out on purpose, so the key the
+  reader used everywhere did nothing in either. `submitOnCtrlEnter` clicks
+  the button and does nothing more, so whatever the button checks is
+  checked, and a disabled one ignores the click. Cmd+Enter is the same key.
+  **And the button stands level with the box's first line**:
+  `.say { line-height: 18px }` makes one line 32 px whoever sizes the box,
+  and `.say + .verb` is 32 px. It was 26 beside 32, and the reason box, at
+  `line-height: 1.5`, stood 1.5 px taller than its button.
+  `test_ctrl_enter_saves_a_comment_and_sends_the_review`,
+  `test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level`.
 - **Enter jumps, except on a button a keyboard reached.** The keys handler
   jumped to the pane from wherever the focus was, so a keyboard could press
   nothing on the page. But a click leaves the focus on the button it pressed,

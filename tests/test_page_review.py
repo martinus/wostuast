@@ -1349,8 +1349,13 @@ def test_another_sessions_scroller_is_not_read_as_this_ones_place(long_page,
             page.wait_for_function("state.sessions.length === 2")
             page.evaluate("choose('s2')")
             open_file(page, "long.py")          # s2 reads it from the top
+            page.wait_for_selector('.filescroll[data-drawn="s2"] .code .dline')
             page.evaluate("choose('s1')")
             open_file(page, "long.py")
+            # s1's own scroller, not s2's still standing in the pane: that
+            # one's listener ignores a scroll once s1 is chosen, and under
+            # load `open_file` found its lines and returned before s1's came.
+            page.wait_for_selector('.filescroll[data-drawn="s1"] .code .dline')
             scroll_to(page, 3000)
             page.wait_for_function("state.files.down > 3000 * 20")
             page.evaluate("choose('s2')")
@@ -1359,5 +1364,31 @@ def test_another_sessions_scroller_is_not_read_as_this_ones_place(long_page,
             assert page.evaluate("state.files.down") < 21 * 10
             assert page.evaluate(
                 "document.querySelector('.filescroll').scrollTop") < 21 * 10
+        finally:
+            browser.close()
+
+
+def test_ctrl_enter_saves_a_comment_and_sends_the_review(repo_page):
+    """Ctrl+Enter presses the button of the box it is typed in, in every box
+    that keeps or sends something: the comment box had Escape and nothing
+    else, so the key the reader used everywhere did nothing there. Cmd+Enter
+    is the same key on a Mac."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "change this please")
+            page.press(".commentbox textarea", "Control+Enter")
+            page.wait_for_selector(".comment")
+            assert "change this please" in page.locator(".comment").inner_text()
+            assert page.locator(".commentbox").count() == 0
+            stub_send(page, [{"done": True}])
+            show_tab(page, "review")
+            page.click(".about textarea >> nth=0")
+            page.keyboard.type("cleanup")
+            page.keyboard.press("Meta+Enter")
+            page.wait_for_function("state.review.comments.length === 0")
+            assert page.evaluate("window.__sent.length") == 1
         finally:
             browser.close()
