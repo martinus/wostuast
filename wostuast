@@ -879,6 +879,43 @@ def path_label(cwd: str, repo: str = "") -> str:
     return name
 
 
+#: What a one-line summary of a command hides, and keeps the name of. The
+#: row's last line is a command as the agent ran it, and a screen is shared,
+#: screenshotted and read over a shoulder: `curl -u me:token` stood on the
+#: row whole. Each pattern keeps the part that says what was there (group
+#: 1) and hides the rest. It catches the shapes it knows, and no more: a
+#: secret in a shape not listed here still shows.
+SECRET_SHAPES = [
+    # A user, and a password, in a URL: `https://me:token@host`.
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@\"']+@"), r"\1***@"),
+    # curl's and wget's user: only with a colon in it, so `sort -u file` and
+    # `git add -u` are left as they are.
+    (re.compile(r"(\s(?:-u|--user|--proxy-user)(?:\s+|=)[\"']?)[^\s\"':]+:[^\s\"']+"),
+     r"\1***"),
+    # A header that is a credential, whatever it holds.
+    (re.compile(r"(?i)\b((?:proxy-)?authorization|cookie|x-api-key|api-key|"
+                r"x-auth-token|private-token)(\s*:\s*)[^\"'\n]+"), r"\1\2***"),
+    # Not `token` as a word: `grep -rn token include/` is a search.
+    (re.compile(r"(?i)\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1\2***"),
+    # `TOKEN=…`, `?api_key=…`, `--password=…`: a name that says secret.
+    (re.compile(r"(?i)\b([\w.-]*(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|"
+                r"access[_-]?key|auth)[\w.-]*\s*=\s*)(\"[^\"]*\"|'[^']*'|[^\s&\"']+)"),
+     r"\1***"),
+    (re.compile(r"(?i)(--?(?:password|passwd|token|secret|api-?key)\s+)(\S+)"), r"\1***"),
+    # Tokens that say what they are by their shape alone.
+    (re.compile(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}"
+                r"|\bsk-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+                r"|\bAKIA[0-9A-Z]{16}\b|\bglpat-[A-Za-z0-9_-]{20,}"), "***"),
+]
+
+
+def hide_secrets(text: str) -> str:
+    """A command with the credentials in it hidden, for a one-line summary."""
+    for shape, keep in SECRET_SHAPES:
+        text = shape.sub(keep, text)
+    return text
+
+
 def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
     """What a call worked on: the path, the command, or the pattern.
 
@@ -897,7 +934,9 @@ def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
             data.get("file_path") or data.get("notebook_path") or data.get("path")
         )
     if tool_name == "Bash":
-        return clip(str(data.get("command") or ""), 60)
+        # Hidden before the cut: a secret cut in half no longer looks like
+        # one, and its first half would stand on the row.
+        return clip(hide_secrets(str(data.get("command") or "")), 60)
     if tool_name in ("Grep", "Glob"):
         return clip(str(data.get("pattern") or ""), 60)
     if tool_name == "Task":
@@ -915,7 +954,7 @@ def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
         return clip(", ".join(one for one in heads if one), 60)
     if not data:
         return ""
-    return clip(json.dumps(data, ensure_ascii=False, default=str), 80)
+    return clip(hide_secrets(json.dumps(data, ensure_ascii=False, default=str)), 80)
 
 
 #: The most of one question, and of one ask, that is kept. A question is

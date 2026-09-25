@@ -52,6 +52,10 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or
   over the worktree to see its path. The colour of the card shows the state.
+  In a command shown on one line, what looks like a password or a token is
+  hidden as `***`: the user and password in a URL, `-u user:password`,
+  `Authorization:` headers, `TOKEN=…`, and known token shapes. A secret in
+  another shape still shows.
 - **You answer an agent's question from the page.** When an agent asks you
   something, the question and its answers show at the foot of the transcript.
   Pick one answer, or several where the question allows it. Change your mind
