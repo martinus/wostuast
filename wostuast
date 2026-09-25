@@ -1534,6 +1534,11 @@ def row(session: Session) -> dict[str, Any]:
         # the repository under it; this is what stands in for the repository
         # outside one, and what the find box searches.
         "place": session.place,
+        # The worktree's own folder, for the row's second line. The top of
+        # the worktree once git has said where that is, so a session started
+        # in `src` is still in `richpalm`; until then, where it started.
+        "worktree": os.path.basename(
+            (facts.root or session.home or session.cwd).rstrip("/")),
         "state": session.state,
         "state_word": STATE_WORDS.get(session.state, session.state),
         "cwd": session.cwd,
@@ -6693,10 +6698,12 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* Only a finished session carries a word; the colour says the rest. */
 .row .word { flex-shrink: 0; color: var(--ink-faint); }
 .row .word:empty { display: none; }
-.row .line2 .repo, .row .line2 .branch {
+.row .line2 .repo, .row .line2 .worktree, .row .line2 .branch {
   display: inline-flex; align-items: center; gap: 4px; min-width: 0;
 }
-.row .line2 .repo { color: var(--ink-mute); max-width: 40%; }
+/* Repository and worktree share their line, and either gives way. */
+.row .line2.where { gap: 14px; color: var(--ink-mute); }
+.row .line2.where > * { flex-shrink: 1; }
 .row .line2 .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .row .icon {
   width: 12px; height: 12px; flex-shrink: 0; color: var(--ink-faint);
@@ -6739,6 +6746,9 @@ body.dragging { cursor: col-resize; user-select: none; }
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
   min-width: 0; white-space: nowrap;
 }
+/* `display: flex` beats the browser's own rule for the attribute. A session
+   outside a repository has no branch, and its line goes. */
+.row .line2[hidden] { display: none; }
 .row .line2 > * { flex-shrink: 0; }
 .row .line2 .branch { flex-shrink: 1; }
 /* The reason gives way; the age never does. "How long has this needed me?" is
@@ -8749,6 +8759,7 @@ function newRow(id) {
   name.title = "double-click to rename";
   name.addEventListener("dblclick", () => renameRow(row));
   put(one, "span", "word");
+  put(row, "div", "line2 where");
   put(row, "div", "line2");
   const three = put(row, "div", "line3");
   put(three, "span", "said");
@@ -8767,7 +8778,7 @@ function newRow(id) {
 // a third and a fourth time. The word stays in the history, where "ended"
 // and "killed" share one group and one grey.
 function fillRow(row, s) {
-  const [one, two, three] = row.children;
+  const [one, where, two, three] = row.children;
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
@@ -8775,16 +8786,21 @@ function fillRow(row, s) {
     one.children[0].textContent = rowName(s);
   }
   one.children[1].textContent = isGone(s) ? s.state_word : "";
-  two.replaceChildren();
-  // The repository, when a name of yours has taken the place of the one
-  // that holds it. The folder stands in outside a repository.
-  const fact = (cls, icon, text) => {
-    const part = put(two, "span", cls);
+  // On every row, the same four lines: the name, where it stands, the
+  // branch and what git counts, and what it is doing. A row not renamed
+  // says its repository twice, and a row that is always one shape is read
+  // faster than one that saves a word.
+  const fact = (line, cls, icon, text) => {
+    const part = put(line, "span", cls);
     putIcon(part, icon);
     put(part, "span", "text", text);
   };
-  if (s.mine && (s.repo || s.place)) fact("repo", "repo", s.repo || s.place);
-  if (s.branch) fact("branch", "branch", s.branch);
+  where.replaceChildren();
+  if (s.repo) fact(where, "repo", "repo", s.repo);
+  if (s.worktree) fact(where, "worktree", "dir", s.worktree);
+  two.replaceChildren();
+  two.hidden = !s.branch;
+  if (s.branch) fact(two, "branch", "branch", s.branch);
   if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
   if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
   if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
