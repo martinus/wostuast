@@ -128,24 +128,24 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
             page.goto(path, wait_until="domcontentloaded")
             page.wait_for_selector(".row", timeout=15000)
             dark = page.evaluate("getComputedStyle(document.body).backgroundColor")
-            assert page.locator("#theme").inner_text() == "auto"
+            assert page.get_attribute("#theme", "data-choice") == "auto"
 
             page.locator("#theme").click()           # auto -> light
             page.wait_for_timeout(150)
             light = page.evaluate("getComputedStyle(document.body).backgroundColor")
             assert light != dark, "light on a dark machine did nothing"
-            assert page.locator("#theme").inner_text() == "light"
+            assert page.get_attribute("#theme", "data-choice") == "light"
 
             page.reload(wait_until="domcontentloaded")
             page.wait_for_selector(".row", timeout=15000)
             assert page.evaluate(
                 "getComputedStyle(document.body).backgroundColor") == light
-            assert page.locator("#theme").inner_text() == "light"
+            assert page.get_attribute("#theme", "data-choice") == "light"
 
             page.locator("#theme").click()           # light -> dark
             page.locator("#theme").click()           # dark -> auto
             page.wait_for_timeout(150)
-            assert page.locator("#theme").inner_text() == "auto"
+            assert page.get_attribute("#theme", "data-choice") == "auto"
             assert page.evaluate(
                 "getComputedStyle(document.body).backgroundColor") == dark
         finally:
@@ -258,5 +258,38 @@ def test_every_icon_fits_inside_its_box(page_at):
             assert out["wide"] > 0, out
             for name, edge in out["found"].items():
                 assert all(-0.001 <= one <= 14.001 for one in edge), (name, edge)
+        finally:
+            browser.close()
+
+
+def test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list(page_at):
+    """A bar across the whole page held the name, a count of sessions, the
+    counts by state, the alerts and the colours. The reader asked for the
+    room back: the counts are the sidebar's groups again, the name and the
+    version head the session list, and the two buttons are icons at the end
+    of the tab row -- which now starts at the top of the window, level with
+    the head of the list beside it."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            out = page.evaluate("""() => {
+              const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+              const head = document.querySelector('.sidebar-head');
+              return {topbar: document.querySelectorAll('.topbar, #counts, #where').length,
+                      tabsTop: box('.tabs').top, tabsBottom: box('.tabs').bottom,
+                      headBottom: box('.sidebar-head').bottom,
+                      brand: head.querySelector('.brand').textContent,
+                      version: head.querySelector('.version').textContent,
+                      bell: !!document.querySelector('.tabs #bell svg'),
+                      theme: !!document.querySelector('.tabs #theme svg'),
+                      words: document.querySelector('.tabs #bell').textContent
+                        + document.querySelector('.tabs #theme').textContent};
+            }""")
+            assert out["topbar"] == 0
+            assert out["tabsTop"] == 0
+            assert abs(out["tabsBottom"] - out["headBottom"]) <= 1, out
+            assert out["brand"] == "wostuast"
+            assert " · " in out["version"] and "__" not in out["version"]
+            assert out["bell"] and out["theme"] and out["words"] == ""
         finally:
             browser.close()
