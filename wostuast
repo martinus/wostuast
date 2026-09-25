@@ -6802,14 +6802,15 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row .line2 > * { flex-shrink: 0; }
 .row .line2 .branch { flex-shrink: 1; }
 .row .line2 .gitstate { display: flex; gap: 10px; margin-left: auto; }
-/* The reason gives way; the age never does. "How long has this needed me?" is
-   the question the sidebar exists to answer. */
+/* What the agent is doing or asks, cut short with an ellipsis. The age is on
+   the name's line, where the name gives way to it and it never does. */
 .row .line3 {
   display: flex; gap: 6px; font-size: 12px; color: var(--ink-mute);
   min-width: 0; white-space: nowrap;
 }
+.row .line3[hidden] { display: none; }
 .row .said { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; }
+.row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; font-size: 12px; }
 .dirty { color: var(--needs); }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
@@ -8810,11 +8811,11 @@ function newRow(id) {
   name.title = "double-click to rename";
   name.addEventListener("dblclick", () => renameRow(row));
   put(one, "span", "word");
+  put(one, "span", "age");
   put(row, "div", "line2 where");
   put(row, "div", "line2");
   const three = put(row, "div", "line3");
   put(three, "span", "said");
-  put(three, "span", "age");
   return row;
 }
 
@@ -8862,10 +8863,13 @@ function fillRow(row, s) {
   else if (s.branch) put(counts, "span", "clean", "✓ clean");
   // A ready session's reason is the state again ("waiting for input",
   // "stopped"), so it says nothing and the age stands alone.
-  three.children[0].textContent =
-    s.state === "done" ? "" : (s.reason || s.last_event || "");
-  three.children[1].textContent = ago(s.since);
-  ages.push([three.children[1], s.since]);
+  const said = s.state === "done" ? "" : (s.reason || s.last_event || "");
+  three.children[0].textContent = said;
+  three.hidden = !said;
+  // Beside the name, at the right: "how long has this needed me?" is read
+  // with the name, and a ready row has no fourth line to carry it.
+  one.children[2].textContent = ago(s.since);
+  ages.push([one.children[2], s.since]);
 }
 
 function rowName(s) {
