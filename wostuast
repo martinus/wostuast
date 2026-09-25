@@ -1530,10 +1530,9 @@ def row(session: Session) -> dict[str, Any]:
     return {
         "id": session.session_id,
         "label": session.label,
-        # Apart, as well as together. The row puts the worktree first and in
-        # front, because that is the one fact you cannot read anywhere else on
-        # the page; the name Claude Code wrote from the first prompt is often
-        # long and often vague, and it used to push the worktree off the end.
+        # Apart, as well as together. The row leads with the name and puts
+        # the repository under it; this is what stands in for the repository
+        # outside one, and what the find box searches.
         "place": session.place,
         "state": session.state,
         "state_word": STATE_WORDS.get(session.state, session.state),
@@ -6691,17 +6690,17 @@ body.dragging { cursor: col-resize; user-select: none; }
   color: var(--ink-bright); font-weight: 600; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; flex-grow: 1;
 }
-/* What Claude Code called the session. It goes under the worktree, not in
-   front of it: it is a title for the conversation, not a place. */
-.row .called {
-  padding-left: 17px; font-size: 12px; color: var(--ink-mute);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Only a finished session carries a word; the colour says the rest. */
+.row .word { flex-shrink: 0; color: var(--ink-faint); }
+.row .word:empty { display: none; }
+.row .line2 .repo {
+  color: var(--ink-mute); max-width: 40%; overflow: hidden; text-overflow: ellipsis;
 }
-.row .word { flex-shrink: 0; }
-.row.needs_you .word { color: var(--needs); }
-.row.working .word { color: var(--working); }
-.row.done .word { color: var(--done); }
-.row.ended .word, .row.dead .word { color: var(--ink-faint); }
+.row input.rowname {
+  width: 100%; min-width: 0; padding: 0 4px; margin: -1px 0;
+  font: inherit; color: var(--ink-bright); background: var(--raised);
+  border: 1px solid var(--edge-bright); border-radius: 3px; outline: none;
+}
 /* History. A finished session is grey through and through: it kept the colour
    of the state it stopped in, which read as though something were still going
    on there. */
@@ -6710,8 +6709,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row.ended .branch, .row.dead .branch,
 .row.ended .said, .row.dead .said { color: var(--ink-faint); }
 .row.ended .dirty, .row.dead .dirty,
-.row.ended .clean, .row.dead .clean,
-.row.ended .called, .row.dead .called { color: var(--gone); }
+.row.ended .clean, .row.dead .clean { color: var(--gone); }
 /* The line above each group of rows. The history one folds and so is a
    button; the other three only name what is under them. */
 .histhead, .band {
@@ -6727,11 +6725,17 @@ body.dragging { cursor: col-resize; user-select: none; }
 .band.needs { color: var(--needs); }
 /* The first head has nothing above it to be separated from. */
 .rows > :first-child.band, .rows > :first-child.histhead { border-top: none; margin-top: 0; }
+/* One line, whatever the branch is called. The branch is the one part that
+   gives way, and it gives way with an ellipsis: "✓ clean" shrank with it and
+   broke over two lines, under a branch cut short anyway. */
 .row .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
-  padding-left: 17px; min-width: 0;
+  padding-left: 17px; min-width: 0; white-space: nowrap;
 }
-.row .line2 .branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .line2 > * { flex-shrink: 0; }
+.row .line2 .branch {
+  flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
 /* The reason gives way; the age never does. "How long has this needed me?" is
    the question the sidebar exists to answer. */
 .row .line3 {
@@ -7902,6 +7906,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>f</dt><dd>filter the session list</dd>
+    <dt>e</dt><dd>rename the chosen session</dd>
     <dt>r</dt><dd>the review you have written</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 5</dt><dd>transcript, files, diff, review, session</dd>
@@ -8024,8 +8029,7 @@ async function tell(id, verb, body) {
 // `/rename` changes that, but the name it hands the status line is the one the
 // session started with — so a rename in the terminal does not reach this page
 // until the session is started again. A name set here is ours and wins.
-async function keepRename(box) {
-  const id = state.chosen;
+async function keepRename(box, id = state.chosen) {
   const asked = box.value;
   box.blur();
   if (!id) return;
@@ -8033,7 +8037,7 @@ async function keepRename(box) {
   if (answer && answer.error) { said(answer); return; }
   // The rows are rebuilt from the names on the daemon's next pass, which is a
   // second away. This is so the header does not sit on the old one until then.
-  const s = current();
+  const s = state.sessions.find((one) => one.id === id);
   if (s) {
     s.name = (answer && answer.name) || "";
     s.label = s.name ? s.name + " \u00b7 " + s.place : s.place;
@@ -8725,9 +8729,10 @@ function newRow(id) {
   row.addEventListener("click", () => choose(id));
   const one = put(row, "div", "line1");
   put(one, "span", "dot");
-  put(one, "span", "name");
+  const name = put(one, "span", "name");
+  name.title = "double-click to rename";
+  name.addEventListener("dblclick", () => renameRow(row));
   put(one, "span", "word");
-  put(row, "div", "called");
   put(row, "div", "line2");
   const three = put(row, "div", "line3");
   put(three, "span", "said");
@@ -8735,23 +8740,87 @@ function newRow(id) {
   return row;
 }
 
+// A row says what nothing else on the page says: the name you know the
+// session by, the repository and the branch, what git counts, and how long
+// ago. Not the state: the dot's colour and the group the row stands in say
+// it already, and a word at the top and "waiting for input" at the foot said
+// it a third and a fourth time. The word stays in the history, where "ended"
+// and "killed" share one group and one grey. Not the worktree's own folder
+// either (`agent/richpalm`): the reader never needed it, and the find box
+// still searches it.
 function fillRow(row, s) {
-  const [one, called, two, three] = row.children;
+  const [one, two, three] = row.children;
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
   one.children[0].className = "dot " + s.state;
-  one.children[1].textContent = s.place || s.label || s.id.slice(0, 8);
-  one.children[2].textContent = s.state_word;
-  called.textContent = s.name || "";
-  called.hidden = !s.name;
+  // A repository, or the folder when there is none, or when git has not
+  // answered yet. It leads the row only when the session has no name.
+  const where = s.repo || s.place;
+  // Not while it is being renamed: the box is in there, and this runs on
+  // every push.
+  if (!one.children[1].querySelector("input")) {
+    one.children[1].textContent = s.name || where || s.id.slice(0, 8);
+  }
+  one.children[2].textContent = isGone(s) ? s.state_word : "";
   two.replaceChildren();
+  if (s.name && where) put(two, "span", "repo", where);
   if (s.branch) put(two, "span", "branch", s.branch);
   if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
   if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
   if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
   else if (s.branch) put(two, "span", "clean", "✓ clean");
-  three.children[0].textContent = s.reason || s.last_event || "";
+  // A ready session's reason is the state again ("waiting for input",
+  // "stopped"), so it says nothing and the age stands alone.
+  three.children[0].textContent =
+    s.state === "done" ? "" : (s.reason || s.last_event || "");
   three.children[1].textContent = ago(s.since);
   ages.push([three.children[1], s.since]);
+}
+
+// Renaming where the name stands, by a double-click or `e`. The Session tab
+// has a box for it too, and it is one tab away from every row -- a name you
+// change when you think of it is a name you have. Enter keeps it, an empty
+// name gives the session back the one Claude Code sent, and Escape or a
+// click elsewhere keeps the old one.
+function renameRow(row) {
+  const id = row.dataset.id;
+  const s = state.sessions.find((one) => one.id === id);
+  const slot = row.querySelector(".line1 .name");
+  if (!s || !slot || slot.querySelector("input")) return;
+  const box = document.createElement("input");
+  box.className = "rowname";
+  box.type = "text";
+  box.autocomplete = "off";
+  box.spellcheck = false;
+  box.placeholder = "a name  \u00b7  enter to keep";
+  box.setAttribute("aria-label", "a name for this session");
+  box.value = s.name || "";
+  slot.replaceChildren(box);
+  const close = () => {
+    if (!box.isConnected) return;
+    box.remove();
+    $("rows").dataset.drawn = "";      // fill the name in again
+    drawSessions();
+  };
+  box.addEventListener("keydown", (press) => {
+    press.stopPropagation();           // a letter is a name, not a key
+    if (press.key === "Enter") {
+      press.preventDefault();
+      keepRename(box, id);
+      close();
+    } else if (press.key === "Escape") {
+      press.preventDefault();
+      close();
+    }
+  });
+  // Later, not now: `drawSessions` moves a row that changed its place, a
+  // moved node loses the focus, and it gives the focus straight back. Only a
+  // focus that is still gone after that is the reader leaving.
+  box.addEventListener("blur", () => setTimeout(() => {
+    if (document.activeElement !== box) close();
+  }, 0));
+  box.addEventListener("click", (press) => press.stopPropagation());
+  box.focus();
+  box.select();
 }
 
 // The line between what is running and what is over. It carries the count and
@@ -8791,6 +8860,10 @@ function drawSessions() {
   // The bar is kept for the same reason; anything else that is not a row goes
   // first, because the loop below places things by position and a stray node
   // would shift every one of them.
+  // A row being renamed may move below, and a moved node loses the focus.
+  const typing = box.contains(document.activeElement)
+    && document.activeElement.tagName === "INPUT" ? document.activeElement : null;
+  const caret = typing ? [typing.selectionStart, typing.selectionEnd] : null;
   const had = new Map();
   let bar = null;
   for (const node of Array.from(box.children)) {
@@ -8834,6 +8907,10 @@ function drawSessions() {
   }
   if (!barPlaced && bar) bar.remove();
   for (const gone of had.values()) gone.remove();
+  if (typing && typing.isConnected && document.activeElement !== typing) {
+    typing.focus();
+    typing.setSelectionRange(caret[0], caret[1]);
+  }
   if (!listed.length && state.sessions.length && !past.length) {
     put(box, "div", "nohits", "no session matches");
   }
@@ -14041,6 +14118,13 @@ document.addEventListener("keydown", (press) => {
       break;
     case "f": $("pick").focus(); break;
     case "r": showTab("review"); break;
+    case "e": {
+      const row = document.querySelector(".row.chosen");
+      if (!row) return;
+      press.preventDefault();          // or the letter lands in the box
+      renameRow(row);
+      break;
+    }
     case "Enter": jumpToPane(); break;
     case "s":
       if ($("sendbar").hidden) return;
