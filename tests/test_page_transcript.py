@@ -2135,3 +2135,49 @@ def test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt(page_at):
             assert abs(got["lined"]) < 0.5, got["lined"]
         finally:
             browser.close()
+
+
+def test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face(page_at):
+    """A `!` command and what it printed are one block on the reader's rail,
+    the output in the fixed face, keeping its columns, as text. It arrives
+    in two records, so the output lands on a block already drawn."""
+    from pathlib import Path
+    daemon, _ = page_at
+    fixture = Path(__file__).parent / "fixtures" / "bash_mode.jsonl"
+    command, printed = fixture.read_text().splitlines()
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write(command + "\n")
+            daemon.tick()
+            page.wait_for_selector(".turn.mine .bubble.shell .command")
+            assert page.locator(".bubble.shell .output").count() == 0
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write(printed + "\n")
+            daemon.tick()
+            page.wait_for_selector(".bubble.shell .output")
+            out = page.evaluate("""() => {
+              const bubble = document.querySelector('.bubble.shell');
+              const output = bubble.querySelector('.output');
+              const style = getComputedStyle(output);
+              return {command: bubble.querySelector('.command').textContent,
+                      output: output.textContent, font: style.fontFamily,
+                      wrap: style.whiteSpace,
+                      drawn: bubble.querySelectorAll('draft').length,
+                      blocks: document.querySelectorAll('.bubble.shell').length,
+                      map: [...document.querySelectorAll('.filelist.transcript button')]
+                        .map((one) => one.textContent)};
+            }""")
+            assert out["command"] == "! git up"
+            assert "-> origin/OLD-1-remove-a-flag" in out["output"]
+            assert "a & b <draft>" in out["output"] and out["drawn"] == 0
+            assert "Mono" in out["font"] or "mono" in out["font"]
+            assert out["wrap"] == "pre"
+            assert out["blocks"] == 1
+            assert any("! git up" in one for one in out["map"])
+            assert not any("bash-" in one for one in out["map"])
+        finally:
+            browser.close()

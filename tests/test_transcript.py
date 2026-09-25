@@ -617,3 +617,39 @@ def test_an_interrupt_claude_code_wrote_is_a_note_not_your_prompt(ws, tmp_path):
         assert ws.read_user_text(said) == ("note", shown)
     asked = "why does it say [Request interrupted by user] here?"
     assert ws.read_user_text(asked) == ("prompt", asked)
+
+
+def test_a_command_run_with_a_bang_is_one_block_with_its_output(ws, tmp_path):
+    """`!git up` in Claude Code writes two `user` records, neither `isMeta`:
+    `<bash-input>` and then `<bash-stdout>`/`<bash-stderr>`, the output with
+    `<`, `>` and `&` as HTML entities. Both were drawn as prompts, tags and
+    entities and all. Measured on 2.1.282; the fixture is that shape."""
+    import json
+    from pathlib import Path
+    fixture = Path(__file__).parent / "fixtures" / "bash_mode.jsonl"
+    command, printed = [json.loads(line) for line in fixture.read_text().splitlines()]
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    one, = reader.add(command)
+    assert (one.kind, one.text, one.result) == ("shell", "git up", "")
+    # The output goes into the command's block: one thing to read.
+    same, = reader.add(printed)
+    assert same is one and len(reader.blocks) == 1
+    assert "-> origin/OLD-1-remove-a-flag" in one.result
+    assert "origin/OLD-2-a & b <draft>" in one.result
+    assert "&gt;" not in one.result and "<bash-" not in one.result
+    # An entity that was printed is printed: Claude Code escaped the `&`.
+    reader.add(command)
+    literal = dict(printed, message={"role": "user", "content":
+        "<bash-stdout>&amp;lt;b&amp;gt; stays</bash-stdout>"
+        "<bash-stderr>fatal: no remote</bash-stderr>"})
+    two, = reader.add(literal)
+    assert two.result == "&lt;b&gt; stays\nfatal: no remote"
+    # Output with no command before it stands alone, and never lands in a
+    # block that already has its own.
+    three, = reader.add(literal)
+    assert three is not two and (three.kind, three.text) == ("shell", "")
+    # A prompt that only mentions the tag is a prompt.
+    asked = dict(command, message={"role": "user", "content":
+        "why does <bash-input>ls</bash-input> show up as a prompt?"})
+    four, = reader.add(asked)
+    assert four.kind == "prompt"
