@@ -27,6 +27,12 @@ Each event adds its own fields:
 `notification_type` is one of `permission_prompt`, `idle_prompt`,
 `auth_success`, `elicitation_dialog`.
 
+`/clear` sends two events, measured on 2.1.282: `SessionEnd` with `reason:
+clear` for the old id, then `SessionStart` with `source: clear` for a new id
+and a new `transcript_path`, about 0.1 s later. They carry the same `pane`
+and `pid` and nothing that names each other. The new transcript opens with
+the `/clear` command's own records.
+
 A newer build adds `scratchpad_dir`, `prompt_id`, `effort` and `shell_pid`
 to the base payload, and `permission_mode` reads `auto`. None of them is read,
 and the log keeps them because it keeps whatever arrives: a field from a newer

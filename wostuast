@@ -169,6 +169,9 @@ GONE_STATES = frozenset({"ended", "dead"})
 #: list as though it were still running, for a week. Long enough that an agent
 #: left waiting overnight is not buried; that one has a pid, and is checked.
 QUIET_MAX = 12 * 3600
+#: How far apart the two events of one `/clear` may be folded. Measured a
+#: tenth of a second; the slack is for a loaded machine.
+CLEAR_GAP = 5.0
 
 
 def state_dir() -> Path:
@@ -813,6 +816,17 @@ class Session:
     #: its own `tool_use_id` when the answer lands.
     asking: dict[str, Any] | None = None
     end_reason: str = ""
+    #: How this session started: `startup`, `resume`, `clear`, `compact`.
+    #: Kept for `link_clear`, which needs it whichever of the two events of
+    #: a `/clear` is folded second.
+    start_source: str = ""
+    #: The two halves of a `/clear`. It ends this session and starts another
+    #: with a new id and a new transcript, in the same pane and the same
+    #: Claude process, so the reader watching this one was left on a session
+    #: that had just ended. `link_clear` joins them; the page follows
+    #: `cleared_into`.
+    cleared_into: str = ""
+    cleared_from: str = ""
     last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
     #: Whether git has answered for this session at all. Until it has, the
@@ -1265,7 +1279,61 @@ class Store:
 
         if session.cwd and touched_the_tree(name, event):
             self.git_wanted.add(session.cwd)
+        if name in ("SessionStart", "SessionEnd"):
+            self.link_clear(session)
         return session
+
+    def link_clear(self, session: Session) -> None:
+        """Join the session a `/clear` ended to the one it started.
+
+        Claude Code ends the old session (`reason: clear`) and starts a new
+        one (`source: clear`) with a new id, a tenth of a second apart,
+        measured on 2.1.282. Nothing in either event names the other, so they
+        are matched by what they share: the Claude process, and the pane
+        where there is no pid (macOS). The two hooks are separate processes,
+        so either event may be folded first, and this is asked on both.
+
+        The reader's name for the session goes with it: they named the
+        conversation in that pane, not an id Claude Code swapped under them.
+        Moved, not copied, so the old row in History falls back to where it
+        was. On a restart the log folds again and finds the name already
+        moved, so it moves nothing twice.
+        """
+        if session.end_reason == "clear" and not session.cleared_into:
+            old, new = session, self._cleared_partner(session, "new")
+        elif session.start_source == "clear" and not session.cleared_from:
+            old, new = self._cleared_partner(session, "old"), session
+        else:
+            return
+        if old is None or new is None:
+            return
+        old.cleared_into = new.session_id
+        new.cleared_from = old.session_id
+        with self.naming:
+            if old.session_id not in self.names or new.session_id in self.names:
+                return
+            names = dict(self.names)
+            names[new.session_id] = names.pop(old.session_id)
+            write_names(names)
+            self.names = names
+
+    def _cleared_partner(self, session: Session, want: str) -> Session | None:
+        """The other half of a `/clear`: same process or pane, moments apart."""
+        best = None
+        for other in self.sessions.values():
+            if other is session:
+                continue
+            if want == "new":
+                fits = other.start_source == "clear" and not other.cleared_from
+            else:
+                fits = other.end_reason == "clear" and not other.cleared_into
+            same = (session.pid and other.pid == session.pid) or (
+                not session.pid and session.pane and other.pane == session.pane)
+            if not (fits and same and abs(other.last_ts - session.last_ts) <= CLEAR_GAP):
+                continue
+            if best is None or other.last_ts > best.last_ts:
+                best = other
+        return best
 
     def fold(self, events: Iterable[dict[str, Any]]) -> None:
         """Fold events in, forgetting sessions a week quiet as the log goes by.
@@ -1624,6 +1692,9 @@ def row(session: Session) -> dict[str, Any]:
         "limit_fired": 0.0,
         "limit_refused": 0.0,
         "end_reason": session.end_reason,
+        # The session a `/clear` turned this one into. The page follows it
+        # when the link appears while the reader is watching this one.
+        "cleared_into": session.cleared_into,
         "has_transcript": bool(session.transcript_path),
     }
 
@@ -1664,6 +1735,7 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     _clear_attention(session)
     session.state = "working" if working else "done"
     session.end_reason = ""
+    session.start_source = source
     session.last_event = f"started ({source})" if source else "started"
 
 
@@ -8177,6 +8249,10 @@ const state = {
   pick: "",             // what the sidebar filter box holds
   history: false,       // whether the finished sessions are unfolded
   skew: 0,              // server clock minus ours
+  // The sessions whose `/clear` this page has seen, followed or not. A
+  // session is followed into its new id once, when the link appears; a
+  // reader who then goes back to read the old one is not sent on again.
+  cleared: new Set(),
   // The reader's own autolinks, compiled once. Empty until `/api/links`
   // answers, and empty for ever on a machine with no `links.json`.
   links: [],
@@ -10403,13 +10479,16 @@ function blockHref(index) {
   return "#" + encodeURIComponent(state.chosen || "") + "/" + index;
 }
 
+// `#<session>` alone is the session on screen, which `choose` writes so that
+// a reload comes back to it; `seq` is then null.
 function placeInHash() {
   const raw = (location.hash || "").replace(/^#/, "");
   const cut = raw.lastIndexOf("/");
-  if (cut < 1) return null;
-  const seq = Number(raw.slice(cut + 1));
-  if (!Number.isInteger(seq) || seq < 0) return null;
   try {
+    if (cut < 0) return raw ? { id: decodeURIComponent(raw), seq: null } : null;
+    if (cut < 1) return null;
+    const seq = Number(raw.slice(cut + 1));
+    if (!Number.isInteger(seq) || seq < 0) return null;
     return { id: decodeURIComponent(raw.slice(0, cut)), seq };
   } catch (error) {
     return null;              // a hash somebody typed by hand
@@ -10424,6 +10503,7 @@ function goToLink() {
   const place = placeInHash();
   if (!place || !place.id) return;
   choose(place.id);           // does nothing when it is already the one shown
+  if (place.seq === null) return;
   state.turns.goTo = place.seq;
   showTab("transcript");
 }
@@ -14060,10 +14140,41 @@ function usePlace(id) {
   return kept;
 }
 
+// A `/clear` ends the session being watched and starts another, with a new
+// id and a new transcript, in the same pane. The page stayed on the one that
+// had ended, and a reload then opened on some other row: the reader read it
+// as the transcript breaking. So it follows -- once, when the daemon links
+// the two while this page is open. A link already there when the page opens
+// was not made under the reader's eyes, and one they have followed is one
+// they may go back from to read the old conversation.
+function followClear(first) {
+  for (const s of state.sessions) {
+    if (!s.cleared_into || state.cleared.has(s.id)) continue;
+    if (first) { state.cleared.add(s.id); continue; }
+    if (!state.sessions.some((one) => one.id === s.cleared_into)) continue;
+    state.cleared.add(s.id);
+    if (s.id === state.chosen) choose(s.cleared_into);
+  }
+}
+
 function choose(id) {
   if (state.chosen === id) return;
   savePlace(state.chosen);
   state.chosen = id;
+  // The address names the session on screen, so a reload comes back to it.
+  // Without it a reload chose the first row, which after a `/clear` is the
+  // new session, and the conversation the reader was on seemed to be gone.
+  // `replaceState` makes no `hashchange` and no entry in the history. An
+  // address that already names this session is left alone: it may be a link
+  // to one reply, and the reply is what a reload of a link should land on.
+  try {
+    const held = placeInHash();
+    if (!held || held.id !== id) {
+      history.replaceState(null, "", "#" + encodeURIComponent(id));
+    }
+  } catch (error) {
+    // A page the browser will not let rewrite its address still works.
+  }
   // One assignment each, which is what the two bags are for: the transcript
   // and the worktree of the last session are not this one's, and a field
   // added to either must not need a line here to be forgotten from.
@@ -14377,7 +14488,9 @@ function resubscribe() {
     // and until it arrives `current()` is null and every tab draws its empty
     // state. This is the moment that session becomes a real one.
     const waiting = !!state.chosen && !current();
+    const first = !state.sessions.length;
     state.sessions = body.sessions || [];
+    followClear(first);
     if (!current() && state.sessions.length) {
       // Pick the first one for the reader. It has to go through choose(), or
       // the stream stays on watch="" and this session, the one actually on
