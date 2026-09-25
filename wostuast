@@ -6693,8 +6693,15 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* Only a finished session carries a word; the colour says the rest. */
 .row .word { flex-shrink: 0; color: var(--ink-faint); }
 .row .word:empty { display: none; }
-.row .line2 .repo {
-  color: var(--ink-mute); max-width: 40%; overflow: hidden; text-overflow: ellipsis;
+.row .line2 .repo, .row .line2 .branch {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0;
+}
+.row .line2 .repo { color: var(--ink-mute); max-width: 40%; }
+.row .line2 .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row .icon {
+  width: 12px; height: 12px; flex-shrink: 0; color: var(--ink-faint);
+  fill: none; stroke: currentColor; stroke-width: 1.2;
+  stroke-linejoin: round; stroke-linecap: round;
 }
 .row input.rowname {
   width: 100%; min-width: 0; padding: 0 4px; margin: -1px 0;
@@ -6730,24 +6737,26 @@ body.dragging { cursor: col-resize; user-select: none; }
    broke over two lines, under a branch cut short anyway. */
 .row .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
-  padding-left: 17px; min-width: 0; white-space: nowrap;
+  min-width: 0; white-space: nowrap;
 }
 .row .line2 > * { flex-shrink: 0; }
-.row .line2 .branch {
-  flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-}
+.row .line2 .branch { flex-shrink: 1; }
 /* The reason gives way; the age never does. "How long has this needed me?" is
    the question the sidebar exists to answer. */
 .row .line3 {
   display: flex; gap: 6px; font-size: 12px; color: var(--ink-mute);
-  padding-left: 17px; min-width: 0; white-space: nowrap;
+  min-width: 0; white-space: nowrap;
 }
 .row .said { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; }
 .dirty { color: var(--needs); }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
-.row.needs_you .dot { box-shadow: 0 0 0 3px var(--ring-near); animation: ring 2s ease-in-out infinite; }
+/* The row has no dot: its edge and its tint say the state, and the group it
+   stands in. The one thing the dot did that nothing else does is pulse for
+   the session that needs you, the thing to see from across a room, so the
+   row itself does that now. */
+.row.needs_you { box-shadow: 0 0 0 3px var(--ring-near); animation: ring 2s ease-in-out infinite; }
 @keyframes ring {
   0%, 100% { box-shadow: 0 0 0 3px var(--ring-near); }
   50% { box-shadow: 0 0 0 5px var(--ring-far); }
@@ -8597,6 +8606,13 @@ const ICONS = {
   // is the second target on a round's row, and a shape of its own, so the
   // icon that says who spoke is not also a button.
   chevron: "M5.4 3.6L8.8 7l-3.4 3.4",
+  // The repository and the branch on a sidebar row: a book, as git hosts
+  // draw a repository, and the fork of a branch leaving its line.
+  repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
+  branch: "M2.6 3a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0z"
+          + "M2.6 11a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0z"
+          + "M8.6 4a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0z"
+          + "M4 4.4v5.2M10 5.4c0 2.4-6 1.8-6 4.2",
 };
 
 function putIcon(parent, kind) {
@@ -8729,7 +8745,6 @@ function newRow(id) {
   row.dataset.id = id;
   row.addEventListener("click", () => choose(id));
   const one = put(row, "div", "line1");
-  put(one, "span", "dot");
   const name = put(one, "span", "name");
   name.title = "double-click to rename";
   name.addEventListener("dblclick", () => renameRow(row));
@@ -8754,18 +8769,22 @@ function newRow(id) {
 function fillRow(row, s) {
   const [one, two, three] = row.children;
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
-  one.children[0].className = "dot " + s.state;
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
-  if (!one.children[1].querySelector("input")) {
-    one.children[1].textContent = rowName(s);
+  if (!one.children[0].querySelector("input")) {
+    one.children[0].textContent = rowName(s);
   }
-  one.children[2].textContent = isGone(s) ? s.state_word : "";
+  one.children[1].textContent = isGone(s) ? s.state_word : "";
   two.replaceChildren();
   // The repository, when a name of yours has taken the place of the one
   // that holds it. The folder stands in outside a repository.
-  if (s.mine && (s.repo || s.place)) put(two, "span", "repo", s.repo || s.place);
-  if (s.branch) put(two, "span", "branch", s.branch);
+  const fact = (cls, icon, text) => {
+    const part = put(two, "span", cls);
+    putIcon(part, icon);
+    put(part, "span", "text", text);
+  };
+  if (s.mine && (s.repo || s.place)) fact("repo", "repo", s.repo || s.place);
+  if (s.branch) fact("branch", "branch", s.branch);
   if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
   if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
   if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
