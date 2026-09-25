@@ -40,7 +40,7 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 | run more than one Claude Code session at a time | run one agent and watch it in its terminal |
 | run those sessions in tmux | do not use tmux, and want to answer and send from the page (reading works without it) |
 | want to know from another window, or another room, which agent is waiting | want a hosted dashboard for a team |
-| read diffs and plans more than you type prompts | want to approve permission prompts from a browser (wostuast never does that) |
+| read diffs and plans more than you type prompts | want to approve permission prompts from a browser (wostuast can only decline them) |
 | want one file, no install step, and nothing leaving your machine | want a desktop app |
 
 ## What you get
@@ -53,6 +53,10 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   Pick one answer, or several where the question allows it. Change your mind
   if you want. Nothing goes to the terminal until you press submit, and the
   button says which keys it will press.
+- **You can say No to a permission request.** The page shows the whole
+  request: every field, not a clipped line. Press **no**, and add what the
+  agent should do instead if you want to. It never offers **yes**: approving
+  stays in the terminal, one click away.
 - **You review its work like a pull request.** Click the `+` beside a line in
   the diff or in a file, and write what you want changed. The comments collect
   into one review. You read the whole message, then send it to the agent in
@@ -68,10 +72,10 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 
 > [!NOTE]
 > **wostuast never owns your agents.** tmux does. wostuast reads files, and it
-> sends only four things to a terminal, always as keys typed into the agent's
-> own pane: **jump** to the pane, **send** a message, **stop** (an Escape), and
-> the **answer** to a question the agent asked. It never answers a permission
-> prompt for you.
+> sends only a few things to a terminal, always as keys typed into the agent's
+> own pane: **jump** to the pane, **send** a message, **stop** (an Escape), the
+> **answer** to a question the agent asked, and **no** to a permission
+> request. It never approves a permission request.
 
 ## How it works
 
@@ -357,9 +361,18 @@ text, and code shows without colour.
 <summary><b>Can it approve a permission prompt for me?</b></summary>
 
 No, and it never will. Approving without seeing the pane is how directories get
-deleted. The row goes amber and waits for you. Answering a question the agent
-asked (`AskUserQuestion`) is different: that is the agent's own question, and
-nothing is typed until you press submit.
+deleted, and a dialog carries no id, so the page cannot prove which one a click
+would land on. The row goes amber and waits for you.
+
+It can **decline** one. The page shows the whole request, and **no** presses
+Escape in the agent's pane. If you write what the agent should do instead,
+wostuast types it only after it has seen the dialog close, in the transcript.
+Until then a reason could land in the dialog itself, where a digit picks an
+option. A wrong No is easy to undo, and a wrong Yes is not.
+
+Answering a question the agent asked (`AskUserQuestion`) is different again:
+that is the agent's own question, and nothing is typed until you press
+submit.
 
 </details>
 

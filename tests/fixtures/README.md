@@ -112,6 +112,15 @@ Both `PreToolUse` events come before the dialog: nothing new starts while one
 is up. That is what separates "the agent moved on" from "the other call
 finished" — see `_on_pre_tool`.
 
+Saying No to a dialog fires no hook. Measured on 2.1.282: after Escape the
+log ends at the `PermissionRequest` and its `Notification`, and the
+transcript gets the call's result (`toolUseResult: "User rejected tool
+use"`) and a `user` record `[Request interrupted by user for tool use]`.
+When the page declines, the daemon appends one record of its own to the
+event log, once the transcript shows that result: `hook_event_name:
+"Declined"`, with `session_id`, `ts`, `key` (the dialog, as
+`Session.permission` names it) and `tool_use_id`. No hook writes it.
+
 `status.json` is one status line payload, in the shape the `statusLine`
 command receives on stdin. The numbers in it are invented; the field names are
 not. The fields wostuast reads or might read:

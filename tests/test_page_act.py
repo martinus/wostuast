@@ -1230,3 +1230,150 @@ def test_a_limit_being_typed_survives_its_own_news(ws, in_pane):
                 "document.activeElement.className") == "limitbox"
         finally:
             browser.close()
+
+
+# --- a permission request: read whole, declined from here, never approved ----
+
+BUILD = ("cmake --build build -j && "
+         + " && ".join(f"ctest -R case{n} --output-on-failure" for n in range(12)))
+
+
+def now_permission(ws, daemon, calls=("toolu_b1",), pane="%7"):
+    """A real dialog's events: its call starting, then the request 90 ms on.
+    Two calls reading the same leave the dialog with no call of its own."""
+    at = time.time()
+    shown = {"command": BUILD, "description": "Build and test"}
+    cwd = daemon.store.sessions["s1"].cwd
+    for call in calls:
+        ws.append_event(conftest.event("PreToolUse", tool_name="Bash",
+                                       tool_input=shown, pane=pane, cwd=cwd,
+                                       tool_use_id=call, ts=at))
+    ws.append_event(conftest.event("PermissionRequest", tool_name="Bash",
+                                   tool_input=shown, pane=pane, cwd=cwd,
+                                   ts=at + 0.09))
+    daemon.store.refresh()
+
+
+def test_a_permission_is_read_whole_and_declined_with_a_reason(
+        ws, in_pane, monkeypatch):
+    """The row said the request in one clipped line. Here it stands whole,
+    field by field, with no way to approve it: that is the terminal's, which
+    the first button opens. No presses Escape; the reason is typed once the
+    transcript shows the dialog closed, and the bar goes with the daemon's
+    own record of the decline."""
+    daemon, base, seen = in_pane
+    path = daemon.store.sessions["s1"].transcript_path
+    with open(path, "a") as handle:
+        handle.write(conftest.records(conftest.record("tool", BUILD, tool_id="toolu_b1")))
+
+    def runner(args, **rest):
+        seen.append(list(args))
+        if args[-1] == "Escape":
+            with open(path, "a") as handle:
+                handle.write(conftest.records(conftest.record(
+                    "result", "The user doesn't want to proceed", tool_id="toolu_b1")))
+        return ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    now_permission(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .permfield")
+            assert page.locator("#asking .askwhat").inner_text() == "May it use Bash?"
+            fields = page.eval_on_selector_all(
+                "#asking .permfield", """els => els.map((one) => [
+                  one.querySelector('.askprevhead').textContent,
+                  one.querySelector('.askprevbody').textContent])""")
+            assert fields == [["command", BUILD], ["description", "Build and test"]]
+            buttons = page.eval_on_selector_all(
+                "#asking button", "els => els.map((one) => one.textContent)")
+            assert buttons == ["open the terminal", "no"], buttons
+            page.fill("#asking .permwhy", "Use the ninja build instead")
+            # What the page says, kept: the slot is repainted on every push.
+            page.evaluate("""() => { window.words = []; const was = note;
+              note = (word) => { window.words.push(word); was(word); }; }""")
+            page.click("#asking .permno")
+            page.wait_for_function(
+                "window.words.includes('declined, and your reason was typed')")
+            deadline = time.time() + 15
+            while not any("-l" in one for one in seen) and time.time() < deadline:
+                time.sleep(0.05)
+            keys = [one[-1] for one in seen if one[:2] == ["tmux", "send-keys"]]
+            assert keys[0] == "Escape", keys
+            assert "Use the ninja build instead" in keys, keys
+            daemon.tick()
+            page.wait_for_selector("#asking", state="hidden")
+        finally:
+            browser.close()
+
+
+def test_a_dialog_with_no_call_of_its_own_takes_no_reason(ws, in_pane):
+    """Nothing can prove it closed, so no reason is typed for it -- and a box
+    that took one and then dropped it would be worse than none."""
+    daemon, base, seen = in_pane
+    now_permission(ws, daemon, calls=("toolu_b1", "toolu_b2"))
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .permfield")
+            assert page.locator("#asking .permwhy").is_disabled()
+            assert not page.locator("#asking .permno").is_disabled()
+            says = page.locator("#asking .asksays").inner_text()
+            assert "cannot be typed" in says
+            # A Yes in the terminal fires no hook: the warning holds here too.
+            assert "Escape stops the agent" in says
+        finally:
+            browser.close()
+
+
+def test_a_permission_can_be_read_without_tmux_but_not_declined(ws, no_pane):
+    daemon, base = no_pane
+    now_permission(ws, daemon, pane="")
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .permfield")
+            assert page.locator("#asking .permno").is_disabled()
+            assert "not in tmux" in page.locator("#asking .asksays").inner_text()
+            # Nothing to open: absent, like jump everywhere else.
+            buttons = page.eval_on_selector_all(
+                "#asking button", "els => els.map((one) => one.textContent)")
+            assert buttons == ["no"], buttons
+        finally:
+            browser.close()
+
+
+def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
+    """The bar is built again when the Transcript tab comes back, and the
+    question bar's scar is half an answer lost that way."""
+    daemon, base, seen = in_pane
+    now_permission(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .permwhy")
+            page.fill("#asking .permwhy", "Use the ninja build")
+            show_tab(page, "diff")
+            show_tab(page, "transcript")
+            page.wait_for_selector("#asking:not([hidden]) .permwhy")
+            assert page.input_value("#asking .permwhy") == "Use the ninja build"
+        finally:
+            browser.close()
+
+
+def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
+    """One thing typed into a session at a time: a send landing between the
+    Escape and the proof would be typed into a dialog that may be up."""
+    daemon, base, seen = in_pane
+    now_permission(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .permno")
+            page.evaluate("sending.add(state.chosen)")
+            page.click("#asking .permno")
+            page.wait_for_timeout(500)        # proving nothing was pressed
+            assert not [one for one in seen if one[-1] == "Escape"], seen
+        finally:
+            browser.close()

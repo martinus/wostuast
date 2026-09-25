@@ -1334,3 +1334,141 @@ def test_an_answer_tmux_cut_short_says_how_far_it_got(ws, served, monkeypatch):
                         {"ask": "toolu_two", "picks": [[1], [1, 2]]},
                         token=daemon.token)
     assert status == 502 and "2 of 5" in body["error"], body
+
+
+# --- declining a permission request -----------------------------------------
+
+REJECTED = ("The user doesn't want to proceed with this tool use. The tool use"
+            " was rejected (eg. if it was a file edit, the new_string was NOT"
+            " written to the file).")
+
+
+@pytest.fixture
+def declining(ws, served, transcript_file, monkeypatch):
+    """A session at a permission dialog, in a pane, with its transcript.
+
+    tmux is a recorder, and `closes` says whether the Escape closes the
+    dialog: when it does, the rejection is written to the transcript as the
+    call's result, as 2.1.282 writes it a few milliseconds after the key.
+    """
+    daemon, base = served
+    path = transcript_file("s1", [conftest.record("tool", "make", tool_id="toolu_p1")])
+    seen, closes = [], [True]
+
+    def runner(args, **rest):
+        seen.append(list(args))
+        if args[-1] == "Escape" and closes[0]:
+            with open(path, "a") as handle:
+                handle.write(conftest.records(conftest.record(
+                    "result", REJECTED, tool_id="toolu_p1")))
+        return ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    monkeypatch.setattr(ws, "DECLINE_WAIT", 0.5)
+    now = time.time()
+    for one in (event("SessionStart", pane="%7", pid=1, transcript_path=str(path),
+                      ts=now - 10),
+                event("PreToolUse", tool_name="Bash", tool_use_id="toolu_p1",
+                      tool_input={"command": "make"}, pane="%7", ts=now - 5),
+                event("PermissionRequest", tool_name="Bash",
+                      tool_input={"command": "make"}, pane="%7", ts=now - 4.9)):
+        ws.append_event(one)
+    daemon.store.refresh()
+    key = daemon.store.sessions["s1"].permission["key"]
+    return daemon, base, seen, closes, key, path
+
+
+def typed(seen):
+    return [one[-1] for one in seen if "-l" in one]
+
+
+def test_a_decline_is_escape_then_the_reason_once_the_dialog_closed(
+        ws, declining):
+    """Escape declines every dialog -- measured on 2.1.282, where the number
+    of "No" is 4 on a command and 3 on a file -- and the reason is a prompt
+    typed after it. The daemon records the decline, so the row leaves amber:
+    no hook says No was said."""
+    daemon, base, seen, closes, key, _ = declining
+    status, body = post(base + "/api/session/s1/decline",
+                        {"key": key, "reason": "Use the ninja build instead"},
+                        token=daemon.token)
+    assert status == 200 and body["sent"] and body["seen"], body
+    assert seen[0][-1] == "Escape"
+    assert typed(seen) == ["Use the ninja build instead"]
+    daemon.store.refresh()
+    session = daemon.store.sessions["s1"]
+    assert session.state == "done" and session.permission is None
+
+
+def test_a_reason_is_never_typed_into_a_dialog_not_seen_to_close(ws, declining):
+    """The cursor starts on "1. Yes" and a digit picks an option, so a
+    reason typed into a dialog still up can approve what was declined. An
+    Escape read in one burst with the letters after it is an Alt key --
+    measured, the dialog stayed up. Without the call's result in the
+    transcript, nothing but the Escape is pressed."""
+    daemon, base, seen, closes, key, _ = declining
+    closes[0] = False
+    status, body = post(base + "/api/session/s1/decline",
+                        {"key": key, "reason": "Use port 1234"},
+                        token=daemon.token)
+    assert status == 200 and not body["seen"] and "not typed" in body["error"]
+    assert [one[-1] for one in seen] == ["Escape"]
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].state == "needs_you"
+
+
+def test_a_request_with_no_call_gets_escape_and_no_reason(ws, declining):
+    """Two open calls reading the same leave the dialog with no call, and
+    then nothing can prove it closed."""
+    daemon, base, seen, closes, key, _ = declining
+    daemon.store.sessions["s1"].permission["call"] = ""
+    status, body = post(base + "/api/session/s1/decline",
+                        {"key": key, "reason": "no"}, token=daemon.token)
+    assert status == 200 and not body["seen"] and "not typed" in body["error"]
+    assert [one[-1] for one in seen] == ["Escape"]
+
+
+def test_a_request_answered_in_the_terminal_is_not_declined(ws, declining):
+    """The row is amber until a hook says otherwise, and none says Yes was
+    pressed. If the call has its result, the dialog is over, and an Escape
+    now would stop whatever the agent went on to do."""
+    daemon, base, seen, closes, key, path = declining
+    with open(path, "a") as handle:
+        handle.write(conftest.records(conftest.record(
+            "result", "built", tool_id="toolu_p1")))
+    status, body = post(base + "/api/session/s1/decline", {"key": key},
+                        token=daemon.token)
+    assert status == 409 and "answered in the terminal" in body["error"]
+    assert seen == []
+
+
+def test_a_decline_for_another_dialog_presses_nothing(ws, declining):
+    daemon, base, seen, closes, key, _ = declining
+    status, body = post(base + "/api/session/s1/decline", {"key": "1.000000"},
+                        token=daemon.token)
+    assert status == 409 and "no longer waiting" in body["error"]
+    status, _ = post(base + "/api/session/s1/decline", {"key": key})
+    assert status == 403
+    assert seen == []
+
+
+def test_a_decline_not_seen_to_close_does_not_say_declined(ws, declining):
+    """With no reason too: "declined" would be a claim nothing proved, and
+    the row stays amber."""
+    daemon, base, seen, closes, key, _ = declining
+    closes[0] = False
+    status, body = post(base + "/api/session/s1/decline", {"key": key},
+                        token=daemon.token)
+    assert status == 200 and not body["seen"]
+    assert "not seen to close" in body["error"]
+
+
+def test_one_decline_at_a_time_per_session(ws, declining):
+    """A decline waits between its Escape and its reason, and a second one
+    from another tab would press another Escape into what came next."""
+    daemon, base, seen, closes, key, _ = declining
+    daemon.declining.add("s1")
+    status, body = post(base + "/api/session/s1/decline", {"key": key},
+                        token=daemon.token)
+    assert status == 409 and "already on its way" in body["error"]
+    assert seen == []

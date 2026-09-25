@@ -121,6 +121,10 @@ TAIL_CHUNK = 1024 * 1024
 #: for reading, not for counting — `Session.counts` is the whole story and
 #: costs one number per event name.
 SESSION_LOG_MAX = 300
+#: How many started and unfinished tool calls a session keeps, to find the
+#: call a permission dialog is about. A turn rarely has more than a handful
+#: open at once; a call declined in the terminal never reports back.
+CALLS_HELD = 32
 LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
 
@@ -792,6 +796,15 @@ class Session:
     #: What the open permission dialog is about, as `tool_summary` says it.
     #: Empty when no dialog is open, or when the event did not name a tool.
     asked_about: str = ""
+    #: The tool calls that have started and not yet reported back, by
+    #: `tool_use_id`, each as `tool_summary` says it. A permission dialog
+    #: carries no id, and this is how its call is found. Bounded by
+    #: `CALLS_HELD`, because a call whose result never comes would otherwise
+    #: stay here for the life of the session.
+    calls: dict[str, str] = field(default_factory=dict)
+    #: The permission dialog on screen, as the page shows it: `read_permission`.
+    #: Cleared wherever the attention is.
+    permission: dict[str, Any] | None = None
     #: The question the agent is waiting on, when it is waiting on one. See
     #: `read_ask`. It is cleared wherever the attention is, and precisely by
     #: its own `tool_use_id` when the answer lands.
@@ -1538,6 +1551,9 @@ def row(session: Session) -> dict[str, Any]:
         # whatever tab you are reading. It is here and not on a route of its
         # own because it must arrive with the amber, not a fetch later.
         "asking": session.asking,
+        # The permission dialog, for the same reason: whole, so the reader
+        # can read what they are declining. Only while the row is amber.
+        "permission": session.permission if session.state == "needs_you" else None,
         "last_event": session.last_event,
         "last_tool": session.last_tool,
         "last_prompt": session.last_prompt,
@@ -1576,6 +1592,7 @@ def _clear_attention(session: Session) -> None:
     session.reason = ""
     session.asked_about = ""
     session.asking = None
+    session.permission = None
 
 
 def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -1605,6 +1622,7 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
 
 def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
+    session.calls.clear()          # a new turn: see `_on_stop`
     session.state = "working"
     # Cut it here, once. Keeping the whole of a pasted prompt would put it in
     # every row, to be compared every tick and sent to the browser every time.
@@ -1655,6 +1673,13 @@ def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
     # What happened is still the latest thing that happened, either way.
     session.last_tool = summary
     session.last_event = session.last_tool
+    call = str(event.get("tool_use_id") or "")
+    if starting and call:
+        session.calls[call] = summary
+        while len(session.calls) > CALLS_HELD:
+            session.calls.pop(next(iter(session.calls)))
+    elif call:
+        session.calls.pop(call, None)
     if starting:
         # After the clear above, or the ask would be wiped by its own call
         # starting. It is None for every tool but this one -- and another
@@ -1686,6 +1711,7 @@ def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
     # the other call is not an answer to the question this one is asking --
     # nor to the ask whose dialog is not up yet, which the clear would take.
     ask = session.asking
+    session.calls.pop(str(event.get("tool_use_id") or ""), None)
     if not session.asked_about or session.asked_about == summary:
         _clear_attention(session)
         session.state = "working"
@@ -1719,6 +1745,54 @@ def _on_permission_request(session: Session, event: dict[str, Any], ts: float) -
         session.reason = f"asks: {asked}" if asked else "asks a question"
     else:
         session.reason = f"permission: {summary}" if summary else "permission"
+        session.permission = read_permission(event, session.calls, summary, ts)
+
+
+def read_permission(event: dict[str, Any], calls: dict[str, str], summary: str,
+                    ts: float) -> dict[str, Any]:
+    """The permission request as the page shows it, for the reader to decline.
+
+    **Every field of the input, whole**: the row said `permission: Bash cmake
+    --build build -j` clipped to one line, and a request is judged on all of
+    it -- the whole command, the whole of an edit. Past `PERMISSION_SHOWN`
+    the fields are withheld and the page points at the pane.
+
+    `key` names this one dialog, so a decline meant for it is refused once
+    another has taken its place. `call` is its `tool_use_id`, found among the
+    calls started and not finished by the summary `_on_pre_tool` keeps --
+    `PermissionRequest` carries none -- and left empty when two open calls
+    read the same, because then which one this is cannot be known. Without
+    it a decline still presses Escape, but will not type a reason: only the
+    call's own result in the transcript proves the dialog has closed.
+    """
+    data = event.get("tool_input")
+    data = data if isinstance(data, dict) else {}
+    fields = [[str(key), value if isinstance(value, str)
+               else json.dumps(value, indent=2, ensure_ascii=False)]
+              for key, value in data.items()]
+    withheld = sum(len(key) + len(text) for key, text in fields) > PERMISSION_SHOWN
+    matches = [one for one, said in calls.items() if said == summary]
+    return {"key": f"{ts:.6f}", "tool": str(event.get("tool_name") or ""),
+            "call": matches[0] if len(matches) == 1 else "",
+            "fields": [] if withheld else fields, "withheld": withheld}
+
+
+def _on_declined(session: Session, event: dict[str, Any], ts: float) -> None:
+    """wostuast's own record, not a hook: the page declined a permission.
+
+    Saying No fires no hook, so the row stayed amber over an agent already
+    back at its prompt. The daemon writes this only once the transcript
+    holds the call's result -- the proof that the dialog closed -- and only
+    for the dialog it was asked about: another that has come up since keeps
+    its row amber.
+    """
+    shown = session.permission
+    if not shown or shown.get("key") != str(event.get("key") or ""):
+        return
+    session.calls.pop(str(shown.get("call") or ""), None)
+    _clear_attention(session)
+    session.state = "done"
+    session.last_event = "declined from the page"
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -1780,6 +1854,10 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
 
 def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
+    # A call declined in the terminal never reports back. Left here, it and
+    # a later call reading the same would be two matches, and that call's
+    # dialog would get no id. Nothing is open once a turn is over.
+    session.calls.clear()
     session.state = "done"
     session.last_event = "stopped"
 
@@ -1809,6 +1887,7 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "PostToolUse": _on_pre_tool,
     "PostToolUseFailure": _on_tool_failed,
     "PermissionRequest": _on_permission_request,
+    "Declined": _on_declined,
     "Notification": _on_notification,
     "Stop": _on_stop,
     "SubagentStop": _on_subagent_stop,
@@ -2039,6 +2118,10 @@ class Block:
     result: str = ""            # the tool's output, shown when expanded
     failed: bool = False
     tool_use_id: str = ""
+    #: Whether this call's result has been read. A result can be empty -- a
+    #: `touch` prints nothing -- so `result` cannot say it; this is what a
+    #: decline waits on (`Daemon.call_answered`).
+    answered: bool = False
 
 
 #: The tags Claude Code wraps its own `user` records in. A real sample, from
@@ -2080,6 +2163,13 @@ QUEUED = re.compile(
 #: A `user` record the harness wrote and not the reader. It is shown, because
 #: it is real news, but never as a prompt: nobody typed it.
 NOTED = ("<task-notification>", "Another Claude session sent a message:")
+
+#: What Claude Code writes as a `user` record when Escape stops a turn --
+#: "for tool use" when it stopped a call or declined its dialog, measured on
+#: 2.1.282. Drawn as a prompt, it wore the reader's rail and the map named a
+#: round after it, once for every decline from the page. Only the whole
+#: record, exactly: a prompt that quotes it is still a prompt.
+INTERRUPTED = re.compile(r"\[Request interrupted by user( for tool use)?\]")
 
 
 def strip_reminder(text: str) -> str:
@@ -2195,6 +2285,10 @@ def read_user_text(text: str) -> tuple[str, str]:
         return "prompt", (named.group(1) + (" " + said if said else "")).strip()
     if not rest:
         return "", ""                      # plumbing, and nothing else
+    stopped = INTERRUPTED.fullmatch(rest)
+    if stopped:
+        return "note", ("Interrupted during a tool call." if stopped.group(1)
+                        else "Interrupted.")
     if rest.startswith(NOTED):
         note = TASK_NOTE.match(rest)
         return "note", (note.group(1) if note else rest)
@@ -2447,6 +2541,7 @@ class Transcript:
             held = self.by_tool_use.get(str(piece.get("tool_use_id") or ""))
             if held is None:
                 return None
+            held.answered = True
             held.result = result_text(piece.get("content"))
             held.failed = bool(piece.get("is_error"))
             return held          # an existing block changed; it is not a new one
@@ -2737,6 +2832,17 @@ LIMIT_MAX = 10_000.0
 #: a tmux whose number is not this one. It was 4,000 characters, which is
 #: less than one long paste: a reader hit it with 4,400.
 SEND_MAX = 12000
+
+#: How much of a permission request the page is sent, counted over every
+#: field of its input. A `Write` carries a whole file, and a row goes to
+#: every browser on every push; past this the page says the request is too
+#: long to show and points at the pane, where the whole of it is.
+PERMISSION_SHOWN = 8000
+
+#: How long a decline waits to see its dialog close, in the transcript,
+#: before it will type the reason. Measured against 2.1.282: the rejection
+#: is written a few milliseconds after the Escape.
+DECLINE_WAIT = 3.0
 
 #: How many untracked files the Diff tab names. git diff shows none of them,
 #: so the tab says they are there rather than leaving a hole.
@@ -4911,6 +5017,10 @@ class Daemon:
         # page, and it lives as long as the daemon does.
         self.token = secrets.token_urlsafe(32)
         self.transcripts: dict[str, Transcript] = {}
+        #: Sessions a decline is being pressed into. It waits up to
+        #: `DECLINE_WAIT` between its Escape and its reason, and a second one
+        #: -- another tab -- would press a second Escape into what came next.
+        self.declining: set[str] = set()
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.started = time.time()
@@ -4985,6 +5095,21 @@ class Daemon:
         with self.lock:
             reader = self.transcripts.get(session_id)
             return None if reader is None else (reader.run, reader.version)
+
+    def call_answered(self, session_id: str, call: str) -> bool:
+        """Whether the transcript holds this call's result, read just now.
+
+        A permission dialog is on screen until its call is answered, and the
+        answer -- run, failed, or rejected -- is written to the transcript as
+        the call's result. So this is the one proof, short of looking at the
+        pane, that the dialog has closed.
+        """
+        if not call or self.read_transcript(session_id) is None:
+            return False
+        with self.lock:
+            reader = self.transcripts.get(session_id)
+            held = reader.by_tool_use.get(call) if reader is not None else None
+            return held is not None and held.answered
 
     def sessions_payload(self) -> dict[str, Any]:
         return {"now": time.time(), "sessions": self.store.rows}
@@ -5390,6 +5515,119 @@ class Serving:
             return
         self.reply_json({"id": session_id, "done": True, "keys": keys})
 
+    def decline(self, session_id: str, body: dict[str, Any]) -> None:
+        """Say No to the permission dialog on screen, and maybe why.
+
+        **No is Escape, and nothing else is pressed until the dialog is seen
+        to close.** Measured against 2.1.282: Escape declines every dialog,
+        where the number of "No" is 4 on a command and 3 on a file. The
+        reason is a prompt typed after it -- the agent gets Claude Code's own
+        "the user doesn't want to proceed", then these words. But the cursor
+        starts on "1. Yes" and a digit picks an option, so the reason typed
+        into a dialog that is still up can approve the very thing declined:
+        an Escape read in one burst with the letters after it is an Alt key,
+        not an Escape, and a busy Claude Code reads a burst. So the reason
+        waits for the call's own result in the transcript
+        (`Daemon.call_answered`), and is not typed without it.
+
+        **Approving is not here, and must never be.** A dialog carries no id,
+        so the page cannot prove which one a click answers; a wrong No is
+        undone by saying what to do, a wrong Yes is not.
+        """
+        session = self.in_tmux(session_id)
+        if session is None:
+            return
+        if self.too_big:
+            self.reply_json({"id": session_id,
+                             "error": "that reason is too large to accept"}, 413)
+            return
+        if session.state in GONE_STATES:
+            self.reply_json({"id": session_id,
+                             "error": "this session is over"}, 409)
+            return
+        shown = session.permission if session.state == "needs_you" else None
+        if not shown or body.get("key") != shown["key"]:
+            self.reply_json({"id": session_id,
+                             "error": "that permission request is no longer"
+                                      " waiting"}, 409)
+            return
+        reason = body.get("reason")
+        reason = reason if isinstance(reason, str) else ""
+        if not CONTROL_CHARS.sub("", reason).strip():
+            reason = ""
+        size = len(reason.encode("utf-8", "replace"))
+        if size > SEND_MAX:
+            self.reply_json({"id": session_id,
+                             "error": f"that reason is {size} bytes, and the"
+                                      f" most that can be typed is {SEND_MAX}"},
+                            400)
+            return
+        call = str(shown.get("call") or "")
+        # Answered in the terminal and finished, and the row is amber only
+        # because no hook says Yes: an Escape now would stop whatever the
+        # agent went on to do. **An approved call still running cannot be
+        # told from a dialog still up** -- its result comes when it ends --
+        # so there the Escape stops it, and the page says so before the
+        # press. That is the cost of No from here, and it is a stop, which
+        # keeps the work done so far.
+        if self.daemon.call_answered(session_id, call):
+            self.reply_json({"id": session_id,
+                             "error": "that request was answered in the"
+                                      " terminal already"}, 409)
+            return
+        with self.daemon.lock:
+            busy = session_id in self.daemon.declining
+            self.daemon.declining.add(session_id)
+        if busy:
+            self.reply_json({"id": session_id,
+                             "error": "a No is already on its way to this"
+                                      " session"}, 409)
+            return
+        try:
+            self.press_decline(session_id, session.pane, shown, call, reason)
+        finally:
+            with self.daemon.lock:
+                self.daemon.declining.discard(session_id)
+
+    def press_decline(self, session_id: str, pane: str, shown: dict[str, Any],
+                      call: str, reason: str) -> None:
+        """Escape, the wait for the proof, and the reason: `decline`'s keys."""
+        if not tmux_interrupt(pane):
+            self.reply_json({"id": session_id,
+                             "error": "tmux would not take the Escape, so"
+                                      " nothing was declined"}, 502)
+            return
+        seen = False
+        if call:
+            deadline = time.monotonic() + DECLINE_WAIT
+            while not seen and time.monotonic() < deadline:
+                time.sleep(0.1)
+                seen = self.daemon.call_answered(session_id, call)
+        if seen:
+            append_event({"session_id": session_id, "hook_event_name": "Declined",
+                          "ts": time.time(), "key": shown["key"],
+                          "tool_use_id": call})
+        if not seen:
+            # "Declined" would be a claim nothing proved: the Escape may have
+            # landed on something else, and the row stays amber.
+            unsent = (" Your reason was not typed: look at the pane, then send"
+                      " it from the send box.") if reason else " Look at the pane."
+            self.reply_json({"id": session_id, "done": True, "seen": False,
+                             "error": "Escape went in, but the dialog was not"
+                                      " seen to close." + unsent})
+            return
+        if not reason:
+            self.reply_json({"id": session_id, "done": True, "seen": True})
+            return
+        if not tmux_send(pane, reason):
+            self.reply_json({"id": session_id, "done": True, "seen": True,
+                             "error": "Declined. tmux did not take the reason:"
+                                      " look at the pane before sending it"
+                                      " again."}, 502)
+            return
+        self.reply_json({"id": session_id, "done": True, "seen": True,
+                         "sent": True})
+
     def limit(self, session_id: str, body: dict[str, Any]) -> None:
         """Set what a session may spend before wostuast stops it.
 
@@ -5671,8 +5909,9 @@ GET_VERBS: dict[str, Any] = {
     "whole": Serving.whole,
 }
 
-# Four of these reach a terminal -- jump, send, interrupt and answer -- and they
-# are the reason every POST carries a token. There will never be another tmux
+# Five of these reach a terminal -- jump, send, interrupt, answer and decline,
+# which is an interrupt and then a send -- and they are the reason every POST
+# carries a token. There will never be another tmux
 # verb without asking first (CLAUDE.md, **Shape**). `name` and `limit` are not
 # ones: they write files of ours and touch no terminal, but they arrive the
 # same way and are checked the same way.
@@ -5681,6 +5920,7 @@ POST_VERBS: dict[str, Any] = {
     "send": Serving.send,
     "interrupt": Serving.interrupt,
     "answer": Serving.answer,
+    "decline": Serving.decline,
     "name": Serving.name,
     "limit": Serving.limit,
 }
@@ -6809,6 +7049,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: var(--needs); border-color: var(--needs); color: var(--sunken);
 }
 .asksend { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+/* A permission request: each field of it, whole, in the preview's box. */
+.permfield + .permfield { margin-top: 8px; }
+.permsend { flex-wrap: wrap; align-items: flex-end; }
+/* A request is read whole, so a long command wraps rather than running off
+   the side: a preview keeps its layout, and this has none to keep. */
+.permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
+.permsend .permwhy { flex: 1 1 260px; }
+.permsend .asksays { flex-basis: 100%; }
 .asksays { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
 .asknum {
   flex-shrink: 0; min-width: 18px; text-align: center;
@@ -7690,6 +7938,8 @@ const state = {
   // number for a multiple-choice one -- and which ask they belong to. Not in
   // the DOM: a pick made for one question must never be submitted for the next.
   picked: { id: "", at: [] },
+  // A reason half written for a No, with the dialog it is for (`key`).
+  declineWhy: { key: "", text: "" },
   // Where each session was left, by id. The choices only -- see `savePlace`.
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
@@ -7805,7 +8055,8 @@ async function keepRename(box) {
 const EVENT_WORDS = {
   UserPromptSubmit: "prompts", PreToolUse: "tool calls",
   PostToolUse: "results", PostToolUseFailure: "failures",
-  PermissionRequest: "permission asks", Notification: "notifications",
+  PermissionRequest: "permission asks", Declined: "declined here",
+  Notification: "notifications",
   Stop: "turns ended", SubagentStop: "subagents", PreCompact: "compactions",
   SessionStart: "starts", SessionEnd: "ends",
 };
@@ -8656,13 +8907,22 @@ function drawAsking() {
   const s = current();
   // `state.tab` and not the content box: this is chrome outside that box,
   // like the send box, and it is drawn after `showTab` has set the name.
-  const ask = s && state.tab === "transcript" ? s.asking : null;
-  box.hidden = !ask;
-  if (!ask) {
+  const here = !!s && state.tab === "transcript";
+  const ask = here ? s.asking : null;
+  // A permission dialog stands in the same place: it is the other thing an
+  // agent waits on, and the two are never up at once -- a question is a
+  // tool too, but it is not kept as a permission.
+  const permission = here && !ask ? s.permission : null;
+  box.hidden = !ask && !permission;
+  if (!ask && !permission) {
     // And forget what was drawn, or the same question asked twice in a row
     // would match the key and leave an empty bar standing.
     box.dataset.ask = "";
     box.replaceChildren();
+    return;
+  }
+  if (permission) {
+    drawPermission(box, s, permission);
     return;
   }
   // The rows arrive about once a second while an agent works. Rebuilding
@@ -8724,6 +8984,116 @@ function drawAsking() {
   send.addEventListener("click", () => submitAsk(s.id, ask, box));
   put(foot, "span", "asksays");
   paintPicks(box, ask);
+}
+
+// The permission dialog, whole, and the one answer this page gives it: No.
+//
+// **Never Yes.** A dialog carries no id, so nothing here can prove which one
+// a press lands on; a wrong No is undone by saying what to do instead, and a
+// wrong Yes is not. So the request is shown field by field -- `textContent`,
+// every one, because an agent wrote them -- and approving is left to the
+// terminal, which the first button opens.
+//
+// No is Escape, and the reason is typed after it only once the daemon has
+// seen the dialog close (`decline`). The box keeps what is typed across the
+// pushes, because it is only built again for another dialog.
+function drawPermission(box, s, permission) {
+  if (!fresh(box, "ask", s.id + "\npermission\n" + permission.key)) {
+    paintDecline(box, s, permission);
+    return;
+  }
+  box.replaceChildren();
+  const block = put(box, "div", "askone");
+  put(block, "div", "askhead", "permission");
+  put(block, "p", "askwhat", "May it use " + (permission.tool || "this tool") + "?");
+  if (permission.withheld) {
+    put(block, "p", "asknote",
+        "This request is too long to show here. Read it in the terminal.");
+  }
+  for (const [name, text] of permission.fields || []) {
+    const field = put(block, "div", "permfield");
+    put(field, "div", "askprevhead", name);
+    put(field, "pre", "askprevbody", text);
+  }
+  const foot = put(box, "div", "asksend permsend");
+  // Absent with no pane, like jump everywhere else: there is nothing to open.
+  if (s.pane) {
+    const open = put(foot, "button", "verb");
+    open.type = "button";
+    open.textContent = "open the terminal";
+    open.addEventListener("click", jumpToPane);
+  }
+  const why = put(foot, "textarea", "say permwhy");
+  why.rows = 1;
+  why.placeholder = "what it should do instead (optional)";
+  // Kept for this dialog across a look at another tab, which builds the
+  // bar again: half a reason lost that way is the question bar's scar.
+  if (state.declineWhy.key === permission.key) why.value = state.declineWhy.text;
+  why.addEventListener("input", () => {
+    state.declineWhy = { key: permission.key, text: why.value };
+  });
+  const no = put(foot, "button", "verb permno");
+  no.type = "button";
+  no.textContent = "no";
+  no.addEventListener("click", () => submitDecline(s.id, permission, box));
+  put(foot, "span", "asksays");
+  paintDecline(box, s, permission);
+}
+
+// What pressing no would do, said before it is pressed.
+function paintDecline(box, s, permission) {
+  const no = box.querySelector(".permno");
+  const why = box.querySelector(".permwhy");
+  const says = box.querySelector(".permsend .asksays");
+  if (!no || !why || !says) return;
+  const canType = !!s.pane;
+  // Without its call nothing can prove the dialog closed, so no reason is
+  // typed -- and a box that takes one and then drops it is worse than none.
+  const reasons = canType && !!permission.call;
+  why.disabled = !reasons;
+  no.disabled = !canType || no.dataset.busy === "1";
+  // Said in both cases: a Yes given in the terminal fires no hook, so the
+  // row stays amber while the approved call runs, and Escape then stops it.
+  const already = " If you already answered in the terminal, Escape stops the agent.";
+  says.textContent = !canType
+    ? "this session is not in tmux, so nothing can be pressed"
+    : !reasons
+    ? "presses Escape. A reason cannot be typed for this one: send it after."
+      + already
+    : "presses Escape, then types your reason once the dialog has closed."
+      + already;
+}
+
+async function submitDecline(id, permission, box) {
+  const no = box.querySelector(".permno");
+  const why = box.querySelector(".permwhy");
+  // One thing typed into a session at a time: the send box and a No share
+  // the guard, because a send landing between the Escape and the proof
+  // would be typed into a dialog that may still be up.
+  if (!no || no.disabled || sending.has(id)) return;
+  sending.add(id);
+  no.disabled = true;
+  no.dataset.busy = "1";
+  const reason = why && !why.disabled ? why.value : "";
+  let answer;
+  try {
+    answer = await tell(id, "decline", { key: permission.key, reason });
+  } finally {
+    sending.delete(id);
+  }
+  no.dataset.busy = "";
+  if (!answer || !answer.done) {
+    said(answer);
+    no.disabled = false;
+    return;
+  }
+  // Declined, and maybe the reason held back: that is said, and stays.
+  said(answer);
+  if (!answer.error) {
+    if (why) why.value = "";
+    state.declineWhy = { key: "", text: "" };
+    note(answer.sent ? "declined, and your reason was typed" : "declined");
+  }
 }
 
 // What is picked, and what pressing submit would do. Everything that changes

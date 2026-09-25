@@ -604,3 +604,16 @@ def test_what_is_not_claude_codes_paste_is_left_as_it_was_typed(ws, text):
     Only the exact shape Claude Code writes -- the rules of its own reader
     -- comes off."""
     assert ws.unwrap_pastes(text) == text
+
+
+def test_an_interrupt_claude_code_wrote_is_a_note_not_your_prompt(ws, tmp_path):
+    """Escape makes Claude Code write "[Request interrupted by user for tool
+    use]" as a `user` record -- measured on 2.1.282, once for every decline.
+    It wore the reader's rail and named a round on the map. A prompt that
+    quotes it is still a prompt."""
+    for said, shown in (("[Request interrupted by user for tool use]",
+                         "Interrupted during a tool call."),
+                        ("[Request interrupted by user]", "Interrupted.")):
+        assert ws.read_user_text(said) == ("note", shown)
+    asked = "why does it say [Request interrupted by user] here?"
+    assert ws.read_user_text(asked) == ("prompt", asked)

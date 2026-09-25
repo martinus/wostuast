@@ -1409,3 +1409,104 @@ def test_started_is_when_the_session_began(ws):
     session = fold(ws, event("SessionStart", ts=1000.0),
                    event("UserPromptSubmit", prompt="go", ts=8200.0))
     assert ws.row(session)["started"] == 1000.0
+
+
+# --- a permission request, whole, and declining it from the page -------------
+
+LONG = "cmake --build build -j && " + " && ".join(f"ctest -R case{n}" for n in range(30))
+
+
+def asking_permission(ws, *before, command=LONG, call="toolu_p1", ts=1010.0):
+    return fold(ws, event("SessionStart", ts=1000.0), *before,
+                event("PreToolUse", tool_name="Bash", tool_use_id=call,
+                      tool_input={"command": command, "description": "Build"},
+                      ts=ts),
+                event("PermissionRequest", tool_name="Bash",
+                      tool_input={"command": command, "description": "Build"},
+                      ts=ts + 0.09))
+
+
+def test_a_permission_request_reaches_the_page_whole(ws):
+    """The row said the request clipped to one line. A request is judged on
+    all of it, so the page gets every field of the input, whole, and the
+    call it is about -- which `PermissionRequest` does not carry, and which
+    is found among the calls that started and have not finished."""
+    session = asking_permission(ws)
+    shown = ws.row(session)["permission"]
+    assert shown["tool"] == "Bash" and shown["call"] == "toolu_p1"
+    assert shown["fields"] == [["command", LONG], ["description", "Build"]]
+    assert not shown["withheld"] and shown["key"] == "1010.090000"
+    assert len(session.reason) < len(LONG)          # the row's line is clipped
+
+
+def test_a_request_two_open_calls_could_be_has_no_call(ws):
+    """Two calls reading the same cannot be told apart, and a guessed call
+    would let a reason be typed on the strength of the wrong result."""
+    session = asking_permission(ws, event(
+        "PreToolUse", tool_name="Bash", tool_use_id="toolu_p0",
+        tool_input={"command": LONG, "description": "Build"}, ts=1005.0))
+    assert session.permission["call"] == ""
+    # A call that has reported back is not open, and not a second match.
+    session = asking_permission(ws, event(
+        "PreToolUse", tool_name="Bash", tool_use_id="toolu_p0",
+        tool_input={"command": LONG, "description": "Build"}, ts=1005.0),
+        event("PostToolUse", tool_name="Bash", tool_use_id="toolu_p0",
+              tool_input={"command": LONG, "description": "Build"}, ts=1006.0))
+    assert session.permission["call"] == "toolu_p1"
+    # Nor is one left from a turn that is over: declined in the terminal,
+    # it never reports back.
+    session = asking_permission(ws, event(
+        "PreToolUse", tool_name="Bash", tool_use_id="toolu_p0",
+        tool_input={"command": LONG, "description": "Build"}, ts=1005.0),
+        event("UserPromptSubmit", prompt="try again", ts=1006.0))
+    assert session.permission["call"] == "toolu_p1"
+
+
+def test_a_request_too_long_to_send_is_withheld(ws, monkeypatch):
+    monkeypatch.setattr(ws, "PERMISSION_SHOWN", 100)
+    shown = asking_permission(ws).permission
+    assert shown["withheld"] and shown["fields"] == []
+
+
+def test_the_permission_goes_with_the_attention(ws):
+    """It is on the row only while the row is amber, and a question is not
+    a permission: it has its own bar."""
+    session = asking_permission(ws)
+    later = fold(ws, event("SessionStart", ts=1000.0),
+                 event("PreToolUse", tool_name="Bash", tool_use_id="toolu_p1",
+                       tool_input={"command": "ls"}, ts=1010.0),
+                 event("PermissionRequest", tool_name="Bash",
+                       tool_input={"command": "ls"}, ts=1010.1),
+                 event("PostToolUse", tool_name="Bash", tool_use_id="toolu_p1",
+                       tool_input={"command": "ls"}, ts=1020.0))
+    assert session.permission and later.permission is None
+    assert ws.row(later)["permission"] is None
+    asked = fold(ws, event("SessionStart", ts=1000.0),
+                 event("PermissionRequest", tool_name="AskUserQuestion",
+                       tool_input={"questions": []}, ts=1010.0))
+    assert asked.permission is None
+
+
+def test_a_decline_seen_in_the_transcript_ends_the_wait(ws):
+    """Saying No fires no hook, so the row stayed amber over an agent back
+    at its prompt. The daemon's own `Declined` record ends it -- for the
+    dialog it names, and no other."""
+    key = asking_permission(ws).permission["key"]
+    declined = asking_permission(ws, ts=1010.0)
+    ws_store = ws.Store()
+    for one in (event("SessionStart", ts=1000.0),
+                event("PreToolUse", tool_name="Bash", tool_use_id="toolu_p1",
+                      tool_input={"command": LONG, "description": "Build"},
+                      ts=1010.0),
+                event("PermissionRequest", tool_name="Bash",
+                      tool_input={"command": LONG, "description": "Build"},
+                      ts=1010.09)):
+        ws_store.apply(one)
+    ws_store.apply(event("Declined", key="999.000000", ts=1011.0))
+    other = ws_store.sessions["s1"]
+    assert other.state == "needs_you" and other.permission   # not its dialog
+    ws_store.apply(event("Declined", key=key, tool_use_id="toolu_p1", ts=1012.0))
+    assert other.state == "done" and other.permission is None
+    assert other.reason == "" and other.calls == {}
+    assert other.last_event == "declined from the page"
+    assert declined.state == "needs_you"         # nothing but the record does it
