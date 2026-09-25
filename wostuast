@@ -1533,9 +1533,8 @@ def row(session: Session) -> dict[str, Any]:
     return {
         "id": session.session_id,
         "label": session.label,
-        # Apart, as well as together. The row leads with the name and puts
-        # the repository under it; this is what stands in for the repository
-        # outside one, and what the find box searches.
+        # A session's name on the row until the reader gives it one, and
+        # part of what the find box searches.
         "place": session.place,
         # The worktree's own folder, for the row's second line. The top of
         # the worktree once git has said where that is, so a session started
@@ -6753,7 +6752,6 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 /* Repository and worktree share their line, and either gives way. */
 .row .line2.where { gap: 14px; color: var(--ink-mute); }
-.row .line2.where > * { flex-shrink: 1; }
 .row .line2 .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .row .icon {
   width: 12px; height: 12px; flex-shrink: 0; color: var(--ink-faint);
@@ -6789,9 +6787,10 @@ body.dragging { cursor: col-resize; user-select: none; }
 .band.needs { color: var(--needs); }
 /* The first head has nothing above it to be separated from. */
 .rows > :first-child.band, .rows > :first-child.histhead { border-top: none; margin-top: 0; }
-/* One line, whatever the branch is called. The branch is the one part that
-   gives way, and it gives way with an ellipsis: "✓ clean" shrank with it and
-   broke over two lines, under a branch cut short anyway. */
+/* One line, whatever the branch is called: `nowrap` is what holds it. The
+   branch is the one part that gives way, with an ellipsis, because only it
+   has `min-width: 0` and a clip -- "✓ clean" used to shrink with it and
+   break over two lines, under a branch cut short anyway. */
 .row .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
   min-width: 0; white-space: nowrap;
@@ -6799,8 +6798,6 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* `display: flex` beats the browser's own rule for the attribute. A session
    outside a repository has no branch, and its line goes. */
 .row .line2[hidden] { display: none; }
-.row .line2 > * { flex-shrink: 0; }
-.row .line2 .branch { flex-shrink: 1; }
 .row .line2 .gitstate { display: flex; gap: 10px; margin-left: auto; }
 /* What the agent is doing or asks, cut short with an ellipsis. The age is on
    the name's line, where the name gives way to it and it never does. */
@@ -8904,7 +8901,6 @@ function renameRow(row) {
     drawSessions();
   };
   box.addEventListener("keydown", (press) => {
-    press.stopPropagation();           // a letter is a name, not a key
     if (press.key === "Enter") {
       press.preventDefault();
       // Enter on the name it came with is not a name chosen: kept, it would
@@ -14225,7 +14221,7 @@ document.addEventListener("keydown", (press) => {
     case "e": {
       const row = document.querySelector(".row.chosen");
       if (!row) return;
-      press.preventDefault();          // or the letter lands in the box
+      press.preventDefault();          // no browser may type it into the box
       renameRow(row);
       break;
     }

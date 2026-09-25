@@ -28,12 +28,11 @@ def test_the_page_draws_the_session(page_at):
         try:
             wait_for_map(page)
             assert page.locator(".row").count() == 1
-            # The worktree leads the row; what Claude Code called the session
-            # goes under it, because the name is often long and often vague
-            # and it used to push the worktree off the end.
+            # Until the reader names it, a session is called by where it
+            # stands. What Claude Code called it is not on the row: `/rename`
+            # never reaches it, and it went stale beside the branch.
             place = page.locator(".row .name").inner_text()
-            assert place and "A session" not in place
-            assert "A session" in page.locator(".row .called").inner_text()
+            assert place and "A session" not in page.locator(".row").inner_text()
             assert page.title() == "wostuast"
             assert page.locator(".turn").count() >= 2
             # The model is a fact about the session, so it is in the tab that

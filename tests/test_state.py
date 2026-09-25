@@ -1510,3 +1510,18 @@ def test_a_decline_seen_in_the_transcript_ends_the_wait(ws):
     assert other.reason == "" and other.calls == {}
     assert other.last_event == "declined from the page"
     assert declined.state == "needs_you"         # nothing but the record does it
+
+
+def test_a_row_names_the_worktree_by_its_top_not_where_it_started(ws):
+    """The row's second line is the repository and the worktree. A session
+    started in `src` is still in `richpalm`: once git has said where the
+    worktree begins, that is the folder named, and its whole path is the
+    hover. Before git has answered, it is where the session started."""
+    session = fold(ws, event("SessionStart", cwd="/w/agent/richpalm/src"))
+    assert ws.row(session)["worktree"] == "src"
+    session.git = ws.GitFacts(repo="agent", root="/w/agent/richpalm",
+                              remote="https://example.com/agent.git")
+    shown = ws.row(session)
+    assert shown["worktree"] == "richpalm"
+    assert shown["worktree_path"] == "/w/agent/richpalm"
+    assert shown["remote"] == "https://example.com/agent.git"

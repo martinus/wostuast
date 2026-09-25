@@ -24,7 +24,7 @@ pytestmark = skip_without_browser
 def test_a_row_is_not_rebuilt_every_second(page_at, ws, tmp_path):
     """The ages advance once a second. Rebuilding the rows to do it restarted
     the needs-you pulse before it could finish a cycle, and threw away the
-    dot's colour transition. Only the age text may change."""
+    row's colour transition. Only the age text may change."""
     daemon, _ = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
@@ -38,25 +38,25 @@ def test_a_row_is_not_rebuilt_every_second(page_at, ws, tmp_path):
             daemon.tick()
             page.wait_for_function(
                 r"/^\d+s$/.test(document.querySelector('.row .age').textContent)")
-            page.evaluate("window.__dot = document.querySelector('.row .dot')")
+            page.evaluate("window.__row = document.querySelector('.row .line1')")
             first = page.locator(".row .age").first.inner_text()
             page.wait_for_timeout(2400)
-            assert page.evaluate("window.__dot.isConnected"), "the row was rebuilt"
+            assert page.evaluate("window.__row.isConnected"), "the row was rebuilt"
             assert page.locator(".row .age").first.inner_text() != first
         finally:
             browser.close()
 
 
-def test_a_row_keeps_its_dot_when_the_state_changes(page_at, ws):
-    """A row that changes state fades its dot (CLAUDE.md, **Motion**). A fade
-    needs the same dot on both sides of the change, and the sidebar used to be
-    rebuilt whole, so the one change the fade is for was the one that threw it
-    away."""
+def test_a_row_is_kept_when_the_state_changes(page_at, ws):
+    """A row that changes state fades into its new colour (CLAUDE.md,
+    **Motion**). A fade needs the same row on both sides of the change, and
+    the sidebar used to be rebuilt whole, so the one change the fade is for
+    was the one that threw it away."""
     daemon, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
-            page.evaluate("window.__dot = document.querySelector('.row .dot')")
+            page.evaluate("window.__dot = document.querySelector('.row')")
             assert "done" in page.evaluate("window.__dot.className")
             ws.append_event(conftest.event(
                 "PermissionRequest", tool_name="Bash",
@@ -68,8 +68,9 @@ def test_a_row_keeps_its_dot_when_the_state_changes(page_at, ws):
             browser.close()
 
 
-def test_a_row_shows_its_state_in_more_than_a_dot(page_at):
-    """Nine sessions in a list are hard to read from one small dot."""
+def test_a_row_shows_its_state_in_its_colour(page_at):
+    """The row's edge and tint say the state, and there is no dot and no
+    word beside them: nine sessions are hard to read from one small dot."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
@@ -806,5 +807,212 @@ def test_the_session_tab_does_not_say_what_git_has_not_said(page_at):
             assert "not in a repository" not in said, said
             assert "none" not in said, said
             assert "git has not answered" in said, said
+        finally:
+            browser.close()
+
+# --- what a row says ---------------------------------------------------------
+
+LONG_BRANCH = "backport/341/OA-74380-rulemetadata-for-the-new-ingest-path"
+
+
+@pytest.fixture
+def rows_at(ws, served, monkeypatch, tmp_path):
+    """Four sessions, one in each group, with git facts a real row carries.
+
+    `named` was given a name on the page and waits on a dialog; `fresh` has
+    none and is working; `idle` is ready, with the notification that used to
+    say "waiting for input" under it; `old` has ended."""
+    daemon, url = served
+    agent = tmp_path / "agent"
+    places = {sid: agent / tree for sid, tree in
+              (("named", "richpalm"), ("fresh", "bluefox"),
+               ("idle", "oakleaf"), ("old", "oldtree"))}
+    facts = {
+        "named": ws.GitFacts(repo="agent", branch=LONG_BRANCH, ahead=1,
+                             root=str(places["named"]),
+                             remote="https://example.com/team/agent.git"),
+        "fresh": ws.GitFacts(repo="agent", branch="feature/retry", dirty=True,
+                             touched_files=3, root=str(places["fresh"])),
+    }
+    by_dir = {str(places[sid]): one for sid, one in facts.items()}
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+        d: by_dir.get(d, ws.GitFacts(repo="agent", branch="main")) for d in dirs})
+    now = time.time()
+    for sid, where in places.items():
+        where.mkdir(parents=True)
+        ws.append_event(conftest.event("SessionStart", sid=sid, cwd=str(where),
+                                       pid=1, ts=now - 60))
+    ws.append_event(conftest.event("PermissionRequest", sid="named",
+                                   cwd=str(places["named"]), tool_name="Bash",
+                                   tool_input={"command": "curl -s example.com"},
+                                   ts=now - 5))
+    ws.append_event(conftest.event("PreToolUse", sid="fresh",
+                                   cwd=str(places["fresh"]), tool_name="Bash",
+                                   tool_use_id="t1",
+                                   tool_input={"command": "pytest -q"}, ts=now - 5))
+    ws.append_event(conftest.event("Notification", sid="idle",
+                                   cwd=str(places["idle"]),
+                                   notification_type="idle_prompt",
+                                   message="Claude is waiting for your input",
+                                   ts=now - 5))
+    ws.append_event(conftest.event("SessionEnd", sid="old",
+                                   cwd=str(places["old"]), reason="logout",
+                                   ts=now - 5))
+    # The title Claude Code writes from the first prompt. It is not the row's.
+    ws.write_status("fresh", ws.Status(ts=now, name="A generated title"))
+    daemon.store.rename("named", "rule work")
+    daemon.store.refresh()
+    return daemon, url, places
+
+
+def open_rows(play, rows_at):
+    daemon, url, _ = rows_at
+    context = fresh_context(play)
+    context.add_init_script("localStorage.setItem('wostuast-history', 'open')")
+    page = context.new_page()
+    page.goto(url, wait_until="domcontentloaded")
+    page.wait_for_function("document.querySelectorAll('.row').length === 4")
+    return context, page
+
+
+READ_ROWS = """() => Object.fromEntries([...document.querySelectorAll('.row')].map(
+  (row) => {
+    const shown = (sel) => {
+      const node = row.querySelector(sel);
+      return node && node.getClientRects().length ? node.innerText : null;
+    };
+    const title = (sel) => (row.querySelector(sel) || {}).title;
+    return [row.dataset.id, {
+      name: shown('.line1 .name'), word: shown('.word'),
+      age: shown('.line1 .age'), repo: shown('.repo'), repoTitle: title('.repo'),
+      tree: shown('.worktree'), treeTitle: title('.worktree'),
+      branch: shown('.branch'), git: shown('.gitstate'), said: shown('.said'),
+      dots: row.querySelectorAll('.dot').length, text: row.innerText}];
+  }))"""
+
+
+def test_a_row_says_its_name_where_it_is_its_branch_and_when(rows_at):
+    """The name, the repository and the worktree, the branch and what git
+    counts, and the time -- and the state nowhere but the colour and the
+    group: a word at the top and "waiting for input" at the foot said it a
+    third and a fourth time, and the dot a fifth. A name not given is where
+    the session stands, never the title Claude Code wrote, which `/rename`
+    does not reach and which went stale beside the branch."""
+    _, _, places = rows_at
+    with sync_playwright() as play:
+        browser, page = open_rows(play, rows_at)
+        try:
+            rows = page.evaluate(READ_ROWS)
+            named, fresh = rows["named"], rows["fresh"]
+            assert named["name"] == "rule work"
+            assert fresh["name"] == "agent/bluefox"
+            assert "A generated title" not in fresh["text"]
+            # Every row, named or not, says its repository and worktree, and
+            # a hover says where each one is.
+            assert (named["repo"], named["tree"]) == ("agent", "richpalm")
+            assert (fresh["repo"], fresh["tree"]) == ("agent", "bluefox")
+            assert named["repoTitle"] == "https://example.com/team/agent.git"
+            assert fresh["repoTitle"] == "no remote"
+            assert named["treeTitle"] == str(places["named"])
+            assert named["branch"] == LONG_BRANCH     # the ellipsis is drawn
+            assert "↑1" in named["git"] and "clean" in named["git"]
+            assert "3 files" in fresh["git"]
+            for one in rows.values():
+                assert one["dots"] == 0
+                assert one["age"], "the time stands beside the name"
+            # The state is said by the colour and the group, and only a
+            # finished row, whose group holds two states, says it in words.
+            assert named["word"] is None and fresh["word"] is None
+            assert rows["idle"]["word"] is None
+            assert rows["old"]["word"] == "ended"
+            # What it is doing or asks, while it is doing or asking.
+            assert "permission" in named["said"]
+            assert "pytest" in fresh["said"]
+            assert rows["idle"]["said"] is None
+            assert "waiting for input" not in rows["idle"]["text"]
+            assert rows["old"]["said"] is None
+            assert "ended (" not in rows["old"]["text"]
+        finally:
+            browser.close()
+
+
+def test_the_git_line_is_one_line_and_its_counts_stand_at_the_right(rows_at):
+    """A long branch pushed "✓ clean" onto a second line of its own. Only the
+    branch gives way now, with an ellipsis, and what git counts stands at the
+    right edge, so the counts of every row read as one column."""
+    with sync_playwright() as play:
+        browser, page = open_rows(play, rows_at)
+        try:
+            measure = """(id) => {
+              const line = document.querySelector(`.row[data-id="${id}"] .branch`)
+                .parentElement;
+              const high = parseFloat(getComputedStyle(line).lineHeight)
+                || parseFloat(getComputedStyle(line).fontSize) * 1.6;
+              const text = line.querySelector('.branch .text');
+              return {tall: line.getBoundingClientRect().height, high,
+                      cut: text.scrollWidth > text.clientWidth,
+                      counts: line.querySelector('.gitstate').getBoundingClientRect().right,
+                      edge: line.getBoundingClientRect().right,
+                      parts: [...line.querySelectorAll('.gitstate > *')]
+                        .map((one) => one.getBoundingClientRect().height)};
+            }"""
+            out = page.evaluate(measure, "named")
+            assert out["cut"], "the branch is long enough to be cut"
+            assert out["tall"] < 1.5 * out["high"], out
+            assert all(h < 1.5 * out["high"] for h in out["parts"]), out
+            assert abs(out["counts"] - out["edge"]) < 1, out
+            # A short branch leaves room, and the counts still stand at the
+            # edge rather than after the branch.
+            out = page.evaluate(measure, "fresh")
+            assert not out["cut"]
+            assert abs(out["counts"] - out["edge"]) < 1, out
+        finally:
+            browser.close()
+
+
+def test_a_row_is_renamed_where_it_stands(rows_at, ws):
+    """A double-click or `e` edits the name in the row; Enter keeps it and
+    Escape does not. The row is filled again on every push and moves when its
+    state changes, and neither may take what is being typed."""
+    daemon, _, places = rows_at
+    with sync_playwright() as play:
+        browser, page = open_rows(play, rows_at)
+        try:
+            page.dblclick('.row[data-id="fresh"] .name')
+            box = page.locator('.row[data-id="fresh"] input.rowname')
+            assert box.input_value() == "agent/bluefox"
+            page.keyboard.type("retry work")
+            # A push that fills the row again and moves it to the top, as a
+            # dialog coming up does, with the box still open.
+            ws.append_event(conftest.event(
+                "PermissionRequest", sid="fresh", cwd=str(places["fresh"]),
+                tool_name="Bash", tool_input={"command": "rm -r build"},
+                ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                "document.querySelector('.row').dataset.id === 'fresh'")
+            page.keyboard.type("!")
+            assert box.input_value() == "retry work!"
+            page.keyboard.press("Enter")
+            page.wait_for_function(
+                """document.querySelector('.row[data-id="fresh"] .name')
+                   .textContent === 'retry work!'""")
+            assert daemon.store.names.get("fresh") == "retry work!"
+
+            # `e` on the chosen row, and Escape: nothing is kept.
+            page.click('.row[data-id="idle"]')
+            page.keyboard.press("e")
+            page.keyboard.type("not this")
+            page.keyboard.press("Escape")
+            page.wait_for_function(
+                "!document.querySelector('input.rowname')")
+            assert page.locator('.row[data-id="idle"] .name').inner_text() \
+                == "agent/oakleaf"
+            # Enter on the name it came with is not a name chosen: kept, it
+            # would stop following the worktree for good.
+            page.keyboard.press("e")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(300)          # proving nothing was sent
+            assert "idle" not in daemon.store.names
         finally:
             browser.close()

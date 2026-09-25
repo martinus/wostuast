@@ -48,6 +48,10 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 - **You see who needs you.** The session list is grouped by state, most urgent
   first. The browser tab's title and icon show the count, so a tab in the
   background still tells you. Your browser can also notify you.
+- **Each session is one card.** It shows the session's name and its age,
+  the repository and the worktree, the branch and its git status, and what
+  the agent is doing now. Hover over the repository to see its remote, or
+  over the worktree to see its path. The colour of the card shows the state.
 - **You answer an agent's question from the page.** When an agent asks you
   something, the question and its answers show at the foot of the transcript.
   Pick one answer, or several where the question allows it. Change your mind
@@ -208,8 +212,7 @@ before it goes to the agent. Nothing in it can be edited on the way.
 #### Session
 
 The worktree, branch, model, context window, pane, and the session's own event
-log. This is the only place where you rename a session. It also has two
-controls:
+log. You can rename a session here too. It also has two controls:
 
 - **stop** presses Escape in the agent's pane. That ends the turn and keeps
   the work done so far.
@@ -244,6 +247,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>j</kbd> <kbd>k</kbd> | Move down and up the session list |
 | <kbd>n</kbd> | Go to the next session that needs you |
 | <kbd>f</kbd> | Filter the session list |
+| <kbd>e</kbd> | Rename the chosen session (or double-click its name) |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
 | <kbd>r</kbd> | Open the review you wrote |
 | <kbd>1</kbd> – <kbd>5</kbd> | Transcript, Files, Diff, Review, Session |
@@ -269,9 +273,9 @@ is depends on your window manager.
 | `wostuast hook` / `status` | Claude Code calls these. You do not. |
 
 `install` also registers `wostuast status` as your Claude Code status line, but
-only if you do not have one. The status line carries the session's name, its
-context usage and its spend; hooks carry none of them. Without it, wostuast
-still works, but sessions have no name, no context bar and no spend. If you
+only if you do not have one. The status line carries the session's
+context usage and its spend; hooks carry neither. Without it, wostuast
+still works, but sessions have no context bar and no spend. If you
 keep your own status line, `install` tells you the line to add to it.
 
 ## Files
@@ -379,8 +383,14 @@ submit.
 <details>
 <summary><b>Where does the name of a session come from?</b></summary>
 
-From the status line, which Claude Code gives the session's name. You can also
-rename a session on the Session tab. That name wins over the status line's.
+From you. A new session is called by its repository and worktree, for
+example `agent/richpalm`. To give it a name, double-click the name in the
+session list, or press <kbd>e</kbd>. Press <kbd>Enter</kbd> to keep the name,
+or <kbd>Esc</kbd> to cancel. An empty name gives the session back its
+repository and worktree.
+
+The title that Claude Code gives a session does not change when you use
+`/rename`, so the list does not show it. The Session tab does.
 
 </details>
 

@@ -865,10 +865,9 @@ def test_a_session_can_be_renamed_from_the_page(in_pane):
             page.fill(".sessionbody .rename", "the parser")
             page.press(".sessionbody .rename", "Enter")
             # The row is where a name is read: there is no second place that
-            # says it any more. The row puts the worktree in `.name` and the
-            # session's own name in `.called`, which is what a rename changes.
+            # says it any more. A name given here leads the row.
             page.wait_for_function(
-                "document.querySelector('.row .called').textContent"
+                "document.querySelector('.row .name').textContent"
                 ".includes('the parser')")
         finally:
             browser.close()
@@ -879,11 +878,11 @@ def test_escape_leaves_the_name_as_it_was(in_pane):
         browser, page = open_page(play, (None, base_of(in_pane)))
         try:
             show_tab(page, "session")
-            was = page.locator(".row .called").inner_text()
+            was = page.locator(".row .name").inner_text()
             page.fill(".sessionbody .rename", "not this")
             page.press(".sessionbody .rename", "Escape")
             page.wait_for_timeout(300)      # proving it did not go
-            assert page.locator(".row .called").inner_text() == was
+            assert page.locator(".row .name").inner_text() == was
         finally:
             browser.close()
 
@@ -896,12 +895,12 @@ def test_an_empty_name_gives_the_session_its_place_back(in_pane):
             page.fill(".sessionbody .rename", "for a moment")
             page.press(".sessionbody .rename", "Enter")
             page.wait_for_function(
-                "document.querySelector('.row .called').textContent"
+                "document.querySelector('.row .name').textContent"
                 ".includes('for a moment')")
             page.fill(".sessionbody .rename", "")
             page.press(".sessionbody .rename", "Enter")
             page.wait_for_function(
-                "!document.querySelector('.row .called').textContent"
+                "!document.querySelector('.row .name').textContent"
                 ".includes('for a moment')")
         finally:
             browser.close()
