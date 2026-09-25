@@ -2011,9 +2011,12 @@ update the comment with its own text, and read it back.
   part of the frame, because building it in `drawTranscript` put half of the
   box's positional contract in another function. **That is why `split`
   returns `box.children[2]` and not `box.lastChild`**: the last child is this
-  button. It is a `.verb`, which is where its height, padding, border,
-  background, type and hover come from; `.tofoot` holds only what makes it
-  float, and needs no `[hidden]` rule because `.verb` sets no `display`.
+  button. It is a `.verb`, which is where its border, background and hover
+  come from; `.tofoot` makes it a round button in the middle of the pane's
+  foot with `ICONS.down` in it, the words in `title` and `aria-label` --
+  the reader asked for the arrow alone. It sets `display` to centre the
+  arrow, so it carries a `[hidden]` rule, the `.sendbar` shape again.
+  `test_the_way_back_is_an_arrow_in_the_middle`.
 - **`showToFoot` is handed both nodes, and this is not a nicety.** It runs on
   every scroll event — dozens of times in one gesture — and on every pushed
   block. `box.querySelector(".tofoot")` is a pre-order walk that reaches the
@@ -2177,6 +2180,18 @@ update the comment with its own text, and read it back.
   **`null` is "no place kept", and nought is the very top**: one number for
   both threw a reader at the top to the foot on every key typed in the find
   box. `test_the_top_of_the_transcript_is_a_place_too`.
+  - **And the foot is `null` too, never its pixels.** A first load draws
+    the transcript as text and again as Markdown once `marked` arrives,
+    much taller; the listener had written the first draw's foot as a
+    number, and the second draw put it back thousands of pixels short of
+    the latest reply. `nearBottom` decides.
+  - **The map keeps its own place across a rebuild**, which `drawTurnList`
+    does for every round that arrives: emptying a list puts its scrollbar
+    at the top. At its foot, or new to the session, it lands at its foot;
+    scrolled up, it stays. `list.dataset.session` says whose map it was.
+  `test_a_first_load_lands_at_the_foot_when_marked_comes_late` holds
+  `marked` until the text draw is done;
+  `test_the_map_keeps_its_place_when_a_round_arrives`.
 - **The search redraws the whole tab, so it has to put the reader back.**
   `drawTranscript` ends at the foot of the transcript, which is where a
   session with no kept place belongs — the last thing the agent said is the
