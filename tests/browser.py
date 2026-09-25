@@ -113,9 +113,16 @@ def fresh_context(play, scheme="dark", with_marked=True):
         status=200, content_type="text/css", body=""))
     return context
 
-def open_page(play, where, scheme="dark", with_marked=True):
+def open_page(play, where, scheme="dark", with_marked=True, wait="transcript"):
     """A fresh context on the shared browser. What comes back is the context,
-    so a test that closes `browser` closes its own and nobody else's."""
+    so a test that closes `browser` closes its own and nobody else's.
+
+    It returns once the chosen session's transcript has answered -- with
+    blocks, with none, or with a failure -- because a test that read the tab
+    the moment the frame was drawn found `.turnbody` missing or empty on a
+    loaded machine, and three such tests went red in one session, each
+    after its own fix. `wait="frame"` returns at the first draw, for a test
+    about what the page does before that answer."""
     url = where[1] if isinstance(where, tuple) else where
     browser = fresh_context(play, scheme, with_marked)
     page = browser.new_page()
@@ -126,6 +133,10 @@ def open_page(play, where, scheme="dark", with_marked=True):
     if with_marked:
         ready = "!!window.marked && " + ready
     page.wait_for_function(ready, timeout=WAIT or 15000)
+    if wait == "transcript":
+        page.wait_for_function(
+            "!state.chosen || state.tab !== 'transcript' || state.turns.landed",
+            timeout=WAIT or 15000)
     return browser, page
 
 def wait_for_map(page, rows=1):

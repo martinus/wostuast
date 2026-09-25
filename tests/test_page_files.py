@@ -1340,7 +1340,11 @@ def test_a_session_comes_back_to_where_it_was_left(two_repos):
               view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
             page.wait_for_function(
                 "document.querySelector('.filescroll').scrollTop > 100")
-            was = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+            # The place the page wrote down, not the scroller's: the scroll
+            # event writes it a frame later, and a switch before it saved the
+            # top -- red under load.
+            page.wait_for_function("state.files.down > 100")
+            was = page.evaluate("state.files.down")
 
             # Away, and back. The other session is put on the Files tab
             # by hand: which tab it lands on is one of the things a session
