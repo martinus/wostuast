@@ -1,13 +1,29 @@
+<div align="center">
+
 # wostuast
 
-*"wos tuast?"* — Austrian for *"what are you doing?"*
+**See what your Claude Code agents are doing: who needs you, what they said, what they changed.**
 
-You run several Claude Code agents, one per tmux window. The terminal is a good
-place to type and a bad place to read. **wostuast is the reading side:** one
-page that says which agent needs you, what each one said, and what it changed.
+*"wos tuast?"* is Austrian for *"what are you doing?"*
 
-```
-wostuast ls
+[![tests](https://github.com/martinus/wostuast/actions/workflows/tests.yml/badge.svg)](https://github.com/martinus/wostuast/actions/workflows/tests.yml)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab)
+![dependencies: none](https://img.shields.io/badge/dependencies-none-2ea44f)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+[Is it for you?](#is-it-for-you) · [How it works](#how-it-works) · [Install](#install) · [The page](#the-page) · [Keys](#keys) · [Commands](#commands) · [FAQ](#faq)
+
+</div>
+
+---
+
+You run several Claude Code agents, one per tmux window. A terminal is a good
+place to type and a bad place to read. **wostuast is the reading side.** It is
+one page in your browser. It tells you which agent needs you, what each agent
+said, and what each agent changed.
+
+```text
+$ wostuast ls
 
 STATE      SESSION                                   BRANCH          CHANGES  PANE  AGE    LAST
 needs you  Add substring search · oans/warmhare      feature/search  ↑2 ●5    %7    38s    permission: Bash cmake --build build -j
@@ -17,143 +33,252 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 1 needs you · 1 working · 1 ready
 ```
 
-## Why
+## Is it for you?
 
-**You see which agent needs you, and what it is asking.** The list is grouped
-by state, most urgent first, newest inside each group. The browser tab title
-and icon say it too, so a background tab still tells you. When an agent stops
-to ask you something, the question and every answer stand at the foot of the
-transcript: pick an answer — or tick several, where the question takes
-more than one — change your mind, and press submit. wostuast presses the
-keys in its terminal, and says which before you press it.
+| Try it if you… | Skip it if you… |
+| --- | --- |
+| run more than one Claude Code session at a time | run one agent and watch it in its terminal |
+| run those sessions in tmux | do not use tmux, and want to answer and send from the page (reading works without it) |
+| want to know from another window, or another room, which agent is waiting | want a hosted dashboard for a team |
+| read diffs and plans more than you type prompts | want to approve permission prompts from a browser (wostuast never does that) |
+| want one file, no install step, and nothing leaving your machine | want a desktop app |
 
-**You review its work like a pull request.** Hover any line — in the diff or in
-a file you are reading — click the `+`, write what you want changed. The
-comments collect into one review, and you send the whole thing to the agent as
-a single message. A comment belongs to a line, not to a tab: one left on line
-42 of the diff is there on line 42 of the file.
+## What you get
 
-**You read the worktree without leaving the page.** Every file git knows
-about, what an agent generated into an ignored directory, the diff against the
-branch point, and your own ticket ids turned into links. Quick on a large
-repository: fifty-odd thousand files cost 1.7 MB once and 200 bytes on every
-check after it, and a build directory of a hundred thousand objects is one row
-that says so rather than a wait.
+- **You see who needs you.** The session list is grouped by state, most urgent
+  first. The browser tab's title and icon show the count, so a tab in the
+  background still tells you. Your browser can also notify you.
+- **You answer an agent's question from the page.** When an agent asks you
+  something, the question and its answers show at the foot of the transcript.
+  Pick one answer, or several where the question allows it. Change your mind
+  if you want. Nothing goes to the terminal until you press submit, and the
+  button says which keys it will press.
+- **You review its work like a pull request.** Click the `+` beside a line in
+  the diff or in a file, and write what you want changed. The comments collect
+  into one review. You read the whole message, then send it to the agent in
+  one go. A comment belongs to a line in the file, so a comment on line 42 of
+  the diff also shows on line 42 of the file.
+- **You read the worktree without an editor.** Every file git knows about, with
+  syntax colour. The diff against the branch the work was cut from. Files an
+  agent generated into an ignored directory, such as a plan. Your ticket ids
+  as links.
+- **It stays fast on big repositories.** The names of 50,000 files cost 1.7 MB
+  once, then about 200 bytes on each later check. A build directory with a
+  hundred thousand objects is one row that says so.
 
-**It never owns the agent.** tmux does. wostuast reads; four things go back to
-the terminal, all as keys typed into the agent's pane: jump, send, stop (an
-Escape), and the answer to a question it asked. It never answers a permission
-prompt for you.
+> [!NOTE]
+> **wostuast never owns your agents.** tmux does. wostuast reads files, and it
+> sends only four things to a terminal, always as keys typed into the agent's
+> own pane: **jump** to the pane, **send** a message, **stop** (an Escape), and
+> the **answer** to a question the agent asked. It never answers a permission
+> prompt for you.
 
-**One file, no dependencies.** Python 3.10+, standard library only. `curl` it
-and run it. The recording side is a hook that appends one JSON line and exits,
-so the daemon need not be running for anything to be kept.
+## How it works
 
-**Local only, on purpose.** It binds `127.0.0.1` and checks the `Host` header,
-and every write carries a token it printed into the page. A port that can type
-into your shell is not something to leave one firewall rule away.
+```mermaid
+flowchart LR
+    subgraph tmux["tmux"]
+        A1["Claude Code<br/>agent 1"]
+        A2["Claude Code<br/>agent 2"]
+    end
+    A1 -- "hook: one JSON line" --> L[("events.jsonl")]
+    A2 -- "hook: one JSON line" --> L
+    L -- "tail" --> D["wostuast serve<br/>127.0.0.1:7331"]
+    D -- "page + live updates" --> B["your browser"]
+    B -- "jump · send · stop · answer" --> D
+    D -- "keys, through tmux" --> tmux
+```
+
+1. Claude Code runs a **hook** on every event. The hook appends one JSON line to
+   `~/.local/state/wostuast/events.jsonl` and exits. It does not need the daemon
+   to run, so nothing is lost while the daemon is down.
+2. **`wostuast serve`** reads that log and the agents' transcripts, and serves
+   one page on `127.0.0.1`. The page updates itself. There is no reload button,
+   because there is nothing to reload.
+3. When you act on the page, the daemon types into the agent's tmux pane.
+   Nothing else writes to a terminal.
 
 ## Install
 
-```
+**You need:** Python 3.10 or newer, Claude Code, and tmux. git makes the Files
+and Diff tabs work. No `pip install`, no build step, no config file.
+
+**1. Install.** This copies one file to `~/.local/bin/wostuast` and adds its
+hooks to `~/.claude/settings.json`. It changes nothing else in that file.
+
+```sh
 python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/main/wostuast)" install
 ```
 
-That writes `~/.local/bin/wostuast` and adds its hooks to
-`~/.claude/settings.json`, touching nothing else in the file. Restart your
-Claude Code sessions so they pick the hooks up, then:
+> [!IMPORTANT]
+> Restart your Claude Code sessions after the install. A running session does
+> not pick up new hooks.
 
+**2. Check the setup.** `doctor` says what is missing, if anything.
+
+```sh
+wostuast doctor
 ```
-wostuast doctor      # check the setup and say what is missing
+
+**3. Open the page.**
+
+```sh
 wostuast serve --open
 ```
 
-To read it from another machine, forward the port over SSH — opening a firewall
-port does not work, because nothing is listening on an address other machines
-can reach:
+> [!TIP]
+> **On another machine?** Forward the port over SSH:
+>
+> ```sh
+> ssh -N -L 7331:127.0.0.1:7331 you@your-server
+> ```
+>
+> Then open <http://127.0.0.1:7331> on your own machine. Opening a port in a
+> firewall does not work: wostuast listens only on `127.0.0.1`, on purpose.
 
+<details>
+<summary><b>Uninstall</b></summary>
+
+```sh
+wostuast uninstall               # removes our hooks and our status line; keeps your history
+rm ~/.local/bin/wostuast         # removes the program
+rm -r ~/.local/state/wostuast    # removes the history too, if you want that
 ```
-ssh -N -L 7331:127.0.0.1:7331 you@your-server
-```
+
+</details>
 
 ## The page
 
-Five tabs, one session at a time. It updates itself; there is no reload button
-because there is nothing to reload. Each session remembers where you left it —
-the tab, the open file, the place in it.
+The page shows one session at a time, in five tabs. Each session remembers
+where you left it: the tab, the open file, and your place in it.
 
-| Tab | Holds |
+| Tab | What it shows |
 | --- | --- |
-| **Transcript** | What the agent said and did, with a map of the conversation beside it: a row per thing you typed and the replies under it. Click a row to go there, or its icon to fold the round away. Scrolled up? A **↓ latest** button takes you back to the end. |
-| **Files** | Every file in the worktree as a tree, with syntax highlighting, pictures shown as pictures, and go-to-file by scattered letters — `mbldr` finds `MetricBuilder.h`. An ignored directory an agent generated into is in the tree too; a folder with thousands of files in it is one row saying it is not listed. |
-| **Diff** | Changed files as a tree, and each file's diff in colour, with the changed words marked. Show it in one column or side by side. Pick what to show: all changes, only what is not committed, or one commit, with its whole message above its files — step through the commits with **older** and **newer**. Where lines are hidden between changes, a band says how many; show twenty more from either end, or all of them. All changes has two halves, each saying what it is a diff of: everything this branch has committed that its base branch has not, and what the files on disk hold that the last commit does not. The base branch is the one the branch was cut from: the default branch for a feature, or a release branch for a backport. When wostuast finds the wrong one, pick another beside the commit picker; this browser keeps the choice for that worktree. Untracked files are named on their own, because git has no diff for one. |
-| **Review** | The comments you have written, as one task to send. |
-| **Session** | Everything about this one: worktree, branch, model, context, pane, and its own event log. It is the only place a session is renamed. |
+| **Transcript** | What the agent said and did, with a map of the conversation beside it. |
+| **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
+| **Diff** | What changed, file by file, in one column or side by side. |
+| **Review** | The comments you wrote, as one message to send. |
+| **Session** | Everything about this session, its event log, and the spend limit. |
 
-How full the chosen session's context window is, and what it has spent, sit at
-the end of the tab row, so both are in view whichever tab you are on. The spend
-is Claude Code's own estimate at list price — it may differ from your bill, and
-it starts again after `/clear`. The Session tab says the same, and adds your
-claude.ai rate-limit windows when your status line carries them.
+<details>
+<summary><b>More about each tab</b></summary>
 
-The Session tab also has **stop**, which presses Escape in that agent's pane —
-it ends the turn and keeps the work done so far — and **stop at**, a number of
-dollars. Once a session's spend passes it, wostuast presses Escape for you,
-once. Raise the number to let it go on. It acts on Claude Code's estimate, so
-treat it as a brake rather than a budget.
+#### Transcript
+
+The map beside the transcript has one row for each thing you typed, with the
+replies under it. Click a row to go there. Click its chevron to fold that round
+away. When you scroll up, a **↓ latest** button takes you back to the end.
+
+#### Files
+
+Every file git knows about, as a tree. Pictures show as pictures. Go to a file
+by typing scattered letters of its name: `mbldr` finds `MetricBuilder.h`. An
+ignored directory that an agent generated files into is in the tree too. A
+folder with thousands of files in it is one row that says it is not listed.
+
+#### Diff
+
+Changed files as a tree, and each file's diff in colour, with the changed
+words marked.
+
+- **Pick what to show:** all changes, only what is not committed, or one
+  commit with its whole message. Step through the commits with **older** and
+  **newer**.
+- **All changes has two halves**, and each half says what it is a diff of:
+  what this branch committed that its base branch does not have, and what the
+  files on disk hold that the last commit does not.
+- **The base branch is the one the branch was cut from:** the default branch
+  for a feature, or a release branch for a backport. If wostuast finds the
+  wrong one, pick another beside the commit picker. Your browser keeps that
+  choice for the worktree.
+- **Hidden lines:** where lines are hidden between changes, a band says how
+  many. Show twenty more from either end, or all of them.
+- **Untracked files** are listed on their own, because git has no diff for
+  them.
+
+#### Review
+
+The comments you wrote, collected into one message. You read the whole message
+before it goes to the agent. Nothing in it can be edited on the way.
+
+#### Session
+
+The worktree, branch, model, context window, pane, and the session's own event
+log. This is the only place where you rename a session. It also has two
+controls:
+
+- **stop** presses Escape in the agent's pane. That ends the turn and keeps
+  the work done so far.
+- **stop at** takes a number of dollars. When the session's spend passes it,
+  wostuast presses Escape for you, one time. Raise the number to let the agent
+  go on.
+
+</details>
+
+How full the context window is, and what the session has spent, show at the
+end of the tab row. You see both on every tab.
+
+> [!WARNING]
+> The spend is Claude Code's own estimate at list price. It can differ from
+> your bill, and it starts again at zero after `/clear`. Use **stop at** as a
+> brake, not as a budget.
 
 ### Alerts
 
-The **alerts** button in the top strip opens two switches: be told when an
-agent needs you, and be told when one has finished. The first is on as soon as
-alerts are — it is what this tool is for. The second is off until you ask for
-it. Both are your browser's own notifications, so it asks permission the first
-time, and both are remembered in that browser and nowhere else.
+The **alerts** button opens two switches. One tells you when an agent needs
+you. The other tells you when an agent has finished. The first is on as soon as
+you allow alerts, because that is what this tool is for. The second is off
+until you turn it on. Both use your browser's own notifications, so the
+browser asks for permission the first time. Your choice stays in that browser.
 
-### Keys
+## Keys
 
-`?` shows this list without leaving the page.
+Press <kbd>?</kbd> on the page to see this list.
 
-| Key | Does |
+| Key | What it does |
 | --- | --- |
-| `j` `k` | move down and up the session list |
-| `n` | jump to the next session that needs you |
-| `f` | filter the session list |
-| `/` | find, on any tab that has a list to narrow: a turn, a file, a comment |
-| `r` | the review you have written |
-| `1` – `5` | Transcript, Files, Diff, Review, Session |
-| `Enter` | jump to that agent's tmux pane |
-| `s` | type into its terminal |
-| `t` | show or hide the agent's thinking, and say how much there is |
-| `c` | colours: auto, light, dark |
-| `Esc` | clear a box, or close the help |
+| <kbd>j</kbd> <kbd>k</kbd> | Move down and up the session list |
+| <kbd>n</kbd> | Go to the next session that needs you |
+| <kbd>f</kbd> | Filter the session list |
+| <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
+| <kbd>r</kbd> | Open the review you wrote |
+| <kbd>1</kbd> – <kbd>5</kbd> | Transcript, Files, Diff, Review, Session |
+| <kbd>Enter</kbd> | Jump to the agent's tmux pane |
+| <kbd>s</kbd> | Type into the agent's terminal |
+| <kbd>t</kbd> | Show or hide the agent's thinking, and say how much there is |
+| <kbd>c</kbd> | Colours: auto, light, dark |
+| <kbd>Esc</kbd> | Clear a box, or close the help |
 
-Jump puts the cursor in that agent's pane. Set `WOSTUAST_FOCUS` to a command
-that raises your terminal window and jump runs that too — which command does
-that is your window manager's business, not this program's.
+**Jump** puts the cursor in the agent's pane. To also raise your terminal
+window, set `WOSTUAST_FOCUS` to a command that does that. Which command that
+is depends on your window manager.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `wostuast install` | Copy to `~/.local/bin` and register the hooks and the status line. |
+| `wostuast install` | Copy to `~/.local/bin`, and register the hooks and the status line. |
 | `wostuast uninstall` | Remove our hooks and our status line. Keep the event log. |
-| `wostuast ls` | List the sessions, in the order of the page's sidebar. |
-| `wostuast doctor` | Check python, the state directory, the log, the hooks, tmux. |
-| `wostuast serve` | Start the daemon and serve the page on 127.0.0.1. It reads the whole event log first, and says how many events, files and bytes that was, and how long it took. |
+| `wostuast ls` | List the sessions, in the same order as the page. |
+| `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
+| `wostuast serve` | Start the daemon and serve the page on `127.0.0.1:7331`. `--port` picks another port, `--open` opens a browser. |
 | `wostuast hook` / `status` | Claude Code calls these. You do not. |
 
 `install` also registers `wostuast status` as your Claude Code status line, but
-only if you have none — hooks carry neither the session name nor the context
-usage, and the status line carries both. Without it wostuast still works;
-sessions then have no name and no context percent.
+only if you do not have one. The status line carries the session's name, its
+context usage and its spend; hooks carry none of them. Without it, wostuast
+still works, but sessions have no name, no context bar and no spend. If you
+keep your own status line, `install` tells you the line to add to it.
 
 ## Files
 
-| Path | Holds |
+Everything wostuast writes is on your machine, in private files (`0600`, in
+`0700` directories).
+
+| Path | What it holds |
 | --- | --- |
 | `~/.local/bin/wostuast` | The program. One file. |
-| `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. Every 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
+| `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
 | `~/.local/state/wostuast/links.json` | Your own ticket links, if you want any. |
@@ -161,8 +286,8 @@ sessions then have no name and no context percent.
 
 ### Ticket links
 
-If your work has ticket ids in it, they can become links. `serve` leaves an
-example `links.json` the first time it runs, so editing it is all there is:
+If your work has ticket ids in it, they can become links. `serve` writes an
+example `links.json` the first time it runs, so you only edit it:
 
 ```json
 [
@@ -170,17 +295,81 @@ example `links.json` the first time it runs, so editing it is all there is:
 ]
 ```
 
-`match` is a regular expression, `url` is where a match goes, and `$1` to `$9`
-are its groups. **Double every backslash**: this is JSON, so a `\d` has to be
-written `\\d`.
+`match` is a regular expression. `url` is where a match links to, and `$1` to
+`$9` are the groups of the match.
 
-A file wostuast cannot use is never silent. `serve` says what is wrong the
-moment you restart it, the Session tab shows the same line, and `doctor` says
-it too — so a link that does nothing is never a mystery. Keep patterns simple:
-nothing in a browser can stop a regular expression once it starts.
+> [!CAUTION]
+> **Write every backslash twice.** The file is JSON, so `\d` must be written
+> `\\d`. If the file has a problem, wostuast says so: `serve` prints it, the
+> Session tab shows it, and `doctor` reports it. Keep patterns simple, because
+> a browser cannot stop a regular expression once it starts.
 
-This is the one file you write. Everything else under
-`~/.local/state/wostuast/` is written by the program.
+This is the one file you write. The program writes everything else in
+`~/.local/state/wostuast/`.
+
+## Safety
+
+The page can type into a terminal, so it is careful about who may use it.
+
+- It listens on `127.0.0.1` only, and refuses a request whose `Host` header is
+  not its own.
+- Every action carries a token that the daemon prints into the page. A token
+  from before a restart is refused, and the page tells you to reload.
+- No other site can show the page in a frame.
+- What an agent wrote is shown as text or as cleaned Markdown, never as live
+  HTML.
+- Control characters never reach a terminal. A message with more than one line
+  goes as one paste, so no line of it runs as a command on its own.
+
+## FAQ
+
+<details>
+<summary><b>Does it work without tmux?</b></summary>
+
+Reading works: the session list, all five tabs, and alerts. The four things
+that type into a pane (jump, send, stop, answer) need tmux. Those controls are
+off for a session with no pane, and the page says why.
+
+</details>
+
+<details>
+<summary><b>Does it work on macOS?</b></summary>
+
+Yes. On Linux, wostuast checks that an agent's process is still alive. macOS has
+no `/proc` to check, so there a quiet session is taken as ended after twelve
+hours.
+
+</details>
+
+<details>
+<summary><b>Does it send anything anywhere?</b></summary>
+
+No. The log, the status files and the review drafts stay on your machine. The
+page itself fetches three things: its fonts from Google Fonts, and two
+JavaScript libraries from cdnjs: `marked` for Markdown and `highlight.js` for
+syntax colour. Each library is pinned by a hash of its bytes. The page works
+without all three: it falls back to your system fonts, Markdown shows as plain
+text, and code shows without colour.
+
+</details>
+
+<details>
+<summary><b>Can it approve a permission prompt for me?</b></summary>
+
+No, and it never will. Approving without seeing the pane is how directories get
+deleted. The row goes amber and waits for you. Answering a question the agent
+asked (`AskUserQuestion`) is different: that is the agent's own question, and
+nothing is typed until you press submit.
+
+</details>
+
+<details>
+<summary><b>Where does the name of a session come from?</b></summary>
+
+From the status line, which Claude Code gives the session's name. You can also
+rename a session on the Session tab. That name wins over the status line's.
+
+</details>
 
 ## No screenshots
 
@@ -191,8 +380,8 @@ one command, and it shows you your own.
 ## Status
 
 All seven planned milestones are done. [`CLAUDE.md`](CLAUDE.md) holds the
-design, the reasoning, what was left out on purpose, and how to work in this
-repository.
+design, the reasons behind it, what was left out on purpose, and how to work in
+this repository.
 
 ## License
 
