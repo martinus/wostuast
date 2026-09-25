@@ -2115,6 +2115,12 @@ update the comment with its own text, and read it back.
   the two apart: a key pressed on a clicked button turns it on before the
   handler runs. `focusedByKey` can: Tab sets it, a pointer press clears it.
   `test_enter_on_a_button_reached_by_keyboard_presses_it` holds both halves.
+  **The same turn-on draws a ring**: a key pressed after a click lights
+  `:focus-visible` on the clicked button, so clicking Session and pressing
+  1 left the browser's dark ring round Session, the tab just left. A
+  shortcut that acts ends by blurring a button the pointer pressed; one
+  `focusedByKey` reached keeps its ring.
+  `test_a_key_leaves_no_ring_on_a_tab_that_was_clicked`.
 - **`t` says what it did.** The key worked from the day it shipped and read
   as broken anyway: most transcripts hold no thinking at all, so pressing it
   changed nothing on screen and nothing said why. A key whose effect can be

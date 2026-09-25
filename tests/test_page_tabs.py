@@ -437,3 +437,32 @@ def test_a_session_that_was_told_no_cost_shows_none(ws, served):
             assert page.locator("#ctxslot .spent").count() == 0
         finally:
             browser.close()
+
+
+def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
+    """A click leaves the focus on its button, and a key pressed after it
+    turns `:focus-visible` on: clicking Session and pressing 1 drew the
+    browser's dark ring round Session, the tab just left. A shortcut that
+    acts takes the focus off a button the pointer pressed. One reached by
+    Tab keeps it, because that is where a keyboard reader is."""
+    ringed = """() => [...document.querySelectorAll('.tab')]
+      .filter((one) => one.matches(':focus-visible')).map((one) => one.dataset.tab)"""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.click(".tab[data-tab='session']")
+            page.keyboard.press("1")
+            page.wait_for_function("state.tab === 'transcript'")
+            assert page.evaluate(ringed) == []
+
+            for _ in range(60):             # to a tab, by keyboard
+                page.keyboard.press("Tab")
+                if page.evaluate("document.activeElement.classList.contains('tab')"):
+                    break
+            reached = page.evaluate("document.activeElement.dataset.tab")
+            assert reached, "Tab never reached a tab"
+            page.keyboard.press("2")
+            page.wait_for_function("state.tab === 'files'")
+            assert page.evaluate(ringed) == [reached]
+        finally:
+            browser.close()

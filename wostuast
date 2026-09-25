@@ -14448,6 +14448,13 @@ document.addEventListener("keydown", (press) => {
       showTab(TAB_KEYS[at]);
     }
   }
+  // A key that did something leaves no ring on a button the pointer
+  // pressed. A click leaves the focus on its button, and a key pressed after
+  // it turns `:focus-visible` on -- so clicking the Session tab and pressing
+  // 1 drew the browser's dark ring round Session, the tab just left. A
+  // button reached by keyboard keeps its ring: that is where the reader is.
+  const held = document.activeElement;
+  if (!focusedByKey && held && held.matches("button")) held.blur();
   press.preventDefault();
 });
 
