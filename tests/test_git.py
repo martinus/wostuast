@@ -49,6 +49,30 @@ def test_a_worktree_keeps_the_name_of_its_repository(ws, repo, tmp_path):
     assert ws.path_label(str(tree), facts.repo) == "myrepo/warmhare"
 
 
+def test_the_remote_is_read_and_never_carries_a_password(ws, repo, tmp_path):
+    """The row shows the remote on a hover, so it goes to the page -- and a
+    remote URL can hold a user and a token. Both come out; the `git@host:`
+    shape holds no secret and stays. A worktree reads its repository's."""
+    git(repo, "remote", "add", "backup", "git@example.com:team/myrepo.git")
+    assert ws.git_facts(str(repo)).remote == "git@example.com:team/myrepo.git"
+    git(repo, "remote", "add", "origin",
+        "https://me:ghp_secret@example.com/team/myrepo.git")
+    tree = tmp_path / "warmhare"
+    git(repo, "worktree", "add", "-q", "-b", "side", str(tree))
+    for where in (repo, tree):
+        facts = ws.git_facts(str(where))
+        assert facts.remote == "https://example.com/team/myrepo.git"
+
+
+def test_a_repository_with_no_remote_has_none(ws, repo, tmp_path):
+    assert ws.git_facts(str(repo)).remote == ""
+    assert ws.remote_url(str(tmp_path / "nowhere")) == ""
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "config").write_bytes(b"[remote \"origin\"\n\xff url")
+    assert ws.remote_url(str(broken)) == ""
+
+
 def test_a_directory_without_git_gives_empty_facts(ws, tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()

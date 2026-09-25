@@ -61,7 +61,7 @@ after the tests go red.
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
-| `newRow`, `fillRow`, `BANDS`, `settled` | The sidebar |
+| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
@@ -588,6 +588,12 @@ update the comment with its own text, and read it back.
   `test_there_is_still_a_cap_on_the_links_in_one_block` builds 500 links out
   of 5,000 matching words and asserts the time. It is a heuristic; say so rather than implying
   the page is safe from a pattern somebody writes.
+- **A remote URL reaches the page without its user and password.** A row's
+  hover shows where the repository is fetched from, and a URL can hold
+  `me:token@`. `remote_url` takes out what stands before the `@` of a URL,
+  and reads the config file rather than asking git: a third git run on every
+  poll for a line that almost never changes. `git@host:path` holds no secret
+  and stays. `test_the_remote_is_read_and_never_carries_a_password`.
 - **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
   of text with colours, never markup.
 - **What a `send` may be is counted in bytes, and tmux is what sets the
@@ -1236,7 +1242,10 @@ update the comment with its own text, and read it back.
   tiebreaker all go through it — three call sites built the same string by
   hand before, which is three chances for one of them to answer differently.
   `cwd` is still what git, the Files tab and the Diff tab are asked about:
-  it is where the agent is, which is the right question for those.
+  it is where the agent is, which is the right question for those. **The
+  row's worktree is the top of the worktree** once git has said where that
+  is (`GitFacts.root`), so a session started in `src` still reads
+  `richpalm`; `place` stays where it started, because it is a name.
 - **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
   is no `/proc` — on macOS, always. Such a session is taken for gone after
   `QUIET_MAX`. One with a pid is never buried for being quiet.
@@ -1308,9 +1317,37 @@ update the comment with its own text, and read it back.
 - **The counts are about every session.** `drawCounts` runs *before* the guard
   that asks whether the shown rows changed — behind it, a session the filter
   hides could go amber and reach the title, icon and notification: none of them.
-- **Rows are kept and filled in again, never rebuilt.** A dot can only fade if it
-  is the same dot, and the needs-you ring can only finish a cycle if its row
-  outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
+- **A row says what nothing else on the page says, in four lines that are
+  the same on every row.** The reader chose each line. The name; the
+  repository and the worktree, with the remote and the path on a hover; the
+  branch with what git counts at the right edge; what the agent is doing or
+  asks, only while it is doing or asking. The time stands beside the name.
+  - **Not the state.** The row's edge, its tint and the group it stands in
+    said it, and a word at the top, "waiting for input" at the foot and a
+    dot said it three more times. Only a finished row keeps the word,
+    because "ended" and "killed" share one group and one grey. The pulse
+    that was the dot's is the needs-you row's own now.
+  - **The name is the reader's, and until they give one, `place`**
+    (`rowName`). Never the title Claude Code writes from the first prompt:
+    `/rename` does not reach it, so it went stale beside the branch -- a
+    row named after one ticket over a branch named after another. The
+    Session tab still shows it.
+  - **The git line is one line.** Everything on it keeps its width but the
+    branch, which gives way with an ellipsis: "✓ clean" shrank with it and
+    broke over two lines. A line that sets `display: flex` needs its own
+    `[hidden]` rule, the `.sendbar` scar again.
+  - **A name is changed where it stands** (`renameRow`), by a double-click
+    or `e`. The row is filled again on every push, so `fillRow` leaves a
+    name with a box in it alone; and a row that moves loses the focus, so
+    `drawSessions` gives it back with the caret where it was. Enter on the
+    name the box came with keeps nothing, or the row would stop following
+    its worktree for good.
+  `test_a_row_says_its_name_where_it_is_its_branch_and_when`,
+  `test_the_git_line_is_one_line_and_its_counts_stand_at_the_right`,
+  `test_a_row_is_renamed_where_it_stands`.
+- **Rows are kept and filled in again, never rebuilt.** A row can only fade
+  into its new colour if it is the same row, and the needs-you pulse can
+  only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
   them by position; a row moves only when its place changed, because
   `appendChild` on an attached node is a remove and an insert.
 
@@ -1744,9 +1781,8 @@ update the comment with its own text, and read it back.
   on every tool call**. `test_the_hook_does_not_import_what_it_does_not_need`
   fails if that slips.
 - **`name` is a POST that writes no terminal.** It keeps a name in
-  `names.json` and wins over the one the status line sent, because Claude Code
-  hands the status line the name the session started with and `/rename` does
-  not change it. `Store.rename` replaces the whole map rather than editing it,
+  `names.json`, and the row shows no other: Claude Code hands the status
+  line the name the session started with and `/rename` does not change it. `Store.rename` replaces the whole map rather than editing it,
   the trick `rows` plays: the HTTP thread writes, the fold thread reads. It
   pushes nothing — the rows are built from the names every pass, so the next
   one differs and goes out on its own.
@@ -2221,8 +2257,8 @@ update the comment with its own text, and read it back.
   as text, without `highlight.js` code has no colour. Tests hold both fallbacks,
   and `tests/fixtures/marked.min.js` is what the page tests serve, so no test
   needs a network.
-- **Motion**: a dot fades on a state change, a *new* transcript block
-  slides in 4 px, the needs-you ring pulses. Nothing else moves. "New" means
+- **Motion**: a row fades on a state change, a *new* transcript block
+  slides in 4 px, the needs-you row pulses. Nothing else moves. "New" means
   arriving in `patchTranscript` — never a redraw. One `prefers-reduced-motion`
   block turns all of it off.
 

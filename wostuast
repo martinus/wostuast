@@ -719,6 +719,9 @@ class GitFacts:
     #: The top of the worktree. The page keys what belongs to a checkout on
     #: it -- the Diff tab's base -- because `cwd` moves with every `cd`.
     root: str = ""
+    #: Where the repository is fetched from, for the row's hover: `origin`,
+    #: or the first remote there is. Any user and password taken out.
+    remote: str = ""
     #: git did not answer about a directory that is a repository. Empty facts
     #: read as a clean repository with no branch, which is a real state and
     #: not this one — and they used to be remembered as the answer.
@@ -1530,11 +1533,16 @@ def row(session: Session) -> dict[str, Any]:
     return {
         "id": session.session_id,
         "label": session.label,
-        # Apart, as well as together. The row puts the worktree first and in
-        # front, because that is the one fact you cannot read anywhere else on
-        # the page; the name Claude Code wrote from the first prompt is often
-        # long and often vague, and it used to push the worktree off the end.
+        # A session's name on the row until the reader gives it one, and
+        # part of what the find box searches.
         "place": session.place,
+        # The worktree's own folder, for the row's second line. The top of
+        # the worktree once git has said where that is, so a session started
+        # in `src` is still in `richpalm`; until then, where it started.
+        "worktree": os.path.basename(
+            (facts.root or session.home or session.cwd).rstrip("/")),
+        "worktree_path": facts.root or session.home or session.cwd,
+        "remote": facts.remote,
         "state": session.state,
         "state_word": STATE_WORDS.get(session.state, session.state),
         "cwd": session.cwd,
@@ -2604,6 +2612,50 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
     return branch.strip(), ahead, behind
 
 
+def remote_url(git_dir: str) -> str:
+    """Where the repository is fetched from, read from its config file.
+
+    Read and not asked: `git config` would be a third git run for every
+    worktree on every poll, for a line that almost never changes, and the
+    common directory `git_facts` already has is where the file is. The
+    older git that gives the top level instead has it under `.git`. What
+    git would add -- `include`, `insteadOf` -- is not followed; this is a
+    hover, and a hover that shows the file's own line is still true.
+
+    A URL can carry a user and a token (`https://me:ghp_x@host/r.git`), and
+    it is going to a page, so the part before the `@` of a URL is taken
+    out. The `git@host:path` shape holds no secret and is left as it is.
+    """
+    import configparser
+    import urllib.parse
+
+    base = git_dir.strip().rstrip("/")
+    if not base:
+        return ""
+    parser = configparser.RawConfigParser(strict=False, interpolation=None)
+    for where in (os.path.join(base, "config"), os.path.join(base, ".git", "config")):
+        if os.path.isfile(where):
+            try:
+                parser.read(where, encoding="utf-8")
+            except (OSError, UnicodeDecodeError, configparser.Error):
+                return ""
+            break
+    remotes = [name for name in parser.sections()
+               if name.startswith('remote "') and parser.has_option(name, "url")]
+    if not remotes:
+        return ""
+    chosen = 'remote "origin"' if 'remote "origin"' in remotes else remotes[0]
+    url = parser.get(chosen, "url").strip()
+    if "://" in url:
+        try:
+            parts = urllib.parse.urlsplit(url)
+        except ValueError:
+            return ""
+        host = parts.netloc.rpartition("@")[2]
+        url = urllib.parse.urlunsplit(parts._replace(netloc=host))
+    return url
+
+
 def repo_name(git_dir: str) -> str:
     """The name of the repository that owns a git directory.
 
@@ -2649,6 +2701,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     if paths:
         facts.repo = repo_name(paths.splitlines()[0])
         facts.root = paths.splitlines()[-1]
+        facts.remote = remote_url(paths.splitlines()[0])
 
     status = git("status", "--porcelain", "--branch")
     if not paths:
@@ -6691,17 +6744,25 @@ body.dragging { cursor: col-resize; user-select: none; }
   color: var(--ink-bright); font-weight: 600; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; flex-grow: 1;
 }
-/* What Claude Code called the session. It goes under the worktree, not in
-   front of it: it is a title for the conversation, not a place. */
-.row .called {
-  padding-left: 17px; font-size: 12px; color: var(--ink-mute);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Only a finished session carries a word; the colour says the rest. */
+.row .word { flex-shrink: 0; color: var(--ink-faint); }
+.row .word:empty { display: none; }
+.row .line2 .repo, .row .line2 .worktree, .row .line2 .branch {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0;
 }
-.row .word { flex-shrink: 0; }
-.row.needs_you .word { color: var(--needs); }
-.row.working .word { color: var(--working); }
-.row.done .word { color: var(--done); }
-.row.ended .word, .row.dead .word { color: var(--ink-faint); }
+/* Repository and worktree share their line, and either gives way. */
+.row .line2.where { gap: 14px; color: var(--ink-mute); }
+.row .line2 .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row .icon {
+  width: 12px; height: 12px; flex-shrink: 0; color: var(--ink-faint);
+  fill: none; stroke: currentColor; stroke-width: 1.2;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+.row input.rowname {
+  width: 100%; min-width: 0; padding: 0 4px; margin: -1px 0;
+  font: inherit; color: var(--ink-bright); background: var(--raised);
+  border: 1px solid var(--edge-bright); border-radius: 3px; outline: none;
+}
 /* History. A finished session is grey through and through: it kept the colour
    of the state it stopped in, which read as though something were still going
    on there. */
@@ -6710,8 +6771,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row.ended .branch, .row.dead .branch,
 .row.ended .said, .row.dead .said { color: var(--ink-faint); }
 .row.ended .dirty, .row.dead .dirty,
-.row.ended .clean, .row.dead .clean,
-.row.ended .called, .row.dead .called { color: var(--gone); }
+.row.ended .clean, .row.dead .clean { color: var(--gone); }
 /* The line above each group of rows. The history one folds and so is a
    button; the other three only name what is under them. */
 .histhead, .band {
@@ -6727,23 +6787,35 @@ body.dragging { cursor: col-resize; user-select: none; }
 .band.needs { color: var(--needs); }
 /* The first head has nothing above it to be separated from. */
 .rows > :first-child.band, .rows > :first-child.histhead { border-top: none; margin-top: 0; }
+/* One line, whatever the branch is called: `nowrap` is what holds it. The
+   branch is the one part that gives way, with an ellipsis, because only it
+   has `min-width: 0` and a clip -- "✓ clean" used to shrink with it and
+   break over two lines, under a branch cut short anyway. */
 .row .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
-  padding-left: 17px; min-width: 0;
+  min-width: 0; white-space: nowrap;
 }
-.row .line2 .branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The reason gives way; the age never does. "How long has this needed me?" is
-   the question the sidebar exists to answer. */
+/* `display: flex` beats the browser's own rule for the attribute. A session
+   outside a repository has no branch, and its line goes. */
+.row .line2[hidden] { display: none; }
+.row .line2 .gitstate { display: flex; gap: 10px; margin-left: auto; }
+/* What the agent is doing or asks, cut short with an ellipsis. The age is on
+   the name's line, where the name gives way to it and it never does. */
 .row .line3 {
   display: flex; gap: 6px; font-size: 12px; color: var(--ink-mute);
-  padding-left: 17px; min-width: 0; white-space: nowrap;
+  min-width: 0; white-space: nowrap;
 }
+.row .line3[hidden] { display: none; }
 .row .said { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; }
+.row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; font-size: 12px; }
 .dirty { color: var(--needs); }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
-.row.needs_you .dot { box-shadow: 0 0 0 3px var(--ring-near); animation: ring 2s ease-in-out infinite; }
+/* The row has no dot: its edge and its tint say the state, and the group it
+   stands in. The one thing the dot did that nothing else does is pulse for
+   the session that needs you, the thing to see from across a room, so the
+   row itself does that now. */
+.row.needs_you { box-shadow: 0 0 0 3px var(--ring-near); animation: ring 2s ease-in-out infinite; }
 @keyframes ring {
   0%, 100% { box-shadow: 0 0 0 3px var(--ring-near); }
   50% { box-shadow: 0 0 0 5px var(--ring-far); }
@@ -7902,6 +7974,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>j / k</dt><dd>move down and up the list</dd>
     <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>f</dt><dd>filter the session list</dd>
+    <dt>e</dt><dd>rename the chosen session</dd>
     <dt>r</dt><dd>the review you have written</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 5</dt><dd>transcript, files, diff, review, session</dd>
@@ -8024,8 +8097,7 @@ async function tell(id, verb, body) {
 // `/rename` changes that, but the name it hands the status line is the one the
 // session started with — so a rename in the terminal does not reach this page
 // until the session is started again. A name set here is ours and wins.
-async function keepRename(box) {
-  const id = state.chosen;
+async function keepRename(box, id = state.chosen) {
   const asked = box.value;
   box.blur();
   if (!id) return;
@@ -8033,9 +8105,10 @@ async function keepRename(box) {
   if (answer && answer.error) { said(answer); return; }
   // The rows are rebuilt from the names on the daemon's next pass, which is a
   // second away. This is so the header does not sit on the old one until then.
-  const s = current();
+  const s = state.sessions.find((one) => one.id === id);
   if (s) {
     s.name = (answer && answer.name) || "";
+    s.mine = Boolean(s.name);
     s.label = s.name ? s.name + " \u00b7 " + s.place : s.place;
   }
   drawHeader();
@@ -8592,6 +8665,13 @@ const ICONS = {
   // is the second target on a round's row, and a shape of its own, so the
   // icon that says who spoke is not also a button.
   chevron: "M5.4 3.6L8.8 7l-3.4 3.4",
+  // The repository and the branch on a sidebar row: a book, as git hosts
+  // draw a repository, and the fork of a branch leaving its line.
+  repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
+  branch: "M2.6 3a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0z"
+          + "M2.6 11a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0z"
+          + "M8.6 4a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0z"
+          + "M4 4.4v5.2M10 5.4c0 2.4-6 1.8-6 4.2",
 };
 
 function putIcon(parent, kind) {
@@ -8724,34 +8804,123 @@ function newRow(id) {
   row.dataset.id = id;
   row.addEventListener("click", () => choose(id));
   const one = put(row, "div", "line1");
-  put(one, "span", "dot");
-  put(one, "span", "name");
+  const name = put(one, "span", "name");
+  name.title = "double-click to rename";
+  name.addEventListener("dblclick", () => renameRow(row));
   put(one, "span", "word");
-  put(row, "div", "called");
+  put(one, "span", "age");
+  put(row, "div", "line2 where");
   put(row, "div", "line2");
   const three = put(row, "div", "line3");
   put(three, "span", "said");
-  put(three, "span", "age");
   return row;
 }
 
+// A row says what nothing else on the page says: the name you know the
+// session by, the repository and the branch, what git counts, and how long
+// ago. The name is one you gave it, and until you do, its repository and
+// worktree (`agent/richpalm`) -- never the title Claude Code writes from the
+// first prompt, which `/rename` does not reach and which went stale beside
+// the branch. The Session tab still shows that one.
+// Not the state: the dot's colour and the group the row stands in say it
+// already, and a word at the top and "waiting for input" at the foot said it
+// a third and a fourth time. The word stays in the history, where "ended"
+// and "killed" share one group and one grey.
 function fillRow(row, s) {
-  const [one, called, two, three] = row.children;
+  const [one, where, two, three] = row.children;
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
-  one.children[0].className = "dot " + s.state;
-  one.children[1].textContent = s.place || s.label || s.id.slice(0, 8);
-  one.children[2].textContent = s.state_word;
-  called.textContent = s.name || "";
-  called.hidden = !s.name;
+  // Not while it is being renamed: the box is in there, and this runs on
+  // every push.
+  if (!one.children[0].querySelector("input")) {
+    one.children[0].textContent = rowName(s);
+  }
+  one.children[1].textContent = isGone(s) ? s.state_word : "";
+  // On every row, the same four lines: the name, where it stands, the
+  // branch and what git counts, and what it is doing. A row not renamed
+  // says its repository twice, and a row that is always one shape is read
+  // faster than one that saves a word.
+  const fact = (line, cls, icon, text, title) => {
+    const part = put(line, "span", cls);
+    putIcon(part, icon);
+    put(part, "span", "text", text);
+    part.title = title;
+  };
+  where.replaceChildren();
+  if (s.repo) fact(where, "repo", "repo", s.repo, s.remote || "no remote");
+  if (s.worktree) fact(where, "worktree", "dir", s.worktree, s.worktree_path || "");
   two.replaceChildren();
-  if (s.branch) put(two, "span", "branch", s.branch);
-  if (s.ahead) put(two, "span", "ahead", "↑" + s.ahead);
-  if (s.behind) put(two, "span", "ahead", "↓" + s.behind);
-  if (s.dirty) put(two, "span", "dirty", "● " + s.touched_files + " files");
-  else if (s.branch) put(two, "span", "clean", "✓ clean");
-  three.children[0].textContent = s.reason || s.last_event || "";
-  three.children[1].textContent = ago(s.since);
-  ages.push([three.children[1], s.since]);
+  two.hidden = !s.branch;
+  if (s.branch) fact(two, "branch", "branch", s.branch, s.branch);
+  // What git counts, at the right edge, so the counts of every row stand in
+  // one column however long each branch is.
+  const counts = put(two, "span", "gitstate");
+  if (s.ahead) put(counts, "span", "ahead", "↑" + s.ahead);
+  if (s.behind) put(counts, "span", "ahead", "↓" + s.behind);
+  if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
+  else if (s.branch) put(counts, "span", "clean", "✓ clean");
+  // Only while the session is doing something or waiting on you. A ready
+  // session's reason is the state again ("waiting for input", "stopped"),
+  // and a finished one's is "ended (logout)" under the word "ended".
+  const said = s.state === "done" || isGone(s)
+    ? "" : (s.reason || s.last_event || "");
+  three.children[0].textContent = said;
+  three.hidden = !said;
+  // Beside the name, at the right: "how long has this needed me?" is read
+  // with the name, and a ready row has no fourth line to carry it.
+  one.children[2].textContent = ago(s.since);
+  ages.push([one.children[2], s.since]);
+}
+
+function rowName(s) {
+  return (s.mine && s.name) || s.place || s.id.slice(0, 8);
+}
+
+// Renaming where the name stands, by a double-click or `e`. The Session tab
+// has a box for it too, and it is one tab away from every row -- a name you
+// change when you think of it is a name you have. Enter keeps it, an empty
+// name gives the session back its repository and worktree, and Escape or a
+// click elsewhere keeps the old one.
+function renameRow(row) {
+  const id = row.dataset.id;
+  const s = state.sessions.find((one) => one.id === id);
+  const slot = row.querySelector(".line1 .name");
+  if (!s || !slot || slot.querySelector("input")) return;
+  const box = document.createElement("input");
+  box.className = "rowname";
+  box.type = "text";
+  box.autocomplete = "off";
+  box.spellcheck = false;
+  box.placeholder = "a name  \u00b7  enter to keep";
+  box.setAttribute("aria-label", "a name for this session");
+  box.value = rowName(s);
+  slot.replaceChildren(box);
+  const close = () => {
+    if (!box.isConnected) return;
+    box.remove();
+    $("rows").dataset.drawn = "";      // fill the name in again
+    drawSessions();
+  };
+  box.addEventListener("keydown", (press) => {
+    if (press.key === "Enter") {
+      press.preventDefault();
+      // Enter on the name it came with is not a name chosen: kept, it would
+      // stop following the worktree for good.
+      if (s.mine || box.value !== rowName(s)) keepRename(box, id);
+      close();
+    } else if (press.key === "Escape") {
+      press.preventDefault();
+      close();
+    }
+  });
+  // Later, not now: `drawSessions` moves a row that changed its place, a
+  // moved node loses the focus, and it gives the focus straight back. Only a
+  // focus that is still gone after that is the reader leaving.
+  box.addEventListener("blur", () => setTimeout(() => {
+    if (document.activeElement !== box) close();
+  }, 0));
+  box.addEventListener("click", (press) => press.stopPropagation());
+  box.focus();
+  box.select();
 }
 
 // The line between what is running and what is over. It carries the count and
@@ -8791,6 +8960,10 @@ function drawSessions() {
   // The bar is kept for the same reason; anything else that is not a row goes
   // first, because the loop below places things by position and a stray node
   // would shift every one of them.
+  // A row being renamed may move below, and a moved node loses the focus.
+  const typing = box.contains(document.activeElement)
+    && document.activeElement.tagName === "INPUT" ? document.activeElement : null;
+  const caret = typing ? [typing.selectionStart, typing.selectionEnd] : null;
   const had = new Map();
   let bar = null;
   for (const node of Array.from(box.children)) {
@@ -8834,6 +9007,10 @@ function drawSessions() {
   }
   if (!barPlaced && bar) bar.remove();
   for (const gone of had.values()) gone.remove();
+  if (typing && typing.isConnected && document.activeElement !== typing) {
+    typing.focus();
+    typing.setSelectionRange(caret[0], caret[1]);
+  }
   if (!listed.length && state.sessions.length && !past.length) {
     put(box, "div", "nohits", "no session matches");
   }
@@ -14041,6 +14218,13 @@ document.addEventListener("keydown", (press) => {
       break;
     case "f": $("pick").focus(); break;
     case "r": showTab("review"); break;
+    case "e": {
+      const row = document.querySelector(".row.chosen");
+      if (!row) return;
+      press.preventDefault();          // no browser may type it into the box
+      renameRow(row);
+      break;
+    }
     case "Enter": jumpToPane(); break;
     case "s":
       if ($("sendbar").hidden) return;
