@@ -1384,6 +1384,18 @@ update the comment with its own text, and read it back.
   loaded machine, so
   `test_a_scroll_left_over_from_another_session_is_not_its_place` dispatches
   the event on purpose rather than waiting for one.
+  - **A rebuild reads the scroller first, once.** A browser reports a scroll
+    a frame late, and a poll that brought the file again rebuilt the pane in
+    between, so the place put back was the one before the scroll and the
+    reader was sent back there. CI caught it as
+    `test_a_comment_in_a_long_file_survives_the_file_being_read_again`
+    timing out. `drawFiles` reads `.filescroll` before it empties the pane,
+    and only one drawn for this session (`dataset.drawn`) and holding the
+    same file: a pane still reading stands at nought, the scar above.
+    `test_a_scroll_not_yet_reported_survives_the_file_being_read_again`
+    puts the scroll and the rebuild in one task, where no event can come
+    between; `test_another_sessions_scroller_is_not_read_as_this_ones_place`
+    holds the session check.
 - **A tab's state lives under its own name**, `state.files` and
   `state.turns`, each with one `blank…()` that builds an empty one. Choosing a session is then
   `state.files = blankFiles()` rather than eleven assignments that could

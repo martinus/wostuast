@@ -11504,6 +11504,17 @@ function drawFiles(box) {
                            + (state.files.read ? "" : state.files.trouble))) {
     return;
   }
+  // Where the scroller stands now, which the listener below may not have
+  // written down yet: a browser reports a scroll a frame late, and a poll
+  // that brought the file again rebuilt the pane in between -- so the place
+  // put back was the one before, and the reader was sent back there. Only
+  // from a file drawn for this session, and only for the same file: a pane
+  // still reading stands at nought, and that is not a place.
+  const shown = pane.querySelector(".filescroll");
+  if (shown && shown.dataset.drawn === state.chosen
+      && pane.dataset.file === String(state.files.path)) {
+    state.files.down = shown.scrollTop;
+  }
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
   if (!state.files.path) {
@@ -11563,6 +11574,7 @@ function drawFiles(box) {
   // session's number over it. Caught as a test that only failed under load,
   // which is what that ordering needs.
   const mine = state.chosen;
+  view.dataset.drawn = mine;
   view.addEventListener("scroll", () => {
     if (state.chosen !== mine) return;
     state.files.down = view.scrollTop;

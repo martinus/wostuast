@@ -1304,3 +1304,60 @@ def test_a_second_window_takes_up_what_the_first_one_kept(page_at):
             assert kept["comments"] == [], kept
         finally:
             browser.close()
+
+
+def test_a_scroll_not_yet_reported_survives_the_file_being_read_again(long_page):
+    """The browser reports a scroll a frame later, and the Files tab polls.
+    A poll that brings the file again rebuilds the pane and puts back the
+    place the last scroll event wrote down -- so a scroll whose event had not
+    fired yet was undone, and the reader was sent back to where they had
+    been. CI caught it as `..._survives_the_file_being_read_again` timing out
+    on a loaded runner. This makes the order happen on purpose: the scroll
+    and the rebuild in one task, where no scroll event can come between."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            open_file(page, "long.py")
+            page.evaluate("""() => {
+              const view = document.querySelector('.filescroll');
+              view.scrollTop = view.scrollHeight;
+              state.files.mtime += 1;
+              draw();
+            }""")
+            page.wait_for_function(
+                "(n) => [...document.querySelectorAll('.filebody .code .dline .ln')]"
+                ".some((e) => e.textContent.trim() === String(n))",
+                arg=conftest.LONG_LINES)
+        finally:
+            browser.close()
+
+
+def test_another_sessions_scroller_is_not_read_as_this_ones_place(long_page,
+                                                                   served, ws):
+    """The rebuild reads the scroller before it empties the pane, and the
+    pane still holds the last session's scroller the moment another is
+    chosen. Two sessions on the same file: read without asking whose it
+    is, the first one's place became the second one's."""
+    repo, _ = long_page
+    daemon, _ = served
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(repo),
+                                   ts=time.time()))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s2')")
+            open_file(page, "long.py")          # s2 reads it from the top
+            page.evaluate("choose('s1')")
+            open_file(page, "long.py")
+            scroll_to(page, 3000)
+            page.wait_for_function("state.files.down > 3000 * 20")
+            page.evaluate("choose('s2')")
+            page.wait_for_function(
+                "state.files.read && document.querySelector('.filescroll .code')")
+            assert page.evaluate("state.files.down") < 21 * 10
+            assert page.evaluate(
+                "document.querySelector('.filescroll').scrollTop") < 21 * 10
+        finally:
+            browser.close()
