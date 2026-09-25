@@ -11901,6 +11901,11 @@ function blankTurns() {
     told: null,         // how long the stream said the transcript is, meanwhile
     failed: false,      // the last fetch failed; "nothing yet" would lie
     version: 0,         // the daemon's count of changes read, as far as held
+    // Whether a fetch has answered for this session yet, with blocks, with
+    // none, or with a failure. A session with no transcript is answered
+    // with no `run`, so nothing else tells "empty" from "not asked yet" --
+    // and the tests wait on it before they read the tab.
+    landed: false,
   };
 }
 
@@ -14172,6 +14177,7 @@ async function loadTranscript() {
     // reader's places were forgotten, and nothing asked again. What is held
     // is drawn, and with nothing held the tab says it could not read it.
     state.turns.failed = true;
+    state.turns.landed = true;
     draw();
     state.transcriptRetry = setTimeout(() => {
       if (state.chosen === want && state.tab === "transcript") loadTranscript();
@@ -14200,6 +14206,7 @@ async function loadTranscript() {
   if (state.turns.run !== -1 && run !== state.turns.run) forgetPlaces();
   state.turns.run = run;
   state.turns.version = version;
+  state.turns.landed = true;
   draw();
   // The stream opened while this was on its way, and said what it holds.
   const told = state.turns.told;

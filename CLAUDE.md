@@ -385,13 +385,21 @@ event that never came. `read_events(..., then=change)` runs the change once
 the first event is in, and `stream` joins the hub before it writes that
 event, so nothing pushed after it is lost.
 
-**`open_page` returning is not the transcript arriving, and `show_tab` is not
-the tab's content arriving.** Both wait for the frame — the map beside the
-transcript, and the document inside the Files tab, fill one fetch later.
-Abort `api/session/*/transcript` and the list is empty with the page otherwise
-drawn, which is what a loaded CI runner looks like. `wait_for_map(page, rows)`
-is the wait for the transcript; for anything else, wait for the element you
-are about to read.
+**`open_page` returns once the transcript has answered; `show_tab` is not
+the tab's content arriving.** `open_page` waits for `state.turns.landed` --
+an answer with blocks, with none, or a failure -- because three tests in one
+session read `.turnbody` the moment the frame was drawn and went red under
+load, each after its own fix. So the fix is the helper's, once:
+`wait="frame"` is the opt-out, for a test about the page before that answer
+(one that holds the request before the page opens needs it, or it waits
+for ever). `show_tab` still waits only for the frame -- the document inside
+the Files tab fills one fetch later -- and `wait_for_map(page, rows)` is
+still the wait for rows on the map. For anything else, wait for what the
+page has *written down*, not for what the DOM shows: a scroll event writes
+`state.files.down` a frame after the scroller moves, and a test that
+switched sessions in between saved the top.
+`test_open_page_returns_once_the_transcript_has_answered` slows the
+daemon's answer, so the gap is there every time.
 
 **To hold what a key *says*, spy on `note`, not on `#live`.** The slot is
 repainted on every push and the stream is allowed to take a passing word
