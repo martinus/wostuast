@@ -388,7 +388,7 @@ def test_one_commit_is_shown_on_its_own(repo_page):
             page.wait_for_function("(state.diff || {}).commits?.length === 1")
             options = page.eval_on_selector_all(
                 ".pickof option", "els => els.map(e => e.textContent)")
-            assert options[:2] == ["all changes", "not committed yet"]
+            assert options[:2] == ["all changes (1 commit)", "not committed yet"]
             assert options[2].endswith("second"), options
             sha = page.evaluate("state.diff.commits[0].sha")
             pick(page, sha)
