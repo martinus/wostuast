@@ -1913,7 +1913,10 @@ update the comment with its own text, and read it back.
   is cleared the moment it lands, or a live session would drag the reader back
   to it every second. **`#<session>` alone is the session on screen**:
   `choose` writes it with `replaceState`, which fires no `hashchange`, so a
-  reload comes back to that session and not to the first row.
+  reload comes back to that session and not to the first row. **Only when
+  the address names another session**: rewritten always, a link to one
+  reply lost its `/<seq>` the moment it opened, and
+  `test_a_reply_is_a_link_you_can_open_in_another_tab` went red.
 - **A session can be chosen before the session list exists.** The address bar
   holds a link at startup, so `choose` runs with `state.sessions` empty —
   `current()` is null and every tab draws its empty state. The `sessions`

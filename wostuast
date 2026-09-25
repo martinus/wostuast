@@ -14164,9 +14164,14 @@ function choose(id) {
   // The address names the session on screen, so a reload comes back to it.
   // Without it a reload chose the first row, which after a `/clear` is the
   // new session, and the conversation the reader was on seemed to be gone.
-  // `replaceState` makes no `hashchange` and no entry in the history.
+  // `replaceState` makes no `hashchange` and no entry in the history. An
+  // address that already names this session is left alone: it may be a link
+  // to one reply, and the reply is what a reload of a link should land on.
   try {
-    history.replaceState(null, "", "#" + encodeURIComponent(id));
+    const held = placeInHash();
+    if (!held || held.id !== id) {
+      history.replaceState(null, "", "#" + encodeURIComponent(id));
+    }
   } catch (error) {
     // A page the browser will not let rewrite its address still works.
   }
