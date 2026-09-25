@@ -2181,3 +2181,116 @@ def test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face(page_at):
             assert not any("bash-" in one for one in out["map"])
         finally:
             browser.close()
+
+
+# --- landing at the foot -----------------------------------------------------
+
+def append_markdown_rounds(daemon, many):
+    """Rounds whose replies are much taller drawn as Markdown than as text:
+    a heading, a list and a code block each."""
+    with open(daemon_transcript(daemon), "a") as handle:
+        for n in range(many):
+            handle.write(json.dumps({
+                "type": "user", "timestamp": "2026-09-18T14:10:00.000Z",
+                "message": {"role": "user", "content": f"round {n} please"}})
+                + "\n")
+            handle.write(json.dumps({
+                "type": "assistant", "timestamp": "2026-09-18T14:11:00.000Z",
+                "message": {"role": "assistant", "content": [{"type": "text",
+                    "text": f"## Answer {n}\n\n- one\n- two\n\n"
+                            "```python\nprint(1)\nprint(2)\n```\n\n"
+                            + "More words. " * 30}]}}) + "\n")
+    daemon.tick()
+
+
+AT_FOOT = """(sel) => { const one = document.querySelector(sel);
+  return one.scrollHeight > one.clientHeight + 200
+    && one.scrollHeight - one.scrollTop - one.clientHeight < 2; }"""
+
+
+def test_a_first_load_lands_at_the_foot_when_marked_comes_late(page_at):
+    """The transcript is drawn as text first, and again as Markdown once
+    `marked` has come from its CDN -- much taller. The first draw's foot was
+    written down in pixels, and the second draw put it back: after a reload
+    the reader stood thousands of pixels above the latest reply. The map
+    beside it always opened at its top. Both land at the foot now, and the
+    library is held here until the first draw is done, which is the order a
+    slow network gives."""
+    from browser import fresh_context
+    from pathlib import Path
+    daemon, path = page_at
+    append_markdown_rounds(daemon, 30)
+    marked = Path(__file__).parent / "fixtures" / "marked.min.js"
+    with sync_playwright() as play:
+        context = fresh_context(play)
+        held = []
+        context.route("**/marked.min.js", lambda route: held.append(route))
+        try:
+            page = context.new_page()
+            page.goto(path, wait_until="domcontentloaded")
+            page.wait_for_function("document.querySelectorAll('.turn').length > 40")
+            assert not page.evaluate("!!window.marked"), "drawn as text first"
+            page.wait_for_function(AT_FOOT, arg=".turnbody")
+            held[0].fulfill(path=str(marked), content_type="application/javascript",
+                            headers={"access-control-allow-origin": "*"})
+            page.wait_for_selector(".turnbody .prose h2")
+            page.wait_for_function(AT_FOOT, arg=".turnbody")
+            page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
+        finally:
+            context.close()
+
+
+def test_the_map_keeps_its_place_when_a_round_arrives(page_at):
+    """Every round that arrived rebuilt the map, and a rebuilt list starts at
+    its top. At its foot it stays at its foot; scrolled up, it stays where
+    the reader put it."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            append_rounds(daemon, 30)
+            page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
+            append_rounds(daemon, 1)
+            page.wait_for_function(
+                "document.querySelectorAll('.filelist.transcript button').length > 60")
+            page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
+            page.eval_on_selector(".filelist.transcript", "el => el.scrollTop = 40")
+            append_rounds(daemon, 1)
+            page.wait_for_function(
+                "document.querySelectorAll('.filelist.transcript button').length > 62")
+            assert page.eval_on_selector(".filelist.transcript",
+                                         "el => el.scrollTop") == 40
+        finally:
+            browser.close()
+
+
+def test_the_way_back_is_an_arrow_in_the_middle(page_at):
+    """The reader asked for the arrow alone, in the middle of the transcript
+    and still at its foot. Its word stays for the pointer and a screen
+    reader."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            append_rounds(daemon, 12)
+            page.eval_on_selector(".turnbody", "el => el.scrollTop = 0")
+            page.wait_for_selector(".tofoot", state="visible")
+            out = page.evaluate("""() => {
+              const button = document.querySelector('.tofoot');
+              const b = button.getBoundingClientRect();
+              const p = document.querySelector('.turnbody').getBoundingClientRect();
+              return {middle: (b.left + b.right) / 2 - (p.left + p.right) / 2,
+                      foot: p.bottom - b.bottom, text: button.textContent,
+                      icon: !!button.querySelector('svg'),
+                      label: button.getAttribute('aria-label')};
+            }""")
+            assert abs(out["middle"]) < 2, out
+            assert 0 < out["foot"] < 40, out
+            assert out["text"] == "" and out["icon"]
+            assert out["label"] == "go to the latest"
+        finally:
+            browser.close()

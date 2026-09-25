@@ -175,7 +175,7 @@ where you left it: the tab, the open file, and your place in it.
 
 The map beside the transcript has one row for each thing you typed, with the
 replies under it. Click a row to go there. Click its chevron to fold that round
-away. When you scroll up, a **↓ latest** button takes you back to the end.
+away. When you scroll up, a round **↓** button at the foot of the transcript takes you back to the end. After a reload, the transcript and the map both open at the latest round.
 
 #### Files
 

@@ -7555,18 +7555,24 @@ body:not(.show-thinking) .thinking { display: none; }
 /* Over the transcript, at its foot, and only while it would do something.
    It is a `.verb`, which already gives it the height, the padding, the
    border, the raised background, the type and the hover -- so what is left
-   here is only what makes it float. It needs no `[hidden]` rule of its own
-   the way `.sendbar` does: `.verb` sets no `display`, so nothing beats the
-   browser's own rule for the attribute. */
+   here is only what makes it float. It sets `display` now, to put its
+   arrow in the middle, so it carries the `[hidden]` rule `.sendbar` does. */
 /* A grid item in the pane's own cell, over the pane, at its foot. Not
    `position: absolute` against the box: the box runs down under the
    question bar and the send box, so its foot is behind them. An absolute
    child with a grid area is meant to be measured from that area, and
    Chromium measured it from the whole box -- the box is a subgrid. */
 .tofoot {
-  grid-row: 1; grid-column: 3; align-self: end; justify-self: end;
-  margin: 0 22px 16px 0; position: relative; z-index: 4;
-  border-radius: 13px; box-shadow: 0 2px 8px var(--shadow);
+  grid-row: 1; grid-column: 3; align-self: end; justify-self: center;
+  margin: 0 0 16px; position: relative; z-index: 4;
+  width: 32px; height: 32px; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.tofoot[hidden] { display: none; }
+.tofoot .icon {
+  width: 16px; height: 16px; fill: none; stroke: currentColor;
+  stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
 }
 /* The map of the conversation. Same rows as the file tree, because they are
    the same thing: a list on the left that names what is on the right. */
@@ -8760,6 +8766,8 @@ const ICONS = {
        + "M2.9 11.1l1.1-1.1M10 4l1.1-1.1",
   moon: "M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4z",
   themeAuto: "M1.8 7a5.2 5.2 0 1 0 10.4 0a5.2 5.2 0 1 0-10.4 0zM7 1.8v10.4",
+  // The way back to the latest, at the foot of the transcript.
+  down: "M7 2.2v9.4M3 7.6l4 4 4-4",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -10569,6 +10577,14 @@ function drawTurnList(list, note) {
                              [...state.turns.shut].sort().join(",")].join("\n"))) {
     return;
   }
+  // Where the reader had the map, read before it is emptied: emptying it
+  // puts the scrollbar back to the top, and every round that arrived threw
+  // the map there. It is read from the end, like the transcript: at its
+  // foot, or new to this session, it lands on the latest round.
+  const mine = list.dataset.session === (state.chosen || "");
+  const atFoot = !mine || nearBottom(list);
+  const was = list.scrollTop;
+  list.dataset.session = state.chosen || "";
   list.replaceChildren();
   if (!found.length) {
     put(list, "div", "nohits",
@@ -10582,6 +10598,7 @@ function drawTurnList(list, note) {
     }
   }
   noteTurns(note, found, replies, all);
+  list.scrollTop = atFoot ? list.scrollHeight : was;
 }
 
 // A prompt is a folder and a reply is what is in it, so the depth is the one
@@ -10653,9 +10670,13 @@ function goToTurn(seq) {
 // content box rather than off the scroller, because the scroller's children
 // are the blocks and `drawTranscript` replaces all of them.
 function putToFoot(box) {
-  const button = put(box, "button", "verb tofoot", "\u2193 latest");
+  // Only the arrow, in the middle: the reader asked for it smaller, and a
+  // word at the right edge stood over the replies' ends.
+  const button = put(box, "button", "verb tofoot");
+  putIcon(button, "down");
   button.type = "button";
-  button.title = "go to the end, and follow it again";
+  button.title = "go to the latest, and follow it again";
+  button.setAttribute("aria-label", "go to the latest");
   button.addEventListener("click", () => {
     const pane = box.children[2];
     pane.scrollTop = pane.scrollHeight;
@@ -10705,8 +10726,12 @@ function drawTranscript(box) {
   if (!pane.dataset.watched) {
     pane.dataset.watched = "1";
     pane.addEventListener("scroll", () => {
+      // At the foot is "no place kept", and not a number of pixels. The
+      // transcript is drawn twice on a first load -- as text, and again as
+      // Markdown once `marked` arrives, much taller -- and the second draw
+      // put back the first one's foot, thousands of pixels short of its own.
       if (pane.dataset.session === (state.chosen || "")) {
-        state.turns.down = pane.scrollTop;
+        state.turns.down = nearBottom(pane) ? null : pane.scrollTop;
       }
       showToFoot(foot, pane);
     });
