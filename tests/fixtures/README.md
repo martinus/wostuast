@@ -131,10 +131,12 @@ Saying No to a dialog fires no hook. Measured on 2.1.282: after Escape the
 log ends at the `PermissionRequest` and its `Notification`, and the
 transcript gets the call's result (`toolUseResult: "User rejected tool
 use"`) and a `user` record `[Request interrupted by user for tool use]`.
-When the page declines, the daemon appends one record of its own to the
+When a dialog is declined, the daemon appends one record of its own to the
 event log, once the transcript shows that result: `hook_event_name:
 "Declined"`, with `session_id`, `ts`, `key` (the dialog, as
-`Session.permission` names it) and `tool_use_id`. No hook writes it.
+`Session.permission` names it) and `tool_use_id`. No hook writes it. It
+carries `where: "terminal"` when the No was given in the pane rather than
+from the page.
 
 `status.json` is one status line payload, in the shape the `statusLine`
 command receives on stdin. The numbers in it are invented; the field names are

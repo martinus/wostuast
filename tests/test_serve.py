@@ -1492,3 +1492,42 @@ def test_one_decline_at_a_time_per_session(ws, declining):
                         token=daemon.token)
     assert status == 409 and "already on its way" in body["error"]
     assert seen == []
+
+
+def test_a_no_given_in_the_terminal_ends_the_wait(ws, declining):
+    """Saying No fires no hook, and only the page's own No had the daemon
+    watch for it: a No typed in the terminal left the row amber, over an
+    agent back at its prompt, until the next prompt. The tick now looks for
+    the rejection as the call's result, for every dialog up. A Yes is not a
+    No, and a No the page is pressing is the page's to record."""
+    daemon, _, _, _, _, path = declining
+
+    def write(text):
+        with open(path, "a") as handle:
+            handle.write(conftest.records(conftest.record(
+                "result", text, tool_id="toolu_p1")))
+
+    # While the page presses its own No, the tick leaves the dialog alone.
+    daemon.declining.add("s1")
+    write(REJECTED)
+    daemon.tick()
+    assert daemon.store.sessions["s1"].state == "needs_you"
+    daemon.declining.discard("s1")
+
+    daemon.tick()
+    session = daemon.store.sessions["s1"]
+    assert session.state == "done" and session.permission is None
+    assert session.last_event == "declined in the terminal"
+    assert session.log[-1]["name"] == "Declined"
+    assert daemon.store.rows[0]["state"] == "done"
+
+
+def test_a_yes_in_the_terminal_is_not_taken_for_a_no(ws, declining):
+    """A call that ran has a result too, and its `PostToolUse` is what says
+    so. Read as a No, the row said "declined" over a build that went on."""
+    daemon, _, _, _, _, path = declining
+    with open(path, "a") as handle:
+        handle.write(conftest.records(conftest.record(
+            "result", "14 passed in 0.31s", tool_id="toolu_p1")))
+    daemon.tick()
+    assert daemon.store.sessions["s1"].state == "needs_you"
