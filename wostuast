@@ -1825,7 +1825,8 @@ def read_permission(event: dict[str, Any], calls: dict[str, str], summary: str,
 
 
 def _on_declined(session: Session, event: dict[str, Any], ts: float) -> None:
-    """wostuast's own record, not a hook: the page declined a permission.
+    """wostuast's own record, not a hook: a permission was declined, from
+    the page or -- `where` is "terminal" -- in the pane itself.
 
     Saying No fires no hook, so the row stayed amber over an agent already
     back at its prompt. The daemon writes this only once the transcript
@@ -1839,7 +1840,8 @@ def _on_declined(session: Session, event: dict[str, Any], ts: float) -> None:
     session.calls.pop(str(shown.get("call") or ""), None)
     _clear_attention(session)
     session.state = "done"
-    session.last_event = "declined from the page"
+    session.last_event = ("declined in the terminal" if event.get("where") == "terminal"
+                          else "declined from the page")
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -2942,6 +2944,11 @@ TOKEN_MARK = "__WOSTUAST_TOKEN__"
 #: Where the running copy's version goes, beside the name at the top of the
 #: session list.
 VERSION_MARK = "__WOSTUAST_VERSION__"
+
+#: How Claude Code answers a call whose dialog was told No, as the call's
+#: result in the transcript. Measured on 2.1.282; the tool_result goes on
+#: "The tool use was rejected (eg. if it was a file edit, …)".
+REJECTED = "The user doesn't want to proceed with this tool use"
 
 #: The most a POST body may be.
 POST_MAX = 64 * 1024
@@ -5240,12 +5247,46 @@ class Daemon:
         the call's result. So this is the one proof, short of looking at the
         pane, that the dialog has closed.
         """
+        return self.call_result(session_id, call) is not None
+
+    def call_result(self, session_id: str, call: str) -> str | None:
+        """The result the transcript holds for a call, read just now, or None
+        while it has none. An empty string is a result: `touch` prints
+        nothing, and its dialog has closed all the same."""
         if not call or self.read_transcript(session_id) is None:
-            return False
+            return None
         with self.lock:
             reader = self.transcripts.get(session_id)
             held = reader.by_tool_use.get(call) if reader is not None else None
-            return held is not None and held.answered
+            return held.result if held is not None and held.answered else None
+
+    def declined_in_terminal(self) -> bool:
+        """Write `Declined` for a dialog told No in the terminal.
+
+        Saying No fires no hook, so the row stayed amber, over an agent back
+        at its prompt, until the next prompt was typed -- the page's own No
+        had the daemon watch for it, and a No in the terminal had nobody. The
+        proof is the same: the transcript holds the call's result, and it is
+        the rejection. A Yes is left alone, because its `PostToolUse` says
+        so, and a No the page is pressing is left to the page, which writes
+        its own record and says where it came from. True when one was written.
+        """
+        wrote = False
+        for session in list(self.store.sessions.values()):
+            shown = session.permission
+            call = str((shown or {}).get("call") or "")
+            if (session.state != "needs_you" or not call
+                    or session.session_id in self.declining):
+                continue
+            said = self.call_result(session.session_id, call)
+            if said is None or not said.lstrip().startswith(REJECTED):
+                continue
+            append_event({"session_id": session.session_id,
+                          "hook_event_name": "Declined", "ts": time.time(),
+                          "key": shown["key"], "tool_use_id": call,
+                          "where": "terminal"})
+            wrote = True
+        return wrote
 
     def sessions_payload(self) -> dict[str, Any]:
         return {"now": time.time(), "sessions": self.store.rows}
@@ -5270,6 +5311,10 @@ class Daemon:
         # `moved or self.store.refresh()` short-circuits, so on a tick that
         # had already changed something the second read never ran at all.
         if stopped:
+            moved = self.store.refresh() or moved
+        # The same reading again, for the record written just now: the row
+        # goes out no longer amber on this tick, not the next.
+        if self.declined_in_terminal():
             moved = self.store.refresh() or moved
         if moved:
             self.hub.send("sessions", self.sessions_payload())
@@ -8262,7 +8307,7 @@ async function keepRename(box, id = state.chosen) {
 const EVENT_WORDS = {
   UserPromptSubmit: "prompts", PreToolUse: "tool calls",
   PostToolUse: "results", PostToolUseFailure: "failures",
-  PermissionRequest: "permission asks", Declined: "declined here",
+  PermissionRequest: "permission asks", Declined: "declined",
   Notification: "notifications",
   Stop: "turns ended", SubagentStop: "subagents", PreCompact: "compactions",
   SessionStart: "starts", SessionEnd: "ends",

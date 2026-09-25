@@ -973,7 +973,15 @@ update the comment with its own text, and read it back.
   next same call two matches. **The daemon writes a `Declined` record of
   its own** into the event log once the transcript shows the decline, and
   `_on_declined` ends the wait for that one dialog: saying No fires no
-  hook, and the row stayed amber over an agent back at its prompt.
+  hook, and the row stayed amber over an agent back at its prompt. **A No
+  in the terminal too**: `declined_in_terminal` looks, each tick, for the
+  call of every dialog up, and writes the record (`where: "terminal"`) when
+  its result is `REJECTED` -- not for any result, because a Yes has one
+  too and its `PostToolUse` says so, and not for a session in `declining`,
+  whose No the page is pressing and records itself. Read again on the same
+  tick, so the row goes out no longer amber.
+  `test_a_no_given_in_the_terminal_ends_the_wait`,
+  `test_a_yes_in_the_terminal_is_not_taken_for_a_no`,
   `test_a_permission_request_reaches_the_page_whole`,
   `test_a_request_two_open_calls_could_be_has_no_call`,
   `test_a_decline_seen_in_the_transcript_ends_the_wait`,
@@ -2403,8 +2411,9 @@ it. The reason is the part to weigh before undoing one.
   `PostToolUse`, for as long as the build runs. Saying No fires nothing at
   all. The row is left saying what is known; the pane is what settles it. Do
   not invent an event that does not exist. **The one record of our own is
-  `Declined`**, and it is not a guess: the page pressed the Escape, and the
-  transcript showed the call rejected before it was written.
+  `Declined`**, and it is not a guess: the transcript showed the call
+  rejected before it was written, whether the page pressed the Escape or
+  the reader did in the terminal.
 - **The status line writes one small file per session, and never the log.**
   It runs on every redraw, so an append would flood the log with nothing
   new. `install` never replaces a status line the user already has: it
