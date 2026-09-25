@@ -274,19 +274,24 @@ def test_a_tab_with_nothing_to_narrow_offers_no_find_box(page_at):
 def test_the_live_slot_keeps_the_far_end_when_the_find_box_goes(page_at):
     """`margin-left: auto` on the find box is what pushed both it and the
     live slot to the end of the tab bar. With the box gone the slot came to
-    rest against the last tab."""
+    rest against the last tab. The far end is the bell and the colours now,
+    so the slot stands just before them."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             show_tab(page, "session")
             seen = page.evaluate("""() => {
               const bar = document.querySelector('.tabs').getBoundingClientRect();
+              const theme = document.getElementById('theme').getBoundingClientRect();
+              const bell = document.getElementById('bell').getBoundingClientRect();
               const live = document.getElementById('live').getBoundingClientRect();
               const last = [...document.querySelectorAll('.tab')]
                 .pop().getBoundingClientRect();
-              return {gap: bar.right - live.right, fromTab: live.left - last.right};
+              return {end: bar.right - theme.right, gap: bell.left - live.right,
+                      fromTab: live.left - last.right};
             }""")
-            assert seen["gap"] < 40, seen         # still at the far end
+            assert seen["end"] < 40, seen         # the group is at the far end
+            assert seen["gap"] < 40, seen         # and the slot is in it
             assert seen["fromTab"] > 100, seen    # not up against the tabs
         finally:
             browser.close()
