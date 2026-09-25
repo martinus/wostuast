@@ -2294,3 +2294,32 @@ def test_the_way_back_is_an_arrow_in_the_middle(page_at):
             assert out["label"] == "go to the latest"
         finally:
             browser.close()
+
+
+def test_open_page_returns_once_the_transcript_has_answered(page_at, ws, monkeypatch):
+    """Three tests in one session read the tab the moment its frame was
+    drawn and went red under load, each after its own fix. `open_page` now
+    waits for the transcript's answer, and a slow daemon is what makes the
+    gap every time rather than on a loaded runner now and then."""
+    daemon, _ = page_at
+    real = ws.Daemon.read_transcript
+
+    def slow(self, session_id):
+        time.sleep(1.0)
+        return real(self, session_id)
+
+    monkeypatch.setattr(ws.Daemon, "read_transcript", slow)
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.evaluate("state.turns.landed")
+            assert page.locator(".turnbody .turn").count() >= 2
+        finally:
+            browser.close()
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at, wait="frame")
+        try:
+            # The opt-out returns at the first draw, before the answer.
+            assert not page.evaluate("state.turns.landed")
+        finally:
+            browser.close()

@@ -398,6 +398,8 @@ still the wait for rows on the map. For anything else, wait for what the
 page has *written down*, not for what the DOM shows: a scroll event writes
 `state.files.down` a frame after the scroller moves, and a test that
 switched sessions in between saved the top.
+`test_open_page_returns_once_the_transcript_has_answered` slows the
+daemon's answer, so the gap is there every time.
 
 **To hold what a key *says*, spy on `note`, not on `#live`.** The slot is
 repainted on every push and the stream is allowed to take a passing word
