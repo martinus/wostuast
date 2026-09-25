@@ -599,6 +599,21 @@ update the comment with its own text, and read it back.
   and reads the config file rather than asking git: a third git run on every
   poll for a line that almost never changes. `git@host:path` holds no secret
   and stays. `test_the_remote_is_read_and_never_carries_a_password`.
+- **A one-line summary of a command hides what looks like a credential.**
+  The row's last line is a command as the agent ran it, and `curl -s -u
+  me:token` stood on a screen that is shared and screenshotted. `tool_target`
+  runs `hide_secrets` -- a user and password in a URL, `-u user:pass`,
+  credential headers, `Bearer …`, a name that says secret `=` a value,
+  `--password x`, and tokens known by their shape -- and it runs it
+  **before the cut**: a URL cut before its `@` no longer looks like one with
+  a password, and its first half stood on the row. The name is kept, so the
+  reader still knows what was there. Every one-line summary goes through it:
+  the row, the session's log, `ls`, a tool call's line in the transcript.
+  The permission bar does not: a request is judged on all of it. It catches
+  the shapes it knows, and a secret in another shape still shows -- say so
+  rather than implying the page is safe from them.
+  `test_a_summary_hides_what_looks_like_a_credential`,
+  `test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole`.
 - **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
   of text with colours, never markup.
 - **What a `send` may be is counted in bytes, and tmux is what sets the

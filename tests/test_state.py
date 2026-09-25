@@ -1525,3 +1525,54 @@ def test_a_row_names_the_worktree_by_its_top_not_where_it_started(ws):
     assert shown["worktree"] == "richpalm"
     assert shown["worktree_path"] == "/w/agent/richpalm"
     assert shown["remote"] == "https://example.com/agent.git"
+
+
+SECRETS = [
+    # (command, what the one-line summary says)
+    ('curl -s -u "me@example.com:s3cr3t" https://api.example.com/x',
+     'curl -s -u "***" https://api.example.com/x'),
+    ("curl --user=me:pw https://h", "curl --user=*** https://h"),
+    ("git clone https://me:tok@example.com/o/r", "git clone https://***@example.com/o/r"),
+    ('curl -H "Authorization: Bearer abc.def.ghi123" https://h',
+     'curl -H "Authorization: ***" https://h'),
+    ("GITHUB_TOKEN=ghp_" + "a" * 36 + " gh pr list", "GITHUB_TOKEN=*** gh pr list"),
+    ('curl "https://h/api?token=abc123&x=1"', 'curl "https://h/api?token=***&x=1"'),
+    ("mysql --password hunter2 db", "mysql --password *** db"),
+    ("echo sk-" + "b" * 30, "echo ***"),
+    # And what only looks like one stays as it was typed.
+    ("sort -u file.txt", "sort -u file.txt"),
+    ("git add -u", "git add -u"),
+    ("grep -rn token include/wostuast/", "grep -rn token include/wostuast/"),
+    ("curl -u me https://h", "curl -u me https://h"),
+    ("echo $TOKEN", "echo $TOKEN"),
+]
+
+
+@pytest.mark.parametrize("command, shown", SECRETS)
+def test_a_summary_hides_what_looks_like_a_credential(ws, command, shown):
+    """The row's last line is a command as the agent ran it, and it stood
+    there whole: `curl -u me:token` on a screen that is shared and
+    screenshotted. The summary hides the value and keeps its name."""
+    assert ws.tool_target("Bash", {"command": command}) == shown
+
+
+def test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole(ws):
+    """Hidden before the line is cut, so half a secret is not left on the
+    row; in every place the summary goes. The permission bar is the one
+    place a request is shown whole, because it is judged on all of it."""
+    # The `@` after the cut at 60: cut first, the URL no longer looks like
+    # one with a password in it, and its first half stands on the row.
+    command = "cd " + "d" * 20 + " && git clone https://me:hunter2hunter2@example.com/r"
+    session = fold(ws,
+                   event("PreToolUse", tool_name="Bash", tool_use_id="toolu_s1",
+                         tool_input={"command": command}, ts=1000.0),
+                   event("PermissionRequest", tool_name="Bash",
+                         tool_input={"command": command}, ts=1000.1))
+    row = ws.row(session)
+    said = [row["last_event"], row["last_tool"], row["reason"],
+            *(str(one) for one in session.log)]
+    assert all("hunter2" not in one for one in said), said
+    assert any("https://***" in one for one in said), said
+    assert row["permission"]["fields"][0] == ["command", command]
+    # A tool that is not Bash is summed up as its input, and hidden too.
+    assert "token=***" in ws.tool_target("WebFetch", {"url": "https://h/?token=abc123"})
