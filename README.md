@@ -179,7 +179,7 @@ where you left it: the tab, the open file, and your place in it.
 
 The map beside the transcript has one row for each thing you typed, with the
 replies under it. Click a row to go there. Click its chevron to fold that round
-away. When you scroll up, a round **↓** button at the foot of the transcript takes you back to the end. After a reload, the transcript and the map both open at the latest round.
+away. When you scroll up, a round **↓** button at the foot of the transcript takes you back to the end. After a reload, the page stays on the same session, and the transcript and the map both open at the latest round.
 
 #### Files
 
@@ -398,6 +398,10 @@ repository and worktree.
 
 The title that Claude Code gives a session does not change when you use
 `/rename`, so the list does not show it. The Session tab does.
+
+`/clear` starts a new session in the same pane. The page moves to it by
+itself, and your name for the session goes with it. The conversation before
+the `/clear` stays under **History**, whole.
 
 </details>
 

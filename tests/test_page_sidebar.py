@@ -1013,3 +1013,74 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
             assert "idle" not in daemon.store.names
         finally:
             browser.close()
+
+
+def clear_into_s2(ws, daemon, tmp_path, transcript_file):
+    """What a `/clear` in s1's pane writes: s1 ends, s2 starts with a
+    transcript of its own, in the same pane and the same process."""
+    path = transcript_file("s2", [conftest.record("you", "after the clear")])
+    now = time.time()
+    ws.append_event(conftest.event("SessionEnd", sid="s1", cwd=str(tmp_path),
+                                   pane="%7", pid=1, reason="clear", ts=now))
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(tmp_path),
+                                   pane="%7", pid=1, source="clear",
+                                   transcript_path=str(path), ts=now + 0.1))
+    daemon.tick()
+
+
+def test_a_clear_is_followed_and_a_reload_stays_on_it(page_at, ws, tmp_path,
+                                                      transcript_file):
+    """The reader typed `/clear` and the page stayed on the session it had
+    ended, with the old transcript; a reload then opened on the first row,
+    the new one, and the old conversation seemed gone. The page follows the
+    `/clear` into the new session, and the address names the session on
+    screen, so a reload comes back to it."""
+    daemon, _ = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.evaluate("location.hash") == "#s1"
+            clear_into_s2(ws, daemon, tmp_path, transcript_file)
+            page.wait_for_function("state.chosen === 's2'")
+            page.wait_for_function(
+                "document.querySelector('.turnbody')?.innerText"
+                ".includes('after the clear')")
+            assert page.evaluate("location.hash") == "#s2"
+            page.reload()
+            page.wait_for_function("state.chosen === 's2' && state.turns.landed")
+            assert "after the clear" in page.locator(".turnbody").inner_text()
+        finally:
+            browser.close()
+
+
+def test_a_reader_who_goes_back_to_a_cleared_session_stays_there(
+        page_at, ws, tmp_path, transcript_file):
+    """Followed once, when the link appears. The old conversation is still
+    worth reading, and a page that sent the reader on again on every push
+    would make it unreadable. Nor is a link that was there before the page
+    opened followed: nobody cleared anything under the reader's eyes."""
+    daemon, _ = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            clear_into_s2(ws, daemon, tmp_path, transcript_file)
+            page.wait_for_function("state.chosen === 's2'")
+            page.evaluate("choose('s1')")
+            ws.append_event(conftest.event("UserPromptSubmit", sid="s2",
+                                           cwd=str(tmp_path), pane="%7", pid=1,
+                                           prompt="more", ts=time.time() + 1))
+            daemon.tick()
+            page.wait_for_function(
+                "state.sessions.find(s => s.id === 's2').state === 'working'")
+            assert page.evaluate("state.chosen") == "s1"
+        finally:
+            browser.close()
+        browser, page = open_page(play, page_at, wait="frame")
+        try:
+            page.goto(page.url.split("#")[0] + "#s1")
+            page.reload()
+            page.wait_for_function("state.chosen === 's1' && state.sessions.length === 2")
+            page.wait_for_timeout(300)     # proving nothing moves
+            assert page.evaluate("state.chosen") == "s1"
+        finally:
+            browser.close()

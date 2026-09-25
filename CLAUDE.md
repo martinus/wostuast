@@ -58,7 +58,7 @@ after the tests go red.
 | `set_limit`, `over_limit`, `limit_refused`, `LIMIT_RETRY`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
-| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home` | State |
+| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `putShell` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url` | The sidebar |
@@ -1077,6 +1077,28 @@ update the comment with its own text, and read it back.
   no `tool_use_id`, so the pairing goes by `tool_summary`; two runs of the same
   command at the same moment cannot be told apart, and nothing in the payload
   can.
+- **A `/clear` is one conversation in two sessions, and the page follows
+  it.** Claude Code ends the session (`reason: clear`) and starts another
+  (`source: clear`) with a new id and a new transcript, in the same pane and
+  the same process, a tenth of a second apart -- measured on 2.1.282. The
+  page stayed on the session that had ended, showing the old transcript, and
+  a reload then opened on the first row, the new one: the reader took the
+  transcript for broken, and the old conversation for lost. `link_clear`
+  joins the two in `Store.apply` by the process, or by the pane where there
+  is no pid, within `CLEAR_GAP`, in either order -- the two hooks are
+  separate processes. The row carries `cleared_into`, and `followClear`
+  chooses it **once, when the link appears while the page is open**:
+  `state.cleared` holds what it has seen, so a reader who goes back to read
+  the old one is not sent on again, and a link already there when the page
+  opened was not made under anybody's eyes. **The reader's name moves with
+  it**, out of `names.json` and not copied, so the old row falls back to
+  where it was; the log folds again on a restart and finds nothing to move.
+  `test_a_clear_joins_the_session_it_ended_to_the_one_it_started`,
+  `test_a_clear_is_not_joined_to_another_sessions_start`,
+  `test_a_clear_with_no_pid_is_joined_by_its_pane`,
+  `test_the_name_goes_with_a_clear_and_moves_once`,
+  `test_a_clear_is_followed_and_a_reload_stays_on_it`,
+  `test_a_reader_who_goes_back_to_a_cleared_session_stays_there`.
 - **A state change clears the attention with it.** Every handler that sets a
   state calls `_clear_attention` — `SessionStart` did not, so a session killed
   at its dialog and resumed came back "ready" with the old permission question
@@ -1889,7 +1911,9 @@ update the comment with its own text, and read it back.
   does nothing then, and that is the whole of the failure. It also wins over
   the usual landing at the foot of the transcript exactly once: `state.goToBlock`
   is cleared the moment it lands, or a live session would drag the reader back
-  to it every second.
+  to it every second. **`#<session>` alone is the session on screen**:
+  `choose` writes it with `replaceState`, which fires no `hashchange`, so a
+  reload comes back to that session and not to the first row.
 - **A session can be chosen before the session list exists.** The address bar
   holds a link at startup, so `choose` runs with `state.sessions` empty —
   `current()` is null and every tab draws its empty state. The `sessions`

@@ -1576,3 +1576,80 @@ def test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole(ws):
     assert row["permission"]["fields"][0] == ["command", command]
     # A tool that is not Bash is summed up as its input, and hidden too.
     assert "token=***" in ws.tool_target("WebFetch", {"url": "https://h/?token=abc123"})
+
+
+def clear_events(end_ts=2000.0, start_ts=2000.1, **new):
+    """The two events of one `/clear`, as Claude Code 2.1.282 sends them:
+    the old session ends, a new one starts in the same pane and process."""
+    ended = event("SessionEnd", reason="clear", ts=end_ts)
+    started = event("SessionStart", source="clear", ts=start_ts,
+                    session_id="s2", transcript_path="/t2.jsonl")
+    started.update(new)
+    return ended, started
+
+
+@pytest.mark.parametrize("backwards", [False, True])
+def test_a_clear_joins_the_session_it_ended_to_the_one_it_started(ws, backwards):
+    """`/clear` ends the session and starts one with a new id and a new
+    transcript. The page stayed on the one that had ended, and a reload then
+    opened on another row, so the reader thought the transcript had broken.
+    Nothing in either event names the other; they share the process. The
+    two hooks are separate processes, so either may be folded first."""
+    store = ws.Store()
+    store.apply(event("SessionStart", source="startup", ts=1000.0))
+    ended, started = clear_events()
+    for one in ((started, ended) if backwards else (ended, started)):
+        store.apply(one)
+    old, new = store.sessions["s1"], store.sessions["s2"]
+    assert old.cleared_into == "s2" and new.cleared_from == "s1"
+    assert ws.row(old)["cleared_into"] == "s2"
+    assert ws.row(new)["cleared_into"] == ""
+
+
+@pytest.mark.parametrize("other", [
+    {"pid": 999},                                  # another agent's /clear
+    {"ts": 2000.0 + 60},                           # a minute later
+])
+def test_a_clear_is_not_joined_to_another_sessions_start(ws, other):
+    store = ws.Store()
+    store.apply(event("SessionStart", source="startup", ts=1000.0))
+    ended, started = clear_events(**other)
+    store.apply(ended)
+    store.apply(started)
+    assert store.sessions["s1"].cleared_into == ""
+    assert store.sessions["s2"].cleared_from == ""
+
+
+def test_a_clear_with_no_pid_is_joined_by_its_pane(ws):
+    """`agent_pid` is 0 where there is no /proc, on macOS always. The pane
+    is then what the two halves share -- and only the same pane."""
+    for pane, joined in (("%1", True), ("%2", False)):
+        store = ws.Store()
+        store.apply(event("SessionStart", source="startup", ts=1000.0, pid=0))
+        ended, started = clear_events(pid=0, pane=pane)
+        ended["pid"] = 0
+        store.apply(ended)
+        store.apply(started)
+        assert (store.sessions["s1"].cleared_into == "s2") is joined
+
+
+def test_the_name_goes_with_a_clear_and_moves_once(ws):
+    """The reader named the conversation in that pane, not an id Claude Code
+    swapped under them. Moved, not copied: the old row in History falls back
+    to where it was. A restart folds the log again and moves nothing twice --
+    not even a name given to the old row after the move."""
+    store = ws.Store()
+    store.apply(event("SessionStart", source="startup", ts=1000.0))
+    store.rename("s1", "the payments work")
+    for one in clear_events():
+        store.apply(one)
+    assert ws.read_names() == {"s2": "the payments work"}
+    store.settle(2001.0, alive=lambda pid: True)
+    assert ws.row(store.sessions["s2"])["name"] == "the payments work"
+    assert ws.row(store.sessions["s1"])["name"] == ""
+    store.rename("s1", "read later")
+    again = ws.Store()
+    again.apply(event("SessionStart", source="startup", ts=1000.0))
+    for one in clear_events():
+        again.apply(one)
+    assert ws.read_names() == {"s2": "the payments work", "s1": "read later"}
