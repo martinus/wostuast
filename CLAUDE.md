@@ -1317,6 +1317,18 @@ update the comment with its own text, and read it back.
 - **The counts are about every session.** `drawCounts` runs *before* the guard
   that asks whether the shown rows changed — behind it, a session the filter
   hides could go amber and reach the title, icon and notification: none of them.
+  **They are not on the page itself**: a strip over it said "1 ready" and
+  "3 sessions" beside groups that already said so, and the reader asked for
+  the room. The browser tab's title and icon, and the alerts, are what count.
+- **There is no bar across the top.** The name and the version head the
+  session list (`.sidebar-head`, as tall as `.tabs`, so the two rules under
+  them are one line), and the bell and the colours are icons at the end of
+  the tab row, their words in `aria-label` and `title`. The version is
+  `own_version`: the day the running file was written and the start of its
+  SHA-256 -- never a number to raise by hand, and the same bytes
+  `install_behind` compares.
+  `test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list`,
+  `test_the_page_says_which_copy_is_running`.
 - **A row says what nothing else on the page says, in four lines that are
   the same on every row.** The reader chose each line. The name; the
   repository and the worktree, with the remote and the path on a hover; the

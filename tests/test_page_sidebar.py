@@ -93,15 +93,14 @@ def test_the_sidebar_filter_narrows_the_list(pair_at):
         browser, page = open_page(play, pair_at)
         try:
             two_rows(page)
-            counted = page.locator("#counts").inner_text()
+            counted = page.title()
 
             page.fill("#pick", "wmhr")          # scattered letters, as in Files
             page.wait_for_function("document.querySelectorAll('.row').length === 1")
             assert "warmhare" in page.locator(".row .name").inner_text()
-            assert "1 of 2 sessions" in page.locator("#where").inner_text()
             # The counts are the answer to "who needs me". A filter in the box
             # must not hide an agent that is waiting.
-            assert page.locator("#counts").inner_text() == counted
+            assert page.title() == counted
 
             page.fill("#pick", "nowhereatall")
             page.wait_for_selector(".rows .nohits")
@@ -115,7 +114,7 @@ def test_the_sidebar_filter_narrows_the_list(pair_at):
 
 
 def test_a_hidden_session_still_counts(pair_at, ws):
-    """The counts, the title and the icon are about every session. They used to
+    """The title, the icon and the alerts are about every session. They used to
     be drawn after the guard that asks whether the shown rows had changed, so
     with anything typed in the filter, a session you could not see going amber
     changed nothing anywhere on the page."""
@@ -126,14 +125,13 @@ def test_a_hidden_session_still_counts(pair_at, ws):
             two_rows(page)
             page.fill("#pick", "wmhr")         # hides s1, keeps warmhare
             page.wait_for_function("document.querySelectorAll('.row').length === 1")
-            assert "needs you" not in page.locator("#counts").inner_text()
+            assert "needs you" not in page.title()
 
             ws.append_event(conftest.event(
                 "PermissionRequest", sid="s1", tool_name="Bash",
                 tool_input={"command": "ls ~"}, ts=time.time()))
             daemon.tick()
-            page.wait_for_function(
-                "document.getElementById('counts').innerText.includes('needs you')")
+            page.wait_for_function("document.title.includes('needs you')")
             assert page.locator(".row").count() == 1, "the filter stopped working"
             assert page.title().startswith("(1)")
         finally:
@@ -213,7 +211,7 @@ def test_alerts_are_off_until_you_ask(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            assert page.locator("#bell").inner_text() == "alerts off"
+            assert page.get_attribute("#bell", "aria-label") == "alerts off"
             assert page.evaluate("Notification.permission") != "granted"
         finally:
             browser.close()
@@ -250,8 +248,7 @@ def test_finished_sessions_are_folded_away_under_history(past_at):
                 "document.getElementById('rows').lastElementChild"
                 ".classList.contains('histhead')")
             # And they are still counted: the fold is not a filter.
-            assert "2 ended" in page.locator("#counts").inner_text()
-            assert page.locator("#where").inner_text() == "3 sessions"
+            assert page.evaluate("state.sessions.length") == 3
         finally:
             browser.close()
 
@@ -540,7 +537,7 @@ def test_the_needs_you_alert_is_on_as_soon_as_alerts_are(page_at):
             page.wait_for_selector("#alerts", state="visible")
             assert page.is_checked("#alertneeds")
             assert not page.is_checked("#alertdone")
-            assert "alerts on" in page.locator("#bell").inner_text()
+            assert page.get_attribute("#bell", "aria-label") == "alerts on"
         finally:
             browser.close()
 

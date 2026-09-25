@@ -232,7 +232,7 @@ end of the tab row. You see both on every tab.
 
 ### Alerts
 
-The **alerts** button opens two switches. One tells you when an agent needs
+The **bell** at the end of the tab row opens two switches. One tells you when an agent needs
 you. The other tells you when an agent has finished. The first is on as soon as
 you allow alerts, because that is what this tool is for. The second is off
 until you turn it on. Both use your browser's own notifications, so the
@@ -254,7 +254,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>s</kbd> | Type into the agent's terminal |
 | <kbd>t</kbd> | Show or hide the agent's thinking, and say how much there is |
-| <kbd>c</kbd> | Colours: auto, light, dark |
+| <kbd>c</kbd> | Colours: auto, light, dark (the last button in the tab row does the same) |
 | <kbd>Esc</kbd> | Clear a box, or close the help |
 
 **Jump** puts the cursor in the agent's pane. To also raise your terminal

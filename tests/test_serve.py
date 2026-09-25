@@ -749,6 +749,26 @@ def ws_token_mark():
     return "__WOSTUAST_" + "TOKEN__"
 
 
+def test_the_page_says_which_copy_is_running(served, ws):
+    """The name at the top of the session list carries a version: the day
+    the running file was written and the start of the SHA-256 of its bytes.
+    Nothing to raise by hand, and two copies that say the same are the same
+    bytes, which is what `install_behind` compares."""
+    import hashlib
+    import re
+    from pathlib import Path
+    daemon, base = served
+    said = ws.own_version()
+    day, _, digest = said.partition(" \u00b7 ")
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d", day)
+    here = Path(ws.__file__).read_bytes()
+    assert digest == hashlib.sha256(here).hexdigest()[:7]
+    with urllib.request.urlopen(f"{base}/", timeout=5) as answer:
+        page = answer.read().decode()
+    assert said in page
+    assert "__WOSTUAST_" + "VERSION__" not in page
+
+
 def test_two_daemons_do_not_share_a_token(ws):
     assert ws.Daemon().token != ws.Daemon().token
     assert len(ws.Daemon().token) >= 32

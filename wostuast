@@ -2900,6 +2900,10 @@ TOKEN_HEADER = "X-Wostuast-Token"
 #: Where the token goes into the page, replaced as the page is served.
 TOKEN_MARK = "__WOSTUAST_TOKEN__"
 
+#: Where the running copy's version goes, beside the name at the top of the
+#: session list.
+VERSION_MARK = "__WOSTUAST_VERSION__"
+
 #: The most a POST body may be.
 POST_MAX = 64 * 1024
 
@@ -5108,6 +5112,7 @@ class Daemon:
         # token can send one that acts. It is made here and printed into the
         # page, and it lives as long as the daemon does.
         self.token = secrets.token_urlsafe(32)
+        self.version = own_version()
         self.transcripts: dict[str, Transcript] = {}
         #: Sessions a decline is being pressed into. It waits up to
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
@@ -5806,7 +5811,8 @@ class Serving:
         query = parse_qs(url.query)
         parts = path.strip("/").split("/")
         if path == "/":
-            page = PAGE.replace(TOKEN_MARK, self.daemon.token)
+            page = (PAGE.replace(TOKEN_MARK, self.daemon.token)
+                    .replace(VERSION_MARK, self.daemon.version))
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
@@ -6308,6 +6314,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if problems else 0
 
 
+def own_version() -> str:
+    """Which copy of this file is running: the day it was last written, and
+    the first seven hex digits of the SHA-256 of its bytes.
+
+    There is no version number to keep up to date, on purpose -- a number
+    somebody has to remember to raise is one that is wrong half the time.
+    The bytes are what `install_behind` compares, so two copies that say the
+    same here are the same program. "" when the file cannot be read.
+    """
+    import hashlib
+
+    try:
+        here = Path(__file__).resolve()
+        data = here.read_bytes()
+        day = time.strftime("%Y-%m-%d", time.localtime(here.stat().st_mtime))
+    except (NameError, OSError):
+        return ""
+    return f"{day} \u00b7 {hashlib.sha256(data).hexdigest()[:7]}"
+
+
 def install_behind() -> str:
     """Why the installed copy is not this one, or "" when it is.
 
@@ -6685,27 +6711,30 @@ body {
 }
 .app { height: 100vh; display: flex; flex-direction: column; }
 
-/* top bar */
-.topbar {
-  height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 16px;
-  padding: 0 16px; border-bottom: 1px solid var(--edge); background: var(--panel);
-  font-family: var(--mono); font-size: 13px;
-}
+/* The name and the version, at the top of the session list and as tall as the
+   tab row beside it, so the two rules under them are one line. There was a
+   bar across the whole page for these and the counts; the reader asked for
+   the room back. */
 .brand { font-weight: 600; color: var(--needs); letter-spacing: .04em; }
-.topbar .where { color: var(--ink-faint); }
-.counts { margin-left: auto; display: flex; gap: 6px; align-items: center;
-  color: var(--ink-mute); }
-.counts .sep { color: var(--edge-bright); margin: 0 6px; }
+.version { color: var(--ink-faint); font-size: 11px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+/* The bell and the colours, as icons at the end of the tab row. */
 .theme {
-  margin-left: 8px; padding: 2px 10px; border-radius: 5px;
-  border: 1px solid var(--edge-bright); background: none; color: var(--ink-mute);
-  font: inherit; font-size: 12px; cursor: pointer;
+  flex-shrink: 0; align-self: center; margin-left: 6px; width: 26px;
+  height: 26px; padding: 0; border-radius: 5px; display: inline-flex;
+  align-items: center; justify-content: center;
+  border: 1px solid var(--edge); background: none; color: var(--ink-mute);
+  cursor: pointer;
+}
+.theme .icon {
+  width: 14px; height: 14px; fill: none; stroke: currentColor;
+  stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round;
 }
 .theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
 .theme:disabled { opacity: .5; cursor: default; }
 /* The bell and what hangs under it. The slot is what the panel is measured
    from, so the panel follows the button wherever the strip puts it. */
-.bellslot { position: relative; margin-left: 14px; display: flex; }
+.bellslot { position: relative; margin-left: 12px; display: flex; }
 .alerts {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
   min-width: 232px; padding: 10px; border-radius: 6px;
@@ -6748,8 +6777,9 @@ body {
 .grip:hover, .grip.dragging { background: var(--needs); }
 body.dragging { cursor: col-resize; user-select: none; }
 .sidebar-head {
-  padding: 12px 16px 8px; font-family: var(--mono); font-size: 11px;
-  color: var(--ink-faint); letter-spacing: .08em; text-transform: uppercase;
+  height: 40px; flex-shrink: 0; display: flex; align-items: baseline;
+  gap: 10px; padding: 12px 16px 0; margin-bottom: 8px;
+  border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13px;
 }
 .rows { flex-grow: 1; overflow-y: auto; padding: 0 8px 8px; }
 .row {
@@ -7955,26 +7985,11 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   <div class="lost">connection lost — reconnecting…</div>
   <div class="stale">wostuast was restarted, so this page is out of date and
     nothing it sends will go in. Reload it.</div>
-  <div class="topbar">
-    <div class="brand">wostuast</div>
-    <div class="where" id="where">—</div>
-    <div class="counts" id="counts"></div>
-    <div class="bellslot">
-      <button type="button" class="theme" id="bell"
-              aria-expanded="false" title="what to be told about"></button>
-      <div class="alerts" id="alerts" hidden>
-        <div class="alertnote" id="alertnote"></div>
-        <label class="alertone"><input type="checkbox" id="alertneeds">
-          <span>an agent needs you</span></label>
-        <label class="alertone"><input type="checkbox" id="alertdone">
-          <span>an agent has finished</span></label>
-      </div>
-    </div>
-    <button type="button" class="theme" id="theme" title="light, dark, or follow the system"></button>
-  </div>
   <div class="body">
     <div class="sidebar">
-      <div class="sidebar-head">Sessions</div>
+      <div class="sidebar-head"><span class="brand">wostuast</span><span
+        class="version" title="the day this copy was written, and the start of its SHA-256"
+        >__WOSTUAST_VERSION__</span></div>
       <div class="findslot">
         <input class="find" id="pick" type="search" placeholder="filter sessions  f"
                autocomplete="off" spellcheck="false">
@@ -8002,6 +8017,18 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         </div>
         <div class="ctxslot" id="ctxslot" hidden></div>
         <div class="live" id="live"></div>
+        <div class="bellslot">
+          <button type="button" class="theme" id="bell"
+                  aria-expanded="false"></button>
+          <div class="alerts" id="alerts" hidden>
+            <div class="alertnote" id="alertnote"></div>
+            <label class="alertone"><input type="checkbox" id="alertneeds">
+              <span>an agent needs you</span></label>
+            <label class="alertone"><input type="checkbox" id="alertdone">
+              <span>an agent has finished</span></label>
+          </div>
+        </div>
+        <button type="button" class="theme" id="theme"></button>
       </div>
       <div class="content" id="content"></div>
       <div class="asking" id="asking" hidden></div>
@@ -8664,7 +8691,17 @@ function applyTheme(choice) {
     // A browser that refuses storage still gets the colours, just not the memory.
   }
   const button = $("theme");
-  if (button) button.textContent = { system: "auto", light: "light", dark: "dark" }[choice];
+  if (button) {
+    // An icon, and the word for it on the pointer and for a screen reader:
+    // the strip it stands in has no room for the word.
+    const word = { system: "auto", light: "light", dark: "dark" }[choice];
+    button.replaceChildren();
+    putIcon(button, { system: "themeAuto", light: "sun", dark: "moon" }[choice]);
+    button.dataset.choice = word;
+    button.setAttribute("aria-label", "colours: " + word);
+    button.title = "colours: " + word + "  \u00b7  c  \u00b7  click for "
+      + { system: "light", light: "dark", dark: "auto" }[choice];
+  }
   redrawIcon();
 }
 
@@ -8712,6 +8749,17 @@ const ICONS = {
   // is the second target on a round's row, and a shape of its own, so the
   // icon that says who spoke is not also a button.
   chevron: "M5.4 3.6L8.8 7l-3.4 3.4",
+  // The two buttons at the end of the tab row. A bell, and the same bell
+  // struck through; a sun, a moon, and a circle half and half for "follow
+  // the system".
+  bell: "M4 6.2a3 3 0 0 1 6 0v2.6l1.3 2H2.7l1.3-2zM5.7 12.2a1.4 1.4 0 0 0 2.6 0",
+  bellOff: "M4 6.2a3 3 0 0 1 6 0v2.6l1.3 2H2.7l1.3-2zM5.7 12.2a1.4 1.4 0 0 0 2.6 0"
+           + "M1.8 1.8l10.4 10.4",
+  sun: "M4.6 7a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0z"
+       + "M7 1.2v1.5M7 11.3v1.5M1.2 7h1.5M11.3 7h1.5M2.9 2.9l1.1 1.1M10 10l1.1 1.1"
+       + "M2.9 11.1l1.1-1.1M10 4l1.1-1.1",
+  moon: "M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4z",
+  themeAuto: "M1.8 7a5.2 5.2 0 1 0 10.4 0a5.2 5.2 0 1 0-10.4 0zM7 1.8v10.4",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -8993,7 +9041,7 @@ function drawSessions() {
   // push of its own, so every page load drew the whole sidebar twice.
   const shown = shownSessions();
   pruneReviews(state.sessions);
-  drawCounts(shown);
+  drawCounts();
   const listed = listedSessions();
   const past = shown.filter(isGone);
   if (!fresh(box, "drawn",
@@ -9070,25 +9118,16 @@ function tickAges() {
   for (const [node, since] of ages) node.textContent = ago(since);
 }
 
-function drawCounts(shown) {
-  const box = $("counts");
-  box.replaceChildren();
-  // The rows arrive already sorted by state, and each carries its own word, so
-  // the order and the wording are the server's and are not restated here.
+// The browser tab's title and icon, and the alerts: the answer to "who needs
+// me" from another window. The page itself says it in the sidebar's groups,
+// so the strip of counts that stood over it was gone -- the reader asked.
+function drawCounts() {
   const tally = new Map();
   for (const s of state.sessions) {
     const seen = tally.get(s.state) || { word: s.state_word, n: 0 };
     seen.n += 1;
     tally.set(s.state, seen);
   }
-  let first = true;
-  for (const [key, seen] of tally) {
-    if (!first) put(box, "span", "sep", "|");
-    first = false;
-    put(box, "span", "dot " + key);
-    put(box, "span", null, seen.n + " " + seen.word);
-  }
-  if (first) put(box, "span", null, "no sessions");
   const needs = (tally.get("needs_you") || { n: 0 }).n;
   const working = (tally.get("working") || { n: 0 }).n;
   document.title = needs
@@ -9096,11 +9135,8 @@ function drawCounts(shown) {
     : working ? working + " working · wostuast" : "wostuast";
   drawIcon(needs ? "needs_you" : working ? "working"
     : state.sessions.length ? "done" : "gone");
-  const all = state.sessions.length;
-  // Everything above is about every session, filter or no filter: "who needs
-  // me" must not change because you typed in a box. Only this line narrows.
-  $("where").textContent = (shown.length === all ? all : shown.length + " of " + all) +
-    " session" + (all === 1 ? "" : "s");
+  // About every session, filter or no filter: "who needs me" must not
+  // change because you typed in a box.
   notifyAbout(state.sessions);
 }
 
@@ -9659,8 +9695,13 @@ function drawBell() {
   if (!button) return;
   const can = "Notification" in window;
   button.disabled = !can;
-  button.textContent = !can ? "no alerts"
-    : alertsCan() && anyAlert() ? "alerts on" : "alerts off";
+  const on = can && alertsCan() && anyAlert();
+  const word = !can ? "no alerts" : on ? "alerts on" : "alerts off";
+  button.replaceChildren();
+  putIcon(button, on ? "bell" : "bellOff");
+  button.dataset.state = word;
+  button.setAttribute("aria-label", word);
+  button.title = word + "  \u00b7  what to be told about";
   const want = alertsWanted();
   $("alertneeds").checked = want.needs;
   $("alertdone").checked = want.done;
