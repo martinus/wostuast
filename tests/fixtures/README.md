@@ -27,6 +27,14 @@ Each event adds its own fields:
 `notification_type` is one of `permission_prompt`, `idle_prompt`,
 `auth_success`, `elicitation_dialog`.
 
+A slash command fires no hook at all: `/model opus` changes the model and
+the log says nothing, measured on 2.1.283. The status line sends the new
+`model` on its next redraw, and the transcript records the command and its
+answer (`local_command.jsonl`), in two shapes: `user` records whose content
+is `<command-name>…<command-args>…` and then `<local-command-stdout>…`, or
+`system` records with `subtype: local_command` holding the same text in
+`content`. `/context`'s answer carries colour codes.
+
 `/clear` sends two events, measured on 2.1.282: `SessionEnd` with `reason:
 clear` for the old id, then `SessionStart` with `source: clear` for a new id
 and a new `transcript_path`, about 0.1 s later. They carry the same `pane`
