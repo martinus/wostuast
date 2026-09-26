@@ -2137,6 +2137,48 @@ def test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt(page_at):
             browser.close()
 
 
+def test_a_slash_command_is_drawn_with_what_it_answered(page_at):
+    """`/model opus` sent from the send box showed as the reader's prompt and
+    nothing more; what Claude Code answered was dropped. The command and its
+    answer are one block now, drawn as a `!` command is but with its own
+    `/`, and a `/context` grid keeps its columns in the fixed face."""
+    from pathlib import Path
+    daemon, _ = page_at
+    fixture = Path(__file__).parent / "fixtures" / "local_command.jsonl"
+    lines = fixture.read_text().splitlines()
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write("".join(line + "\n" for line in lines))
+            daemon.tick()
+            page.wait_for_function(
+                "document.querySelectorAll('.bubble.shell .output').length === 3")
+            out = page.evaluate("""() => {
+              const bubbles = [...document.querySelectorAll('.bubble.shell')];
+              return {commands: bubbles.map((one) =>
+                        one.querySelector('.command').textContent),
+                      outputs: bubbles.map((one) =>
+                        one.querySelector('.output').textContent),
+                      mine: bubbles.every((one) => one.closest('.turn.mine')),
+                      wrap: getComputedStyle(
+                        bubbles[2].querySelector('.output')).whiteSpace,
+                      map: [...document.querySelectorAll(
+                        '.filelist.transcript button')].map((one) => one.textContent)};
+            }""")
+            assert out["commands"] == ["/model", "/model opus", "/context"]
+            assert out["outputs"][1].startswith("Set model to `Opus 5.5`")
+            assert "Context Usage" in out["outputs"][2]
+            assert "[38;5" not in out["outputs"][2]
+            assert out["mine"] and out["wrap"] == "pre"
+            assert any("/model opus" in one for one in out["map"])
+            assert not any("! /" in one for one in out["map"])
+        finally:
+            browser.close()
+
+
 def test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face(page_at):
     """A `!` command and what it printed are one block on the reader's rail,
     the output in the fixed face, keeping its columns, as text. It arrives

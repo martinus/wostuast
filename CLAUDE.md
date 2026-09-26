@@ -59,7 +59,7 @@ after the tests go red.
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
-| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `putShell` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
+| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
@@ -202,7 +202,7 @@ This list exists because each entry was re-implemented once already.
 
 **Python helpers**: `path_label`, `clip`, `run` (subprocess with a timeout),
 `private_dir`/`private_file`, `safe_transcript`, `worktree_root`, `is_listed`,
-`inside`, `ansi_runs`, `GONE_STATES`, `STATE_WORDS`.
+`inside`, `CONTROL_CHARS`, `ESCAPE_CODES`, `GONE_STATES`, `STATE_WORDS`.
 
 **Test helpers**: `conftest.event(name, sid=..., **extra)` builds a hook event —
 never hand-write the dict. `conftest.record(kind, text, ...)` builds a
@@ -622,8 +622,9 @@ update the comment with its own text, and read it back.
   rather than implying the page is safe from them.
   `test_a_summary_hides_what_looks_like_a_credential`,
   `test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole`.
-- **The page never builds HTML from a pane.** `ansi_runs` hands over stretches
-  of text with colours, never markup.
+- **The page never builds HTML from what a program printed.** A `!`
+  command's output and a slash command's answer reach it as text, and
+  `putShell` puts them in a `pre` as text: a program can print `<img>`.
 - **What a `send` may be is counted in bytes, and tmux is what sets the
   number.** Bisected against tmux 3.4: `send-keys -t %0 -l -- <text>` takes
   16,341 bytes and refuses 16,342 with "command too long"; the same run with
@@ -1926,8 +1927,7 @@ update the comment with its own text, and read it back.
   one `/reload-plugins` arrives as three or four records of tags, and
   `(no content)` was drawn as something the reader had typed.
   `read_user_text` reads one for what it is — a command becomes one line
-  saying what was run, its output and the resumed-session caveat are
-  dropped, and a task notification or another session's message becomes a
+  saying what was run, the resumed-session caveat is dropped, and a task notification or another session's message becomes a
   `note`, which is shown but never wears the reader's rail. **A record is
   only read as a command when there is nothing else on it**: a prompt really
   can hold `<command-name>` in it, because somebody asking about this very
@@ -1951,6 +1951,23 @@ update the comment with its own text, and read it back.
     Measured on 2.1.282, `tests/fixtures/bash_mode.jsonl`.
     `test_a_command_run_with_a_bang_is_one_block_with_its_output`,
     `test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face`.
+  - **A slash command is one block with its answer, in the same shape.**
+    `/model opus` sent from the send box changed the model and the page
+    showed the command alone: its answer, "Set model to `Opus 5.5`", was
+    dropped as plumbing, and no hook fires for a slash command, so nothing
+    said what it did. `command_output` puts `<local-command-stdout>` into
+    the command's `command` block, which the page draws as a `shell` one
+    with its own `/` instead of a `!`. "(no content)" closes the block and
+    draws nothing. **Two shapes, both read**: 2.1.283 writes `/model opus`
+    as `user` records and `/model` closed without a pick, or `/context`, as
+    `system` records with `subtype: local_command` and the text in
+    `content` -- `Transcript.add` read no `system` record but the
+    compaction's. **And the colour codes come off** (`ESCAPE_CODES`, then
+    `CONTROL_CHARS`): `/context` draws its grid in them, measured. A command
+    nobody typed is a note, like any other words that are not the reader's.
+    `tests/fixtures/local_command.jsonl`.
+    `test_a_slash_command_and_what_it_answered_are_one_block`,
+    `test_a_slash_command_is_drawn_with_what_it_answered`.
 - **A message sent to a busy agent comes back wrapped, and the wrapper is not
   yours.** Claude Code queues it into the running turn and writes a header
   (`The user sent a new message while you were working:`), the words typed,

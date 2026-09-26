@@ -352,7 +352,7 @@ def test_a_slash_command_is_one_line_saying_what_was_run(ws, tmp_path):
         "            <command-message>reload-plugins</command-message>\n"
         "            <command-args></command-args>"))
     assert [(one.kind, one.text) for one in blocks] == [
-        ("prompt", "/reload-plugins")]
+        ("command", "/reload-plugins")]
 
 
 def test_a_slash_command_keeps_what_was_passed_to_it(ws, tmp_path):
@@ -366,15 +366,61 @@ def test_a_slash_command_keeps_what_was_passed_to_it(ws, tmp_path):
 
 def test_a_command_s_own_output_is_not_a_prompt(ws, tmp_path):
     """`(no content)` is not something anybody typed, and neither is the
-    caveat Claude Code puts in front of a resumed conversation."""
+    caveat Claude Code puts in front of a resumed conversation: neither draws
+    anything. An answer with no command before it is drawn as an answer."""
     reader = ws.Transcript(str(tmp_path / "t.jsonl"))
     for text in ("<local-command-stdout>(no content)</local-command-stdout>",
-                 "<local-command-stdout>✔ Updated 1 marketplace"
-                 "</local-command-stdout>",
                  "<local-command-caveat>Caveat: The messages below were"
                  " generated while a session was resumed."
                  "</local-command-caveat>"):
         assert reader.add(user_record(text)) == [], text
+    alone, = reader.add(user_record(
+        "<local-command-stdout>✔ Updated 1 marketplace</local-command-stdout>"))
+    assert (alone.kind, alone.text, alone.result) == (
+        "command", "", "✔ Updated 1 marketplace")
+
+
+def test_a_slash_command_and_what_it_answered_are_one_block(ws, tmp_path):
+    """`/model opus` typed from the page's send box changed the model, and the
+    page showed the command and nothing of what it did: Claude Code's answer
+    was dropped as plumbing. And a `/model` closed without a pick, or
+    `/context`, came as `system` records the reader did not read at all.
+    Measured on 2.1.283; the fixture is those records, with the paths and ids
+    made up. `/context` writes colour codes, which a page would show as
+    `[38;5;244m` litter."""
+    import json
+    from pathlib import Path
+    fixture = Path(__file__).parent / "fixtures" / "local_command.jsonl"
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    for line in fixture.read_text().splitlines():
+        reader.add(json.loads(line))
+    shown = [(one.kind, one.text, one.result) for one in reader.blocks]
+    kept, picked, context, spoken = shown
+    assert kept == ("command", "/model", "Kept model as `Sonnet 5 (default)`")
+    assert picked == ("command", "/model opus", "Set model to `Opus 5.5` and"
+                      " saved as your default for new sessions")
+    assert context[:2] == ("command", "/context")
+    assert "Context Usage" in context[2] and "⛀" in context[2]
+    assert "\x1b" not in context[2] and "[38;5" not in context[2]
+    # The caveat draws nothing; the Markdown Claude Code handed the agent
+    # after `/context` is the harness speaking, as it always was.
+    assert spoken[0] == "note"
+    # "(no content)" closes the command's block and draws nothing.
+    quiet = ws.Transcript(str(tmp_path / "q.jsonl"))
+    one, = quiet.add(user_record("<command-name>/reload-plugins</command-name>"
+                                 "<command-message>reload-plugins"
+                                 "</command-message><command-args></command-args>"))
+    same, = quiet.add(user_record(
+        "<local-command-stdout>(no content)</local-command-stdout>"))
+    assert same is one and (one.result, one.answered) == ("", True)
+    # An answer never lands in a block that already has one.
+    other, = quiet.add(user_record(
+        "<local-command-stdout>Reloaded 3 plugins</local-command-stdout>"))
+    assert other is not one and other.text == ""
+    # A command nobody typed -- another session's, or Claude Code's own -- is
+    # the harness speaking, like any other words that are not the reader's.
+    theirs = quiet.user_block("<command-name>/compact</command-name>", 0.0, True)
+    assert theirs.kind == "note"
 
 
 def test_the_harness_speaking_is_a_note_and_not_your_prompt(ws, tmp_path):

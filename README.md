@@ -181,6 +181,12 @@ The map beside the transcript has one row for each thing you typed, with the
 replies under it. Click a row to go there. Click its chevron to fold that round
 away. When you scroll up, a round **↓** button at the foot of the transcript takes you back to the end. After a reload, the page stays on the same session, and the transcript and the map both open at the latest round.
 
+A command you run in Claude Code shows with its answer, in a fixed-width font:
+a `!` command with what it printed, and a slash command such as `/model opus`
+with what Claude Code answered. You can send a slash command from the send box
+too. One that opens a menu, such as `/model` alone, opens it in the terminal:
+press <kbd>Enter</kbd> to jump there and pick.
+
 #### Files
 
 Every file git knows about, as a tree. Pictures show as pictures. Go to a file

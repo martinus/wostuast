@@ -2269,6 +2269,20 @@ MACHINE_TAG = re.compile(
 BASH_INPUT = re.compile(r"\s*<bash-input>(.*?)</bash-input>\s*", re.S)
 BASH_OUTPUT = re.compile(r"\s*<bash-stdout>(.*?)</bash-stdout>\s*"
                          r"(?:<bash-stderr>(.*?)</bash-stderr>\s*)?", re.S)
+#: What a slash command answered, written as the record after the command's.
+#: Measured on 2.1.283: `/model opus` answers "Set model to `Opus 5.5`...",
+#: a `/model` closed without a pick "Kept model as ...", and `/context`
+#: draws a grid of symbols in colour codes. A reader who typed the command
+#: from the page's send box had no other way to see what it did.
+#: `tests/fixtures/local_command.jsonl`.
+LOCAL_OUTPUT = re.compile(
+    r"\s*<local-command-stdout>(.*?)</local-command-stdout>\s*", re.S)
+#: What a command writes for "nothing to say".
+NO_OUTPUT = "(no content)"
+#: Colour and cursor codes, which a terminal acts on and a page would show as
+#: `[38;5;244m`: CSI sequences, OSC sequences, and the two-byte kind.
+ESCAPE_CODES = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]")
 COMMAND_NAME = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
 COMMAND_ARGS = re.compile(r"<command-args>\s*(.*?)\s*</command-args>", re.S)
 TASK_NOTE = re.compile(r"^<task-notification>\s*(.*?)\s*</task-notification>$",
@@ -2411,10 +2425,11 @@ def read_user_text(text: str) -> tuple[str, str]:
     rest = MACHINE_TAG.sub("", text).strip()
     named = COMMAND_NAME.search(text)
     if named and not rest:
-        # One line saying what was run, which is the whole of what happened.
+        # One line saying what was run. What it answered comes in the next
+        # record, and `command_output` puts it into this block.
         args = COMMAND_ARGS.search(text)
         said = args.group(1).strip() if args else ""
-        return "prompt", (named.group(1) + (" " + said if said else "")).strip()
+        return "command", (named.group(1) + (" " + said if said else "")).strip()
     if not rest:
         return "", ""                      # plumbing, and nothing else
     stopped = INTERRUPTED.fullmatch(rest)
@@ -2552,7 +2567,18 @@ class Transcript:
             # and no build in use writes one, so there is nothing to measure.
             return [self.keep(Block(kind="divider", text="context compacted"))]
         if kind == "system":
-            if str(record.get("subtype") or "") != "compact_boundary":
+            subtype = str(record.get("subtype") or "")
+            if subtype == "local_command":
+                # The same command and answer as a `user` record, in another
+                # shape: 2.1.283 writes `/model` closed without a pick and
+                # `/context` this way, with the text in `content`.
+                content = record.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    return []
+                block = self.user_block(
+                    content, parse_timestamp(record.get("timestamp")), False)
+                return [block] if block else []
+            if subtype != "compact_boundary":
                 return []
             return [self.keep(Block(kind="divider", text="context compacted"))]
         if kind == "attachment":
@@ -2609,10 +2635,13 @@ class Transcript:
         printed = BASH_OUTPUT.fullmatch(text)
         if printed:
             return self.shell_output(printed, ts)
+        answered = LOCAL_OUTPUT.fullmatch(text)
+        if answered:
+            return self.command_output(answered.group(1), ts)
         mine, text = read_user_text(text)
         if not mine:
             return None
-        if theirs and mine == "prompt":
+        if theirs and mine in ("prompt", "command"):
             mine = "note"
         return self.keep(Block(kind=mine, ts=ts, text=text))
 
@@ -2633,6 +2662,28 @@ class Transcript:
         if block is None or block.kind != "shell" or block.answered:
             block = self.keep(Block(kind="shell", ts=ts))
         block.result = said
+        block.answered = True
+        return block
+
+    def command_output(self, said: str, ts: float) -> Block | None:
+        """What a slash command answered, into the block of the command.
+
+        The shape of `shell_output`: a command and its answer are one thing
+        to read. The colour codes come off, and so does every other control
+        character, because a page shows them as litter. "(no content)" is
+        Claude Code saying there is nothing to say: it closes the command's
+        block and draws nothing. An answer with no command before it -- a
+        transcript read from the middle -- stands alone.
+        """
+        said = CONTROL_CHARS.sub("", ESCAPE_CODES.sub("", said))
+        said = "\n".join(line.rstrip() for line in said.strip("\n").splitlines())
+        nothing = not said.strip() or said.strip() == NO_OUTPUT
+        block = self.blocks[-1] if self.blocks else None
+        if block is None or block.kind != "command" or block.answered:
+            if nothing:
+                return None
+            block = self.keep(Block(kind="command", ts=ts))
+        block.result = "" if nothing else said
         block.answered = True
         return block
 
@@ -10577,8 +10628,9 @@ function blockTurn(block, index) {
     drawTool(tools, block, index);
     return node;
   }
-  // A `!` command is the reader's too: they typed it.
-  const shell = block.kind === "shell";
+  // A `!` command is the reader's too: they typed it. So is a slash command,
+  // drawn the same way, because its answer is output in the fixed face.
+  const shell = block.kind === "shell" || block.kind === "command";
   const mine = block.kind === "prompt" || shell;
   // Something the harness said, not the reader and not the agent.
   const aside = block.kind === "note";
@@ -10616,7 +10668,11 @@ function blockTurn(block, index) {
 // output, and `<draft>` in a branch name is a branch name.
 function putShell(node, block) {
   const bubble = put(node, "div", "bubble shell");
-  put(bubble, "div", "command", "! " + block.text);
+  // A slash command wears its own `/`; a shell command gets the `!` typed.
+  if (block.text) {
+    put(bubble, "div", "command",
+        (block.kind === "shell" ? "! " : "") + block.text);
+  }
   if (block.result) put(bubble, "pre", "output", block.result);
 }
 
@@ -10683,6 +10739,8 @@ function rounds() {
       out.push(here = { seq: at, text: block.text, replies: [] });
     } else if (block.kind === "shell") {      // typed too, with its `!`
       out.push(here = { seq: at, text: "! " + block.text, replies: [] });
+    } else if (block.kind === "command" && block.text) {   // with its `/`
+      out.push(here = { seq: at, text: block.text, replies: [] });
     } else if (block.kind === "text") {   // a `note` is neither, by design
       if (!here) out.push(here = { seq: at, text: "", replies: [] });
       here.replies.push({ seq: at, text: block.text });
