@@ -2314,6 +2314,30 @@ QUEUED = re.compile(
 #: it is real news, but never as a prompt: nobody typed it.
 NOTED = ("<task-notification>", "Another Claude session sent a message:")
 
+#: A task notification is a block of fields, measured on 2.1.276 to 2.1.283:
+#: `task-id`, `tool-use-id`, `output-file`, `status`, `summary`, and at times
+#: `note`, `result` and a `usage` of three numbers. The page took the outer
+#: tag off and drew the rest raw -- 272 notes of tags on one machine, found
+#: by `wostuast shapes`. What a reader wants is the summary, and the result
+#: when there is one. `tests/fixtures/notes.jsonl`.
+TASK_FIELD = re.compile(r"<(status|summary|result)>\s*(.*?)\s*</\1>", re.S)
+#: Another session's message: a header line in a `user` record (none in a
+#: queued one), the words inside the tag, and after it a paragraph Claude
+#: Code writes to the agent about who sent it. Only the words are news.
+AGENT_MESSAGE = re.compile(
+    r"\A\s*(?:Another Claude session sent a message:\s*)?"
+    r"<agent-message\b[^>]*>\s*(.*?)\s*</agent-message>", re.S)
+
+
+def task_note(inner: str) -> str:
+    """What a task notification says: its summary, and its result."""
+    fields = dict(TASK_FIELD.findall(inner))
+    head = fields.get("summary") or fields.get("status") or ""
+    if not head:
+        return inner              # a shape nobody has measured: as it came
+    result = fields.get("result")
+    return f"{head}\n\n{result}" if result else head
+
 #: What Claude Code writes as a `user` record when Escape stops a turn --
 #: "for tool use" when it stopped a call or declined its dialog, measured on
 #: 2.1.282. Drawn as a prompt, it wore the reader's rail and the map named a
@@ -2440,9 +2464,12 @@ def read_user_text(text: str) -> tuple[str, str]:
     if stopped:
         return "note", ("Interrupted during a tool call." if stopped.group(1)
                         else "Interrupted.")
+    sent = AGENT_MESSAGE.match(rest)
+    if sent:
+        return "note", "From another session:\n\n" + sent.group(1)
     if rest.startswith(NOTED):
         note = TASK_NOTE.match(rest)
-        return "note", (note.group(1) if note else rest)
+        return "note", (task_note(note.group(1)) if note else rest)
     return "prompt", text
 
 
@@ -6571,8 +6598,19 @@ def transcript_shapes(paths: Iterable[Path]) -> Shapes:
             for block in blocks:
                 if block.kind not in ("prompt", "note", "command", "shell"):
                     continue
-                for name in set(MACHINE_TAG_NAME.findall(
-                        f"{block.text}\n{block.result}")):
+                shown = f"{block.text}\n{block.result}"
+                for name in set(MACHINE_TAG_NAME.findall(shown)):
+                    # Only a tag that is closed too: Claude Code's come in
+                    # pairs, and a `<uint32_t>` in C++ or a `<commit-hash>`
+                    # placeholder in a skill's text does not.
+                    if f"</{name}>" not in shown:
+                        continue
+                    # And in a prompt, only one that opens it: Claude Code's
+                    # wrapper is the first thing in the record, and a person
+                    # quoting one -- a bug report about this page -- writes
+                    # their own words first.
+                    if block.kind == "prompt" and not shown.lstrip().startswith(f"<{name}"):
+                        continue
                     _count(found.tags, f"<{name}> in a {block.kind}")
     return found
 

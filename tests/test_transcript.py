@@ -729,3 +729,31 @@ def test_a_command_run_with_a_bang_is_one_block_with_its_output(ws, tmp_path):
         "why does <bash-input>ls</bash-input> show up as a prompt?"})
     four, = reader.add(asked)
     assert four.kind == "prompt"
+
+
+def test_a_task_notification_and_another_sessions_message_read_as_words(ws, tmp_path):
+    """`wostuast shapes` found 272 task notes drawn with `<task-id>`,
+    `<output-file>` and `<usage>` in them, and every message from another
+    session drawn inside its `<agent-message>` tag with the paragraph
+    Claude Code writes to the agent after it. A task note is its summary and
+    its result; a message is the words sent. The fixture is the five shapes
+    measured on 2.1.276 to 2.1.283, with made-up text."""
+    import json
+    from pathlib import Path
+    fixture = Path(__file__).parent / "fixtures" / "notes.jsonl"
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    shown = []
+    for line in fixture.read_text().splitlines():
+        shown += [(one.kind, one.text) for one in reader.add(json.loads(line))]
+    full, short, queued, sent, sent_queued = shown
+    done = ('Background command "Run the test suite" completed (exit code 0)'
+            "\n\n412 passed in 31.2s")
+    assert full == ("note", done) and queued == ("note", done)
+    assert short == ("note", 'Task "watch the build" was stopped')
+    words = "From another session:\n\nThe migration script is written and its tests pass."
+    assert sent == ("note", words) and sent_queued == ("note", words)
+    for kind, text in shown:
+        assert "<" not in text and "other Claude session" not in text
+    # A notification in a shape nobody has measured is shown as it came.
+    odd = ws.read_user_text("<task-notification><phase>3</phase></task-notification>")
+    assert odd == ("note", "<phase>3</phase>")

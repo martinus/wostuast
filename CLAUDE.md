@@ -1937,6 +1937,20 @@ update the comment with its own text, and read it back.
   from the page drew it as a prompt and named a round after it.
   `INTERRUPTED` makes the whole record, exactly, a note.
   `test_an_interrupt_claude_code_wrote_is_a_note_not_your_prompt`.
+  - **A task notification is its summary and its result.** It is a block
+    of fields -- `task-id`, `tool-use-id`, `output-file`, `status`,
+    `summary`, and at times `note`, `result` and a `usage` of numbers --
+    and the page took the outer tag off and drew the rest: 272 notes of
+    tags on one machine, which `wostuast shapes` found. `task_note` keeps
+    the summary and the result; a notification in a shape nobody has
+    measured is shown as it came. **Another session's message is its
+    words** (`AGENT_MESSAGE`): a header line in a `user` record and none
+    in a queued one, the words in `<agent-message from=…>`, and after it a
+    paragraph Claude Code writes to the agent about the sender. The header
+    was guessed away in the first fixture, and `shapes` caught it on a real
+    transcript: read the record, not its skeleton. Five shapes, measured on
+    2.1.276 to 2.1.283, in `tests/fixtures/notes.jsonl`.
+    `test_a_task_notification_and_another_sessions_message_read_as_words`.
   - **A `!` command is two records, and one block.** `!git up` writes
     `<bash-input>git up</bash-input>`, then
     `<bash-stdout>...</bash-stdout><bash-stderr>...</bash-stderr>` with `<`,
@@ -1980,7 +1994,10 @@ update the comment with its own text, and read it back.
   itself and lists records and pieces it leaves out that are not on
   `SILENT_RECORDS`, and Claude Code's tags (`MACHINE_TAG_NAME`: a hyphen or
   an underscore, which typed HTML has not) left in a prompt, a note or a
-  command. **Names and counts, never text**, so the output can go into a
+  command. **A tag counts only when it is closed too, and in a prompt only
+  when the prompt opens with it**: the reader's first run listed
+  `<uint32_t>` out of C++, `<commit-hash>` placeholders out of skills, and
+  two bug reports about this page that quoted tags after their own words. **Names and counts, never text**, so the output can go into a
   public issue as it is. **A name goes on `SILENT_RECORDS` only after a
   real record of it was read**: the queued message was an attachment
   nobody looked at. **It splits on `\n`, never `splitlines()`**: U+2028
