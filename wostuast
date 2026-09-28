@@ -763,10 +763,6 @@ class Session:
     #: state over and over and only a change is a change.
     state_since: float = 0.0
     last_ts: float = 0.0
-    #: When the session began: its first event. The Session tab's "started"
-    #: row read `since`, the last event, and said "0s ago" for a session two
-    #: hours old that had just been sent a prompt.
-    started: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
     last_tool: str = ""
@@ -806,10 +802,6 @@ class Session:
     cleared_from: str = ""
     last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
-    #: Whether git has answered for this session at all. Until it has, the
-    #: facts above are the empty default, and the Session tab said "not in a
-    #: repository" and "changed files: none" as facts.
-    git_known: bool = False
     status: Status = field(default_factory=Status)
 
     #: A name the reader gave this session on the page. It wins over the one
@@ -1198,18 +1190,8 @@ class Store:
             # the archive deliver events a second time, and replaying them here
             # would set the state back to what it was then.
             return session
-        # Strictly newer, which is the one question that makes appending
-        # safe. `apply` drops what is *older* than the session has seen, but
-        # an event with the very same `ts` folds again, and a rotation
-        # re-delivers the newest one — so a list that grew, or a number that
-        # went up, would do it twice. Everything else here assigns, and this
-        # is the rule that lets these two accumulate. Two events in one
-        # instant cost this log the second of them, and nothing else.
-        fresh = bool(ts) and ts > session.last_ts
         if ts > session.last_ts:
             session.last_ts = ts
-        if ts and (not session.started or ts < session.started):
-            session.started = ts
         for key in ("cwd", "transcript_path"):
             value = event.get(key)
             if value:
@@ -1424,7 +1406,6 @@ class Store:
             one = facts.get(session.cwd)
             if one is not None and not one.failed:
                 session.git = one
-                session.git_known = True
 
     def rename(self, session_id: str, name: str) -> str:
         """Give a session a name, or take the name away when it is empty.
@@ -1514,8 +1495,6 @@ def row(session: Session) -> dict[str, Any]:
         "last_tool": session.last_tool,
         "last_prompt": session.last_prompt,
         "since": round(session.since, 3),
-        "started": round(session.started, 3),
-        "git_known": session.git_known,
         "name": session.mine or session.status.name,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -1563,7 +1542,7 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     # **Except that a compaction does not end a turn.** An auto compaction
     # fires this with `source=compact` in the middle of one, and the agent
     # goes on: "done" moved the row to ready, told the page the agent had
-    # finished, and kept a spend limit from firing until the next tool call.
+    # finished, and put the row under "ready" while the agent worked on.
     # A `/compact` typed at the prompt finds the session ready already.
     source = str(event.get("source") or "")
     working = source == "compact" and session.state == "working"
@@ -2909,7 +2888,6 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
     facts = git_facts_many([session.cwd for session in sessions])
     for session in sessions:
         session.git = facts.get(session.cwd, GitFacts())
-        session.git_known = not session.git.failed
 
 
 # --- files and diffs: what the worktree holds --------------------------------
@@ -5021,8 +4999,8 @@ def tmux_interrupt(pane: str,
     so far"; Ctrl-C "interrupts a running operation" but "if nothing is
     running, the first press clears the prompt input and a second press exits
     Claude Code". A turn can end between deciding to stop a session and the
-    key landing, so Ctrl-C on a limit is a race whose losing side is a session
-    that quit. Escape on an idle prompt does nothing.
+    key landing, so Ctrl-C is a race whose losing side is a session that
+    quit. Escape on an idle prompt does nothing.
 
     It is a key name rather than literal text, so it is the shape of the
     `Enter` press `tmux_send` already makes -- not something that could go
@@ -5322,8 +5300,8 @@ class Daemon:
     def tick(self) -> None:
         """One pass: fold new events, then tell the browsers what changed."""
         moved = self.store.refresh()
-        # The rows are read again for the record written just now, so the row
-        # goes out no longer amber on this tick, not the next. Its own
+        # Read again for the `Declined` record `declined_in_terminal` may have
+        # just written, so the row goes out no longer amber on this tick. Its own
         # statement: `moved or self.store.refresh()` short-circuits, and on a
         # tick that had already changed something the read never ran.
         if self.declined_in_terminal():
@@ -6990,11 +6968,10 @@ body {
 .dot.ended, .dot.dead { border: 1px solid var(--edge-bright); }
 
 /* body */
-/* What the chosen row meets beside the list: the column of a split tab
-   (the map, a file tree), or the page itself on a tab with none. Its fade
-   and the grip's opening end in this, so the row flows into what is there. */
-.body { flex-grow: 1; display: flex; min-height: 0; --meet: var(--bg); }
-.body:has(> .main > .content.split) { --meet: var(--panel); }
+/* What the chosen row meets beside the list: the column every tab has (the
+   map, a file tree, the comments). Its fade and the grip's opening end in
+   this, so the row flows into what is there. */
+.body { flex-grow: 1; display: flex; min-height: 0; --meet: var(--panel); }
 /* The list wears the grip's colour, so the grip reads as the list's own
    edge and only the chosen row crosses it. */
 .sidebar {
@@ -7275,10 +7252,6 @@ body.dragging { cursor: col-resize; user-select: none; }
    spacer belongs to none of them, so any of them can come and go. */
 .tabfill { flex-grow: 1; }
 .findhome { display: flex; align-items: center; }
-/* `display` above would otherwise beat the browser's own rule for `hidden`,
-   and the box would never go away -- the same line `.sendbar` carries, and
-   the third time this shape has caught something here. */
-.findhome[hidden] { display: none; }
 .find {
   width: 240px; height: 26px; padding: 0 10px; border-radius: 5px;
   border: 1px solid var(--edge); background: var(--raised); color: var(--ink);
@@ -7287,9 +7260,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .find:focus { outline: none; border-color: var(--needs); }
 .find::placeholder { color: var(--ink-faint); }
 /* How full the chosen session's context window is, at the end of the tab row
-   where it is in view on every tab. The Session tab says it too, in a panel
-   you have to go to; this is the one fact in that panel you want to notice
-   rather than look up. */
+   where it is in view on every tab. */
 .ctxslot { margin-left: 12px; display: inline-flex; align-items: center;
   gap: 10px; }
 .ctxslot[hidden] { display: none; }
@@ -8184,12 +8155,6 @@ dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
   font-family: var(--mono); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;
 }
-.rename {
-  width: min(460px, 60vw); padding: 4px 8px; border-radius: 5px;
-  border: 1px solid var(--needs); background: var(--raised); color: var(--ink);
-  font-family: var(--sans); font-size: 13px;
-}
-.rename:focus { outline: none; }
 .sidefoot:empty { display: none; }
 .sidefoot {
   flex-shrink: 0; padding: 8px 10px; border-top: 1px solid var(--edge);
@@ -8302,7 +8267,9 @@ const state = {
   // The reader's own autolinks, compiled once. Empty until `/api/links`
   // answers, and empty for ever on a machine with no `links.json`.
   links: [],
-  // What is wrong with `links.json`, if anything. Shown on the Session tab.
+  // What is wrong with `links.json`, if anything. It stands in the live slot
+  // behind everything else, because nothing the reader does can mend it.
+  linkTrouble: [],
   // The last thing the daemon refused to do, on the one line the page keeps
   // for saying things. It stays there until something replaces it.
   trouble: "",
@@ -8342,9 +8309,6 @@ const state = {
   diffMore: new Map(),
   diffWhole: new Map(),
   sides: "unified",     // one column or two; see `recallSides`
-  // What the Session tab shows: how many of each event, and the last few of
-  // them. `at` moves when an answer arrives, which is what the tab redraws on.
-  events: { counts: {}, events: [], at: 0 },
   diffOpen: new Map(),  // diff files the reader opened or shut by hand
   // The review being written. It lives in this browser and nowhere else
   // until it is sent. See `blankReview`.
@@ -8397,10 +8361,9 @@ async function tell(id, verb, body) {
 // `/rename` changes that, but the name it hands the status line is the one the
 // session started with — so a rename in the terminal does not reach this page
 // until the session is started again. A name set here is ours and wins.
-async function keepRename(box, id = state.chosen) {
+async function keepRename(box, id) {
   const asked = box.value;
   box.blur();
-  if (!id) return;
   const answer = await tell(id, "name", { name: asked });
   if (answer && answer.error) { said(answer); return; }
   // The rows are rebuilt from the names on the daemon's next pass, which is a
@@ -8425,9 +8388,7 @@ function hasContext(s) {
 }
 
 // The bar, not a number: how full a context window is reads at a glance and
-// does not at a count. Two places want it -- the Session tab, and the strip
-// at the end of the tab row -- and they draw the same thing, so they build it
-// the same way.
+// does not at a count.
 function putContext(parent, percent) {
   const pct = Math.round(percent);
   const ctx = put(parent, "span",
@@ -8461,9 +8422,16 @@ function said(answer) {
   paintLive();
 }
 
-// The one line the page keeps for saying things, and the three things that
+// The one line the page keeps for saying things, and the four things that
 // want it: what the stream is doing, something you asked for and did not
-// get, and a passing word that borrows the slot over both.
+// get, a `links.json` that cannot be used, and a passing word that borrows
+// the slot over all three.
+//
+// The file's trouble stands last, and in a few words, with the whole of it
+// on a hover: nothing the reader does on the page mends it, so an answer
+// that works must not clear it the way it clears `state.trouble`, and the
+// daemon's sentence about bad JSON runs to 150 characters on a line that
+// does not wrap.
 //
 // One painter, because four writers raced for it.
 //
@@ -8474,7 +8442,12 @@ function said(answer) {
 // holds "live"; it is only not painted.
 function paintLive(borrowed) {
   const stream = state.live === "live" ? "" : state.live;
-  $("live").textContent = borrowed || state.trouble || stream || "";
+  const links = state.linkTrouble.length
+    ? "links.json has a problem · wostuast doctor" : "";
+  const slot = $("live");
+  slot.textContent = borrowed || state.trouble || stream || links;
+  slot.title = links && slot.textContent === links
+    ? state.linkTrouble.join("\n") : "";
 }
 
 // Our own word about what just happened -- "review sent", "pressed 2, 1".
@@ -8849,7 +8822,7 @@ function newRow(id) {
 // ago. The name is one you gave it, and until you do, its repository and
 // worktree (`agent/richpalm`) -- never the title Claude Code writes from the
 // first prompt, which `/rename` does not reach and which went stale beside
-// the branch. The Session tab still shows that one.
+// the branch.
 // Not the state: the dot's colour and the group the row stands in say it
 // already, and a word at the top and "waiting for input" at the foot said it
 // a third and a fourth time. The word stays in the history, where "ended"
@@ -8919,8 +8892,7 @@ function rowName(s) {
   return (s.mine && s.name) || s.place || s.id.slice(0, 8);
 }
 
-// Renaming where the name stands, by a double-click or `e`. The Session tab
-// has a box for it too, and it is one tab away from every row -- a name you
+// Renaming where the name stands, by a double-click or `e` -- a name you
 // change when you think of it is a name you have. Enter keeps it, an empty
 // name gives the session back its repository and worktree, and Escape or a
 // click elsewhere keeps the old one.
@@ -9534,8 +9506,7 @@ function drawContext() {
     ? money(s.cost_usd) : "";
   // Which model the session runs, left of the bar it fills. It changes
   // with `/model` mid-session, and it is what the percentage is a
-  // percentage of, so it stands beside it rather than in the Session tab
-  // alone. The status line sends it; without one there is nothing to say.
+  // percentage of, so it stands beside it. The status line sends it; without one there is nothing to say.
   const model = (s && s.model) || "";
   slot.hidden = !hasContext(s) && !spent && !model;
   if (slot.hidden) {
@@ -9827,10 +9798,9 @@ async function loadLinks() {
     }
   }
   state.links = out;
-  // Said on the live slot, where a refusal stands until something replaces
-  // it: there is no other place on the page for news about the reader's
-  // own file.
-  if (trouble.length) said({ error: "links.json: " + trouble.join(" · ") });
+  // Said on the live slot, until a reload: see `paintLive`.
+  state.linkTrouble = trouble;
+  paintLive();
   // The rows link their tickets too, and nothing else draws them again:
   // this answer can come after the last push.
   if (out.length) {
@@ -13829,39 +13799,30 @@ function drawDiffCount() {
 // three tabs, so the two it did not name got whatever the last arm said.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0,
-                splits: true, finds: "find a turn  /" },
-  files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true,
+                finds: "find a turn  /" },
+  files: { draw: drawFiles, load: loadFiles, poll: 2000,
            finds: "go to file  /" },
-  diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true,
+  diff: { draw: drawDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /" },
   // No `load`: a review is written in this browser, so there is nothing to
   // fetch. `load()` draws for a tab that says so, which is the half an empty
   // loader forgot — and then switching here left the page on the tab before.
-  review: { draw: drawReview, load: null, poll: 0, splits: true,
+  review: { draw: drawReview, load: null, poll: 0,
             finds: "find a comment  /" },
 };
 
-// Which tab each number key picks. A key for a tab that is not built yet does
-// nothing, because showTab only accepts a name TABS knows.
-const TAB_KEYS = ["transcript", "files", "diff", "review"];
+// Which tab each number key picks: the order of `TABS`, so a new tab is one
+// entry there and nothing else.
+const TAB_KEYS = Object.keys(TABS);
 
 function draw() {
   const box = $("content");
-  box.className = "content" + (TABS[state.tab].splits ? " split" : "");
-  // There is one find box and it lives wherever it is used, which on a split
-  // tab is inside this content box. Any tab that rebuilds the box empties it,
-  // so the box has to be taken home first or it is destroyed — and with it
-  // every listener on it, and the next `$("find")` throws. That threw inside
-  // `showTab` before it reached `load`, so the tab never loaded and every
-  // switch after it threw too: broken until a reload.
-  //
-  // The box is in danger exactly when a tab is about to rebuild, and every
-  // tab rebuilds on the same condition: the box says another tab owns it.
-  // Asking the DOM means a new tab cannot forget to say so, and it does not
-  // move on a redraw of the same tab, which would blur the box mid-word.
-  // `split` takes it back for the tabs that keep it.
-  if (!current() || box.dataset.tab !== state.tab) homeFind($("findhome"));
+  box.className = "content split";
   if (!current()) {
+    // The find box lives inside this box, so it goes home before the box is
+    // emptied, or it is destroyed with every listener on it and the next
+    // `$("find")` throws. A tab's own rebuild does the same in `split`.
+    homeFind($("findhome"));
     box.replaceChildren();
     box.dataset.tab = "";       // nothing is built, so the next tab rebuilds
     state.turns.nodes = [];
@@ -13880,12 +13841,7 @@ function showTab(name) {
   for (const button of document.querySelectorAll(".tab")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
-  // A tab that does not use the box does not show one. `findhome` is where
-  // the box lives when no split tab has claimed it, and hiding the home
-  // rather than the box means `homeFind` has somewhere to put it either way.
-  const finds = TABS[name].finds;
-  $("findhome").hidden = !finds;
-  if (finds) $("find").placeholder = finds;
+  $("find").placeholder = TABS[name].finds;
   load();
   resubscribe();
 }
@@ -14440,12 +14396,7 @@ document.addEventListener("keydown", (press) => {
     return;
   }
   switch (press.key) {
-    // Not on a tab that has no find box. This changes no behaviour -- a
-    // browser will not focus an element it is not rendering, so the key was
-    // already doing nothing there -- and it is here to say so rather than to
-    // rest on that. There is no test, because there is nothing to perturb.
     case "/":
-      if (!TABS[state.tab].finds) return;
       $("find").focus();
       break;
     case "f": $("pick").focus(); break;
@@ -14480,8 +14431,8 @@ document.addEventListener("keydown", (press) => {
   }
   // A key that did something leaves no ring on a button the pointer
   // pressed. A click leaves the focus on its button, and a key pressed after
-  // it turns `:focus-visible` on -- so clicking the Session tab and pressing
-  // 1 drew the browser's dark ring round Session, the tab just left. A
+  // it turns `:focus-visible` on -- so clicking the Review tab and pressing
+  // 1 drew the browser's dark ring round Review, the tab just left. A
   // button reached by keyboard keeps its ring: that is where the reader is.
   const held = document.activeElement;
   if (!focusedByKey && held && held.matches("button")) held.blur();

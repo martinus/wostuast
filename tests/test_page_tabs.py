@@ -60,16 +60,23 @@ def test_a_number_key_picks_a_tab_that_is_built(page_at):
 def test_the_find_box_sits_above_the_list_it_narrows(repo_page):
     """One box, moved to where it is used. Two would be two values to keep in
     step, and `/` would have to guess which one it meant. Every tab has a
-    list, and keeps it in that list's slot."""
+    list, and keeps it in that list's slot.
+
+    And each says what it is for: a tab used to offer "find a file" for a
+    list it did not have, from a ternary that named three tabs and gave the
+    rest whatever its last arm said. `finds` in `TABS` is one entry a tab."""
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
+            hints = []
             for name in ("transcript", "files", "diff", "review"):
                 show_tab(page, name)
                 assert page.eval_on_selector(
                     "#find", "el => el.parentElement.className") == "findslot", name
                 assert page.eval_on_selector(
                     "#find", "el => el.closest('.side') !== null"), name
+                hints.append(page.eval_on_selector("#find", "el => el.placeholder"))
+            assert len(set(hints)) == 4, hints
         finally:
             browser.close()
 
@@ -234,32 +241,6 @@ def test_a_transcript_push_during_a_tab_switch_stays_out_of_the_other_tab(
                 """() => [...document.getElementById('content').children]
                            .map((node) => node.className)""")
             assert after == before
-        finally:
-            browser.close()
-
-
-def test_every_tab_says_what_its_find_box_is_for(page_at):
-    """A tab used to offer "find a file" for a list it did not have. `finds`
-    in `TABS` says what the box is for, so a new tab is one entry rather
-    than another arm of a ternary that names three tabs and gives the rest
-    whatever the last arm said."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            seen = {}
-            for tab in ("transcript", "files", "diff", "review"):
-                show_tab(page, tab)
-                seen[tab] = page.evaluate("""() => {
-                  const box = document.getElementById('find');
-                  return {shown: !!box.offsetParent, hint: box.placeholder};
-                }""")
-            for tab in ("transcript", "files", "diff", "review"):
-                assert seen[tab]["shown"] is True, (tab, seen)
-            # And each says what it is for, rather than three of them saying
-            # the same thing because a ternary ran out of arms.
-            hints = [seen[one]["hint"]
-                     for one in ("transcript", "files", "diff", "review")]
-            assert len(set(hints)) == 4, hints
         finally:
             browser.close()
 

@@ -1133,15 +1133,6 @@ def test_a_session_that_never_changed_state_keeps_its_place(ws):
     assert store.sessions["a"].settled == 1.0
 
 
-def test_started_is_when_the_session_began(ws):
-    """The Session tab's "started" row read `since`, the last event -- so it
-    said "0s ago" for a session two hours old that had just been sent a
-    prompt."""
-    session = fold(ws, event("SessionStart", ts=1000.0),
-                   event("UserPromptSubmit", prompt="go", ts=8200.0))
-    assert ws.row(session)["started"] == 1000.0
-
-
 # --- a permission request, whole, and declining it from the page -------------
 
 LONG = "cmake --build build -j && " + " && ".join(f"ctest -R case{n}" for n in range(30))
@@ -1287,7 +1278,7 @@ def test_a_summary_hides_what_looks_like_a_credential(ws, command, shown):
     assert ws.tool_target("Bash", {"command": command}) == shown
 
 
-def test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole(ws):
+def test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole(ws):
     """Hidden before the line is cut, so half a secret is not left on the
     row; in every place the summary goes. The permission bar is the one
     place a request is shown whole, because it is judged on all of it."""

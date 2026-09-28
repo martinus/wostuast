@@ -830,17 +830,23 @@ def test_a_links_file_the_daemon_cannot_use_says_so(ws, page_at):
     """A file you wrote and got wrong must never look like a file you never
     wrote. Without this the page is identical either way: no links, no clue,
     and `doctor` is something you had no reason to run. It is said on the
-    live slot, and read from `state.trouble` because the slot is repainted
-    on every push."""
+    live slot, and an answer that worked does not take it away: nothing the
+    reader does on the page mends the file."""
     ws.links_path().parent.mkdir(parents=True, exist_ok=True)
     ws.links_path().write_text("not json at all", encoding="utf-8")
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
-            page.wait_for_function("state.trouble.includes('links.json')")
-            said = page.evaluate("state.trouble")
-            assert "not valid JSON" in said, said
+            page.wait_for_function("state.linkTrouble.length > 0")
+            # Written and read in one go, so no push can repaint between.
+            slot = page.evaluate("""() => {
+              state.live = "live";
+              said({ done: true });
+              return [$("live").textContent, $("live").title];
+            }""")
+            assert "links.json" in slot[0], slot
+            assert "not valid JSON" in slot[1], slot
         finally:
             browser.close()
 
@@ -856,7 +862,7 @@ def test_a_links_file_that_works_says_nothing(ws, page_at):
         browser, page = open_page(play, path)
         try:
             page.wait_for_function("state.links.length === 1")
-            assert page.evaluate("state.trouble") == ""
+            assert page.evaluate("state.linkTrouble") == []
         finally:
             browser.close()
 
@@ -879,9 +885,9 @@ def test_a_pattern_this_browser_cannot_use_says_so_too(ws, page_at):
                 links: [{match: '(?P<id>OA-1)', url: 'https://tickets/'}],
                 trouble: []})});
               await loadLinks();
-              return state.trouble;
+              return state.linkTrouble.join(" ");
             }""")
-            assert "links.json" in said and "(?P<id>OA-1)" in said, said
+            assert "(?P<id>OA-1)" in said, said
         finally:
             browser.close()
 

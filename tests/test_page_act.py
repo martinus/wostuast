@@ -22,15 +22,13 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_jump_puts_the_cursor_in_the_pane(in_pane):
-    """The button is an icon at the end of the tab row, so it is there on
-    every tab, and a click asks the daemon to jump -- the Enter key's verb."""
+    """The button is an icon at the end of the tab row, outside every tab,
+    and a click asks the daemon to jump -- the Enter key's verb."""
     daemon, base, seen = in_pane
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
         try:
-            for tab in ("transcript", "files", "diff", "review"):
-                show_tab(page, tab)
-                assert page.locator("#jump").is_visible(), tab
+            assert page.locator("#jump").is_visible()
             assert not [one for one in seen if "select-window" in one], seen
             page.click("#jump")
             deadline = time.time() + 15
@@ -627,9 +625,6 @@ def test_the_verbs_are_not_there_without_a_pane(no_pane):
             page.wait_for_function("state.sessions.length === 1")
             assert page.locator("#sendbar").is_hidden()
             assert page.locator("#jump").is_hidden()
-            for tab in ("files", "diff", "review", "transcript"):
-                show_tab(page, tab)
-                assert page.locator("#jump").is_hidden(), tab
         finally:
             browser.close()
 

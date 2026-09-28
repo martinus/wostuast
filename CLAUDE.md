@@ -80,8 +80,8 @@ after the tests go red.
 
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
 `wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
-SSE. The page shows a session list and five tabs: Transcript, Files, Diff,
-Review, Session.
+SSE. The page shows a session list and four tabs: Transcript, Files, Diff,
+Review.
 Four things go back to the terminal, all through tmux: jump, send, the
 keys that answer a question, and a No to a permission dialog, which is an
 Escape and then a send. Nothing else writes to a
@@ -618,12 +618,12 @@ update the comment with its own text, and read it back.
   **before the cut**: a URL cut before its `@` no longer looks like one with
   a password, and its first half stood on the row. The name is kept, so the
   reader still knows what was there. Every one-line summary goes through it:
-  the row, the session's log, `ls`, a tool call's line in the transcript.
+  the row, `ls`, a tool call's line in the transcript.
   The permission bar does not: a request is judged on all of it. It catches
   the shapes it knows, and a secret in another shape still shows -- say so
   rather than implying the page is safe from them.
   `test_a_summary_hides_what_looks_like_a_credential`,
-  `test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole`.
+  `test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole`.
 - **The page never builds HTML from what a program printed.** A `!`
   command's output and a slash command's answer reach it as text, and
   `putShell` puts them in a `pre` as text: a program can print `<img>`.
@@ -743,10 +743,15 @@ update the comment with its own text, and read it back.
   file never parses. `load_links` returns the usable entries *and* what is
   wrong with the rest; `read_links` is the wrapper for a caller with nowhere
   to put the trouble. `serve` prints it, `/api/links` carries it, the page
-  says it in the live slot (`said`), `doctor` says it. **The file is never repaired**: guessing at
+  says it in the live slot, `doctor` says it. **The file is never repaired**: guessing at
   a backslash somebody meant is a worse surprise than the message. And the
   page adds its own trouble — a pattern Python compiled and this browser
   will not is only findable there, and `loadLinks` says both together.
+  **On the slot it is `state.linkTrouble`, not `state.trouble`**: `said`
+  clears the second on any answer that worked, so the first Enter took the
+  message away for good, and the daemon's sentence about bad JSON is 150
+  characters on a line that does not wrap. `paintLive` shows a few words,
+  last of the four, with the whole of it in `title`.
 - **The list of what may be shown lives in the daemon, once.** `SHOWN_AS` is
   read by `shown_as`, which the `raw` route enforces and which
   `read_worktree_file` reports as `FileText.shown` — so the page holds no
@@ -1337,9 +1342,8 @@ update the comment with its own text, and read it back.
   - **The list wears the grip's colour (`--edge`), and a split tab's own
     list -- the map, a file tree -- wears `--meet`.** The grip then reads
     as the list's edge, which only the chosen row crosses, and the map
-    stands apart from the page without a line. `--meet` is `--panel` where
-    a split tab stands beside the list and `--bg` where none does, set on
-    `.body` with `:has`; the map's ground, the fade's end and the grip's
+    stands apart from the page without a line. `--meet` is `--panel`,
+    set on `.body`, because every tab is split now; the map's ground, the fade's end and the grip's
     opening all read it, so the row flows into what is there.
   - **The chosen row has no ground of its own.** The state tints are half
     transparent: on the list's old ground under it, it came out brighter
@@ -1781,8 +1785,6 @@ update the comment with its own text, and read it back.
   row (`#jump`, `ICONS.terminal`), beside the model and the context bar; the
   name is changed on the row; the rest went. `drawHeader` is the send box,
   the question bar, the context strip and jump, and nothing else.
-  **It said only what git said** while it stood, and the row still does:
-  `Session.git_known` (`test_a_row_says_whether_git_has_answered_for_it`).
 - **A tab that fetches nothing says `load: null`**, and the shared `load()`
   draws for it. A tab switch goes through `load`, not `draw`, so an empty
   loader left the page showing the tab before.
@@ -2316,17 +2318,14 @@ update the comment with its own text, and read it back.
   ignores the first falls back to, and it is also what puts the form controls
   right — the search box's clear button, the send box's own bar.
   `scrollbar-color` is inherited, so `:root` is the only place it is said.
-- **A tab that cannot use the find box does not show one**, and `TABS.finds`
-  is where that lives — the placeholder was a ternary in `showTab` naming
-  three tabs, so the two it did not name got whatever the last arm said, and
-  a tab with no list offered "find a file" for a list it did not have. One
-  entry per tab, like `draw`, `load` and `poll`. **`.findhome` needs
-  `[hidden] { display: none }`** for the reason `.sendbar` does — it sets
-  `display: flex`, which beats the browser's own rule for the attribute —
-  and that is the third time this shape has caught something here. Its
-  `margin-left: auto` is also what pushes the live slot to the far end of the
-  tab bar, so `.findhome[hidden] + .live` takes that over or the slot comes
-  to rest against the last tab.
+- **Every tab says what its find box is for, in `TABS.finds`.** The
+  placeholder was a ternary in `showTab` naming three tabs, so the two it did
+  not name got whatever the last arm said, and a tab with no list offered
+  "find a file" for a list it did not have. One entry per tab, like `draw`,
+  `load` and `poll`, and `TAB_KEYS` is `Object.keys(TABS)`, so a new tab is
+  that one entry. Every tab is split and has a list, so there is no longer
+  a tab that hides the box; one that needs to must bring back a
+  `.findhome[hidden]` rule, the `.sendbar` scar.
 - **A class the page puts on `body` is never the class an element wears.**
   `stream.onerror` did `classList.add("lost")`, and the rule hiding the bar
   until it was wanted was `.lost { display: none }` — which `body` then
@@ -2362,10 +2361,10 @@ update the comment with its own text, and read it back.
   temporal dead zone — a page that throws on every draw, from a line that
   reads perfectly. Same scar as `matches` / `matching` / `hits`.
 - **The context bar is its own slot, beside `#live` and never in it.**
-  `paintLive` is the one writer of that slot and three things already want it
-  — what the stream is doing, something you asked for and did not get, and a
-  passing word over both. A fourth would be the race that rule was written
-  after. `drawContext` is called from `drawHeader`, so it arrives with
+  `paintLive` is the one writer of that slot and four things already want it
+  — what the stream is doing, something you asked for and did not get, a
+  `links.json` that cannot be used, and a passing word over them. A fifth
+  would be the race that rule was written after. `drawContext` is called from `drawHeader`, so it arrives with
   everything else a push carries and no fifth call site can forget it, and it
   redraws only when the number moves — the push is about once a second and
   the number is not. `putContext` builds it. A session whose status line is not
@@ -2376,9 +2375,10 @@ update the comment with its own text, and read it back.
   It is part of the same redraw key. `tests/shot.py` writes a status line
   for its session, so a picture of the strip has all three in it.
   `test_the_model_stands_left_of_the_context_bar`.
-- **One painter for the live slot, and three things that want it.**
+- **One painter for the live slot, and four things that want it.**
   `state.live` is what the stream is doing, `state.trouble` is something you
-  asked for and did not get, and `note` borrows the slot over both for four
+  asked for and did not get, `state.linkTrouble` is the reader's own file
+  that cannot be used, and `note` borrows the slot over all three for four
   seconds. `paintLive` decides; nothing else assigns to `#live`. Four writers
   raced before it: the stream writes "live" on every push, about once a
   second while an agent works, so a failure written straight into the slot
