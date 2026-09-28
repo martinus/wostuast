@@ -63,14 +63,6 @@ ATTENTION_NOTIFICATIONS = frozenset({"permission_prompt", "elicitation_dialog"})
 #: It must never hold Claude Code, whatever goes wrong underneath it.
 HOOK_TIMEOUT = 5
 
-#: How long a spend limit whose Escape tmux refused waits before it is tried
-#: again -- and it is tried only once the agent has spent more since. A
-#: `send-keys` that timed out may have landed all the same, and an agent
-#: stopped by it fires no hook that says so: the row still reads "working".
-#: A stopped agent spends nothing, so a spend that has grown is the proof it
-#: is still going.
-LIMIT_RETRY = 30.0
-
 #: The deadline over logging a hook's or the status line's failure. Short,
 #: because Claude Code is already waiting, and the failure being logged may be
 #: a filesystem that is not answering.
@@ -125,10 +117,6 @@ EVENTS_MAX_BYTES = 20 * 1024 * 1024
 #: that nobody notices it held.
 TAIL_CHUNK = 1024 * 1024
 
-#: How much of a session's own history the Session tab can show. The log is
-#: for reading, not for counting — `Session.counts` is the whole story and
-#: costs one number per event name.
-SESSION_LOG_MAX = 300
 #: How many started and unfinished tool calls a session keeps, to find the
 #: call a permission dialog is about. A turn rarely has more than a handful
 #: open at once; a call declined in the terminal never reports back.
@@ -283,12 +271,6 @@ def names_path() -> Path:
     started again. A name set on the page is kept by us and wins.
     """
     return state_dir() / "names.json"
-
-
-def limits_path() -> Path:
-    """Where the spend limits live. Beside the names, and for the same reason:
-    both are what the reader told this program from the page."""
-    return state_dir() / "limits.json"
 
 
 def links_path() -> Path:
@@ -753,12 +735,6 @@ class Status:
     #: than dropping the number, because an estimate you can see beats a bill
     #: you cannot. `None` is "the status line did not say", which is not 0.
     cost_usd: float | None = None
-    #: The claude.ai rate-limit windows, `{name: {used_pct, resets_at}}`.
-    #: Present only for Pro and Max subscribers, or behind a gateway that sets
-    #: a spend limit, and only after the first API response -- and Claude Code
-    #: drops a window once its reset has passed. So an empty map means "not
-    #: told", never "nothing used". `spend_limit` can read above 100.
-    limits: dict[str, dict[str, float]] = field(default_factory=dict)
     agent: str = ""
     version: str = ""
 
@@ -787,10 +763,6 @@ class Session:
     #: state over and over and only a change is a change.
     state_since: float = 0.0
     last_ts: float = 0.0
-    #: When the session began: its first event. The Session tab's "started"
-    #: row read `since`, the last event, and said "0s ago" for a session two
-    #: hours old that had just been sent a prompt.
-    started: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
     last_tool: str = ""
@@ -800,13 +772,6 @@ class Session:
     # the same news as a permission Notification, up to twelve seconds
     # earlier, so once it arrives the Notification is only ever stale.
     asks_first: bool = False
-    #: The last few things this session did, newest last, for the Session tab.
-    #: Bounded, because a session that runs all day would otherwise keep every
-    #: event it ever sent in memory.
-    log: list[dict[str, Any]] = field(default_factory=list)
-    #: How many of each event this session has sent. Not a `Counter`, so it
-    #: serialises as it stands.
-    counts: dict[str, int] = field(default_factory=dict)
     #: What the open permission dialog is about, as `tool_summary` says it.
     #: Empty when no dialog is open, or when the event did not name a tool.
     asked_about: str = ""
@@ -837,10 +802,6 @@ class Session:
     cleared_from: str = ""
     last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
-    #: Whether git has answered for this session at all. Until it has, the
-    #: facts above are the empty default, and the Session tab said "not in a
-    #: repository" and "changed files: none" as facts.
-    git_known: bool = False
     status: Status = field(default_factory=Status)
 
     #: A name the reader gave this session on the page. It wins over the one
@@ -1206,7 +1167,6 @@ class Store:
         # snapshot: one name was lost, and memory and the file disagreed
         # about which, so a restart silently swapped them.
         self.names: dict[str, str] = read_names()
-        self.limits: dict[str, dict[str, float]] = read_limits()
         self.naming = threading.Lock()
 
     def get(self, session_id: str) -> Session:
@@ -1230,18 +1190,8 @@ class Store:
             # the archive deliver events a second time, and replaying them here
             # would set the state back to what it was then.
             return session
-        # Strictly newer, which is the one question that makes appending
-        # safe. `apply` drops what is *older* than the session has seen, but
-        # an event with the very same `ts` folds again, and a rotation
-        # re-delivers the newest one — so a list that grew, or a number that
-        # went up, would do it twice. Everything else here assigns, and this
-        # is the rule that lets these two accumulate. Two events in one
-        # instant cost this log the second of them, and nothing else.
-        fresh = bool(ts) and ts > session.last_ts
         if ts > session.last_ts:
             session.last_ts = ts
-        if ts and (not session.started or ts < session.started):
-            session.started = ts
         for key in ("cwd", "transcript_path"):
             value = event.get(key)
             if value:
@@ -1275,15 +1225,6 @@ class Store:
         # notification moved a row that had not changed at all.
         if session.state != was or not session.state_since:
             session.state_since = ts or session.last_ts
-
-        if fresh and name:
-            # After the handler, so the line is the one it wrote: the Session
-            # tab says what the row says, in the order it happened.
-            session.counts[name] = session.counts.get(name, 0) + 1
-            session.log.append({"ts": ts, "name": name,
-                                "text": session.last_event})
-            if len(session.log) > SESSION_LOG_MAX:
-                del session.log[:-SESSION_LOG_MAX]
 
         if session.cwd and touched_the_tree(name, event):
             self.git_wanted.add(session.cwd)
@@ -1405,15 +1346,6 @@ class Store:
         sessions = self.settle(moment, alive)
         self.reload_git(sessions, moment)
         rows = [row(session) for session in sort_sessions(sessions)]
-        # The limits are the page's, not the session's, so they are put on
-        # here rather than inside `row` -- the same shape as the names, which
-        # `settle` reads onto `session.mine` one call above.
-        for one in rows:
-            kept = self.limits.get(one["id"])
-            if kept:
-                one["spend_limit"] = kept["limit"]
-                one["limit_fired"] = kept["fired_at"]
-                one["limit_refused"] = kept.get("refused_at", 0.0)
         changed = rows != self.rows
         self.rows = rows
         return changed
@@ -1474,124 +1406,6 @@ class Store:
             one = facts.get(session.cwd)
             if one is not None and not one.failed:
                 session.git = one
-                session.git_known = True
-
-    def set_limit(self, session_id: str, limit: float) -> float:
-        """Set what a session may spend, or take the limit away with nought.
-
-        The map is replaced rather than edited, the trick `rename` plays and
-        for the same reason: the thread folding events reads it and must never
-        see a half-written one. Setting a limit clears `fired_at`, so raising
-        it after a stop is how an agent is let go again -- otherwise the limit
-        would fire on the next tick, for ever, and the session would be stuck.
-        """
-        with self.naming:
-            limits = dict(self.limits)
-            if limit > 0:
-                limits[session_id] = {"limit": limit, "fired_at": 0.0}
-            else:
-                limits.pop(session_id, None)
-            write_limits(limits)
-            self.limits = limits
-        return max(0.0, limit)
-
-    def over_limit(self, now: float | None = None) -> list[tuple[str, str, float]]:
-        """The sessions that have just gone past what they may spend, with
-        their panes and the `fired_at` stamped for each.
-
-        Read on the fold thread, which is the one that may write `fired_at`.
-        Three guards, each of them a way this could be worse than no limit:
-
-        * **Only a session that is working.** Stopping an idle one is a
-          keystroke nobody asked for, and an Escape while a permission dialog
-          is up declines it -- which is a decision, and not this one's to make.
-        * **Once.** `fired_at` is stamped before the key goes out, so a
-          session over its limit is not stopped again on every tick a second
-          later. Raising the limit clears it. An Escape tmux refused did not
-          stop anything, so `limit_refused` puts `fired_at` back, and the
-          next try waits `LIMIT_RETRY` and a spend that has grown since.
-        * **Only a spend the status line actually gave us.** `None` is "not
-          told", and stopping an agent over a number nobody sent would be the
-          worst of the three.
-        """
-        moment = now if now is not None else time.time()
-        out: list[tuple[str, str, float]] = []
-        # The whole of it under the lock, reading and writing the same
-        # snapshot. Deciding outside it and merging inside was a race with
-        # `set_limit`: a raise that landed in between was overwritten with the
-        # old number and a fresh `fired_at`, and the Escape went out anyway --
-        # so the reader's release was undone at the moment they made it.
-        with self.naming:
-            limits = dict(self.limits)
-            changed = False
-            for session_id, one in limits.items():
-                session = self.sessions.get(session_id)
-                spent = None if session is None else session.status.cost_usd
-                # Armed again once the spend is back under the limit. Without
-                # this one stop disarms it for the rest of the session, and
-                # `/clear` puts `cost.total_cost_usd` back to nought -- so the
-                # agent could then run without bound behind a box still
-                # showing a limit. A refusal is forgotten the same way, or
-                # the panel says "tmux refused" for ever over a session that
-                # is under its limit.
-                if ((one["fired_at"] or one.get("refused_at"))
-                        and spent is not None and spent < one["limit"]):
-                    limits[session_id] = {"limit": one["limit"], "fired_at": 0.0}
-                    changed = True
-                    continue
-                if one["fired_at"]:
-                    continue
-                if one.get("refused_at") and (
-                        moment - one["refused_at"] < LIMIT_RETRY
-                        or spent is None
-                        or spent <= one.get("refused_spend", 0.0)):
-                    continue
-                if session is None or session.state != "working" or not session.pane:
-                    continue
-                if spent is None or spent < one["limit"]:
-                    continue
-                limits[session_id] = {"limit": one["limit"], "fired_at": moment}
-                changed = True
-                out.append((session_id, session.pane, moment))
-                session.last_event = f"stopped at its ${one['limit']:.2f} limit"
-            if changed:
-                write_limits(limits)
-                self.limits = limits
-        return out
-
-    def limit_refused(self, session_id: str, fired_at: float,
-                      now: float | None = None) -> None:
-        """tmux did not take the Escape, so the session was not stopped.
-
-        It used to be recorded, and shown, as a stop all the same: `fired_at`
-        stamped, "stopped at its limit" on the row, and never tried again --
-        so the agent went on spending behind a page that said it had been
-        stopped, the one thing a reader must never be told falsely. `fired_at`
-        goes back to nought, `refused_at` says why, and `over_limit` tries
-        again after `LIMIT_RETRY`, once the spend has grown past
-        `refused_spend`.
-
-        Only for the stop it is about: the key went out of the lock, and a
-        `set_limit` in between has already said what stands. Written over
-        it, a raise to a number the spend was under came back as "could not
-        stop at its $20.00 limit", and held the next real stop back.
-        """
-        moment = now if now is not None else time.time()
-        with self.naming:
-            one = self.limits.get(session_id)
-            if not one or one["fired_at"] != fired_at:
-                return
-            session = self.sessions.get(session_id)
-            spent = None if session is None else session.status.cost_usd
-            limits = dict(self.limits)
-            limits[session_id] = {"limit": one["limit"], "fired_at": 0.0,
-                                  "refused_at": moment,
-                                  "refused_spend": spent or 0.0}
-            write_limits(limits)
-            self.limits = limits
-            if session is not None:
-                session.last_event = (f"could not stop at its ${one['limit']:.2f}"
-                                      " limit: tmux refused the key")
 
     def rename(self, session_id: str, name: str) -> str:
         """Give a session a name, or take the name away when it is empty.
@@ -1681,24 +1495,16 @@ def row(session: Session) -> dict[str, Any]:
         "last_tool": session.last_tool,
         "last_prompt": session.last_prompt,
         "since": round(session.since, 3),
-        "started": round(session.started, 3),
-        "git_known": session.git_known,
         "name": session.mine or session.status.name,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
         "mine": bool(session.mine),
         "model": session.status.model,
         "context_pct": session.status.context_pct,
-        # What the session has spent, and how much of a rate-limit window it
-        # has used. Both move only when a status line lands, so neither makes
-        # a row differ by itself -- which is the rule this dict is built by.
+        # What the session has spent. It moves only when a status line
+        # lands, so it never makes a row differ by itself -- which is the
+        # rule this dict is built by.
         "cost_usd": session.status.cost_usd,
-        "limits": session.status.limits,
-        # What this session may spend, and whether that has already stopped
-        # it. Filled in by `rows`, from the map the page POSTs to.
-        "spend_limit": 0.0,
-        "limit_fired": 0.0,
-        "limit_refused": 0.0,
         "end_reason": session.end_reason,
         # The session a `/clear` turned this one into. The page follows it
         # when the link appears while the reader is watching this one.
@@ -1736,7 +1542,7 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     # **Except that a compaction does not end a turn.** An auto compaction
     # fires this with `source=compact` in the middle of one, and the agent
     # goes on: "done" moved the row to ready, told the page the agent had
-    # finished, and kept a spend limit from firing until the next tool call.
+    # finished, and put the row under "ready" while the agent worked on.
     # A `/compact` typed at the prompt finds the session ready already.
     source = str(event.get("source") or "")
     working = source == "compact" and session.state == "working"
@@ -3082,7 +2888,6 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
     facts = git_facts_many([session.cwd for session in sessions])
     for session in sessions:
         session.git = facts.get(session.cwd, GitFacts())
-        session.git_known = not session.git.failed
 
 
 # --- files and diffs: what the worktree holds --------------------------------
@@ -3209,11 +3014,6 @@ REJECTED = "The user doesn't want to proceed with this tool use"
 
 #: The most a POST body may be.
 POST_MAX = 64 * 1024
-
-#: The most a spend limit may be set to. Not a safety property -- it is a
-#: sanity bound on a number typed into a box, so a stray keypress cannot store
-#: something that reads as "no limit at all" while looking like one.
-LIMIT_MAX = 10_000.0
 
 #: The most text one `send` may type, **in bytes**. Longer is refused rather
 #: than cut: what arrives in the terminal must be what the user wrote, or
@@ -4605,22 +4405,12 @@ def status_from_payload(payload: dict[str, Any], now: float | None = None) -> St
 
     # Named field by field, like `read_ask`: a status payload is large and
     # growing, and a field nobody has read must not reach the page.
-    limits: dict[str, dict[str, float]] = {}
-    for window, one in nested("rate_limits").items():
-        if not isinstance(one, dict):
-            continue
-        used = opt_float(one.get("used_percentage"))
-        if used is None:
-            continue
-        limits[str(window)] = {"used_pct": used,
-                               "resets_at": to_float(one.get("resets_at"))}
     return Status(
         ts=now if now is not None else time.time(),
         name=str(payload.get("session_name") or ""),
         model=str(nested("model").get("display_name") or ""),
         context_pct=opt_float(nested("context_window").get("used_percentage")),
         cost_usd=opt_float(nested("cost").get("total_cost_usd")),
-        limits=limits,
         agent=str(nested("agent").get("name") or ""),
         version=str(payload.get("version") or ""),
     )
@@ -4780,40 +4570,6 @@ def read_links() -> list[dict[str, str]]:
     return load_links()[0]
 
 
-def read_limits() -> dict[str, dict[str, float]]:
-    """Every spend limit the reader has set, or an empty map.
-
-    `{session_id: {"limit": 10.0, "fired_at": 0.0}}`. It sits beside
-    `names.json` and is the same kind of thing: state this program keeps
-    because the page told it to, not a file anybody hand-edits. `links.json`
-    is the config file goal 4 in CLAUDE.md allows one of, and this is not a
-    second one -- nothing here is typed into an editor, and wostuast could not
-    work the number out, because only you know what an agent is worth to you.
-    """
-    try:
-        payload = json.loads(limits_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    out: dict[str, dict[str, float]] = {}
-    for key, one in payload.items():
-        if not isinstance(key, str) or not isinstance(one, dict):
-            continue
-        limit = to_float(one.get("limit"))
-        if limit > 0:
-            out[key] = {"limit": limit, "fired_at": to_float(one.get("fired_at"))}
-            refused = to_float(one.get("refused_at"))
-            if refused > 0:
-                out[key]["refused_at"] = refused
-                out[key]["refused_spend"] = to_float(one.get("refused_spend"))
-    return out
-
-
-def write_limits(limits: dict[str, dict[str, float]]) -> None:
-    write_atomic(limits_path(), json.dumps(limits), private=True)
-
-
 def read_names() -> dict[str, str]:
     """Every name the reader has given, or an empty map."""
     try:
@@ -4843,19 +4599,12 @@ def read_status(session_id: str) -> Status:
         return Status()
     if not isinstance(payload, dict):
         return Status()
-    kept = payload.get("limits")
     return Status(
         ts=to_float(payload.get("ts")),
         name=str(payload.get("name") or ""),
         model=str(payload.get("model") or ""),
         context_pct=opt_float(payload.get("context_pct")),
         cost_usd=opt_float(payload.get("cost_usd")),
-        # Our own file, but it outlives the version that wrote it, so the
-        # shape is checked rather than trusted -- an older wostuast wrote no
-        # `limits` at all and a newer one must read that file, not fall over.
-        limits={str(name): {"used_pct": to_float(one.get("used_pct")),
-                            "resets_at": to_float(one.get("resets_at"))}
-                for name, one in (kept or {}).items() if isinstance(one, dict)},
         agent=str(payload.get("agent") or ""),
         version=str(payload.get("version") or ""),
     )
@@ -5250,8 +4999,8 @@ def tmux_interrupt(pane: str,
     so far"; Ctrl-C "interrupts a running operation" but "if nothing is
     running, the first press clears the prompt input and a second press exits
     Claude Code". A turn can end between deciding to stop a session and the
-    key landing, so Ctrl-C on a limit is a race whose losing side is a session
-    that quit. Escape on an idle prompt does nothing.
+    key landing, so Ctrl-C is a race whose losing side is a session that
+    quit. Escape on an idle prompt does nothing.
 
     It is a key name rather than literal text, so it is the shape of the
     `Enter` press `tmux_send` already makes -- not something that could go
@@ -5551,26 +5300,10 @@ class Daemon:
     def tick(self) -> None:
         """One pass: fold new events, then tell the browsers what changed."""
         moved = self.store.refresh()
-        # After the fold, so the spend being read is the one the newest status
-        # line gave; before the push, so the row the browsers get already says
-        # the session was stopped. It is the one thing this program does to a
-        # terminal that nobody pressed a button for, so it is guarded three
-        # ways in `over_limit` and it says so in the session's own log.
-        stopped = self.store.over_limit()
-        for session_id, pane, fired_at in stopped:
-            # A key tmux refused stopped nothing, and says so: on the row, in
-            # the panel, and by being tried again.
-            if not tmux_interrupt(pane):
-                self.store.limit_refused(session_id, fired_at)
-        # A stop moves `fired_at` and the session's last event, and both are
-        # in the row -- so the rows are built again before they go out, or the
-        # browsers hear about it a tick late. Written as its own statement:
-        # `moved or self.store.refresh()` short-circuits, so on a tick that
-        # had already changed something the second read never ran at all.
-        if stopped:
-            moved = self.store.refresh() or moved
-        # The same reading again, for the record written just now: the row
-        # goes out no longer amber on this tick, not the next.
+        # Read again for the `Declined` record `declined_in_terminal` may have
+        # just written, so the row goes out no longer amber on this tick. Its own
+        # statement: `moved or self.store.refresh()` short-circuits, and on a
+        # tick that had already changed something the read never ran.
         if self.declined_in_terminal():
             moved = self.store.refresh() or moved
         if moved:
@@ -5901,18 +5634,6 @@ class Serving:
         # show it without waiting for that.
         self.reply_json({"id": session_id, "name": given, "done": True})
 
-    def interrupt(self, session_id: str, body: dict[str, Any]) -> None:
-        """Stop what the agent is doing. Escape, not Ctrl-C: see
-        `tmux_interrupt` for why the other one can end a session."""
-        session = self.in_tmux(session_id)
-        if session is None:
-            return
-        if not tmux_interrupt(session.pane):
-            self.reply_json({"id": session_id,
-                             "error": "tmux would not take it"}, 502)
-            return
-        self.reply_json({"id": session_id, "done": True})
-
     def answer(self, session_id: str, body: dict[str, Any]) -> None:
         """Answer the question the agent is waiting on, in its own dialog.
 
@@ -6065,30 +5786,6 @@ class Serving:
             return
         self.reply_json({"id": session_id, "done": True, "seen": True,
                          "sent": True})
-
-    def limit(self, session_id: str, body: dict[str, Any]) -> None:
-        """Set what a session may spend before wostuast stops it.
-
-        It writes no terminal itself, like `name` -- but unlike `name` it is
-        what lets the daemon write one later, so it is the same POST with the
-        same token and origin behind it. Nought takes the limit away.
-        """
-        session = self.known(session_id)
-        if session is None:
-            return
-        asked = body.get("limit")
-        if not isinstance(asked, (int, float)) or asked != asked or asked < 0:
-            self.reply_json({"id": session_id,
-                             "error": "a limit is a number of dollars,"
-                                      " or nought for none"}, 400)
-            return
-        if asked > LIMIT_MAX:
-            self.reply_json({"id": session_id,
-                             "error": f"the most that can be set is"
-                                      f" ${LIMIT_MAX:.0f}"}, 400)
-            return
-        given = self.daemon.store.set_limit(session_id, float(asked))
-        self.reply_json({"id": session_id, "limit": given, "done": True})
 
     def send(self, session_id: str, body: dict[str, Any]) -> None:
         session = self.in_tmux(session_id)
@@ -6254,21 +5951,6 @@ class Serving:
         # every tab switch, which is what the mtime was put there to avoid.
         self.reply(200, raw, kind, cache="private, max-age=300")
 
-    def events(self, session_id: str, query: dict[str, list[str]]) -> None:
-        """What this session has done, for the Session tab.
-
-        The log is the daemon's own, folded as the events arrived — not the
-        file read again. `events.jsonl` is twenty megabytes at its largest and
-        holds every session; walking it per request, for one of them, to draw
-        a panel nobody is looking at most of the time is not a trade worth
-        making.
-        """
-        session = self.known(session_id)
-        if session is None:
-            return
-        self.reply_json({"id": session_id, "counts": session.counts,
-                         "events": session.log})
-
     def diff(self, session_id: str, query: dict[str, list[str]]) -> None:
         session = self.known(session_id)
         if session is None:
@@ -6339,7 +6021,6 @@ class Serving:
 
 # The verbs a session route can end in.
 GET_VERBS: dict[str, Any] = {
-    "events": Serving.events,
     "transcript": Serving.transcript,
     "files": Serving.files,
     "file": Serving.file,
@@ -6348,20 +6029,18 @@ GET_VERBS: dict[str, Any] = {
     "whole": Serving.whole,
 }
 
-# Five of these reach a terminal -- jump, send, interrupt, answer and decline,
-# which is an interrupt and then a send -- and they are the reason every POST
-# carries a token. There will never be another tmux
-# verb without asking first (CLAUDE.md, **Shape**). `name` and `limit` are not
-# ones: they write files of ours and touch no terminal, but they arrive the
-# same way and are checked the same way.
+# Four of these reach a terminal -- jump, send, answer and decline, which is
+# an Escape and then a send -- and they are the reason every POST carries a
+# token. There will never be another tmux verb without asking first
+# (CLAUDE.md, **Shape**). `name` is not one: it writes a file of ours and
+# touches no terminal, but it arrives the same way and is checked the same
+# way.
 POST_VERBS: dict[str, Any] = {
     "jump": Serving.jump,
     "send": Serving.send,
-    "interrupt": Serving.interrupt,
     "answer": Serving.answer,
     "decline": Serving.decline,
     "name": Serving.name,
-    "limit": Serving.limit,
 }
 
 
@@ -7257,6 +6936,9 @@ body {
 }
 .theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
 .theme:disabled { opacity: .5; cursor: default; }
+/* `display` above beats the browser's own rule for `hidden`: the `.sendbar`
+   scar. Jump is absent for a session with no pane, not disabled. */
+.theme[hidden] { display: none; }
 /* The bell and what hangs under it. The slot is what the panel is measured
    from, so the panel follows the button wherever the strip puts it. */
 .bellslot { position: relative; margin-left: 12px; display: flex; }
@@ -7286,11 +6968,10 @@ body {
 .dot.ended, .dot.dead { border: 1px solid var(--edge-bright); }
 
 /* body */
-/* What the chosen row meets beside the list: the column of a split tab
-   (the map, a file tree), or the page itself on a tab with none. Its fade
-   and the grip's opening end in this, so the row flows into what is there. */
-.body { flex-grow: 1; display: flex; min-height: 0; --meet: var(--bg); }
-.body:has(> .main > .content.split) { --meet: var(--panel); }
+/* What the chosen row meets beside the list: the column every tab has (the
+   map, a file tree, the comments). Its fade and the grip's opening end in
+   this, so the row flows into what is there. */
+.body { flex-grow: 1; display: flex; min-height: 0; --meet: var(--panel); }
 /* The list wears the grip's colour, so the grip reads as the list's own
    edge and only the chosen row crosses it. */
 .sidebar {
@@ -7486,53 +7167,6 @@ body.dragging { cursor: col-resize; user-select: none; }
    send box went to the box under it. */
 .main > .asking { grid-row: 3; grid-column: 3; position: relative; }
 .main > .sendbar { grid-row: 4; grid-column: 3; position: relative; }
-/* The Session tab: everything about the one that is open, and the only place
-   it is named. There used to be a bar above every tab saying some of this,
-   which said again what the chosen row already says and cost 56 pixels of
-   every tab to do it. */
-.sessionbody { flex-grow: 1; overflow-y: auto; padding: 20px 26px; }
-.sessionbody .field { margin-bottom: 22px; max-width: 760px; }
-.sessionbody dl {
-  display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px;
-  margin: 0; font-size: 13px;
-}
-.sessionbody dt {
-  font-family: var(--narrow); font-size: 12px; letter-spacing: .04em;
-  color: var(--ink-faint);
-}
-.sessionbody dd {
-  margin: 0; font-family: var(--mono); color: var(--ink);
-  overflow-wrap: anywhere;
-}
-.sessionbody dd.word.needs_you { color: var(--needs); }
-.sessionbody dd.word.working { color: var(--working); }
-.sessionbody dd.word.done { color: var(--done); }
-/* The name, and the box that changes it. */
-.sessionbody .rename { width: 100%; max-width: 480px; }
-.sessionbody .counts { display: flex; flex-wrap: wrap; gap: 8px 22px; }
-.sessionbody .counts span { font-family: var(--mono); font-size: 13px; }
-.sessionbody .counts b { color: var(--ink-bright); font-weight: 600; }
-/* What this session has done, newest last, the way it happened. */
-.sessionlog {
-  border: 1px solid var(--edge); border-radius: 6px; max-height: 42vh;
-  overflow-y: auto; background: var(--panel);
-}
-.sessionlog div {
-  display: flex; gap: 14px; padding: 5px 12px; font-size: 12.5px;
-  border-bottom: 1px solid var(--edge);
-}
-.sessionlog div:last-child { border-bottom: 0; }
-.sessionlog .at {
-  font-family: var(--mono); color: var(--ink-faint); flex-shrink: 0;
-}
-.sessionlog .what {
-  font-family: var(--narrow); color: var(--ink-soft); flex-shrink: 0;
-  width: 130px;
-}
-.sessionlog .said {
-  color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* The page's one button shape. A full-strength `.verb` reaches the terminal —
    jump, send, submit a review — and there are only a few of those. `.quiet` is
    the same button a size down, for what only changes what is on screen: edit a
@@ -7596,17 +7230,6 @@ body.dragging { cursor: col-resize; user-select: none; }
   border: 1px solid var(--edge); overflow: hidden;
 }
 .ctx .fill { display: block; height: 100%; background: var(--working); }
-/* A caveat beside a number, or when a window resets. It is the smallest
-   thing in the panel because it is read once. */
-.sessionbody .aside { margin-left: 10px; color: var(--ink-faint); font-size: 11px; }
-.limitrow { display: flex; align-items: baseline; }
-.limitbox {
-  width: 96px; padding: 2px 8px; border-radius: 5px;
-  border: 1px solid var(--edge); background: var(--bg); color: var(--ink);
-  font-family: var(--mono); font-size: 12px;
-}
-.limitbox:focus { outline: none; border-color: var(--needs); }
-.limitbox:disabled { opacity: .5; cursor: default; }
 .ctx.warm .fill { background: var(--needs); }
 .ctx.hot .fill { background: var(--hot); }
 .tabs {
@@ -7629,10 +7252,6 @@ body.dragging { cursor: col-resize; user-select: none; }
    spacer belongs to none of them, so any of them can come and go. */
 .tabfill { flex-grow: 1; }
 .findhome { display: flex; align-items: center; }
-/* `display` above would otherwise beat the browser's own rule for `hidden`,
-   and the box would never go away -- the same line `.sendbar` carries, and
-   the third time this shape has caught something here. */
-.findhome[hidden] { display: none; }
 .find {
   width: 240px; height: 26px; padding: 0 10px; border-radius: 5px;
   border: 1px solid var(--edge); background: var(--raised); color: var(--ink);
@@ -7641,9 +7260,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .find:focus { outline: none; border-color: var(--needs); }
 .find::placeholder { color: var(--ink-faint); }
 /* How full the chosen session's context window is, at the end of the tab row
-   where it is in view on every tab. The Session tab says it too, in a panel
-   you have to go to; this is the one fact in that panel you want to notice
-   rather than look up. */
+   where it is in view on every tab. */
 .ctxslot { margin-left: 12px; display: inline-flex; align-items: center;
   gap: 10px; }
 .ctxslot[hidden] { display: none; }
@@ -7791,16 +7408,6 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   line-height: 1.5; white-space: pre;
 }
 .askprevbody.none { color: var(--ink-faint); font-style: italic; }
-/* A file of the reader's own that wostuast cannot use. Not an error of the
-   program's, so it does not shout -- but it has to be visible, because the
-   only other sign is links that never appear. */
-.trouble {
-  margin: 14px 0; padding: 10px 12px; border-radius: 6px;
-  background: var(--cut-bg); color: var(--cut-ink);
-  font-family: var(--mono); font-size: 12px; line-height: 1.6;
-  word-break: break-word;
-}
-.troublehead { font-weight: 600; margin-bottom: 4px; }
 /* Something the harness said: a background task finishing, a message from
    another session. It is real news and it is not a prompt, so it gets a quiet
    block rather than your rail and your tint. It was drawn as though you had
@@ -8548,12 +8155,6 @@ dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
   font-family: var(--mono); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;
 }
-.rename {
-  width: min(460px, 60vw); padding: 4px 8px; border-radius: 5px;
-  border: 1px solid var(--needs); background: var(--raised); color: var(--ink);
-  font-family: var(--sans); font-size: 13px;
-}
-.rename:focus { outline: none; }
 .sidefoot:empty { display: none; }
 .sidefoot {
   flex-shrink: 0; padding: 8px 10px; border-top: 1px solid var(--edge);
@@ -8582,7 +8183,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       <div class="rows" id="rows"></div>
       <div class="hints">
         <div><b>j k</b> move &nbsp; <b>n</b> next needs-you &nbsp; <b>f</b> filter &nbsp; <b>/</b> find</div>
-        <div><b>1-5</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
+        <div><b>1-4</b> tabs &nbsp; <b>t</b> thinking &nbsp; <b>c</b> colours &nbsp; <b>?</b> keys</div>
       </div>
     </div>
     <div class="grip" id="grip"></div>
@@ -8594,7 +8195,6 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           class="badge" id="diffcount" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="review">4 Review<span
           class="badge" id="reviewcount" hidden></span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="session">5 Session</button>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -8602,6 +8202,9 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         </div>
         <div class="ctxslot" id="ctxslot" hidden></div>
         <div class="live" id="live"></div>
+        <button type="button" class="theme" id="jump" hidden
+                title="jump to its tmux pane  ⏎"
+                aria-label="jump to its tmux pane"></button>
         <div class="bellslot">
           <button type="button" class="theme" id="bell"
                   aria-expanded="false"></button>
@@ -8636,7 +8239,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>e</dt><dd>rename the chosen session</dd>
     <dt>r</dt><dd>the review you have written</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 5</dt><dd>transcript, files, diff, review, session</dd>
+    <dt>1 – 4</dt><dd>transcript, files, diff, review</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>type into its terminal</dd>
     <dt>t</dt><dd>show or hide thinking</dd>
@@ -8664,7 +8267,8 @@ const state = {
   // The reader's own autolinks, compiled once. Empty until `/api/links`
   // answers, and empty for ever on a machine with no `links.json`.
   links: [],
-  // What is wrong with `links.json`, if anything. Shown on the Session tab.
+  // What is wrong with `links.json`, if anything. It stands in the live slot
+  // behind everything else, because nothing the reader does can mend it.
   linkTrouble: [],
   // The last thing the daemon refused to do, on the one line the page keeps
   // for saying things. It stays there until something replaces it.
@@ -8705,9 +8309,6 @@ const state = {
   diffMore: new Map(),
   diffWhole: new Map(),
   sides: "unified",     // one column or two; see `recallSides`
-  // What the Session tab shows: how many of each event, and the last few of
-  // them. `at` moves when an answer arrives, which is what the tab redraws on.
-  events: { counts: {}, events: [], at: 0 },
   diffOpen: new Map(),  // diff files the reader opened or shut by hand
   // The review being written. It lives in this browser and nowhere else
   // until it is sent. See `blankReview`.
@@ -8760,10 +8361,9 @@ async function tell(id, verb, body) {
 // `/rename` changes that, but the name it hands the status line is the one the
 // session started with — so a rename in the terminal does not reach this page
 // until the session is started again. A name set here is ours and wins.
-async function keepRename(box, id = state.chosen) {
+async function keepRename(box, id) {
   const asked = box.value;
   box.blur();
-  if (!id) return;
   const answer = await tell(id, "name", { name: asked });
   if (answer && answer.error) { said(answer); return; }
   // The rows are rebuilt from the names on the daemon's next pass, which is a
@@ -8776,100 +8376,9 @@ async function keepRename(box, id = state.chosen) {
   }
   drawHeader();
   drawSessions();
-  if (state.tab === "session") draw();
 }
 
-// --- the Session tab ---------------------------------------------------------
-//
-// Everything about the one session that is open, in the one place that is
-// about it. It replaces a bar that stood over every tab and said the branch,
-// the pane, the model and the state — which the chosen row says already, one
-// column to the left, and which cost 56 pixels of every tab to repeat.
-
-// The names a reader would recognise, for the counts. An event this does not
-// know still shows, under the name Claude Code gave it.
-const EVENT_WORDS = {
-  UserPromptSubmit: "prompts", PreToolUse: "tool calls",
-  PostToolUse: "results", PostToolUseFailure: "failures",
-  PermissionRequest: "permission asks", Declined: "declined",
-  Notification: "notifications",
-  Stop: "turns ended", SubagentStop: "subagents", PreCompact: "compactions",
-  SessionStart: "starts", SessionEnd: "ends",
-};
-
-function putFacts(pane, s) {
-  const field = put(pane, "div", "field");
-  const list = put(field, "dl");
-  const row = (name, value, cls) => {
-    if (value === "" || value === null || value === undefined) return;
-    put(list, "dt", null, name);
-    put(list, "dd", cls || null, String(value));
-  };
-  row("state", s.state_word, "word " + s.state);
-  row("worktree", s.cwd);
-  row("repository", s.repo);
-  // Only what git said. Before it has answered the facts are the empty
-  // default, and "not in a repository" and "none" were drawn over them.
-  if (s.git_known) {
-    row("branch", s.branch || "not in a repository");
-    if (s.ahead || s.behind) row("against upstream", "↑" + s.ahead + " ↓" + s.behind);
-    row("changed files", s.dirty ? s.touched_files : "none");
-  } else {
-    row("branch", "git has not answered yet");
-  }
-  row("model", s.model);
-  if (hasContext(s)) {
-    put(list, "dt", null, "context used");
-    putContext(put(list, "dd"), s.context_pct);
-  }
-  if (s.cost_usd !== null && s.cost_usd !== undefined) {
-    put(list, "dt", null, "spent");
-    const cell = put(list, "dd", null, money(s.cost_usd));
-    put(cell, "span", "aside",
-        "estimated at list price \u00b7 starts again after /clear");
-  }
-  // One row per rate-limit window the status line told us about. Each is
-  // independently absent -- they appear only for a claude.ai Pro or Max
-  // subscription, or behind a gateway, and only after the first API response,
-  // and Claude Code drops a window once its reset has passed. So nothing here
-  // is drawn as a nought: an empty map means nobody said, not nothing used.
-  for (const [window, one] of Object.entries(s.limits || {})) {
-    put(list, "dt", null, LIMIT_WORDS[window] || window);
-    const cell = put(list, "dd");
-    // Above 100 behind a spend limit you have gone past, which is exactly
-    // when it must not be clamped away.
-    putContext(cell, one.used_pct).lastChild.textContent =
-      Math.round(one.used_pct) + "% used";
-    if (one.resets_at) {
-      put(cell, "span", "aside", "resets " + whenOf(one.resets_at));
-    }
-  }
-  if (s.started) row("started", whenOf(s.started) + "  ·  " + ago(s.started) + " ago");
-  row("session id", s.id);
-  // The pane, and the one thing this page can do with it. `jump` used to sit
-  // in the bar above every tab; it belongs beside the pane it is about.
-  put(list, "dt", null, "tmux pane");
-  const where = put(list, "dd");
-  put(where, "span", null, s.pane || "not in tmux");
-  if (s.pane) {
-    const go = put(where, "button", "verb", "jump");
-    go.type = "button";
-    go.style.marginLeft = "12px";
-    go.title = "put the cursor in that pane  ⏎";
-    go.addEventListener("click", jumpToPane);
-    // Escape, not Ctrl-C: see `tmux_interrupt`. It stops the turn and keeps
-    // the work, where Ctrl-C into a prompt that has just gone idle is one
-    // press away from ending the session.
-    const stop = put(where, "button", "verb quiet", "stop");
-    stop.type = "button";
-    stop.style.marginLeft = "8px";
-    stop.title = "press Escape in that pane: stops this turn, keeps the work";
-    stop.addEventListener("click", async () => {
-      said(await tell(s.id, "interrupt"));
-      if (!state.trouble) note("pressed Escape");
-    });
-  }
-}
+// --- the context bar and the live slot --------------------------------------
 
 // Whether the status line has told us how full the window is. It is the one
 // number here that only the status line carries, so a session whose status
@@ -8879,9 +8388,7 @@ function hasContext(s) {
 }
 
 // The bar, not a number: how full a context window is reads at a glance and
-// does not at a count. Two places want it -- the Session tab, and the strip
-// at the end of the tab row -- and they draw the same thing, so they build it
-// the same way.
+// does not at a count.
 function putContext(parent, percent) {
   const pct = Math.round(percent);
   const ctx = put(parent, "span",
@@ -8890,234 +8397,6 @@ function putContext(parent, percent) {
   put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
   put(ctx, "span", null, pct + "% ctx");
   return ctx;
-}
-
-// What a session may spend before wostuast stops it, and the box that sets
-// it. The number is the reader's own -- only they know what an agent is worth
-// -- so the daemon keeps it beside the names rather than working it out.
-//
-// It is the one thing on this page that makes wostuast type into a terminal
-// with nobody watching, so the row says plainly what it will do, and says it
-// again once it has: a reader who comes back to a stopped agent must be able
-// to find out why from the page rather than from the pane.
-function putLimit(pane, s) {
-  const field = put(pane, "div", "field");
-  put(field, "div", "fieldname", "stop at");
-  const cell = put(field, "div", "limitrow");
-  const box = put(cell, "input", "limitbox");
-  box.type = "number";
-  box.min = "0";
-  box.step = "1";
-  box.placeholder = "no limit";
-  box.title = "Dollars. wostuast presses Escape in this pane once the spend"
-    + " passes it, which stops the turn and keeps the work done so far."
-    + " Empty or 0 means it never does.";
-  box.value = s.spend_limit ? String(s.spend_limit) : "";
-  box.dataset.stood = box.value;
-  box.addEventListener("change", () => {
-    // A number box reads "" for anything it cannot parse -- "10e", a lone
-    // "-" -- and "" means "no limit", so a slip of the finger took a limit
-    // away in silence. That, and a number below nought, is refused and put
-    // back.
-    if (box.validity.badInput || Number(box.value) < 0) {
-      said({ error: "a limit is a number of dollars, or empty for none" });
-      box.value = s.spend_limit ? String(s.spend_limit) : "";
-      return;
-    }
-    setLimit(s.id, box.value);
-  });
-  // Nothing to press, so nothing to offer. jump and stop are simply absent
-  // for such a session; this box stays, disabled, because the panel is where
-  // you go to find out what a session is and "you cannot stop this one from
-  // here" is part of that. It used to accept a number and warn only once one
-  // had been typed.
-  if (!s.pane) box.disabled = true;
-  // What it will actually do, which is not always what it was asked to do.
-  // `over_limit` skips a session with no pane and one whose status line has
-  // not sent a spend, so promising either reader that they are protected is
-  // the worst thing this box could say.
-  const blind = s.cost_usd === null || s.cost_usd === undefined;
-  if (!s.pane) {
-    put(cell, "span", "aside",
-        "this session is not in tmux, so nothing can be pressed");
-  } else if (s.limit_refused && !s.limit_fired) {
-    // It went past, and the Escape did not go in. Saying "stopped" here kept
-    // a reader trusting a limit while the agent went on spending.
-    put(cell, "span", "aside",
-        "tmux refused the Escape " + ago(s.limit_refused)
-        + " ago · it is tried again while the agent works");
-  } else if (s.limit_fired) {
-    // Said here and not only in the log, because "why did my agent stop" is
-    // asked in front of this panel. Raising the box is what lets it go again.
-    put(cell, "span", "aside",
-        "stopped " + ago(s.limit_fired) + " ago · raise it to go on");
-  } else if (!s.spend_limit) {
-    // Nothing promised, so nothing to warn about.
-  } else if (blind) {
-    put(cell, "span", "aside",
-        "its status line does not send the spend, so this cannot fire");
-  } else {
-    put(cell, "span", "aside", "Escape into this pane when the spend passes it");
-  }
-}
-
-async function setLimit(id, typed) {
-  const asked = Number(typed);
-  said(await tell(id, "limit",
-                  { limit: typed.trim() === "" || !(asked > 0) ? 0 : asked }));
-}
-
-//: What each rate-limit window is called, in words. A name wostuast does not
-//: know is shown as the status line spelled it, rather than left out.
-const LIMIT_WORDS = {
-  five_hour: "5-hour limit", seven_day: "weekly limit",
-  spend_limit: "spend limit",
-};
-
-function putRename(pane, s) {
-  const field = put(pane, "div", "field");
-  put(field, "div", "fieldname", "name");
-  const box = put(field, "input", "rename");
-  box.type = "text";
-  box.autocomplete = "off";
-  box.spellcheck = false;
-  box.placeholder = "a name for this session  ·  enter to keep";
-  // What is already there, when it is a name someone chose. A name Claude
-  // Code wrote is a starting point too, so it goes in as well.
-  box.value = s.name || "";
-  box.addEventListener("keydown", (press) => {
-    if (press.key === "Enter") { press.preventDefault(); keepRename(box); }
-    else if (press.key === "Escape") { press.preventDefault(); box.blur(); }
-  });
-}
-
-function putTally(pane, counts) {
-  const field = put(pane, "div", "field");
-  put(field, "div", "fieldname", "what it has done");
-  const box = put(field, "div", "counts");
-  const names = Object.keys(counts).sort(
-    (a, b) => counts[b] - counts[a] || a.localeCompare(b));
-  if (!names.length) {
-    put(box, "span", null, "nothing yet");
-    return;
-  }
-  for (const name of names) {
-    const one = put(box, "span");
-    put(one, "b", null, String(counts[name]));
-    put(one, "span", null, " " + (EVENT_WORDS[name] || name));
-  }
-}
-
-function putLog(pane, events) {
-  const field = put(pane, "div", "field");
-  put(field, "div", "fieldname",
-      "the last " + events.length + (events.length === 1 ? " event" : " events"));
-  const box = put(field, "div", "sessionlog");
-  if (!events.length) {
-    put(box, "div", "note", "Nothing has arrived for this session yet.");
-    return;
-  }
-  // Newest last, the way it happened, and scrolled to the end: the thing you
-  // came to read is what it did most recently.
-  for (const one of events) {
-    const row = put(box, "div");
-    put(row, "span", "at", clock(one.ts));
-    put(row, "span", "what", EVENT_WORDS[one.name] || one.name);
-    put(row, "span", "said", one.text || "");
-  }
-  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
-}
-
-function drawSession(box) {
-  if (box.dataset.tab !== "session") {
-    homeFind($("findhome"));   // it may be inside what is about to be cleared
-    box.replaceChildren();
-    box.dataset.tab = "session";
-    box.dataset.nameKey = "";
-    box.dataset.bodyKey = "";
-    const body = put(box, "div", "sessionbody");
-    // Two parts, because one of them is typed into. The name field is built
-    // when the session changes and not again; everything else is rebuilt
-    // whenever it moves. A poll that redrew the box being typed in would take
-    // the name with it, which is the rule the review keeps for its comments.
-    put(body, "div", "namefield");
-    put(body, "div", "limitfield");
-    put(body, "div", "rest");
-  }
-  const [name, limit, rest] = box.firstChild.children;
-  const s = current();
-  if (fresh(box, "nameKey", s ? s.id : "none")) {
-    name.replaceChildren();
-    if (s) putRename(name, s);
-  }
-  // The other box on this panel, and it is kept for the same reason: `rest`
-  // is rebuilt on every four-second poll, and a rebuild under the hand takes
-  // what is in it -- worse here than for the name, because the node is
-  // removed rather than blurred, so `change` never fires and the number the
-  // reader typed is not merely lost on screen, it is never stored.
-  //
-  // Unlike the name it has news of its own -- a limit that has fired -- so
-  // its key carries that, and the redraw is skipped while the box has the
-  // focus. `writingIn` is the same instinct: ask the DOM, not a flag.
-  const limitKey = s ? JSON.stringify(
-    [s.id, s.spend_limit, s.limit_fired, s.limit_refused, s.pane,
-     s.cost_usd === null || s.cost_usd === undefined]) : "none";
-  // Skipped while the box has the focus -- but only while it is still this
-  // session's box. Another session chosen with the focus left in it (an
-  // alert clicked, a link followed) kept the old box, and a number typed
-  // there set the old session's limit under the new one's name. What was
-  // half typed in the old box is put back, not stored: a number is given by
-  // Enter, Tab or a click away, never by an alert that changed the page --
-  // "7" on the way to "75" would stop that agent at seven dollars.
-  const mine = limit.dataset.id === (s ? s.id : "none");
-  if (!(mine && limit.contains(document.activeElement))
-      && fresh(box, "limitKey", limitKey)) {
-    const typing = limit.querySelector(".limitbox");
-    if (typing && typing === document.activeElement) {
-      typing.value = typing.dataset.stood;
-      typing.blur();
-    }
-    limit.replaceChildren();
-    limit.dataset.id = s ? s.id : "none";
-    if (s) putLimit(limit, s);
-  }
-  if (!s) {
-    if (!fresh(box, "bodyKey", "none")) return;
-    rest.replaceChildren();
-    drawEmpty(rest);
-    return;
-  }
-  const key = JSON.stringify([s.id, s.state, s.branch, s.cwd, s.pane, s.model,
-                              s.context_pct, s.dirty, s.touched_files, s.since,
-                              state.events.at, state.linkTrouble]);
-  if (!fresh(box, "bodyKey", key)) return;
-  rest.replaceChildren();
-  putFacts(rest, s);
-  putLinkTrouble(rest);
-  putTally(rest, state.events.counts);
-  putLog(rest, state.events.events);
-}
-
-// What is wrong with `links.json`. It is the reader's own file and nothing
-// else on the page can say so: the transcript just has no links in it, which
-// is also what a machine with no such file looks like.
-function putLinkTrouble(pane) {
-  if (!state.linkTrouble.length) return;
-  const box = put(pane, "div", "trouble");
-  put(box, "div", "troublehead", "links.json");
-  for (const why of state.linkTrouble) put(box, "div", null, why);
-}
-
-async function loadSession() {
-  const want = state.chosen;
-  if (!want) { draw(); return; }
-  const body = await ask(want, "events");
-  if (state.chosen !== want) return;   // the reader moved on while we waited
-  if (body && !body.missing) {
-    state.events = { counts: body.counts || {}, events: body.events || [],
-                     at: state.events.at + 1 };
-  }
-  draw();
 }
 
 // What the daemon answered, on the one line the page keeps for saying
@@ -9143,9 +8422,16 @@ function said(answer) {
   paintLive();
 }
 
-// The one line the page keeps for saying things, and the three things that
+// The one line the page keeps for saying things, and the four things that
 // want it: what the stream is doing, something you asked for and did not
-// get, and a passing word that borrows the slot over both.
+// get, a `links.json` that cannot be used, and a passing word that borrows
+// the slot over all three.
+//
+// The file's trouble stands last, and in a few words, with the whole of it
+// on a hover: nothing the reader does on the page mends it, so an answer
+// that works must not clear it the way it clears `state.trouble`, and the
+// daemon's sentence about bad JSON runs to 150 characters on a line that
+// does not wrap.
 //
 // One painter, because four writers raced for it.
 //
@@ -9156,7 +8442,12 @@ function said(answer) {
 // holds "live"; it is only not painted.
 function paintLive(borrowed) {
   const stream = state.live === "live" ? "" : state.live;
-  $("live").textContent = borrowed || state.trouble || stream || "";
+  const links = state.linkTrouble.length
+    ? "links.json has a problem · wostuast doctor" : "";
+  const slot = $("live");
+  slot.textContent = borrowed || state.trouble || stream || links;
+  slot.title = links && slot.textContent === links
+    ? state.linkTrouble.join("\n") : "";
 }
 
 // Our own word about what just happened -- "review sent", "pressed 2, 1".
@@ -9351,6 +8642,9 @@ const ICONS = {
   themeAuto: "M1.8 7a5.2 5.2 0 1 0 10.4 0a5.2 5.2 0 1 0-10.4 0zM7 1.8v10.4",
   // The way back to the latest, at the foot of the transcript.
   down: "M7 2.2v9.4M3 7.6l4 4 4-4",
+  // Jump, at the end of the tab row: a terminal, and its prompt.
+  terminal: "M1.6 3.2a1 1 0 0 1 1-1h8.8a1 1 0 0 1 1 1v7.6a1 1 0 0 1-1 1H2.6"
+            + "a1 1 0 0 1-1-1zM4.2 5.4l2 1.6-2 1.6M7.4 8.8h2.4",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -9528,7 +8822,7 @@ function newRow(id) {
 // ago. The name is one you gave it, and until you do, its repository and
 // worktree (`agent/richpalm`) -- never the title Claude Code writes from the
 // first prompt, which `/rename` does not reach and which went stale beside
-// the branch. The Session tab still shows that one.
+// the branch.
 // Not the state: the dot's colour and the group the row stands in say it
 // already, and a word at the top and "waiting for input" at the foot said it
 // a third and a fourth time. The word stays in the history, where "ended"
@@ -9598,8 +8892,7 @@ function rowName(s) {
   return (s.mine && s.name) || s.place || s.id.slice(0, 8);
 }
 
-// Renaming where the name stands, by a double-click or `e`. The Session tab
-// has a box for it too, and it is one tab away from every row -- a name you
+// Renaming where the name stands, by a double-click or `e` -- a name you
 // change when you think of it is a name you have. Enter keeps it, an empty
 // name gives the session back its repository and worktree, and Escape or a
 // click elsewhere keeps the old one.
@@ -10184,6 +9477,9 @@ function drawHeader() {
   drawAsking();
   drawContext();
   const s = current();
+  // Absent, not disabled, for a session with no pane: there is nothing to
+  // jump to, and a button that cannot work is not offered.
+  $("jump").hidden = !s || !s.pane;
   const was = $("sendbar").hidden;
   $("sendbar").hidden = !s || !s.pane || state.tab !== "transcript"
     || s.state === "ended" || s.state === "dead";
@@ -10210,8 +9506,7 @@ function drawContext() {
     ? money(s.cost_usd) : "";
   // Which model the session runs, left of the bar it fills. It changes
   // with `/model` mid-session, and it is what the percentage is a
-  // percentage of, so it stands beside it rather than in the Session tab
-  // alone. The status line sends it; without one there is nothing to say.
+  // percentage of, so it stands beside it. The status line sends it; without one there is nothing to say.
   const model = (s && s.model) || "";
   slot.hidden = !hasContext(s) && !spent && !model;
   if (slot.hidden) {
@@ -10503,11 +9798,12 @@ async function loadLinks() {
     }
   }
   state.links = out;
+  // Said on the live slot, until a reload: see `paintLive`.
   state.linkTrouble = trouble;
-  // Trouble goes on the Session tab, which may be what is on screen. The
-  // rows link their tickets too, and nothing else draws them again: this
-  // answer can come after the last push.
-  if (out.length || trouble.length) {
+  paintLive();
+  // The rows link their tickets too, and nothing else draws them again:
+  // this answer can come after the last push.
+  if (out.length) {
     draw();
     drawSessions();
   }
@@ -14503,40 +13799,30 @@ function drawDiffCount() {
 // three tabs, so the two it did not name got whatever the last arm said.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0,
-                splits: true, finds: "find a turn  /" },
-  files: { draw: drawFiles, load: loadFiles, poll: 2000, splits: true,
+                finds: "find a turn  /" },
+  files: { draw: drawFiles, load: loadFiles, poll: 2000,
            finds: "go to file  /" },
-  diff: { draw: drawDiff, load: loadDiff, poll: 5000, splits: true,
+  diff: { draw: drawDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /" },
   // No `load`: a review is written in this browser, so there is nothing to
   // fetch. `load()` draws for a tab that says so, which is the half an empty
   // loader forgot — and then switching here left the page on the tab before.
-  review: { draw: drawReview, load: null, poll: 0, splits: true,
+  review: { draw: drawReview, load: null, poll: 0,
             finds: "find a comment  /" },
-  session: { draw: drawSession, load: loadSession, poll: 4000, finds: null },
 };
 
-// Which tab each number key picks. A key for a tab that is not built yet does
-// nothing, because showTab only accepts a name TABS knows.
-const TAB_KEYS = ["transcript", "files", "diff", "review", "session"];
+// Which tab each number key picks: the order of `TABS`, so a new tab is one
+// entry there and nothing else.
+const TAB_KEYS = Object.keys(TABS);
 
 function draw() {
   const box = $("content");
-  box.className = "content" + (TABS[state.tab].splits ? " split" : "");
-  // There is one find box and it lives wherever it is used, which on a split
-  // tab is inside this content box. Any tab that rebuilds the box empties it,
-  // so the box has to be taken home first or it is destroyed — and with it
-  // every listener on it, and the next `$("find")` throws. That threw inside
-  // `showTab` before it reached `load`, so the tab never loaded and every
-  // switch after it threw too: broken until a reload.
-  //
-  // The box is in danger exactly when a tab is about to rebuild, and every
-  // tab rebuilds on the same condition: the box says another tab owns it.
-  // Asking the DOM means a new tab cannot forget to say so, and it does not
-  // move on a redraw of the same tab, which would blur the box mid-word.
-  // `split` takes it back for the tabs that keep it.
-  if (!current() || box.dataset.tab !== state.tab) homeFind($("findhome"));
+  box.className = "content split";
   if (!current()) {
+    // The find box lives inside this box, so it goes home before the box is
+    // emptied, or it is destroyed with every listener on it and the next
+    // `$("find")` throws. A tab's own rebuild does the same in `split`.
+    homeFind($("findhome"));
     box.replaceChildren();
     box.dataset.tab = "";       // nothing is built, so the next tab rebuilds
     state.turns.nodes = [];
@@ -14555,12 +13841,7 @@ function showTab(name) {
   for (const button of document.querySelectorAll(".tab")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
-  // A tab that does not use the box does not show one. `findhome` is where
-  // the box lives when no split tab has claimed it, and hiding the home
-  // rather than the box means `homeFind` has somewhere to put it either way.
-  const finds = TABS[name].finds;
-  $("findhome").hidden = !finds;
-  if (finds) $("find").placeholder = finds;
+  $("find").placeholder = TABS[name].finds;
   load();
   resubscribe();
 }
@@ -14695,7 +13976,6 @@ function choose(id) {
   state.diffShut = new Set();
   state.diffMore = new Map();
   state.diffWhole = new Map();
-  state.events = { counts: {}, events: [], at: 0 };
   state.diffOpen.clear();
   recallReview(id);
   state.writing = null;
@@ -15116,12 +14396,7 @@ document.addEventListener("keydown", (press) => {
     return;
   }
   switch (press.key) {
-    // Not on a tab that has no find box. This changes no behaviour -- a
-    // browser will not focus an element it is not rendering, so the key was
-    // already doing nothing there -- and it is here to say so rather than to
-    // rest on that. There is no test, because there is nothing to perturb.
     case "/":
-      if (!TABS[state.tab].finds) return;
       $("find").focus();
       break;
     case "f": $("pick").focus(); break;
@@ -15156,8 +14431,8 @@ document.addEventListener("keydown", (press) => {
   }
   // A key that did something leaves no ring on a button the pointer
   // pressed. A click leaves the focus on its button, and a key pressed after
-  // it turns `:focus-visible` on -- so clicking the Session tab and pressing
-  // 1 drew the browser's dark ring round Session, the tab just left. A
+  // it turns `:focus-visible` on -- so clicking the Review tab and pressing
+  // 1 drew the browser's dark ring round Review, the tab just left. A
   // button reached by keyboard keeps its ring: that is where the reader is.
   const held = document.activeElement;
   if (!focusedByKey && held && held.matches("button")) held.blur();
@@ -15174,6 +14449,8 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 $("theme").addEventListener("click", nextTheme);
+putIcon($("jump"), "terminal");
+$("jump").addEventListener("click", jumpToPane);
 $("bell").addEventListener("click", (press) => {
   press.stopPropagation();            // or the listener below shuts it again
   showAlerts($("alerts").hidden);

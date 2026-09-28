@@ -22,16 +22,19 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_jump_puts_the_cursor_in_the_pane(in_pane):
-    """The button lives beside the pane it is about, in the Session tab. It
-    used to sit in a bar over every tab, saying nothing the chosen row was not
-    already saying."""
+    """The button is an icon at the end of the tab row, outside every tab,
+    and a click asks the daemon to jump -- the Enter key's verb."""
     daemon, base, seen = in_pane
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
         try:
-            show_tab(page, "session")
-            page.click(".sessionbody .verb")
-            page.wait_for_timeout(400)
+            assert page.locator("#jump").is_visible()
+            assert not [one for one in seen if "select-window" in one], seen
+            page.click("#jump")
+            deadline = time.time() + 15
+            while (["tmux", "select-pane", "-t", "%7"] not in seen
+                   and time.time() < deadline):
+                time.sleep(0.05)
             assert ["tmux", "select-window", "-t", "%7"] in seen
             assert ["tmux", "select-pane", "-t", "%7"] in seen
         finally:
@@ -173,7 +176,7 @@ def test_a_question_belongs_to_the_transcript_and_no_other_tab(ws, in_pane):
         browser, page = open_page(play, (None, base))
         try:
             page.wait_for_selector("#asking:not([hidden]) .askopt")
-            for tab in ("files", "diff", "review", "session"):
+            for tab in ("files", "diff", "review"):
                 show_tab(page, tab)
                 assert page.locator("#asking .askopt").count() == 0, tab
                 assert page.locator("#asking:not([hidden])").count() == 0, tab
@@ -614,15 +617,14 @@ def test_the_send_box_keeps_the_text_when_it_did_not_go_in(ws, in_pane,
 
 
 def test_the_verbs_are_not_there_without_a_pane(no_pane):
-    """Nothing to jump to, nothing to type into."""
+    """Nothing to jump to, nothing to type into. Jump is absent, not
+    disabled: a button that cannot work is not offered."""
     with sync_playwright() as play:
         browser, page = open_page(play, (None, no_pane[1]))
         try:
+            page.wait_for_function("state.sessions.length === 1")
             assert page.locator("#sendbar").is_hidden()
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody dl")
-            assert "not in tmux" in page.locator(".sessionbody").inner_text()
-            assert page.locator(".sessionbody .verb").count() == 0
+            assert page.locator("#jump").is_hidden()
         finally:
             browser.close()
 
@@ -652,23 +654,6 @@ def test_a_question_can_be_read_without_tmux_but_not_answered(ws, no_pane):
                 """() => document.querySelector('#asking .askopt.chosen') !== null""")
             assert page.locator("#asking .asksend .verb").is_disabled()
             assert "not in tmux" in page.locator(".asksays").inner_text()
-        finally:
-            browser.close()
-
-
-def test_a_spend_limit_is_not_offered_where_nothing_can_be_pressed(no_pane):
-    """jump and stop are simply absent for such a session. The box stays,
-    disabled, because the panel is where you go to find out what a session is
-    — but it used to take a number and warn only once one had been typed."""
-    _, base = no_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".limitbox")
-            assert page.locator(".limitbox").is_disabled()
-            assert "not in tmux" in page.locator(".limitrow").inner_text()
-            assert page.locator(".sessionbody .verb").count() == 0
         finally:
             browser.close()
 
@@ -861,9 +846,9 @@ def test_a_session_can_be_renamed_from_the_page(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base_of(in_pane)))
         try:
-            show_tab(page, "session")
-            page.fill(".sessionbody .rename", "the parser")
-            page.press(".sessionbody .rename", "Enter")
+            page.dblclick(".row .name")
+            page.fill("input.rowname", "the parser")
+            page.press("input.rowname", "Enter")
             # The row is where a name is read: there is no second place that
             # says it any more. A name given here leads the row.
             page.wait_for_function(
@@ -877,10 +862,10 @@ def test_escape_leaves_the_name_as_it_was(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base_of(in_pane)))
         try:
-            show_tab(page, "session")
             was = page.locator(".row .name").inner_text()
-            page.fill(".sessionbody .rename", "not this")
-            page.press(".sessionbody .rename", "Escape")
+            page.dblclick(".row .name")
+            page.fill("input.rowname", "not this")
+            page.press("input.rowname", "Escape")
             page.wait_for_timeout(300)      # proving it did not go
             assert page.locator(".row .name").inner_text() == was
         finally:
@@ -891,342 +876,18 @@ def test_an_empty_name_gives_the_session_its_place_back(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base_of(in_pane)))
         try:
-            show_tab(page, "session")
-            page.fill(".sessionbody .rename", "for a moment")
-            page.press(".sessionbody .rename", "Enter")
+            page.dblclick(".row .name")
+            page.fill("input.rowname", "for a moment")
+            page.press("input.rowname", "Enter")
             page.wait_for_function(
                 "document.querySelector('.row .name').textContent"
                 ".includes('for a moment')")
-            page.fill(".sessionbody .rename", "")
-            page.press(".sessionbody .rename", "Enter")
+            page.dblclick(".row .name")
+            page.fill("input.rowname", "")
+            page.press("input.rowname", "Enter")
             page.wait_for_function(
                 "!document.querySelector('.row .name').textContent"
                 ".includes('for a moment')")
-        finally:
-            browser.close()
-
-
-# --- the Session tab ---------------------------------------------------------
-
-
-def test_the_session_tab_says_what_the_row_cannot(in_pane):
-    """The bar that used to stand over every tab said the branch, the pane,
-    the model and the state. Three of those the chosen row says already, one
-    column to the left — and it cost 56 pixels of every tab to repeat them.
-    What it said that the row does not say is here, with the rest."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            assert page.locator(".session-head").count() == 0
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody dl")
-            said = page.locator(".sessionbody").inner_text()
-            assert "%7" in said                      # the pane
-            assert "/w/one" in said or "one" in said  # the whole path
-            assert "session id" in said
-        finally:
-            browser.close()
-
-
-def test_the_session_tab_counts_what_the_session_did(in_pane, ws):
-    daemon, base, seen = in_pane
-    ws.append_event(conftest.event("UserPromptSubmit", cwd="/w/one",
-                                   ts=time.time(), prompt="do the thing"))
-    daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody .counts")
-            page.wait_for_function(
-                """() => document.querySelector('.sessionbody .counts')
-                     .textContent.includes('prompts')""")
-            # And the log says the same thing in the order it happened.
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.sessionlog .said')]
-                     .some((e) => e.textContent.includes('do the thing'))""")
-        finally:
-            browser.close()
-
-
-def test_a_name_being_typed_survives_the_tab_redrawing(in_pane):
-    """The panel is polled, and the name box is typed into. Rebuilding it
-    under the reader would take the name with it — the rule the review keeps
-    for its comments."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody .rename")
-            page.click(".sessionbody .rename")
-            page.fill(".sessionbody .rename", "half a name")
-            # Whatever the poll brings, and a state change on top of it.
-            page.evaluate("""() => {
-              state.events = {counts: {Stop: 3}, events: [], at: state.events.at + 1};
-              draw();
-            }""")
-            page.wait_for_function(
-                """() => document.querySelector('.sessionbody .counts')
-                     .textContent.includes('3')""")
-            assert page.input_value(".sessionbody .rename") == "half a name"
-        finally:
-            browser.close()
-
-
-# --- stopping an agent, and the limit that does it for you --------------------
-
-
-def test_the_stop_button_presses_escape_and_not_ctrl_c(in_pane):
-    """Escape stops the turn and keeps the work done so far. Ctrl-C into a
-    prompt that has just gone idle is one press away from ending the
-    session — see `tmux_interrupt`."""
-    daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody .verb")
-            seen.clear()
-            page.click(".sessionbody .verb:text-is('stop')")
-            page.wait_for_function(
-                "() => document.getElementById('live').innerText"
-                ".includes('Escape')")
-            assert seen == [["tmux", "send-keys", "-t", "%7", "Escape"]], seen
-        finally:
-            browser.close()
-
-
-def test_a_spend_limit_is_set_from_the_panel_and_comes_back(ws, in_pane):
-    daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".limitbox")
-            assert page.input_value(".limitbox") == ""
-            seen.clear()
-            # Every limit this page asks for, kept where nothing repaints it.
-            # It must be one, for 12 — on `input` rather than `change` the
-            # box posts $1 on the way to $12, and a session already past a
-            # dollar is stopped by a number the reader was still typing.
-            page.evaluate("""() => { window.__asked = [];
-              const real = tell;
-              tell = (id, what, body) => {
-                if (what === 'limit') window.__asked.push(body.limit);
-                return real(id, what, body);
-              }; }""")
-            page.click(".limitbox")
-            page.type(".limitbox", "12", delay=40)
-            page.keyboard.press("Tab")           # `change`, not every keystroke
-            # The daemon has it first. Like a rename, setting one pushes
-            # nothing: the rows are built from the map on the next pass, so
-            # the browsers hear about it when that pass happens.
-            wait_until(lambda: ws.read_limits().get("s1", {}).get("limit") == 12.0)
-            assert seen == [], "setting a limit must write no terminal"
-            assert page.evaluate("window.__asked") == [12], \
-                page.evaluate("window.__asked")
-            daemon.tick()
-            page.wait_for_function(
-                "() => state.sessions[0].spend_limit === 12")
-            # And it says what it will *actually* do. This session's status
-            # line has sent no spend, so nothing could ever fire, and saying
-            # "Escape when the spend passes it" would be a promise this
-            # program cannot keep.
-            page.wait_for_function(
-                """() => document.querySelector('.limitrow')
-                     .innerText.includes('does not send the spend')""")
-
-            # With a spend, it promises what it can do.
-            daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=2.0)
-            daemon.tick()
-            page.wait_for_function(
-                """() => document.querySelector('.limitrow')
-                     .innerText.includes('Escape into this pane')""")
-
-            # Emptying it takes the limit away.
-            page.fill(".limitbox", "")
-            page.keyboard.press("Tab")
-            wait_until(lambda: ws.read_limits() == {})
-            daemon.tick()
-            page.wait_for_function("() => !state.sessions[0].spend_limit")
-        finally:
-            browser.close()
-
-
-def test_a_limit_typed_after_another_session_is_chosen_is_that_sessions(
-        ws, in_pane, tmp_path):
-    """The box kept the focus when an alert or a link chose another session,
-    so it was never rebuilt: the panel stood over the old session's box, and
-    a number typed to protect the new one set the old one's limit."""
-    daemon, base, seen = in_pane
-    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(tmp_path),
-                                   pane="%9", pid=2, ts=time.time()))
-    daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("document.querySelectorAll('.row').length === 2")
-            # Both seen on the Session tab, so each comes back to it.
-            for one in ("s2", "s1"):
-                page.evaluate(f"choose('{one}')")
-                show_tab(page, "session")
-                page.wait_for_function(
-                    "(id) => { const one = document.querySelector('.limitfield');"
-                    "          return one && one.dataset.id === id; }", arg=one)
-            page.click(".limitbox")
-            page.keyboard.type("7")
-            # An alert clicked: `choose` runs with the focus where it was.
-            page.evaluate("choose('s2')")
-            page.wait_for_function(
-                "() => { const one = document.querySelector('.limitfield');"
-                "        return one && one.dataset.id === 's2'; }")
-            page.click(".limitbox")
-            page.keyboard.type("9")
-            page.keyboard.press("Tab")
-            wait_until(lambda: ws.read_limits().get("s2", {}).get("limit") == 9.0)
-            # And the 7 half typed in s1's box was never given: no Enter, no
-            # Tab, no click away. Stored, it would stop s1 at seven dollars
-            # on the way to seventy-five.
-            assert "s1" not in ws.read_limits(), ws.read_limits()
-        finally:
-            browser.close()
-
-
-@pytest.mark.parametrize("typed", ["10e", "-5"])
-def test_a_limit_the_box_cannot_read_leaves_the_limit_standing(ws, in_pane, typed):
-    """A number box reads `10e` as empty, and empty means "no limit": one slip
-    of the hand took the limit away and the panel went quiet about it. A
-    negative number did the same through `!(asked > 0)`."""
-    daemon, base, seen = in_pane
-    daemon.store.set_limit("s1", 10.0)
-    daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            show_tab(page, "session")
-            page.wait_for_function(
-                "() => { const box = document.querySelector('.limitbox');"
-                "        return box && box.value === '10'; }")
-            page.click(".limitbox", click_count=3)
-            page.keyboard.type(typed)
-            page.keyboard.press("Tab")
-            page.wait_for_function(
-                "() => state.trouble.includes('a limit is a number of dollars')")
-            assert page.input_value(".limitbox") == "10"
-            assert ws.read_limits()["s1"]["limit"] == 10.0
-        finally:
-            browser.close()
-
-
-def test_an_escape_tmux_refused_is_not_called_a_stop(ws, in_pane, monkeypatch):
-    """The panel said "stopped · raise it to go on" over an agent still
-    spending, because the key that would have stopped it never landed."""
-    daemon, base, seen = in_pane
-    monkeypatch.setattr(ws, "tmux_interrupt", lambda pane: False)
-    ws.append_event(conftest.event("UserPromptSubmit", pane="%7",
-                                   prompt="go", ts=time.time()))
-    daemon.store.refresh()
-    daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=30.0)
-    daemon.store.set_limit("s1", 10.0)
-    daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            show_tab(page, "session")
-            page.wait_for_function(
-                """() => { const one = document.querySelector('.limitrow');
-                           return one && one.innerText.includes('refused'); }""")
-            said = page.locator(".limitrow").inner_text()
-            assert "stopped" not in said, said
-            assert "tried again" in said, said
-        finally:
-            browser.close()
-
-
-def test_a_session_stopped_by_its_limit_says_so_where_you_would_look(ws, in_pane):
-    """"Why did my agent stop" is asked in front of this panel, not in the
-    pane — and raising the box is what lets it go again."""
-    daemon, base, seen = in_pane
-    ws.append_event(conftest.event("UserPromptSubmit", pane="%7",
-                                   prompt="go", ts=time.time()))
-    daemon.store.refresh()
-    daemon.store.sessions["s1"].status = ws.Status(ts=1.0, cost_usd=30.0)
-    daemon.store.set_limit("s1", 10.0)
-    daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            show_tab(page, "session")
-            page.wait_for_function(
-                """() => { const one = document.querySelector('.limitrow');
-                           return one && one.innerText.includes('stopped'); }""")
-            said = page.locator(".limitrow").inner_text()
-            assert "raise it to go on" in said, said
-            assert page.input_value(".limitbox") == "10"
-        finally:
-            browser.close()
-
-
-def wait_until(said, seconds=10):
-    """Wait for something the daemon knows, rather than for the page to be
-    told: a POST that writes no terminal pushes nothing, so the browser only
-    hears about it on the next pass."""
-    until = time.monotonic() + seconds
-    while time.monotonic() < until:
-        if said():
-            return
-        time.sleep(0.02)
-    raise AssertionError("the daemon never got it")
-
-
-def test_a_limit_being_typed_survives_the_panel_redrawing(in_pane):
-    """`rest` is rebuilt on every four-second poll. A rebuild under the hand
-    is worse here than for the name: the node is removed rather than blurred,
-    so `change` never fires and the number is not merely lost on screen — it
-    is never stored at all."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".limitbox")
-            page.click(".limitbox")
-            page.type(".limitbox", "25", delay=20)
-            # Whatever the poll brings, and a state change on top of it.
-            page.evaluate("""() => {
-              state.events = {counts: {Stop: 3}, events: [], at: state.events.at + 1};
-              draw();
-            }""")
-            page.wait_for_function(
-                """() => document.querySelector('.sessionbody .counts')
-                     .textContent.includes('3')""")
-            assert page.input_value(".limitbox") == "25"
-            assert page.evaluate(
-                "document.activeElement.className") == "limitbox"
-        finally:
-            browser.close()
-
-
-def test_a_limit_being_typed_survives_its_own_news(ws, in_pane):
-    """The narrow key keeps the poll's churn out, but the limit field has
-    news of its own — a status line that starts reporting a spend, or a limit
-    that has just fired. Without the focus guard that news rebuilds the box
-    under the hand, and the node is removed rather than blurred, so `change`
-    never fires and the number is gone."""
-    daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".limitbox")
-            page.click(".limitbox")
-            page.type(".limitbox", "25", delay=20)
-            # Exactly what `limitKey` watches, arriving mid-word.
-            page.evaluate("""() => { state.sessions[0].cost_usd = 3.5;
-                                     draw(); }""")
-            page.wait_for_timeout(200)   # proving something did not happen
-            assert page.input_value(".limitbox") == "25"
-            assert page.evaluate(
-                "document.activeElement.className") == "limitbox"
         finally:
             browser.close()
 

@@ -10,8 +10,8 @@ tmux_send CLAUDE.md` finds it.
 **A new scar goes into the bullet it belongs to, not beside it.** Grep for
 the symbol first. A bullet is new only when the bug is a new kind; the same
 kind again adds its test name and a sentence to the bullet that holds it,
-as a nested item when it has a why of its own (the limit box and the live
-slot are the shape). The skill writes a rule for every fix, and a file that
+as a nested item when it has a why of its own (the live slot and the
+transcript's place are the shape). The skill writes a rule for every fix, and a file that
 grows by one bullet a fix is read whole on every turn and pushes a long
 session into compaction sooner — eleven times in the session that wrote
 this.
@@ -55,7 +55,6 @@ after the tests go red.
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending` | Safety: the token, localhost, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | State: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `Session.permission`, `Declined` | Safety: a No is Escape, and the reason waits for proof |
-| `set_limit`, `over_limit`, `limit_refused`, `LIMIT_RETRY`, `limits.json`, `putLimit` | Safety: the one thing that types with nobody watching |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
@@ -81,11 +80,11 @@ after the tests go red.
 
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
 `wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
-SSE. The page shows a session list and five tabs: Transcript, Files, Diff,
-Review, Session.
-Four things go back to the terminal, all through tmux: jump, send,
-interrupt, and the keys that answer a question. A No to a permission dialog
-is two of them: an interrupt, then a send. Nothing else writes to a
+SSE. The page shows a session list and four tabs: Transcript, Files, Diff,
+Review.
+Four things go back to the terminal, all through tmux: jump, send, the
+keys that answer a question, and a No to a permission dialog, which is an
+Escape and then a send. Nothing else writes to a
 terminal. Nothing owns the agent process —
 interrupt is a keystroke, not a signal.
 
@@ -112,8 +111,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 
 - **Owning the agent process.** Nothing here spawns, wraps or kills it; tmux
   owns the PTY. Typing into a pane is not owning it, which is why jump, send,
-  interrupt, the answer keys and the spend limit's Escape are allowed and a
-  signal is not.
+  the answer keys and a No's Escape are allowed and a signal is not.
 - **A terminal emulator** (no xterm.js). A Peek tab showed a still capture of
   the pane for two milestones and was removed: the tmux window it copied was
   always one keystroke away. `capture-pane` went with it.
@@ -127,7 +125,11 @@ building anything. A goal that bends is rewritten here in the same PR.
   is the agent's own question, and the page types nothing until the reader
   submits.
 - **Agent-to-agent messaging, teams, orchestration, cache telemetry.** Showing
-  the spend the status line sends, and a limit on it, is in; accounting is out.
+  the spend the status line sends is in; accounting is out. **So is a spend
+  limit**: one shipped, the one thing here that typed into a terminal with
+  nobody watching, and it went with the Session tab that set it -- ten rules
+  and their tests for a box the reader never used. `git show` the commit
+  that removed the Session tab before building one again.
 - **Knowing a worktree layout.** A session is an agent standing in a
   directory, nothing more. No dependency on `gra`.
 - **Electron, Tauri, React, or any build step**, a Python dependency outside
@@ -616,12 +618,12 @@ update the comment with its own text, and read it back.
   **before the cut**: a URL cut before its `@` no longer looks like one with
   a password, and its first half stood on the row. The name is kept, so the
   reader still knows what was there. Every one-line summary goes through it:
-  the row, the session's log, `ls`, a tool call's line in the transcript.
+  the row, `ls`, a tool call's line in the transcript.
   The permission bar does not: a request is judged on all of it. It catches
   the shapes it knows, and a secret in another shape still shows -- say so
   rather than implying the page is safe from them.
   `test_a_summary_hides_what_looks_like_a_credential`,
-  `test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole`.
+  `test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole`.
 - **The page never builds HTML from what a program printed.** A `!`
   command's output and a slash command's answer reach it as text, and
   `putShell` puts them in a `pre` as text: a program can print `<img>`.
@@ -654,8 +656,8 @@ update the comment with its own text, and read it back.
   "Claude keeps the work done so far"; Ctrl-C "interrupts a running
   operation", but "if nothing is running, the first press clears the prompt
   input and a second press exits Claude Code". A turn can end between deciding
-  to stop a session and the key landing, so Ctrl-C on an automatic limit is a
-  race whose losing side is a session that quit. Escape on an idle prompt does
+  to stop a session and the key landing, so Ctrl-C is a race whose losing
+  side is a session that quit. Escape on an idle prompt does
   nothing. `tmux_interrupt` is a key name, the shape of the `Enter` press
   `tmux_send` already makes — not something that could go through `tmux_send`,
   which strips every byte below a space on purpose. Measured: `send-keys C-c`
@@ -696,120 +698,17 @@ update the comment with its own text, and read it back.
   `test_one_decline_at_a_time_per_session`,
   `test_a_no_waits_for_a_send_already_on_its_way`,
   `test_a_reason_half_written_survives_a_look_at_another_tab`.
-- **A spend limit is the one thing here that types with nobody watching, so
-  it is guarded three ways and says so afterwards.** `over_limit` fires only
-  for a session that is **working** (Escape into an idle prompt is a keystroke
-  nobody asked for, and Escape while a permission dialog is up declines it —
-  a decision, and not this one's to make), only **once** (`fired_at` is
-  stamped before the key goes out, or the key lands again on every tick and
-  the agent can never be let go), and only on a spend the status line
-  **actually sent** (`None` is "not told", and stopping an agent over a number
-  nobody sent is the worst of the three). Raising the limit clears `fired_at`,
-  which is how a stopped session is released — otherwise the only way on would
-  be deleting a file nobody told you about. The page says it in the Session
-  panel, beside the box that set it, because "why did my agent stop" is asked
-  there and not in the pane.
-  **And it is armed again when the spend drops below it**: `/clear` puts
-  `cost.total_cost_usd` back to nought, so without this one stop disarms the
-  limit for the rest of the session and the agent runs without bound behind a
-  box still showing a number. Only `set_limit` used to clear `fired_at`.
 - **A control that cannot work is disabled where it stands, and says why.**
-  Everything on this page works with no tmux — the log, the sidebar, all five
-  tabs, alerts, the spend on the strip. The five things that do not are the
-  five that type into a pane: jump, send, interrupt, answering a question and
-  submitting a review. jump, send and stop are simply absent for a session
-  with no pane, and the review's submit has always refused; two were offered
-  anyway. `paintPicks` enabled **submit** on a question and said `presses 1`,
-  which is a promise of keystrokes into a terminal that does not exist, and
-  `putLimit` took a number and warned only once one had been typed, because
-  its `!s.pane` aside sat behind `!s.spend_limit` in the chain. **Reading is
-  not acting**: the question bar and the limit box both stay where they are,
-  because the panel is where you go to find out what a session is. It is the
-  press that is refused. Grep `canType` and `box.disabled`.
-- **`limits.json` is not a second config file.** Goal 4 allows one,
-  `links.json`, because a human writes it in an editor. This is written by the
-  page through a POST and read by the daemon, which is what `names.json`
-  already is. **The daemon enforces it, not the browser**: a limit that holds
-  only while a tab is open is a promise that breaks when you shut the laptop,
-  and two open tabs would each fire their own.
-- **The tick reads the rows again after a stop, and not with `or`.** A stop
-  moves `fired_at` and the session's last event, both of which are in the row.
-  `if moved or self.store.refresh()` short-circuits, so on a tick that had
-  already changed something the second read never ran and the browsers heard
-  about the stop a tick late. `test_a_tick_stops_a_session_that_has_gone_over`
-  reads the row, not just the tmux call, for exactly this.
-- **The limit box is typed into while the page redraws under it, and a
-  half-typed number must never become a limit.** Five guards, each a scar:
-  - **It listens for `change`, never `input`.** On `input` the box
-    posts $1 on the way to $12, and a session already past a dollar is stopped
-    by a number the reader was still typing. The test spies on `tell` and
-    asserts one call.
-  - **It lives in `drawSession`'s kept half, and it is guarded
-    twice.** `rest` is rebuilt on every four-second poll, and a rebuild under
-    the hand is worse here than for the name: the node is *removed* rather than
-    blurred, so `change` never fires and the number is not merely lost on
-    screen, it is never stored. So it sits in its own part with its own narrow
-    key — that is what keeps the poll's churn out. **And the key is skipped
-    while the box has the focus**, because unlike the name this field has news
-    of its own: a status line that starts reporting a spend, or a limit that
-    has just fired, arriving mid-word. Two tests, because the two guards fail
-    differently.
-  - **It is kept while it has the focus only while it is still this
-    session's box.** An alert clicked or a link followed runs `choose` with the
-    focus where it was, so the skip kept the old session's box under the new
-    session's panel, and a number typed there to protect the new session set
-    the old one's limit. `limitfield`'s `dataset.id` says whose box it is; a
-    box that is not the chosen session's is rebuilt. **What was half typed in
-    it is put back first** (`dataset.stood`), never stored: a number is given
-    by Enter, Tab or a click away, and an alert that changed the page is none
-    of those — "7" on the way to "75" would stop that agent at seven dollars,
-    which is the `change` scar above by another road. Chromium commits a
-    focused box that is removed, so the value has to go back before it goes.
-    `test_a_limit_typed_after_another_session_is_chosen_is_that_sessions`.
-  - **A number it cannot read is refused, never read as "no limit".** A
-    number input reads `10e`, `1e` or a lone `-` as the empty string, and empty
-    means "take the limit away" — one slip of the hand removed the limit and
-    the panel went quiet. A negative number did the same through
-    `!(asked > 0)`. `box.validity.badInput` and a sign check refuse both,
-    `said` says why, and the box goes back to the limit that stands.
-    `test_a_limit_the_box_cannot_read_leaves_the_limit_standing`.
-  - **It says what it will *actually* do.** `over_limit` skips a session
-    with no pane and one whose status line has sent no spend, so "Escape into
-    this pane when the spend passes it" is a promise this program cannot keep
-    for either — and a reader told they are protected when they are not is the
-    worst thing this feature could do. Each case says which it is.
-- **`over_limit` decides and writes inside one lock.** Reading the map
-  outside `naming` and merging `limits.update(fired)` inside it is a race
-  with `set_limit`: a raise that lands in between is overwritten with the old
-  number and a fresh `fired_at`, and the Escape goes out anyway — the
-  reader's release undone at the moment they made it.
-- **An Escape tmux refused is not a stop.** `over_limit` stamps `fired_at`
-  before the key goes out, and the tick threw away what `tmux_interrupt`
-  answered — so a closed pane, another tmux socket or a timed-out `run` left
-  a row saying "stopped · raise it to go on" over an agent still spending,
-  and the once-only guard meant nothing tried again. `limit_refused` puts
-  `fired_at` back to nought, stamps `refused_at`, says so in the session's
-  log, and the panel says it will try again. **Not on every tick**: a tmux
-  that refuses once a second is asked once a second for ever, so the next
-  try waits `LIMIT_RETRY`, and `refused_at` is kept in `limits.json` so a
-  restart does not forget the wait. **And not until the agent has spent
-  more** (`refused_spend`): `run` gives None for a `send-keys` that timed
-  out as well as for one refused, and a timed-out key may have landed. An
-  agent stopped by Escape fires no hook that says so, so the row still reads
-  "working", and a second Escape went into a prompt nobody was at. A stopped
-  agent spends nothing; a spend that has grown is the proof. **A refusal
-  answers only its own stop**: the key goes out of the lock, so
-  `over_limit` hands back the `fired_at` it stamped and `limit_refused`
-  does nothing when a `set_limit` has moved it since — or a raise came back
-  as "could not stop at its $20.00 limit" with the spend at 12. **And the
-  spend dropping below the limit forgets a refusal**, as it re-arms a stop,
-  or the panel said "tmux refused" for ever after a `/clear`.
-  `test_an_escape_tmux_refused_is_not_a_stop`,
-  `test_a_refused_escape_waits_and_is_tried_again_across_a_restart`,
-  `test_a_refused_escape_is_not_pressed_again_into_an_agent_it_stopped`,
-  `test_a_refusal_after_the_limit_was_raised_is_not_written_over_it`,
-  `test_a_refusal_is_forgotten_when_the_spend_drops_below_the_limit`,
-  `test_an_escape_tmux_refused_is_not_called_a_stop`.
+  Everything on this page works with no tmux — the sidebar, all four tabs,
+  alerts, the spend on the strip. The things that do not are the ones that
+  type into a pane: jump, send, answering a question, a No and submitting a
+  review. Jump (`#jump`) and the send box are simply absent for a session
+  with no pane, and the review's submit has always refused. `paintPicks`
+  enabled **submit** on a question and said `presses 1`, which is a promise
+  of keystrokes into a terminal that does not exist. **Reading is not
+  acting**: the question bar stays where it is. It is the press that is
+  refused. Grep `canType`. **`#jump` wears `.theme`, which sets `display`**,
+  so `.theme[hidden]` puts the browser's rule back: the `.sendbar` scar.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters, keeping tab and newline. "Below a space" includes the C1 block
   above `\x7f` — NEL and CSI are controls, and U+2028 is a line break that
@@ -843,12 +742,16 @@ update the comment with its own text, and read it back.
   The first thing anybody writes is `\d`, which is not a JSON escape, so the
   file never parses. `load_links` returns the usable entries *and* what is
   wrong with the rest; `read_links` is the wrapper for a caller with nowhere
-  to put the trouble. `serve` prints it, `/api/links` carries it, the Session
-  tab shows it, `doctor` says it. **The file is never repaired**: guessing at
+  to put the trouble. `serve` prints it, `/api/links` carries it, the page
+  says it in the live slot, `doctor` says it. **The file is never repaired**: guessing at
   a backslash somebody meant is a worse surprise than the message. And the
   page adds its own trouble — a pattern Python compiled and this browser
-  will not is only findable there. `state.linkTrouble` is in the Session
-  tab's redraw key, or a late answer draws nothing.
+  will not is only findable there, and `loadLinks` says both together.
+  **On the slot it is `state.linkTrouble`, not `state.trouble`**: `said`
+  clears the second on any answer that worked, so the first Enter took the
+  message away for good, and the daemon's sentence about bad JSON is 150
+  characters on a line that does not wrap. `paintLive` shows a few words,
+  last of the four, with the whole of it in `title`.
 - **The list of what may be shown lives in the daemon, once.** `SHOWN_AS` is
   read by `shown_as`, which the `raw` route enforces and which
   `read_worktree_file` reports as `FileText.shown` — so the page holds no
@@ -996,8 +899,8 @@ update the comment with its own text, and read it back.
   `test_a_decline_seen_in_the_transcript_ends_the_wait`,
   `test_a_permission_is_read_whole_and_declined_with_a_reason`.
 - **The question bar belongs to the Transcript tab, at its foot.** It is not
-  the header bar that was taken away (the Session tab's bullet says why that
-  went): this stands in one place, over the send box, because the
+  the header bar that was taken away (**The review** says why that went):
+  this stands in one place, over the send box, because the
   transcript ends at its foot and answering is sending. The row still goes amber from any tab, which is what
   the row is for. It reads `state.tab`, like the send box, because it is
   chrome outside the content box and is drawn after `showTab` has set the
@@ -1113,7 +1016,7 @@ update the comment with its own text, and read it back.
   **A compaction is the exception**: an auto compaction fires
   `SessionStart` with `source=compact` in the middle of a turn, and the
   agent goes on. Setting "done" moved the row to ready, fired "has
-  finished", and kept a spend limit from firing until the next tool call.
+  finished", and the row went to ready under a working agent.
   `_on_session_start` keeps "working" for it.
   `test_a_compaction_in_the_middle_of_a_turn_does_not_end_it`.
   **And the wait clock only starts when the wait does**: a second
@@ -1122,13 +1025,6 @@ update the comment with its own text, and read it back.
 - **Folding an event twice must change nothing.** Handlers assign, never
   accumulate; `Store.apply` drops an event older than the session has seen. A
   log rotation really does deliver old events after new ones.
-- **`Session.log` and `Session.counts` are the two things that accumulate**,
-  and the rule that makes them safe is **strictly newer**: `apply` drops what
-  is *older* than the session has seen, but an event with the very same `ts`
-  folds again and a rotation re-delivers the newest one. They are appended
-  under `ts > last_ts`, which is asked once, before `last_ts` moves. Two
-  events in one instant cost the log the second of them and nothing else. The
-  log is bounded (`SESSION_LOG_MAX`); the counts are the whole story.
 - **The log is never thrown away, so nothing may hold it whole.** Every
   archive is kept (`archive_log`, `archived_events_paths`), and a year of
   heavy use is a few hundred megabytes. Three things grew with it, measured on
@@ -1403,7 +1299,7 @@ update the comment with its own text, and read it back.
     (`rowName`). Never the title Claude Code writes from the first prompt:
     `/rename` does not reach it, so it went stale beside the branch -- a
     row named after one ticket over a branch named after another. The
-    Session tab still shows it. **It wears the sans face**: in the fixed
+    **It wears the sans face**: in the fixed
     face it was half as wide again as the lines under it, and the reader
     said so. The age beside it stays fixed, so its digits do not dance.
   - **A ticket in the name, the worktree or the branch is a link**, by
@@ -1446,9 +1342,8 @@ update the comment with its own text, and read it back.
   - **The list wears the grip's colour (`--edge`), and a split tab's own
     list -- the map, a file tree -- wears `--meet`.** The grip then reads
     as the list's edge, which only the chosen row crosses, and the map
-    stands apart from the page without a line. `--meet` is `--panel` where
-    a split tab stands beside the list and `--bg` where none does, set on
-    `.body` with `:has`; the map's ground, the fade's end and the grip's
+    stands apart from the page without a line. `--meet` is `--panel`,
+    set on `.body`, because every tab is split now; the map's ground, the fade's end and the grip's
     opening all read it, so the row flows into what is there.
   - **The chosen row has no ground of its own.** The state tints are half
     transparent: on the list's old ground under it, it came out brighter
@@ -1881,24 +1776,15 @@ update the comment with its own text, and read it back.
 - **An async answer belongs to the session that asked.** `submitReview` blanked
   whatever review was current when `tmux send-keys` returned, and removed its
   key from storage. The sent review is cleared by its own id.
-- **The Session tab is where everything about one session lives**, and the
-  only place it is named. There was a bar over every tab saying the branch,
-  the pane, the model and the state — three of which the chosen row says one
-  column to the left, at a cost of 56 pixels on every tab. What it said that
-  the row does not is in the tab: the whole path, the context bar, the counts,
-  and the session's own event log. `drawHeader` is what is left, and all it
-  does now is the send box. **It says only what git said**: before git
-  answered, the facts are the empty default, and "not in a repository" and
-  "changed files: none" were drawn over them. `Session.git_known` goes on
-  the row (`test_a_row_says_whether_git_has_answered_for_it`,
-  `test_the_session_tab_does_not_say_what_git_has_not_said`). **"started"
-  is `Session.started`, the first event**: it read `since`, the last one,
-  and said "0s ago" for a session two hours old
-  (`test_started_is_when_the_session_began`).
-- **The name box is built once and the rest is rebuilt around it.**
-  `drawSession` keeps two children for this reason: the panel is polled, and a
-  rebuild under a box being typed in takes what is in it — the rule the review
-  keeps for its comments, in a second place.
+- **There is no Session tab, and no bar over the tabs.** The bar said the
+  branch, the pane, the model and the state -- three of which the chosen row
+  says one column to the left, at a cost of 56 pixels on every tab. The tab
+  that took its place held the whole path, the counts, the session's own
+  event log, the rate-limit windows, a spend limit and a stop button, and the
+  reader used it for one thing: jump. Jump is an icon at the end of the tab
+  row (`#jump`, `ICONS.terminal`), beside the model and the context bar; the
+  name is changed on the row; the rest went. `drawHeader` is the send box,
+  the question bar, the context strip and jump, and nothing else.
 - **A tab that fetches nothing says `load: null`**, and the shared `load()`
   draws for it. A tab switch goes through `load`, not `draw`, so an empty
   loader left the page showing the tab before.
@@ -2432,17 +2318,14 @@ update the comment with its own text, and read it back.
   ignores the first falls back to, and it is also what puts the form controls
   right — the search box's clear button, the send box's own bar.
   `scrollbar-color` is inherited, so `:root` is the only place it is said.
-- **A tab that cannot use the find box does not show one**, and `TABS.finds`
-  is where that lives — the placeholder was a ternary in `showTab` naming
-  three tabs, so the two it did not name got whatever the last arm said, and
-  the Session tab offered "find a file" for a list it does not have. One
-  entry per tab, like `draw`, `load` and `poll`. **`.findhome` needs
-  `[hidden] { display: none }`** for the reason `.sendbar` does — it sets
-  `display: flex`, which beats the browser's own rule for the attribute —
-  and that is the third time this shape has caught something here. Its
-  `margin-left: auto` is also what pushes the live slot to the far end of the
-  tab bar, so `.findhome[hidden] + .live` takes that over or the slot comes
-  to rest against the last tab.
+- **Every tab says what its find box is for, in `TABS.finds`.** The
+  placeholder was a ternary in `showTab` naming three tabs, so the two it did
+  not name got whatever the last arm said, and a tab with no list offered
+  "find a file" for a list it did not have. One entry per tab, like `draw`,
+  `load` and `poll`, and `TAB_KEYS` is `Object.keys(TABS)`, so a new tab is
+  that one entry. Every tab is split and has a list, so there is no longer
+  a tab that hides the box; one that needs to must bring back a
+  `.findhome[hidden]` rule, the `.sendbar` scar.
 - **A class the page puts on `body` is never the class an element wears.**
   `stream.onerror` did `classList.add("lost")`, and the rule hiding the bar
   until it was wanted was `.lost { display: none }` — which `body` then
@@ -2471,24 +2354,20 @@ update the comment with its own text, and read it back.
   once and the strip has no width for a sentence. `None` is "the status line
   did not say" and `0` is "it spent nothing": a session on an API key gets no
   `cost` at all, and `$0.00` for it would be a number nobody measured — so
-  `drawContext` tests for null rather than defaulting. The rate-limit windows
-  go in the Session tab instead, where there is room to name the window and
-  when it resets; each is independently absent, and one that is missing is
-  drawn as nothing, never as nought.
+  `drawContext` tests for null rather than defaulting.
 - **`money` is a name on both sides, and shadowing it is a `ReferenceError`.**
   `drawContext` calls the page's `money()` and then builds an element for what
   it returned. Naming that element `money` puts the call above it in the
   temporal dead zone — a page that throws on every draw, from a line that
   reads perfectly. Same scar as `matches` / `matching` / `hits`.
 - **The context bar is its own slot, beside `#live` and never in it.**
-  `paintLive` is the one writer of that slot and three things already want it
-  — what the stream is doing, something you asked for and did not get, and a
-  passing word over both. A fourth would be the race that rule was written
-  after. `drawContext` is called from `drawHeader`, so it arrives with
+  `paintLive` is the one writer of that slot and four things already want it
+  — what the stream is doing, something you asked for and did not get, a
+  `links.json` that cannot be used, and a passing word over them. A fifth
+  would be the race that rule was written after. `drawContext` is called from `drawHeader`, so it arrives with
   everything else a push carries and no fifth call site can forget it, and it
   redraws only when the number moves — the push is about once a second and
-  the number is not. `putContext` builds it for the strip and for the Session
-  tab, because they draw the same thing. A session whose status line is not
+  the number is not. `putContext` builds it. A session whose status line is not
   registered has no `context_pct` and gets no bar: nought would read as an
   empty window rather than as no answer.
   **The model stands left of the bar**, because the percentage is a
@@ -2496,9 +2375,10 @@ update the comment with its own text, and read it back.
   It is part of the same redraw key. `tests/shot.py` writes a status line
   for its session, so a picture of the strip has all three in it.
   `test_the_model_stands_left_of_the_context_bar`.
-- **One painter for the live slot, and three things that want it.**
+- **One painter for the live slot, and four things that want it.**
   `state.live` is what the stream is doing, `state.trouble` is something you
-  asked for and did not get, and `note` borrows the slot over both for four
+  asked for and did not get, `state.linkTrouble` is the reader's own file
+  that cannot be used, and `note` borrows the slot over all three for four
   seconds. `paintLive` decides; nothing else assigns to `#live`. Four writers
   raced before it: the stream writes "live" on every push, about once a
   second while an agent works, so a failure written straight into the slot

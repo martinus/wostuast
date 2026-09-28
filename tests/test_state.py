@@ -161,9 +161,8 @@ def test_subagent_stop_keeps_the_state(ws):
 
 def test_a_compaction_in_the_middle_of_a_turn_does_not_end_it(ws):
     """An auto compaction fires `SessionStart` with `source=compact` and the
-    turn goes on. It set "done", so the row moved to ready, the page said the
-    agent had finished, and a spend limit could not fire until the next
-    tool call."""
+    turn goes on. It set "done", so the row moved to ready, and the page said
+    the agent had finished."""
     session = fold(
         ws,
         event("UserPromptSubmit", prompt="x"),
@@ -1018,61 +1017,6 @@ def test_a_dialog_with_no_tool_named_is_cleared_by_anything(ws):
     assert session.reason == ""
 
 
-# --- what a session has done -------------------------------------------------
-
-
-def test_a_session_keeps_its_own_short_history(ws):
-    """The Session tab reads the daemon's own log, folded as the events
-    arrived. `events.jsonl` is twenty megabytes at its largest and holds every
-    session; walking it per request for one of them is not a trade worth
-    making."""
-    store = ws.Store()
-    store.apply(event("SessionStart", cwd="/w/one", ts=1000.0))
-    store.apply(event("UserPromptSubmit", cwd="/w/one", ts=1001.0,
-                      prompt="do the thing"))
-    store.apply(event("PreToolUse", cwd="/w/one", ts=1002.0, tool_name="Bash",
-                      tool_input={"command": "pytest -q"}))
-    session = store.sessions["s1"]
-    assert [one["name"] for one in session.log] == [
-        "SessionStart", "UserPromptSubmit", "PreToolUse"]
-    assert session.log[-1]["text"] == "Bash pytest -q"
-    assert session.counts == {"SessionStart": 1, "UserPromptSubmit": 1,
-                              "PreToolUse": 1}
-
-
-def test_folding_an_event_twice_does_not_count_it_twice(ws):
-    """Everything else here assigns; these two accumulate, which is the one
-    thing `CLAUDE.md` says a handler may not do. The rule that makes it safe
-    is strictly-newer: `apply` drops what is *older* than the session has
-    seen, but an event with the very same `ts` folds again and a rotation
-    re-delivers the newest one."""
-    store = ws.Store()
-    same = event("PreToolUse", cwd="/w/one", ts=1002.0, tool_name="Bash",
-                 tool_input={"command": "ls"})
-    store.apply(event("SessionStart", cwd="/w/one", ts=1000.0))
-    store.apply(same)
-    store.apply(same)                  # the rotation delivering it again
-    store.apply(dict(same))            # and a copy of it, for good measure
-    session = store.sessions["s1"]
-    assert session.counts["PreToolUse"] == 1
-    assert len(session.log) == 2
-
-
-def test_the_history_does_not_grow_without_bound(ws):
-    """A session that runs all day would otherwise keep every event it ever
-    sent, in memory, for a panel nobody is looking at most of the time."""
-    store = ws.Store()
-    for n in range(ws.SESSION_LOG_MAX + 50):
-        store.apply(event("PreToolUse", cwd="/w/one", ts=1000.0 + n,
-                          tool_name="Bash", tool_input={"command": f"n{n}"}))
-    session = store.sessions["s1"]
-    assert len(session.log) == ws.SESSION_LOG_MAX
-    # The newest are the ones kept.
-    assert session.log[-1]["text"].endswith(f"n{ws.SESSION_LOG_MAX + 49}")
-    # And the count is the whole story, not what is left of the log.
-    assert session.counts["PreToolUse"] == ws.SESSION_LOG_MAX + 50
-
-
 def test_the_place_does_not_follow_the_agent_into_a_subdirectory(ws):
     """`cwd` is where the agent is standing, and Claude Code moves it the
     moment the agent changes directory. The row's one irreplaceable fact is
@@ -1098,219 +1042,6 @@ def test_a_resumed_session_starts_where_it_was_resumed(ws):
         event("SessionStart", cwd="/w/repo/other", source="resume", ts=1002.0),
     )
     assert session.place == "other"
-
-
-# --- a spend limit ------------------------------------------------------------
-
-
-def working(ws, store, spent, session_id="s1"):
-    """A session mid-turn, with the status line's idea of what it has spent."""
-    store.apply(dict(event("SessionStart", ts=1000.0), session_id=session_id))
-    store.apply(dict(event("UserPromptSubmit", ts=1001.0, prompt="go"),
-                     session_id=session_id))
-    session = store.sessions[session_id]
-    session.pane = "%7"
-    session.status = ws.Status(ts=1.0, cost_usd=spent)
-    assert session.state == "working"
-    return session
-
-
-def test_a_session_over_its_limit_is_stopped_once(ws):
-    """Fired again on every tick, the agent could never be let go: the key
-    would land a second later, and a second after that, for ever."""
-    store = ws.Store()
-    session = working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
-    assert "stopped at its $10.00 limit" in session.last_event
-    # And not again, however far past it goes.
-    session.status = ws.Status(ts=2.0, cost_usd=99.0)
-    assert store.over_limit(now=51.0) == []
-
-
-def test_raising_the_limit_lets_the_session_go_again(ws):
-    """Otherwise a stopped session is stuck: the only way on would be to
-    delete a file nobody told you about."""
-    store = ws.Store()
-    working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
-    store.set_limit("s1", 20.0)              # clears `fired_at`
-    assert store.over_limit(now=51.0) == []  # 12 is under 20
-    store.sessions["s1"].status = ws.Status(ts=2.0, cost_usd=25.0)
-    assert store.over_limit(now=52.0) == [("s1", "%7", 52.0)]
-
-
-def test_a_refused_escape_waits_and_is_tried_again_across_a_restart(ws):
-    """A key tmux refused stopped nothing. Kept as a stop, the agent ran on
-    behind a page that said it had been stopped; tried on every tick, a
-    refusing tmux would be asked once a second for ever. `refused_at` is
-    kept in the file, or a restart forgets the wait."""
-    store = ws.Store()
-    working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
-    store.limit_refused("s1", 50.0, now=50.0)
-    assert ws.read_limits()["s1"] == {"limit": 10.0, "fired_at": 0.0,
-                                      "refused_at": 50.0, "refused_spend": 12.0}
-    assert "could not stop" in store.sessions["s1"].last_event
-    again = ws.Store()
-    session = working(ws, again, 13.0)
-    assert again.over_limit(now=50.0 + ws.LIMIT_RETRY - 1) == []
-    assert again.over_limit(now=50.0 + ws.LIMIT_RETRY) == [
-        ("s1", "%7", 50.0 + ws.LIMIT_RETRY)]
-    assert session.last_event.startswith("stopped")
-
-
-def test_a_refused_escape_is_not_pressed_again_into_an_agent_it_stopped(ws):
-    """`run` gives None for a `send-keys` that timed out, and the key may
-    have landed all the same. An agent stopped by an Escape fires no hook
-    that says so, so the row still reads "working" -- and a second Escape
-    after `LIMIT_RETRY` went into a prompt nobody was at. A stopped agent
-    spends nothing: only a spend that has grown is tried again."""
-    store = ws.Store()
-    session = working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
-    store.limit_refused("s1", 50.0, now=50.0)
-    assert store.over_limit(now=50.0 + ws.LIMIT_RETRY * 10) == []
-    session.status = ws.Status(ts=2.0, cost_usd=12.5)
-    assert store.over_limit(now=50.0 + ws.LIMIT_RETRY * 10) == [
-        ("s1", "%7", 50.0 + ws.LIMIT_RETRY * 10)]
-
-
-def test_a_refusal_after_the_limit_was_raised_is_not_written_over_it(ws):
-    """The key goes out of the lock, so a raise can land between the stop and
-    its refusal. Written over it, the panel said "could not stop at its
-    $20.00 limit" with the spend at 12, and the next real stop waited."""
-    store = ws.Store()
-    session = working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
-    store.set_limit("s1", 20.0)
-    store.limit_refused("s1", 50.0, now=51.0)
-    assert store.limits["s1"] == {"limit": 20.0, "fired_at": 0.0}
-    assert "could not stop" not in session.last_event
-    session.status = ws.Status(ts=2.0, cost_usd=25.0)
-    assert store.over_limit(now=52.0) == [("s1", "%7", 52.0)]
-
-
-def test_a_refusal_is_forgotten_when_the_spend_drops_below_the_limit(ws):
-    """`/clear` puts the spend back to nought. The refusal stayed, and the
-    panel said "tmux refused the Escape" for ever over a session under its
-    limit."""
-    store = ws.Store()
-    session = working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    store.over_limit(now=50.0)
-    store.limit_refused("s1", 50.0, now=50.0)
-    session.status = ws.Status(ts=2.0, cost_usd=0.0)
-    assert store.over_limit(now=51.0) == []
-    assert store.limits["s1"] == {"limit": 10.0, "fired_at": 0.0}
-
-
-def test_only_a_working_session_is_stopped(ws):
-    """Escape into an idle prompt is a keystroke nobody asked for, and Escape
-    while a permission dialog is up declines it — which is a decision, and not
-    this one's to make."""
-    store = ws.Store()
-    session = working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    store.apply(event("Stop", ts=1002.0))
-    assert session.state == "done"
-    assert store.over_limit(now=50.0) == []
-
-
-def test_a_session_whose_spend_nobody_sent_is_not_stopped(ws):
-    """`None` is "the status line did not say". Stopping an agent over a
-    number nobody sent is the worst way this could go wrong."""
-    store = ws.Store()
-    working(ws, store, None)
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == []
-
-
-def test_a_session_with_no_pane_is_not_stopped(ws):
-    store = ws.Store()
-    session = working(ws, store, 12.0)
-    session.pane = ""
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == []
-
-
-def test_a_limit_survives_a_restart_and_nought_takes_it_away(ws):
-    store = ws.Store()
-    store.set_limit("s1", 7.5)
-    assert ws.read_limits() == {"s1": {"limit": 7.5, "fired_at": 0.0}}
-    assert ws.Store().limits == {"s1": {"limit": 7.5, "fired_at": 0.0}}
-    store.set_limit("s1", 0)
-    assert ws.read_limits() == {}
-
-
-def test_a_limits_file_with_rubbish_in_it_is_not_trusted(ws):
-    """Ours, but it outlives the version that wrote it."""
-    ws.limits_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.limits_path().write_text(
-        '{"a": {"limit": "lots"}, "b": 3, "c": {"limit": -1},'
-        ' "d": {"limit": 5, "fired_at": "soon"}}', encoding="utf-8")
-    assert ws.read_limits() == {"d": {"limit": 5.0, "fired_at": 0.0}}
-    ws.limits_path().write_text("not json", encoding="utf-8")
-    assert ws.read_limits() == {}
-
-
-def test_a_stopped_session_is_armed_again_when_the_spend_drops(ws):
-    """`/clear` puts `cost.total_cost_usd` back to nought. Without re-arming,
-    one stop disarms the limit for the rest of the session and the agent runs
-    without bound behind a box still showing a number."""
-    store = ws.Store()
-    session = working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    assert store.over_limit(now=50.0) == [("s1", "%7", 50.0)]
-    assert store.limits["s1"]["fired_at"]
-
-    session.status = ws.Status(ts=2.0, cost_usd=0.0)      # /clear
-    assert store.over_limit(now=51.0) == []               # armed, not fired
-    assert store.limits["s1"]["fired_at"] == 0.0
-    session.status = ws.Status(ts=3.0, cost_usd=11.0)
-    assert store.over_limit(now=52.0) == [("s1", "%7", 52.0)]
-
-
-def test_a_limit_raised_while_a_stop_is_being_decided_is_not_clobbered(ws):
-    """`over_limit` used to read the map outside the lock and merge under it,
-    so a raise that landed in between was overwritten with the old number and
-    a fresh `fired_at` — the reader's release undone at the moment they made
-    it. Both sides take `naming` now, so one waits for the other."""
-    import threading
-
-    store = ws.Store()
-    working(ws, store, 12.0)
-    store.set_limit("s1", 10.0)
-    held = threading.Event()
-    go = threading.Event()
-    real = ws.write_limits
-
-    def slow(limits):
-        real(limits)
-        if not held.is_set():
-            held.set()
-            go.wait(5)               # still inside `over_limit`'s lock
-
-    ws.write_limits = slow
-    try:
-        worker = threading.Thread(target=store.over_limit, args=(50.0,))
-        worker.start()
-        held.wait(5)
-        raiser = threading.Thread(target=store.set_limit, args=("s1", 50.0))
-        raiser.start()
-        raiser.join(0.3)
-        assert raiser.is_alive(), "the raise got in while the stop was writing"
-        go.set()
-        worker.join(5)
-        raiser.join(5)
-    finally:
-        ws.write_limits = real
-    # The raise is what stands, and it cleared the firing.
-    assert store.limits["s1"] == {"limit": 50.0, "fired_at": 0.0}
 
 
 # --- a history that is never thrown away ------------------------------------
@@ -1400,15 +1131,6 @@ def test_a_session_that_never_changed_state_keeps_its_place(ws):
                      session_id="a"))
     assert order() == ["b", "a"]
     assert store.sessions["a"].settled == 1.0
-
-
-def test_started_is_when_the_session_began(ws):
-    """The Session tab's "started" row read `since`, the last event -- so it
-    said "0s ago" for a session two hours old that had just been sent a
-    prompt."""
-    session = fold(ws, event("SessionStart", ts=1000.0),
-                   event("UserPromptSubmit", prompt="go", ts=8200.0))
-    assert ws.row(session)["started"] == 1000.0
 
 
 # --- a permission request, whole, and declining it from the page -------------
@@ -1556,7 +1278,7 @@ def test_a_summary_hides_what_looks_like_a_credential(ws, command, shown):
     assert ws.tool_target("Bash", {"command": command}) == shown
 
 
-def test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole(ws):
+def test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole(ws):
     """Hidden before the line is cut, so half a secret is not left on the
     row; in every place the summary goes. The permission bar is the one
     place a request is shown whole, because it is judged on all of it."""
@@ -1569,8 +1291,7 @@ def test_a_secret_reaches_no_row_log_or_ls_but_the_dialog_stays_whole(ws):
                    event("PermissionRequest", tool_name="Bash",
                          tool_input={"command": command}, ts=1000.1))
     row = ws.row(session)
-    said = [row["last_event"], row["last_tool"], row["reason"],
-            *(str(one) for one in session.log)]
+    said = [row["last_event"], row["last_tool"], row["reason"]]
     assert all("hunter2" not in one for one in said), said
     assert any("https://***" in one for one in said), said
     assert row["permission"]["fields"][0] == ["command", command]

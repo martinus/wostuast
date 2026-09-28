@@ -35,11 +35,9 @@ def test_the_page_draws_the_session(page_at):
             assert place and "A session" not in page.locator(".row").inner_text()
             assert page.title() == "wostuast"
             assert page.locator(".turn").count() >= 2
-            # The model is a fact about the session, so it is in the tab that
-            # holds those — not in a bar standing over every tab.
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody dl")
-            assert "Opus 5" in page.locator(".sessionbody").inner_text()
+            # The model stands on the strip, beside the window it fills.
+            page.wait_for_selector("#ctxslot .model")
+            assert "Opus 5" in page.locator("#ctxslot").inner_text()
         finally:
             browser.close()
 
@@ -828,28 +826,33 @@ def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
             browser.close()
 
 
-def test_a_links_file_the_daemon_cannot_use_says_so_on_the_session_tab(ws,
-                                                                       page_at):
+def test_a_links_file_the_daemon_cannot_use_says_so(ws, page_at):
     """A file you wrote and got wrong must never look like a file you never
     wrote. Without this the page is identical either way: no links, no clue,
-    and `doctor` is something you had no reason to run."""
+    and `doctor` is something you had no reason to run. It is said on the
+    live slot, and an answer that worked does not take it away: nothing the
+    reader does on the page mends the file."""
     ws.links_path().parent.mkdir(parents=True, exist_ok=True)
     ws.links_path().write_text("not json at all", encoding="utf-8")
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody .trouble")
-            said = page.inner_text(".sessionbody .trouble")
-            assert "links.json" in said
-            assert "not valid JSON" in said
+            page.wait_for_function("state.linkTrouble.length > 0")
+            # Written and read in one go, so no push can repaint between.
+            slot = page.evaluate("""() => {
+              state.live = "live";
+              said({ done: true });
+              return [$("live").textContent, $("live").title];
+            }""")
+            assert "links.json" in slot[0], slot
+            assert "not valid JSON" in slot[1], slot
         finally:
             browser.close()
 
 
 def test_a_links_file_that_works_says_nothing(ws, page_at):
-    """A note on every Session tab would be noise, and noise is not read."""
+    """A note on every page would be noise, and noise is not read."""
     ws.links_path().parent.mkdir(parents=True, exist_ok=True)
     ws.links_path().write_text(json.dumps([
         {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
@@ -859,8 +862,7 @@ def test_a_links_file_that_works_says_nothing(ws, page_at):
         browser, page = open_page(play, path)
         try:
             page.wait_for_function("state.links.length === 1")
-            show_tab(page, "session")
-            assert page.locator(".sessionbody .trouble").count() == 0
+            assert page.evaluate("state.linkTrouble") == []
         finally:
             browser.close()
 
@@ -873,11 +875,9 @@ def test_a_pattern_this_browser_cannot_use_says_so_too(ws, page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody")
             # The answer is taken and the page asked in one go, with no
-            # poll in between: the note has to arrive because `loadLinks`
-            # redrew for it, not because something else happened to.
+            # push in between: the word has to arrive because `loadLinks`
+            # said it, not because something else happened to.
             said = page.evaluate("""async () => {
               // What the daemon serves, with a pattern Python compiles and
               // this browser does not: `(?P<x>)` is Python's alone.
@@ -885,14 +885,9 @@ def test_a_pattern_this_browser_cannot_use_says_so_too(ws, page_at):
                 links: [{match: '(?P<id>OA-1)', url: 'https://tickets/'}],
                 trouble: []})});
               await loadLinks();
-              return [state.linkTrouble,
-                      document.querySelector('.sessionbody .trouble')
-                        ? document.querySelector('.sessionbody .trouble').innerText
-                        : null];
+              return state.linkTrouble.join(" ");
             }""")
-            trouble, drawn = said
-            assert len(trouble) == 1 and "(?P<id>OA-1)" in trouble[0], trouble
-            assert drawn and "(?P<id>OA-1)" in drawn, drawn
+            assert "(?P<id>OA-1)" in said, said
         finally:
             browser.close()
 
@@ -1767,7 +1762,7 @@ def test_a_block_pushed_while_the_transcript_is_fetched_is_kept(page_at):
         try:
             wait_for_map(page)
             wait_for_watching(daemon)
-            show_tab(page, "session")
+            show_tab(page, "review")
             held = hold_next_transcript(page)
             page.click('.tab[data-tab="transcript"]')
             route = wait_for_request(page, held)
@@ -1799,7 +1794,7 @@ def test_a_transcript_fetch_that_fails_keeps_what_is_held(page_at):
             wait_for_watching(daemon)
             before = page.evaluate("document.querySelectorAll('.turn').length")
             page.evaluate("state.turns.open = new Set([1])")
-            show_tab(page, "session")
+            show_tab(page, "review")
             page.route("**/transcript", lambda route: route.abort())
             page.click('.tab[data-tab="transcript"]')
             page.wait_for_timeout(300)             # the failed answer is in
@@ -1852,7 +1847,7 @@ def test_a_block_read_while_no_stream_was_open_is_fetched(page_at):
 
             # And when the stream says so while a fetch is on its way, the
             # fetch's older snapshot is not the last word.
-            show_tab(page, "session")
+            show_tab(page, "review")
             held = hold_next_transcript(page)
             page.click('.tab[data-tab="transcript"]')
             route = wait_for_request(page, held)
@@ -1974,7 +1969,7 @@ def test_a_fetch_older_than_a_pushed_reading_is_asked_again(page_at):
         try:
             wait_for_map(page)
             wait_for_watching(daemon)
-            show_tab(page, "session")
+            show_tab(page, "review")
             held = hold_next_transcript(page)
             page.click('.tab[data-tab="transcript"]')
             route = wait_for_request(page, held)
@@ -1998,7 +1993,7 @@ def test_a_fetch_older_than_a_pushed_reading_is_asked_again(page_at):
 
 
 def test_only_the_newest_transcript_fetch_lands(page_at):
-    """A quick Transcript-Session-Transcript put two fetches out. The push
+    """A quick Transcript-Review-Transcript put two fetches out. The push
     went into the second one's list; the first, answering last, put its
     older snapshot back without it -- and a text block is never pushed
     twice."""
@@ -2008,12 +2003,12 @@ def test_only_the_newest_transcript_fetch_lands(page_at):
         try:
             wait_for_map(page)
             wait_for_watching(daemon)
-            show_tab(page, "session")
+            show_tab(page, "review")
             held = hold_next_transcript(page, 2)
             page.click('.tab[data-tab="transcript"]')
             first = wait_for_request(page, held)
             older = first.fetch()
-            page.click('.tab[data-tab="session"]')
+            page.click('.tab[data-tab="review"]')
             page.click('.tab[data-tab="transcript"]')
             for _ in range(500):
                 if len(held) > 1:
@@ -2047,7 +2042,7 @@ def test_failing_fetches_keep_one_retry_not_one_each(page_at):
             page.route("**/transcript",
                        lambda route: (asked.append(1), route.abort()))
             for _ in range(4):
-                page.click('.tab[data-tab="session"]')
+                page.click('.tab[data-tab="review"]')
                 page.click('.tab[data-tab="transcript"]')
                 page.wait_for_timeout(100)
             before = len(asked)
