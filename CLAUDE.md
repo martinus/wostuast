@@ -59,7 +59,7 @@ after the tests go red.
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
-| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
+| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
@@ -1973,6 +1973,22 @@ update the comment with its own text, and read it back.
     `tests/fixtures/local_command.jsonl`.
     `test_a_slash_command_and_what_it_answered_are_one_block`,
     `test_a_slash_command_is_drawn_with_what_it_answered`.
+- **`wostuast shapes` is how a new Claude Code shape is found before the
+  reader finds it.** Every bug of this kind -- `!git up`, `/clear`,
+  `/model`, paste tags on the row -- was reported as tags on the screen.
+  `transcript_shapes` reads recent transcripts through `Transcript.add`
+  itself and lists records and pieces it leaves out that are not on
+  `SILENT_RECORDS`, and Claude Code's tags (`MACHINE_TAG_NAME`: a hyphen or
+  an underscore, which typed HTML has not) left in a prompt, a note or a
+  command. **Names and counts, never text**, so the output can go into a
+  public issue as it is. **A name goes on `SILENT_RECORDS` only after a
+  real record of it was read**: the queued message was an attachment
+  nobody looked at. **It splits on `\n`, never `splitlines()`**: U+2028
+  inside a string cut 17 records in half on the first machine it read, the
+  diff scar again. Its first run found task notifications drawn with their
+  inner tags and pasted images not drawn at all.
+  `test_shapes_lists_what_the_page_cannot_show_and_never_the_text`,
+  `test_shapes_reads_only_the_days_asked_for`.
 - **A message sent to a busy agent comes back wrapped, and the wrapper is not
   yours.** Claude Code queues it into the running turn and writes a header
   (`The user sent a new message while you were working:`), the words typed,

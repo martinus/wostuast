@@ -282,6 +282,7 @@ is depends on your window manager.
 | `wostuast uninstall` | Remove our hooks and our status line. Keep the event log. |
 | `wostuast ls` | List the sessions, in the same order as the page. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
+| `wostuast shapes` | List what in your transcripts of the last 7 days the page cannot show: record types it does not read, and Claude Code's own tags it leaves showing. It prints names and counts, never your text, so you can paste the output into a bug report. `--days` reads further back. |
 | `wostuast serve` | Start the daemon and serve the page on `127.0.0.1:7331`. `--port` picks another port, `--open` opens a browser. |
 | `wostuast hook` / `status` | Claude Code calls these. You do not. |
 

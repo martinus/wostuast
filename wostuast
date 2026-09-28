@@ -6457,6 +6457,174 @@ def which_tmux() -> bool:
     return shutil.which("tmux") is not None
 
 
+#: What the transcript reader turns into something on the page. Anything
+#: else it leaves out, which is right for the lists below and wrong for any
+#: shape nobody has looked at yet.
+READ_RECORDS = {"user", "assistant", "summary", "attachment/queued_command",
+                "system/compact_boundary", "system/local_command"}
+READ_PIECES = {"text", "thinking", "tool_use", "tool_result"}
+#: Records the reader leaves out on purpose: bookkeeping, and the harness
+#: talking to the agent. Read on real transcripts of 2.1.276 to 2.1.283.
+#: `queue-operation` carries a queued message, which arrives again as the
+#: `queued_command` attachment the reader does read. When `shapes` lists a
+#: new name as not read, look at a real record before putting it here: the
+#: queued message was an attachment of exactly that kind, missed for weeks.
+SILENT_RECORDS = {
+    "last-prompt", "atis-latch", "mode", "queue-operation", "cost-state",
+    "file-history-snapshot", "custom-title", "agent-name", "permission-mode",
+    "system/stop_hook_summary", "system/turn_duration", "system/informational",
+    "attachment/total_tokens_reminder", "attachment/task_reminder",
+    "attachment/deferred_tools_record", "attachment/deferred_tools_delta",
+    "attachment/skill_listing", "attachment/prompt_snapshot",
+    "attachment/silent_turn_reminder", "attachment/environment",
+    "attachment/instructions", "attachment/mcp_instructions_delta",
+    "attachment/date", "attachment/remote_session_change",
+    "attachment/model", "attachment/session_context",
+    "attachment/agent_listing_delta", "attachment/edited_text_file",
+    "attachment/auto_mode", "attachment/compact_file_reference",
+    "attachment/file", "attachment/credential_org",
+    "attachment/command_permissions", "attachment/invoked_skills",
+    "attachment/task_status", "attachment/thinking_drop",
+}
+#: A tag Claude Code wraps its own text in: lowercase, with a hyphen or an
+#: underscore -- `bash-input`, `pasted_content`, `system-reminder`. HTML a
+#: person types has neither, so a prompt about a `<div>` is not reported.
+MACHINE_TAG_NAME = re.compile(r"</?([a-z][a-z0-9]*[-_][a-z0-9_-]*)[\s>]")
+#: How far back `shapes` reads by default.
+SHAPES_DAYS = 7
+
+
+@dataclass
+class Shapes:
+    """What `transcript_shapes` found: names and counts, never text."""
+
+    transcripts: int = 0
+    records: int = 0
+    versions: dict[str, int] = field(default_factory=dict)
+    not_read: dict[str, int] = field(default_factory=dict)
+    tags: dict[str, int] = field(default_factory=dict)
+
+
+def record_shape(record: dict[str, Any]) -> str:
+    """A record's kind as one name: `type`, or `type/subtype`."""
+    kind = str(record.get("type") or "?")
+    if kind == "attachment":
+        inner = record.get("attachment")
+        sub = inner.get("type") if isinstance(inner, dict) else ""
+    else:
+        sub = record.get("subtype") or ""
+    return f"{kind}/{sub}" if sub else kind
+
+
+def transcript_shapes(paths: Iterable[Path]) -> Shapes:
+    """Read transcripts the way the page does, and count what it cannot show.
+
+    Every recent bug report of one kind -- `!git up`, `/clear`, `/model`,
+    paste tags on the row -- was Claude Code writing a shape the page did not
+    know, and each time the reader found it first, as tags on the screen.
+    This asks the page's own reader (`Transcript.add`) and lists two things:
+    records and pieces it leaves out that are not on the lists above, and
+    Claude Code's own tags left in what it shows as a prompt, a note or a
+    command. Only names and counts leave here, so the output can go into a
+    public report as it is.
+    """
+    found = Shapes()
+    for path in paths:
+        reader = Transcript(str(path))
+        found.transcripts += 1
+        try:
+            # On "\n" only, as `Tail` reads: `splitlines` also breaks on
+            # U+2028 and the file separators, which JSON strings may hold,
+            # and cut 17 good records in half on the first machine it read.
+            lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+        except OSError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                record = None
+            if not isinstance(record, dict):
+                _count(found.not_read, "(not a JSON object)")
+                continue
+            found.records += 1
+            _count(found.versions, str(record.get("version") or "(none)"))
+            shape = record_shape(record)
+            if shape not in READ_RECORDS and record.get("type") not in READ_RECORDS:
+                if shape not in SILENT_RECORDS:
+                    _count(found.not_read, shape)
+                continue
+            message = record.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, list):
+                for piece in content:
+                    kind = piece.get("type") if isinstance(piece, dict) else None
+                    if kind not in READ_PIECES:
+                        _count(found.not_read, f"{record.get('type')} piece: {kind}")
+            try:
+                blocks = reader.add(record)
+            except Exception:
+                _count(found.not_read, f"{shape} (the reader failed on it)")
+                continue
+            for block in blocks:
+                if block.kind not in ("prompt", "note", "command", "shell"):
+                    continue
+                for name in set(MACHINE_TAG_NAME.findall(
+                        f"{block.text}\n{block.result}")):
+                    _count(found.tags, f"<{name}> in a {block.kind}")
+    return found
+
+
+def _count(counts: dict[str, int], name: str) -> None:
+    counts[name] = counts.get(name, 0) + 1
+
+
+def recent_transcripts(days: float, now: float | None = None) -> list[Path]:
+    """Every transcript under Claude Code's projects written in the last days."""
+    since = (now if now is not None else time.time()) - days * 86400
+    folder = settings_path().parent / "projects"
+    found = []
+    for path in folder.glob("*/*.jsonl"):
+        try:
+            if path.stat().st_mtime >= since:
+                found.append(path)
+        except OSError:
+            continue
+    return sorted(found)
+
+
+def cmd_shapes(args: argparse.Namespace) -> int:
+    """List the transcript shapes the page cannot show. Names and counts only."""
+    days = getattr(args, "days", SHAPES_DAYS)
+    paths = recent_transcripts(days)
+    found = transcript_shapes(paths)
+    out = [f"Read {found.records} records in {found.transcripts} transcripts"
+           f" from the last {days:g} days."]
+    if found.versions:
+        named = sorted(found.versions.items(), key=lambda one: -one[1])
+        out.append("Claude Code: " + ", ".join(f"{v} ({n})" for v, n in named))
+    if found.not_read:
+        out.append("")
+        out.append("Records and pieces the page does not show:")
+        for name, n in sorted(found.not_read.items(), key=lambda one: -one[1]):
+            out.append(f"  {n:6}  {name}")
+    if found.tags:
+        out.append("")
+        out.append("Claude Code's tags still on the page:")
+        for name, n in sorted(found.tags.items(), key=lambda one: -one[1]):
+            out.append(f"  {n:6}  {name}")
+    if not found.not_read and not found.tags:
+        out.append("Nothing the page does not know.")
+    else:
+        out.append("")
+        out.append("This lists names and counts, never your text, so you can"
+                   " paste it into a report as it is.")
+    print("\n".join(out))
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Check the setup and say what is wrong."""
     problems = 0
@@ -6752,6 +6920,8 @@ def build_parser() -> argparse.ArgumentParser:
         ("status", cmd_status, "the status line entry point; reads JSON from stdin"),
         ("ls", cmd_ls, "list the sessions"),
         ("doctor", cmd_doctor, "check the setup"),
+        ("shapes", cmd_shapes,
+         "list what in your transcripts the page cannot show; names and counts only"),
         ("serve", cmd_serve, "start the daemon and serve the page"),
     ]
     for name, handler, help_text in commands:
@@ -6760,6 +6930,9 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "status":
             sub.add_argument("--then", metavar="COMMAND",
                              help="run this status line too, and print its output")
+        if name == "shapes":
+            sub.add_argument("--days", type=float, default=SHAPES_DAYS,
+                             help=f"how far back to read (default {SHAPES_DAYS})")
         if name == "serve":
             sub.add_argument("--port", type=int, default=DEFAULT_PORT,
                              help=f"the port to listen on (default {DEFAULT_PORT})")
