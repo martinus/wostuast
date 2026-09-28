@@ -156,9 +156,124 @@ def test_the_chosen_row_is_still_obvious(page_at):
         browser, page = open_page(play, page_at)
         try:
             assert page.locator(".row.chosen").count() == 1
-            ring = page.evaluate(
-                "getComputedStyle(document.querySelector('.row.chosen')).outlineStyle")
-            assert ring != "none"
+        finally:
+            browser.close()
+
+
+READ_TAB = """() => {
+  const row = document.querySelector('.row.chosen');
+  const grip = document.getElementById('grip');
+  const list = document.getElementById('rows').getBoundingClientRect();
+  const at = row.getBoundingClientRect();
+  const from = grip.getBoundingClientRect().top;
+  const look = getComputedStyle(row);
+  const root = getComputedStyle(document.documentElement);
+  const probe = document.createElement('div');
+  probe.style.background = root.getPropertyValue('--bg');
+  document.body.appendChild(probe);
+  const ground = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return {
+    fade: look.backgroundImage.split('), linear-gradient')[0] + ')', content: ground,
+    top: look.borderTopWidth, bottom: look.borderBottomWidth,
+    right: look.borderRightWidth,
+    reach: Math.round(grip.getBoundingClientRect().left - at.right),
+    gap: [parseFloat(grip.style.getPropertyValue('--gap-top')),
+          parseFloat(grip.style.getPropertyValue('--gap-bottom'))],
+    want: [Math.max(at.top + parseFloat(look.borderTopWidth), list.top) - from,
+           Math.min(at.bottom - parseFloat(look.borderBottomWidth), list.bottom) - from],
+  };
+}"""
+
+
+def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path):
+    """As in a browser, the chosen row wears the content's ground and runs
+    to the line between the list and the content, the line opens where the
+    row meets it, and the row's top and bottom are that line turned round
+    it. The line stands outside the list that scrolls, so the opening has to
+    follow the row when the list moves, and close when the row goes."""
+    daemon = rows_at[0]
+    with sync_playwright() as play:
+        browser, page = open_rows(play, rows_at)
+        try:
+            page.set_viewport_size({"width": 1100, "height": 420})
+            page.click('.row[data-id="fresh"]', position={"x": 5, "y": 5})
+            page.wait_for_function("state.chosen === 'fresh'")
+            # The row fades into its new ground, and the scroll event lands a
+            # frame after the scroll.
+            page.wait_for_function(
+                "document.querySelector('.row.chosen').getAnimations().length === 0")
+            page.evaluate("new Promise((done) => requestAnimationFrame(() => "
+                          "requestAnimationFrame(done)))")
+            seen = page.evaluate(READ_TAB)
+            # The fade ends in the content's own ground, where the two meet.
+            assert seen["fade"].startswith("linear-gradient(90deg"), seen
+            assert seen["fade"].endswith(seen["content"] + ")"), seen
+            assert seen["top"] == seen["bottom"] == "1px", seen
+            assert seen["right"] == "0px" and seen["reach"] == 0, seen
+            assert seen["gap"][1] > seen["gap"][0] > 0, seen
+            assert all(abs(a - b) < 0.5
+                       for a, b in zip(seen["gap"], seen["want"])), seen
+
+            # A row that arrives above it moves it down, and nothing about
+            # the chosen row changes size or scrolls: the draw has to say so.
+            # A taller window first, so the row stays in the list's view.
+            page.set_viewport_size({"width": 1100, "height": 700})
+            page.evaluate("new Promise((done) => requestAnimationFrame(() => "
+                          "requestAnimationFrame(done)))")
+            seen = page.evaluate(READ_TAB)
+            where = tmp_path / "agent" / "newer"
+            where.mkdir(parents=True)
+            ws.append_event(conftest.event("PreToolUse", sid="newer", cwd=str(where),
+                                           tool_name="Bash", tool_use_id="t9",
+                                           tool_input={"command": "make"},
+                                           ts=time.time()))
+            daemon.tick()
+            page.wait_for_function("document.querySelectorAll('.row').length === 5")
+            page.evaluate("new Promise((done) => requestAnimationFrame(() => "
+                          "requestAnimationFrame(done)))")
+            moved = page.evaluate(READ_TAB)
+            assert moved["want"][0] > seen["want"][0], (seen, moved)
+            assert all(abs(a - b) < 0.5
+                       for a, b in zip(moved["gap"], moved["want"])), moved
+
+            page.set_viewport_size({"width": 1100, "height": 420})
+
+            # The list's bar only while the pointer is on the list: anywhere
+            # else it stands between the row and the content.
+            bar = "getComputedStyle(document.getElementById('rows')).scrollbarWidth"
+            page.mouse.move(900, 300)
+            assert page.evaluate(bar) == "none"
+            page.hover('.row[data-id="named"]')
+            assert page.evaluate(bar) == "thin"
+            page.mouse.move(900, 300)
+
+            # Scrolled half out of the list, only what the list shows opens it.
+            page.evaluate("""() => {
+              const list = document.getElementById('rows');
+              const row = document.querySelector('.row.chosen');
+              list.scrollTop += row.getBoundingClientRect().top
+                - list.getBoundingClientRect().top + row.offsetHeight / 2;
+            }""")
+            page.wait_for_function("""() => {
+              const grip = document.getElementById('grip');
+              const list = document.getElementById('rows').getBoundingClientRect();
+              return Math.abs(parseFloat(grip.style.getPropertyValue('--gap-top'))
+                - (list.top - grip.getBoundingClientRect().top)) < 0.5;
+            }""")
+            # Scrolled out of it, the line is whole again. A shorter window,
+            # so the list can scroll that far.
+            page.set_viewport_size({"width": 1100, "height": 330})
+            page.evaluate("document.getElementById('rows').scrollTop = 1e6")
+            page.wait_for_function("""() => {
+              const row = document.querySelector('.row.chosen');
+              const list = document.getElementById('rows').getBoundingClientRect();
+              return row.getBoundingClientRect().bottom < list.top
+                || row.getBoundingClientRect().top > list.bottom;
+            }""")
+            page.wait_for_function(
+                "parseFloat(document.getElementById('grip').style"
+                ".getPropertyValue('--gap-bottom')) === 0")
         finally:
             browser.close()
 

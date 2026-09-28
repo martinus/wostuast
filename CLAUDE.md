@@ -61,7 +61,7 @@ after the tests go red.
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
-| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url` | The sidebar |
+| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
@@ -1289,7 +1289,8 @@ update the comment with its own text, and read it back.
   used `box-shadow: inset 0 0 0 40px`, which fills inward from each edge, so a
   row with a name, a branch and a reason on it had an untinted stripe down its
   middle. A `linear-gradient` background layer covers any height and sits over
-  the state's own colour instead of replacing it.
+  the state's own colour instead of replacing it. The chosen row's fade is
+  such layers too, over `--soft`, which each state sets.
 - **What the row says a session is, is where it started, not where it
   stands.** `cwd` is in every hook payload and Claude Code moves it the
   moment the agent changes directory, so a row reading `repo/dir` renamed
@@ -1431,6 +1432,23 @@ update the comment with its own text, and read it back.
   `test_a_row_says_its_name_where_it_is_its_branch_and_when`,
   `test_the_git_line_is_one_line_and_its_counts_stand_at_the_right`,
   `test_a_row_is_renamed_where_it_stands`.
+- **The chosen row is a tab of the content beside it, as in a browser.**
+  A faint ring marked it, and the reader had to look for it. It runs
+  through the list's padding to the grip, its ground fades from the state's
+  colour to the content's own (`--bg`), and the grip opens where they meet.
+  The reader chose each part from pictures; the top and bottom lines as
+  thick as the grip were tried and taken back as heavy.
+  - **The grip is outside the list that scrolls, so `openGrip` tells it
+    where the row is**, as `--gap-top` and `--gap-bottom`: after every
+    `drawSessions`, on the list's scroll, on a resize, and from a
+    `ResizeObserver` on the chosen row. Only the part the list shows opens
+    it, and nothing when the row is out of view. The draw is the one that
+    a row arriving above the chosen one needs: nothing scrolls and nothing
+    changes size.
+  - **The list's scrollbar shows only while the pointer is on it.** A bar
+    stands between the row and the grip, and cut the tab from its content
+    in both themes. The wheel and `j` `k` scroll without it.
+  `test_the_chosen_row_is_a_tab_of_the_content_beside_it`.
 - **Rows are kept and filled in again, never rebuilt.** A row can only fade
   into its new colour if it is the same row, and the needs-you pulse can
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches

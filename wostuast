@@ -7210,35 +7210,49 @@ body {
   background: var(--edge);
   border: 0; padding: 0; transition: background .15s ease;
 }
-.grip:hover, .grip.dragging { background: var(--needs); }
+/* Open where the chosen row meets it; `openGrip` says where that is. */
+#grip {
+  background: linear-gradient(var(--edge) var(--gap-top, 0px),
+    var(--bg) var(--gap-top, 0px), var(--bg) var(--gap-bottom, 0px),
+    var(--edge) var(--gap-bottom, 0px));
+}
+.grip:hover, .grip.dragging, #grip:hover, #grip.dragging { background: var(--needs); }
 body.dragging { cursor: col-resize; user-select: none; }
 .sidebar-head {
   height: 40px; flex-shrink: 0; display: flex; align-items: baseline;
   gap: 10px; padding: 12px 16px 0; margin-bottom: 8px;
   border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13px;
 }
-.rows { flex-grow: 1; overflow-y: auto; padding: 0 8px 8px; }
+.rows { flex-grow: 1; overflow-y: auto; padding: 0 8px 8px; scrollbar-width: none; }
+/* The bar only while the pointer is over the list. It stands between the
+   chosen row and the content it belongs to, and cut the one from the other;
+   the wheel and `j` `k` scroll the list without it. */
+.rows:hover { scrollbar-width: thin; }
 .row {
   margin-bottom: 6px; padding: 9px 12px 9px 11px; border-radius: 6px;
   cursor: pointer; display: flex; flex-direction: column; gap: 4px;
   border: 1px solid transparent; border-left: 4px solid var(--gone);
   transition: background .2s ease, border-color .2s ease;
 }
-.row.needs_you { border-left-color: var(--needs); background: var(--needs-soft); }
-.row.working { border-left-color: var(--working); background: var(--working-soft); }
-.row.done { border-left-color: var(--done); background: var(--done-soft); }
+.row.needs_you { --soft: var(--needs-soft); border-left-color: var(--needs); background: var(--needs-soft); }
+.row.working { --soft: var(--working-soft); border-left-color: var(--working); background: var(--working-soft); }
+.row.done { --soft: var(--done-soft); border-left-color: var(--done); background: var(--done-soft); }
 .row:hover { border-color: var(--edge-bright); border-left-width: 4px; }
-/* The tint says what the session is doing, so the selection has to say
-   something else: a ring and a brighter face.
-   The face is a gradient layer rather than an inset shadow. A shadow fills
-   inward from each edge by its spread, so `inset 0 0 0 40px` left a stripe of
-   untinted row down the middle of anything taller than 80 px — and a row with
-   a name, a branch and a reason on it is taller than that. A background layer
-   covers whatever height the row turns out to be, and it sits over the state's
-   own colour rather than replacing it. */
-.row.chosen {
-  outline: 1px solid var(--ink-faint); outline-offset: -1px;
-  background-image: linear-gradient(var(--tint), var(--tint));
+/* The chosen row is a tab of the content beside it, as in a browser: it
+   runs through the list's padding to the line between the two, that line
+   opens where they meet (`openGrip`), and its ground goes from the state's
+   colour on the left to the content's own on the right, so the one flows
+   into the other. A faint ring said which row was chosen before this, and a
+   reader had to look for it. The top and bottom stay thin lines: as thick
+   as the grip they read as a heavy box. */
+.row.chosen, .row.chosen:hover {
+  background: linear-gradient(90deg, transparent, var(--bg)),
+    linear-gradient(var(--soft, transparent), var(--soft, transparent)),
+    var(--panel);
+  margin-right: -8px;
+  border-top-color: var(--edge); border-bottom-color: var(--edge);
+  border-right: 0; border-radius: 6px 0 0 6px;
+  padding-right: 20px;
 }
 .row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
@@ -9615,7 +9629,41 @@ function drawSessions() {
   if (!listed.length && state.sessions.length && !past.length) {
     put(box, "div", "nohits", "no session matches");
   }
+  openGrip();
 }
+
+// The line between the list and the content opens where the chosen row
+// meets it, so the row reads as a tab of what is beside it. The line is the
+// grip, which stands outside the list that scrolls, so it is told where the
+// row is: on every draw, scroll and change of size. Only the part of the row
+// the list shows opens it, between the row's top and bottom lines.
+function openGrip() {
+  const grip = $("grip");
+  const list = $("rows");
+  const row = list.querySelector(".row.chosen");
+  let top = 0;
+  let bottom = 0;
+  if (row) {
+    const edge = parseFloat(getComputedStyle(row).borderTopWidth) || 0;
+    const seen = list.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    const from = grip.getBoundingClientRect().top;
+    top = Math.max(at.top + edge, seen.top) - from;
+    bottom = Math.min(at.bottom - edge, seen.bottom) - from;
+    if (bottom <= top) top = bottom = 0;
+  }
+  grip.style.setProperty("--gap-top", top + "px");
+  grip.style.setProperty("--gap-bottom", bottom + "px");
+  if (row !== gripRow) {
+    if (gripRow) gripWatch.unobserve(gripRow);
+    if (row) gripWatch.observe(row);
+    gripRow = row;
+  }
+}
+// A row grows when a line is added to it, and every row moves when the
+// fonts arrive; neither is a draw.
+const gripWatch = new ResizeObserver(() => openGrip());
+let gripRow = null;
 
 // Only the ages change by themselves. Rebuilding the rows to advance them
 // would restart the needs-you pulse every second, so it never finished a
@@ -15077,6 +15125,10 @@ drawBell();
 // with is a list you stop reading.
 try { state.history = localStorage.getItem("wostuast-history") === "open"; }
 catch (error) { }
+// The opening in the line follows the chosen row: `openGrip`.
+$("rows").addEventListener("scroll", openGrip, { passive: true });
+window.addEventListener("resize", openGrip);
+gripWatch.observe($("rows"));
 $("find").addEventListener("input", (typed) => {
   state.find = typed.target.value.trim().toLowerCase();
   draw();
