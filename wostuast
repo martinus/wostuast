@@ -7245,7 +7245,11 @@ body.dragging { cursor: col-resize; user-select: none; }
   display: flex; align-items: center; gap: 8px;
   font-family: var(--mono); font-size: 13px; min-width: 0;
 }
+/* The name in the face the lines under it wear. The fixed face made it
+   half as wide again, and a name is read, not lined up; the age beside it
+   keeps the fixed face, so its digits do not dance. */
 .row .name {
+  font-family: var(--sans); font-size: 14px;
   color: var(--ink-bright); font-weight: 600; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; flex-grow: 1;
 }
@@ -9375,11 +9379,17 @@ function listedSessions() {
 function newRow(id) {
   const row = document.createElement("div");
   row.dataset.id = id;
-  row.addEventListener("click", () => choose(id));
+  // A ticket link in the row opens the ticket and nothing else: choosing
+  // the session as well would change the page behind a tab the reader has
+  // just gone to.
+  const onLink = (press) => press.target.closest && press.target.closest("a");
+  row.addEventListener("click", (press) => { if (!onLink(press)) choose(id); });
   const one = put(row, "div", "line1");
   const name = put(one, "span", "name");
   name.title = "double-click to rename";
-  name.addEventListener("dblclick", () => renameRow(row));
+  name.addEventListener("dblclick", (press) => {
+    if (!onLink(press)) renameRow(row);
+  });
   put(one, "span", "word");
   put(one, "span", "age");
   put(row, "div", "line2 where");
@@ -9404,8 +9414,16 @@ function fillRow(row, s) {
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
-  if (!one.children[0].querySelector("input")) {
-    one.children[0].textContent = rowName(s);
+  // Each part is written again only when what it says has changed. This
+  // runs on every push, about once a second while an agent works, and a
+  // ticket link rebuilt between the press and the release is a click that
+  // never happens.
+  const links = state.links.length;
+  const slot = one.children[0];
+  if (!slot.querySelector("input")
+      && fresh(slot, "text", JSON.stringify([rowName(s), links]))) {
+    slot.textContent = rowName(s);
+    linkTickets(slot);
   }
   one.children[1].textContent = isGone(s) ? s.state_word : "";
   // On every row, the same four lines: the name, where it stands, the
@@ -9415,22 +9433,30 @@ function fillRow(row, s) {
   const fact = (line, cls, icon, text, title) => {
     const part = put(line, "span", cls);
     putIcon(part, icon);
-    put(part, "span", "text", text);
+    // The reader's ticket links, from `links.json`: a branch or a worktree
+    // named after its ticket is the most common place for one.
+    linkTickets(put(part, "span", "text", text));
     part.title = title;
   };
-  where.replaceChildren();
-  if (s.repo) fact(where, "repo", "repo", s.repo, s.remote || "no remote");
-  if (s.worktree) fact(where, "worktree", "dir", s.worktree, s.worktree_path || "");
-  two.replaceChildren();
+  if (fresh(where, "text", JSON.stringify([s.repo, s.remote, s.worktree,
+                                           s.worktree_path, links]))) {
+    where.replaceChildren();
+    if (s.repo) fact(where, "repo", "repo", s.repo, s.remote || "no remote");
+    if (s.worktree) fact(where, "worktree", "dir", s.worktree, s.worktree_path || "");
+  }
   two.hidden = !s.branch;
-  if (s.branch) fact(two, "branch", "branch", s.branch, s.branch);
-  // What git counts, at the right edge, so the counts of every row stand in
-  // one column however long each branch is.
-  const counts = put(two, "span", "gitstate");
-  if (s.ahead) put(counts, "span", "ahead", "↑" + s.ahead);
-  if (s.behind) put(counts, "span", "ahead", "↓" + s.behind);
-  if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
-  else if (s.branch) put(counts, "span", "clean", "✓ clean");
+  if (fresh(two, "text", JSON.stringify([s.branch, s.ahead, s.behind, s.dirty,
+                                         s.touched_files, links]))) {
+    two.replaceChildren();
+    if (s.branch) fact(two, "branch", "branch", s.branch, s.branch);
+    // What git counts, at the right edge, so the counts of every row stand
+    // in one column however long each branch is.
+    const counts = put(two, "span", "gitstate");
+    if (s.ahead) put(counts, "span", "ahead", "↑" + s.ahead);
+    if (s.behind) put(counts, "span", "ahead", "↓" + s.behind);
+    if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
+    else if (s.branch) put(counts, "span", "clean", "✓ clean");
+  }
   // Only while the session is doing something or waiting on you. A ready
   // session's reason is the state again ("waiting for input", "stopped"),
   // and a finished one's is "ended (logout)" under the word "ended".
@@ -9467,6 +9493,7 @@ function renameRow(row) {
   box.setAttribute("aria-label", "a name for this session");
   box.value = rowName(s);
   slot.replaceChildren(box);
+  delete slot.dataset.text;            // so `fillRow` writes the name again
   const close = () => {
     if (!box.isConnected) return;
     box.remove();
@@ -9523,7 +9550,8 @@ function drawSessions() {
   const listed = listedSessions();
   const past = shown.filter(isGone);
   if (!fresh(box, "drawn",
-             JSON.stringify([listed, state.chosen, past.length, state.history]))) {
+             JSON.stringify([listed, state.chosen, past.length, state.history,
+                             state.links.length]))) {
     return;
   }
   // A row that is still there is kept and filled in again. A dot can only
