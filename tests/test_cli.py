@@ -471,3 +471,74 @@ def test_a_size_is_said_the_way_a_person_reads_it(ws):
     assert ws.size_label(12 * 1024) == "12 KB"
     assert ws.size_label(45 * 1024 * 1024 + 200 * 1024) == "45.2 MB"
     assert ws.size_label(3 * 1024 ** 3 // 2) == "1.5 GB"
+
+
+def shaped_transcript(transcript_file):
+    """One transcript holding every shape `shapes` sorts: read, left out on
+    purpose, not known, and a tag the page leaves showing. The words in it
+    are the reader's own, and must never reach the output."""
+    note = ("<task-notification>\n<task-id>b1</task-id>\n"
+            "<output-file>/tmp/secret-output</output-file>\n"
+            "PRIVATE-NOTE-WORDS\n</task-notification>")
+    path = transcript_file("shapes", [
+        dict(conftest.record("you", "PRIVATE-PROMPT-WORDS"), version="2.1.283"),
+        {"type": "mode", "mode": "auto"},
+        {"type": "brand-new-record", "content": "PRIVATE-NEW-WORDS"},
+        {"type": "attachment", "attachment": {"type": "new_thing",
+                                              "text": "PRIVATE-ATTACHED"}},
+        {"type": "attachment", "attachment": {"type": "date"}},
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "image", "source": {"data": "PRIVATE-IMAGE"}}]}},
+        {"type": "user", "message": {"role": "user", "content": note}},
+        conftest.record("you", "how do I centre a <div> in <my-widget>?"),
+    ])
+    # A line separator inside a string is one record, not two halves. Written
+    # raw, as Claude Code writes it: `json.dumps` escapes it by default, and
+    # an escaped one never broke anything.
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(conftest.record("claude", "one\u2028record"),
+                                ensure_ascii=False) + "\n")
+    return path
+
+
+def test_shapes_lists_what_the_page_cannot_show_and_never_the_text(
+        ws, transcript_file, capsys):
+    """Every bug of one kind lately -- `!git up`, `/clear`, `/model`, paste
+    tags on the row -- was a shape Claude Code wrote and the page did not
+    know, found by the reader as tags on the screen. `shapes` reads recent
+    transcripts with the page's own reader and lists what it leaves out or
+    leaves tagged: names and counts, so it can go into a public report."""
+    shaped_transcript(transcript_file)
+    assert ws.main(["shapes"]) == 0
+    out = capsys.readouterr().out
+    assert "brand-new-record" in out
+    assert "attachment/new_thing" in out
+    assert "user piece: image" in out
+    assert "<task-id> in a note" in out
+    assert "2.1.283 (1)" in out
+    # Left out on purpose: bookkeeping, and the harness talking to the agent.
+    assert "mode" not in out.split("does not show:")[1].split("tags")[0]
+    assert "attachment/date" not in out
+    # HTML a person types is not Claude Code's: no hyphen, no underscore.
+    assert "<div>" not in out
+    # The U+2028 record was read whole.
+    assert "not a JSON object" not in out
+    assert "PRIVATE" not in out and "secret-output" not in out
+
+
+def test_shapes_reads_only_the_days_asked_for(ws, transcript_file, capsys):
+    import os
+    old = shaped_transcript(transcript_file)
+    week_ago = time.time() - 8 * 86400
+    os.utime(old, (week_ago, week_ago))
+    ws.main(["shapes"])
+    assert "Read 0 records in 0 transcripts" in capsys.readouterr().out
+    ws.main(["shapes", "--days", "9"])
+    assert "brand-new-record" in capsys.readouterr().out
+
+
+def test_shapes_says_so_when_it_knows_everything(ws, transcript_file, capsys):
+    transcript_file("plain", [conftest.record("you", "hello"),
+                              conftest.record("claude", "hi")])
+    ws.main(["shapes"])
+    assert "Nothing the page does not know." in capsys.readouterr().out
