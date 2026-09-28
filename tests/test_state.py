@@ -1653,3 +1653,20 @@ def test_the_name_goes_with_a_clear_and_moves_once(ws):
     for one in clear_events():
         again.apply(one)
     assert ws.read_names() == {"s2": "the payments work", "s1": "read later"}
+
+
+@pytest.mark.parametrize("typed, shown", [
+    ('<pasted_content id="3400">\nI got this question from a colleague.\n'
+     '</pasted_content id="3400">', "I got this question from a colleague."),
+    ('Look at this:\n\n<pasted_content id="1da8">\nthe log line\n'
+     '</pasted_content id="1da8">', "Look at this:"),
+])
+def test_the_row_shows_a_pasted_prompt_without_its_tags(ws, typed, shown):
+    """The transcript took Claude Code's paste tags off; the row did not, so
+    a pasted prompt read `prompt: <pasted_content id="3400"> I got...` under
+    the session's name. The hook hands over the prompt as Claude Code wrote
+    it, and the same reader takes the tags off both."""
+    session = fold(ws, event("UserPromptSubmit", prompt=typed))
+    assert "pasted_content" not in session.last_prompt
+    assert session.last_prompt.startswith(shown)
+    assert "pasted_content" not in session.last_event

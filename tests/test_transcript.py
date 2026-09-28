@@ -395,16 +395,45 @@ def test_a_slash_command_and_what_it_answered_are_one_block(ws, tmp_path):
     for line in fixture.read_text().splitlines():
         reader.add(json.loads(line))
     shown = [(one.kind, one.text, one.result) for one in reader.blocks]
-    kept, picked, context, spoken = shown
+    kept, picked, context = shown
     assert kept == ("command", "/model", "Kept model as `Sonnet 5 (default)`")
     assert picked == ("command", "/model opus", "Set model to `Opus 5.5` and"
                       " saved as your default for new sessions")
     assert context[:2] == ("command", "/context")
     assert "Context Usage" in context[2] and "⛀" in context[2]
     assert "\x1b" not in context[2] and "[38;5" not in context[2]
-    # The caveat draws nothing; the Markdown Claude Code handed the agent
-    # after `/context` is the harness speaking, as it always was.
-    assert spoken[0] == "note"
+    # The caveat draws nothing, and neither does the Markdown copy of the
+    # answer Claude Code hands the agent straight after `/context`: the page
+    # drew those numbers twice, the second time as raw Markdown.
+    assert not any("## Context Usage" in (one.text or "") for one in reader.blocks)
+    # A command that sends the agent a prompt -- `/init`, measured -- writes
+    # it as an `isMeta` record with no answer before it. That one is shown.
+    sent = ws.Transcript(str(tmp_path / "s.jsonl"))
+    sent.add(user_record("<command-message>init</command-message>\n"
+                         "<command-name>/init</command-name>"))
+    body = dict(user_record("Please analyze this codebase."), isMeta=True)
+    note, = sent.add(body)
+    assert (note.kind, note.text) == ("note", "Please analyze this codebase.")
+    # And only once: a second `isMeta` record after an answer is shown.
+    again = ws.Transcript(str(tmp_path / "a.jsonl"))
+    again.add(user_record("<command-name>/context</command-name>"))
+    again.add(user_record("<local-command-stdout>grid</local-command-stdout>"))
+    assert again.add(dict(user_record("the copy"), isMeta=True)) == []
+    later, = again.add(dict(user_record("a hook's answer"), isMeta=True))
+    assert later.kind == "note"
+    # Only straight after: a prompt between them makes it a note again.
+    between = ws.Transcript(str(tmp_path / "b.jsonl"))
+    between.add(user_record("<command-name>/context</command-name>"))
+    between.add(user_record("<local-command-stdout>grid</local-command-stdout>"))
+    between.add(user_record("and now a prompt"))
+    shown, = between.add(dict(user_record("a skill's body"), isMeta=True))
+    assert shown.kind == "note"
+    # An answer of "(no content)" has nothing to echo.
+    empty = ws.Transcript(str(tmp_path / "e.jsonl"))
+    empty.add(user_record("<command-name>/reload-plugins</command-name>"))
+    empty.add(user_record("<local-command-stdout>(no content)</local-command-stdout>"))
+    kept, = empty.add(dict(user_record("a skill's body"), isMeta=True))
+    assert kept.kind == "note"
     # "(no content)" closes the command's block and draws nothing.
     quiet = ws.Transcript(str(tmp_path / "q.jsonl"))
     one, = quiet.add(user_record("<command-name>/reload-plugins</command-name>"
@@ -419,7 +448,8 @@ def test_a_slash_command_and_what_it_answered_are_one_block(ws, tmp_path):
     assert other is not one and other.text == ""
     # A command nobody typed -- another session's, or Claude Code's own -- is
     # the harness speaking, like any other words that are not the reader's.
-    theirs = quiet.user_block("<command-name>/compact</command-name>", 0.0, True)
+    fresh = ws.Transcript(str(tmp_path / "f.jsonl"))
+    theirs = fresh.user_block("<command-name>/compact</command-name>", 0.0, True)
     assert theirs.kind == "note"
 
 

@@ -1745,7 +1745,11 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     session.state = "working"
     # Cut it here, once. Keeping the whole of a pasted prompt would put it in
     # every row, to be compared every tick and sent to the browser every time.
-    session.last_prompt = clip(str(event.get("prompt") or ""), PROMPT_WIDTH)
+    # The paste tags come off first, as the transcript takes them off: the
+    # hook hands over the prompt as Claude Code wrote it, and a pasted prompt
+    # read `prompt: <pasted_content id="3400"> I got...` on the row.
+    prompt = unwrap_pastes(str(event.get("prompt") or ""))
+    session.last_prompt = clip(prompt, PROMPT_WIDTH)
     session.last_event = f"prompt: {session.last_prompt}"
 
 
@@ -2511,6 +2515,9 @@ class Transcript:
         self.cwd = cwd
         self.blocks: list[Block] = []
         self.by_tool_use: dict[str, Block] = {}
+        #: A command whose answer has just been read. The `isMeta` record
+        #: straight after it is the same answer for the agent: `user_block`.
+        self.echo_of: Block | None = None
         #: Which reading of this session's transcript these blocks belong to.
         #: `seq` is only a position in one reading, so the page needs to know
         #: when it is looking at a different one.
@@ -2641,6 +2648,16 @@ class Transcript:
         mine, text = read_user_text(text)
         if not mine:
             return None
+        if theirs and self.echo_of is not None:
+            # What a command answered, again, for the agent: `/context`
+            # writes its numbers as Markdown in an `isMeta` record straight
+            # after its answer, and the page drew them twice. Only straight
+            # after, and once: `/init` sends its prompt as an `isMeta`
+            # record with no answer before it, and that one is shown.
+            echoed = self.echo_of is (self.blocks[-1] if self.blocks else None)
+            self.echo_of = None
+            if echoed:
+                return None
         if theirs and mine in ("prompt", "command"):
             mine = "note"
         return self.keep(Block(kind=mine, ts=ts, text=text))
@@ -2685,6 +2702,7 @@ class Transcript:
             block = self.keep(Block(kind="command", ts=ts))
         block.result = "" if nothing else said
         block.answered = True
+        self.echo_of = None if nothing else block
         return block
 
     def add_queued(self, record: dict[str, Any]) -> list[Block]:
