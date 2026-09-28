@@ -59,22 +59,17 @@ def test_a_number_key_picks_a_tab_that_is_built(page_at):
 
 def test_the_find_box_sits_above_the_list_it_narrows(repo_page):
     """One box, moved to where it is used. Two would be two values to keep in
-    step, and `/` would have to guess which one it meant. Every tab with a
-    list keeps it in that list's slot; the Session tab has none, so there the
-    box goes home."""
+    step, and `/` would have to guess which one it meant. Every tab has a
+    list, and keeps it in that list's slot."""
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
-            for name in ("transcript", "files", "diff"):
+            for name in ("transcript", "files", "diff", "review"):
                 show_tab(page, name)
                 assert page.eval_on_selector(
                     "#find", "el => el.parentElement.className") == "findslot", name
                 assert page.eval_on_selector(
                     "#find", "el => el.closest('.side') !== null"), name
-            # and it goes home when a tab without a list is chosen
-            show_tab(page, "session")
-            assert page.eval_on_selector(
-                "#find", "el => el.parentElement.id") == "findhome"
         finally:
             browser.close()
 
@@ -116,8 +111,8 @@ def test_a_tab_comes_back_after_visiting_another(repo_page):
             for name in ("files", "diff"):
                 show_tab(page, name)
                 assert page.locator(f".filelist.{name} button").count() > 0
-                show_tab(page, "session")
-                assert page.locator(".filelist").count() == 0
+                show_tab(page, "review")
+                assert page.locator(f".filelist.{name}").count() == 0
                 show_tab(page, name)
                 assert page.locator(f".filelist.{name} button").count() > 0, name
                 assert page.eval_on_selector(
@@ -130,7 +125,7 @@ def test_every_tab_is_built(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            for name in ("transcript", "files", "diff", "review", "session"):
+            for name in ("transcript", "files", "diff", "review"):
                 assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
         finally:
             browser.close()
@@ -243,23 +238,21 @@ def test_a_transcript_push_during_a_tab_switch_stays_out_of_the_other_tab(
             browser.close()
 
 
-def test_a_tab_with_nothing_to_narrow_offers_no_find_box(page_at):
-    """The Session tab is about one session and has no list to narrow, and it
-    was offering "find a file" — a promise about a tab one over. `finds` in
-    `TABS` says what the box is for, or `null`, so a new tab is one entry
-    rather than another arm of a ternary that names three tabs and gives the
-    rest whatever the last arm said."""
+def test_every_tab_says_what_its_find_box_is_for(page_at):
+    """A tab used to offer "find a file" for a list it did not have. `finds`
+    in `TABS` says what the box is for, so a new tab is one entry rather
+    than another arm of a ternary that names three tabs and gives the rest
+    whatever the last arm said."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
             seen = {}
-            for tab in ("transcript", "files", "diff", "review", "session"):
+            for tab in ("transcript", "files", "diff", "review"):
                 show_tab(page, tab)
                 seen[tab] = page.evaluate("""() => {
                   const box = document.getElementById('find');
                   return {shown: !!box.offsetParent, hint: box.placeholder};
                 }""")
-            assert seen["session"]["shown"] is False, seen
             for tab in ("transcript", "files", "diff", "review"):
                 assert seen[tab]["shown"] is True, (tab, seen)
             # And each says what it is for, rather than three of them saying
@@ -271,40 +264,12 @@ def test_a_tab_with_nothing_to_narrow_offers_no_find_box(page_at):
             browser.close()
 
 
-def test_the_live_slot_keeps_the_far_end_when_the_find_box_goes(page_at):
-    """`margin-left: auto` on the find box is what pushed both it and the
-    live slot to the end of the tab bar. With the box gone the slot came to
-    rest against the last tab. The far end is the bell and the colours now,
-    so the slot stands just before them."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            show_tab(page, "session")
-            seen = page.evaluate("""() => {
-              const bar = document.querySelector('.tabs').getBoundingClientRect();
-              const theme = document.getElementById('theme').getBoundingClientRect();
-              const bell = document.getElementById('bell').getBoundingClientRect();
-              const live = document.getElementById('live').getBoundingClientRect();
-              const last = [...document.querySelectorAll('.tab')]
-                .pop().getBoundingClientRect();
-              return {end: bar.right - theme.right, gap: bell.left - live.right,
-                      fromTab: live.left - last.right};
-            }""")
-            assert seen["end"] < 40, seen         # the group is at the far end
-            assert seen["gap"] < 40, seen         # and the slot is in it
-            assert seen["fromTab"] > 100, seen    # not up against the tabs
-        finally:
-            browser.close()
-
-
-
 # --- how full the window is ---------------------------------------------------
 
 
 def test_the_model_stands_left_of_the_context_bar(page_at):
     """The percentage is a percentage of this model's window, and `/model`
-    changes it mid-session, so the name stands beside the bar it fills
-    rather than in the Session tab alone."""
+    changes it mid-session, so the name stands beside the bar it fills."""
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -322,16 +287,15 @@ def test_the_model_stands_left_of_the_context_bar(page_at):
 
 
 def test_the_context_bar_stands_at_the_end_of_the_tab_row(page_at):
-    """It is in the Session tab too, in a panel you have to go to. This is the
-    one fact in that panel you want to notice rather than look up, so it is on
-    every tab — which is the whole of what #101 asked for that wostuast can
-    actually know."""
+    """It is the one fact about a session you want to notice rather than look
+    up, so it is on every tab — which is the whole of what #101 asked for
+    that wostuast can actually know."""
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
             page.wait_for_selector("#ctxslot .ctx")
-            for tab in ("transcript", "files", "diff", "review", "session"):
+            for tab in ("transcript", "files", "diff", "review"):
                 show_tab(page, tab)
                 seen = page.evaluate("""() => {
                   const slot = document.getElementById('ctxslot');
@@ -401,7 +365,7 @@ def test_the_strip_carries_what_this_session_has_spent(page_at):
         browser, page = open_page(play, path)
         try:
             page.wait_for_selector("#ctxslot .spent")
-            for tab in ("transcript", "files", "diff", "review", "session"):
+            for tab in ("transcript", "files", "diff", "review"):
                 show_tab(page, tab)
                 seen = page.evaluate("""() => {
                   const slot = document.getElementById('ctxslot');
@@ -441,8 +405,8 @@ def test_a_session_that_was_told_no_cost_shows_none(ws, served):
 
 def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
     """A click leaves the focus on its button, and a key pressed after it
-    turns `:focus-visible` on: clicking Session and pressing 1 drew the
-    browser's dark ring round Session, the tab just left. A shortcut that
+    turns `:focus-visible` on: clicking a tab and pressing 1 drew the
+    browser's dark ring round the tab just left. A shortcut that
     acts takes the focus off a button the pointer pressed. One reached by
     Tab keeps it, because that is where a keyboard reader is."""
     ringed = """() => [...document.querySelectorAll('.tab')]
@@ -450,7 +414,7 @@ def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            page.click(".tab[data-tab='session']")
+            page.click(".tab[data-tab='review']")
             page.keyboard.press("1")
             page.wait_for_function("state.tab === 'transcript'")
             assert page.evaluate(ringed) == []

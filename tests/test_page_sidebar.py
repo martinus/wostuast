@@ -285,19 +285,6 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
 
             page.set_viewport_size({"width": 1100, "height": 420})
 
-            # A tab with no list beside it: the row meets the page itself.
-            page.click(".tab[data-tab='session']")
-            page.wait_for_function("state.tab === 'session'")
-            page.evaluate(
-                "document.querySelector('.row.chosen').scrollIntoView({block: 'center'})")
-            page.evaluate("new Promise((done) => requestAnimationFrame(() => "
-                          "requestAnimationFrame(done)))")
-            alone = page.evaluate(READ_TAB)
-            assert alone["fade"].endswith(alone["page"] + ")") and alone["open"], alone
-            page.click(".tab[data-tab='transcript']")
-            page.wait_for_function(
-                "document.querySelector('.content.split > .side') !== null")
-
             # The list's bar only while the pointer is on the list: anywhere
             # else it stands between the row and the content.
             bar = "getComputedStyle(document.getElementById('rows')).scrollbarWidth"
@@ -345,36 +332,6 @@ def test_the_tab_says_what_is_happening(page_at):
             icon = page.evaluate(
                 "document.querySelector(\"link[rel='icon']\")?.getAttribute('href') || ''")
             assert icon.startswith("data:image/png"), "no icon was drawn"
-        finally:
-            browser.close()
-
-
-def test_the_context_percent_is_a_bar(page_at):
-    """How full a context window is reads at a glance and does not at a
-    count. It lives in the Session tab, which is where everything the chosen
-    row does not already say now lives."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody .ctx .bar")
-            # Named by its row, not counted: `putContext` builds the bar for
-            # the strip and for each rate-limit window too, so `.ctx` on its
-            # own finds several and none of them is this one.
-            seen = page.evaluate("""() => { let key = null;
-              for (const one of document.querySelectorAll('.sessionbody dl > *')) {
-                if (one.tagName === 'DT') { key = one.innerText; continue; }
-                if (key !== 'context used') continue;
-                const fill = one.querySelector('.ctx .bar .fill');
-                return {bars: one.querySelectorAll('.ctx .bar').length,
-                        width: fill && fill.style.width,
-                        text: one.innerText};
-              }
-              return null; }""")
-            assert seen, "no context row in the panel"
-            assert seen["bars"] == 1, seen
-            assert seen["width"] == "41%", seen
-            assert "41% ctx" in seen["text"], seen
         finally:
             browser.close()
 
@@ -864,53 +821,6 @@ def test_the_alert_panel_shuts_from_anywhere(page_at):
             browser.close()
 
 
-def test_the_session_panel_names_each_rate_limit_window(page_at):
-    """They appear only for a claude.ai Pro or Max subscription, or behind a
-    gateway, and only after the first API response — and Claude Code drops a
-    window once its reset has passed. So each is drawn only when it was sent,
-    never as a nought."""
-    _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody dl")
-            rows = page.evaluate(
-                """() => { const out = {}; let key = null;
-                     for (const one of document.querySelectorAll('.sessionbody dl > *')) {
-                       if (one.tagName === 'DT') key = one.innerText;
-                       else out[key] = one.innerText.replace(/\\s+/g, ' ');
-                     }
-                     return out; }""")
-            assert "$1.83" in rows["spent"], rows
-            assert "list price" in rows["spent"], rows
-            # Named in words, not as the payload spells them.
-            assert "24% used" in rows["5-hour limit"], rows
-            assert "resets" in rows["5-hour limit"], rows
-            assert "41% used" in rows["weekly limit"], rows
-        finally:
-            browser.close()
-
-
-def test_a_session_with_no_rate_limits_gets_no_rows_for_them(ws, served):
-    daemon, base = served
-    ws.append_event(conftest.event(
-        "SessionStart", pane="%7", pid=1, ts=time.time()))
-    ws.write_status("s1", ws.Status(ts=1.0, name="A session"))
-    daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 1")
-            show_tab(page, "session")
-            page.wait_for_selector(".sessionbody dl")
-            said = page.locator(".sessionbody dl").inner_text()
-            assert "limit" not in said, said
-            assert "spent" not in said, said
-        finally:
-            browser.close()
-
-
 def test_every_alert_makes_itself_heard(page_at):
     """One tag per session, so a second alert replaces the first -- and with
     `renotify` left false a replacement makes no sound and shows no banner.
@@ -960,26 +870,6 @@ def test_turning_needs_you_on_brings_no_backlog(ws, page_at):
         finally:
             browser.close()
 
-
-def test_the_session_tab_does_not_say_what_git_has_not_said(page_at):
-    """Before git answered, "not in a repository" and "changed files: none"
-    were drawn as facts."""
-    _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.sessions.length === 1")
-            said = page.evaluate("""() => {
-              const box = document.createElement('div');
-              putFacts(box, { ...state.sessions[0], git_known: false,
-                              branch: '', dirty: false, repo: '' });
-              return box.innerText;
-            }""")
-            assert "not in a repository" not in said, said
-            assert "none" not in said, said
-            assert "git has not answered" in said, said
-        finally:
-            browser.close()
 
 # --- what a row says ---------------------------------------------------------
 
