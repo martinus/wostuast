@@ -10345,8 +10345,13 @@ async function loadLinks() {
   }
   state.links = out;
   state.linkTrouble = trouble;
-  // Trouble goes on the Session tab, which may be what is on screen.
-  if (out.length || trouble.length) draw();
+  // Trouble goes on the Session tab, which may be what is on screen. The
+  // rows link their tickets too, and nothing else draws them again: this
+  // answer can come after the last push.
+  if (out.length || trouble.length) {
+    draw();
+    drawSessions();
+  }
 }
 
 // The address one match stands for. `$1` to `$9` are the groups and `$0` is

@@ -1034,8 +1034,20 @@ def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
     with sync_playwright() as play:
         context = fresh_context(play)
         context.add_init_script("localStorage.setItem('wostuast-history', 'open')")
-        # The links answer after the rows are drawn, so the rows have to be
-        # filled again when they come.
+        # The links answer after the last push, so the rows have to be
+        # filled again when they come, and no push will do it. The last push
+        # is the one a stream opens with once a session is chosen.
+        context.add_init_script("""
+          const add = EventSource.prototype.addEventListener;
+          EventSource.prototype.addEventListener = function (name, fn, ...rest) {
+            if (name !== 'sessions' || !this.url.includes('watch=')) {
+              return add.call(this, name, fn, ...rest);
+            }
+            return add.call(this, name, (message) => {
+              fn(message);
+              window.watchedPush = true;
+            }, ...rest);
+          };""")
         held = []
         context.route("**/api/links", lambda route: held.append(route))
         context.route("https://*.example/**", lambda route: route.abort())
@@ -1044,7 +1056,7 @@ def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
             page.goto(url, wait_until="domcontentloaded")
             page.wait_for_function(
                 "document.querySelectorAll('.row').length === 4")
-            page.wait_for_function("state.chosen !== null")
+            page.wait_for_function("window.watchedPush === true")
             assert held, "the page never asked for its links"
             held[0].continue_()
             named = '.row[data-id="named"]'
