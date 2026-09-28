@@ -181,13 +181,27 @@ READ_TAB = """() => {
   const from = grip.getBoundingClientRect().top;
   const look = getComputedStyle(row);
   const root = getComputedStyle(document.documentElement);
-  const probe = document.createElement('div');
-  probe.style.background = root.getPropertyValue('--bg');
-  document.body.appendChild(probe);
-  const ground = getComputedStyle(probe).backgroundColor;
-  probe.remove();
+  const colour = (value) => {
+    const probe = document.createElement('div');
+    probe.style.background = value;
+    document.body.appendChild(probe);
+    const said = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return said;
+  };
+  // What the row meets: the split tab's own list, or the page itself.
+  const side = document.querySelector('.content.split > .side');
+  const beside = side ? getComputedStyle(side).backgroundColor
+                      : colour(root.getPropertyValue('--bg'));
   return {
-    fade: look.backgroundImage.split('), linear-gradient')[0] + ')', content: ground,
+    fade: look.backgroundImage.split('), linear-gradient')[0] + ')', content: beside,
+    ground: look.backgroundColor,
+    list: getComputedStyle(document.querySelector('.sidebar')).backgroundColor,
+    edge: colour(root.getPropertyValue('--edge')),
+    page: colour(root.getPropertyValue('--bg')),
+    open: grip.style.getPropertyValue('--gap-top') !== '0px'
+      && getComputedStyle(grip).backgroundImage.includes(beside),
+    gripWidth: grip.offsetWidth,
     top: look.borderTopWidth, bottom: look.borderBottomWidth,
     right: look.borderRightWidth,
     indent: Math.round(at.left - document.querySelector('.row:not(.chosen)')
@@ -223,13 +237,21 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
             page.evaluate("new Promise((done) => requestAnimationFrame(() => "
                           "requestAnimationFrame(done)))")
             seen = page.evaluate(READ_TAB)
-            # The fade ends in the content's own ground, where the two meet.
+            # The fade ends in the ground of what it meets -- here the map,
+            # which stands apart from the page -- and so does the opening.
             assert seen["fade"].startswith("linear-gradient(90deg"), seen
             assert seen["fade"].endswith(seen["content"] + ")"), seen
+            assert seen["content"] != seen["page"] and seen["open"], seen
+            # The list wears the grip's colour, and the chosen row has no
+            # ground of its own: its tint stands on the list's, as its
+            # group's rows' do.
+            assert seen["list"] == seen["edge"], seen
+            assert seen["ground"] == "rgba(0, 0, 0, 0)", seen
             assert seen["top"] == seen["bottom"] == "2px", seen
-            # Out to the left of the other rows, so its left edge is not one
-            # of theirs; and they run to the line as well, as tabs behind it.
-            assert seen["indent"] == -4, seen
+            # In from the other rows by the grip's width, as it crosses the
+            # grip on the right; and they run to the line as well, as tabs
+            # behind it.
+            assert seen["indent"] == seen["gripWidth"] > 0, seen
             assert seen["behind"] == 0, seen
             assert seen["right"] == "0px" and seen["reach"] == 0, seen
             assert seen["gap"][1] > seen["gap"][0] > 0, seen
@@ -259,6 +281,19 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
                        for a, b in zip(moved["gap"], moved["want"])), moved
 
             page.set_viewport_size({"width": 1100, "height": 420})
+
+            # A tab with no list beside it: the row meets the page itself.
+            page.click(".tab[data-tab='session']")
+            page.wait_for_function("state.tab === 'session'")
+            page.evaluate(
+                "document.querySelector('.row.chosen').scrollIntoView({block: 'center'})")
+            page.evaluate("new Promise((done) => requestAnimationFrame(() => "
+                          "requestAnimationFrame(done)))")
+            alone = page.evaluate(READ_TAB)
+            assert alone["fade"].endswith(alone["page"] + ")") and alone["open"], alone
+            page.click(".tab[data-tab='transcript']")
+            page.wait_for_function(
+                "document.querySelector('.content.split > .side') !== null")
 
             # The list's bar only while the pointer is on the list: anywhere
             # else it stands between the row and the content.
