@@ -1965,6 +1965,11 @@ update the comment with its own text, and read it back.
     compaction's. **And the colour codes come off** (`ESCAPE_CODES`, then
     `CONTROL_CHARS`): `/context` draws its grid in them, measured. A command
     nobody typed is a note, like any other words that are not the reader's.
+    **An `isMeta` record straight after an answer is the answer again**, as
+    Markdown for the agent: `/context` writes one, and the page drew its
+    numbers twice. `echo_of` drops it -- only straight after, only once, and
+    not after "(no content)": `/init` sends its prompt as an `isMeta` record
+    with no answer before it, measured, and that one is shown.
     `tests/fixtures/local_command.jsonl`.
     `test_a_slash_command_and_what_it_answered_are_one_block`,
     `test_a_slash_command_is_drawn_with_what_it_answered`.
@@ -1994,7 +1999,10 @@ update the comment with its own text, and read it back.
   own line, up to two newlines either side belonging to the wrapper, and
   anything else left as typed -- a person asking about the tag types one.
   It runs first in `read_user_text`, so a paste inside a queued message
-  comes off too. Measured on 2.1.281, which does not wrap on this machine:
+  comes off too. **And in `_on_prompt`**: the hook hands over the prompt as
+  Claude Code wrote it, so the row read `prompt: <pasted_content
+  id="3400"> I got...` while the transcript beside it was clean.
+  `test_the_row_shows_a_pasted_prompt_without_its_tags`. Measured on 2.1.281, which does not wrap on this machine:
   a feature switch decides, so the shape comes from its source and the
   reader's record, not from a run here.
 - **A message queued while the agent works is an `attachment`, and it is
