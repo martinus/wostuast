@@ -2365,3 +2365,73 @@ def test_open_page_returns_once_the_transcript_has_answered(page_at, ws, monkeyp
             assert not page.evaluate("state.turns.landed")
         finally:
             browser.close()
+
+
+def test_an_edit_opens_onto_what_it_changed(page_at):
+    """The words that announce an edit and the lines it changed are read
+    together, under the call, and the Diff tab keeps its width. The change
+    is drawn as the Diff tab draws one, in one column whatever that tab is
+    set to, with the numbers the file had at that moment -- so no `+` to
+    anchor a review comment to, and no more of the file to show. An edit
+    that failed opens onto its error; a long one says how much is left."""
+    from pathlib import Path
+    daemon, _ = page_at
+    fixture = Path(__file__).parent / "fixtures" / "edits.jsonl"
+    lines = fixture.read_text().splitlines()
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.evaluate("state.sides = 'split'")
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            with open(daemon_transcript(daemon), "a") as handle:
+                handle.write("".join(line + "\n" for line in lines))
+            daemon.tick()
+            page.wait_for_function(
+                "[...document.querySelectorAll('.tool .name')]"
+                ".filter((n) => /Edit|Write/.test(n.textContent)).length === 4")
+            shut = page.evaluate("""() => [...document.querySelectorAll('.tool')]
+              .filter((t) => /Edit|Write/.test(t.querySelector('.name').textContent))
+              .map((t) => [t.querySelector('.caret').textContent, t.textContent])""")
+            # Shut, an edit says what it touched and how much, not that it
+            # "has been updated successfully".
+            assert [caret for caret, _ in shut] == ["▸"] * 4, shut
+            assert not any("successfully" in text for _, text in shut[:3]), shut
+            assert "+1" in shut[0][1], shut
+
+            page.evaluate("""() => [...document.querySelectorAll('.tool')]
+              .filter((t) => /Edit|Write/.test(t.querySelector('.name').textContent))
+              .forEach((t) => t.click())""")
+            page.wait_for_function(
+                "document.querySelectorAll('.tooldiff').length === 3")
+            seen = page.evaluate("""() => [...document.querySelectorAll('.tooldiff')]
+              .map((box) => ({
+                rows: [...box.querySelectorAll('.dline')].map((row) =>
+                  [row.className.replace('dline ', ''),
+                   row.querySelector('.ln').textContent.trim(),
+                   row.querySelector('.dtext').textContent]),
+                pairs: box.querySelectorAll('.dline.pair').length,
+                review: box.querySelectorAll('.addnote').length,
+                more: box.querySelectorAll('.more, .hunk.tail').length,
+              }))""")
+            edit, created, rewritten = seen
+            assert edit["rows"][1] == [
+                "added", "2", '    """The sum of the prices, in cents."""'], edit
+            assert [row[0] for row in created["rows"]] == ["added"] * 3
+            assert rewritten["rows"][2][:2] == ["removed", "7"], rewritten
+            for one in seen:
+                assert one["pairs"] == 0 and one["review"] == 0 and one["more"] == 0
+            # A change cut to `PATCH_SHOWN` lines says how much is left.
+            said = page.evaluate("""() => {
+              const box = document.createElement('div');
+              putToolDiff(box, {target: 'big.py', patch_more: 420, patch: [{
+                header: '@@ -1,1 +1,1 @@', lines: [{kind: 'added', text: 'a'}]}]});
+              return box.querySelector('.toolmore').textContent;
+            }""")
+            assert said.startswith("… 420 more lines"), said
+            # The failed edit opens onto its error, as any tool call does.
+            assert page.evaluate(
+                "document.querySelector('.tool-result').textContent"
+            ).startswith("<tool_use_error>String to replace not found")
+        finally:
+            browser.close()

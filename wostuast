@@ -86,6 +86,14 @@ LIVENESS_INTERVAL = 5.0
 #: Tools whose line counts the transcript shows, as `+added −removed`.
 COUNTED_TOOLS = frozenset({"Edit", "MultiEdit", "NotebookEdit"})
 
+#: Tools whose change the transcript shows under the call, from the patch
+#: Claude Code writes beside the result (`read_patch`).
+PATCHED_TOOLS = frozenset({"Edit", "MultiEdit", "Write"})
+#: How many lines of one such change the page is sent. A Write over a file
+#: sends a patch over all of it, and five hundred lines under one tool call
+#: is the Diff tab's job; the rest is counted, and the page says so.
+PATCH_SHOWN = 80
+
 #: A finished tool of one of these kinds probably changed the working tree.
 WRITING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"})
 
@@ -2243,6 +2251,11 @@ class Block:
     added: int = 0              # lines an edit added
     removed: int = 0            # lines an edit removed
     result: str = ""            # the tool's output, shown when expanded
+    #: What an edit changed, as hunks in the Diff tab's shape: a `header`
+    #: with the file's line numbers at that moment, and `lines` of `kind`
+    #: and `text`. `patch_more` counts the lines left out (`PATCH_SHOWN`).
+    patch: list[dict[str, Any]] = field(default_factory=list)
+    patch_more: int = 0
     failed: bool = False
     tool_use_id: str = ""
     #: Whether this call's result has been read. A result can be empty -- a
@@ -2511,6 +2524,68 @@ def edit_counts(tool_input: Any) -> tuple[int, int]:
     return 0, 0
 
 
+PATCH_KINDS = {" ": "context", "-": "removed", "+": "added"}
+
+
+def read_patch(made: Any) -> tuple[list[dict[str, Any]], int, int, int]:
+    """What an Edit or a Write changed, out of the record that answers it.
+
+    Claude Code writes `toolUseResult` beside the result: for an edit, the
+    old and new strings, the whole old file, `structuredPatch` -- hunks with
+    the file's line numbers at that moment, each line led by a space, `-`
+    or `+` -- and a git diff of the whole file. A new file (`type: create`)
+    has no patch, and its text is the change. Only the hunks are kept, and
+    only `PATCH_SHOWN` lines of them: the rest is the size of the file, on
+    every edit of a session, and every block goes to the page. Measured on
+    2.1.278, `tests/fixtures/edits.jsonl`.
+
+    It also counts what was added and removed, over every line and not only
+    the ones kept. Counted from the edit's strings instead, an Edit said
+    "+3 −2" for one line added, because the strings carry the lines round
+    the change as well.
+    """
+    if not isinstance(made, dict):
+        return [], 0, 0, 0
+    hunks: list[dict[str, Any]] = []
+    left = PATCH_SHOWN
+    more = added = removed = 0
+
+    def keep(header: str, lines: list[tuple[str, str]]) -> None:
+        nonlocal left, more, added, removed
+        if not lines:
+            return
+        added += sum(1 for kind, _ in lines if kind == "added")
+        removed += sum(1 for kind, _ in lines if kind == "removed")
+        shown = lines[:max(left, 0)]
+        more += len(lines) - len(shown)
+        left -= len(shown)
+        if shown:
+            hunks.append({"header": header,
+                          "lines": [{"kind": k, "text": t} for k, t in shown]})
+
+    patch = made.get("structuredPatch")
+    if isinstance(patch, list) and patch:
+        for hunk in patch:
+            if not isinstance(hunk, dict) or not isinstance(hunk.get("lines"), list):
+                continue
+            header = (f"@@ -{hunk.get('oldStart', 0)},{hunk.get('oldLines', 0)}"
+                      f" +{hunk.get('newStart', 0)},{hunk.get('newLines', 0)} @@")
+            # A line that is not led by one of the three -- git's "\ No
+            # newline at end of file" -- is not a line of the file.
+            keep(header, [(PATCH_KINDS[line[0]], line[1:])
+                          for line in hunk["lines"]
+                          if isinstance(line, str) and line[:1] in PATCH_KINDS])
+    elif made.get("type") == "create" and isinstance(made.get("content"), str):
+        # Split on `\n` only: a line of a file can hold U+2028 or a form
+        # feed, and `splitlines` would cut it in two -- the diff scar.
+        text = made["content"]
+        lines = text.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        keep(f"@@ -0,0 +1,{len(lines)} @@", [("added", line) for line in lines])
+    return hunks, more, added, removed
+
+
 def result_text(content: Any) -> str:
     """A tool result is usually a string, and sometimes a list of blocks."""
     if isinstance(content, str):
@@ -2644,10 +2719,15 @@ class Transcript:
             return []
 
         touched: list[Block] = []
+        # What an edit changed is on the record, not on its result, so it
+        # answers the one result a record carries and no other.
+        answers = [piece for piece in content
+                   if isinstance(piece, dict) and piece.get("type") == "tool_result"]
+        made = record.get("toolUseResult") if len(answers) == 1 else None
         for piece in content:
             if not isinstance(piece, dict):
                 continue
-            block = self.add_piece(kind, piece, ts, bool(record.get("isMeta")))
+            block = self.add_piece(kind, piece, ts, bool(record.get("isMeta")), made)
             if block is not None:
                 touched.append(block)
         return touched
@@ -2764,7 +2844,7 @@ class Transcript:
         return [block] if block else []
 
     def add_piece(self, role: str, piece: dict[str, Any], ts: float,
-                  theirs: bool = False) -> Block | None:
+                  theirs: bool = False, made: Any = None) -> Block | None:
         kind = str(piece.get("type") or "")
         if kind == "text":
             text = str(piece.get("text") or "")
@@ -2785,7 +2865,9 @@ class Transcript:
             name = str(piece.get("name") or "")
             tool_input = piece.get("input")
             # Section 4.6 asks for counts on an edit. A Write is one whole file
-            # and its line count says nothing useful, so it does not get them.
+            # and its line count says nothing useful, so it does not get them
+            # here -- until its result brings the patch, which counts what
+            # really moved (`read_patch`), for an Edit too.
             added, removed = edit_counts(tool_input) if name in COUNTED_TOOLS else (0, 0)
             block = Block(kind="tool", ts=ts, tool=name,
                           target=tool_target(name, tool_input, self.cwd),
@@ -2800,6 +2882,13 @@ class Transcript:
             held.answered = True
             held.result = result_text(piece.get("content"))
             held.failed = bool(piece.get("is_error"))
+            if held.tool in PATCHED_TOOLS and not held.failed:
+                patch, more, added, removed = read_patch(made)
+                if patch:
+                    # The counts of the change itself, which a Write has
+                    # too, now: a new file's lines, or what a rewrite moved.
+                    held.patch, held.patch_more = patch, more
+                    held.added, held.removed = added, removed
             return held          # an existing block changed; it is not a new one
         else:
             return None
@@ -7835,6 +7924,11 @@ body:not(.show-thinking) .turn.next-tool:not(.toolrow) > .who {
 .tool .plus { color: var(--working); }
 .tool .minus { color: var(--cut-ink); }
 .tool.failed .name { color: var(--cut-ink); }
+/* An edit's change under its call: the diff card, at the result's inset. */
+.dfile.tooldiff { margin: 2px 0 6px 18px; }
+.tooldiff .toolmore {
+  padding: 4px 12px; border-top: 1px solid var(--edge); color: var(--ink-faint);
+}
 .tool-result {
   margin: 2px 0 6px 18px; padding: 8px 12px; border-radius: 6px;
   background: var(--code); border: 1px solid var(--edge); color: var(--code-ink);
@@ -11407,22 +11501,44 @@ function putCounts(parent, one) {
 
 function drawTool(parent, block, index) {
   const open = state.turns.open.has(index);
+  // An edit opens onto what it changed. Its result only says that it did
+  // ("The file … has been updated successfully."), which the counts and the
+  // change say better.
+  const patch = block.patch && block.patch.length ? block.patch : null;
+  const opens = !!(patch || block.result);
   const line = put(parent, "button", "tool" + (block.failed ? " failed" : ""));
   line.type = "button";
-  put(line, "span", "caret", block.result ? (open ? "▾" : "▸") : " ");
+  put(line, "span", "caret", opens ? (open ? "▾" : "▸") : " ");
   put(line, "span", "name", block.tool);
   if (block.target) put(line, "span", "target", block.target);
   putCounts(line, block);
-  if (block.result && !open) {
+  if (block.result && !open && !patch) {
     const head = block.result.split("\n")[0];
     if (head) put(line, "span", "target", head.slice(0, 60));
   }
   line.addEventListener("click", () => {
-    if (!block.result) return;
+    if (!opens) return;
     if (state.turns.open.has(index)) state.turns.open.delete(index); else state.turns.open.add(index);
     redrawBlock(index);        // this line only; the rest of the tab stays put
   });
-  if (open && block.result) put(parent, "div", "tool-result", block.result);
+  if (open && patch) putToolDiff(parent, block);
+  else if (open && block.result) put(parent, "div", "tool-result", block.result);
+}
+
+// What one edit changed, under the call that made it: the words that
+// announced it and the lines are read together, and the Diff tab keeps its
+// width. Drawn by `fillDiffFile`, so it looks and is painted like the Diff
+// tab -- but `atEdit`: the numbers are the file's at the moment of the edit,
+// so there is no `+` to anchor a review comment to and no more of the file
+// to show, and it is one column whatever the Diff tab is set to.
+function putToolDiff(parent, block) {
+  const box = put(parent, "div", "dfile tooldiff");
+  fillDiffFile(put(box, "div", "dbody"),
+               { path: block.target, hunks: block.patch, tail: 0, atEdit: true });
+  if (block.patch_more) {
+    put(box, "div", "toolmore", "… " + block.patch_more + " more line"
+        + (block.patch_more > 1 ? "s" : "") + " · the Diff tab has the whole change");
+  }
 }
 
 // --- the Files tab ----------------------------------------------------------
@@ -13333,7 +13449,7 @@ function fillDiffFile(body, one, atHead = false) {
     hunks.push(held);
     return held;
   }, (line, old, now, held) => held.rows.push({ line, old, now }));
-  const sides = state.sides === "split";
+  const sides = state.sides === "split" && !one.atEdit;
   // What each side of each hunk says, in order, with the node that shows each
   // line -- or none, for a line the reader sees on the other side only -- and
   // the words to mark in it. It is what the highlighter is handed; see
@@ -13470,6 +13586,7 @@ function pairRow(lines, one, left, right, atHead, words, side) {
 // A comment under its line, or the `+` that starts one. A line that is no
 // longer in the file gets neither.
 function putLineReview(lines, where, one, line, now, atHead) {
+  if (one.atEdit) return;      // an edit in the transcript: see `putToolDiff`
   const anchor = lineAnchor(one.path, line,
                             atHead ? inWorktree(one.path, now) : now);
   if (anchor === null) return;

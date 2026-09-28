@@ -187,6 +187,10 @@ with what Claude Code answered. You can send a slash command from the send box
 too. One that opens a menu, such as `/model` alone, opens it in the terminal:
 press <kbd>Enter</kbd> to jump there and pick.
 
+An edit shows how many lines it added and removed. Click it to see the change
+under it, drawn as the Diff tab draws it, with the line numbers the file had at
+that moment. A long change shows its first lines; the Diff tab has all of it.
+
 #### Files
 
 Every file git knows about, as a tree. Pictures show as pictures. Go to a file

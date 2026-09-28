@@ -757,3 +757,82 @@ def test_a_task_notification_and_another_sessions_message_read_as_words(ws, tmp_
     # A notification in a shape nobody has measured is shown as it came.
     odd = ws.read_user_text("<task-notification><phase>3</phase></task-notification>")
     assert odd == ("note", "<phase>3</phase>")
+
+
+def test_an_edit_keeps_what_it_changed_and_nothing_of_the_whole_file(ws, tmp_path):
+    """The record that answers an Edit or a Write carries the change as
+    Claude Code measured it -- `toolUseResult.structuredPatch`, hunks with
+    the file's line numbers at that moment -- beside the whole old file, the
+    whole new one and a git diff of all of it. The transcript shows the
+    change under the call, so the block keeps the hunks in the Diff tab's
+    shape and none of the rest: a session edits hundreds of times, and every
+    block goes to the page. Measured on 2.1.278, `tests/fixtures/edits.jsonl`."""
+    fixture = Path(__file__).parent / "fixtures" / "edits.jsonl"
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    for line in fixture.read_text().splitlines():
+        reader.add(json.loads(line))
+    edit, created, rewritten, failed = reader.blocks
+    assert edit.patch == [{
+        "header": "@@ -1,5 +1,6 @@",
+        "lines": [{"kind": "context", "text": "def total(items):"},
+                  {"kind": "added", "text": '    """The sum of the prices, in cents."""'},
+                  {"kind": "context", "text": "    return sum(items)"},
+                  {"kind": "context", "text": ""},
+                  {"kind": "context", "text": ""}]}]
+    assert edit.patch_more == 0
+    # The counts are the change's: one line added. Counted from the strings,
+    # which carry the lines round the change too, it said +3 -2.
+    assert (edit.added, edit.removed) == (1, 0)
+    assert (created.added, created.removed) == (3, 0)
+    assert (rewritten.added, rewritten.removed) == (1, 1)
+    # A new file has no patch of its own: its text is the change.
+    assert created.patch == [{
+        "header": "@@ -0,0 +1,3 @@",
+        "lines": [{"kind": "added", "text": "# Notes"},
+                  {"kind": "added", "text": ""},
+                  {"kind": "added", "text": "Prices are in cents."}]}]
+    assert [line["kind"] for line in rewritten.patch[0]["lines"]] == [
+        "context", "context", "removed", "added"]
+    assert rewritten.patch[0]["header"] == "@@ -5,3 +5,3 @@"
+    # An edit that did not happen changed nothing.
+    assert failed.failed and failed.patch == []
+    # Nothing of the whole file reaches the page.
+    sent = json.dumps(ws.blocks_json(reader.blocks))
+    assert "whole file, never kept" not in sent
+    assert "0.2\\n" not in sent and "originalFile" not in sent
+
+
+def test_a_long_change_is_cut_and_says_how_much_is_left(ws, tmp_path):
+    """A Write over a file sends a patch over all of it, and one of 500 lines
+    is not something to read under a tool call: the Diff tab is for that.
+    The block keeps `PATCH_SHOWN` lines and counts the rest, and a line of
+    the file that holds a line break of its own is still one line."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    reader.add(conftest.record("tool", "/w/big.py", tool="Write", tool_id="w"))
+    many = [f"+line {n}" for n in range(500)]
+    body = conftest.record("result", "ok", tool_id="w")
+    body["toolUseResult"] = {"type": "update", "structuredPatch": [
+        {"oldStart": 1, "oldLines": 0, "newStart": 1, "newLines": 500, "lines": many}]}
+    reader.add(body)
+    block, = reader.blocks
+    assert sum(len(h["lines"]) for h in block.patch) == ws.PATCH_SHOWN
+    assert block.patch_more == 500 - ws.PATCH_SHOWN
+    assert block.added == 500       # every line, and not only those kept
+    # A result that failed changed nothing, whatever its record carries.
+    refused = ws.Transcript(str(tmp_path / "r.jsonl"))
+    refused.add(conftest.record("tool", "/w/a.py", tool="Edit", tool_id="e"))
+    said = conftest.record("result", "not found", tool_id="e")
+    said["message"]["content"][0]["is_error"] = True
+    said["toolUseResult"] = {"structuredPatch": [
+        {"oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": 1, "lines": ["-a", "+b"]}]}
+    refused.add(said)
+    assert refused.blocks[0].patch == [] and refused.blocks[0].failed
+    # A new file's text is split on newlines only, as a diff is.
+    fresh = ws.Transcript(str(tmp_path / "f.jsonl"))
+    fresh.add(conftest.record("tool", "/w/new.txt", tool="Write", tool_id="n"))
+    made = conftest.record("result", "ok", tool_id="n")
+    made["toolUseResult"] = {"type": "create", "structuredPatch": [],
+                             "content": "one still one\ntwo\n"}
+    fresh.add(made)
+    assert [line["text"] for line in fresh.blocks[0].patch[0]["lines"]] == [
+        "one still one", "two"]
