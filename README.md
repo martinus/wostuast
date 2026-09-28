@@ -318,7 +318,9 @@ example `links.json` the first time it runs, so you only edit it:
 ```
 
 `match` is a regular expression. `url` is where a match links to, and `$1` to
-`$9` are the groups of the match.
+`$9` are the groups of the match. The links work in the transcript, in commit
+messages, and in the session list: in a session's name, its worktree and its
+branch.
 
 > [!CAUTION]
 > **Write every backslash twice.** The file is JSON, so `\d` must be written

@@ -1015,6 +1015,101 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
             browser.close()
 
 
+
+def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
+    """A branch is most often named after its ticket, and so is a session
+    reviewing a pull request. `links.json` makes both links, as it does in
+    the transcript. The row is filled again on every push, so a link must
+    outlive a push that does not change it -- one rebuilt between the press
+    and the release is a click that never happens -- and a click on it
+    opens the ticket and chooses nothing."""
+    daemon, url, places = rows_at
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"(OA)-(\d+)", "url": "https://tickets.example/browse/$1-$2"},
+        {"match": r"PR #(\d+)", "url": "https://code.example/pull/$1"},
+    ]), encoding="utf-8")
+    daemon.store.rename("named", "review PR #58")
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        context = fresh_context(play)
+        context.add_init_script("localStorage.setItem('wostuast-history', 'open')")
+        # The links answer after the last push, so the rows have to be
+        # filled again when they come, and no push will do it. The last push
+        # is the one a stream opens with once a session is chosen.
+        context.add_init_script("""
+          const add = EventSource.prototype.addEventListener;
+          EventSource.prototype.addEventListener = function (name, fn, ...rest) {
+            if (name !== 'sessions' || !this.url.includes('watch=')) {
+              return add.call(this, name, fn, ...rest);
+            }
+            return add.call(this, name, (message) => {
+              fn(message);
+              window.watchedPush = true;
+            }, ...rest);
+          };""")
+        held = []
+        context.route("**/api/links", lambda route: held.append(route))
+        context.route("https://*.example/**", lambda route: route.abort())
+        page = context.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            page.wait_for_function(
+                "document.querySelectorAll('.row').length === 4")
+            page.wait_for_function("window.watchedPush === true")
+            assert held, "the page never asked for its links"
+            held[0].continue_()
+            named = '.row[data-id="named"]'
+            page.wait_for_selector(named + " .branch a.ticket")
+            seen = page.eval_on_selector_all(
+                named + " a.ticket",
+                "els => els.map((one) => [one.textContent, one.href, one.target])")
+            assert seen == [
+                ["PR #58", "https://code.example/pull/58", "_blank"],
+                ["OA-74380", "https://tickets.example/browse/OA-74380", "_blank"],
+            ], seen
+            assert page.inner_text(named + " .line1 .name") == "review PR #58"
+            assert page.inner_text(named + " .branch") == LONG_BRANCH
+
+            # A push that fills the row again leaves both links where they
+            # stand.
+            page.evaluate(f"""() => {{
+              window.links = [...document.querySelectorAll(
+                '{named} a.ticket')];
+            }}""")
+            ws.append_event(conftest.event(
+                "PermissionRequest", sid="named", cwd=str(places["named"]),
+                tool_name="Bash", tool_input={"command": "make check"},
+                ts=time.time()))
+            daemon.tick()
+            page.wait_for_function(
+                f"""document.querySelector('{named} .said')
+                   .textContent.includes('make check')""")
+            assert page.evaluate(
+                "window.links.map((one) => one.isConnected)") == [True, True]
+
+            # A click on a link opens the ticket and chooses nothing.
+            page.click('.row[data-id="fresh"]')
+            page.wait_for_function("state.chosen === 'fresh'")
+            with context.expect_page():
+                page.click(named + " .branch a.ticket")
+            page.wait_for_timeout(300)          # proving nothing was chosen
+            assert page.evaluate("state.chosen") == "fresh"
+
+            # A rename edits the name as text, and the link comes back after.
+            page.bring_to_front()
+            page.click(named, position={"x": 5, "y": 5})
+            page.wait_for_function("state.chosen === 'named'")
+            page.keyboard.press("e")
+            box = page.locator(named + " input.rowname")
+            assert box.input_value() == "review PR #58"
+            page.keyboard.press("Escape")
+            page.wait_for_selector(named + " .line1 .name a.ticket")
+            assert page.inner_text(named + " .line1 .name") == "review PR #58"
+        finally:
+            context.close()
+
+
 def clear_into_s2(ws, daemon, tmp_path, transcript_file):
     """What a `/clear` in s1's pane writes: s1 ends, s2 starts with a
     transcript of its own, in the same pane and the same process."""

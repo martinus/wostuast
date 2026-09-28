@@ -1402,7 +1402,22 @@ update the comment with its own text, and read it back.
     (`rowName`). Never the title Claude Code writes from the first prompt:
     `/rename` does not reach it, so it went stale beside the branch -- a
     row named after one ticket over a branch named after another. The
-    Session tab still shows it.
+    Session tab still shows it. **It wears the sans face**: in the fixed
+    face it was half as wide again as the lines under it, and the reader
+    said so. The age beside it stays fixed, so its digits do not dance.
+  - **A ticket in the name, the worktree or the branch is a link**, by
+    `linkTickets`: a branch is most often named after its ticket. Each part
+    is written again only when its text or `state.links` changed (`fresh`
+    on `slot`, `where`, `two`): `fillRow` runs on every push, and a link
+    rebuilt between the press and the release is a click that never
+    happens. A click on a link chooses nothing, and a double-click on one
+    does not start a rename. `renameRow` forgets the name's key, or the name
+    stays empty after the box goes. `state.links.length` is in
+    `drawSessions`' key, and **`loadLinks` calls `drawSessions` itself**:
+    the links can answer after the last push, the one a stream opens with
+    once a session is chosen, and then nothing drew the rows again. Alone
+    the test passed; under load it was red three runs in three.
+    `test_a_ticket_in_a_rows_name_or_branch_is_a_link`.
   - **The git line is one line.** Everything on it keeps its width but the
     branch, which gives way with an ellipsis: "✓ clean" shrank with it and
     broke over two lines. A line that sets `display: flex` needs its own
