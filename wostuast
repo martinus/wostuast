@@ -7343,12 +7343,12 @@ body.dragging { cursor: col-resize; user-select: none; }
    opens where they meet (`openGrip`), and its ground goes from the state's
    colour on the left to the content's own on the right, so the one flows
    into the other. A faint ring said which row was chosen before this, and a
-   reader had to look for it. The top and bottom are 2 px, which the reader
-   chose from pictures of 1, 2, 3 and 5: as thick as the grip they read as a
-   heavy box. It stands in from the other rows by the grip's width, as it
-   crosses the grip on the right, so its left edge is not one more in the
-   column of theirs; the padding gives the lines back, so the row keeps its
-   height. Its fade ends in `--meet`, and it starts in its group's colour
+   reader had to look for it. Its outline is the other rows' own: lines of
+   2 px in the list's colour could not be seen on a list of that colour, and
+   where they met the state's edge on the left they cut its corner. It
+   stands in from the other rows by the grip's width, as it crosses the grip
+   on the right, so its left edge is not one more in the column of theirs.
+   Its fade ends in `--meet`, and it starts in its group's colour
    because it has no ground of its own: the tints are half transparent, and
    on the list's old ground it came out brighter in the light and darker in
    the dark than the rows beside it. */
@@ -7356,8 +7356,6 @@ body.dragging { cursor: col-resize; user-select: none; }
   background: linear-gradient(90deg, transparent, var(--meet)),
     linear-gradient(var(--soft, transparent), var(--soft, transparent));
   margin-left: calc(4px + var(--grip-w));
-  border-top: 2px solid var(--edge); border-bottom: 2px solid var(--edge);
-  padding-top: 8px; padding-bottom: 8px;
 }
 .row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
@@ -9756,12 +9754,13 @@ function openGrip() {
   let top = 0;
   let bottom = 0;
   if (row) {
-    const edge = parseFloat(getComputedStyle(row).borderTopWidth) || 0;
+    // The whole height: the row's border is see-through, and its ground
+    // shows under it.
     const seen = list.getBoundingClientRect();
     const at = row.getBoundingClientRect();
     const from = grip.getBoundingClientRect().top;
-    top = Math.max(at.top + edge, seen.top) - from;
-    bottom = Math.min(at.bottom - edge, seen.bottom) - from;
+    top = Math.max(at.top, seen.top) - from;
+    bottom = Math.min(at.bottom, seen.bottom) - from;
     if (bottom <= top) top = bottom = 0;
   }
   grip.style.setProperty("--gap-top", top + "px");

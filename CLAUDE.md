@@ -1436,8 +1436,11 @@ update the comment with its own text, and read it back.
   browser.** A faint ring marked it, and the reader had to look for it. It
   runs through the list's padding to the grip, its ground fades from the
   state's colour into `--meet`, and the grip opens where they meet. The
-  reader chose each part from pictures: top and bottom lines of 2 px (as
-  thick as the grip they read as a heavy box, 1 px was too faint).
+  reader chose each part from pictures. **Its outline is the other rows'
+  own**: it had top and bottom lines of 2 px in `--edge`, chosen while the
+  list had another ground, and once the list wore `--edge` they could not be
+  seen and cut the corner of the state's edge on the left. So the grip opens
+  over the row's whole height, border and all (`openGrip`).
   **Every row runs to the line**, as a tab behind the chosen one: cards with
   four round corners read as buttons.
   - **The list wears the grip's colour (`--edge`), and a split tab's own
