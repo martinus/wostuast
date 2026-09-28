@@ -7228,10 +7228,16 @@ body.dragging { cursor: col-resize; user-select: none; }
    chosen row and the content it belongs to, and cut the one from the other;
    the wheel and `j` `k` scroll the list without it. */
 .rows:hover { scrollbar-width: thin; }
+/* Every row runs through the list's padding to the line beside it, like a
+   tab behind the one in front: as cards with four round corners they read
+   as buttons. The padding gives the 8 px back, so the text keeps its place,
+   and each stands 4 px in, so the chosen row stands out to the left. */
 .row {
-  margin-bottom: 6px; padding: 9px 12px 9px 11px; border-radius: 6px;
+  margin: 0 -8px 6px 4px; padding: 9px 20px 9px 11px;
+  border-radius: 6px 0 0 6px;
   cursor: pointer; display: flex; flex-direction: column; gap: 4px;
   border: 1px solid transparent; border-left: 4px solid var(--gone);
+  border-right: 0;
   transition: background .2s ease, border-color .2s ease;
 }
 .row.needs_you { --soft: var(--needs-soft); border-left-color: var(--needs); background: var(--needs-soft); }
@@ -7245,17 +7251,16 @@ body.dragging { cursor: col-resize; user-select: none; }
    into the other. A faint ring said which row was chosen before this, and a
    reader had to look for it. The top and bottom are 2 px, which the reader
    chose from pictures of 1, 2, 3 and 5: as thick as the grip they read as a
-   heavy box. It stands 8 px in from the other rows, so its left edge is not
-   one more in the column of theirs; the padding gives both back, so the row
-   keeps its height and its text keeps its place. */
+   heavy box. It stands out 4 px to the left of the other rows, so its left
+   edge is not one more in the column of theirs; the padding gives the lines
+   back, so the row keeps its height. */
 .row.chosen, .row.chosen:hover {
   background: linear-gradient(90deg, transparent, var(--bg)),
     linear-gradient(var(--soft, transparent), var(--soft, transparent)),
     var(--panel);
-  margin-left: 8px; margin-right: -8px;
+  margin-left: 0;
   border-top: 2px solid var(--edge); border-bottom: 2px solid var(--edge);
-  border-right: 0; border-radius: 6px 0 0 6px;
-  padding-top: 8px; padding-bottom: 8px; padding-right: 20px;
+  padding-top: 8px; padding-bottom: 8px;
 }
 .row.chosen .name { color: var(--ink-bright); }
 .row .line1 {

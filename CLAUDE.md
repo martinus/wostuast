@@ -1437,9 +1437,11 @@ update the comment with its own text, and read it back.
   through the list's padding to the grip, its ground fades from the state's
   colour to the content's own (`--bg`), and the grip opens where they meet.
   The reader chose each part from pictures: top and bottom lines of 2 px
-  (as thick as the grip they read as a heavy box, 1 px was too faint), and
-  8 px in from the other rows, so its left edge is not one more in their
-  column.
+  (as thick as the grip they read as a heavy box, 1 px was too faint).
+  **Every row runs to the line**, as a tab behind the chosen one: cards with
+  four round corners read as buttons. The others stand 4 px in, so the
+  chosen row stands out to the left and its left edge is not one more in
+  their column; 8 px in for the chosen row alone was tried first.
   - **The grip is outside the list that scrolls, so `openGrip` tells it
     where the row is**, as `--gap-top` and `--gap-bottom`: after every
     `drawSessions`, on the list's scroll, on a resize, and from a

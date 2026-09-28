@@ -192,6 +192,8 @@ READ_TAB = """() => {
     right: look.borderRightWidth,
     indent: Math.round(at.left - document.querySelector('.row:not(.chosen)')
       .getBoundingClientRect().left),
+    behind: Math.round(grip.getBoundingClientRect().left - document
+      .querySelector('.row:not(.chosen)').getBoundingClientRect().right),
     reach: Math.round(grip.getBoundingClientRect().left - at.right),
     gap: [parseFloat(grip.style.getPropertyValue('--gap-top')),
           parseFloat(grip.style.getPropertyValue('--gap-bottom'))],
@@ -225,8 +227,10 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
             assert seen["fade"].startswith("linear-gradient(90deg"), seen
             assert seen["fade"].endswith(seen["content"] + ")"), seen
             assert seen["top"] == seen["bottom"] == "2px", seen
-            # In from the other rows, so its left edge is not one of theirs.
-            assert seen["indent"] == 8, seen
+            # Out to the left of the other rows, so its left edge is not one
+            # of theirs; and they run to the line as well, as tabs behind it.
+            assert seen["indent"] == -4, seen
+            assert seen["behind"] == 0, seen
             assert seen["right"] == "0px" and seen["reach"] == 0, seen
             assert seen["gap"][1] > seen["gap"][0] > 0, seen
             assert all(abs(a - b) < 0.5
