@@ -491,6 +491,10 @@ def shaped_transcript(transcript_file):
             {"type": "image", "source": {"data": "PRIVATE-IMAGE"}}]}},
         {"type": "user", "message": {"role": "user", "content": note}},
         conftest.record("you", "how do I centre a <div> in <my-widget>?"),
+        conftest.record("you", "why is a std::vector<uint32_t> slow?"),
+        conftest.record("meta", "Run git show <commit-hash> before <next-step>."),
+        conftest.record("you", "The page shows <bash-input>ls</bash-input> raw."),
+        conftest.record("you", "<shiny-wrapper>Something new</shiny-wrapper>"),
     ])
     # A line separator inside a string is one record, not two halves. Written
     # raw, as Claude Code writes it: `json.dumps` escapes it by default, and
@@ -521,6 +525,13 @@ def test_shapes_lists_what_the_page_cannot_show_and_never_the_text(
     assert "attachment/date" not in out
     # HTML a person types is not Claude Code's: no hyphen, no underscore.
     assert "<div>" not in out
+    # A tag Claude Code writes is closed; an open one is C++ or a placeholder.
+    assert "<uint32_t>" not in out and "<my-widget>" not in out
+    assert "<commit-hash>" not in out and "<next-step>" not in out
+    # A prompt that quotes a tag after its own words is a person's report; a
+    # prompt that opens with a closed tag is a wrapper nobody knows yet.
+    assert "<bash-input>" not in out
+    assert "<shiny-wrapper> in a prompt" in out
     # The U+2028 record was read whole.
     assert "not a JSON object" not in out
     assert "PRIVATE" not in out and "secret-output" not in out
