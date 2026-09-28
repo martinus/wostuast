@@ -1436,8 +1436,10 @@ update the comment with its own text, and read it back.
   A faint ring marked it, and the reader had to look for it. It runs
   through the list's padding to the grip, its ground fades from the state's
   colour to the content's own (`--bg`), and the grip opens where they meet.
-  The reader chose each part from pictures; the top and bottom lines as
-  thick as the grip were tried and taken back as heavy.
+  The reader chose each part from pictures: top and bottom lines of 2 px
+  (as thick as the grip they read as a heavy box, 1 px was too faint), and
+  8 px in from the other rows, so its left edge is not one more in their
+  column.
   - **The grip is outside the list that scrolls, so `openGrip` tells it
     where the row is**, as `--gap-top` and `--gap-bottom`: after every
     `drawSessions`, on the list's scroll, on a resize, and from a

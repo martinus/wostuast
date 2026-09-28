@@ -7243,16 +7243,19 @@ body.dragging { cursor: col-resize; user-select: none; }
    opens where they meet (`openGrip`), and its ground goes from the state's
    colour on the left to the content's own on the right, so the one flows
    into the other. A faint ring said which row was chosen before this, and a
-   reader had to look for it. The top and bottom stay thin lines: as thick
-   as the grip they read as a heavy box. */
+   reader had to look for it. The top and bottom are 2 px, which the reader
+   chose from pictures of 1, 2, 3 and 5: as thick as the grip they read as a
+   heavy box. It stands 8 px in from the other rows, so its left edge is not
+   one more in the column of theirs; the padding gives both back, so the row
+   keeps its height and its text keeps its place. */
 .row.chosen, .row.chosen:hover {
   background: linear-gradient(90deg, transparent, var(--bg)),
     linear-gradient(var(--soft, transparent), var(--soft, transparent)),
     var(--panel);
-  margin-right: -8px;
-  border-top-color: var(--edge); border-bottom-color: var(--edge);
+  margin-left: 8px; margin-right: -8px;
+  border-top: 2px solid var(--edge); border-bottom: 2px solid var(--edge);
   border-right: 0; border-radius: 6px 0 0 6px;
-  padding-right: 20px;
+  padding-top: 8px; padding-bottom: 8px; padding-right: 20px;
 }
 .row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
