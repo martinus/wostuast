@@ -77,12 +77,25 @@ def test_a_row_shows_its_state_in_its_colour(page_at):
             row = page.locator(".row").first
             edge = page.evaluate(
                 "getComputedStyle(document.querySelector('.row')).borderLeftColor")
-            face = page.evaluate(
-                "getComputedStyle(document.querySelector('.row')).backgroundColor")
-            plain = page.evaluate(
-                "getComputedStyle(document.querySelector('.sidebar')).backgroundColor")
+            # The chosen row wears its tint as a layer under its fade, so
+            # the tint is asked of the row itself.
+            look = page.evaluate("""() => {
+              const row = document.querySelector('.row');
+              const probe = document.createElement('div');
+              probe.style.background = 'var(--soft)';
+              row.appendChild(probe);
+              const tint = getComputedStyle(probe).backgroundColor;
+              probe.remove();
+              const style = getComputedStyle(row);
+              return {tint, face: style.backgroundColor, image: style.backgroundImage,
+                      chosen: row.classList.contains('chosen'),
+                      plain: getComputedStyle(document.querySelector('.sidebar'))
+                        .backgroundColor};
+            }""")
             assert edge not in ("rgba(0, 0, 0, 0)", "transparent")
-            assert face != plain, "the row is not tinted by its state"
+            assert look["tint"] not in ("rgba(0, 0, 0, 0)", look["plain"]), look
+            worn = look["image"] if look["chosen"] else look["face"]
+            assert look["tint"] in worn, "the row is not tinted by its state"
         finally:
             browser.close()
 
