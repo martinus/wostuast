@@ -209,6 +209,25 @@ content blocks. The block types and their keys:
 blocks. `tool_use.name` and `tool_use.input` hold what the hook payload calls
 `tool_name` and `tool_input`, so `tool_summary` reads both without changing.
 
+### What an edit changed
+
+The `user` record that answers an `Edit` or a `Write` carries
+`toolUseResult` beside its `tool_result`, on the record and not on the piece.
+Read off real records of 2.1.278; `edits.jsonl` has the shapes with invented
+text.
+
+| Tool | `toolUseResult` keys |
+| --- | --- |
+| `Edit` | `filePath`, `oldString`, `newString`, `originalFile`, `structuredPatch`, `userModified`, `replaceAll`, `gitDiff` |
+| `Write` | `type` (`create` or `update`), `filePath`, `content`, `structuredPatch`, `originalFile`, `userModified`, `gitDiff` |
+| a failed call | a string, the error |
+
+`structuredPatch` is a list of hunks: `oldStart`, `oldLines`, `newStart`,
+`newLines`, and `lines`, each led by a space, `-` or `+`. The numbers are the
+file's at that moment. A `create` has an empty patch, and its `content` is the
+change. `originalFile` is the whole old file and `gitDiff.patch` a git diff of
+the whole file -- 30 KB in one record read -- and neither is kept.
+
 ### A compaction
 
 Measured over 31 transcripts on three machines, two different builds: **no

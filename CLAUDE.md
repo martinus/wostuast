@@ -59,7 +59,7 @@ after the tests go red.
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | Safety: the page never trusts what an agent wrote |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | Safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
-| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
+| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
@@ -2090,6 +2090,24 @@ update the comment with its own text, and read it back.
   reader's rail, and opened a round on the map named after it. `user_block`
   turns what would be a prompt into a note, for a string and for pieces
   alike. `test_what_claude_code_wrote_itself_is_never_your_prompt`.
+- **An edit opens onto what it changed, under the call that made it.** The
+  reader wanted the words and the change read together; a transcript column
+  beside the tabs was pictured and turned down, because the diff lost half
+  its width. The record answering an `Edit` or a `Write` carries
+  `toolUseResult.structuredPatch` -- on the record, not on the piece, so it
+  goes to the one `tool_result` a record holds -- and `read_patch` keeps its
+  hunks in the Diff tab's shape, `PATCH_SHOWN` lines of them, and none of
+  `originalFile`, `content` or `gitDiff`: the size of the file, on every
+  edit, and every block goes to the page. A `create` has an empty patch and
+  its text is the change, split on `\n` only. **The counts come from the
+  patch**: from the strings an Edit said "+3 −2" for one line added,
+  because the strings carry the lines round the change. A failed call keeps
+  none. `putToolDiff` draws it through `fillDiffFile` with `atEdit`: one
+  column whatever the Diff tab says, and no review `+` and no more of the
+  file, because the numbers are the file's at that moment and not now.
+  `test_an_edit_keeps_what_it_changed_and_nothing_of_the_whole_file`,
+  `test_a_long_change_is_cut_and_says_how_much_is_left`,
+  `test_an_edit_opens_onto_what_it_changed`.
 - **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
   the agent's text and nothing else, so the map stays a map of the
   conversation.
