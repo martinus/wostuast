@@ -7286,10 +7286,16 @@ body {
 .dot.ended, .dot.dead { border: 1px solid var(--edge-bright); }
 
 /* body */
-.body { flex-grow: 1; display: flex; min-height: 0; }
+/* What the chosen row meets beside the list: the column of a split tab
+   (the map, a file tree), or the page itself on a tab with none. Its fade
+   and the grip's opening end in this, so the row flows into what is there. */
+.body { flex-grow: 1; display: flex; min-height: 0; --meet: var(--bg); }
+.body:has(> .main > .content.split) { --meet: var(--panel); }
+/* The list wears the grip's colour, so the grip reads as the list's own
+   edge and only the chosen row crosses it. */
 .sidebar {
   width: var(--sidebar-w, 340px); flex-shrink: 0; display: flex;
-  flex-direction: column; background: var(--panel);
+  flex-direction: column; background: var(--edge);
 }
 /* Paths are long and no width chosen here is right for every repository, so
    both column edges are draggable. The alternative is a config option, which
@@ -7302,7 +7308,7 @@ body {
 /* Open where the chosen row meets it; `openGrip` says where that is. */
 #grip {
   background: linear-gradient(var(--edge) var(--gap-top, 0px),
-    var(--bg) var(--gap-top, 0px), var(--bg) var(--gap-bottom, 0px),
+    var(--meet) var(--gap-top, 0px), var(--meet) var(--gap-bottom, 0px),
     var(--edge) var(--gap-bottom, 0px));
 }
 .grip:hover, .grip.dragging, #grip:hover, #grip.dragging { background: var(--needs); }
@@ -7319,8 +7325,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .rows:hover { scrollbar-width: thin; }
 /* Every row runs through the list's padding to the line beside it, like a
    tab behind the one in front: as cards with four round corners they read
-   as buttons. The padding gives the 8 px back, so the text keeps its place,
-   and each stands 4 px in, so the chosen row stands out to the left. */
+   as buttons. The padding gives the 8 px back, so the text keeps its place. */
 .row {
   margin: 0 -8px 6px 4px; padding: 9px 20px 9px 11px;
   border-radius: 6px 0 0 6px;
@@ -7340,14 +7345,17 @@ body.dragging { cursor: col-resize; user-select: none; }
    into the other. A faint ring said which row was chosen before this, and a
    reader had to look for it. The top and bottom are 2 px, which the reader
    chose from pictures of 1, 2, 3 and 5: as thick as the grip they read as a
-   heavy box. It stands out 4 px to the left of the other rows, so its left
-   edge is not one more in the column of theirs; the padding gives the lines
-   back, so the row keeps its height. */
+   heavy box. It stands in from the other rows by the grip's width, as it
+   crosses the grip on the right, so its left edge is not one more in the
+   column of theirs; the padding gives the lines back, so the row keeps its
+   height. Its fade ends in `--meet`, and it starts in its group's colour
+   because it has no ground of its own: the tints are half transparent, and
+   on the list's old ground it came out brighter in the light and darker in
+   the dark than the rows beside it. */
 .row.chosen, .row.chosen:hover {
-  background: linear-gradient(90deg, transparent, var(--bg)),
-    linear-gradient(var(--soft, transparent), var(--soft, transparent)),
-    var(--panel);
-  margin-left: 0;
+  background: linear-gradient(90deg, transparent, var(--meet)),
+    linear-gradient(var(--soft, transparent), var(--soft, transparent));
+  margin-left: calc(4px + var(--grip-w));
   border-top: 2px solid var(--edge); border-bottom: 2px solid var(--edge);
   padding-top: 8px; padding-bottom: 8px;
 }
@@ -7957,7 +7965,9 @@ body:not(.show-thinking) .thinking { display: none; }
   grid-template-columns: subgrid; grid-template-rows: subgrid;
 }
 .content.split > .side, .content.split > .grip { grid-row: 1 / -1; }
-.content.split > .side { grid-column: 1; }
+/* A split tab's list -- the map, a file tree -- stands apart from what it
+   lists by its ground, not by a line, and it is what the chosen row meets. */
+.content.split > .side { grid-column: 1; background: var(--meet); }
 .content.split > .grip { grid-column: 2; }
 .content.split > :nth-child(3) { grid-row: 1; grid-column: 3; min-height: 0; }
 .side {

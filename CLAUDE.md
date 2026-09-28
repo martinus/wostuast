@@ -1432,16 +1432,28 @@ update the comment with its own text, and read it back.
   `test_a_row_says_its_name_where_it_is_its_branch_and_when`,
   `test_the_git_line_is_one_line_and_its_counts_stand_at_the_right`,
   `test_a_row_is_renamed_where_it_stands`.
-- **The chosen row is a tab of the content beside it, as in a browser.**
-  A faint ring marked it, and the reader had to look for it. It runs
-  through the list's padding to the grip, its ground fades from the state's
-  colour to the content's own (`--bg`), and the grip opens where they meet.
-  The reader chose each part from pictures: top and bottom lines of 2 px
-  (as thick as the grip they read as a heavy box, 1 px was too faint).
+- **The chosen row is a tab of what stands beside the list, as in a
+  browser.** A faint ring marked it, and the reader had to look for it. It
+  runs through the list's padding to the grip, its ground fades from the
+  state's colour into `--meet`, and the grip opens where they meet. The
+  reader chose each part from pictures: top and bottom lines of 2 px (as
+  thick as the grip they read as a heavy box, 1 px was too faint).
   **Every row runs to the line**, as a tab behind the chosen one: cards with
-  four round corners read as buttons. The others stand 4 px in, so the
-  chosen row stands out to the left and its left edge is not one more in
-  their column; 8 px in for the chosen row alone was tried first.
+  four round corners read as buttons.
+  - **The list wears the grip's colour (`--edge`), and a split tab's own
+    list -- the map, a file tree -- wears `--meet`.** The grip then reads
+    as the list's edge, which only the chosen row crosses, and the map
+    stands apart from the page without a line. `--meet` is `--panel` where
+    a split tab stands beside the list and `--bg` where none does, set on
+    `.body` with `:has`; the map's ground, the fade's end and the grip's
+    opening all read it, so the row flows into what is there.
+  - **The chosen row has no ground of its own.** The state tints are half
+    transparent: on the list's old ground under it, it came out brighter
+    in the light and darker in the dark than the rows of its own group,
+    and the reader saw it.
+  - **It stands in from the other rows by the grip's width**
+    (`calc(4px + var(--grip-w))`), as it crosses the grip on the right.
+    It stood out to the left first; the reader asked for this.
   - **The grip is outside the list that scrolls, so `openGrip` tells it
     where the row is**, as `--gap-top` and `--gap-bottom`: after every
     `drawSessions`, on the list's scroll, on a resize, and from a
