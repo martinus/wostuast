@@ -180,6 +180,7 @@ READ_TAB = """() => {
   const at = row.getBoundingClientRect();
   const from = grip.getBoundingClientRect().top;
   const look = getComputedStyle(row);
+  const other = getComputedStyle(document.querySelector('.row:not(.chosen)'));
   const root = getComputedStyle(document.documentElement);
   const colour = (value) => {
     const probe = document.createElement('div');
@@ -204,6 +205,7 @@ READ_TAB = """() => {
     gripWidth: grip.offsetWidth,
     top: look.borderTopWidth, bottom: look.borderBottomWidth,
     right: look.borderRightWidth,
+    others: [other.borderTopWidth, other.borderBottomWidth],
     indent: Math.round(at.left - document.querySelector('.row:not(.chosen)')
       .getBoundingClientRect().left),
     behind: Math.round(grip.getBoundingClientRect().left - document
@@ -211,8 +213,7 @@ READ_TAB = """() => {
     reach: Math.round(grip.getBoundingClientRect().left - at.right),
     gap: [parseFloat(grip.style.getPropertyValue('--gap-top')),
           parseFloat(grip.style.getPropertyValue('--gap-bottom'))],
-    want: [Math.max(at.top + parseFloat(look.borderTopWidth), list.top) - from,
-           Math.min(at.bottom - parseFloat(look.borderBottomWidth), list.bottom) - from],
+    want: [Math.max(at.top, list.top) - from, Math.min(at.bottom, list.bottom) - from],
   };
 }"""
 
@@ -247,7 +248,9 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
             # group's rows' do.
             assert seen["list"] == seen["edge"], seen
             assert seen["ground"] == "rgba(0, 0, 0, 0)", seen
-            assert seen["top"] == seen["bottom"] == "2px", seen
+            # Its outline is the other rows' own: a line in the list's
+            # colour could not be seen, and cut the corner of its edge.
+            assert [seen["top"], seen["bottom"]] == seen["others"], seen
             # In from the other rows by the grip's width, as it crosses the
             # grip on the right; and they run to the line as well, as tabs
             # behind it.
