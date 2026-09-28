@@ -81,9 +81,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 > [!NOTE]
 > **wostuast never owns your agents.** tmux does. wostuast reads files, and it
 > sends only a few things to a terminal, always as keys typed into the agent's
-> own pane: **jump** to the pane, **send** a message, **stop** (an Escape), the
-> **answer** to a question the agent asked, and **no** to a permission
-> request. It never approves a permission request.
+> own pane: **jump** to the pane, **send** a message, the **answer** to a
+> question the agent asked, and **no** to a permission request. It never approves a permission request.
 
 ## How it works
 
@@ -97,7 +96,7 @@ flowchart LR
     A2 -- "hook: one JSON line" --> L
     L -- "tail" --> D["wostuast serve<br/>127.0.0.1:7331"]
     D -- "page + live updates" --> B["your browser"]
-    B -- "jump · send · stop · answer" --> D
+    B -- "jump · send · answer · no" --> D
     D -- "keys, through tmux" --> tmux
 ```
 
@@ -161,7 +160,7 @@ rm -r ~/.local/state/wostuast    # removes the history too, if you want that
 
 ## The page
 
-The page shows one session at a time, in five tabs. Each session remembers
+The page shows one session at a time, in four tabs. Each session remembers
 where you left it: the tab, the open file, and your place in it.
 
 | Tab | What it shows |
@@ -170,7 +169,6 @@ where you left it: the tab, the open file, and your place in it.
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Diff** | What changed, file by file, in one column or side by side. |
 | **Review** | The comments you wrote, as one message to send. |
-| **Session** | Everything about this session, its event log, and the spend limit. |
 
 <details>
 <summary><b>More about each tab</b></summary>
@@ -225,26 +223,15 @@ words marked.
 The comments you wrote, collected into one message. You read the whole message
 before it goes to the agent. Nothing in it can be edited on the way.
 
-#### Session
-
-The worktree, branch, model, context window, pane, and the session's own event
-log. You can rename a session here too. It also has two controls:
-
-- **stop** presses Escape in the agent's pane. That ends the turn and keeps
-  the work done so far.
-- **stop at** takes a number of dollars. When the session's spend passes it,
-  wostuast presses Escape for you, one time. Raise the number to let the agent
-  go on.
-
 </details>
 
-How full the context window is, and what the session has spent, show at the
-end of the tab row. You see both on every tab.
+The model, how full the context window is, and what the session has spent
+show at the end of the tab row, on every tab. Beside them, the terminal icon
+jumps to the agent's tmux pane (or press <kbd>Enter</kbd>).
 
 > [!WARNING]
 > The spend is Claude Code's own estimate at list price. It can differ from
-> your bill, and it starts again at zero after `/clear`. Use **stop at** as a
-> brake, not as a budget.
+> your bill, and it starts again at zero after `/clear`.
 
 ### Alerts
 
@@ -266,7 +253,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>e</kbd> | Rename the chosen session (or double-click its name) |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
 | <kbd>r</kbd> | Open the review you wrote |
-| <kbd>1</kbd> – <kbd>5</kbd> | Transcript, Files, Diff, Review, Session |
+| <kbd>1</kbd> – <kbd>4</kbd> | Transcript, Files, Diff, Review |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
 | <kbd>s</kbd> | Type into the agent's terminal |
@@ -329,7 +316,7 @@ branch.
 > [!CAUTION]
 > **Write every backslash twice.** The file is JSON, so `\d` must be written
 > `\\d`. If the file has a problem, wostuast says so: `serve` prints it, the
-> Session tab shows it, and `doctor` reports it. Keep patterns simple, because
+> page shows it at the end of the tab row, and `doctor` reports it. Keep patterns simple, because
 > a browser cannot stop a regular expression once it starts.
 
 This is the one file you write. The program writes everything else in
@@ -354,8 +341,8 @@ The page can type into a terminal, so it is careful about who may use it.
 <details>
 <summary><b>Does it work without tmux?</b></summary>
 
-Reading works: the session list, all five tabs, and alerts. The four things
-that type into a pane (jump, send, stop, answer) need tmux. Those controls are
+Reading works: the session list, all four tabs, and alerts. The things that
+type into a pane (jump, send, answer, no) need tmux. Those controls are
 off for a session with no pane, and the page says why.
 
 </details>
@@ -410,7 +397,7 @@ or <kbd>Esc</kbd> to cancel. An empty name gives the session back its
 repository and worktree.
 
 The title that Claude Code gives a session does not change when you use
-`/rename`, so the list does not show it. The Session tab does.
+`/rename`, so the list does not show it.
 
 `/clear` starts a new session in the same pane. The page moves to it by
 itself, and your name for the session goes with it. The conversation before
