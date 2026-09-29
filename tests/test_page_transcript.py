@@ -86,6 +86,36 @@ def test_a_code_fence_keeps_its_angle_bracket(page_at):
             browser.close()
 
 
+def test_a_code_block_copies_itself_from_a_button_that_shows_on_hover(page_at):
+    """What an agent puts in a fence is most often a command or a file to
+    take somewhere else, and selecting it by hand takes the line above with
+    it. A button at the block's top right copies the block and nothing
+    else. It stands outside the block's scroll, so a long line does not
+    carry it away, and it shows only while the pointer is on the block."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.evaluate("""() => { window.__copied = [];
+              copyToClipboard = async (text) => {
+                window.__copied.push(text); return true; }; }""")
+            box = page.locator(".prose .codebox").last
+            shown = """() => getComputedStyle([...document.querySelectorAll(
+              '.prose .codebox')].pop().querySelector('.copycode')).opacity"""
+            assert page.evaluate(shown) == "0"
+            box.locator("pre").hover()
+            page.wait_for_function(f"({shown})() === '1'")
+            assert page.evaluate("""() => [...document.querySelectorAll(
+              '.prose .copycode')].every((one) => !one.closest('pre'))""")
+            box.locator(".copycode").click()
+            page.wait_for_function("window.__copied.length === 1")
+            code = box.locator("pre").evaluate("(pre) => pre.textContent")
+            assert page.evaluate("window.__copied[0]") == code
+            assert "len(hits) > 1" in code
+            page.wait_for_selector(".prose .codebox .copycode.done")
+        finally:
+            browser.close()
+
+
 def test_only_a_block_that_has_just_arrived_slides_in(page_at):
     """A transcript is rebuilt whenever anything about it changes. Animating
     every block on every rebuild would make the tab shiver each time an agent

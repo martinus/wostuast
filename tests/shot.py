@@ -28,8 +28,8 @@ session's is. `result` answers the call just above it.
 
 `--measure` prints, for each block on screen, the gap from the bottom of
 what it shows -- its text, not its box -- to the top of the next block.
-`--hover WORDS` puts the pointer on the block holding WORDS first, which is
-what shows its copy button. `--part SELECTOR` is what the picture is of: the
+`--hover WORDS` puts the pointer on WORDS first, which is what shows the
+copy button of their turn, and of their code block when they are in one. `--part SELECTOR` is what the picture is of: the
 transcript pane unless it says otherwise, `#content` for the map beside it
 too, `body` for the whole page.
 """
@@ -157,7 +157,11 @@ def main(argv: list[str]) -> int:
                 page.evaluate("document.body.classList.add('show-thinking')")
             page.wait_for_function("() => !document.getAnimations().length")
             if said.hover:
-                page.locator(".turnbody .turn", has_text=said.hover).hover()
+                # On the words themselves: a code block's copy shows only
+                # while the pointer is on the block, and the middle of the
+                # turn may be text beside it.
+                page.locator(".turnbody .turn", has_text=said.hover) \
+                    .get_by_text(said.hover).first.hover()
             page.locator(said.part).first.screenshot(path=said.out)
             if said.measure:
                 print(f"{'box':>4} {'shows':>5} {'gap':>4}  block")

@@ -61,7 +61,7 @@ after the tests go red.
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen` | The sidebar |
-| `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking` | The transcript's shape |
+| `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
 | `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
@@ -2049,6 +2049,17 @@ update the comment with its own text, and read it back.
   `test_an_edit_keeps_what_it_changed_and_nothing_of_the_whole_file`,
   `test_a_long_change_is_cut_and_says_how_much_is_left`,
   `test_an_edit_opens_onto_what_it_changed`.
+- **A code block copies itself, from a box round it** (`putCodeCopies`,
+  `.codebox`, `.copycode`). The reader asked for it: what an agent puts in
+  a fence is most often a command or a file to take somewhere else, and
+  selecting it by hand takes the line above with it. The button is a child
+  of the box, not of the `pre`: inside, a long line scrolls it away with
+  the code. It is an icon (`ICONS.copy`, then `ICONS.check` when the copy
+  worked) and not the word, so a search for "copy" does not mark every
+  block. It shows on the block's hover and on keyboard focus, as a reply's
+  copy does on its turn. `markdown` adds it, so a document on the Files
+  tab has it too.
+  `test_a_code_block_copies_itself_from_a_button_that_shows_on_hover`.
 - **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
   the agent's text and nothing else, so the map stays a map of the
   conversation.

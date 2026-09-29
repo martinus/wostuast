@@ -184,6 +184,9 @@ with what Claude Code answered. You can send a slash command from the send box
 too. One that opens a menu, such as `/model` alone, opens it in the terminal:
 press <kbd>Enter</kbd> to jump there and pick.
 
+Point at a code block in a reply to show a copy button at its top right. It
+copies the block and nothing else.
+
 An edit shows how many lines it added and removed. Click it to see the change
 under it, drawn as the Review tab draws it, with the line numbers the file had at
 that moment. A long change shows its first lines; the Review tab has all of it.
