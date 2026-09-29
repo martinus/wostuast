@@ -7464,6 +7464,25 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   border: 1px solid var(--edge); overflow-x: auto; margin: 0 0 8px;
 }
 .prose pre code { background: none; padding: 0; color: var(--code-ink); font-size: 12.5px; }
+/* A code block and the button that copies it. The box holds the margin, so
+   the button stands at the block's corner and not in its scroll. It shows
+   while the pointer is on the block, as a reply's copy does on its turn,
+   and on keyboard focus, or it could not be reached without a mouse. */
+.prose .codebox { position: relative; margin: 0 0 8px; }
+.prose .codebox > pre { margin: 0; }
+.copycode {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+  border: 1px solid var(--edge); border-radius: 5px; background: var(--code);
+  color: var(--ink-faint); cursor: pointer; opacity: 0; transition: opacity .1s ease;
+}
+.codebox:hover .copycode, .copycode:focus-visible { opacity: 1; }
+.copycode:hover { color: var(--needs); border-color: var(--edge-bright); }
+.copycode.done { color: var(--working); opacity: 1; }
+.copycode .icon {
+  width: 14px; height: 14px; fill: none; stroke: currentColor;
+  stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round;
+}
 .prose a { color: var(--needs); }
 .prose blockquote {
   margin: 0 0 8px; padding-left: 12px; border-left: 2px solid var(--edge-bright);
@@ -8668,6 +8687,11 @@ const ICONS = {
   // Jump, at the end of the tab row: a terminal, and its prompt.
   terminal: "M1.6 3.2a1 1 0 0 1 1-1h8.8a1 1 0 0 1 1 1v7.6a1 1 0 0 1-1 1H2.6"
             + "a1 1 0 0 1-1-1zM4.2 5.4l2 1.6-2 1.6M7.4 8.8h2.4",
+  // Copy a code block, and the tick that says it went: two sheets, one
+  // over the other.
+  copy: "M4.6 4.2V2.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H9.8"
+        + "M1.6 5.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z",
+  check: "M2.4 7.4l3 3 6.2-6.6",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -10039,6 +10063,7 @@ function markdown(parent, text) {
     node.textContent = text;   // assigning text already clears the children
   }
   safeLinks(node);
+  putCodeCopies(node);
   // After the scrub, so a pattern can never put an element on this page: it
   // walks text nodes and builds one anchor at a time, with an href this side
   // has checked again.
@@ -10415,6 +10440,39 @@ function putShell(node, block) {
         (block.kind === "shell" ? "! " : "") + block.text);
   }
   if (block.result) put(bubble, "pre", "output", block.result);
+}
+
+// A code block copies itself: what an agent puts in a fence is most often a
+// command or a file to take somewhere else, and selecting it by hand takes
+// the numbers of a list or the line above with it. The button stands in a
+// box round the block, not in it: inside, it would scroll away with a long
+// line, and its own text would be copied with the code. An icon and not the
+// word, so a search for "copy" does not mark every block.
+function putCodeCopies(node) {
+  for (const pre of node.querySelectorAll("pre")) {
+    const box = document.createElement("div");
+    box.className = "codebox";
+    pre.replaceWith(box);
+    box.appendChild(pre);
+    const copy = put(box, "button", "copycode");
+    copy.type = "button";
+    copy.title = "copy this block";
+    copy.setAttribute("aria-label", "copy this block");
+    putIcon(copy, "copy");
+    copy.addEventListener("click", async () => {
+      const done = await copyToClipboard(pre.textContent);
+      copy.replaceChildren();
+      putIcon(copy, done ? "check" : "copy");
+      copy.title = done ? "copied" : "the browser would not copy it";
+      copy.classList.toggle("done", done);
+      setTimeout(() => {
+        copy.replaceChildren();
+        putIcon(copy, "copy");
+        copy.title = "copy this block";
+        copy.classList.remove("done");
+      }, 1400);
+    });
+  }
 }
 
 // The Markdown an agent wrote, as it wrote it. The page shows it drawn; this
