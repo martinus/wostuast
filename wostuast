@@ -7637,10 +7637,12 @@ body:not(.show-thinking) .thinking { display: none; }
    map. Without it the icon sat on a line of its own above the text, which
    is how the map first shipped. One rule, so a fourth list joins it rather
    than copying it. */
-.filelist.fixed button, .filelist.diff button, .filelist.transcript button {
+.filelist.fixed button, .filelist.diff button, .filelist.transcript button,
+.filelist.review button {
   display: flex; align-items: center; gap: 5px;
 }
-.filelist.fixed .name, .filelist.diff .name, .filelist.transcript .name {
+.filelist.fixed .name, .filelist.diff .name, .filelist.transcript .name,
+.filelist.review .name {
   flex-grow: 1; min-width: 0;
 }
 /* The Files list is one height per row, which is what lets it build only the
@@ -8024,31 +8026,57 @@ body:not(.show-thinking) .thinking { display: none; }
 /* Sticky, so a comment stays where it can be read when a wide diff is
    scrolled sideways. `pre` is the diff's business, not the note's. */
 .onLine, .onFile { position: sticky; left: 0; white-space: normal; max-width: 680px; }
+/* A comment is one light line of the reader's own: who wrote it, the note,
+   and what can be done to it, side by side. It had a blue bar down its left
+   and a box round it, and in the Review tab a box round that; the reader
+   called it ugly, and chose this from pictures. The tint is the reader's
+   colour, faint, as their prompts are in the transcript. */
 .comment {
-  margin: 6px 20px; padding: 9px 12px; border-radius: 6px;
-  background: var(--raised); border-left: 3px solid var(--mine);
-  font-family: var(--sans); font-size: 13px; color: var(--ink);
+  margin: 4px 20px 6px 56px; padding: 7px 10px 7px 12px; border-radius: 6px;
+  display: flex; align-items: flex-start; gap: 10px;
+  background: color-mix(in srgb, var(--mine) 9%, var(--sheet));
+  font-family: var(--sans); font-size: 14px; color: var(--ink);
 }
+/* The icon is drawn by `putIcon`, which sets no size of its own. */
+.comment .icon {
+  width: 14px; height: 14px; flex-shrink: 0; margin-top: 3px; fill: none;
+  stroke: var(--mine); stroke-width: 1.2; stroke-linejoin: round;
+}
+.comment .words { flex-grow: 1; min-width: 0; }
 .comment .note { white-space: pre-wrap; line-height: 1.5; }
+/* `.note` is also the page's quiet line in a pane, in the fixed face and
+   padded, and a comment's note wore all of it: the reader's words stood in
+   the code's face with 14 px round them. */
+.comment .note { padding: 0; font-family: var(--sans); font-size: 14px; color: var(--ink); }
 /* What you can do to a comment, at the far end of it. The note is what you
-   came to read; the buttons are not, so they get out of its way. A row of its
-   own rather than `.buttons`, which the Review tab already owns two of. */
-.acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
-/* The Review tab: the two boxes at the top, one block per place, and the
-   message itself at the bottom. */
-.about { margin-bottom: 20px; }
-.field { display: block; margin-bottom: 12px; }
+   came to read; the buttons are not, so they are faint until the pointer is
+   on the comment. */
+.acts { display: flex; gap: 8px; flex-shrink: 0; opacity: .55; }
+.comment:hover .acts, .acts:focus-within { opacity: 1; }
+/* The Review tab: one card per file, then the message and what goes with
+   it. */
 .fieldname { display: block; margin-bottom: 4px; }
-.spot {
-  margin-bottom: 18px; padding: 10px 12px; border-radius: 6px;
-  background: var(--raised); border: 1px solid var(--edge);
+.reviewbody .dfile .name { cursor: default; }
+.reviewbody .dfile .many {
+  margin-left: 10px; color: var(--ink-faint); font-family: var(--sans);
+  font-size: 12px;
 }
+.reviewbody .dfile .go { margin-left: auto; display: flex; gap: 6px; }
+/* Two places in one file are two runs of lines, and the dashes say a jump. */
+.reviewbody .dfile .dlines + .dlines { border-top: 1px dashed var(--edge); }
+.reviewbody .dfile .sofar { margin: 10px 14px 4px; }
+.sendreview { margin: 26px 0 8px; }
+.sendrow { display: flex; gap: 10px; align-items: flex-start; }
+.sendrow textarea { flex-grow: 1; min-height: 58px; }
+.sendrow .buttons {
+  flex-direction: column; align-items: stretch; flex-shrink: 0; margin: 0;
+}
+.sendrow .verb { white-space: nowrap; }
 /* The heading over the message, in the same voice as a diff's section head. */
 .sofar {
   margin: 4px 0 8px; font-family: var(--narrow); font-size: 12px;
   letter-spacing: .04em; color: var(--ink-faint);
 }
-.spot .where { margin-bottom: 4px; }
 .reviewbody .buttons { flex-wrap: wrap; margin: 14px 0 8px; }
 .reviewbody .why { font-size: 11px; color: var(--ink-faint); }
 .comment .quoted {
@@ -8067,13 +8095,13 @@ body:not(.show-thinking) .thinking { display: none; }
 .link:hover { color: var(--needs); }
 .commentbox { margin: 6px 20px; max-width: 680px; }
 /* Every box you type a review into looks the same: the one under a line, and
-   the two at the top of the Review tab. */
-.commentbox textarea, .field textarea {
+   "what to do" at the foot of the Review tab. */
+.commentbox textarea, .sendrow textarea {
   width: 100%; padding: 9px 12px; border-radius: 6px; resize: vertical;
   border: 1px solid var(--edge-bright); background: var(--raised);
   color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5;
 }
-.commentbox textarea:focus, .field textarea:focus {
+.commentbox textarea:focus, .sendrow textarea:focus {
   outline: none; border-color: var(--needs);
 }
 .commentbox .buttons, .reviewbody .buttons {
@@ -8097,9 +8125,11 @@ body:not(.show-thinking) .thinking { display: none; }
   color: var(--done);
 }
 .filelist.diff button.deleted .name { text-decoration: line-through; }
-/* The Diff tab's tree: a little tighter than a block row, the count at its end. */
-.filelist.diff button { padding-top: 4px; padding-bottom: 4px; }
+/* The Diff tab's tree, and the Review tab's, which is the same tree: a
+   little tighter than a block row, the count at its end. */
+.filelist.diff button, .filelist.review button { padding-top: 4px; padding-bottom: 4px; }
 .filelist.diff .counts { margin: 0 0 0 8px; flex-shrink: 0; }
+.filelist.review .many { margin-left: 8px; flex-shrink: 0; color: var(--ink-faint); }
 .note {
   padding: 14px 20px; font-family: var(--mono); font-size: 12px;
   line-height: 1.7; color: var(--ink-mute);
@@ -8140,12 +8170,6 @@ dialog.help {
 }
 dialog.help::backdrop { background: var(--veil); }
 dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
-.field textarea {
-  width: 100%; padding: 8px 10px; border-radius: 6px; resize: vertical;
-  border: 1px solid var(--edge-bright); background: var(--raised);
-  color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5;
-}
-.field textarea:focus { outline: none; border-color: var(--needs); }
 /* The message itself, not a description of it. It cannot be edited here: a
    comment is edited where the comment is, so there is one text and one place
    it comes from. */
@@ -8310,6 +8334,13 @@ const state = {
   diffWhole: new Map(),
   sides: "unified",     // one column or two; see `recallSides`
   diffOpen: new Map(),  // diff files the reader opened or shut by hand
+  // A comment's place to go to on the Diff tab, once it has drawn. Set by
+  // "in diff" on the Review tab.
+  diffGoTo: null,
+  // The files the review is about, read for the Review tab's cards: path to
+  // the daemon's answer. `reviewRead` moves when an answer lands.
+  reviewFiles: new Map(),
+  reviewRead: 0,
   // The review being written. It lives in this browser and nowhere else
   // until it is sent. See `blankReview`.
   review: null,         // set below, because it is built in one place
@@ -12306,7 +12337,7 @@ function treeOrder(found, pathOf) {
 // file is three rows of nothing. Folders stand open unless the reader shut
 // one, and all of them stand open while the find box has a query in it: a
 // match inside a shut folder is a match nobody sees.
-function putDiffTree(list, section, found, pathOf, fill) {
+function putDiffTree(list, section, found, pathOf, fill, again) {
   const root = { dirs: new Map(), files: [] };
   for (const hit of found) {
     let at = root;
@@ -12334,7 +12365,7 @@ function putDiffTree(list, section, found, pathOf, fill) {
       row.addEventListener("click", () => {
         if (state.diffShut.has(key)) state.diffShut.delete(key);
         else state.diffShut.add(key);
-        drawDiffList(list);         // from the last draw's `diffShown`
+        again();
       });
       if (open) walk(one, full, depth + 1);
     }
@@ -12391,14 +12422,14 @@ function drawDiffList(list, shown = list.shown) {
       }
       putCounts(put(row, "span", "counts"), one);
       row.addEventListener("click", () => goToDiffFile(row.dataset.key));
-    });
+    }, () => drawDiffList(list));     // from the last draw's `diffShown`
   }
   if (shown.loose.length) {
     put(list, "div", "head", "untracked");
     putDiffTree(list, "untracked", shown.loose, (hit) => hit.one, (row, hit) => {
       row.classList.add("untracked");
       row.addEventListener("click", () => chooseUntracked(hit.one));
-    });
+    }, () => drawDiffList(list));
   }
   list.scrollTop = top;
   // In the next frame, when the pane beside it is built and laid out once:
@@ -12551,6 +12582,18 @@ function drawDiff(box) {
     requestAnimationFrame(() => picked.scrollIntoView({ block: "start" }));
   } else if (place) {
     requestAnimationFrame(() => { scroll.scrollTop = place; });
+  }
+  // "in diff" on the Review tab: the comment's own line, or its file when the
+  // line is not drawn -- a file shut for its size, or a commit that does not
+  // hold it. Once the diff has come, and once.
+  if (state.diffGoTo && state.diff) {
+    const want = state.diffGoTo;
+    const path = want.split("\n")[0];
+    state.diffGoTo = null;
+    const at = [...scroll.querySelectorAll(".comment")].find(
+      (one) => one.dataset.anchor === want)
+      || [...scroll.blocks].find(([key]) => key.endsWith("\n" + path))?.[1];
+    if (at) requestAnimationFrame(() => at.scrollIntoView({ block: "center" }));
   }
   note.replaceChildren();
   countNote(note, shown + loose.length);
@@ -13375,9 +13418,7 @@ function recallReview(id) {
              // a draft from an older page, and drawing it would put a comment
              // on a line nobody chose.
              && /^[^\n]+\n\d+$/.test(one.anchor));
-  for (const field of ["task", "overall"]) {
-    if (typeof held[field] === "string") state.review[field] = held[field];
-  }
+  if (typeof held.overall === "string") state.review.overall = held.overall;
 }
 
 // A review for a session the daemon no longer lists is a review nobody can
@@ -13400,17 +13441,16 @@ function pruneReviews(sessions) {
 // choosing another session cannot drift apart about what "nothing" means.
 function blankReview() {
   return {
-    task: "",           // a short name for the whole thing: "cleanup"
     overall: "",        // what to do at each location, and with the result
     comments: [],       // one per place, in the order they were made
   };
 }
 
-// Is there anything here at all? A review with a task name and no comments is
-// still a review someone started, and throwing it away silently would lose it.
+// Is there anything here at all? A review with only "what to do" and no
+// comments is still one someone started, and throwing it away silently would
+// lose it.
 function anyReview() {
-  return !!(state.review.comments.length || state.review.task.trim()
-            || state.review.overall.trim());
+  return !!(state.review.comments.length || state.review.overall.trim());
 }
 
 // The note the reader typed. An empty one deletes the comment, which is what
@@ -13449,8 +13489,12 @@ function redrawCode() {
 // is right there and an empty save is the way to remove one.
 function putComment(parent, one, full) {
   const node = put(parent, "div", "comment");
-  if (full && one.quoted) put(node, "div", "quoted", one.quoted);
-  put(node, "div", "note", one.note);
+  // Which comment this is, so "in diff" can find the node it drew.
+  node.dataset.anchor = one.anchor;
+  putIcon(node, "person");
+  const words = put(node, "div", "words");
+  if (full && one.quoted) put(words, "div", "quoted", one.quoted);
+  put(words, "div", "note", one.note);
   const acts = put(node, "div", "acts");
   const edit = put(acts, "button", "verb quiet", "edit");
   edit.type = "button";
@@ -13458,12 +13502,10 @@ function putComment(parent, one, full) {
     state.writing = one.anchor;
     redrawCode();
   });
-  if (full) {
-    const drop = put(acts, "button", "verb quiet", "delete");
-    drop.type = "button";
-    drop.addEventListener("click",
-                          () => writeComment(one.anchor, one.quoted, ""));
-  }
+  const drop = put(acts, "button", "verb quiet", "delete");
+  drop.type = "button";
+  drop.addEventListener("click",
+                        () => writeComment(one.anchor, one.quoted, ""));
   return node;
 }
 
@@ -13527,9 +13569,10 @@ function reviewInOrder() {
   });
 }
 
-// The message the agent gets. It is a task, not a list of remarks: a heading
-// it can read at a glance, what to do, what to hand back, and then one section
-// per place with the line quoted under it.
+// The message the agent gets. It is a task, not a list of remarks: a heading,
+// what to do, what to hand back, and then one section per place with the line
+// quoted under it. The heading is fixed: a box for naming the task was one
+// the reader never filled, and asked to be rid of.
 //
 // The line number is a hint and says so. The file moves while the review is
 // being written, so the quoted line is the thing that is really being pointed
@@ -13545,8 +13588,7 @@ const REVIEW_HOW = [
 ];
 
 function reviewText(comments = reviewInOrder()) {
-  const task = state.review.task.trim();
-  const parts = ["# Task: " + (task || "review")];
+  const parts = ["# Review"];
   if (state.review.overall.trim()) parts.push(state.review.overall.trim());
   parts.push(...REVIEW_HOW);
   for (const one of comments) {
@@ -13570,48 +13612,41 @@ function drawReview(box) {
   if (!fresh(box, "bodyKey", reviewKey())) return;
   list.replaceChildren();
   pane.replaceChildren();
+  foot.replaceChildren();
 
-  const found = hits(reviewInOrder(), (one) => one.anchor.split("\n")[0]);
-  const comments = found.map((hit) => hit.one);
   if (!anyReview()) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, "No review yet. Press the + beside any line of any"
         + " file, on this tab's neighbours, and it turns up here.");
     note.replaceChildren();
-    foot.replaceChildren();
     return;
   }
-
-  // What the whole thing is for. The task name becomes the heading the agent
-  // reads first, so it is asked for separately rather than guessed at.
-  const about = put(pane, "div", "about");
-  const boxes = [
-    putField(about, "task", "Task", state.review.task,
-             "a short name: cleanup, security analysis", 1),
-    putField(about, "overall", "What to do", state.review.overall,
-             "what to do at each location, and what to do with the result", 3),
-  ];
-
-  for (const { one, at } of found) {
+  // The files, as the Diff tab's tree lists them, and the comments on each.
+  // The find box narrows the files; it never narrows what is sent.
+  const every = reviewInOrder();
+  const onFile = new Map();
+  for (const one of every) {
     const path = one.anchor.split("\n")[0];
-    const where = placeOf(one.anchor);
-    const node = put(pane, "div", "spot");
-    const head = put(node, "div", "where");
-    const go = put(head, "button", "crumb", where);
-    go.type = "button";
-    go.title = "open " + path;
-    go.addEventListener("click", () => goToComment(one.anchor));
-    // The same dispatch every other place uses: the box if it is being
-    // written, the comment if it is not. A comment always exists here, so the
-    // `+` branch cannot be reached.
-    putReview(node, one.anchor, one.quoted, true);
-    const button = put(list, "button");
-    button.type = "button";
-    button.title = path;
-    putName(button, where, at);
-    button.addEventListener("click",
-                            () => node.scrollIntoView({ block: "start" }));
+    if (!onFile.has(path)) onFile.set(path, []);
+    onFile.get(path).push(one);
   }
+  const files = treeOrder(hits([...onFile.keys()], (path) => path),
+                          (hit) => hit.one);
+  const cards = new Map();
+  for (const { one: path } of files) {
+    cards.set(path, putReviewFile(pane, path, onFile.get(path)));
+  }
+  const drawList = () => {
+    list.replaceChildren();
+    putDiffTree(list, "review", files, (hit) => hit.one, (row, hit) => {
+      const many = onFile.get(hit.one).length;
+      put(row, "span", "many", String(many));
+      row.addEventListener("click",
+                           () => cards.get(hit.one).scrollIntoView({ block: "start" }));
+    }, drawList);
+  };
+  drawList();
+  if (!files.length) put(pane, "div", "nohits", "No commented file matches.");
 
   // The message itself, not a description of it. This is where a person reads
   // what is about to be pasted into their terminal, and part of it is text an
@@ -13623,43 +13658,186 @@ function drawReview(box) {
   // typed — one left over from finding a file, since the box is shared — the
   // preview showed one comment and the send took two, quoted source and all.
   // "One text, one place it comes from" is the rule this breaks.
-  put(pane, "div", "sofar", "what the agent will be sent");
-  const preview = put(pane, "pre", "reviewtext", reviewText());
-  putSubmit(put(pane, "div", "buttons"));
-
-  // The boxes are wired once the preview exists, so each keystroke writes to
-  // the node this draw made rather than going looking for it.
-  for (const area of boxes) {
-    area.addEventListener("input", () => {
-      state.review[area.dataset.which] = area.value;
-      keepReview();
-      preview.textContent = reviewText();
-    });
-  }
+  const send = put(pane, "div", "sendreview");
+  put(send, "div", "sofar", "what the agent will be sent");
+  const preview = put(send, "pre", "reviewtext", reviewText());
+  // What to do, beside the button that sends it: the last thing written, and
+  // the reader asked for it there rather than at the top.
+  put(send, "div", "sofar", "what to do");
+  const row = put(send, "div", "sendrow");
+  const area = put(row, "textarea");
+  area.value = state.review.overall;
+  area.placeholder = "what to do at each place, and what to do with the result";
+  area.rows = 2;
+  area.spellcheck = false;
+  area.dataset.which = "overall";
+  putSubmit(put(row, "div", "buttons"));
+  submitOnCtrlEnter(area, () => document.querySelector("button.submit"));
+  area.addEventListener("input", () => {
+    state.review.overall = area.value;
+    keepReview();
+    preview.textContent = reviewText();
+  });
 
   note.replaceChildren();
   const all = state.review.comments.length;
+  const shown = files.reduce((sum, hit) => sum + onFile.get(hit.one).length, 0);
   put(note, "span", null,
-      comments.length === all
+      shown === all
         ? all + (all === 1 ? " comment" : " comments")
-        : comments.length + " of " + all + " comments");
+        : shown + " of " + all + " comments");
 }
 
-// One of the two boxes at the top. They are the only editable things on the
-// tab, so they share their shape.
-function putField(parent, which, label, value, hint, rows) {
-  const wrap = put(parent, "label", "field");
-  put(wrap, "span", "fieldname", label);
-  const area = put(wrap, "textarea");
-  area.value = value;
-  area.placeholder = hint;
-  area.rows = rows;
-  area.spellcheck = false;
-  area.dataset.which = which;
-  // The review goes to the agent from here too, through its own button: the
-  // message it sends stands on this tab, and the button is what reads it.
-  submitOnCtrlEnter(area, () => document.querySelector("button.submit"));
-  return area;
+// One file's card, as the Diff tab draws a file: its name, how many
+// comments, the way to it on the two tabs that show it, and then the places
+// the comments are about. A place is shown the way it was most likely
+// written: in the diff when a hunk holds it, drawn by the Diff tab's own
+// `withMore` so its bands show more lines exactly as they do there, and
+// keeping only the hunks that hold a comment. A comment on a line no diff
+// holds -- one written on the Files tab -- stands under its lines of the file
+// as it is on disk, read by `loadReview`; and until those come, or where the
+// line is no longer there, it stands with the line it quoted.
+function putReviewFile(pane, path, comments) {
+  const node = put(pane, "div", "dfile");
+  const head = put(node, "div", "name");
+  put(head, "span", "path", path);
+  put(head, "span", "many",
+      comments.length === 1 ? "1 comment" : comments.length + " comments");
+  const go = put(head, "span", "go");
+  const first = comments[0].anchor;
+  for (const [word, why, where] of [
+    ["in diff", "this file on the Diff tab", goToDiff],
+    ["in file", "this file on the Files tab", goToComment],
+  ]) {
+    const button = put(go, "button", "verb quiet", word);
+    button.type = "button";
+    button.title = why;
+    button.addEventListener("click", () => where(first));
+  }
+  const body = put(node, "div", "dbody");
+  const whole = commentAt(anchorOf(path, 0));
+  if (whole) putReview(put(body, "div", "onFile"), whole.anchor, "");
+  const parts = [];
+  const placed = new Set();
+  // What is not committed first: it is the file as it is, which is what a
+  // comment's line counts.
+  const report = state.diff || { sections: [] };
+  const sections = [...(report.sections || [])].sort(
+    (a, b) => (b.name === "uncommitted") - (a.name === "uncommitted"));
+  for (const section of sections) {
+    const file = (section.files || []).find((one) => one.path === path);
+    if (!file || file.binary || !file.hunks.length) continue;
+    const kept = commentedHunks(file, section, placed);
+    if (kept) parts.push([section.title, (into) => fillDiffFile(into, kept, section.at_commit)]);
+  }
+  const read = state.reviewFiles.get(path);
+  const text = read && typeof read.text === "string"
+    ? read.text.replace(/\n$/, "") : null;
+  const lines = text === null ? [] : linesOf(text);
+  const drawn = [];
+  const loose = [];
+  for (const one of comments) {
+    const at = Number(one.anchor.split("\n")[1]);
+    if (!at || placed.has(one.anchor)) continue;
+    (at <= lines.length ? drawn : loose).push(at);
+  }
+  // Two lines before each commented line and one after, and runs that meet
+  // are one run.
+  const runs = [];
+  for (const at of drawn.sort((a, b) => a - b)) {
+    const from = Math.max(1, at - 2);
+    const to = Math.min(lines.length, at + 1);
+    const last = runs[runs.length - 1];
+    if (last && from <= last[1] + 1) last[1] = Math.max(last[1], to);
+    else runs.push([from, to]);
+  }
+  if (runs.length) {
+    parts.push(["not in the diff", (into) => {
+      fillDiffFile(into, { path, hunks: runs.map(([from, to]) => ({
+        header: "", from,
+        lines: lines.slice(from - 1, to).map((one) => ({ kind: "plain", text: one })),
+      })) });
+      paintSlices(into, path, text);
+    }]);
+  }
+  // A heading for each part only when there is more than one, so a card
+  // that is one diff reads as the Diff tab's does.
+  for (const [title, fill] of parts) {
+    if (parts.length > 1) put(body, "div", "sofar", title);
+    fill(body);
+  }
+  for (const at of loose) {
+    const one = commentAt(anchorOf(path, at));
+    if (one) putReview(put(body, "div", "onLine"), one.anchor, one.quoted, true);
+  }
+  return node;
+}
+
+// A file's hunks as the Diff tab draws them -- `withMore`, with whatever the
+// reader has asked to see -- keeping those that hold a comment not drawn in
+// an earlier part. The band above a kept hunk counts from the end of the kept
+// one before it, so the lines it offers are the lines between the two, and a
+// change among them comes into the hunk when they are shown, as it would on
+// the Diff tab. Null when no hunk holds one.
+function commentedHunks(file, section, placed) {
+  const shown = withMore(file, section.name);
+  const kept = [];
+  let end = 1;                 // the new-side line after the last kept hunk
+  let last = false;
+  shown.hunks.forEach((hunk, at) => {
+    const here = [];
+    walkHunks({ hunks: [hunk] }, null, (line, old, now) => {
+      const anchor = lineAnchor(file.path, line,
+                                section.at_commit ? inWorktree(file.path, now) : now);
+      if (anchor && commentAt(anchor) && !placed.has(anchor)) here.push(anchor);
+    });
+    if (!here.length) return;
+    for (const anchor of here) placed.add(anchor);
+    const found = HUNK_AT.exec(hunk.header);
+    const from = found ? Number(found[2]) : end;
+    kept.push(Object.assign({}, hunk, { gapFrom: end, gapTo: from - 1 }));
+    end = from + hunk.lines.filter((line) => line.kind !== "removed").length;
+    last = at === shown.hunks.length - 1;
+  });
+  if (!kept.length) return null;
+  return Object.assign({}, shown, { hunks: kept,
+    after: last ? shown.after : end, tail: last ? shown.tail : null });
+}
+
+// Colour for the lines of a card. The whole file is painted, because a
+// comment or a string that began above the slice colours what is in it, and
+// each row takes its own line.
+async function paintSlices(body, path, text) {
+  const lib = await hljsReady();
+  if (!lib || !body.isConnected) return;
+  const language = languageOf(path, text, null);
+  if (!language || !lib.getLanguage(language)) return;
+  const count = linesOf(text).length;
+  if (count > CODE_WHOLE) return;
+  const lines = paintedLines(lib, language, text, count);
+  if (!lines) return;
+  for (const row of body.querySelectorAll(".dline")) {
+    const at = Number(row.querySelector(".ln").textContent);
+    const cell = row.querySelector(".dtext");
+    if (at && lines[at - 1] && cell) cell.replaceChildren(lines[at - 1]);
+  }
+}
+
+// The files the comments are about, read again each time the tab is shown:
+// the agent may have changed them since the comment was written.
+async function loadReview() {
+  const want = state.chosen;
+  draw();
+  loadDiff();                // draws the cards again once the diff is in
+  const paths = [...new Set(state.review.comments.map(
+    (one) => one.anchor.split("\n")[0]))];
+  if (!want || !paths.length) return;
+  const answers = await Promise.all(paths.map(
+    (path) => ask(want, "file", "?path=" + encodeURIComponent(path))));
+  if (state.chosen !== want) return;
+  state.reviewFiles = new Map(paths.map((path, at) => [path, answers[at] || {}]));
+  state.reviewRead += 1;
+  draw();
 }
 
 function putSubmit(foot) {
@@ -13703,7 +13881,15 @@ function putSubmit(foot) {
 // the next unrelated `draw()` — the find box has two — rebuilt the pane and
 // took the box being typed in with it.
 function reviewKey() {
-  return [state.chosen, (current() || {}).pane || "", state.find].join("\n");
+  return [state.chosen, (current() || {}).pane || "", state.find,
+          state.reviewRead, state.diffAt, state.sides].join("\n");
+}
+
+// Open the Diff tab at a comment's line. The tab draws when its diff comes,
+// so the place waits in `state.diffGoTo` for `drawDiff` to go to.
+function goToDiff(anchor) {
+  state.diffGoTo = anchor;
+  showTab("diff");
 }
 
 // Open the file a comment is about, on the tab that shows whole files.
@@ -13804,10 +13990,9 @@ const TABS = {
            finds: "go to file  /" },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /" },
-  // No `load`: a review is written in this browser, so there is nothing to
-  // fetch. `load()` draws for a tab that says so, which is the half an empty
-  // loader forgot — and then switching here left the page on the tab before.
-  review: { draw: drawReview, load: null, poll: 0,
+  // The review is written in this browser; what is fetched is the files it
+  // is about, for the lines around each comment.
+  review: { draw: drawReview, load: loadReview, poll: 0,
             finds: "find a comment  /" },
 };
 
@@ -13978,6 +14163,7 @@ function choose(id) {
   state.diffWhole = new Map();
   state.diffOpen.clear();
   recallReview(id);
+  state.reviewFiles = new Map();
   state.writing = null;
   drawReviewCount();
   state.diffRaw = "";
