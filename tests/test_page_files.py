@@ -1381,7 +1381,7 @@ def test_a_session_comes_back_to_the_tab_it_was_left_on(two_repos):
             page.evaluate("choose('s1')")
             show_tab(page, "diff")
             page.evaluate("choose('s2')")
-            show_tab(page, "review")
+            show_tab(page, "files")
             page.evaluate("choose('s1')")
             # The box, not `state.tab`: `showTab` sets the name and then
             # awaits the load, and until that comes back the box still holds

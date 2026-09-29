@@ -69,14 +69,14 @@ def test_the_find_box_sits_above_the_list_it_narrows(repo_page):
         browser, page = open_page(play, repo_page)
         try:
             hints = []
-            for name in ("transcript", "files", "diff", "review"):
+            for name in ("transcript", "files", "diff"):
                 show_tab(page, name)
                 assert page.eval_on_selector(
                     "#find", "el => el.parentElement.className") == "findslot", name
                 assert page.eval_on_selector(
                     "#find", "el => el.closest('.side') !== null"), name
                 hints.append(page.eval_on_selector("#find", "el => el.placeholder"))
-            assert len(set(hints)) == 4, hints
+            assert len(set(hints)) == 3, hints
         finally:
             browser.close()
 
@@ -118,7 +118,7 @@ def test_a_tab_comes_back_after_visiting_another(repo_page):
             for name in ("files", "diff"):
                 show_tab(page, name)
                 assert page.locator(f".filelist.{name} button").count() > 0
-                show_tab(page, "review")
+                show_tab(page, "transcript")
                 assert page.locator(f".filelist.{name}").count() == 0
                 show_tab(page, name)
                 assert page.locator(f".filelist.{name} button").count() > 0, name
@@ -132,7 +132,7 @@ def test_every_tab_is_built(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            for name in ("transcript", "files", "diff", "review"):
+            for name in ("transcript", "files", "diff"):
                 assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
         finally:
             browser.close()
@@ -203,8 +203,8 @@ def test_switching_tabs_faster_than_they_load_still_lands(repo_page):
         try:
             blew_up = []
             page.on("pageerror", lambda error: blew_up.append(str(error)))
-            for name in ["files", "diff", "review", "transcript", "review",
-                         "files", "transcript", "diff", "review", "files"]:
+            for name in ["files", "diff", "transcript", "files", "transcript",
+                         "diff", "transcript", "diff", "files", "files"]:
                 page.click(f".tab[data-tab='{name}']")
                 page.wait_for_timeout(110)      # quicker than a human, on purpose
             page.wait_for_selector(DRAWN["files"], timeout=15000)
@@ -276,7 +276,7 @@ def test_the_context_bar_stands_at_the_end_of_the_tab_row(page_at):
         browser, page = open_page(play, path)
         try:
             page.wait_for_selector("#ctxslot .ctx")
-            for tab in ("transcript", "files", "diff", "review"):
+            for tab in ("transcript", "files", "diff"):
                 show_tab(page, tab)
                 seen = page.evaluate("""() => {
                   const slot = document.getElementById('ctxslot');
@@ -346,7 +346,7 @@ def test_the_strip_carries_what_this_session_has_spent(page_at):
         browser, page = open_page(play, path)
         try:
             page.wait_for_selector("#ctxslot .spent")
-            for tab in ("transcript", "files", "diff", "review"):
+            for tab in ("transcript", "files", "diff"):
                 show_tab(page, tab)
                 seen = page.evaluate("""() => {
                   const slot = document.getElementById('ctxslot');
@@ -395,7 +395,7 @@ def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            page.click(".tab[data-tab='review']")
+            page.click(".tab[data-tab='diff']")
             page.keyboard.press("1")
             page.wait_for_function("state.tab === 'transcript'")
             assert page.evaluate(ringed) == []
