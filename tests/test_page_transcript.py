@@ -1762,7 +1762,7 @@ def test_a_block_pushed_while_the_transcript_is_fetched_is_kept(page_at):
         try:
             wait_for_map(page)
             wait_for_watching(daemon)
-            show_tab(page, "review")
+            show_tab(page, "files")
             held = hold_next_transcript(page)
             page.click('.tab[data-tab="transcript"]')
             route = wait_for_request(page, held)
@@ -1794,7 +1794,7 @@ def test_a_transcript_fetch_that_fails_keeps_what_is_held(page_at):
             wait_for_watching(daemon)
             before = page.evaluate("document.querySelectorAll('.turn').length")
             page.evaluate("state.turns.open = new Set([1])")
-            show_tab(page, "review")
+            show_tab(page, "files")
             page.route("**/transcript", lambda route: route.abort())
             page.click('.tab[data-tab="transcript"]')
             page.wait_for_timeout(300)             # the failed answer is in
@@ -1847,7 +1847,7 @@ def test_a_block_read_while_no_stream_was_open_is_fetched(page_at):
 
             # And when the stream says so while a fetch is on its way, the
             # fetch's older snapshot is not the last word.
-            show_tab(page, "review")
+            show_tab(page, "files")
             held = hold_next_transcript(page)
             page.click('.tab[data-tab="transcript"]')
             route = wait_for_request(page, held)
@@ -1969,7 +1969,7 @@ def test_a_fetch_older_than_a_pushed_reading_is_asked_again(page_at):
         try:
             wait_for_map(page)
             wait_for_watching(daemon)
-            show_tab(page, "review")
+            show_tab(page, "files")
             held = hold_next_transcript(page)
             page.click('.tab[data-tab="transcript"]')
             route = wait_for_request(page, held)
@@ -1993,7 +1993,7 @@ def test_a_fetch_older_than_a_pushed_reading_is_asked_again(page_at):
 
 
 def test_only_the_newest_transcript_fetch_lands(page_at):
-    """A quick Transcript-Review-Transcript put two fetches out. The push
+    """A quick Transcript-Files-Transcript put two fetches out. The push
     went into the second one's list; the first, answering last, put its
     older snapshot back without it -- and a text block is never pushed
     twice."""
@@ -2003,12 +2003,12 @@ def test_only_the_newest_transcript_fetch_lands(page_at):
         try:
             wait_for_map(page)
             wait_for_watching(daemon)
-            show_tab(page, "review")
+            show_tab(page, "files")
             held = hold_next_transcript(page, 2)
             page.click('.tab[data-tab="transcript"]')
             first = wait_for_request(page, held)
             older = first.fetch()
-            page.click('.tab[data-tab="review"]')
+            page.click('.tab[data-tab="files"]')
             page.click('.tab[data-tab="transcript"]')
             for _ in range(500):
                 if len(held) > 1:
@@ -2042,7 +2042,7 @@ def test_failing_fetches_keep_one_retry_not_one_each(page_at):
             page.route("**/transcript",
                        lambda route: (asked.append(1), route.abort()))
             for _ in range(4):
-                page.click('.tab[data-tab="review"]')
+                page.click('.tab[data-tab="files"]')
                 page.click('.tab[data-tab="transcript"]')
                 page.wait_for_timeout(100)
             before = len(asked)

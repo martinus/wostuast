@@ -13470,10 +13470,9 @@ function redrawCode() {
 
 // One comment, under the line or the file it is about.
 //
-// `full` is the Review tab, which shows a comment away from the code: there is
-// no line above it there, so it carries the quoted one itself, and it is the
-// only place a comment can be thrown away outright. Everywhere else the line
-// is right there and an empty save is the way to remove one.
+// `full` is a comment shown away from its line -- under "commented
+// elsewhere", where the line is no longer in the file -- so it carries the
+// quoted one itself. Every comment can be thrown away where it stands.
 function putComment(parent, one, full) {
   const node = put(parent, "div", "comment");
   // Which comment this is, so "in diff" can find the node it drew.
@@ -13556,10 +13555,11 @@ function reviewInOrder() {
   });
 }
 
-// The message the agent gets. It is a task, not a list of remarks: a heading,
-// what to do, what to hand back, and then one section per place with the line
-// quoted under it. The heading is fixed: a box for naming the task was one
-// the reader never filled, and asked to be rid of.
+// The message the agent gets. It is a task, not a list of remarks: the
+// reader's word on the whole review, what to hand back, and then one section
+// per place with the line quoted under it. It has no heading: a box for
+// naming the task was one the reader never filled, and "# Review" over the
+// rest was a line the reader asked to be rid of.
 //
 // The line number is a hint and says so. The file moves while the review is
 // being written, so the quoted line is the thing that is really being pointed
@@ -13745,7 +13745,10 @@ async function paintSlices(body, path, text) {
 function drawReviewBar() {
   const bar = $("reviewbar");
   const was = bar.hidden;
-  bar.hidden = state.tab !== "diff" || !anyReview();
+  // Kept while its box has the focus: emptying the one comment on the whole
+  // review is not leaving it, and the bar went with the caret still in it.
+  bar.hidden = state.tab !== "diff"
+    || (!anyReview() && document.activeElement !== $("overall"));
   if (bar.hidden) return;
   const over = $("overall");
   if (document.activeElement !== over) over.value = state.review.overall;

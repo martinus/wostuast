@@ -176,7 +176,7 @@ def test_a_question_belongs_to_the_transcript_and_no_other_tab(ws, in_pane):
         browser, page = open_page(play, (None, base))
         try:
             page.wait_for_selector("#asking:not([hidden]) .askopt")
-            for tab in ("files", "diff", "review"):
+            for tab in ("files", "diff"):
                 show_tab(page, tab)
                 assert page.locator("#asking .askopt").count() == 0, tab
                 assert page.locator("#asking:not([hidden])").count() == 0, tab
@@ -772,13 +772,13 @@ def test_enter_on_a_button_reached_by_keyboard_presses_it(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
         try:
-            page.focus(".tab[data-tab='review']")
+            page.focus(".tab[data-tab='diff']")
             page.keyboard.press("Shift+Tab")
             page.keyboard.press("Tab")
             assert page.evaluate(
-                "document.activeElement.matches('.tab[data-tab=review]')")
+                "document.activeElement.matches('.tab[data-tab=diff]')")
             page.keyboard.press("Enter")
-            page.wait_for_function("state.tab === 'review'")
+            page.wait_for_function("state.tab === 'diff'")
             page.wait_for_timeout(300)
             assert not [one for one in seen if "select-window" in one], seen
 
