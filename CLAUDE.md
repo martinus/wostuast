@@ -65,7 +65,7 @@ after the tests go red.
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
 | `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
-| `putComment`, `anchorOf`, a review comment | The review |
+| `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `drawReviewBar`, `reviewText` | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
 | a new test | **How to work here** — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |
@@ -80,8 +80,8 @@ after the tests go red.
 
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
 `wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
-SSE. The page shows a session list and four tabs: Transcript, Files, Diff,
-Review.
+SSE. The page shows a session list and three tabs: Transcript, Files, and
+Review, which is the diff with the review written on it (`data-tab="diff"`).
 Four things go back to the terminal, all through tmux: jump, send, the
 keys that answer a question, and a No to a permission dialog, which is an
 Escape and then a send. Nothing else writes to a
@@ -169,7 +169,7 @@ Page: asking the daemon · dragging an edge · the two fetched scripts · colour
 **the sidebar** · tab icon · notifications · **the transcript** · painting code ·
 **the Files tab** · finding a file · the tree · a file too long to draw whole ·
 how a file is drawn · **the Diff tab** · **the review** ·
-keeping a review · **the Review tab** · the tabs · talking to the
+keeping a review · **the review on the Review tab** · the tabs · talking to the
 daemon · keys.
 
 ## Before you write anything new
@@ -699,7 +699,7 @@ update the comment with its own text, and read it back.
   `test_a_no_waits_for_a_send_already_on_its_way`,
   `test_a_reason_half_written_survives_a_look_at_another_tab`.
 - **A control that cannot work is disabled where it stands, and says why.**
-  Everything on this page works with no tmux — the sidebar, all four tabs,
+  Everything on this page works with no tmux — the sidebar, all three tabs,
   alerts, the spend on the strip. The things that do not are the ones that
   type into a pane: jump, send, answering a question, a No and submitting a
   review. Jump (`#jump`) and the send box are simply absent for a session
@@ -1120,10 +1120,9 @@ update the comment with its own text, and read it back.
   next file opened wherever the last one had been read to. `same` is the other
   half of that: it is what refuses to carry the old place over.
 - **A tab's empty state is inset by whatever its body does not inset**, and
-  that is a wart, not a design. The Review tab's body has padding, the Files
-  tab's children have it, the Diff tab's body has none at all — a diff's rows
-  run to the edge — so `.diffscroll > .empty` brings its own. Three spellings of
-  one idea. One inset on `.empty` itself would be the mechanism; it is not
+  that is a wart, not a design. The Files tab's children have padding, the
+  Diff tab's body has none at all — a diff's rows run to the edge — so
+  `.diffscroll > .empty` brings its own. Two spellings of one idea. One inset on `.empty` itself would be the mechanism; it is not
   done because two of the five empty states sit in `.content` rather than in a
   `*body` and would move with it. When a fourth spelling is needed, do that
   instead of adding one. A margin, not a padding, either way: the block has to
@@ -1739,9 +1738,33 @@ update the comment with its own text, and read it back.
   taller than a row, and assuming otherwise landed the target off screen), a
   file drawn whole scrolls to the row, and a document is switched to its
   lines — it has no line 4 to go to otherwise.
-- **The Review tab is the only place a review is sent from**, and the message
-  stands above the send button, not editable. `drawReview` is the tab,
-  `reviewText` is the message, `blankReview` is an empty one.
+- **The review is written, read back and sent on one tab, the diff's, and
+  its label says Review.** A tab of its own held the message and the send
+  button, and later a card per file with the hunks that held a comment; the
+  reader used it only to press send, because the comments already stood in
+  the diff where they were written. So the diff tab took what it had
+  (`data-tab` is still `diff`, and so is the code):
+  - **The tree lists the comments** under the files (`putCommentList`), as
+    the transcript's map lists rounds: the note's first line and its
+    `path:line`, and a click goes to it (`goToComment`). `delete review`
+    stands on the heading and takes two presses.
+  - **Every comment is somewhere on the tab** (`putElsewhere`): one the diff
+    does not draw -- written on the Files tab, on a file or a line no hunk
+    holds, or on another commit than the one picked -- stands under
+    "commented elsewhere" at the foot, with the lines round it read from
+    disk (`readElsewhere`, `state.reviewFiles`, forgotten with each new
+    diff). The message sends every comment, and a comment it sends that the
+    reader cannot see on the tab is a comment sent unread.
+  - **The send bar is the only place a review is sent from** (`#reviewbar`,
+    `drawReviewBar`), pinned under the pane like the transcript's and shown
+    only on this tab and only while there is a review. On top a comment on
+    the whole review, typed (`state.review.overall`); under it the message
+    as it goes after that comment, `reviewText(…, false)`, in a box that
+    cannot be edited -- a comment is edited where it stands; and **Send**.
+    The message is in view beside the button, which is what "the preview
+    cannot be skipped" means now. `reviewText` is the message and has no
+    heading: the reader asked for "# Review" to go, and the box for naming
+    a task went before it, never filled. `blankReview` is an empty one.
 - **A removed diff line gets no `+`.** It has no line in the file as it is, so
   there is nowhere for the comment to be drawn and nowhere to put it back. The
   anchor used to carry a side for this, and a comment on a removed line could
@@ -1752,12 +1775,18 @@ update the comment with its own text, and read it back.
   from HEAD to disk — by `inWorktree`, and a line that is no longer on disk
   gets no `+`, like a removed one. Anchoring to HEAD's number was wrong at the
   moment of writing, not because the file moved afterwards.
-- **One comment, drawn one way.** `putComment` builds it everywhere; the
-  Review tab passes `full`, which adds the quoted line — there is no code
-  above it there — and the delete button, which only that tab offers. The
-  Review tab used to reach into the node it got back and append both, so the
-  two drifted. Its buttons go in `.acts`, at the right edge, out of the note's
-  way; the comment box's own go under the field, at the same edge.
+- **One comment, drawn one way.** `putComment` builds it everywhere: a
+  person icon, the note in the prose face, and edit and delete in `.acts` at
+  the right, faint until the pointer is on it, on a faint tint of the
+  reader's colour. It had a blue bar down its left and a box round it, and
+  the reader called it ugly and chose this from pictures. `full` adds the
+  quoted line, for a comment whose line is not drawn above it. The Review
+  tab used to reach into the node it got back and append its own buttons,
+  so the two drifted. **The note is `.note`, which is also the page's quiet
+  line in a pane**, mono and padded: `.comment .note` takes both back, or
+  the reader's words stand in the code's face. **The icon has no size of its
+  own**: `.comment .icon` gives it 14 px, and a picture without that rule
+  showed a person the height of the comment.
 - **One anchor, one comment box.** A file in both sections shows the same line
   twice. Two boxes meant the later `focus()` took the keystrokes to a box off
   screen, and saving the visible one passed an empty note — which means
@@ -2169,7 +2198,7 @@ update the comment with its own text, and read it back.
   the page had just been opened on.
 - **Ctrl+Enter presses the button of the box it is typed in**, in every box
   that keeps or sends something: the send box, a review comment, the reason
-  for a No, and the Review tab's two boxes. The comment box had Escape and
+  for a No, and the comment on the whole review in the review's send bar. The comment box had Escape and
   nothing else, and the send box left Ctrl out on purpose, so the key the
   reader used everywhere did nothing in either. `submitOnCtrlEnter` clicks
   the button and does nothing more, so whatever the button checks is

@@ -112,7 +112,7 @@ flowchart LR
 ## Install
 
 **You need:** Python 3.10 or newer, Claude Code, and tmux. git makes the Files
-and Diff tabs work. No `pip install`, no build step, no config file.
+and Review tabs work. No `pip install`, no build step, no config file.
 
 **1. Install.** This copies one file to `~/.local/bin/wostuast` and adds its
 hooks to `~/.claude/settings.json`. It changes nothing else in that file.
@@ -160,15 +160,14 @@ rm -r ~/.local/state/wostuast    # removes the history too, if you want that
 
 ## The page
 
-The page shows one session at a time, in four tabs. Each session remembers
+The page shows one session at a time, in three tabs. Each session remembers
 where you left it: the tab, the open file, and your place in it.
 
 | Tab | What it shows |
 | --- | --- |
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
-| **Diff** | What changed, file by file, in one column or side by side. |
-| **Review** | The comments you wrote, as one message to send. |
+| **Review** | What changed, file by file, with your comments on it and the bar to send them. |
 
 <details>
 <summary><b>More about each tab</b></summary>
@@ -186,8 +185,8 @@ too. One that opens a menu, such as `/model` alone, opens it in the terminal:
 press <kbd>Enter</kbd> to jump there and pick.
 
 An edit shows how many lines it added and removed. Click it to see the change
-under it, drawn as the Diff tab draws it, with the line numbers the file had at
-that moment. A long change shows its first lines; the Diff tab has all of it.
+under it, drawn as the Review tab draws it, with the line numbers the file had at
+that moment. A long change shows its first lines; the Review tab has all of it.
 
 #### Files
 
@@ -196,7 +195,7 @@ by typing scattered letters of its name: `mbldr` finds `MetricBuilder.h`. An
 ignored directory that an agent generated files into is in the tree too. A
 folder with thousands of files in it is one row that says it is not listed.
 
-#### Diff
+#### Review
 
 Changed files as a tree, and each file's diff in colour, with the changed
 words marked.
@@ -218,10 +217,20 @@ words marked.
 - **Untracked files** are listed on their own, because git has no diff for
   them.
 
-#### Review
+#### Your review
 
-The comments you wrote, collected into one message. You read the whole message
-before it goes to the agent. Nothing in it can be edited on the way.
+- **Comment** with the `+` beside a line, in this tab or in Files. Each
+  comment has **edit** and **delete**.
+- **The tree lists your comments** under the changed files. Click one to go
+  to it.
+- **Commented elsewhere:** a comment on a line this diff does not show
+  stands at the end, with the lines around it.
+- **The send bar** at the bottom shows while you have a review. Write a
+  comment on the whole review in its top box. Under it stands the review
+  exactly as the agent will get it, which you cannot edit there. Press
+  **Send** to type it into the agent's pane.
+- **delete review**, beside the comments in the tree, throws the whole review
+  away on the second press.
 
 </details>
 
@@ -252,8 +261,8 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>f</kbd> | Filter the session list |
 | <kbd>e</kbd> | Rename the chosen session (or double-click its name) |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
-| <kbd>r</kbd> | Open the review you wrote |
-| <kbd>1</kbd> – <kbd>4</kbd> | Transcript, Files, Diff, Review |
+| <kbd>r</kbd> | Open the review |
+| <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
 | <kbd>s</kbd> | Type into the agent's terminal |
