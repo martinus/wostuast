@@ -7798,7 +7798,7 @@ body:not(.show-thinking) .thinking { display: none; }
 .media audio { width: 100%; max-width: 420px; }
 /* The Diff tab's body has no padding of its own -- a diff's rows run to the
    edge -- so its empty state has to bring its own inset, or it sits against
-   the left edge while the Review tab's sits properly in from it. A margin
+   the left edge while the Files tab's sits properly in from it. A margin
    and not a padding: it is the block that has to move, and a padded box
    still starts at the edge. */
 .diffscroll > .empty { margin: 16px 20px; }
@@ -7836,9 +7836,8 @@ body:not(.show-thinking) .thinking { display: none; }
 .diffbar .sides .verb[aria-pressed="true"] {
   background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
 }
-/* The small label look: the path above a file, and the names of the two
-   boxes at the top of a review. */
-.filebody .where, .fieldname {
+/* The small label look: the path above a file. */
+.filebody .where {
   font-family: var(--narrow); font-size: 12px; letter-spacing: .04em;
   color: var(--ink-faint);
 }
@@ -8025,7 +8024,7 @@ body:not(.show-thinking) .thinking { display: none; }
 .onLine, .onFile { position: sticky; left: 0; white-space: normal; max-width: 680px; }
 /* A comment is one light line of the reader's own: who wrote it, the note,
    and what can be done to it, side by side. It had a blue bar down its left
-   and a box round it, and in the Review tab a box round that; the reader
+   and a box round it, and on the old Review tab a box round that; the reader
    called it ugly, and chose this from pictures. The tint is the reader's
    colour, faint, as their prompts are in the transcript. */
 .comment {
@@ -8040,17 +8039,15 @@ body:not(.show-thinking) .thinking { display: none; }
   stroke: var(--mine); stroke-width: 1.2; stroke-linejoin: round;
 }
 .comment .words { flex-grow: 1; min-width: 0; }
-.comment .note { white-space: pre-wrap; line-height: 1.5; }
-/* `.note` is also the page's quiet line in a pane, in the fixed face and
-   padded, and a comment's note wore all of it: the reader's words stood in
-   the code's face with 14 px round them. */
-.comment .note { padding: 0; font-family: var(--sans); font-size: 14px; color: var(--ink); }
+/* Not `.note`: that is the page's quiet line in a pane, in the fixed face
+   and padded, and a comment's words wore all of it -- the reader's words
+   stood in the code's face with 14 px round them. */
+.comment .says { white-space: pre-wrap; line-height: 1.5; }
 /* What you can do to a comment, at the far end of it. The note is what you
    came to read; the buttons are not, so they are faint until the pointer is
    on the comment. */
 .acts { display: flex; gap: 8px; flex-shrink: 0; opacity: .55; }
 .comment:hover .acts, .acts:focus-within { opacity: 1; }
-.fieldname { display: block; margin-bottom: 4px; }
 /* The send bar of the Review tab: a comment on the whole review, typed, and
    under it the review as the agent gets it after that comment, which cannot
    be edited here -- a comment is edited where it stands. It is the
@@ -9369,8 +9366,8 @@ function paintPicks(box, ask) {
   // Reading the question is worth having wherever the session runs -- it is
   // the one thing this page exists to tell you. *Answering* it is keystrokes
   // into a tmux pane, and a session outside tmux has none, so the button is
-  // refused rather than left to fail on the press. The Review tab's submit
-  // has said this for as long as it has existed; this bar did not, and
+  // refused rather than left to fail on the press. The review's send has
+  // said this for as long as it has existed; this bar did not, and
   // offered "presses 1" to a terminal that could never be typed into.
   const s = current();
   const canType = !!(s && s.pane);
@@ -11624,14 +11621,10 @@ function drawFiles(box) {
       : "reading…");
     return;
   }
-  // Where the reader will be. A line that was asked for wins over the place
-  // they were in: they asked to be somewhere else.
-  const wanted = state.files.goToLine;
-  state.files.goToLine = 0;
   // Where the reader is in this file, whether they scrolled there a moment
   // ago or left it on their last visit to this session. `forgetFile` puts it
   // back to nought, which is what makes a different file open at its top.
-  const place = wanted ? 0 : state.files.down;
+  const place = state.files.down;
   const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
   // Split once. The header wants to know how long the file is and so does the
   // body, and two copies of that arithmetic are two copies that can drift —
@@ -11694,7 +11687,7 @@ function drawFiles(box) {
       // Where the reader will be once `place` is put back, not where an
       // emptied pane says they are: the rows have to be there before the
       // scrollbar can reach them.
-      fillCode(view, wanted ? lineTop(view, code, wanted) : place);
+      fillCode(view, place);
     } else {
       fillDiffFile(code, asLines(state.files.path, rows));
       paintLines(code, state.files.path, body, state.files.lang);
@@ -11704,8 +11697,7 @@ function drawFiles(box) {
   // `view` is built with the file, so a different file already starts at
   // nought -- the pane used to be the scroller, it outlived the file in it,
   // and a `replaceChildren` does not reliably put its bar back.
-  if (wanted) requestAnimationFrame(() => showLine(view, wanted));
-  else requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
     // A place waits for the file to be there. The first draw after a session
     // is chosen has no text yet, and setting the bar against nothing would
     // scroll to nought and then be written back as the place.
@@ -11755,31 +11747,6 @@ function putMedia(parent, path, found) {
   box.appendChild(node);
 }
 
-// How far down the pane a line stands. Only a windowed file can answer before
-// it is drawn, because only there is a row's height a fixed number.
-function lineTop(pane, code, line) {
-  const from = code.offsetTop - pane.offsetTop;
-  // Not `(line - 1) * CODE_H`: a commented line is taller than a row, and
-  // `fillCode` lays the file out knowing that. With fifteen comments above it
-  // the target landed 1600 px below a 760 px pane — off screen, in a jump
-  // whose whole point is to put it on screen. `heightOf` is that layout.
-  const above = heightOf(tallLines(code), line - 1);
-  return Math.max(0, from + above - CODE_H * 3);
-}
-
-// Put a line on screen, whichever way the file is drawn. A windowed file is
-// arithmetic; a file drawn whole has the row itself to scroll to.
-function showLine(pane, line) {
-  const code = pane.querySelector(".code");
-  if (!code) return;
-  if (code.classList.contains("windowed")) {
-    pane.scrollTop = lineTop(pane, code, line);
-    fillCode(pane);
-    return;
-  }
-  const row = code.querySelectorAll(".dline")[line - 1];
-  if (row) row.scrollIntoView({ block: "center" });
-}
 
 
 // An empty Files tab. One place, so that choosing a session, choosing a file
@@ -11860,7 +11827,6 @@ function blankFiles() {
     // usually wants to review the next one too.
     asText: false,
     goTo: null,         // a path the list has been asked to move to
-    goToLine: 0,        // and the line in it the body should show, if any
     // How far down the open file the reader was, kept across a tab switch
     // and across a visit to another session. Put back once, when there is
     // something under the scrollbar to put it back into.
@@ -12005,16 +11971,12 @@ function putAbout(where, rows, windowed) {
 // Open the tree down to a path, and ask the list to move to it. A filter hides
 // most of the tree, and revealing something the filter has taken out would
 // show nothing at all, so the box is cleared first.
-function revealInTree(path, line = 0) {
+function revealInTree(path) {
   for (const above of ancestors(path)) state.files.dirs.set(above, true);
   state.files.dirs.set(path, true);   // a directory opens itself; a file has
                                       // no entry, and setting one is harmless
   state.files.goTo = path;
   state.files.at = path;              // and the list marks where you landed
-  state.files.goToLine = line;
-  // A document has no line to go to, so being asked for one is being asked
-  // for the lines it is written in.
-  if (line && MARKDOWN.test(path)) state.files.asText = true;
   if (state.find) {
     $("find").value = "";
     state.find = "";
@@ -12333,7 +12295,7 @@ function treeOrder(found, pathOf) {
 // file is three rows of nothing. Folders stand open unless the reader shut
 // one, and all of them stand open while the find box has a query in it: a
 // match inside a shut folder is a match nobody sees.
-function putDiffTree(list, section, found, pathOf, fill, again) {
+function putDiffTree(list, section, found, pathOf, fill) {
   const root = { dirs: new Map(), files: [] };
   for (const hit of found) {
     let at = root;
@@ -12361,7 +12323,7 @@ function putDiffTree(list, section, found, pathOf, fill, again) {
       row.addEventListener("click", () => {
         if (state.diffShut.has(key)) state.diffShut.delete(key);
         else state.diffShut.add(key);
-        again();
+        drawDiffList(list);           // from the last draw's `diffShown`
       });
       if (open) walk(one, full, depth + 1);
     }
@@ -12418,14 +12380,14 @@ function drawDiffList(list, shown = list.shown) {
       }
       putCounts(put(row, "span", "counts"), one);
       row.addEventListener("click", () => goToDiffFile(row.dataset.key));
-    }, () => drawDiffList(list));     // from the last draw's `diffShown`
+    });
   }
   if (shown.loose.length) {
     put(list, "div", "head", "untracked");
     putDiffTree(list, "untracked", shown.loose, (hit) => hit.one, (row, hit) => {
       row.classList.add("untracked");
       row.addEventListener("click", () => chooseUntracked(hit.one));
-    }, () => drawDiffList(list));
+    });
   }
   putCommentList(list);
   list.scrollTop = top;
@@ -12564,7 +12526,6 @@ function drawDiff(box) {
     put(scroll, "div", "note", "This diff is long, so the rest is left out.");
   }
   drawDiffList(list);
-  drawReviewBar();
   // Picking a file moves the pane to it; anything else leaves the reader
   // where they were. Restoring the old place whatever happened is what made a
   // click on an untracked name look like it had done nothing: the block was
@@ -12581,7 +12542,7 @@ function drawDiff(box) {
   } else if (place) {
     requestAnimationFrame(() => { scroll.scrollTop = place; });
   }
-  putElsewhere(scroll);
+  putElsewhere(scroll, report);
   note.replaceChildren();
   countNote(note, shown + loose.length);
   drawDiffCount();
@@ -13480,7 +13441,7 @@ function putComment(parent, one, full) {
   putIcon(node, "person");
   const words = put(node, "div", "words");
   if (full && one.quoted) put(words, "div", "quoted", one.quoted);
-  put(words, "div", "note", one.note);
+  put(words, "div", "says", one.note);
   const acts = put(node, "div", "acts");
   const edit = put(acts, "button", "verb quiet", "edit");
   edit.type = "button";
@@ -13574,11 +13535,11 @@ const REVIEW_HOW = [
   + " comment is not clear, ask me before you change anything.",
 ];
 
-function reviewText(comments = reviewInOrder(), withOverall = true) {
+function reviewText(withOverall = true) {
   const parts = [];
   if (withOverall && state.review.overall.trim()) parts.push(state.review.overall.trim());
   parts.push(...REVIEW_HOW);
-  for (const one of comments) {
+  for (const one of reviewInOrder()) {
     parts.push("## " + placeOf(one.anchor));
     if (one.quoted) parts.push("> " + one.quoted);
     parts.push(one.note);
@@ -13604,12 +13565,13 @@ function putCommentList(list) {
   put(head, "span", null, "comments");
   putDropReview(head);
   const found = hits(reviewInOrder(), (one) => one.anchor.split("\n")[0]);
+  // Found by the path, which is the `where` under the note: the letters of
+  // the note are not what matched, so none are picked out.
   for (const { one } of found) {
-    const [path, line] = one.anchor.split("\n");
     const row = putListRow(list, { depth: 0, title: one.note, icon: "person" });
     row.classList.add("said");
     putName(row, glimpse(one.note), []);
-    put(row, "span", "where", Number(line) ? path + ":" + line : path);
+    put(row, "span", "where", placeOf(one.anchor));
     row.addEventListener("click", () => goToComment(one.anchor));
   }
 }
@@ -13634,50 +13596,98 @@ function putDropReview(parent) {
   });
 }
 
-// A comment in the pane, or the file it is on when the line is not drawn --
-// a file shut for its size -- and nothing when the file is not there either.
+// A comment in the pane. One on a file shut for its size, or by hand, is in
+// the diff and not drawn, so the file is opened first; one being edited is
+// its box. A file the find box has taken out is not in the pane at all, and
+// its comment is not in the list either.
 function goToComment(anchor) {
   const scroll = document.querySelector(".diffscroll");
   if (!scroll) return;
-  const path = anchor.split("\n")[0];
-  const at = [...scroll.querySelectorAll(".comment")].find(
-    (one) => one.dataset.anchor === anchor)
-    || [...(scroll.blocks || [])].find(([key]) => key.endsWith("\n" + path))?.[1];
+  const find = () => state.writing === anchor
+    ? scroll.querySelector(".commentbox")
+    : scroll.querySelector('.comment[data-anchor="' + CSS.escape(anchor) + '"]');
+  let at = find();
+  if (!at) {
+    const path = anchor.split("\n")[0];
+    const keys = [...(scroll.blocks || new Map()).keys()].filter(
+      (key) => key.endsWith("\n" + path) && !key.startsWith("untracked\n"));
+    if (!keys.length) return;
+    for (const key of keys) state.diffOpen.set(state.diffOf + "\n" + key, true);
+    state.diffAt += 1;
+    draw();
+    at = find() || scroll.blocks.get(keys[0]);
+  }
   if (at) at.scrollIntoView({ block: "center" });
 }
 
-// The comments nothing above drew: on a file the diff does not show, or on a
+// The places the diff draws a comment on, worked out from the diff and never
+// asked of the pane. The pane leaves out more than the diff does: a comment
+// being written is a box with no anchor on it, a file shut for its size has
+// no lines drawn, and the find box takes files out. Asked of the pane, each
+// of those moved a comment to "commented elsewhere" -- and one being edited
+// stood there a second time, beside its own box.
+function diffAnchors(report) {
+  const anchors = new Set();
+  for (const section of report.sections) {
+    for (const one of section.files || []) {
+      anchors.add(anchorOf(one.path, 0));
+      walkHunks(withMore(one, section.name), null, (line, old, now) => {
+        const anchor = lineAnchor(one.path, line,
+                                  section.at_commit ? inWorktree(one.path, now) : now);
+        if (anchor) anchors.add(anchor);
+      });
+    }
+  }
+  // The untracked file picked is drawn whole, once it is read.
+  if (state.loose && typeof state.looseText === "string" && !state.looseBinary) {
+    anchors.add(anchorOf(state.loose, 0));
+    const count = linesOf(state.looseText.replace(/\n$/, "")).length;
+    for (let line = 1; line <= count; line += 1) {
+      anchors.add(anchorOf(state.loose, line));
+    }
+  }
+  return anchors;
+}
+
+// The comments the diff does not draw: on a file it does not show, or on a
 // line of one it does not reach -- a comment written on the Files tab, or
 // one on a commit other than the one picked. The message sends every
-// comment, so every comment has to be somewhere on this tab. Each file stands
-// with its lines round each comment, as the file is on disk, which is what a
-// comment's line counts; until those are read, or where a line is no longer
-// there, the comment stands with the line it quoted.
-function putElsewhere(scroll) {
-  const drawn = new Set([...scroll.querySelectorAll(".comment")].map(
-    (one) => one.dataset.anchor));
+// comment, so every comment has to be somewhere on this tab. They stand in a
+// box of their own at the foot of the pane, so that the lines arriving fill
+// that box again and not the whole diff.
+function putElsewhere(scroll, report) {
+  const holder = put(scroll, "div", "offdiff");
+  holder.drawn = diffAnchors(report);
+  fillElsewhere(holder);
+}
+
+// Each file stands with its lines round each comment, as the file is on
+// disk, which is what a comment's line counts; until those are read, or
+// where a line is no longer there, the comment stands with the line it
+// quoted.
+function fillElsewhere(holder) {
+  holder.replaceChildren();
   const byPath = new Map();
   for (const one of reviewInOrder()) {
-    if (drawn.has(one.anchor)) continue;
+    if (holder.drawn.has(one.anchor)) continue;
     const path = one.anchor.split("\n")[0];
     if (!byPath.has(path)) byPath.set(path, []);
     byPath.get(path).push(one);
   }
   if (!byPath.size) return;
-  const head = put(scroll, "div", "diffhead elsewhere", "commented elsewhere");
+  const head = put(holder, "div", "diffhead elsewhere", "commented elsewhere");
   put(head, "span", "about", "comments on lines this diff does not show");
   const want = [];
   for (const [path, comments] of byPath) {
-    const node = put(scroll, "div", "dfile");
+    const node = put(holder, "div", "dfile");
     const name = put(node, "div", "name");
     put(name, "span", "what", "file");
     put(name, "span", "path", path);
     const body = put(node, "div", "dbody");
     const read = state.reviewFiles.get(path);
     if (!read) want.push(path);
-    const text = read && typeof read.text === "string"
-      ? read.text.replace(/\n$/, "") : null;
-    const lines = text === null ? [] : linesOf(text);
+    const lines = read && typeof read.text === "string"
+      ? linesOf(read.text.replace(/\n$/, "")) : [];
     const runs = [];
     const loose = [];
     for (const one of comments) {
@@ -13693,11 +13703,9 @@ function putElsewhere(scroll) {
     }
     runs.sort((a, b) => a[0] - b[0]);
     if (runs.length) {
-      fillDiffFile(body, { path, hunks: runs.map(([from, to]) => ({
-        header: "", from,
-        lines: lines.slice(from - 1, to).map((one) => ({ kind: "plain", text: one })),
-      })) });
-      paintSlices(body, path, text);
+      fillDiffFile(body, { path, hunks: runs.map(([from, to]) =>
+        asLines(path, lines.slice(from - 1, to), from).hunks[0]) });
+      paintSlices(body, path, read, lines);
     }
     for (const one of loose) {
       putReview(put(body, "div", Number(one.anchor.split("\n")[1]) ? "onLine" : "onFile"),
@@ -13707,35 +13715,58 @@ function putElsewhere(scroll) {
   if (want.length) readElsewhere(want);
 }
 
-// The lines of the files `putElsewhere` shows, read once for each answer the
-// diff gets; the pane is drawn again when they come.
+// The lines of the files `fillElsewhere` shows. An answer is kept until the
+// diff lists the file, which is when it may have changed (`forgetChanged`);
+// a read that failed is not kept, so the next draw asks again, and only an
+// answer that came fills the box again. The map is taken before the wait: a
+// new session has a new one, and an answer for the old is not written in it.
 async function readElsewhere(paths) {
   const id = state.chosen;
-  for (const path of paths) state.reviewFiles.set(path, { asking: true });
+  const files = state.reviewFiles;
+  for (const path of paths) files.set(path, { asking: true });
   const answers = await Promise.all(paths.map(
     (path) => ask(id, "file", "?path=" + encodeURIComponent(path))));
-  if (state.chosen !== id) return;
-  paths.forEach((path, at) => state.reviewFiles.set(path, answers[at] || {}));
-  state.diffAt += 1;
-  if (state.tab === "diff") draw();
+  let came = false;
+  paths.forEach((path, at) => {
+    if (answers[at]) { files.set(path, answers[at]); came = true; }
+    else files.delete(path);
+  });
+  const holder = document.querySelector(".diffscroll > .offdiff");
+  if (came && files === state.reviewFiles && state.chosen === id && holder) {
+    fillElsewhere(holder);
+  }
+}
+
+// A file the diff lists is one that changed, so what was read of it may be
+// out of date. The others cannot have moved without the diff listing them,
+// and a poll that forgot them all read every one again every five seconds.
+function forgetChanged(report) {
+  const listed = new Set(report.untracked || []);
+  for (const section of report.sections) {
+    for (const one of section.files || []) listed.add(one.path);
+  }
+  for (const one of report.since || []) listed.add(one.path);
+  for (const path of listed) state.reviewFiles.delete(path);
 }
 
 // Colour for the lines of a file shown in part. The whole file is painted,
 // because a comment or a string that began above the part colours what is in
-// it, and each row takes its own line.
-async function paintSlices(body, path, text) {
+// it -- once for each time it is read, not on every draw -- and each row
+// takes a copy of its own line.
+async function paintSlices(body, path, read, lines) {
   const lib = await hljsReady();
   if (!lib || !body.isConnected) return;
-  const language = languageOf(path, text, null);
-  if (!language || !lib.getLanguage(language)) return;
-  const count = linesOf(text).length;
-  if (count > CODE_WHOLE) return;
-  const lines = paintedLines(lib, language, text, count);
-  if (!lines) return;
+  if (read.painted === undefined) {
+    const language = languageOf(path, read.text, read.language || null);
+    read.painted = language && lib.getLanguage(language) && lines.length <= CODE_WHOLE
+      ? paintedLines(lib, language, lines.join("\n"), lines.length) : null;
+  }
+  if (!read.painted) return;
   for (const row of body.querySelectorAll(".dline")) {
     const at = Number(row.querySelector(".ln").textContent);
     const cell = row.querySelector(".dtext");
-    if (at && lines[at - 1] && cell) cell.replaceChildren(lines[at - 1]);
+    const line = read.painted[at - 1];
+    if (line && cell) cell.replaceChildren(line.cloneNode(true));
   }
 }
 
@@ -13753,7 +13784,7 @@ function drawReviewBar() {
   const over = $("overall");
   if (document.activeElement !== over) over.value = state.review.overall;
   const said = $("reviewsay");
-  const text = reviewText(reviewInOrder(), false).trimEnd();
+  const text = reviewText(false).trimEnd();
   const moved = said.value !== text;
   if (moved) said.value = text;
   const s = current();
@@ -13764,22 +13795,13 @@ function drawReviewBar() {
   const send = $("sendreview");
   send.disabled = !!why;
   send.title = why || "type the whole review into the agent's pane";
-  if (was || moved) fitReviewBar();
-}
-
-// Both boxes as tall as what is in them: the comment grows as it is typed,
-// and the review up to its limit, after which it scrolls.
-function fitReviewBar() {
-  for (const box of [$("overall"), $("reviewsay")]) {
-    box.style.height = "auto";
-    box.style.height = (box.scrollHeight + 2) + "px";
-  }
+  if (was || moved) { fitSay($("overall")); fitSay($("reviewsay")); }
 }
 
 $("overall").addEventListener("input", () => {
   state.review.overall = $("overall").value;
   keepReview();
-  fitReviewBar();
+  fitSay($("overall"));
 });
 $("overall").addEventListener("keydown", (press) => {
   if (press.key === "Escape") $("overall").blur();
@@ -14082,8 +14104,7 @@ async function ask(id, what, query, raw) {
 async function load() {
   if (!state.chosen) { draw(); return; }
   try {
-    const fetcher = TABS[state.tab].load;
-    if (fetcher) await fetcher(); else draw();
+    await TABS[state.tab].load();
   } finally {
     repoll();
   }
@@ -14294,7 +14315,7 @@ async function loadDiff() {
     }
     state.diffRaw = raw;
     state.diff = body;
-    state.reviewFiles = new Map();
+    forgetChanged(body);
     state.diffAt += 1;
   }
   draw();
@@ -14578,14 +14599,16 @@ $("sendbar").addEventListener("submit", (press) => {
 // in it — up to the height the stylesheet allows, after which it scrolls.
 // Height has to go back to nothing first, or a box that has grown can never
 // shrink again: scrollHeight would only ever report the height it already has.
-function fitSay() {
-  const box = $("say");
-  if ($("sendbar").hidden) return;   // a box nobody can see measures nothing
+// It leaves the border out, and every box is `border-box`, so the 2 px of
+// border are added back or the last line scrolls. The review's two boxes are
+// sized here too.
+function fitSay(box = $("say")) {
+  if (box.closest("form").hidden) return;  // a box nobody can see measures nothing
   box.style.height = "auto";
-  box.style.height = box.scrollHeight + "px";
+  box.style.height = (box.scrollHeight + 2) + "px";
 }
 
-$("say").addEventListener("input", fitSay);
+$("say").addEventListener("input", () => fitSay());
 $("say").addEventListener("keydown", (press) => {
   if (press.key === "Escape") {
     $("say").blur();

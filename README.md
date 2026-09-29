@@ -350,7 +350,7 @@ The page can type into a terminal, so it is careful about who may use it.
 <details>
 <summary><b>Does it work without tmux?</b></summary>
 
-Reading works: the session list, all four tabs, and alerts. The things that
+Reading works: the session list, all three tabs, and alerts. The things that
 type into a pane (jump, send, answer, no) need tmux. Those controls are
 off for a session with no pane, and the page says why.
 

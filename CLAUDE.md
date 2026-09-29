@@ -65,7 +65,7 @@ after the tests go red.
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
 | `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
-| `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `drawReviewBar`, `reviewText` | The review |
+| `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `drawReviewBar`, `reviewText` | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
 | a new test | **How to work here** — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |
@@ -1562,8 +1562,7 @@ update the comment with its own text, and read it back.
   it is said** (`state.files.read`, `state.files.trouble`): a refused first
   read drew the header over an empty body, which is a file with nothing in
   it, for as long as the refusal lasted, and a fetch that failed drew
-  nothing, so the file before stood under the name just picked. The line a
-  goTo asked for is kept until the text comes.
+  nothing, so the file before stood under the name just picked.
   `test_a_first_read_that_failed_says_so_and_is_not_the_file`,
   `test_a_listing_git_failed_on_keeps_the_open_file`,
   `test_a_file_read_git_failed_on_is_not_drawn_as_its_text`; `reload_git` puts a failed directory back on the
@@ -1732,12 +1731,6 @@ update the comment with its own text, and read it back.
   the reader had written them, so a note on a file the agent never touched
   went out saying "this line is no longer in the diff". The message tells the
   agent to search for the quoted line instead.
-- **A goTo is a place, not a path.** `state.files.goTo` moves the list to a
-  file and `state.files.goToLine` moves the body to a line in it. A windowed
-  file is arithmetic (`lineTop`, through `heightOf` — a commented line is
-  taller than a row, and assuming otherwise landed the target off screen), a
-  file drawn whole scrolls to the row, and a document is switched to its
-  lines — it has no line 4 to go to otherwise.
 - **The review is written, read back and sent on one tab, the diff's, and
   its label says Review.** A tab of its own held the message and the send
   button, and later a card per file with the hunks that held a comment; the
@@ -1746,20 +1739,35 @@ update the comment with its own text, and read it back.
   (`data-tab` is still `diff`, and so is the code):
   - **The tree lists the comments** under the files (`putCommentList`), as
     the transcript's map lists rounds: the note's first line and its
-    `path:line`, and a click goes to it (`goToComment`). `delete review`
-    stands on the heading and takes two presses.
+    `path:line`, and a click goes to it (`goToComment`), opening its file
+    first when it is shut. `delete review` stands on the heading and takes
+    two presses. A comment is gone to here and never on the Files tab: the
+    jump to a line there (`goToLine`, `lineTop`, `showLine`) went with the
+    old tab, and nothing else asked for a line.
   - **Every comment is somewhere on the tab** (`putElsewhere`): one the diff
     does not draw -- written on the Files tab, on a file or a line no hunk
     holds, or on another commit than the one picked -- stands under
     "commented elsewhere" at the foot, with the lines round it read from
-    disk (`readElsewhere`, `state.reviewFiles`, forgotten with each new
-    diff). The message sends every comment, and a comment it sends that the
+    disk. The message sends every comment, and a comment it sends that the
     reader cannot see on the tab is a comment sent unread.
+    - **What the diff draws is worked out from the diff, never asked of the
+      pane** (`diffAnchors`). The pane leaves out more: a comment being
+      edited is a box with no anchor, a shut file draws no lines, and the
+      find box takes files out. Asked of the pane, each moved a comment to
+      "elsewhere", and one being edited stood there beside its own box.
+    - **The lines are read once, and only a changed file is read again.**
+      `state.reviewFiles` is forgotten per file the new diff lists
+      (`forgetChanged`) -- a file it does not list cannot have moved --
+      and a read that failed is not kept. The lines arriving fill the
+      section's own box (`.offdiff`, `fillElsewhere`), not the whole diff,
+      and `paintSlices` paints a file once per read. Forgetting every
+      file on every diff redrew the whole pane twice a poll while an
+      agent worked, and the section jumped under the reader.
   - **The send bar is the only place a review is sent from** (`#reviewbar`,
     `drawReviewBar`), pinned under the pane like the transcript's and shown
     only on this tab and only while there is a review. On top a comment on
     the whole review, typed (`state.review.overall`); under it the message
-    as it goes after that comment, `reviewText(…, false)`, in a box that
+    as it goes after that comment, `reviewText(false)`, in a box that
     cannot be edited -- a comment is edited where it stands; and **Send**.
     The message is in view beside the button, which is what "the preview
     cannot be skipped" means now. `reviewText` is the message and has no
@@ -1782,9 +1790,9 @@ update the comment with its own text, and read it back.
   the reader called it ugly and chose this from pictures. `full` adds the
   quoted line, for a comment whose line is not drawn above it. The Review
   tab used to reach into the node it got back and append its own buttons,
-  so the two drifted. **The note is `.note`, which is also the page's quiet
-  line in a pane**, mono and padded: `.comment .note` takes both back, or
-  the reader's words stand in the code's face. **The icon has no size of its
+  so the two drifted. **The words are `.says`, not `.note`**: `.note` is
+  the page's quiet line in a pane, mono and padded, and the reader's words
+  stood in the code's face. **The icon has no size of its
   own**: `.comment .icon` gives it 14 px, and a picture without that rule
   showed a person the height of the comment.
 - **One anchor, one comment box.** A file in both sections shows the same line
@@ -1813,10 +1821,13 @@ update the comment with its own text, and read it back.
   reader used it for one thing: jump. Jump is an icon at the end of the tab
   row (`#jump`, `ICONS.terminal`), beside the model and the context bar; the
   name is changed on the row; the rest went. `drawHeader` is the send box,
-  the question bar, the context strip and jump, and nothing else.
-- **A tab that fetches nothing says `load: null`**, and the shared `load()`
-  draws for it. A tab switch goes through `load`, not `draw`, so an empty
-  loader left the page showing the tab before.
+  the review's send bar, the question bar, the context strip and jump, and
+  nothing else.
+- **Every tab has a loader, and a tab switch goes through it**, not through
+  `draw`. A tab that fetched nothing once said `load: null` and `load()`
+  drew for it, because an empty loader left the page showing the tab
+  before. That tab went; a new one that fetches nothing gives a loader
+  that draws.
 - **The diff does not rebuild while a comment box is open.** It would take what
   is being typed with it, and move the code the comment is about.
 - **The draft lives in the browser.** A review is yours until you submit it, and

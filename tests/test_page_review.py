@@ -1257,7 +1257,7 @@ def test_what_you_can_do_to_a_comment_sits_at_its_right_edge(repo_page):
             seen = page.evaluate("""() => {
               const box = document.querySelector('.comment');
               const icon = box.querySelector('svg.icon');
-              const note = box.querySelector('.note');
+              const note = box.querySelector('.says');
               const all = box.querySelectorAll('.acts button');
               const last = all[all.length - 1].getBoundingClientRect();
               const its = box.getBoundingClientRect();
@@ -1448,5 +1448,130 @@ def test_ctrl_enter_saves_a_comment_and_sends_the_review(repo_page):
             page.wait_for_function("state.review.comments.length === 0")
             assert page.evaluate("window.__sent.length") == 1
             assert page.evaluate("window.__sent[0]").startswith("cleanup\n\n")
+        finally:
+            browser.close()
+
+
+def test_a_comment_the_diff_holds_is_never_commented_elsewhere(repo_page):
+    """What the diff draws is worked out from the diff, not asked of the
+    pane. The pane leaves out more: a comment being edited is a box with no
+    anchor on it, a shut file draws no lines, and the find box takes files
+    out. Asked of the pane, each of those moved the comment to "commented
+    elsewhere" -- and one being edited stood there beside its own box."""
+    elsewhere = "document.querySelectorAll('.diffhead.elsewhere').length"
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "on the diff")
+            anchor = page.evaluate("state.review.comments[0].anchor")
+            path = anchor.split("\n")[0]
+
+            page.click(".diffscroll .comment button:text-is('edit')")
+            page.wait_for_selector(".commentbox textarea")
+            assert page.evaluate(elsewhere) == 0, "edited"
+            page.click(".commentbox button:text-is('cancel')")
+            page.wait_for_selector(".diffscroll .comment")
+
+            # Shut by hand, then drawn again as a save does.
+            head = f".dfile:has(.path:text-is('{path}')) > .name"
+            page.click(head)
+            page.evaluate("state.diffAt += 1; draw();")
+            page.wait_for_function(
+                "document.querySelectorAll('.diffscroll .comment').length === 0")
+            assert page.evaluate(elsewhere) == 0, "shut"
+            # Its row still goes to it: the file opens under it.
+            page.click(".filelist.diff button.said")
+            page.wait_for_selector(".diffscroll .comment")
+            assert page.evaluate(elsewhere) == 0
+
+            page.fill("#find", "nothing is called this")
+            page.wait_for_selector(".diffscroll .empty")
+            assert page.evaluate(elsewhere) == 0, "found out"
+        finally:
+            browser.close()
+
+
+def file_reads(page):
+    """The file route's requests, as the page makes them."""
+    asked = []
+    page.on("request", lambda request: asked.append(request.url)
+            if "/file?" in request.url else None)
+    return asked
+
+
+def test_a_file_no_diff_shows_is_read_once_not_on_every_diff(long_page):
+    """Each diff that changed forgot every file read for "commented
+    elsewhere", so while an agent worked each poll read them all again and
+    drew the whole pane twice. A file the diff does not list cannot have
+    changed, so what was read of it is kept."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            asked = file_reads(page)
+            add_comment(page, "long.py\n12", "about line twelve",
+                        quoted="line11 = 11")
+            show_tab(page, "diff")
+            card = ".diffscroll .dfile:has(.path:text-is('long.py'))"
+            page.wait_for_selector(f"{card} .dline")
+            assert len(asked) == 1, asked
+            for _ in range(3):
+                # A diff that changed, as a save by the agent brings one.
+                page.evaluate("() => { state.diffRaw = ''; loadDiff(); }")
+                page.wait_for_function("state.diffRaw !== ''")
+                assert page.locator(f"{card} .dline").count() == 4
+            assert len(asked) == 1, asked
+        finally:
+            browser.close()
+
+
+def test_a_file_that_could_not_be_read_is_asked_for_again(long_page):
+    """A read that failed was kept as an answer with no text, so the comment
+    stood with its quoted line alone until the reader chose another
+    session. Now the next draw asks again."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            asked = file_reads(page)
+            first = []
+
+            def once(route):
+                if not first:
+                    first.append(route.request.url)
+                    route.abort()
+                else:
+                    route.continue_()
+
+            page.route("**/file?path=long.py*", once)
+            add_comment(page, "long.py\n12", "about line twelve",
+                        quoted="line11 = 11")
+            show_tab(page, "diff")
+            card = ".diffscroll .dfile:has(.path:text-is('long.py'))"
+            page.wait_for_selector(f"{card} .comment .quoted")
+            page.wait_for_function("!state.reviewFiles.has('long.py')")
+            assert page.locator(f"{card} .dline").count() == 0
+            page.evaluate("() => { state.diffRaw = ''; loadDiff(); }")
+            page.wait_for_selector(f"{card} .dline")
+            assert len(asked) == 2, asked
+        finally:
+            browser.close()
+
+
+def test_the_bar_stays_while_the_word_on_the_whole_is_typed_away(repo_page):
+    """A review that is only a word on the whole is a review, and emptying
+    that word is not leaving it: the bar went with the caret still in it."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.evaluate("""() => { state.review.overall = 'abc';
+              keepReview(); }""")
+            page.wait_for_selector("#reviewbar:not([hidden])")
+            page.click("#overall")
+            page.keyboard.press("Control+a")
+            page.keyboard.press("Backspace")
+            assert page.evaluate("state.review.overall") == ""
+            assert page.evaluate("$('reviewbar').hidden") is False
+            page.keyboard.press("Escape")
+            page.evaluate("drawReviewBar()")
+            assert page.evaluate("$('reviewbar').hidden") is True
         finally:
             browser.close()
