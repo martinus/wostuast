@@ -119,6 +119,10 @@ holds the last session's drawing of the same file. After `choose`, the
 Files tab shows the old session's scroller until the new text lands, so
 `open_file` found lines and returned, and a scroll went to a scroller
 whose listener belongs to another session -- 4 runs in 10 red at `-n 12`.
-Wait for `.filescroll[data-drawn="<session>"]`. Running the test
+Wait for `.filescroll[data-drawn="<session>"]`. The Review tab has it
+too: after `choose`, the pane holds the last session's diff until the new
+one lands, and `test_another_sessions_diff_is_read_from_its_top` scrolled
+that one -- 2 runs in 3 red at `-n 12` -- until it waited for a file only
+the new session changed. Running the test
 files you changed at `-n 12` three times over is what turns them up; once
 is not enough.

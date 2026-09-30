@@ -13333,7 +13333,9 @@ function keepBase(name) {
     else localStorage.removeItem(BASE_KEY + home);
   } catch (error) { }
   // Another base is another list of commits, so a picked one may not be on
-  // it; and everything the reader revealed was counted against the old one.
+  // it. What the reader revealed (`state.diffMore`) stays: it is lines of
+  // HEAD and of the disk, which no base moves, and a whole file kept for
+  // the old hunks is dropped by `withMore` when they change.
   state.diffOf = "";
   state.diffGone = false;
   state.diffRaw = "";
@@ -13727,8 +13729,11 @@ function drawDiff(box) {
   // Another commit, or another half, is another diff, and it is read from
   // its top. Only a redraw of the same one keeps the reader's place: stepping
   // to the next commit left the pane where the last one had been read to.
-  const same = scroll.dataset.of === (report.of || "");
-  scroll.dataset.of = report.of || "";
+  // And another session's diff is another diff: all changes are "" in every
+  // session, so the next one opened where the last was read to.
+  const of = state.chosen + "\n" + (report.of || "");
+  const same = scroll.dataset.of === of;
+  scroll.dataset.of = of;
   drawDiffList(list, found);
   scroll.replaceChildren();
   // Every block by the key its row in the list carries, in the order they
@@ -13922,7 +13927,8 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
     ? one.old_path + " \u2192 " + one.path : one.path);
   putCounts(head, one);
   const body = put(node, "div", "dbody");
-  putReview(put(node, "div", "onFile"), anchorOf(one.path, 0), "");
+  putReview(put(node, "div", "onFile"),
+            anchorOf(atHead ? pathNow(one.path) : one.path, 0), "");
   if (one.binary) {
     put(body, "div", "note", "Binary file. There is nothing to show.");
     return node;
@@ -14172,9 +14178,12 @@ function pairRow(lines, one, left, right, atHead, words, side) {
 // longer in the file gets neither.
 function putLineReview(lines, where, one, line, now, atHead) {
   if (one.atEdit) return;      // an edit in the transcript: see `putToolDiff`
-  const anchor = lineAnchor(one.path, line,
-                            atHead ? inWorktree(one.path, now) : now);
+  const anchor = diffLineAnchor(one.path, line, now, atHead);
   if (anchor === null) return;
+  // A slice under "commented elsewhere" reaches a line the diff above
+  // draws too: its comment stood twice, and "edit" on the lower copy
+  // opened the box on the upper one. One place per anchor.
+  if (one.drawn && one.drawn.has(anchor)) return;
   if (commentAt(anchor) || state.writing === anchor) {
     putReview(put(lines, "div", "onLine"), anchor, line.text);
   } else {
@@ -14194,7 +14203,9 @@ function putLineReview(lines, where, one, line, now, atHead) {
 // change and not of the line -- most edits are a word or two in the middle.
 // Past `WORDS_MAX` characters it is not asked at all.
 const WORDS_MAX = 400;
-const WORD = /\w+|\s+|[^\w\s]/g;
+// `u`, or an emoji is two halves of a pair, and a mark on one half draws
+// two broken glyphs.
+const WORD = /\w+|\s+|[^\w\s]/gu;
 
 function wordDiff(was, now) {
   if (was.length > WORDS_MAX || now.length > WORDS_MAX || was === now) return null;
@@ -14573,13 +14584,15 @@ function lineAnchor(path, line, now) {
 // One commit on its own is the same question one step further back: its new
 // side is that commit, and the daemon sends `since`, the diff from it to the
 // disk for the files it touched. A file not in that is unchanged since.
+//
+// It answers the path too. A file the agent moved and did not commit is
+// listed there under its new name, with the old one as `old_path` -- which
+// is the name on HEAD's side, and so the one to match. Matched on `path`,
+// a comment kept a name that is not on disk, and the same line had a
+// second anchor in the other half.
 function inWorktree(path, headLine) {
-  const report = state.diff || {};
-  const later = report.of && report.of !== "uncommitted"
-    ? { files: report.since || [] }
-    : (report.sections || []).find((section) => section.name === "uncommitted");
-  const one = ((later || {}).files || []).find((file) => file.path === path);
-  if (!one) return headLine;          // nothing uncommitted: the same file
+  const one = laterFile(path);
+  if (!one) return [path, headLine];  // nothing uncommitted: the same file
   let drift = 0;                      // how far the worktree has slid by here
   let found = null;
   walkHunks(one, null, (line, old, now) => {
@@ -14589,7 +14602,29 @@ function inWorktree(path, headLine) {
     drift = now - old - (line.kind === "removed" ? 1 : 0);
   });
   // Past the last hunk, the whole file has slid by the same amount.
-  return found === null ? headLine + drift : found;
+  return [one.path, found === null ? headLine + drift : found];
+}
+
+// A file of HEAD, or of the commit shown, in the diff from it to the disk.
+function laterFile(path) {
+  const report = state.diff || {};
+  const later = report.of && report.of !== "uncommitted"
+    ? { files: report.since || [] }
+    : (report.sections || []).find((section) => section.name === "uncommitted");
+  return ((later || {}).files || []).find((file) => file.old_path === path) || null;
+}
+
+// The name a file of HEAD has on disk, for a comment on the whole file.
+function pathNow(path) {
+  const one = laterFile(path);
+  return one ? one.path : path;
+}
+
+// The anchor of a line of a drawn diff. `atHead` is a half whose new side
+// is a commit and not the disk, carried through by `inWorktree`.
+function diffLineAnchor(path, line, now, atHead) {
+  const [where, at] = atHead ? inWorktree(path, now) : [path, now];
+  return lineAnchor(where, line, at);
 }
 
 // How a place reads: `path:112`, or just the path when it is the whole file.
@@ -14634,9 +14669,12 @@ window.addEventListener("storage", (event) => {
   if (!state.chosen || event.key !== REVIEW_KEY + state.chosen) return;
   recallReview(state.chosen);
   drawReviewCount();
+  // Nor while a box is open with the focus elsewhere: it was built again
+  // from the stored note, and what was typed in it was lost. Closing it
+  // draws the tab, and takes this up then.
   const typing = document.activeElement
     && document.activeElement.matches("textarea, input");
-  if (state.tab === "diff" && !typing) redrawCode();
+  if (state.tab === "diff" && !typing && !writingIn($("content"))) redrawCode();
 });
 
 function recallReview(id) {
@@ -14732,16 +14770,20 @@ function putComment(parent, one, full) {
   if (full && one.quoted) put(words, "div", "quoted", one.quoted);
   put(words, "div", "says", one.note);
   const acts = put(node, "div", "acts");
+  // Both rebuild the tab, so both wait while a box is open, as a pick
+  // does (`busyWriting`): the box took what was typed in it with it.
   const edit = put(acts, "button", "verb quiet", "edit");
   edit.type = "button";
   edit.addEventListener("click", () => {
+    if (busyWriting()) return;
     state.writing = one.anchor;
     redrawCode();
   });
   const drop = put(acts, "button", "verb quiet", "delete");
   drop.type = "button";
-  drop.addEventListener("click",
-                        () => writeComment(one.anchor, one.quoted, ""));
+  drop.addEventListener("click", () => {
+    if (!busyWriting()) writeComment(one.anchor, one.quoted, "");
+  });
   return node;
 }
 
@@ -14786,6 +14828,7 @@ function putReview(parent, anchor, quoted, full) {
   add.type = "button";
   add.title = "comment here";
   add.addEventListener("click", () => {
+    if (busyWriting()) return;      // a box elsewhere: see `putComment`
     state.writing = anchor;
     redrawCode();
   });
@@ -14898,13 +14941,24 @@ function goToComment(anchor) {
   let at = find();
   if (!at) {
     const path = anchor.split("\n")[0];
-    const keys = [...(scroll.blocks || new Map()).keys()].filter(
-      (key) => key.endsWith("\n" + path) && !key.startsWith("untracked\n"));
+    // By the name on disk: a file moved and not committed has its old name
+    // in the committed half, and the comment is drawn there (`pathNow`).
+    const keys = [...(scroll.blocks || new Map()).keys()].filter((key) => {
+      const name = key.slice(key.indexOf("\n") + 1);
+      return !key.startsWith("untracked\n")
+        && (name === path || pathNow(name) === path);
+    });
     if (!keys.length) return;
     for (const key of keys) state.diffOpen.set(state.diffOf + "\n" + key, true);
     state.diffAt += 1;
     draw();
     at = find() || scroll.blocks.get(keys[0]);
+    // `drawDiff` puts the reader's place back a frame from now. Scrolled
+    // now, the pane went back there, and only a second click went to the
+    // comment. Frames run in the order they were asked for, so this one
+    // comes after.
+    if (at) requestAnimationFrame(() => at.scrollIntoView({ block: "center" }));
+    return;
   }
   if (at) at.scrollIntoView({ block: "center" });
 }
@@ -14919,10 +14973,9 @@ function diffAnchors(report) {
   const anchors = new Set();
   for (const section of report.sections) {
     for (const one of section.files || []) {
-      anchors.add(anchorOf(one.path, 0));
+      anchors.add(anchorOf(section.at_commit ? pathNow(one.path) : one.path, 0));
       walkHunks(withMore(one, section.name), null, (line, old, now) => {
-        const anchor = lineAnchor(one.path, line,
-                                  section.at_commit ? inWorktree(one.path, now) : now);
+        const anchor = diffLineAnchor(one.path, line, now, section.at_commit);
         if (anchor) anchors.add(anchor);
       });
     }
@@ -14992,8 +15045,8 @@ function fillElsewhere(holder) {
     }
     runs.sort((a, b) => a[0] - b[0]);
     if (runs.length) {
-      fillDiffFile(body, { path, hunks: runs.map(([from, to]) =>
-        asLines(path, lines.slice(from - 1, to), from).hunks[0]) });
+      fillDiffFile(body, { path, drawn: holder.drawn, hunks: runs.map(
+        ([from, to]) => asLines(path, lines.slice(from - 1, to), from).hunks[0]) });
       paintSlices(body, path, read, lines);
     }
     for (const one of loose) {
@@ -15016,8 +15069,11 @@ async function readElsewhere(paths) {
   const answers = await Promise.all(paths.map(
     (path) => ask(id, "file", "?path=" + encodeURIComponent(path))));
   let came = false;
+  // A 404 is JSON too: `missing`, which a timed-out `is_listed` also
+  // says. Kept, it stood as a file with no lines until another session.
   paths.forEach((path, at) => {
-    if (answers[at]) { files.set(path, answers[at]); came = true; }
+    const got = answers[at];
+    if (got && !got.missing && !got.error) { files.set(path, got); came = true; }
     else files.delete(path);
   });
   const holder = document.querySelector(".diffscroll > .offdiff");
@@ -15127,9 +15183,27 @@ function doneSending(id) {
   drawAsking();
 }
 
+// What is left of a review once `sent` has gone: a comment saved or
+// changed while it was on its way, and a word on the whole typed then.
+function unsent(review, sent) {
+  const went = new Set(sent.comments.map((one) => one.anchor + "\n" + one.note));
+  const overall = typeof review.overall === "string" ? review.overall : "";
+  return {
+    overall: overall === sent.overall ? "" : overall,
+    comments: review.comments.filter(
+      (one) => !went.has(one.anchor + "\n" + one.note)),
+  };
+}
+
 async function submitReview() {
   const id = state.chosen;
+  // A box with text in it is a comment not yet in the review. Send closed
+  // it, and what was typed went nowhere and nothing said so.
+  if (busyWriting()) return;
   if (!startSending(id)) return;
+  // A copy: an edit changes a comment in place.
+  const sent = { overall: state.review.overall,
+                 comments: state.review.comments.map((one) => ({ ...one })) };
   let answer;
   try {
     answer = await tell(id, "send", { text: reviewText() });
@@ -15148,16 +15222,28 @@ async function submitReview() {
   // works on whatever is current: it wiped the new session's draft and
   // removed its key from storage. The review that was sent is the one to
   // clear, and where it lives when the reader has moved on is storage.
+  //
+  // And only what was sent: `send-keys` takes a moment, and a comment
+  // saved in it was cleared with the rest, never sent.
   if (state.chosen !== id) {
-    try { localStorage.removeItem(REVIEW_KEY + id); } catch (error) { }
+    try {
+      const held = JSON.parse(localStorage.getItem(REVIEW_KEY + id) || "null");
+      const left = held && Array.isArray(held.comments) ? unsent(held, sent) : null;
+      if (left && (left.comments.length || left.overall.trim())) {
+        localStorage.setItem(REVIEW_KEY + id, JSON.stringify(left));
+      } else {
+        localStorage.removeItem(REVIEW_KEY + id);
+      }
+    } catch (error) { }
     note("review sent");
     return;
   }
   const session = current();
-  state.review = blankReview();
-  state.writing = null;
+  state.review = unsent(state.review, sent);
   keepReview();
-  redrawCode();
+  // A box opened while it went is left alone, as a poll leaves it; closing
+  // it draws the tab without what was sent.
+  if (!writingIn($("content"))) redrawCode();
   // Claude Code queues what arrives mid-turn, so a review sent to a working
   // agent is not lost — it is read when the turn ends. Say so, because from
   // here it looks like nothing happened.
@@ -15230,8 +15316,11 @@ function draw() {
 
 function showTab(name) {
   if (!TABS[name]) return;
+  // The box was on the tab you are leaving. A click on the tab on screen,
+  // or its key, leaves nothing: the box stayed, the flag went, and the
+  // next poll or pick rebuilt the diff and took what was typed.
+  if (name !== state.tab) state.writing = null;
   state.tab = name;
-  state.writing = null;       // the box was on the tab you are leaving
 
   drawHeader();               // the send box belongs to the transcript only
   for (const button of document.querySelectorAll(".tab")) {

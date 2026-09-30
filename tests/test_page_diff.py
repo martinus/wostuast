@@ -1479,3 +1479,57 @@ def test_the_settings_say_what_is_chosen_and_change_it_in_place(repo_page):
             assert page.evaluate("state.diffAt") == drawn
         finally:
             browser.close()
+
+
+def test_another_sessions_diff_is_read_from_its_top(two_repos):
+    """`drawDiff` kept the place when `scroll.dataset.of` matched, and it
+    held only what the diff was of: "" for everything, in any session. So
+    the next session's diff opened 2,000 px down, where the last one had
+    been read to."""
+    repo, other, base = two_repos
+    for where, name in ((repo, "deep/inner.py"), (other, "other.py")):
+        with (where / name).open("a") as out:
+            out.write("".join(f"more_{n} = {n}\n" for n in range(300)))
+    top = "document.querySelector('.diffscroll').scrollTop"
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            # Each session was last left on this tab, so a choice keeps the
+            # pane, as `j` does between two sessions under review.
+            # Its own file, not the pane the last session left: that one
+            # is as tall, and a scroll into it was put back to the top when
+            # this diff came -- red under load.
+            shows = ("(name) => [...document.querySelectorAll("
+                     "'.diffscroll .dfile .path')]"
+                     ".some((one) => one.textContent === name)")
+            for sid, name in (("s2", "other.py"), ("s1", "deep/inner.py")):
+                page.evaluate(f"choose('{sid}')")
+                show_tab(page, "diff")
+                page.wait_for_function(shows, arg=name)
+            page.wait_for_function(
+                "document.querySelector('.diffscroll').scrollHeight > 3000")
+            page.evaluate(f"{top} = 2000")
+            page.wait_for_function(f"{top} === 2000")
+            page.evaluate("choose('s2')")
+            page.wait_for_function(shows, arg="other.py")
+            # Past the frame a place is put back in.
+            page.evaluate("""() => new Promise((done) =>
+              requestAnimationFrame(() => requestAnimationFrame(done)))""")
+            assert page.evaluate(top) == 0
+        finally:
+            browser.close()
+
+
+def test_an_emoji_that_changed_is_marked_whole(repo_page):
+    """`WORD` had no `u` flag, so an emoji was two halves of a pair, and
+    for one face changed to another the mark took the second half only:
+    the line then drew two broken glyphs where the face had been."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            runs = page.evaluate("wordDiff('face = \"\\u{1F600}\"', "
+                                 "'face = \"\\u{1F603}\"')")
+            assert runs == [[[8, 10]], [[8, 10]]], runs
+        finally:
+            browser.close()
