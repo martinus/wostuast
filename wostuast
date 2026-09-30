@@ -2755,13 +2755,27 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
     inside a line of a diff into a line break before `parse_diff` saw it --
     every line after it counted one too high, and the Files tab, which reads
     the bytes, disagreed. The form-feed scar, by another road.
+
+    git runs with `GIT_OPTIONAL_LOCKS=0`. Without it, `status` and `diff`
+    take `.git/index.lock` to write a refreshed index back. The daemon only
+    reads, and it runs git just after an agent's tool call -- exactly when
+    the agent runs its own `git add`, which then failed on the lock. And a
+    git that passes its timeout is killed with SIGKILL, which it cannot
+    catch, so it left the lock behind: every `git add` and `git commit`
+    failed until somebody deleted the file by hand. Here, and not as a flag
+    on each call, so a new git call cannot forget it.
     """
     import subprocess
 
+    command = list(args)
+    env = None
+    if command and os.path.basename(str(command[0])) == "git":
+        env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
     try:
         done = subprocess.run(
-            list(args),
+            command,
             cwd=cwd or None,
+            env=env,
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -2811,6 +2825,15 @@ def remote_url(git_dir: str) -> str:
     A URL can carry a user and a token (`https://me:ghp_x@host/r.git`), and
     it is going to a page, so the part before the `@` of a URL is taken
     out. The `git@host:path` shape holds no secret and is left as it is.
+
+    The value is read the way git reads it (`config_value`): git accepts
+    `url = "https://me:tok@host/r.git"`, and `git config` writes the quotes
+    itself when a value holds `#` or `;`. With the quotes left on,
+    `urlsplit` found no scheme, took nothing out, and the token went to the
+    page. So the result goes through `hide_secrets` as well, a second guard
+    for a shape the first one did not see. A key with no `=` (`fsmonitor`
+    under `[core]`) is git's "true"; without `allow_no_value` it was a
+    parse error, and one such line hid the remote.
     """
     import configparser
     import urllib.parse
@@ -2818,7 +2841,8 @@ def remote_url(git_dir: str) -> str:
     base = git_dir.strip().rstrip("/")
     if not base:
         return ""
-    parser = configparser.RawConfigParser(strict=False, interpolation=None)
+    parser = configparser.RawConfigParser(strict=False, interpolation=None,
+                                          allow_no_value=True)
     for where in (os.path.join(base, "config"), os.path.join(base, ".git", "config")):
         if os.path.isfile(where):
             try:
@@ -2831,7 +2855,7 @@ def remote_url(git_dir: str) -> str:
     if not remotes:
         return ""
     chosen = 'remote "origin"' if 'remote "origin"' in remotes else remotes[0]
-    url = parser.get(chosen, "url").strip()
+    url = config_value(parser.get(chosen, "url") or "").strip()
     if "://" in url:
         try:
             parts = urllib.parse.urlsplit(url)
@@ -2839,7 +2863,34 @@ def remote_url(git_dir: str) -> str:
             return ""
         host = parts.netloc.rpartition("@")[2]
         url = urllib.parse.urlunsplit(parts._replace(netloc=host))
-    return url
+    return hide_secrets(url)
+
+
+def config_value(raw: str) -> str:
+    """A value from a git config file, as git reads it.
+
+    A double quote opens and closes a quoted part and is not part of the
+    value. A backslash escapes the next character, and `\\n`, `\\t` and
+    `\\b` are the controls. Outside quotes, `#` and `;` start a comment.
+    `configparser` does none of this: it kept the quotes, and a quoted
+    remote URL went to the page with its token (`remote_url`).
+    """
+    out: list[str] = []
+    quoted = False
+    at = 0
+    while at < len(raw):
+        char = raw[at]
+        if char == "\\" and at + 1 < len(raw):
+            at += 1
+            out.append({"n": "\n", "t": "\t", "b": "\b"}.get(raw[at], raw[at]))
+        elif char == '"':
+            quoted = not quoted
+        elif char in "#;" and not quoted:
+            break
+        else:
+            out.append(char)
+        at += 1
+    return "".join(out)
 
 
 def repo_name(git_dir: str) -> str:
@@ -2875,19 +2926,31 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         return facts
 
     def git(*args: str) -> str | None:
+        # Only the newline git ends with. `strip()` also took the space off a
+        # worktree whose path ends in one, and that path does not exist.
         out = runner(["git", "-C", cwd, *args])
-        return None if out is None else out.strip()
+        return None if out is None else out.rstrip("\n")
 
     # --git-common-dir points at the main repository, so a worktree keeps its
-    # repository's name. --path-format needs git 2.31; older git falls back to
-    # the top level, which for a worktree is the worktree itself.
+    # repository's name. --path-format needs git 2.31, and an older git does
+    # not fail on it: `rev-parse` prints a flag it does not know back and
+    # exits 0. That line became the repository's name, and every row read
+    # `--path-format=absolute/<dir>`. So a line starting with `-` is dropped
+    # -- a path git prints is absolute or starts with `.` -- and a common
+    # directory that came back relative is made absolute against `cwd`.
     paths = git("rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
     if paths is None:
         paths = git("rev-parse", "--show-toplevel")
-    if paths:
-        facts.repo = repo_name(paths.splitlines()[0])
-        facts.root = paths.splitlines()[-1]
-        facts.remote = remote_url(paths.splitlines()[0])
+    found = [line for line in (paths or "").split("\n")
+             if line and not line.startswith("-")]
+    paths = "\n".join(found) if paths is not None else None
+    if found:
+        common = found[0]
+        if not os.path.isabs(common):
+            common = os.path.realpath(os.path.join(cwd, common))
+        facts.repo = repo_name(common)
+        facts.root = found[-1]
+        facts.remote = remote_url(common)
 
     status = git("status", "--porcelain", "--branch")
     if not paths:
@@ -3248,7 +3311,9 @@ def worktree_root(cwd: str, runner: Callable[..., str | None] = run) -> str:
     if not cwd or not os.path.isdir(cwd):
         return ""
     top = runner(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
-    return top.strip() if top else ""
+    # Only the newline. `strip()` took the space off `/x/proj `, and the tab
+    # then read nothing -- or, when `/x/proj` also existed, another repository.
+    return top.rstrip("\n") if top else ""
 
 
 def git_answers(runner: Callable[..., str | None] = run) -> bool:
@@ -3686,11 +3751,27 @@ def worktree_target(
     not remembered** — it is the check that git still offers this name, and a
     cached yes would mean a file could still be read after it was taken out of
     the tree.
+
+    **Nothing inside a `.git` is read**, although it is inside the worktree.
+    git lists a tracked link such as `notes.md -> ../.git/config` and never
+    what it points at, so both checks passed, and the Files tab showed the
+    config -- with the token of a remote URL in it, which `remote_url` keeps
+    off the page. Any part of the real path named `.git`, in any case: a
+    filesystem that ignores case opens `.GIT/config` as `.git/config`.
     """
     root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
     if not root or not is_listed(root, wanted, runner):
         return None
-    return inside(root, Path(root) / wanted)
+    target = inside(root, Path(root) / wanted)
+    if target is None:
+        return None
+    try:
+        parts = target.relative_to(Path(root).resolve()).parts
+    except (OSError, ValueError):
+        return None
+    if any(part.lower() == ".git" for part in parts):
+        return None
+    return target
 
 
 def read_worktree_bytes(
@@ -3943,6 +4024,10 @@ def diff_side(text: str) -> str:
     return text[2:] if text[:2] in ("a/", "b/") else text
 
 
+#: The line counts of a hunk's header, `@@ -1,4 +1,5 @@`. A count left out is 1.
+HUNK_COUNTS = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
 def parse_diff(text: str) -> list[DiffFile]:
     """Turn `git diff` output into files, hunks and lines.
 
@@ -3967,6 +4052,7 @@ def parse_diff(text: str) -> list[DiffFile]:
     files: list[DiffFile] = []
     current: DiffFile | None = None
     hunk: Hunk | None = None
+    left = [-1, -1]          # old and new lines the hunk still has to come
     lines = text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()       # the newline that ends the last line, not a line
@@ -3981,16 +4067,30 @@ def parse_diff(text: str) -> list[DiffFile]:
         elif line.startswith("@@"):
             hunk = Hunk(header=line)
             current.hunks.append(hunk)
+            # The hunk ends when the lines its header counts have come. A
+            # line after that is not a line of the file: `diff.submodule=log`
+            # writes `  > message` lines with no header of their own, and each
+            # one was read as context, so a file of ten lines had an eleventh.
+            # A header that does not read is never ended early.
+            counts = HUNK_COUNTS.match(line)
+            left = ([int(counts.group(1) or 1), int(counts.group(2) or 1)]
+                    if counts else [-1, -1])
         elif hunk is not None:
             if line.startswith("+"):
                 current.added += 1
                 hunk.lines.append(DiffLine("added", line[1:]))
+                left[1] -= 1
             elif line.startswith("-"):
                 current.removed += 1
                 hunk.lines.append(DiffLine("removed", line[1:]))
+                left[0] -= 1
             elif line.startswith(" ") or not line:
                 hunk.lines.append(DiffLine("context", line[1:]))
+                left[0] -= 1
+                left[1] -= 1
             # anything else is `\\ No newline at end of file`
+            if left[0] == 0 and left[1] == 0:
+                hunk = None
         elif line.startswith("--- "):
             # git ends a name holding a space with a TAB here, for GNU patch.
             # Kept, the Diff tab's `foo bar.txt\t` was not the Files tab's
@@ -4036,6 +4136,7 @@ class BaseChoice:
     """What a branch's own work is measured against, and what else it could be."""
 
     name: str = ""
+    ref: str = ""             # `name` in full, which is what git is given
     failed: bool = False      # git did not answer; "no base" would lie
     detected: str = ""        # the base with nothing picked
     offered: list[str] = field(default_factory=list)
@@ -4153,6 +4254,11 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
             choice.offered.append(wanted)     # picked, so it is on the list
     else:
         choice.name = choice.detected
+    # git is given the full name, never the short one. A branch may be named
+    # `--output=x`: git takes `update-ref refs/heads/--output=x`, the short
+    # name reached the argv of `git diff` as an option, and git wrote the
+    # diff into a file of that name. A full name starts with `refs/`.
+    choice.ref = refs.get(choice.name, "")
     return choice
 
 
@@ -4172,10 +4278,27 @@ def git_diff(
     None is not the same as "": git failed, timed out, or was killed. An empty
     diff says nothing changed, and saying that when we do not know is worse
     than saying nothing — it is the answer a reader would act on.
+
+    Every part of the output that `parse_diff` reads is pinned here, because
+    a reader's config changes it. `diff.mnemonicPrefix` wrote `c/` and `w/`,
+    so every file read as a rename; `diff.noprefix` wrote no prefix, so a
+    file under a folder named `b/` lost that folder. `diff.renames=copies`
+    made a copy read as a rename. `diff.submodule=log` wrote a submodule's
+    log into the file before it. A `textconv` in `.gitattributes` gave the
+    lines of the converted text, not the lines the Files tab reads.
+
+    `diff.autoRefreshIndex=false` because `git diff` writes a refreshed
+    index back under `.git/index.lock` whatever `GIT_OPTIONAL_LOCKS` says
+    (measured, git 2.43), when a file's stat moved and its bytes did not.
+    That is the lock `run` keeps `status` off, and the agent's `git add`
+    needs it. The diff is the same without the refresh.
     """
     out = runner(
         ["git", "-C", cwd, "-c", "core.quotePath=false",
-         "diff", "--no-color", "--no-ext-diff", *args],
+         "-c", "diff.autoRefreshIndex=false",
+         "diff", "--no-color", "--no-ext-diff", "--no-textconv",
+         "--src-prefix=a/", "--dst-prefix=b/", "-M", "--submodule=short",
+         *args],
         timeout=DIFF_TIMEOUT,
     )
     if out is None:
@@ -4251,17 +4374,22 @@ def branch_commits(
     which is the same work the committed section shows with three. A session
     working on the default branch has none, and there the last few commits of
     HEAD are what it did. None when git did not answer.
+
+    `base` is a full ref name (`BaseChoice.ref`), so it cannot be read as an
+    option. The `--` after the revisions says no file is meant: without it,
+    a file named `HEAD` at the top of the worktree made git refuse the
+    argument as ambiguous, and the whole Diff tab failed on every poll.
     """
     shape = LOG_FIELD.join(("%H", "%h", "%at", "%an", "%P", "%s")) + LOG_END
     ask = ["git", "-C", root, "log", "--no-color", "--no-show-signature",
            "--format=" + shape]
     if base:
-        out = runner([*ask, "-n", str(COMMITS_SHOWN), base + "..HEAD"])
+        out = runner([*ask, "-n", str(COMMITS_SHOWN), base + "..HEAD", "--"])
         if out is None:
             return None, False
         if out.strip():
             return read_commits(out), False
-    out = runner([*ask, "-n", str(COMMITS_RECENT), "HEAD"])
+    out = runner([*ask, "-n", str(COMMITS_RECENT), "HEAD", "--"])
     return (None if out is None else read_commits(out)), True
 
 
@@ -4307,8 +4435,10 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     def section(name: str, title: str, about: str, *args: str) -> list[DiffFile]:
         # Three lines of context, said rather than assumed: the page reads
         # fewer than three after the last change as the end of the file, and
-        # a reader's `diff.context` would otherwise move that line.
-        text, cut = git_diff(root, [*args, f"-U{DIFF_CONTEXT}"], runner)
+        # a reader's `diff.context` would otherwise move that line. The `--`
+        # says the arguments are revisions: a file named `HEAD` made git
+        # refuse `HEAD` as ambiguous, and the tab failed on every poll.
+        text, cut = git_diff(root, [*args, f"-U{DIFF_CONTEXT}", "--"], runner)
         report.cut = report.cut or cut
         report.failed = report.failed or text is None
         files = parse_diff(text or "")
@@ -4320,7 +4450,7 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     choice = pick_base(root, runner, base, ranks)
     report.base, lost = choice.name, choice.failed
     report.base_auto, report.bases = choice.detected, choice.offered
-    commits, report.recent = branch_commits(root, report.base, runner)
+    commits, report.recent = branch_commits(root, choice.ref, runner)
     # A repository with no commit yet has no HEAD, so the log fails: git
     # answering "there is none", not failing to answer. Asked only on the
     # failure path, so a repository with commits never pays for it.
@@ -4345,7 +4475,7 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
                 report.failed = True
                 return report
             body = runner(["git", "-C", root, "show", "-s", "--no-color",
-                           "--no-show-signature", "--format=%b", one.sha])
+                           "--no-show-signature", "--format=%b", one.sha, "--"])
             report.failed = report.failed or body is None
             report.body = (body or "").strip()[:COMMIT_BODY_MAX]
             files = section(
@@ -4365,11 +4495,11 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
             return report
     if of == "uncommitted":
         report.of = of
-    elif report.base and not unborn:
+    elif choice.ref and not unborn:
         section("committed", "committed on this branch",
                 f"every commit this branch has that {report.base} has not"
                 f" \u2014 and nothing that landed on {report.base} since",
-                report.base + "...HEAD")
+                choice.ref + "...HEAD")
     # With no commit, against the empty tree: the staged files are in the
     # index, so they are not untracked, and `HEAD` is not there to diff to.
     section("uncommitted", "not committed yet",
@@ -4419,8 +4549,11 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
     if not root:
         found.failed = not git_answers(runner)
         return found
-    base, lost = (diff_base(root, runner, base, ranks)
-                  if section in ("committed", "commit") else ("", False))
+    # The full name, as `worktree_diff` gives git: a short one can start
+    # with `-` and be read as an option.
+    choice = (pick_base(root, runner, base, ranks)
+              if section in ("committed", "commit") else BaseChoice())
+    base, lost = choice.ref, choice.failed
     if lost:
         found.failed = True
         return found

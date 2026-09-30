@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -595,3 +596,246 @@ def test_the_diff_says_three_lines_of_context_whatever_the_reader_set(ws, repo):
     change(repo, "long.txt", 50)
     lines = ws.worktree_diff(str(repo)).sections[-1].files[0].hunks[0].lines
     assert [one.kind for one in lines].count("context") == 6
+
+
+# --- what the reader's git and odd names must not change ---------------------
+
+
+def test_git_never_takes_the_index_lock_the_agent_needs(ws, repo):
+    """`status` and `diff` write a refreshed index back under
+    `.git/index.lock`. The daemon runs them just after an agent's tool
+    call, when the agent runs `git add`, and a `status` killed at its
+    timeout left the lock for good. So no git of the daemon writes the
+    index. The last line shows the file on disk did need a refresh."""
+    for index in range(20):
+        (repo / f"f{index}.txt").write_text(f"{index}\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "files")
+    for index in range(20):
+        os.utime(repo / f"f{index}.txt", (1, 1))    # same bytes, other stat
+    (repo / "README.md").write_text("changed\n")
+    index = repo / ".git" / "index"
+    before = index.read_bytes()
+    assert ws.git_facts(str(repo)).dirty is True
+    assert ws.changed_files(str(repo)) == {"README.md"}
+    report = ws.worktree_diff(str(repo))
+    assert [one.path for one in report.sections[-1].files] == ["README.md"]
+    assert index.read_bytes() == before
+    assert not (repo / ".git" / "index.lock").exists()
+    subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                   check=True, capture_output=True)
+    assert index.read_bytes() != before
+
+
+def test_an_old_git_that_prints_path_format_back_keeps_the_repository(
+        ws, repo, tmp_path):
+    """git before 2.31 does not fail on `--path-format=absolute`: it prints
+    the flag back, exits 0, and gives the common directory relative to where
+    it ran. That line was the repository's name, and every row read
+    `--path-format=absolute/<dir>`. This git (2.43 here) does the same for a
+    flag it does not know, which is what the stand-in copies."""
+    shown = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--path-formatx=absolute",
+         "--git-common-dir"], capture_output=True, text=True, check=True)
+    assert shown.stdout.splitlines()[0] == "--path-formatx=absolute"
+    git(repo, "remote", "add", "origin", "https://example.com/team/myrepo.git")
+
+    def old(args, **rest):
+        args = list(args)
+        if "--path-format=absolute" not in args:
+            return ws.run(args, **rest)
+        out = ws.run([one for one in args if one != "--path-format=absolute"],
+                     **rest)
+        return None if out is None else "--path-format=absolute\n" + out
+
+    (repo / "src" / "deeper").mkdir(parents=True)
+    for where in (repo, repo / "src" / "deeper"):
+        facts = ws.git_facts(str(where), runner=old)
+        assert facts.repo == "myrepo", where
+        assert facts.root == str(repo)
+        assert facts.remote == "https://example.com/team/myrepo.git"
+
+
+def test_the_readers_diff_settings_do_not_change_the_names(ws, repo):
+    """`diff.mnemonicPrefix` wrote `c/` and `w/`, so every file read as a
+    rename; `diff.noprefix` wrote no prefix, so `b/c.py` lost its folder;
+    `diff.renames=copies` made a copy read as a rename of its source."""
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x\n")
+    (repo / "b").mkdir()
+    (repo / "b" / "c.py").write_text("c\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "code")
+    (repo / "src" / "a.py").write_text("y\n")
+    (repo / "b" / "c.py").write_text("d\n")
+    (repo / "src" / "copy.py").write_text("x\n")
+    git(repo, "add", ".")
+    for key, value in (("diff.mnemonicPrefix", "true"), ("diff.noprefix", "true"),
+                       ("diff.renames", "copies")):
+        git(repo, "config", key, value)
+        files = ws.worktree_diff(str(repo)).sections[-1].files
+        assert sorted((one.path, one.old_path, one.status) for one in files) == [
+            ("b/c.py", "b/c.py", "modified"),
+            ("src/a.py", "src/a.py", "modified"),
+            ("src/copy.py", "", "added")], key
+        git(repo, "config", "--unset", key)
+
+
+def test_a_submodule_is_its_own_file_and_its_log_is_not_lines_of_another(
+        ws, repo, tmp_path):
+    """`diff.submodule=log` writes `Submodule sub a..b:` and `  > message`
+    lines with no header of their own. They were read as context lines of
+    the file before, which then had an eleventh line out of ten."""
+    inner = tmp_path / "inner"
+    inner.mkdir()
+    git(inner, "init", "-q", "-b", "main")
+    git(inner, "config", "user.email", "t@example.com")
+    git(inner, "config", "user.name", "T")
+    (inner / "x").write_text("x\n")
+    git(inner, "add", ".")
+    git(inner, "commit", "-qm", "first in the submodule")
+    (repo / "a.txt").write_text("".join(f"{n}\n" for n in range(1, 11)))
+    git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q",
+        str(inner), "sub")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "with a submodule")
+    (inner / "x").write_text("y\n")
+    git(inner, "commit", "-qam", "a message in the submodule")
+    git(repo / "sub", "-c", "protocol.file.allow=always", "pull", "-q")
+    with (repo / "a.txt").open("a") as handle:
+        handle.write("11\n")
+    git(repo, "config", "diff.submodule", "log")
+    files = {one.path: one for one in ws.worktree_diff(str(repo)).sections[-1].files}
+    assert sorted(files) == ["a.txt", "sub"]
+    lines = [line for hunk in files["a.txt"].hunks for line in hunk.lines]
+    assert [line.text for line in lines] == ["8", "9", "10", "11"]
+    assert files["sub"].status == "modified"
+
+
+def test_a_file_named_head_does_not_break_the_diff_tab(ws, repo):
+    """git refuses `HEAD` as "both revision and filename" when a file of
+    that name stands at the top of the worktree, and the tab failed on
+    every poll. The `--` after the revisions says no file is meant. A range
+    (`a..b`) is never checked, so `HEAD` and a commit shown alone are what
+    needs it: here both have a file of their name."""
+    branch_of_three(repo)
+    (repo / "HEAD").write_text("not a revision\n")
+    (repo / "README.md").write_text("changed\n")
+    report = ws.worktree_diff(str(repo), base="main")
+    assert report.failed is False
+    assert [one.subject for one in report.commits] == ["three: add c", "two"]
+    assert [one.name for one in report.sections] == ["committed", "uncommitted"]
+    assert report.sections[-1].files[0].path == "README.md"
+    assert "HEAD" in report.untracked
+    sha = report.commits[0].sha
+    (repo / sha).write_text("not a commit\n")
+    one = ws.worktree_diff(str(repo), of=sha)
+    assert one.failed is False and one.body == ""
+    assert [each.path for each in one.sections[0].files] == ["c.txt"]
+    git(repo, "checkout", "-qf", "main")
+    recent = ws.worktree_diff(str(repo))
+    assert recent.failed is False and recent.recent is True
+    assert [each.subject for each in recent.commits] == ["first"]
+
+
+def test_a_branch_named_like_an_option_never_reaches_git_as_one(ws, repo):
+    """git takes `update-ref refs/heads/--output=pwned`. Its short name went
+    into `git diff --output=pwned...HEAD`, and git wrote the diff into a
+    file. git is given the full name; the reader still sees the short one."""
+    branch_of_three(repo)
+    git(repo, "update-ref", "refs/heads/--output=pwned", "main")
+    seen = []
+
+    def spy(args, **rest):
+        seen.append(list(args))
+        return ws.run(args, **rest)
+
+    report = ws.worktree_diff(str(repo), runner=spy, base="--output=pwned")
+    assert report.base == "--output=pwned" and report.failed is False
+    assert [one.subject for one in report.commits] == ["three: add c", "two"]
+    assert [one.path for one in report.sections[0].files] == ["README.md", "c.txt"]
+    whole = ws.whole_file_diff(str(repo), "committed", "c.txt", runner=spy,
+                               base="--output=pwned")
+    assert whole.failed is False and whole.file.path == "c.txt"
+    whole = ws.whole_file_diff(str(repo), "commit", "c.txt", runner=spy,
+                               of=report.commits[0].sha, base="--output=pwned")
+    assert whole.failed is False and whole.file.path == "c.txt"
+    assert not any(part.startswith("--output") for argv in seen for part in argv)
+    assert not [one for one in repo.iterdir() if "pwned" in one.name]
+
+
+def test_a_worktree_whose_path_ends_in_a_space_is_that_worktree(ws, tmp_path):
+    """`strip()` took the space off `/x/proj `, so the tab read nothing --
+    or, with `/x/proj` there too, the other repository."""
+    for name, text in (("proj", "the other one\n"), ("proj ", "this one\n")):
+        root = tmp_path / name
+        root.mkdir()
+        git(root, "init", "-q", "-b", "main")
+        (root / "notes.md").write_text(text)
+        git(root, "add", ".")
+    spaced = str(tmp_path / "proj ")
+    assert ws.worktree_root(spaced) == spaced
+    assert ws.git_facts(spaced).root == spaced
+    assert ws.read_worktree_file(spaced, "notes.md").text == "this one\n"
+
+
+def test_a_textconv_does_not_move_the_diffs_line_numbers(ws, repo):
+    """`git diff` applies a `textconv` from `.gitattributes` unless told not
+    to. Its lines were those of the converted text, one header line more
+    here, and not the lines the Files tab reads."""
+    (repo / ".gitattributes").write_text("*.dat diff=up\n")
+    (repo / "d.dat").write_text("a\nb\nc\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "data")
+    git(repo, "config", "diff.up.textconv",
+        "sh -c 'printf \"a header\\n\"; cat \"$1\"' -")
+    (repo / "d.dat").write_text("a\nB\nc\n")
+    hunk = ws.worktree_diff(str(repo)).sections[-1].files[0].hunks[0]
+    assert hunk.header.startswith("@@ -1,3 +1,3 @@")
+    assert [line.text for line in hunk.lines] == ["a", "b", "B", "c"]
+
+
+def test_a_quoted_remote_url_carries_no_password(ws, repo):
+    """git reads `url = "…"` without its quotes, and `git config` writes
+    them itself around a value holding `;` or `#`. `configparser` kept
+    them, `urlsplit` then found no scheme, and the token went to the page."""
+    git(repo, "remote", "add", "origin", "https://example.com/x.git")
+    config = repo / ".git" / "config"
+    plain = config.read_text()
+    for written, wanted in (
+            ('"https://me:ghp_secret@github.com/a/b.git"',
+             "https://github.com/a/b.git"),
+            ('"https://me:ghp_secret@github.com/a/\\"b\\".git" ; mine',
+             'https://github.com/a/"b".git')):
+        config.write_text(plain.replace("https://example.com/x.git", written))
+        assert ws.git_facts(str(repo)).remote == wanted, written
+    git(repo, "config", "remote.origin.url",
+        "https://me:ghp_secret@github.com/a/b.git;v2")
+    assert '"' in config.read_text()
+    assert ws.git_facts(str(repo)).remote == "https://github.com/a/b.git;v2"
+
+
+def test_a_password_the_url_parse_missed_is_hidden_all_the_same(ws, repo):
+    """The second guard: a URL inside the URL is not in its netloc, so the
+    first one does not see it."""
+    git(repo, "remote", "add", "origin",
+        "https://proxy.example.com/?to=https://me:ghp_secret@github.com/a.git")
+    remote = ws.git_facts(str(repo)).remote
+    assert "ghp_secret" not in remote and "me:" not in remote
+    assert remote.startswith("https://proxy.example.com/")
+
+
+def test_a_key_without_a_value_does_not_hide_the_remote(ws, repo):
+    """git reads a key alone on a line, `fsmonitor` under `[core]` say, as
+    true. `configparser` called it an error, and the remote came back
+    empty. A made-up key here, so git starts nothing for it."""
+    git(repo, "remote", "add", "origin", "https://example.com/team/myrepo.git")
+    config = repo / ".git" / "config"
+    config.write_text(config.read_text().replace("[core]", "[core]\n\tsparse", 1))
+    assert git_value(repo, "core.sparse") == "true"
+    assert ws.git_facts(str(repo)).remote == "https://example.com/team/myrepo.git"
+
+
+def git_value(repo, key):
+    return subprocess.run(["git", "-C", str(repo), "config", "--type=bool", key],
+                          capture_output=True, text=True, check=True).stdout.strip()

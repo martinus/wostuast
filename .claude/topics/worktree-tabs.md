@@ -6,6 +6,24 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 
 - **Work from the worktree root, not the agent's directory.** git reports
   root-relative paths whatever directory it ran in. `worktree_root` answers this.
+  - **Take only the newline off a path git prints, never `strip()`.** A
+    worktree at `/x/proj ` became `/x/proj`: the tab listed nothing and read
+    nothing, or, when `/x/proj` also existed, showed that other repository.
+    `worktree_root` and `git_facts` both do `rstrip("\n")`.
+    `test_a_worktree_whose_path_ends_in_a_space_is_that_worktree`.
+- **The daemon's git takes no lock.** `status` and `diff` write a refreshed
+  index back, under `.git/index.lock`. The daemon runs them just after an
+  agent's tool call, when the agent runs its own `git add`, and the add
+  failed on the lock. A git that passes its timeout is killed with SIGKILL,
+  which it cannot catch, so the lock stayed: every `git add` and `git
+  commit` failed until somebody deleted the file. `run` gives every git
+  `GIT_OPTIONAL_LOCKS=0`, in one place so a new call cannot forget it.
+  **That is not enough for `git diff`**: it writes the index whatever
+  `GIT_OPTIONAL_LOCKS` says (measured, git 2.43), when a file's stat moved
+  and its bytes did not. `git_diff` also sets `diff.autoRefreshIndex=false`;
+  the diff is the same without the refresh.
+  `test_git_never_takes_the_index_lock_the_agent_needs` ends by showing that
+  a plain `git status` does write that index.
 - **Inside a hunk, the first character of a line is the only thing that matters.**
   Removing `-- a comment` writes `--- a comment`; read as a header it renamed the
   file and swallowed the hunk. Only `diff --git` and `@@` may start something new.
@@ -161,6 +179,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_root_git_could_not_find_is_not_an_empty_worktree`,
   `test_a_base_git_could_not_look_for_is_not_no_base`,
   `test_a_git_that_does_not_answer_at_all_has_failed`.
+  - **An exit status of 0 is not an answer either, when git did not know
+    the flag.** `rev-parse` prints a flag it does not know back and exits
+    0. git before 2.31 does not know `--path-format=absolute`, so that line
+    became the repository's name: every row read
+    `--path-format=absolute/<dir>`, and the remote was never found.
+    `git_facts` drops a line that starts with `-`, and makes a common
+    directory that came back relative absolute against `cwd`.
+    `test_an_old_git_that_prints_path_format_back_keeps_the_repository`.
 - **A repository with no commit yet is an answer, not a failure.** `git init`
   leaves no HEAD, so `git log HEAD` and `git diff HEAD` fail, and the tab
   said git did not answer on every poll -- while the staged files were in
@@ -188,6 +214,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   (`test_a_log_git_failed_on_is_not_a_commit_gone`).
   `test_a_commit_the_page_names_is_used_only_if_git_listed_it` sends
   `--output=` and `HEAD~1` and asserts neither reaches an argv.
+  - **A base goes to git by its full name, `BaseChoice.ref`.** A listed
+    name is not a safe one: git takes `update-ref refs/heads/--output=x`,
+    `pick_base` offered `--output=x`, and `git diff --output=x...HEAD` wrote
+    the diff into a file of that name, which can hold a `/`. A full name
+    starts with `refs/`. The picker and the headings still show the short
+    name. `test_a_branch_named_like_an_option_never_reaches_git_as_one`.
+  - **A revision is followed by `--`.** Without it a file named `HEAD` at
+    the top of the worktree -- an untracked one is enough -- made git
+    refuse `HEAD` as "both revision and filename", and the whole tab failed
+    on every poll. git never checks a range (`a..b`) this way, so a test
+    can only hold the single names: `HEAD`, and the sha `git show` is
+    given. `test_a_file_named_head_does_not_break_the_diff_tab`.
 - **One commit's comments go through `since`, as the committed half's go
   through the uncommitted one.** The commit's new side is that commit, not
   the disk, so its line numbers are not the file's. `since` is `git diff
@@ -251,6 +289,23 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   three lines after the last change as the end of the file and offers no
   more below it; a reader's `diff.context` would move that line and hide
   the offer on every file. `DIFF_CONTEXT` is the number on both sides.
+  - **So is every other part of the output `parse_diff` reads**, in
+    `git_diff`, because a reader's config changes each one.
+    `diff.mnemonicPrefix` wrote `c/` and `w/`, so every file read as a
+    rename; `diff.noprefix` wrote none, so `b/c.py` lost its folder: hence
+    `--src-prefix=a/ --dst-prefix=b/`. `diff.renames=copies` made a copy
+    read as a rename: `-M`. A `textconv` in `.gitattributes` gave the lines
+    of the converted text, not the lines the Files tab reads:
+    `--no-textconv`. `test_the_readers_diff_settings_do_not_change_the_names`,
+    `test_a_textconv_does_not_move_the_diffs_line_numbers`.
+  - **A hunk ends when the lines its header counts have come.**
+    `diff.submodule=log` wrote `  > message` lines with no header of their
+    own, and they were read as context lines of the file before it, which
+    then had an eleventh line out of ten. `--submodule=short` pins git's
+    default, which shows a submodule as its own file, and `HUNK_COUNTS`
+    ends a hunk whatever git writes after it.
+    `test_a_hunk_ends_when_the_lines_it_counts_have_come`,
+    `test_a_submodule_is_its_own_file_and_its_log_is_not_lines_of_another`.
 - **A diff stands on `--sheet`, not on `--code`, and it is white in the
   light.** Its file header stands on it too: a colour of its own, darker
   than the code, read as a bar rather than the top of the file. On the code ground, `#eceae3`, an unchanged line stood at a
