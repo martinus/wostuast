@@ -834,6 +834,9 @@ class GitFacts:
     #: read as a clean repository with no branch, which is a real state and
     #: not this one — and they used to be remembered as the answer.
     failed: bool = False
+    #: What reading the facts raised, when it raised: `failed` is set too.
+    #: For the log only (`git_facts_or_failed`).
+    raised: str = ""
 
 
 @dataclass
@@ -1308,6 +1311,8 @@ class Store:
         self.rows: list[dict[str, Any]] = []
         self.git_read: dict[str, float] = {}
         self.git_wanted: set[str] = set()
+        #: The directories whose git facts raised, logged once each.
+        self.git_raised: set[str] = set()
         self.status_seen: dict[str, float] = {}
         self.liveness_checked = 0.0
         #: Where the log's clock stood at the last look for quiet sessions.
@@ -1575,6 +1580,10 @@ class Store:
         self.git_read.update(dict.fromkeys(facts, moment))
         self.git_wanted |= {
             directory for directory, one in facts.items() if one.failed}
+        for directory, one in facts.items():
+            if one.raised and directory not in self.git_raised:
+                self.git_raised.add(directory)
+                log(f"git facts raised for {directory}: {one.raised}")
         for session in sessions:
             one = facts.get(session.cwd)
             if one is not None and not one.failed:
@@ -3009,88 +3018,255 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
 #: anybody reads, and the secret patterns cost time in its length.
 REMOTE_SHOWN = 500
 
+#: The largest config file `remote_url` reads. A real one is a few
+#: kilobytes. It is read on the tick thread, and an agent can write any
+#: line into it; a larger file gives no remote rather than a slow tick.
+CONFIG_MAX = 1 << 20
+
 
 def remote_url(git_dir: str) -> str:
     """Where the repository is fetched from, read from its config file.
 
     Read and not asked: `git config` would be a third git run for every
     worktree on every poll, for a line that almost never changes, and the
-    common directory `git_facts` already has is where the file is. The
-    older git that gives the top level instead has it under `.git`. What
-    git would add -- `include`, `insteadOf` -- is not followed; this is a
+    git directory `git_facts` already has is where the file is. Only
+    `<git_dir>/config` is read. It used to try `<git_dir>/.git/config` as
+    well, and `git_facts` gave it the top of the worktree when only
+    `--show-toplevel` answered, so a tracked file named `config` there was
+    read as the repository's config.
+
+    The file is read the way git reads it (`config_entries`). What git
+    would add -- `include`, `insteadOf` -- is not followed; this is a
     hover, and a hover that shows the file's own line is still true.
+    `origin` is taken, or else the first remote with a URL. For a remote
+    with several `url` lines the first is taken: git fetches from that one.
 
     A URL can carry a user and a token (`https://me:ghp_x@host/r.git`), and
     it is going to a page, so the part before the `@` of a URL is taken
     out. The `git@host:path` shape holds no secret and is left as it is.
-
-    The value is read the way git reads it (`config_value`): git accepts
-    `url = "https://me:tok@host/r.git"`, and `git config` writes the quotes
-    itself when a value holds `#` or `;`. With the quotes left on,
-    `urlsplit` found no scheme, took nothing out, and the token went to the
-    page. So the result goes through `hide_secrets` as well, a second guard
-    for a shape the first one did not see -- through `clip_hidden`, so a
+    The result then goes through `hide_secrets` as well, a second guard for
+    a shape the first one does not see -- through `clip_hidden`, so a
     remote of a megabyte, which an agent can write, costs the tick thread
-    no more than one of a line. A key with no `=` (`fsmonitor` under
-    `[core]`) is git's "true"; without `allow_no_value` it was a parse
-    error, and one such line hid the remote.
+    no more than one of a line.
+
+    It never raises. A file it cannot read, or one git would refuse, gives
+    "": that is also what the row shows for a repository with no remote.
     """
-    import configparser
     import urllib.parse
 
     base = git_dir.strip().rstrip("/")
     if not base:
         return ""
-    parser = configparser.RawConfigParser(strict=False, interpolation=None,
-                                          allow_no_value=True)
-    for where in (os.path.join(base, "config"), os.path.join(base, ".git", "config")):
-        if os.path.isfile(where):
-            try:
-                parser.read(where, encoding="utf-8")
-            except (OSError, UnicodeDecodeError, configparser.Error):
-                return ""
-            break
-    remotes = [name for name in parser.sections()
-               if name.startswith('remote "') and parser.has_option(name, "url")]
-    if not remotes:
+    where = os.path.join(base, "config")
+    # A plain file only: a FIFO of that name would hold the tick thread.
+    try:
+        if not os.path.isfile(where):
+            return ""
+        with open(where, "rb") as handle:
+            data = handle.read(CONFIG_MAX + 1)
+    except (OSError, ValueError):
         return ""
-    chosen = 'remote "origin"' if 'remote "origin"' in remotes else remotes[0]
-    url = config_value(parser.get(chosen, "url") or "").strip()
+    if len(data) > CONFIG_MAX:
+        return ""
+    entries = config_entries(data.decode("utf-8", "replace"))
+    if entries is None:
+        return ""
+    urls: dict[str, str] = {}
+    for key, value in entries:
+        section, _, rest = key.partition(".")
+        name, _, last = rest.rpartition(".")
+        if section == "remote" and last == "url" and name and value is not None:
+            urls.setdefault(name, value)
+    if not urls:
+        return ""
+    url = urls.get("origin", next(iter(urls.values()))).strip()
     if "://" in url:
         try:
             parts = urllib.parse.urlsplit(url)
+            host = parts.netloc.rpartition("@")[2]
+            url = urllib.parse.urlunsplit(parts._replace(netloc=host))
         except ValueError:
             return ""
-        host = parts.netloc.rpartition("@")[2]
-        url = urllib.parse.urlunsplit(parts._replace(netloc=host))
     return clip_hidden(url, REMOTE_SHOWN)
 
 
-def config_value(raw: str) -> str:
-    """A value from a git config file, as git reads it.
+#: What git counts as white space in a config file (its own `isspace`):
+#: not the vertical tab or the form feed, which C's `isspace` takes.
+CONFIG_SPACE = " \t\r\n"
+#: Space and comments between entries, in one step.
+CONFIG_GAP = re.compile(r"(?:[ \t\r\n]+|[#;][^\n]*)+")
+#: A key: a letter, then letters, digits and `-`.
+CONFIG_KEY = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
+#: A section's name in `[name]` or `[name "sub"]`; a `.` in it is the old
+#: `[name.sub]` form.
+CONFIG_SECTION = re.compile(r"[A-Za-z0-9.-]*")
+#: A run of characters with no meaning of their own inside a value.
+CONFIG_PLAIN = re.compile(r'[^\n\\"#; \t\r]+')
+#: What a backslash in a value may stand before. git refuses the file for
+#: any other.
+CONFIG_ESCAPES = {"n": "\n", "t": "\t", "b": "\b", "\\": "\\", '"': '"'}
 
-    A double quote opens and closes a quoted part and is not part of the
-    value. A backslash escapes the next character, and `\\n`, `\\t` and
-    `\\b` are the controls. Outside quotes, `#` and `;` start a comment.
-    `configparser` does none of this: it kept the quotes, and a quoted
-    remote URL went to the page with its token (`remote_url`).
+
+def config_entries(text: str) -> list[tuple[str, str | None]] | None:
+    """Each `key = value` of a git config file, in order, or None.
+
+    The key is git's full name: the section and the key in lower case, the
+    subsection as it is written -- `remote.Origin.url` for
+    `[Remote "Origin"] URL = x`. A key with no `=` is git's "true", and its
+    value is None. None for the whole file is what git would refuse, and
+    git then reads nothing from it either.
+
+    The rules are git's own (`config.c`, `git_parse_source`): `#` and `;`
+    start a comment, a `[section]` can have a key after it on the same
+    line, a key starts with a letter. `configparser` is not this, and a
+    file git reads without complaint made it raise: a key with no `=`, then
+    a line indented further, is read as a continuation of a value that is
+    None -- `AttributeError` before Python 3.13, which escaped `remote_url`
+    and stopped every row. It also kept a `\\` that continues a value onto
+    the next line, so a password in a URL split that way went to the page.
     """
-    out: list[str] = []
-    quoted = False
+    text = text.replace("\r\n", "\n")
+    if text.startswith("﻿"):
+        text = text[1:]
+    text += "\n"
+    size = len(text)
+    entries: list[tuple[str, str | None]] = []
+    section = ""
     at = 0
-    while at < len(raw):
-        char = raw[at]
-        if char == "\\" and at + 1 < len(raw):
+    while True:
+        gap = CONFIG_GAP.match(text, at)
+        if gap:
+            at = gap.end()
+        if at >= size:
+            return entries
+        if text[at] == "[":
+            found = config_section(text, at + 1)
+            if found is None:
+                return None
+            section, at = found
+            continue
+        key = CONFIG_KEY.match(text, at)
+        if not key:
+            return None
+        at = key.end()
+        while text[at] in " \t":
             at += 1
-            out.append({"n": "\n", "t": "\t", "b": "\b"}.get(raw[at], raw[at]))
-        elif char == '"':
-            quoted = not quoted
-        elif char in "#;" and not quoted:
-            break
-        else:
-            out.append(char)
+        word = key.group().lower()
+        name = f"{section}.{word}" if section else word
+        if text[at] == "\n":
+            entries.append((name, None))
+            at += 1
+            continue
+        if text[at] != "=":
+            return None
+        found_value = config_value(text, at + 1)
+        if found_value is None:
+            return None
+        value, at = found_value
+        entries.append((name, value))
+
+
+def config_section(text: str, at: int) -> tuple[str, int] | None:
+    """The section a `[` starts, and where its header ends, or None.
+
+    `[name]` and `[name.sub]` are in lower case whole. `[name "sub"]`
+    keeps the subsection as written, with `\\` taking the next character
+    as it is. A header that ends on its own line is refused, as git does.
+    """
+    name = CONFIG_SECTION.match(text, at)
+    base = name.group().lower()
+    at = name.end()
+    if text[at] == "]":
+        return (base, at + 1) if base else None
+    if text[at] not in CONFIG_SPACE:
+        return None
+    while text[at] in CONFIG_SPACE:
+        if text[at] == "\n":
+            return None
         at += 1
-    return "".join(out)
+    if text[at] != '"':
+        return None
+    at += 1
+    sub: list[str] = []
+    while True:
+        char = text[at]
+        if char == "\n":
+            return None
+        if char == '"':
+            break
+        if char == "\\":
+            at += 1
+            char = text[at]
+            if char == "\n":
+                return None
+        sub.append(char)
+        at += 1
+    if text[at + 1] != "]":
+        return None
+    return f"{base}.{''.join(sub)}", at + 2
+
+
+def config_value(text: str, at: int) -> tuple[str, int] | None:
+    """The value that starts at `at`, after the `=`, and where its line
+    ends; None for one git refuses.
+
+    As git reads it (`parse_value`): space before the value and after it
+    is dropped, a double quote opens and closes a quoted part and is not
+    part of the value, `#` and `;` outside quotes start a comment, a
+    backslash takes `\\\\`, `\\"`, `\\n`, `\\t` and `\\b`, and a backslash at
+    the end of a line joins the next line on. A quote still open at the end
+    of the line, and any other backslash, make git refuse the file.
+    `text` ends in a newline, which `config_entries` makes sure of.
+    """
+    parts: list[str] = []
+    size = 0
+    trim = 0
+    quoted = False
+    end = len(text)
+    while True:
+        char = text[at] if at < end else "\n"
+        if char == "\n":
+            if quoted:
+                return None
+            value = "".join(parts)
+            return (value[:trim] if trim else value), at + 1
+        if char in " \t\r" and not quoted:
+            if not trim:
+                trim = size
+            if size:
+                parts.append(char)
+                size += 1
+            at += 1
+            continue
+        if char in "#;" and not quoted:
+            at = text.find("\n", at)
+            continue
+        trim = 0
+        if char == "\\":
+            after = text[at + 1] if at + 1 < end else "\n"
+            at += 2
+            if after == "\n":
+                continue
+            escaped = CONFIG_ESCAPES.get(after)
+            if escaped is None:
+                return None
+            parts.append(escaped)
+            size += 1
+            continue
+        if char == '"':
+            quoted = not quoted
+            at += 1
+            continue
+        plain = CONFIG_PLAIN.match(text, at)
+        if plain:
+            parts.append(plain.group())
+            size += plain.end() - at
+            at = plain.end()
+        else:
+            # `#`, `;`, a space, a tab or a carriage return inside quotes.
+            parts.append(char)
+            size += 1
+            at += 1
 
 
 def repo_name(git_dir: str) -> str:
@@ -3149,7 +3325,11 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
             common = os.path.realpath(os.path.join(cwd, common))
         facts.repo = repo_name(common)
         facts.root = found[-1]
-        facts.remote = remote_url(common)
+        # With one line, only `--show-toplevel` answered, and that is the
+        # top of the worktree, not a git directory: its `config` can be a
+        # file of the project. The git directory is then `.git` under it.
+        git_dir = common if len(found) > 1 else os.path.join(common, ".git")
+        facts.remote = remote_url(git_dir)
 
     status = git("status", "--porcelain", "--branch")
     if not found:
@@ -3178,19 +3358,40 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
 def git_facts_many(directories: Sequence[str]) -> dict[str, GitFacts]:
     """Read several directories at once. git waits on disk, so ten worktrees
     cost about as long as one. It reads and returns; it assigns nothing, so
-    only the thread that called it ever writes to a session."""
+    only the thread that called it ever writes to a session.
+
+    It never raises. One directory whose facts raised took the whole batch
+    with it out of `pool.map`: `refresh` raised before it replaced the
+    rows, on every tick, so no row changed for any session while that one
+    was known, and `ls` ended in a traceback. A directory that raises now
+    has failed, which `reload_git` asks again after the cool-down.
+    """
     from concurrent.futures import ThreadPoolExecutor
 
     wanted = sorted({directory for directory in directories if directory})
     if not wanted:
         return {}
     with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
-        return dict(zip(wanted, pool.map(git_facts, wanted)))
+        return dict(zip(wanted, pool.map(git_facts_or_failed, wanted)))
+
+
+def git_facts_or_failed(directory: str) -> GitFacts:
+    """`git_facts`, with anything it raises turned into a failure that
+    says what it raised. The caller logs it: the `Store` once a directory,
+    because a failure is asked again after every cool-down."""
+    try:
+        return git_facts(directory)
+    except Exception as error:
+        return GitFacts(failed=True, raised=repr(error))
 
 
 def add_git_facts(sessions: Sequence[Session]) -> None:
-    """Fill in git facts for every session."""
+    """Fill in git facts for every session. It never raises, because
+    `git_facts_many` does not: `ls` ended in a traceback when one
+    directory's facts raised."""
     facts = git_facts_many([session.cwd for session in sessions])
+    for one in {one.raised for one in facts.values() if one.raised}:
+        log(f"git facts raised: {one}")
     for session in sessions:
         session.git = facts.get(session.cwd, GitFacts())
 
@@ -5123,10 +5324,13 @@ def inside(root: Path | str, path: Path | str) -> Path | None:
     flattens every `..`, so one comparison answers a question that a pattern
     over the raw text can only guess at. Both callers share it so it cannot drift.
     """
+    # A link loop (`a -> b`, `b -> a`, both tracked) raises RuntimeError
+    # before Python 3.13, and OSError after. It is not inside anything: the
+    # read answered 500 before.
     try:
         top = Path(root).resolve()
         target = Path(path).resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return None
     return target if target.is_relative_to(top) else None
 

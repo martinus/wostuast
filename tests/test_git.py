@@ -881,9 +881,9 @@ def test_a_remote_of_a_megabyte_costs_the_tick_no_time(ws, repo):
     """The remote is read on the tick thread, and an agent can write any
     line into the config. A megabyte of `a.token.` took the secret patterns
     8.5 s whole; the hover shows the start of it, and only that is looked
-    at. What is left is reading the file, which `config_value` does a
-    character at a time: 0.23 s for the megabyte, and linear. CPU time, so
-    a loaded machine does not fail it, and a second, so a slow one does
+    at. What is left is reading the file, which `config_value` does a run
+    of plain characters at a time: 0.01 s for the megabyte. CPU time, so a
+    loaded machine does not fail it, and a second, so a slow one does
     not."""
     import time
 
@@ -909,6 +909,222 @@ def test_a_key_without_a_value_does_not_hide_the_remote(ws, repo):
     assert ws.git_facts(str(repo)).remote == "https://example.com/team/myrepo.git"
 
 
-def git_value(repo, key):
-    return subprocess.run(["git", "-C", str(repo), "config", "--type=bool", key],
+def git_value(repo, key, kind="bool"):
+    typed = [f"--type={kind}"] if kind else []
+    return subprocess.run(["git", "-C", str(repo), "config", *typed, key],
                           capture_output=True, text=True, check=True).stdout.strip()
+
+
+def git_entries(path):
+    """Every entry git reads in a config file, as `config_entries` gives
+    them, or None when git refuses the file."""
+    done = subprocess.run(["git", "config", "--file", str(path), "-z", "--list"],
+                          capture_output=True)
+    if done.returncode:
+        return None
+    entries = []
+    for item in done.stdout.decode("utf-8", "replace").split("\0")[:-1]:
+        key, newline, value = item.partition("\n")
+        entries.append((key, value if newline else None))
+    return entries
+
+
+#: Config files with the shapes a reader gets wrong. git decides what each
+#: one means, in `test_the_config_is_read_as_git_reads_it`.
+TRICKY_CONFIGS = [
+    b'[core]\nsparse\n\teditor = vim\n[remote "origin"]\n\turl = https://e.com/x.git\n',
+    b'[remote "origin"]\n\turl = https://me:pw\\\n@github.com/o/r.git\n\tfetch = x\n',
+    b'[remote "origin"]\n\turl = "https://me:tok@h/r.git" ; comment\n',
+    b'[remote "origin"]\n\turl = a\\"b\\\\c\\td\\ne\\bf\n',
+    b'[remote "origin"]\n\turl = a\\x\n',
+    b'[remote "origin"]\n\turl = "open\n',
+    b'[remote "origin"]\n\turl =   spaced value   # trailing\n',
+    b'[remote "origin"]\n\turl = " kept  " x  \n',
+    b'[remote "origin"]\n\turl = "a;#b"\n',
+    b'[remote "origin"]\n\turl = "a"b"c"\n',
+    b'[remote "origin"]\n\turl = \\\n  continued\n',
+    b'[remote "origin"]\n\turl = a # comment \\\n\tfetch = y\n',
+    b'[remote "origin"]\n\turl = a\\',
+    b'[remote "origin"] url = on-the-header-line\n',
+    b'[Remote "Origin"]\n\tURL = case\n[remote "origin"]\n\turl = lower\n',
+    b'[remote.Origin]\n\turl = old-form\n',
+    b'[remote "a\\"b\\\\c"]\n\turl = escaped-subsection\n',
+    b'# c\n; c\n[remote "origin"] # c\n\turl = x\n\turl = second\n',
+    b'[remote "origin"]\r\n\turl = crlf\r\n',
+    b'\xef\xbb\xbf[remote "origin"]\n\turl = bom\n',
+    b'[remote "origin"]\n\turl = caf\xc3\xa9\n',
+    b'[remote "origin"]\n\turl = a\x0cb\x0b \n',
+    b'[remote "origin"\n\turl = x\n',
+    b'[remote  "origin" ]\n\turl = x\n',
+    b'[remote\n"origin"]\n\turl = x\n',
+    b'[remote "origin"]\n\t9url = x\n',
+    b'[remote "origin"]\n\turl x\n',
+    b'[remote "origin"]\n\turl # c\n',
+    b'[remote "origin"]\n\turl\n',
+    b'[remote "origin"]\n\turl =\n',
+    b'[a]b=1[c]d=2\n',
+    b'[]\nx=1\n',
+    b'[s "sub.dot"]\n\tk-e-y2 = v\n',
+    b'',
+]
+
+
+def test_the_config_is_read_as_git_reads_it(ws, tmp_path):
+    """`configparser` read a file git reads without complaint as an error,
+    and raised on one (`test_a_bare_key_then_an_indented_line_stops_nothing`);
+    it kept the `\\` that continues a value, and a password with it. Every
+    entry of each file must be what `git config --list` says, and a file git
+    refuses gives None. Then the same for seeded random files made of the
+    parts that mean something: 400 of them found no difference in 3,000.
+
+    Left out, on purpose: whitespace inside a value other than a space (git
+    2.43 turns each tab or lone CR into a space; this reader keeps it), a
+    NUL in a value (git's value ends there), and `[include]`, which the
+    reader does not follow. None of them changes where a URL's `@` is."""
+    import random
+
+    config = tmp_path / "config"
+    for data in TRICKY_CONFIGS:
+        config.write_bytes(data)
+        assert ws.config_entries(data.decode("utf-8")) == git_entries(config), data
+    parts = ['[remote "origin"]\n', "[s]", "\n", " ", "=", " = ", "#", ";",
+             '"', "\\", "\\\n", "a", "b", "url", "k", ".", "-", "é", "n",
+             "t", "[", "]"]
+    rng = random.Random(252)
+    read = 0
+    for _ in range(400):
+        text = "".join(rng.choice(parts) for _ in range(rng.randint(1, 25)))
+        config.write_text(text)
+        wanted = git_entries(config)
+        assert ws.config_entries(text) == wanted, text
+        read += bool(wanted)
+    assert read > 10, "the random files must hold entries git reads"
+
+
+def test_a_bare_key_then_an_indented_line_stops_nothing(ws, repo):
+    """A key with no `=` at the start of its line, then a line indented
+    further: `git config core.editor vim` writes one after a hand-written
+    key. git reads the file. `configparser` read the indented line as the
+    continuation of a value that was None, and raised AttributeError
+    before Python 3.13 -- out of `remote_url`, out of `git_facts`, and out
+    of every `refresh` (`test_one_directory_that_raises_stops_no_other`)."""
+    git(repo, "remote", "add", "origin", "https://example.com/team/myrepo.git")
+    config = repo / ".git" / "config"
+    config.write_text(config.read_text().replace("[core]", "[core]\nsparse", 1))
+    git(repo, "config", "core.editor", "vim")
+    assert "sparse\n\t" in config.read_text()
+    assert git_value(repo, "core.sparse") == "true"
+    facts = ws.git_facts(str(repo))
+    assert facts.remote == "https://example.com/team/myrepo.git"
+    assert facts.branch == "main"
+
+
+def test_a_url_continued_on_the_next_line_carries_no_password(ws, repo):
+    """git joins a line that ends in `\\` to the next one. `configparser`
+    kept the `\\` and read the next line as a key of its own, so the URL
+    was `https://me:hunter2password\\`: no `@`, so neither `urlsplit` nor
+    `hide_secrets` found the password, and it went to the row's hover."""
+    git(repo, "remote", "add", "origin", "https://example.com/x.git")
+    config = repo / ".git" / "config"
+    config.write_text(config.read_text().replace(
+        "https://example.com/x.git", "https://me:hunter2password\\\n@github.com/o/r.git"))
+    assert git_value(repo, "remote.origin.url", kind=None) == \
+        "https://me:hunter2password@github.com/o/r.git"
+    remote = ws.git_facts(str(repo)).remote
+    assert remote == "https://github.com/o/r.git"
+
+
+def test_the_first_url_of_a_remote_is_the_one_shown(ws, repo):
+    """A remote can have several `url` lines, and git fetches from the
+    first (`git remote get-url`). `configparser` kept the last."""
+    git(repo, "remote", "add", "origin", "https://example.com/first.git")
+    git(repo, "config", "--add", "remote.origin.url", "https://example.com/second.git")
+    first = subprocess.run(["git", "-C", str(repo), "remote", "get-url", "origin"],
+                           capture_output=True, text=True, check=True).stdout.strip()
+    assert first == "https://example.com/first.git"
+    assert ws.git_facts(str(repo)).remote == first
+
+
+def test_a_config_git_refuses_or_too_big_gives_no_remote(ws, repo):
+    """What git refuses, git reads nothing from, so neither does the row.
+    A file over `CONFIG_MAX` is not read at all: it is read on the tick
+    thread. Neither raises, and no byte that is not UTF-8 does."""
+    git(repo, "remote", "add", "origin", "https://example.com/x.git")
+    config = repo / ".git" / "config"
+    plain = config.read_text()
+    for data in (plain.replace("[core]", "[core\n").encode(),
+                 plain.replace("x.git", 'x.git\\q').encode(),
+                 plain.encode() + b"\xff\xfe\x00[[[\n",
+                 plain.encode() + b"#" * ws.CONFIG_MAX):
+        config.write_bytes(data)
+        assert ws.remote_url(str(repo / ".git")) == ""
+    config.write_bytes(plain.encode() + b"# caf\xe9\n")
+    assert ws.remote_url(str(repo / ".git")) == "https://example.com/x.git"
+
+
+def test_the_top_of_the_worktree_is_not_read_as_its_config(ws, repo):
+    """With only `--show-toplevel` answering, `git_facts` gave `remote_url`
+    the top of the worktree, and it read `<top>/config` -- a file of the
+    project -- as the repository's config."""
+    git(repo, "remote", "add", "origin", "https://example.com/real.git")
+    (repo / "config").write_text(
+        '[remote "origin"]\n\turl = https://example.com/a-file-of-the-project.git\n')
+    real = ws.run
+
+    def runner(args, **rest):
+        return None if "--path-format=absolute" in args else real(args, **rest)
+
+    assert ws.git_facts(str(repo), runner=runner).remote == \
+        "https://example.com/real.git"
+
+
+def test_one_directory_that_raises_stops_no_other(ws, repo, tmp_path, monkeypatch):
+    """`git_facts` raising for one directory took the whole batch out of
+    `pool.map`; `refresh` raised before it replaced the rows, on every
+    tick, so no row changed and no new session was shown, and `ls` ended
+    in a traceback. That directory has failed now, is asked again after
+    the cool-down, and is logged once."""
+    from conftest import event
+
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    real = ws.git_facts
+
+    def facts(cwd, runner=ws.run):
+        if cwd == str(bad):
+            raise AttributeError("'NoneType' object has no attribute 'append'")
+        return real(cwd, runner)
+
+    logged = []
+    monkeypatch.setattr(ws, "git_facts", facts)
+    monkeypatch.setattr(ws, "log", logged.append)
+    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
+    store = ws.Store()
+    ws.append_event(event("SessionStart", sid="bad", cwd=str(bad)))
+    ws.append_event(event("SessionStart", sid="good", cwd=str(repo)))
+    store.refresh(now=1000.0, alive=lambda p: True)
+    rows = {row["id"]: row for row in store.rows}
+    assert rows.keys() == {"bad", "good"}
+    assert rows["good"]["branch"] == "main"
+    assert str(bad) in store.git_wanted
+    ws.append_event(event("SessionStart", sid="new", cwd=str(repo), ts=1001.0))
+    store.refresh(now=1000.0 + ws.GIT_MIN_INTERVAL, alive=lambda p: True)
+    assert "new" in {row["id"] for row in store.rows}
+    assert len([line for line in logged if "git facts raised" in line]) == 1
+
+    sessions = [ws.Session(session_id="a", cwd=str(bad)),
+                ws.Session(session_id="b", cwd=str(repo))]
+    ws.add_git_facts(sessions)
+    assert sessions[0].git.failed and sessions[1].git.branch == "main"
+
+
+def test_a_link_loop_is_not_inside_and_is_not_an_error(ws, repo):
+    """`Path.resolve` raises RuntimeError on a link loop before Python
+    3.13, and `inside` caught only OSError, so reading a tracked `a -> b`,
+    `b -> a` answered 500."""
+    (repo / "a").symlink_to("b")
+    (repo / "b").symlink_to("a")
+    git(repo, "add", "a", "b")
+    git(repo, "commit", "-qm", "a loop")
+    assert ws.inside(repo, repo / "a") is None
+    assert ws.read_worktree_file(str(repo), "a") is None
