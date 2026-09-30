@@ -115,9 +115,7 @@ def test_a_transcript_the_page_holds_whole_is_not_sent_again(
     the pushes had already brought. A page that names the reading it holds
     gets `same` and no blocks; one that names anything else gets them all."""
     daemon, base = served
-    path = transcript_file("s1", [{
-        "type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
-        "message": {"role": "user", "content": "hello there"}}])
+    path = transcript_file("s1", [conftest.record("you", "hello there")])
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
     _, first = get(f"{base}/api/session/s1/transcript")
@@ -131,9 +129,7 @@ def test_a_transcript_the_page_holds_whole_is_not_sent_again(
     assert [b["text"] for b in behind["blocks"]] == ["hello there"]
     # Something new read on the way is news, even to a page that was whole.
     with path.open("a") as out:
-        out.write(json.dumps({
-            "type": "user", "timestamp": "2026-09-18T14:01:00.000Z",
-            "message": {"role": "user", "content": "and again"}}) + "\n")
+        out.write(conftest.records(conftest.record("you", "and again")))
     _, moved = get(f"{base}/api/session/s1/transcript?have={held}")
     assert "same" not in moved
     assert [b["text"] for b in moved["blocks"]] == ["hello there", "and again"]
@@ -171,9 +167,7 @@ def test_text_is_packed_for_a_client_that_takes_gzip(ws, served,
     headers, _ = fetch_packed(f"{base}/", "*")
     assert headers["Content-Encoding"] == "gzip"
     # JSON too, which is what the Files tab and the transcript are.
-    path = transcript_file("s1", [{
-        "type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
-        "message": {"role": "user", "content": "hello there " * 200}}])
+    path = transcript_file("s1", [conftest.record("you", "hello there " * 200)])
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
     headers, body = fetch_packed(f"{base}/api/session/s1/transcript", "gzip")

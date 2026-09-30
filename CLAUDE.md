@@ -2314,8 +2314,8 @@ update the comment with its own text, and read it back.
   `wait_for_watching` exists in the tests for exactly that gap. **It cannot
   see a stream the page has just replaced**: the daemon lists the closed one
   until a write to it fails, so it answers at once and the next push goes
-  to the dead socket. After `resubscribe` or `choose`, a test clears
-  `state.live` and waits for the new stream's first word to set it again.
+  to the dead socket. After `resubscribe` or `choose`, a test goes through
+  `renew_stream`, which waits for the new stream's first word.
   `Serving.stream` sends it (`transcript_held`) after joining, so what is
   read after it is pushed and what was read before it is counted; the page
   fetches when it holds less, or keeps it in `state.turns.told` for the
@@ -2343,12 +2343,14 @@ update the comment with its own text, and read it back.
     and the daemon answers `same` with no blocks. **Only `state.turns.whole`
     may send it**: pushes alone are pieces, and their version is the
     daemon's own. A session chosen on another tab gathers pushes before any
-    fetch, and a stream that opens on more than is held while another tab
-    is up has lost pushes. Either named as what is held came back `same`
-    and the tab showed the pieces.
-  - **`load` clears the last tab's poll timer first.** Only `repoll` did,
-    after the load: the Files tab's two-second poll fired into the
-    Transcript tab while its fetch was out and fetched it all again.
+    fetch, and a stream that opens on more than is held has lost pushes.
+    Either named as what is held came back `same` and the tab showed the
+    pieces. Any gap clears `whole`; only a fetch that lands sets it.
+  - **`load` clears the last tab's poll timer first**, and re-arms one
+    only for the tab it loaded. Only `repoll` cleared it, after the load:
+    the Files tab's two-second poll fired into the Transcript tab while its
+    fetch was out and fetched it all again; and a Files load still out at
+    the switch armed the next tab's timer on its way out.
   A test that holds the transcript route matches it with `TRANSCRIPT`, a
   pattern that takes a query: the glob `**/transcript` does not, and held
   nothing once `?have=` was there.
@@ -2358,7 +2360,8 @@ update the comment with its own text, and read it back.
   `test_coming_back_to_the_transcript_fetches_only_what_moved`,
   `test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole`,
   `test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole`,
-  `test_the_last_tabs_poll_does_not_fetch_the_transcript_again`.
+  `test_the_last_tabs_poll_does_not_fetch_the_transcript_again`,
+  `test_a_load_that_ends_after_the_switch_sets_no_timer`.
 - **A failed transcript fetch is not an empty transcript.** `ask` gives
   null, and the page drew "Nothing in this transcript yet.", forgot the
   reader's places, and asked no more, because the tab polls nothing. Now

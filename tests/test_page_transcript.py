@@ -18,6 +18,7 @@ from browser import (
     show_tab,
     wait_for_map,
     wait_for_watching,
+    renew_stream,
     daemon_transcript,
 )
 
@@ -2093,7 +2094,7 @@ def asks_for_transcript(page):
     """Every transcript request the page makes, as its address."""
     asked = []
     page.on("request", lambda request: asked.append(request.url)
-            if request.url.split("?")[0].endswith("/transcript") else None)
+            if TRANSCRIPT.search(request.url) else None)
     return asked
 
 
@@ -2154,6 +2155,44 @@ def test_the_last_tabs_poll_does_not_fetch_the_transcript_again(page_at):
             browser.close()
 
 
+def test_a_load_that_ends_after_the_switch_sets_no_timer(page_at):
+    """A Files load still out when the reader moved on ran `repoll` on its
+    way out, and armed the next tab's timer: the Review tab's poll then
+    fired while its own first fetch was still on its way, and asked twice."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            show_tab(page, "files")
+            files, diffs = [], []
+            page.route(re.compile(r"/files(\?.*)?$"),
+                       lambda route: files.append(route))
+            page.route(re.compile(r"/diff(\?.*)?$"),
+                       lambda route: diffs.append(route))
+            page.evaluate("() => { TABS.diff.poll = 100; load(); }")
+            for _ in range(250):
+                if files:
+                    break
+                page.wait_for_timeout(20)
+            assert files, "the Files tab never asked"
+            page.click('.tab[data-tab="diff"]')
+            for _ in range(250):
+                if diffs:
+                    break
+                page.wait_for_timeout(20)
+            files[0].continue_()                 # the Files load ends now
+            page.wait_for_timeout(600)           # proving it did not happen
+            count = len(diffs)
+            for route in files[1:] + diffs:
+                route.continue_()
+            page.unroute(re.compile(r"/files(\?.*)?$"))
+            page.unroute(re.compile(r"/diff(\?.*)?$"))
+            assert count == 1, f"{count} diff fetches for one click"
+        finally:
+            browser.close()
+
+
 def test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole(pair_at):
     """A session chosen while another tab is up holds nothing, and the pushes
     it gathers there are pieces. Their version is the daemon's own, so named
@@ -2170,14 +2209,9 @@ def test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole(pair_at):
             count = page.evaluate("state.turns.blocks.length")
             assert count > 0
             show_tab(page, "files")
-            # Each choice opens a new stream, and the daemon can still list
-            # the one closed before it; the new one's first word says it
-            # has joined.
-            page.evaluate(
-                "() => { state.live = ''; choose('s2'); choose('s1'); }")
+            renew_stream(page, "choose('s2'); choose('s1')")
             page.wait_for_function(
-                "state.live === 'live' && state.chosen === 's1'"
-                " && state.tab === 'files'")
+                "state.chosen === 's1' && state.tab === 'files'")
             append_blocks(daemon, ["A piece, pushed alone."])
             page.wait_for_function(has_text("A piece, pushed alone."))
             asked = asks_for_transcript(page)
@@ -2204,11 +2238,7 @@ def test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole(page_at):
             page.evaluate("""() => { state.stream.close(); state.stream = null;
                                      state.streamUrl = ''; }""")
             append_blocks(daemon, ["Said while nobody listened."])
-            # The closed stream can still be on the daemon's list, so the
-            # daemon cannot say when the new one has joined; the page can.
-            # Its first word comes in one write with the opening.
-            page.evaluate("() => { state.live = ''; resubscribe(); }")
-            page.wait_for_function("state.live === 'live'")
+            renew_stream(page, "resubscribe()")
             append_blocks(daemon, ["Said once the stream was back."])
             page.wait_for_function(has_text("Said once the stream was back."))
             asked = asks_for_transcript(page)
