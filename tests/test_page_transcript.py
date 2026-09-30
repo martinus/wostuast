@@ -33,7 +33,7 @@ def test_the_page_draws_the_session(page_at):
             # never reaches it, and it went stale beside the branch.
             place = page.locator(".row .name").inner_text()
             assert place and "A session" not in page.locator(".row").inner_text()
-            assert page.title() == "wostuast"
+            assert page.title() == "1 ready \u00b7 wostuast"
             assert page.locator(".turn").count() >= 2
             # The model stands on the strip, beside the window it fills.
             page.wait_for_selector("#ctxslot .model")

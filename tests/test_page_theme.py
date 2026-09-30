@@ -4,6 +4,8 @@ See tests/browser.py for the shared browser and the helpers."""
 
 from __future__ import annotations
 
+import json
+
 
 import pytest
 
@@ -157,24 +159,27 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
             browser.close()
 
 
-def test_the_tab_icon_follows_a_theme_change(page_at):
-    """The icon is a dot painted out of the palette, and the section is placed
-    beside the colours so that it follows them. It did not: `drawIcon` returns
-    early when the state it shows has not changed, and the state does not
-    change with the theme — so a dark-theme dot sat on a light page."""
+def test_the_tab_icon_follows_the_browser_and_not_the_page(page_at):
+    """The icon stands in the browser's tab bar, so it follows the browser's
+    light or dark. It was painted out of the page's palette, and a page
+    switched to light in a dark browser put a dark-ink icon on a dark bar.
+    So the page's theme leaves it alone, and the browser's scheme redraws
+    it."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            page.wait_for_function(
-                "document.querySelector(\"link[rel='icon']\") !== null")
-            before = page.evaluate(
-                "document.querySelector(\"link[rel='icon']\").href")
+            page.emulate_media(color_scheme="light")
+            page.evaluate("redrawIcon()")
+            href = "document.querySelector(\"link[rel='icon']\").href"
+            before = page.evaluate(href)
             assert before.startswith("data:image/png")
 
-            page.locator("#theme").click()          # whatever it was, not that
-            page.wait_for_function(
-                """(was) => document.querySelector("link[rel='icon']").href !== was""",
-                arg=before)
+            page.locator("#theme").click()
+            page.locator("#theme").click()
+            assert page.evaluate(href) == before, "the page's theme moved it"
+
+            page.emulate_media(color_scheme="dark")
+            page.wait_for_function(f"{href} !== {json.dumps(before)}")
         finally:
             browser.close()
 
