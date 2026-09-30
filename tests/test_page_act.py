@@ -645,11 +645,13 @@ def test_the_send_box_types_into_the_terminal(in_pane):
         try:
             page.fill("#say", "run the tests")
             page.press("#say", "Enter")
-            page.wait_for_timeout(500)
-            assert ["tmux", "send-keys", "-t", "%7", "-l", "--",
-                    "run the tests"] in seen
+            # The keys reaching the pane and the send's lock let go, not a
+            # number of seconds: a loaded runner takes longer than any.
+            typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "run the tests"]
+            wait_until(page, lambda: typed in seen)
+            page.wait_for_function("sending.size === 0")
             assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
-            # cleared only once the daemon said it went in
+            # empty, and not put back: the daemon said it went in
             assert page.input_value("#say") == ""
         finally:
             browser.close()
@@ -676,13 +678,19 @@ def test_the_enter_that_ends_a_composition_sends_nothing(in_pane):
             page.fill("#say", "\u65e5\u672c")
             for how in ("composing", "safari"):
                 page.evaluate(COMPOSED_ENTER, ["#say", how])
+            # The box empties the moment a send starts, in the same call as
+            # the Enter, so a box still full is the sure sign nothing went.
+            assert page.input_value("#say") == "\u65e5\u672c"
             page.wait_for_timeout(500)          # proving nothing was sent
             assert not any("send-keys" in one for one in seen), seen
-            assert page.input_value("#say") == "\u65e5\u672c"
             page.press("#say", "Enter")
-            page.wait_for_function("document.getElementById('say').value === ''")
-            assert ["tmux", "send-keys", "-t", "%7", "-l", "--",
-                    "\u65e5\u672c"] in seen
+            # Not the box emptying: that is the send starting, not landing.
+            # The keys reaching the pane, and the send's lock let go, are.
+            typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "\u65e5\u672c"]
+            wait_until(page, lambda: typed in seen)
+            page.wait_for_function("sending.size === 0")
+            assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+            assert page.input_value("#say") == ""
         finally:
             browser.close()
 
