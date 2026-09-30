@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import json
+from pathlib import Path
 
 
 def test_it_reads_each_line_once(ws, tmp_path):
@@ -88,9 +90,9 @@ def test_the_follower_reads_new_events(ws):
 def test_nothing_is_lost_when_the_log_rotates_under_the_follower(ws, monkeypatch):
     """The hook rotates, not the daemon, so this happens without warning.
 
-    A rotation makes the archive tail read a file it has already read, so some
-    events arrive a second time. Losing one is the failure; repeating one is
-    not, and `Store.apply` ignores an event older than the session has seen.
+    Every event comes once and in the order of the log. `Store.apply` folds
+    whatever it is given, so a repeat, or an old event after a new one, would
+    set a session back to what it was then.
     """
     monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
     follower = ws.EventFollower()
@@ -102,7 +104,7 @@ def test_nothing_is_lost_when_the_log_rotates_under_the_follower(ws, monkeypatch
         seen += [e["n"] for e in follower.new_events()]
         assert written < 200
     seen += [e["n"] for e in follower.new_events()]
-    assert set(seen) == set(range(written)), "an event went missing"
+    assert seen == list(range(written)), "an event was lost, repeated or moved"
 
 
 def test_events_written_between_polls_survive_a_rotation(ws, monkeypatch):
@@ -116,7 +118,7 @@ def test_events_written_between_polls_survive_a_rotation(ws, monkeypatch):
         ws.append_event({"session_id": "s", "n": written, "pad": "x" * 60})
         written += 1
         assert written < 200
-    assert set(e["n"] for e in follower.new_events()) >= set(range(1, written))
+    assert [e["n"] for e in follower.new_events()] == list(range(1, written))
 
 
 def test_a_daemon_started_after_a_rotation_still_sees_the_history(ws, monkeypatch):
@@ -140,18 +142,117 @@ def test_a_daemon_started_after_a_rotation_still_sees_the_history(ws, monkeypatc
     assert session.pane == "%7"
 
 
-def test_an_event_delivered_twice_does_not_rewind_a_session(ws):
-    """A rotation re-reads the archive, so old events arrive after new ones."""
-    store = ws.Store()
-    start = {"session_id": "s", "hook_event_name": "SessionStart",
-             "cwd": "/w/repo/dir", "pid": 1, "ts": 1000.0}
-    store.apply(start)
-    store.apply({"session_id": "s", "hook_event_name": "Stop", "ts": 1005.0})
-    assert store.sessions["s"].state == "done"
+def rotate_once(ws, n: int) -> int:
+    """Append numbered events until the log has rotated once more, then one
+    more into the new live file. Gives the next number to write."""
+    before = len(ws.archived_events_paths())
+    start = n
+    while len(ws.archived_events_paths()) == before:
+        ws.append_event({"session_id": "s", "n": n, "pad": "x" * 60})
+        n += 1
+        assert n - start < 200
+    ws.append_event({"session_id": "s", "n": n, "pad": "x" * 60})
+    return n + 1
 
-    store.apply(start)                      # the archive, read again
-    assert store.sessions["s"].state == "done"
-    assert store.sessions["s"].cwd == "/w/repo/dir"
+
+def test_a_rotation_in_the_middle_of_a_pass_is_read_once_and_in_order(
+        ws, monkeypatch):
+    """At the start the fold reads a year of archives, which takes seconds,
+    and a hook can rotate the log meanwhile. The follower listed the
+    archives once a pass, so it read the new live file first and the new
+    archive after it, a pass later -- and `Store.apply` dropped every event
+    in it as old: an open question with no bar. Here the rotation lands
+    after the first event a pass gives: once at the start, and once while
+    an archive the live tail was handed over to is read."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    written = rotate_once(ws, 0)
+    written = rotate_once(ws, written)
+    follower = ws.EventFollower()
+    seen: list[int] = []
+    for _ in range(2):
+        for index, one in enumerate(follower.new_events()):
+            seen.append(one["n"])
+            if index == 0:
+                written = rotate_once(ws, written)
+        seen += [e["n"] for e in follower.new_events()]
+        # The live file, part read, becomes an archive before the next pass.
+        written = rotate_once(ws, written)
+    seen += [e["n"] for e in follower.new_events()]
+    assert seen == list(range(written)), "an event was lost, repeated or moved"
+
+
+def test_a_rotation_just_after_the_listing_is_read_in_order(ws, monkeypatch):
+    """The narrow case: the log rotates after the archives are listed and
+    before the live file is opened. Opened then, the live name is already
+    the new file, and the old one's last events come after it, from the top.
+    The follower opens the live file first, so what it holds is the file
+    the listing was about."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    follower = ws.EventFollower()
+    written = 0
+    seen: list[int] = []
+    for _ in range(3):
+        ws.append_event({"session_id": "s", "n": written, "pad": "x" * 60})
+        written += 1
+        seen += [e["n"] for e in follower.new_events()]
+    listing = ws.archived_events_paths
+    rotated: list[int] = []
+
+    def then_rotate():
+        found = listing()
+        if not rotated:
+            rotated.append(1)
+            nonlocal written
+            written = rotate_once(ws, written)
+        return found
+
+    monkeypatch.setattr(ws, "archived_events_paths", then_rotate)
+    seen += [e["n"] for e in follower.new_events()]
+    seen += [e["n"] for e in follower.new_events()]
+    assert rotated
+    assert seen == list(range(written)), "an event was lost, repeated or moved"
+
+
+def refuse_to_open(ws, monkeypatch, refused: Path) -> None:
+    """`open` fails for one file, as it does for a daemon out of descriptors."""
+    import builtins
+
+    def opener(path, *args, **kwargs):
+        if Path(path) == refused:
+            raise OSError(errno.EMFILE, "Too many open files", str(path))
+        return builtins.open(path, *args, **kwargs)
+
+    monkeypatch.setattr(ws, "open", opener, raising=False)
+
+
+def test_an_archive_that_could_not_be_opened_is_read_on_the_next_pass(
+        ws, monkeypatch):
+    """`Tail.lines` stops quietly when `open` fails, and the follower took
+    that for the end of the archive: its events were not read until the
+    daemon started again. Nothing after it is read meanwhile, so the log
+    still folds in its order."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    written = rotate_once(ws, 0)
+    refuse_to_open(ws, monkeypatch, ws.archived_events_paths()[0])
+    follower = ws.EventFollower()
+    assert list(follower.new_events()) == []
+    monkeypatch.delattr(ws, "open")
+    assert [e["n"] for e in follower.new_events()] == list(range(written))
+
+
+def test_an_archive_that_never_opens_is_given_up_in_the_end(ws, monkeypatch):
+    """Waiting on it for ever would stop the log for good. After
+    `ARCHIVE_TRIES` passes it is left out, and the rest is read."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    rotate_once(ws, 0)
+    live = [json.loads(line)["n"] for line in
+            ws.events_path().read_text().splitlines()]
+    refuse_to_open(ws, monkeypatch, ws.archived_events_paths()[0])
+    follower = ws.EventFollower()
+    for _ in range(ws.ARCHIVE_TRIES - 1):
+        assert list(follower.new_events()) == []
+    assert [e["n"] for e in follower.new_events()] == live
+    assert list(follower.new_events()) == []
 
 
 def test_broken_lines_do_not_stop_the_follower(ws):
