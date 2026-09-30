@@ -499,7 +499,8 @@ def test_serve_says_how_much_history_it_read_and_how_long_it_took(
     for i in range(12):
         ws.append_event({"session_id": "s1", "n": i, "pad": "z" * 40})
     files = len(ws.archived_events_paths()) + 1
-    size = sum(path.stat().st_size for path in ws.event_files())
+    size = sum(path.stat().st_size for path in
+               ws.archived_events_paths() + [ws.events_path()])
 
     class Fake:
         server_address = ("127.0.0.1", 7331)

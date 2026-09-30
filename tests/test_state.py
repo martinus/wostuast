@@ -1509,3 +1509,37 @@ def test_the_row_shows_a_pasted_prompt_without_its_tags(ws, typed, shown):
     assert "pasted_content" not in session.last_prompt
     assert session.last_prompt.startswith(shown)
     assert "pasted_content" not in session.last_event
+
+
+def test_a_listing_that_fails_does_not_bring_an_answered_dialog_back(
+        ws, monkeypatch):
+    """#253, with a `Store`: the dialog is in the log a hook has just
+    rotated away, and its answer and the end of the turn are in the new
+    one. A pass whose listing failed read the new file as if nothing
+    waited, and the next pass read the old one after it: the row went
+    amber again, with a No button, over a question that was gone."""
+    import errno
+
+    from conftest import event as hook_event
+
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 10 ** 9)
+    ask = {"tool_name": "Bash", "tool_input": {"command": "rm -rf build"}}
+    store = ws.Store()
+    ws.append_event(hook_event("SessionStart", ts=1.0))
+    ws.append_event(hook_event("UserPromptSubmit", prompt="go", ts=2.0))
+    store.follow()
+    ws.append_event(hook_event("PermissionRequest", ts=3.0, **ask))
+    assert ws.archive_log(ws.events_path())
+    ws.append_event(hook_event("PostToolUse", ts=4.0, **ask))
+    ws.append_event(hook_event("Stop", ts=5.0))
+
+    def listdir(path):
+        raise OSError(errno.EMFILE, "Too many open files", str(path))
+
+    with monkeypatch.context() as short:
+        short.setattr(ws.os, "listdir", listdir)
+        store.follow()
+    store.follow()
+    session = store.sessions["s1"]
+    assert session.state == "done"
+    assert session.permission is None

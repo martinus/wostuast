@@ -255,6 +255,140 @@ def test_an_archive_that_never_opens_is_given_up_in_the_end(ws, monkeypatch):
     assert list(follower.new_events()) == []
 
 
+def fail_to_list(ws, monkeypatch) -> None:
+    """`os.listdir` fails as it does for a daemon out of descriptors."""
+    def listdir(path):
+        raise OSError(errno.EMFILE, "Too many open files", str(path))
+
+    monkeypatch.setattr(ws.os, "listdir", listdir)
+
+
+def test_a_listing_that_fails_reads_nothing_until_it_works(ws, monkeypatch):
+    """A listing that failed read as "no archives". The live tail then
+    started on the new file while the archive of the old one waited unread,
+    and the next pass read that archive from its top, after the newer
+    events: #253 saw pass 2 give [4] and pass 3 give [0, 1, 2, 3]."""
+    follower = ws.EventFollower()
+    for n in range(2):
+        ws.append_event({"session_id": "s", "n": n})
+    assert [e["n"] for e in follower.new_events()] == [0, 1]
+    for n in range(2, 4):
+        ws.append_event({"session_id": "s", "n": n})
+    assert ws.archive_log(ws.events_path())      # a hook rotates
+    ws.append_event({"session_id": "s", "n": 4})
+    with monkeypatch.context() as short:
+        fail_to_list(ws, short)
+        assert list(follower.new_events()) == []
+    assert [e["n"] for e in follower.new_events()] == [2, 3, 4]
+    assert list(follower.new_events()) == []
+
+
+def cut_short(ws, monkeypatch) -> None:
+    """The next `os.unlink` fails, as if the hook stopped between the link
+    and the unlink of a rotation: one file, two names."""
+    unlink = ws.os.unlink
+    calls: list[int] = []
+
+    def once(path, *args, **kwargs):
+        if not calls:
+            calls.append(1)
+            raise OSError(errno.EIO, "cut short", str(path))
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(ws.os, "unlink", once)
+
+
+def test_a_rotation_cut_short_is_read_once(ws, monkeypatch):
+    """The live file stays under its archive name too, and the next rotation
+    gives it a third. Read by name, the running follower read it from its
+    top once it saw the archive (#253: [3, 0, 1, 2, 3]), and a start read
+    it twice over. The event of the hook that stopped is kept, in the file
+    it holds."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    follower = ws.EventFollower()
+    seen: list[int] = []
+    written = 0
+    cut_short(ws, monkeypatch)
+    while len(ws.archived_events_paths()) < 3:
+        ws.append_event({"session_id": "s", "n": written, "pad": "x" * 60})
+        written += 1
+        seen += [e["n"] for e in follower.new_events()]
+        assert written < 500
+    names = ws.archived_events_paths()
+    assert names[0].stat().st_ino == names[1].stat().st_ino, "not cut short"
+    seen += [e["n"] for e in follower.new_events()]
+    assert seen == list(range(written)), "an event was lost, repeated or moved"
+    again = ws.EventFollower()
+    assert [e["n"] for e in again.new_events()] == list(range(written))
+    assert again.files_read()[0] == 3
+
+
+def test_a_start_on_a_rotation_cut_short_reads_the_live_file_once(
+        ws, monkeypatch):
+    """Before the next rotation the one file is the live log and the newest
+    archive at once, and the hooks still write to it."""
+    for n in range(3):
+        ws.append_event({"session_id": "s", "n": n})
+    cut_short(ws, monkeypatch)
+    assert not ws.archive_log(ws.events_path())
+    assert ws.archived_events_paths()
+    follower = ws.EventFollower()
+    assert [e["n"] for e in follower.new_events()] == [0, 1, 2]
+    ws.append_event({"session_id": "s", "n": 3})
+    assert [e["n"] for e in follower.new_events()] == [3]
+    assert ws.archive_log(ws.events_path())
+    ws.append_event({"session_id": "s", "n": 4})
+    assert [e["n"] for e in follower.new_events()] == [4]
+    assert list(follower.new_events()) == []
+
+
+def test_an_archive_that_moves_is_not_given_up(ws, monkeypatch):
+    """`ARCHIVE_TRIES` counts passes that read nothing. An archive on a slow
+    disk that gives a piece and then fails, pass after pass, is moving, and
+    it was given up after ten passes all the same, with the rest unread."""
+    import builtins
+
+    monkeypatch.setattr(ws, "TAIL_CHUNK", 64, raising=False)
+    for n in range(40):
+        ws.append_event({"session_id": "s", "n": n, "pad": "x" * 40})
+    assert ws.archive_log(ws.events_path())
+    ws.append_event({"session_id": "s", "n": 40})
+    slow = ws.archived_events_paths()[0]
+
+    class OnePiece:
+        """A file that gives one piece a read and fails on the next."""
+        def __init__(self, handle):
+            self.handle, self.given = handle, False
+
+        def read(self, size):
+            if self.given:
+                raise OSError(errno.EIO, "slow disk")
+            self.given = True
+            return self.handle.read(size)
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.handle.close()
+
+    def opener(path, *args, **kwargs):
+        handle = builtins.open(path, *args, **kwargs)
+        return OnePiece(handle) if Path(path) == slow else handle
+
+    monkeypatch.setattr(ws, "open", opener, raising=False)
+    follower = ws.EventFollower()
+    seen: list[int] = []
+    for _ in range(200):
+        seen += [e["n"] for e in follower.new_events()]
+        if seen and seen[-1] == 40:
+            break
+    assert seen == list(range(41)), "an archive that moved was given up"
+
+
 def test_broken_lines_do_not_stop_the_follower(ws):
     path = ws.events_path()
     path.parent.mkdir(parents=True, exist_ok=True)

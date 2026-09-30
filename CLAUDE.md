@@ -84,7 +84,7 @@ bullets beside it are the same part's other scars.
 | `read_worktree_file`, `is_listed`, `worktree_target`, `inside`, `SHOWN_AS`, the `raw` route | topics/safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear`, `Session.pane`, `Session.pid` | topics/state |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
-| `Tail`, `EventFollower`, `archive_log`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
+| `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `move`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | topics/daemon-and-page: the transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | topics/tab-state |

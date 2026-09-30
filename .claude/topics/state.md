@@ -241,11 +241,59 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     question with no bar. **An archive that cannot be read stops the pass**
     and is tried again on the next, up to `ARCHIVE_TRIES` (`Tail.whole`).
     It used to be marked finished at the first failed `open` -- EMFILE, say
-    -- and skipped until the daemon started again.
+    -- and skipped until the daemon started again. **Only a pass that read
+    none of it counts as a try**: an archive on a slow disk that gives a
+    piece and then fails is moving, and it was given up after ten passes
+    all the same.
     `test_a_rotation_in_the_middle_of_a_pass_is_read_once_and_in_order`,
     `test_a_rotation_just_after_the_listing_is_read_in_order`,
     `test_an_archive_that_could_not_be_opened_is_read_on_the_next_pass`,
-    `test_an_archive_that_never_opens_is_given_up_in_the_end`.
+    `test_an_archive_that_never_opens_is_given_up_in_the_end`,
+    `test_an_archive_that_moves_is_not_given_up`.
+  - **A listing that fails is not a listing with no archives**
+    (#253). `archived_events_paths` gave `[]` for every error. A daemon
+    short of descriptors read the live file as if no archive waited: the
+    live tail started on the new file, and on the next pass the archive of
+    the old file came from its top, after the newer events. A permission
+    dialog already answered came back amber, with a No button on it. Now
+    the listing gives None for any error but a missing folder, and
+    `new_lines` then reads nothing, not even the live file, until a
+    listing works. **Every caller says what None means to it**:
+    `archive_log` does not rotate, and the hook writes its event into the
+    file it holds -- a second `open` of the log waits on its own `flock`,
+    because the lock belongs to the open file and not to the process;
+    `read_events` raises, and `ls` and `doctor` say they cannot read the
+    log. The hook's deadline is a `TimeoutError`, which is an `OSError`,
+    and it is not a failed listing: it goes on out.
+    `test_a_listing_that_fails_reads_nothing_until_it_works`,
+    `test_a_listing_that_fails_does_not_bring_an_answered_dialog_back`,
+    `test_a_rotation_with_no_listing_writes_the_event_where_it_is`,
+    `test_the_hooks_deadline_in_the_listing_is_not_a_failed_listing`,
+    `test_a_listing_that_fails_is_not_a_log_with_no_archives`.
+  - **A file is read once, by its device and inode, whatever it is
+    called** (#253). A rotation stopped between its `os.link` and its
+    `os.unlink` -- the hook's deadline, a crash, an unlink that failed --
+    leaves the live file under an archive name too, and the next rotation
+    gives it a third. Read by name, the running follower read it again
+    from its top, and every start and every `ls` read it twice. So
+    `new_lines` does not read the newest archives that are the file its
+    live handle holds (that file is still the live log, and the hooks still
+    write to it), and it finishes without a read an archive whose file it
+    finished under another name (`done_files`). The handover by inode is
+    unchanged: the live tail goes to the first archive name of its file.
+    **The live handle is not checked against `done_files`**: the live name
+    only ever gets a new file, so a finished inode comes back as the live
+    file only when an archive was deleted and its inode used again, and a
+    follower that skipped it would be blind until a restart.
+    `log_handles` does the same for `read_events` and `count_events`, and
+    it opens the live file *before* it lists the archives, like
+    `new_lines`: listed first, a rotation in between left the newest
+    archive out. `archive_log` takes a failed `unlink` as no rotation, so
+    the hook's event is not lost.
+    `test_a_rotation_cut_short_is_read_once`,
+    `test_a_start_on_a_rotation_cut_short_reads_the_live_file_once`,
+    `test_a_log_under_two_names_is_read_once`,
+    `test_a_rotation_between_the_listing_and_the_live_file_is_read`.
 - **The log is never thrown away, so nothing may hold it whole.** Every
   archive is kept (`archive_log`, `archived_events_paths`), and a year of
   heavy use is a few hundred megabytes. Three things grew with it, measured on
