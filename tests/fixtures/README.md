@@ -188,7 +188,7 @@ status line on another machine said otherwise and was right. `rate_limits`
 appears only for claude.ai Pro and Max subscribers, or behind a gateway, and
 only after the first API response, and each window disappears once its
 `resets_at` passes — so its absence proves nothing about a payload either.
-The lesson is the one at the top of this file and in `CLAUDE.md`: a claim about
+The lesson is the one at the top of this file and in `.claude/topics/payloads.md`: a claim about
 a payload is worth what the sample behind it is worth, and one fixture is one
 sample.
 

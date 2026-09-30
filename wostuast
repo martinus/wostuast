@@ -94,7 +94,7 @@ WRITING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"}
 PROMPT_WIDTH = 500
 
 #: Loopback only, always. The page can reach the tmux verbs, so this port must
-#: never be offered to the network. CLAUDE.md: "The daemon answers on
+#: never be offered to the network. .claude/topics/safety.md: "The daemon answers on
 #: localhost only".
 BIND_HOST = "127.0.0.1"
 DEFAULT_PORT = 7331
@@ -3675,7 +3675,7 @@ def worktree_target(
     name git itself offers, and the file it points at has to stay inside the
     worktree once every link is followed. Those two checks together cover
     `..`, an absolute path and a symbolic link out of the tree, without having
-    to guess at each of them. CLAUDE.md: "A path out of the page is input
+    to guess at each of them. .claude/topics/safety.md: "A path out of the page is input
     too".
 
     Both readers come through here, so neither can be given one check and not
@@ -6894,7 +6894,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 #: pinned by the hash of their bytes, and the page works without either.
 #: Neither is trusted: marked does not sanitize, so its output is scrubbed to
 #: an allowlist, and every value that came from an agent is set with
-#: textContent. CLAUDE.md: "The page never trusts what an agent wrote".
+#: textContent. .claude/topics/safety.md: "The page never trusts what an agent wrote".
 PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
