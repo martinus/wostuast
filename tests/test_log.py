@@ -473,6 +473,27 @@ def test_the_map_in_claude_md_points_at_real_symbols():
     assert not missing, f"CLAUDE.md routes to symbols that are gone: {missing}"
 
 
+def test_every_rules_file_is_routed_to_and_every_route_is_a_file():
+    """The rules are one file a subject in `.claude/topics/`, read only when
+    `CLAUDE.md` sends an agent there. A file nothing routes to is a subject
+    nobody reads before editing it, and a route to a file that is gone sends
+    an agent to read nothing -- both silent. So the table and the list under
+    **Rules** name every file, and name nothing else."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    doc = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    there = {one.stem for one in (root / ".claude" / "topics").glob("*.md")}
+    start = doc.index("## Where to look")
+    table = doc[start:doc.index("\n## ", start + 4)]
+    routed = set(re.findall(r"topics/([a-z-]+)", table))
+    listed = set(re.findall(r"^\| `([a-z-]+)\.md` \|", doc, re.M))
+    assert there, "no rules files"
+    assert routed == there, (sorted(routed ^ there))
+    assert listed == there, (sorted(listed ^ there))
+
+
 
 def test_no_rotation_ever_loses_an_event(ws, monkeypatch):
     """The log used to keep two files and drop the older one on the next

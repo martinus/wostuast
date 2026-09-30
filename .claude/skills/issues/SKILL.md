@@ -14,7 +14,8 @@ and the issue list has been read again.
 Saying "do the issues" is the permission to merge: **merge a PR of your own
 the moment CI is green**, and only then. Nothing else is relaxed.
 
-**This file is the order of the work. `CLAUDE.md` is the rules.** Where it
+**This file is the order of the work. `CLAUDE.md` and `.claude/topics/` are
+the rules.** Where it
 answers a question, it answers it here too, and it is not restated below —
 one rule in two files is two rules that drift, which is a scar this
 repository already carries about a list kept in two languages.
@@ -69,9 +70,10 @@ Decide everything else yourself and say what you decided.
 ### 4. Build it
 
 `CLAUDE.md` **Where to look** routes from what you are about to touch to the
-rules for it. Read that row before editing, not after the tests go red.
+rules file for it, in `.claude/topics/`. Read that file before editing, not
+after the tests go red.
 
-Every test proved by perturbation — `CLAUDE.md` **How to work here** says how
+Every test proved by perturbation — `.claude/topics/testing.md` says how
 and why. The part that catches people: read the count pytest prints, not the
 colour. A test run under a `-k` that never selected it is a test you have not
 run. `tests/perturb.py` runs each break against only the tests it names and
@@ -81,14 +83,14 @@ prints one line a break; its last line is the count to read.
 
 | Where | What |
 | --- | --- |
-| `CLAUDE.md` | a rule the next agent needs, in the shape its header sets; a decision with no scar behind it goes in **Decisions without a scar behind them** |
+| `.claude/topics/<subject>.md` | a rule the next agent needs, in the shape `CLAUDE.md`'s header sets; a decision with no scar behind it goes in `decisions.md`; a way of working goes in `CLAUDE.md` itself |
 | `tests/fixtures/README.md` | a payload shape, read off a real payload |
 | `README.md` | anything a reader of the program sees |
 
 The rule and the code that keeps it land together, or the rule is not true
-yet. **Grep `CLAUDE.md` for the symbol before adding a bullet**: the same
-kind of bug again goes into the bullet that already holds it, as its header
-says. Add the symbol to `CLAUDE.md`'s **Where to look** table if the rule is
+yet. **Grep for the symbol before adding a bullet** (`grep -rn <symbol>
+CLAUDE.md .claude/topics`): the same kind of bug again goes into the bullet
+that already holds it, as `CLAUDE.md`'s header says. Add the symbol to `CLAUDE.md`'s **Where to look** table if the rule is
 about code an agent would go looking for.
 
 ### 6. Review it when review is worth it
@@ -153,8 +155,13 @@ for `martinus/martinus/wostuast`.
    `expectedHeadSha` from `git rev-parse HEAD` — all 40 characters; a short
    sha is refused. A 409 "Head branch was modified" means the head is not
    the one CI checked: read the checks again on the new head, never force.
-7. **Let go**: `delete_trigger` the check-in, `unsubscribe_pr_activity`.
-8. **Back onto main**: `git fetch origin main && git checkout -B <branch>
+7. **Close what it closed**: `list_issues`, and close each issue the pull
+   request names with `issue_write` method `update`, `state: "closed"`,
+   `state_reason: "completed"`. "Closes #N" in the body that created the
+   pull request left the issues open after both merges of one session, so
+   the list is read, never assumed.
+8. **Let go**: `delete_trigger` the check-in, `unsubscribe_pr_activity`.
+9. **Back onto main**: `git fetch origin main && git checkout -B <branch>
    origin/main`, then `git push -u origin <branch>`. The merge commit holds
    the branch's head, so this is a fast-forward and needs no force.
 
@@ -168,8 +175,8 @@ for `martinus/martinus/wostuast`.
   are making is not widening the PR. Otherwise file an issue and leave it.
   Trivia is not an issue.
 - **Never guess a payload, a browser, or a shape** — record a real event,
-  drive a real Chromium, measure the box. `CLAUDE.md` **Do not guess payload
-  fields** says where the recorded ones live.
+  drive a real Chromium, measure the box. `.claude/topics/payloads.md` says
+  where the recorded ones live.
 - **Say what you left out, and why.** A pass that skipped something without
   saying so reads as a pass that finished.
 
