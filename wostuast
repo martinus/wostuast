@@ -142,6 +142,13 @@ EVENTS_MAX_BYTES = 20 * 1024 * 1024
 #: that nobody notices it held.
 TAIL_CHUNK = 1024 * 1024
 
+#: How many passes an archive that cannot be read is tried again before it
+#: is given up. Until then nothing after it is read, so the log still folds
+#: in its order; a file that failed once for want of a descriptor (EMFILE)
+#: is read on the next pass. It used to be marked finished at the first
+#: failure, and its events were not read until the daemon started again.
+ARCHIVE_TRIES = 10
+
 #: How many started and unfinished tool calls a session keeps, to find the
 #: call a permission dialog is about. A turn rarely has more than a handful
 #: open at once; a call declined in the terminal never reports back.
@@ -450,8 +457,18 @@ def still_the_file(handle: Any, target: Path) -> bool:
     return (ours.st_dev, ours.st_ino) == (there.st_dev, there.st_ino)
 
 
-def append_event(record: dict[str, Any]) -> None:
-    """Append one event. The caller has already added ts, pane and pid.
+def append_event(record: dict[str, Any], stamp: bool = False) -> None:
+    """Append one event. The caller has already added pane and pid.
+
+    `stamp` is for the hook: `ts` is written *after* the lock is held, so
+    the order of the lines and the order of `ts` agree. The hook used to
+    stamp first and lock second, and two hooks of one session race for the
+    lock -- a batch of parallel tools, a `Notification` timer -- so the one
+    that stamped later could write first: 30 rounds of four real hooks at
+    once gave one line in 120 out of order. The rest of the line is made
+    before the lock and the stamp is put on its end, so the lock is held for
+    a write and never for a `json.dumps` of a megabyte of tool output. Every
+    other writer -- the daemon's `Declined`, a test -- gives its own `ts`.
 
     Two hooks can reach the size limit at the same moment, and the lock alone
     does not order them: it is taken on the inode, so a hook that opened the
@@ -469,8 +486,18 @@ def append_event(record: dict[str, Any]) -> None:
     """
     target = events_path()
     private_dir(target.parent)
-    raw = json.dumps(record, ensure_ascii=False, default=str) + "\n"
-    line = raw.encode("utf-8", "replace").decode("utf-8")
+    if stamp:
+        record = {key: value for key, value in record.items() if key != "ts"}
+    raw = json.dumps(record, ensure_ascii=False, default=str)
+    body = raw.encode("utf-8", "replace").decode("utf-8")
+
+    def line() -> str:
+        """The line to write, stamped now if it is to be: call it under the lock."""
+        if not stamp:
+            return body + "\n"
+        joint = ", " if record else ""
+        return body[:-1] + joint + '"ts": ' + json.dumps(time.time()) + "}\n"
+
     for _ in range(3):        # a rotation under us; the next open finds it
         with open_private(target) as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -483,9 +510,9 @@ def append_event(record: dict[str, Any]) -> None:
                 # archive. It is created 0600, like every file we make.
                 with open_private(target) as fresh:
                     fcntl.flock(fresh.fileno(), fcntl.LOCK_EX)
-                    fresh.write(line)
+                    fresh.write(line())
                 return
-            handle.write(line)
+            handle.write(line())
             handle.flush()
             return
 
@@ -594,10 +621,15 @@ class Tail:
     partial: bytes = b""
     key: tuple[int, int] = (0, 0)
     #: True when the last read started over rather than carried on. A caller
-    #: that accumulates what it reads has to hear about that: the event log
-    #: does not care, because `Store.apply` drops an event it has seen, but a
-    #: transcript reader that only appends will draw the whole file twice.
+    #: that accumulates what it reads has to hear about that: a transcript
+    #: reader that only appends will draw the whole file twice. The event log
+    #: never lets its tail start over on a file it can still read on
+    #: (`EventFollower.new_lines`), because nothing there drops a repeat.
     restarted: bool = False
+    #: True when the last read reached the end of the file, or found no file.
+    #: False when `open`, `fstat` or `read` failed on the way. An archive is
+    #: finished with only once this is True.
+    whole: bool = False
     #: Every byte this tail has read, restarts included. It is what the start
     #: of `serve` reports, and a file read twice was parsed twice.
     consumed: int = 0
@@ -606,7 +638,7 @@ class Tail:
         """Every new line, as one list, for a caller that keeps them anyway."""
         return list(self.lines())
 
-    def lines(self) -> Iterator[bytes]:
+    def lines(self, handle: Any = None) -> Iterator[bytes]:
         """Every new line, read `TAIL_CHUNK` at a time.
 
         A piece holding no newline gives no line, and that is not the end:
@@ -616,12 +648,21 @@ class Tail:
         later is the next call's. The file is asked about through the handle
         it is read from, so a file renamed between the two is never read
         with the other one's offset.
+
+        A caller may hand in a handle it opened itself, and the lines then
+        come from that file whatever the name holds by now: the follower
+        opens the live log before it lists the archives.
         """
         self.restarted = False
-        try:
-            handle = open(self.path, "rb")
-        except OSError:
-            return
+        self.whole = False
+        if handle is None:
+            try:
+                handle = open(self.path, "rb")
+            except FileNotFoundError:
+                self.whole = True        # no file is nothing left to read
+                return
+            except OSError:
+                return
         with handle:
             try:
                 info = os.fstat(handle.fileno())
@@ -643,7 +684,7 @@ class Tail:
                 except OSError:
                     return
                 if not data:
-                    return
+                    break                # it shrank while read: no more
                 self.offset += len(data)
                 self.consumed += len(data)
                 head, newline, rest = (self.partial + data).rpartition(b"\n")
@@ -652,6 +693,7 @@ class Tail:
                     for line in head.split(b"\n"):
                         if line.strip():
                             yield line
+            self.whole = True
 
 
 class EventFollower:
@@ -666,15 +708,21 @@ class EventFollower:
     its end is the last. The live file that has just become an archive is
     recognised by its inode and its tail is handed over with its place in
     it: a tail that only knew names read all 20 MB again on every rotation.
-    When the rotation lands in the middle of a pass the hand-over is missed
-    and the archive is read from the top; `Store.apply` ignores an event
-    older than its session has seen, so a repeat is safe, and a loss is not.
+
+    **Every line is read once, and in the order of the log**, because
+    `Store.apply` folds every event it is given and drops none by its time
+    (it used to, and dropped real events: see there). A repeat would set a
+    session back to what it was then, and an archive read after the live
+    file that replaced it would do the same. `new_lines` says how both are
+    kept out.
     """
 
     def __init__(self) -> None:
         self.live = Tail(events_path())
         self.archives: dict[Path, Tail] = {}
         self.finished: set[Path] = set()
+        #: How many passes each archive has failed to be read on.
+        self.failed: dict[Path, int] = {}
         #: What has been read, for the start of `serve` to say: the events,
         #: and the bytes of every archive already finished with.
         self.events = 0
@@ -693,19 +741,61 @@ class EventFollower:
         return Tail(path)
 
     def new_lines(self) -> Iterator[bytes]:
-        for path in archived_events_paths():
-            if path in self.finished:
-                continue
-            tail = self.archives.get(path)
-            if tail is None:
-                tail = self.archives[path] = self.archive_tail(path)
-            yield from tail.lines()
-            # Read to its end, and nothing will be added to it: the tail is
-            # done with, and only how much it read is kept.
-            self.finished.add(path)
-            del self.archives[path]
-            self.finished_bytes += tail.consumed
-        yield from self.live.lines()
+        """Every line not read yet, each once, oldest first.
+
+        The live file is opened *before* the archives are listed. A rotation
+        links the live file to its archive name before it unlinks the live
+        name, and a new live file is made only after that, so every archive
+        older than the file this handle holds had its name before the handle
+        was opened, and the listing names it. When every archive listed is
+        finished, nothing older than the live file is unread, and the handle
+        is read. When one is not, the handle is closed, the archives are
+        read, and the loop looks again, because the log may have rotated
+        meanwhile: at the start the fold reads a year of archives, which
+        takes seconds.
+
+        The listing used to be taken once, at the start of a pass. A
+        rotation during the pass took the live tail to the new file from
+        its top, and the next pass read the new archive from its top: its
+        first part twice, and all of it after newer events. `Store.apply`
+        then dropped every one of them it saw as old -- an open question
+        with no bar, a prompt, where the session started.
+
+        An archive that cannot be read (`Tail.whole` is False) stops the
+        pass, so nothing after it comes first, and is tried again on the
+        next one, up to `ARCHIVE_TRIES`. It used to be marked finished at
+        once, and skipped until the daemon started again.
+        """
+        while True:
+            try:
+                live = open(self.live.path, "rb")
+            except OSError:
+                live = None
+            pending = [path for path in archived_events_paths()
+                       if path not in self.finished]
+            if not pending:
+                break
+            if live is not None:
+                live.close()
+            for path in pending:
+                tail = self.archives.get(path)
+                if tail is None:
+                    tail = self.archives[path] = self.archive_tail(path)
+                yield from tail.lines()
+                if not tail.whole:
+                    tries = self.failed[path] = self.failed.get(path, 0) + 1
+                    if tries < ARCHIVE_TRIES:
+                        return
+                    log(f"an archive could not be read {tries} times, so it"
+                        f" is left out until the next start: {path.name}")
+                # Read to its end, and nothing will be added to it: the tail
+                # is done with, and only how much it read is kept.
+                self.finished.add(path)
+                del self.archives[path]
+                self.failed.pop(path, None)
+                self.finished_bytes += tail.consumed
+        if live is not None:
+            yield from self.live.lines(live)
 
     def new_events(self) -> Iterator[dict[str, Any]]:
         for event in json_objects(self.new_lines()):
@@ -1210,11 +1300,16 @@ class Store:
         name = str(event.get("hook_event_name") or "")
         ts = to_float(event.get("ts"))
 
-        if ts and ts < session.last_ts:
-            # Older than what this session has already folded. A rotation makes
-            # the archive deliver events a second time, and replaying them here
-            # would set the state back to what it was then.
-            return session
+        # Every event is folded, in the order of the log, and none is dropped
+        # for its time. The follower reads each line once, oldest first
+        # (`EventFollower.new_lines`), so there is no repeat to skip. This
+        # used to drop an event older than its session had seen, for an
+        # archive read again, and it dropped real ones: two hooks of one
+        # session race for the lock, and a log written before `append_event`
+        # stamped under it holds lines out of `ts` order -- a lost
+        # `PermissionRequest` is a row that never goes amber. And a clock
+        # stepped back by NTP or a VM resume dropped every event of every
+        # session until real time caught up.
         if ts > session.last_ts:
             session.last_ts = ts
         for key in ("cwd", "transcript_path"):
@@ -1225,7 +1320,12 @@ class Store:
         # the agent has walked to since. `SessionStart` is the one event that
         # means "this is where I am starting", and a resume really does start
         # a session in another directory, so it is the one that may move this.
-        if session.cwd and (not session.home or name == "SessionStart"):
+        # **Not a compaction's**: an auto compaction sends `SessionStart`
+        # (`source=compact`) in the middle of a turn, with the directory the
+        # agent has walked to, and the row renamed itself from `richpalm` to
+        # `src` while the agent worked.
+        starts = name == "SessionStart" and event.get("source") != "compact"
+        if session.cwd and (not session.home or starts):
             session.home = session.cwd
         # A hook writes both keys on every event, and an empty one is news:
         # it says "not in tmux" or "no process found" *now*. A session that
@@ -1580,6 +1680,12 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     _clear_attention(session)
     session.state = "working" if working else "done"
     session.end_reason = ""
+    # A resume starts the session again, and a `/clear` after it is a new
+    # one: session A, cleared into B and then resumed, kept `cleared_into`
+    # B, and `link_clear` joins only a session that has none -- so a second
+    # `/clear` joined A to nothing, and the page did not follow it to C.
+    if source not in ("clear", "compact"):
+        session.cleared_into = ""
     session.start_source = source
     session.last_event = f"started ({source})" if source else "started"
 
@@ -6667,11 +6773,10 @@ def cmd_hook(args: argparse.Namespace) -> int:
     try:
         give_up_after(HOOK_TIMEOUT)
         record = read_stdin_json()
-        record["ts"] = time.time()
         record["pane"] = os.environ.get("TMUX_PANE", "")
         record["pid"] = agent_pid()
         record["shell_pid"] = os.getppid()
-        append_event(record)
+        append_event(record, stamp=True)    # `ts`, under the log's lock
         stand_down()
     except BaseException as error:  # a hook must never block Claude Code
         # A deadline stays armed over the logging. `log` opens and writes a

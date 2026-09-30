@@ -340,6 +340,39 @@ def test_a_hook_holding_the_old_log_does_not_replace_the_archive(ws, monkeypatch
     assert '"session_id": "b"' in target.read_text(), "and the event still landed"
 
 
+def test_a_hook_stamps_its_time_once_it_holds_the_lock(ws, monkeypatch):
+    """The hook stamped `ts` and then waited for the lock, so of two hooks at
+    once the one that stamped later could write first: one line in 120 was
+    out of order, with four real hooks at once. The fold dropped the older
+    one, and a lost `PermissionRequest` is a row that never goes amber. Here
+    another writer holds the lock, and the time on the line must be from
+    after it let go."""
+    import fcntl
+    import threading
+
+    # The hook runs in a thread here, and an alarm can only be set in the
+    # main one, so the deadline is left out.
+    monkeypatch.setattr(ws, "give_up_after", lambda seconds: None)
+    monkeypatch.setattr(ws, "stand_down", lambda: None)
+    monkeypatch.setattr(ws, "read_stdin_json", lambda: {"session_id": "s", "ts": 1.0})
+    target = ws.events_path()
+    ws.private_dir(target.parent)
+    with ws.open_private(target) as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        writer = threading.Thread(target=ws.cmd_hook, args=(None,))
+        writer.start()
+        writer.join(0.3)
+        assert writer.is_alive(), "it did not wait for the lock"
+        released = time.time()
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+    writer.join(10)
+    line = target.read_text()
+    assert line.count('"ts"') == 1, line          # the record's own is replaced
+    assert json.loads(line)["ts"] >= released
+    ws.append_event({}, stamp=True)               # nothing else on the line
+    assert set(json.loads(target.read_text().splitlines()[-1])) == {"ts"}
+
+
 def test_a_lone_surrogate_does_not_lose_the_event(ws):
     """JS strings are UTF-16 and `JSON.stringify` escapes an unpaired
     surrogate rather than refusing it, so one can arrive in a tool response.

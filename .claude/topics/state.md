@@ -180,7 +180,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   chooses it **once, when the link appears while the page is open**:
   `state.cleared` holds what it has seen, so a reader who goes back to read
   the old one is not sent on again, and a link already there when the page
-  opened was not made under anybody's eyes. **The reader's name moves with
+  opened was not made under anybody's eyes. **A resume starts the link
+  again**: `_on_session_start` resets `cleared_into` for any source but
+  `clear` and `compact`. Session A, cleared into B and then resumed, kept
+  B, and `link_clear` joins only a session with none, so a second `/clear`
+  joined A to nothing and the page did not follow.
+  `test_a_resumed_session_cleared_again_joins_the_new_one`.
+  **The reader's name moves with
   it**, out of `names.json` and not copied, so the old row falls back to
   where it was; the log folds again on a restart and finds nothing to move.
   `test_a_clear_joins_the_session_it_ended_to_the_one_it_started`,
@@ -208,9 +214,38 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   **And the wait clock only starts when the wait does**: a second
   notification about the same dialog moved it, so a row that had waited a
   minute said it had waited none.
-- **Folding an event twice must change nothing.** Handlers assign, never
-  accumulate; `Store.apply` drops an event older than the session has seen. A
-  log rotation really does deliver old events after new ones.
+- **Every line of the log is folded once, in the order it was written, and
+  no event is dropped for its `ts`.** Handlers assign, never accumulate.
+  `Store.apply` used to drop an event older than its session had seen, to
+  skip an archive read a second time after a rotation, and it dropped real
+  events too. The hook stamped `ts` before it took the lock, so of two
+  hooks of one session at once the one that stamped later could write
+  first -- one line in 120, with four real hooks at once -- and a lost
+  `PermissionRequest` is a row that never goes amber. A clock stepped back
+  by NTP or a VM resume dropped every event of every session until real
+  time caught up. Now `append_event(record, stamp=True)` stamps `ts` under
+  the lock, so new lines and their `ts` agree, and a repeat is kept out by
+  its place in the file, not by its time. A log written before holds lines
+  out of `ts` order; they fold in line order.
+  `test_two_hooks_that_raced_for_the_lock_are_both_folded`,
+  `test_a_clock_stepped_back_does_not_stop_the_fold`,
+  `test_a_hook_stamps_its_time_once_it_holds_the_lock`.
+  - **So `EventFollower.new_lines` never reads a line twice or out of
+    order**: the time check hid both. It opens the live file *before* it
+    lists the archives. A rotation links the archive before it unlinks the
+    live name, so a listing taken after the open names every archive older
+    than the open file; one not finished is read first, and the loop looks
+    again. The listing used to be taken once a pass. At the start the fold
+    reads a year of archives for seconds, a hook rotated meanwhile, and the
+    new live file was read before the archive that came before it: an open
+    question with no bar. **An archive that cannot be read stops the pass**
+    and is tried again on the next, up to `ARCHIVE_TRIES` (`Tail.whole`).
+    It used to be marked finished at the first failed `open` -- EMFILE, say
+    -- and skipped until the daemon started again.
+    `test_a_rotation_in_the_middle_of_a_pass_is_read_once_and_in_order`,
+    `test_a_rotation_just_after_the_listing_is_read_in_order`,
+    `test_an_archive_that_could_not_be_opened_is_read_on_the_next_pass`,
+    `test_an_archive_that_never_opens_is_given_up_in_the_end`.
 - **The log is never thrown away, so nothing may hold it whole.** Every
   archive is kept (`archive_log`, `archived_events_paths`), and a year of
   heavy use is a few hundred megabytes. Three things grew with it, measured on
@@ -252,8 +287,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   reader that only appends then drew the whole transcript a second time on top
   of what it held, and after a truncate went on showing text the file no
   longer had. `Tail.restarted` says so; `Transcript` clears and bumps `run`.
-  The event log needs none of this, because `Store.apply` drops what it has
-  seen.
+  The event log never lets its tail start over on a file it can still read
+  on: the follower hands the tail to the archive, place and all (above).
 - **`seq` is a place in one reading, not an identity.** The page patches by
   index, and `Daemon` builds a new reader whenever `transcript_path` changes —
   a session resumed from another directory, so `seq` counts from nought for
@@ -382,7 +417,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   itself to `repo/src` mid-turn — and the worktree is the one fact on that
   row you cannot read anywhere else on the page. `Session.home` is stamped by
   `SessionStart`, because a resumed session really does start somewhere else,
-  and otherwise only while nothing is known yet. `Session.place` is the one
+  and otherwise only while nothing is known yet. **Not by a compaction's
+  `SessionStart`** (`source=compact`): an auto compaction sends one in the
+  middle of a turn, with the directory the agent has walked to, and the row
+  renamed itself from `richpalm` to `src`.
+  `test_a_compaction_does_not_move_where_the_session_started`. `Session.place` is the one
   spelling of the question, and the row, the label and `sort_sessions`'s
   tiebreaker all go through it — three call sites built the same string by
   hand before, which is three chances for one of them to answer differently.

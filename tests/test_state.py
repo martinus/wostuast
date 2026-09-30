@@ -176,6 +176,43 @@ def test_a_compaction_in_the_middle_of_a_turn_does_not_end_it(ws):
     assert session.state == "done"
 
 
+def test_two_hooks_that_raced_for_the_lock_are_both_folded(ws):
+    """The hook stamped `ts` before it took the log's lock, so of two hooks
+    of one session at once, the one that stamped later could write first.
+    The fold dropped an event older than its session had seen, for a re-read
+    archive, and so dropped this `PermissionRequest`: a row that never went
+    amber. A log written then still holds such lines, and each is folded in
+    the order it was written."""
+    session = fold(
+        ws,
+        event("UserPromptSubmit", prompt="x", ts=1000.0),
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "a"},
+              tool_use_id="a", ts=1000.05),
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "b"},
+              tool_use_id="b", ts=1000.06),
+        event("PostToolUse", tool_name="Bash", tool_input={"command": "a"},
+              tool_use_id="a", ts=1000.0905),
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "b"},
+              ts=1000.0900),
+    )
+    assert session.state == "needs_you"
+    assert session.permission["call"] == "b"
+    assert session.last_ts == 1000.0905           # the latest, still
+
+
+def test_a_clock_stepped_back_does_not_stop_the_fold(ws):
+    """NTP or a VM resume can step the wall clock back. Every event after it
+    was older than what its session had seen, and all of them were dropped
+    until real time caught up: a prompt, a question, a dialog."""
+    session = fold(
+        ws,
+        event("Stop", ts=2000.0),
+        event("UserPromptSubmit", prompt="after the step", ts=1990.0),
+    )
+    assert session.state == "working"
+    assert session.last_prompt == "after the step"
+
+
 def test_pre_compact_keeps_the_state_and_is_remembered(ws):
     session = fold(
         ws,
@@ -1044,6 +1081,23 @@ def test_a_resumed_session_starts_where_it_was_resumed(ws):
     assert session.place == "other"
 
 
+def test_a_compaction_does_not_move_where_the_session_started(ws):
+    """An auto compaction sends `SessionStart` with `source=compact` in the
+    middle of a turn, with the directory the agent has walked to. It moved
+    `home`, and the row renamed itself from `richpalm` to `src` while the
+    agent worked."""
+    session = fold(
+        ws,
+        event("SessionStart", cwd="/w/richpalm", source="startup"),
+        event("UserPromptSubmit", cwd="/w/richpalm", prompt="go", ts=1001.0),
+        event("PostToolUse", cwd="/w/richpalm/src", ts=1002.0,
+              tool_name="Bash", tool_input={"command": "cd src"}),
+        event("SessionStart", cwd="/w/richpalm/src", source="compact", ts=1003.0),
+    )
+    assert session.home == "/w/richpalm"
+    assert session.place == "richpalm"
+
+
 # --- a history that is never thrown away ------------------------------------
 
 DAY = 86400.0
@@ -1325,6 +1379,27 @@ def test_a_clear_joins_the_session_it_ended_to_the_one_it_started(ws, backwards)
     assert old.cleared_into == "s2" and new.cleared_from == "s1"
     assert ws.row(old)["cleared_into"] == "s2"
     assert ws.row(new)["cleared_into"] == ""
+
+
+def test_a_resumed_session_cleared_again_joins_the_new_one(ws):
+    """Session A is cleared into B, then resumed, then cleared again into
+    C. A kept `cleared_into` B from the first time, and `link_clear` joins
+    only a session that has none, so C was joined to nothing and the page
+    did not follow it."""
+    store = ws.Store()
+    store.apply(event("SessionStart", source="startup", ts=1000.0))
+    for one in clear_events():
+        store.apply(one)
+    store.apply(event("SessionEnd", session_id="s2", reason="other", ts=2100.0,
+                      transcript_path="/t2.jsonl"))
+    store.apply(event("SessionStart", source="resume", ts=3000.0, pid=5555))
+    assert store.sessions["s1"].cleared_into == ""
+    store.apply(event("SessionEnd", reason="clear", ts=4000.0, pid=5555))
+    store.apply(event("SessionStart", session_id="s3", source="clear",
+                      ts=4000.1, pid=5555, transcript_path="/t3.jsonl"))
+    assert store.sessions["s1"].cleared_into == "s3"
+    assert store.sessions["s3"].cleared_from == "s1"
+    assert store.sessions["s2"].cleared_from == "s1"      # the first is kept
 
 
 @pytest.mark.parametrize("other", [
