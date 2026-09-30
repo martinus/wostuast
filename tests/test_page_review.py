@@ -1478,6 +1478,28 @@ def test_ctrl_enter_saves_a_comment_and_sends_the_review(repo_page):
             browser.close()
 
 
+def test_ctrl_enter_in_the_whole_review_box_empties_it(repo_page):
+    """Ctrl+Enter sends with the focus still in the box, and the bar leaves
+    a box with the focus alone. So the sent words stayed in it, the bar
+    stayed up, and what was typed next went into the state after them: the
+    next review started with words already sent."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "change this")
+            stub_send(page, [{"done": True}])
+            page.click("#overall")
+            page.keyboard.type("OVERALL WORD")
+            page.keyboard.press("Control+Enter")
+            page.wait_for_function("state.review.comments.length === 0")
+            assert page.evaluate("window.__sent.length") == 1
+            assert page.evaluate("state.review.overall") == ""
+            assert page.input_value("#overall") == ""
+            assert page.locator("#reviewbar").is_hidden()
+        finally:
+            browser.close()
+
+
 def test_a_comment_the_diff_holds_is_never_commented_elsewhere(repo_page):
     """What the diff draws is worked out from the diff, not asked of the
     pane. The pane leaves out more: a comment being edited is a box with no

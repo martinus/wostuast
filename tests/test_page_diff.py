@@ -859,6 +859,28 @@ def test_a_diff_of_a_file_with_windows_line_ends_is_painted(repo_page):
             browser.close()
 
 
+def test_a_lone_carriage_return_keeps_the_word_marks_in_place(repo_page):
+    """A CR inside a line, as progress output in a log has, was taken out
+    before the highlighter. The coloured line was one character short, and
+    every word mark after the CR stood one place late: on `0)`, not `10`.
+    It becomes a space, as the plain row draws it."""
+    root, _ = repo_page
+    (root / "code.py").write_bytes(b"a\rprint(10)\nprint(2)\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            page.evaluate(PAINT_EVERY_LINE)
+            show_tab(page, "diff")
+            last = page.locator(".dfile:has(.path:text-is('code.py'))").last
+            added = last.locator(".dline.added .dtext").first
+            added.locator(".hljs-keyword").first.wait_for()
+            assert added.text_content() == "a print(10)"
+            assert added.locator(".hljs-keyword .wd").all_text_contents() == [
+                "a ", "10"]
+        finally:
+            browser.close()
+
+
 def test_the_list_is_a_tree_and_the_pane_reads_in_its_order(repo_page):
     """Folders first, then files, at every level -- and the pane beside it in
     the same order, so the two read the same way down. A folder holding only

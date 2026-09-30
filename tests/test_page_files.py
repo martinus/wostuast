@@ -431,13 +431,16 @@ def test_code_is_painted(repo_page):
 
 @pytest.mark.parametrize("body, rows", [
     (b"print(1)\r\nprint(2)\r\n", "print(1)\nprint(2)"),
-    (b"print(1)\nx = 1\ry = 2\n", "print(1)\nx = 1y = 2"),
+    (b"print(1)\nx = 1\ry = 2\n", "print(1)\nx = 1 y = 2"),
+    (b"print(1)\r\nx = 1\ry = 2\r\n", "print(1)\nx = 1 y = 2"),
 ])
 def test_a_file_with_a_carriage_return_is_painted(repo_page, body, rows):
     """The HTML parser reads CR LF, and a lone CR, as a line break. So the
     painted answer of a file saved on Windows had one line more than the
-    file had rows, and the page painted nothing, with no word why. Every CR
-    comes off before the highlighter; rows are cut on LF, so none moves."""
+    file had rows, and the page painted nothing, with no word why. CR LF
+    becomes LF before the highlighter; rows are cut on LF, so none moves.
+    A lone CR becomes a space, which is how the plain row draws it: taken
+    out, `x = 1\ry = 2` read `x = 1y = 2` once it was coloured."""
     root, _ = repo_page
     (root / "code.py").write_bytes(body)
     with sync_playwright() as play:

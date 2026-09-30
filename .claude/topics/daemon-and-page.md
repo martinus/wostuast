@@ -399,6 +399,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `line-height: 1.5`, stood 1.5 px taller than its button.
   `test_ctrl_enter_saves_a_comment_and_sends_the_review`,
   `test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level`.
+  - **Every one of these boxes shows all it holds, its placeholder too.**
+    A `.say` box wraps (`white-space: pre-wrap`), and so does its
+    placeholder. The reason for a No was one row high and never sized:
+    at 1,100 px its placeholder wrapped, and "(optional)" stood cut in
+    half on a second row that did not show; a long reason did the same.
+    `fitSay` sizes it now, as it sizes the send box and the review's two
+    boxes, and Chromium counts an empty box's placeholder in
+    `scrollHeight`. `fitSay` asks `getClientRects()`, not the box's form,
+    because this box stands in none. And `.permsend .permwhy` is at least
+    as wide as its placeholder (`--fits`, set from the placeholder's
+    length), so the box takes a row of its own rather than wrap it.
+    Narrower than about 900 px, the reading column itself is narrower
+    than the placeholder; that is the layout's limit, not the box's.
+    `test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole`.
   - **The Enter that ends an IME composition is the input method's**
     (`composing`). In Japanese or Chinese, Enter picks the word; the send
     box and the rename box took it as the reader's, and could send half a

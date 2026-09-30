@@ -566,6 +566,62 @@ def test_submit_stays_off_while_its_keys_go_in_and_after(ws, in_pane):
             browser.close()
 
 
+def test_an_answered_question_stays_answered_after_a_look_at_another(
+        ws, in_pane):
+    """`state.picked` is one for the whole page. A look at another session
+    with a question of its own built it again for that question, and the
+    look back built it again with `pressed` off: after a new pick, submit
+    was on for a question whose keys had gone in. The answered ids are kept
+    apart from the picks, and one is forgotten when its question is gone."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    cwd = daemon.store.sessions["s1"].cwd
+    at = time.time()
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=cwd,
+                                   pane="%8", pid=2, ts=at))
+    for name in ("PreToolUse", "PermissionRequest"):
+        ws.append_event(conftest.event(
+            name, sid="s2", cwd=cwd, pane="%8", pid=2, ts=at + 0.1,
+            tool_name="AskUserQuestion", tool_input=ASKED,
+            **({"tool_use_id": "toolu_q2"} if name == "PreToolUse" else {})))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_function("state.sessions.length === 2")
+            page.evaluate("choose('s1')")
+            page.wait_for_function(
+                "document.getElementById('asking').dataset.ask"
+                " === 's1\\ntoolu_q1'")
+            page.click(option(1, 3))
+            page.click(option(2, 2))
+            page.click(SUBMIT)
+            wait_until(page, lambda: len(pressed(seen)) >= 3)
+            page.wait_for_function(
+                "document.querySelector('#asking .asksays').textContent"
+                ".startsWith('pressed')")
+            for sid, ask in (("s2", "toolu_q2"), ("s1", "toolu_q1")):
+                page.evaluate(f"choose('{sid}')")
+                page.wait_for_function(
+                    "document.getElementById('asking').dataset.ask"
+                    f" === '{sid}\\n{ask}'")
+            page.click(option(1, 1))
+            page.click(option(2, 1))
+            assert page.locator(SUBMIT).is_disabled()
+            assert page.inner_text("#asking .asksays").startswith("pressed")
+
+            ws.append_event(conftest.event(
+                "PostToolUse", cwd=cwd, pane="%7", pid=1, ts=time.time(),
+                tool_name="AskUserQuestion", tool_input=ASKED,
+                tool_use_id="toolu_q1"))
+            daemon.tick()
+            page.wait_for_function("!state.answered.has('toolu_q1')")
+            page.wait_for_timeout(300)        # proving nothing more went in
+            assert pressed(seen) == ["3", "2", "Enter"], seen
+        finally:
+            browser.close()
+
+
 def test_submit_waits_for_a_message_on_its_way_and_comes_back(ws, in_pane):
     """A message from the send box landing between the answer's keys is
     typed into the dialog, so submit is held while one is on its way -- and
@@ -1181,17 +1237,33 @@ def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
 
 def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
     """One thing typed into a session at a time: a send landing between the
-    Escape and the proof would be typed into a dialog that may be up."""
+    Escape and the proof would be typed into a dialog that may be up. No
+    looked like it could be pressed then, and a press did nothing and said
+    nothing; now it is off, says why, and comes back when the send lands."""
     daemon, base, seen = in_pane
     now_permission(ws, daemon)
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
         try:
             page.wait_for_selector("#asking:not([hidden]) .permno")
-            page.evaluate("sending.add(state.chosen)")
-            page.click("#asking .permno")
+            page.evaluate("startSending(state.chosen)")
+            assert page.locator("#asking .permno").is_disabled()
+            assert page.inner_text("#asking .permsend .asksays") == \
+                "waiting for what is on its way to this session"
+            page.click("#asking .permno", force=True)
             page.wait_for_timeout(500)        # proving nothing was pressed
             assert not [one for one in seen if one[-1] == "Escape"], seen
+            page.evaluate("doneSending(state.chosen)")
+            assert not page.locator("#asking .permno").is_disabled()
+            assert page.inner_text("#asking .permsend .asksays") \
+                .startswith("presses Escape")
+            # Its own No is on its way too, and does not wait for itself.
+            held = hold(page, "**/decline")
+            page.click("#asking .permno")
+            wait_until(page, lambda: held)
+            assert page.locator("#asking .permno").is_disabled()
+            assert page.inner_text("#asking .permsend .asksays") \
+                .startswith("presses Escape")
         finally:
             browser.close()
 
@@ -1237,6 +1309,39 @@ def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
             assert page.locator("#sendreview").is_disabled()
             assert "permission dialog" in page.get_attribute(
                 "#sendreview", "title")
+        finally:
+            browser.close()
+
+
+def test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole(ws, in_pane):
+    """The reason for a No is a box one row high. Its placeholder was wider
+    than the box at 1,100 px, and wrapped onto a second row that did not
+    show: "(optional)" stood cut in half under the first. And a long reason
+    wrapped onto rows nobody could see, because the box did not grow as the
+    send box does. The placeholder, typed in, needs no second row, and a
+    long reason makes the box as tall as it is."""
+    daemon, base, seen = in_pane
+    path = daemon.store.sessions["s1"].transcript_path
+    with open(path, "a") as handle:
+        handle.write(conftest.records(conftest.record("tool", BUILD, tool_id="toolu_b1")))
+    now_permission(ws, daemon)
+    rows = """() => { const box = document.querySelector('#asking .permwhy');
+      return [box.clientHeight, box.scrollHeight]; }"""
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.set_viewport_size({"width": 1100, "height": 700})
+            page.wait_for_selector("#asking:not([hidden]) .permwhy")
+            page.evaluate("""() => { const box = document.querySelector('#asking .permwhy');
+              box.value = box.placeholder; }""")
+            shown, needed = page.evaluate(rows)
+            assert needed <= shown, "the placeholder wraps onto a hidden row"
+
+            page.fill("#asking .permwhy", "do not delete the folder; move it to "
+                      "the archive and tell me what is in it first")
+            shown, needed = page.evaluate(rows)
+            assert shown > 40, "a long reason did not grow the box"
+            assert needed <= shown, "a long reason wraps onto a hidden row"
         finally:
             browser.close()
 

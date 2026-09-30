@@ -8774,7 +8774,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* A request is read whole, so a long command wraps rather than running off
    the side: a preview keeps its layout, and this has none to keep. */
 .permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
-.permsend .permwhy { flex: 1 1 260px; }
+/* At least as wide as its placeholder, when the row has room: the box is
+   one row high, and a placeholder wider than the box wrapped onto a second
+   row that did not show -- "(optional)" stood cut in half under the first.
+   `--fits` is the placeholder's length, set where the placeholder is, so
+   new words cannot outgrow it; `ch` is one character of this mono font, and
+   24 px is the padding and the border. Wider than it fits, the box takes a
+   row of its own rather than shrinking. */
+.permsend .permwhy {
+  flex: 1 1 260px; min-width: min(100%, calc(var(--fits, 0ch) + 24px));
+}
 .permsend .asksays { flex-basis: 100%; }
 .asksays { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
 .asknum {
@@ -9748,6 +9757,12 @@ const state = {
   // number for a multiple-choice one -- and which ask they belong to. Not in
   // the DOM: a pick made for one question must never be submitted for the next.
   picked: { id: "", at: [] },
+  // The asks whose keys went in, by id. Not in `picked`: that is one for the
+  // whole page, and a look at another session with a question built it
+  // again, so a look back found this question unanswered and submit came
+  // back on for keys that had gone in. An id goes when its question does
+  // (`forgetAnswered`).
+  answered: new Set(),
   // A reason half written for a No, with the dialog it is for (`key`).
   declineWhy: { key: "", text: "" },
   // Where each session was left, by id. The choices only -- see `savePlace`.
@@ -10683,7 +10698,7 @@ function drawAsking() {
   // and took `drawHeader` -- jump, the send box, the strip -- down with it.
   if (state.picked.id !== ask.id
       || state.picked.at.length !== ask.questions.length) {
-    state.picked = { id: ask.id, at: ask.questions.map(() => []), pressed: false };
+    state.picked = { id: ask.id, at: ask.questions.map(() => []) };
   }
   box.replaceChildren();
   ask.questions.forEach((one, which) => {
@@ -10783,11 +10798,15 @@ function drawPermission(box, s, permission) {
   const why = put(foot, "textarea", "say permwhy");
   why.rows = 1;
   why.placeholder = "what it should do instead (optional)";
+  why.style.setProperty("--fits", why.placeholder.length + "ch");
   // Kept for this dialog across a look at another tab, which builds the
   // bar again: half a reason lost that way is the question bar's scar.
   if (state.declineWhy.key === permission.key) why.value = state.declineWhy.text;
+  // It grows with what is typed, as every other box here does: one row
+  // high, a long reason wrapped onto rows nobody could see.
   why.addEventListener("input", () => {
     state.declineWhy = { key: permission.key, text: why.value };
+    fitSay(why);
   });
   const no = put(foot, "button", "verb permno");
   no.type = "button";
@@ -10796,6 +10815,7 @@ function drawPermission(box, s, permission) {
   submitOnCtrlEnter(why, no);
   put(foot, "span", "asksays");
   paintDecline(box, s, permission);
+  fitSay(why);   // a reason kept from before, or a placeholder on a narrow bar
 }
 
 // What pressing no would do, said before it is pressed.
@@ -10809,12 +10829,19 @@ function paintDecline(box, s, permission) {
   // typed -- and a box that takes one and then drops it is worse than none.
   const reasons = canType && !!permission.call;
   why.disabled = !reasons;
-  no.disabled = !canType || no.dataset.busy === "1";
+  // Off while something else is on its way to the session, as submit on a
+  // question is: `submitDecline` refuses then, and a No that could be
+  // pressed and did nothing, with no word why, read as a broken button.
+  // Its own No is on its way too, and says what it does, not that it waits.
+  const mine = no.dataset.busy === "1";
+  const busy = sending.has(s.id) && !mine;
+  no.disabled = !canType || mine || busy;
   // Said in both cases: a Yes given in the terminal fires no hook, so the
   // row stays amber while the approved call runs, and Escape then stops it.
   const already = " If you already answered in the terminal, Escape stops the agent.";
   says.textContent = !canType
     ? "this session is not in tmux, so nothing can be pressed"
+    : busy ? "waiting for what is on its way to this session"
     : !reasons
     ? "presses Escape. A reason cannot be typed for this one: send it after."
       + already
@@ -10828,9 +10855,12 @@ async function submitDecline(id, permission, box) {
   // One thing typed into a session at a time: the send box and a No share
   // the guard, because a send landing between the Escape and the proof
   // would be typed into a dialog that may still be up.
-  if (!no || no.disabled || !startSending(id)) return;
-  no.disabled = true;
+  // Marked as its own before the guard is taken, which paints the bar: the
+  // mark is what keeps the bar from saying it waits for this very No.
+  if (!no || no.disabled) return;
   no.dataset.busy = "1";
+  if (!startSending(id)) { no.dataset.busy = ""; return; }
+  no.disabled = true;
   const reason = why && !why.disabled ? why.value : "";
   let answer;
   try {
@@ -10896,9 +10926,10 @@ function paintPicks(box, ask) {
   // first answer's keys were still going in `KEY_GAP` apart; a second
   // submit mixed its keys with them. After they went in, the question
   // stays until the `PostToolUse` says so, and a second set of keys would
-  // land on whatever the agent does next.
+  // land on whatever the agent does next. Asked by the ask's id, never of
+  // `state.picked`, which a look at another question builds again.
   const busy = !!s && sending.has(s.id);
-  const pressed = state.picked.pressed === true;
+  const pressed = state.answered.has(ask.id);
   send.disabled = !ready || !canType || !whole || busy || pressed;
   send.textContent = "submit";
   // Said before it is pressed, not after. These are keystrokes into a live
@@ -10981,9 +11012,7 @@ async function submitAsk(id, ask, box) {
   } finally {
     // Marked before the guard lets go, which paints the bar again: for a
     // moment in between, submit was on for keys that had gone in.
-    if (answer && !answer.error && state.picked.id === ask.id) {
-      state.picked.pressed = true;
-    }
+    if (answer && !answer.error) state.answered.add(ask.id);
     doneSending(id);
   }
   said(answer);              // an earlier refusal is no longer news
@@ -11999,11 +12028,17 @@ function paintedLines(lib, language, text, want) {
   if (tooDenseToPaint(text)) return null;
   let lines;
   try {
-    // Without any CR. The HTML parser in `paintedInto` reads CR LF and a
+    // No CR goes in. The HTML parser in `paintedInto` reads CR LF and a
     // lone CR as a line break, so a Windows file had one more line than
     // rows and was never painted. Rows are cut on LF only, so no line moves.
-    const done = lib.highlight(text.replace(/\r/g, ""),
-                               { language, ignoreIllegals: true });
+    // A CR that ends a line goes: before an LF, or at the end of the text,
+    // which is where a Windows file's last row and a hunk's last line stop.
+    // A CR inside a line -- progress output in a log -- becomes a space,
+    // which is how CSS draws it in the plain row: taken out, `a\rb` read
+    // `ab` once coloured, and every word mark after it on the Diff tab stood
+    // one place late.
+    const clean = text.replace(/\r(?=\n|$)/g, "").replace(/\r/g, " ");
+    const done = lib.highlight(clean, { language, ignoreIllegals: true });
     lines = cutIntoLines(paintedInto(document.createElement("template"),
                                      done.value));
   } catch (error) {
@@ -15873,6 +15908,14 @@ async function submitReview() {
   }
   const session = current();
   state.review = unsent(state.review, sent);
+  // Ctrl+Enter sends with the focus still in the whole-review box, and
+  // `drawReviewBar` leaves a box with the focus alone. The sent words stayed
+  // in it, and what was typed next went into the state after them. So the
+  // box takes what is left, and lets go of the focus when nothing is, or
+  // the bar would stay up for an empty review.
+  const over = $("overall");
+  if (over.value !== state.review.overall) over.value = state.review.overall;
+  if (!anyReview() && document.activeElement === over) over.blur();
   keepReview();
   // A box opened while it went is left alone, as a poll leaves it; closing
   // it draws the tab without what was sent.
@@ -16056,6 +16099,14 @@ function followClear(first) {
     state.cleared.add(s.id);
     if (s.id === state.chosen) choose(s.cleared_into);
   }
+}
+
+// An answered question stays until its `PostToolUse`, and then its id is
+// no longer needed: one no session still asks is forgotten, so the set holds
+// what is on screen and nothing that has gone.
+function forgetAnswered() {
+  const asked = new Set(state.sessions.map((s) => s.asking && s.asking.id));
+  for (const id of state.answered) if (!asked.has(id)) state.answered.delete(id);
 }
 
 function choose(id) {
@@ -16446,6 +16497,7 @@ function resubscribe() {
     const waiting = !!state.chosen && !current();
     const first = !state.sessions.length;
     state.sessions = body.sessions || [];
+    forgetAnswered();
     followClear(first);
     if (!current() && state.sessions.length) {
       // Pick the first one for the reader. It has to go through choose(), or
@@ -16691,10 +16743,13 @@ $("sendbar").addEventListener("submit", (press) => {
 // Height has to go back to nothing first, or a box that has grown can never
 // shrink again: scrollHeight would only ever report the height it already has.
 // It leaves the border out, and every box is `border-box`, so the 2 px of
-// border are added back or the last line scrolls. The review's two boxes are
-// sized here too.
+// border are added back or the last line scrolls. The review's two boxes and
+// the reason for a No are sized here too. An empty box is as tall as its
+// placeholder: Chromium counts the placeholder in `scrollHeight`.
 function fitSay(box = $("say")) {
-  if (box.closest("form").hidden) return;  // a box nobody can see measures nothing
+  // A box nobody can see measures nothing, and would be sized to 2 px. The
+  // reason for a No stands in no form, so its form cannot be asked.
+  if (!box.getClientRects().length) return;
   box.style.height = "auto";
   box.style.height = (box.scrollHeight + 2) + "px";
 }
