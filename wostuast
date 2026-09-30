@@ -9510,19 +9510,32 @@ function dragWidth(grip, name, least, most) {
     rememberWidth(name,
                   Math.min(most, Math.max(least, was + at.clientX - from)));
   };
+  // A drag ends on every way a press can end, not on `pointerup` alone. A
+  // right-click opens the context menu on Linux and macOS, and the menu took
+  // the `pointerup`: the column then followed the mouse with no button held
+  // until the next click. A touch the browser takes for a scroll ends in
+  // `pointercancel`. So only the main button starts a drag, the grip
+  // captures the pointer, and losing the capture ends it too.
+  const ends = ["pointerup", "pointercancel", "lostpointercapture"];
   const stop = () => {
     document.body.classList.remove("dragging");
     grip.classList.remove("dragging");
     window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", stop);
+    for (const end of ends) window.removeEventListener(end, stop);
   };
   grip.addEventListener("pointerdown", (at) => {
+    if (at.button !== 0) return;
     from = at.clientX;
     was = grip.previousElementSibling.getBoundingClientRect().width;
     document.body.classList.add("dragging");
     grip.classList.add("dragging");
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
+    for (const end of ends) window.addEventListener(end, stop);
+    try {
+      grip.setPointerCapture(at.pointerId);
+    } catch (error) {
+      // A pointer that is already gone. `pointerup` still ends the drag.
+    }
     at.preventDefault();          // no text selection while dragging
   });
   grip.addEventListener("dblclick", () => rememberWidth(name, 0));
@@ -9692,6 +9705,15 @@ function putIcon(parent, kind) {
   return svg;
 }
 
+// An Enter that ends an IME composition -- the key that picks the word in
+// Japanese or Chinese -- is the input method's, not the reader's. Chromium
+// says so in `isComposing`; Safari sends that Enter after the composition
+// has ended, and says so only in the old `keyCode` 229. Taken as the
+// reader's, it kept half a name, or sent half a message into a terminal.
+function composing(press) {
+  return press.isComposing || press.keyCode === 229;
+}
+
 // Ctrl+Enter (Cmd+Enter on a Mac) in a box presses its button, in every box
 // that sends or keeps something, so the one key works wherever the reader
 // is typing. It presses the button and nothing else, so whatever the button
@@ -9805,15 +9827,25 @@ function shownSessions() {
     [s.place, s.name, s.branch].filter(Boolean).join(" "), state.pick));
 }
 
-// What is actually in the list. `j` and `k` walk this, because a key must not
-// move to a row that is not on screen. Typing in the filter box opens the
-// history: a search that cannot see half the sessions gives a wrong answer
-// that looks like a right one. So does the session you are reading, which is
-// never hidden from the list it is chosen in.
+// What is actually in the list, in the order it is drawn. `j` and `k` walk
+// this, because a key must not move to a row that is not on screen. Typing in
+// the filter box opens the history: a search that cannot see half the
+// sessions gives a wrong answer that looks like a right one. So does the
+// session you are reading, which is never hidden from the list it is chosen
+// in.
+//
+// The daemon sends its own order, `settled` newest first, and the list draws
+// it in `BANDS` groups. The two differ as soon as a group holds two rows, and
+// `j` walked the daemon's: from a needs-you row on top it jumped over the
+// working row under it. So the groups are put in order here, once, and
+// `drawSessions` and `move` both read this. The sort is stable, so inside a
+// group the daemon's order stands.
 function listedSessions() {
   const shown = shownSessions();
-  if (state.history || state.pick) return shown;
-  return shown.filter((s) => !isGone(s) || s.id === state.chosen);
+  const listed = state.history || state.pick ? shown
+    : shown.filter((s) => !isGone(s) || s.id === state.chosen);
+  const rank = (s) => BANDS.findIndex((band) => band[0] === bandOf(s));
+  return listed.slice().sort((a, b) => rank(a) - rank(b));
 }
 
 // One empty row, built once and then only filled in. Every row has the same
@@ -9949,6 +9981,7 @@ function renameRow(row) {
     drawSessions();
   };
   box.addEventListener("keydown", (press) => {
+    if (composing(press)) return;
     if (press.key === "Enter") {
       press.preventDefault();
       // Enter on the name it came with is not a name chosen: kept, it would
@@ -10947,10 +10980,14 @@ function notifyAbout(sessions) {
   // when the switch comes on.
   if (!on || !want.needs) for (const id of now) waiting.add(id);
   if (!on) return;
+  // Each alert names the session by `rowName`, as the row and the tab's
+  // title do. `label` leads with the title Claude Code writes from the first
+  // prompt, which `/rename` never reaches, so the alert named a session that
+  // was not in the list.
   for (const session of sessions) {
     if (want.needs && session.state === "needs_you" && !waiting.has(session.id)) {
       waiting.add(session.id);
-      tellAbout(session, session.label + " needs you",
+      tellAbout(session, rowName(session) + " needs you",
                 session.reason || "waiting for you");
     }
     // A change, not a state: "done" is where a session sits between turns,
@@ -10959,7 +10996,7 @@ function notifyAbout(sessions) {
     // opened the page says nothing.
     if (want.done && session.state === "done"
         && before.get(session.id) === "working") {
-      tellAbout(session, session.label + " has finished", "ready for you");
+      tellAbout(session, rowName(session) + " has finished", "ready for you");
     }
   }
 }
@@ -12223,7 +12260,12 @@ function split(box, tab, bodyClass) {
     // without a class name of its own to keep in step with this one.
     const list = put(side, "div",
                      "filelist " + tab + (windowed ? " fixed" : ""));
-    if (windowed) list.addEventListener("scroll", () => fillList(list));
+    if (windowed) {
+      list.addEventListener("scroll", () => fillList(list));
+      // A list made taller fires no scroll, and the rows it uncovers are
+      // then drawn only on the next scroll.
+      new ResizeObserver(() => fillList(list)).observe(list);
+    }
     // Under the list and pinned there, for what must stay in reach however
     // far the list scrolls. The count strip above it is one clipped line.
     put(side, "div", "sidefoot");
@@ -12281,7 +12323,11 @@ function fresh(box, which, key) {
 // Ten thousand matches then cost the same as ten, and no answer has to be cut
 // short to keep the tab quick.
 const ROW_H = 28;
-const ROWS_SHOWN = 80;      // a tall screenful, and some either side
+// The fewest rows a window holds: a tall screenful, and some either side.
+// A list taller than this gets as many rows as it can show, and eight more
+// at each end (`fillList`). A fixed 80 was 2,240 px, and a portrait or 4K
+// screen, or a browser zoomed out, showed empty space under the last row.
+const ROWS_SHOWN = 80;
 
 // Which files are Markdown, and so get rendered rather than shown as they are.
 const MARKDOWN = /\.(md|markdown)$/i;
@@ -12326,7 +12372,24 @@ function fuzzy(text, query, slack = 0) {
     at.push(found);
     from = found + 1;
   }
-  return { score: score - lower.length / 50, at };
+  return { score: score - lower.length / 50,
+           at: lower.length === text.length ? at : unlowered(text, at) };
+}
+
+// Where each place in `text.toLowerCase()` stands in `text`. The two are
+// almost always the same length, and then a place is a place. Not always:
+// "\u0130" lower-cases to two code units, and every letter `fuzzy` found
+// after it was marked one place late -- `notes` lit "btes.". Each code point
+// is lower-cased on its own here, which gives the same length as the whole:
+// the one rule that reads its neighbours, a final sigma, keeps the length.
+function unlowered(text, at) {
+  const back = [];
+  let where = 0;
+  for (const one of text) {
+    for (let unit = one.toLowerCase().length; unit > 0; unit -= 1) back.push(where);
+    where += one.length;
+  }
+  return at.map((place) => back[place]);
 }
 
 // What a path is matched against: the name, unless you typed a slash.
@@ -12606,16 +12669,21 @@ function pick(names) {
 }
 
 // The name, with the letters that matched picked out. Every piece is a text
-// node, so a file name is never read as markup.
+// node, so a file name is never read as markup. A mark is a whole code
+// point: `text[index]` is one UTF-16 unit, half of an emoji, and drew a
+// broken character. Two places in one code point -- "\u0130" is two when
+// lower-cased -- mark it once.
 function putName(parent, text, at) {
   const node = put(parent, "span", "name");
   let done = 0;
   for (const index of at) {
+    if (index < done || index >= text.length) continue;
     if (index > done) {
       node.appendChild(document.createTextNode(text.slice(done, index)));
     }
-    put(node, "b", "lit", text[index]);
-    done = index + 1;
+    const one = String.fromCodePoint(text.codePointAt(index));
+    put(node, "b", "lit", one);
+    done = index + one.length;
   }
   if (done < text.length) {
     node.appendChild(document.createTextNode(text.slice(done)));
@@ -12634,7 +12702,8 @@ function fillList(list) {
   // past the end and show nothing at all.
   const first = Math.min(Math.max(0, Math.floor(list.scrollTop / ROW_H) - 8),
                          Math.max(0, found.length - 1));
-  const last = Math.min(found.length, first + ROWS_SHOWN);
+  const many = Math.max(ROWS_SHOWN, Math.ceil(list.clientHeight / ROW_H) + 16);
+  const last = Math.min(found.length, first + many);
   if (list.dataset.first === String(first) &&
       list.dataset.last === String(last)) return;
   list.dataset.first = String(first);
@@ -16163,8 +16232,10 @@ $("say").addEventListener("keydown", (press) => {
   }
   // Enter sends. Shift and Enter is how you write a second line, which is
   // what every chat box does and what a prompt with a plan in it needs.
-  // Ctrl+Enter sends too, as it does in every other box on this page.
-  if (press.key === "Enter" && !press.shiftKey && !press.altKey) {
+  // Ctrl+Enter sends too, as it does in every other box on this page. The
+  // Enter that ends a composition picks a word and sends nothing.
+  if (press.key === "Enter" && !press.shiftKey && !press.altKey
+      && !composing(press)) {
     press.preventDefault();
     sendTyped();
   }

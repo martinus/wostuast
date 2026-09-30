@@ -655,6 +655,38 @@ def test_the_send_box_types_into_the_terminal(in_pane):
             browser.close()
 
 
+#: An Enter that ends an IME composition, in Chromium's shape
+#: (`isComposing`) and in Safari's (`keyCode` 229 once it has ended).
+COMPOSED_ENTER = """([box, how]) => {
+  const press = new KeyboardEvent('keydown', {key: 'Enter', bubbles: true,
+    cancelable: true, isComposing: how === 'composing'});
+  if (how === 'safari') Object.defineProperty(press, 'keyCode', {value: 229});
+  document.querySelector(box).dispatchEvent(press);
+}"""
+
+
+def test_the_enter_that_ends_a_composition_sends_nothing(in_pane):
+    """The Enter that picks a word in an input method is the input
+    method's. Taken as the reader's, it sent half a message into the
+    terminal."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.fill("#say", "\u65e5\u672c")
+            for how in ("composing", "safari"):
+                page.evaluate(COMPOSED_ENTER, ["#say", how])
+            page.wait_for_timeout(500)          # proving nothing was sent
+            assert not any("send-keys" in one for one in seen), seen
+            assert page.input_value("#say") == "\u65e5\u672c"
+            page.press("#say", "Enter")
+            page.wait_for_function("document.getElementById('say').value === ''")
+            assert ["tmux", "send-keys", "-t", "%7", "-l", "--",
+                    "\u65e5\u672c"] in seen
+        finally:
+            browser.close()
+
+
 def test_a_restarted_daemon_says_so_and_keeps_saying_it(ws, in_pane):
     """Restarting `serve` gives the daemon a new token, and an open page
     keeps the one printed into it. The stream is a GET and reconnects, so

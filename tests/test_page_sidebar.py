@@ -593,6 +593,87 @@ def test_j_and_k_do_not_walk_into_a_folded_history(past_at):
             browser.close()
 
 
+def test_j_and_k_walk_the_rows_in_the_order_they_are_drawn(ws, served, tmp_path):
+    """The daemon sorts by `settled`, newest first; the list draws that in
+    `BANDS` groups. `move` walked the daemon's order, so with a needs-you
+    row on top and a working one under it, `j` skipped the working row and
+    `k` on the top row went down."""
+    daemon, url = served
+    now = time.time()
+    for sid in ("s1", "s2", "s3"):
+        where = tmp_path / sid
+        where.mkdir()
+        ws.append_event(conftest.event("SessionStart", sid=sid, cwd=str(where),
+                                       pane="%7", pid=1, ts=now))
+    ws.append_event(conftest.event("PermissionRequest", sid="s3",
+                                   cwd=str(tmp_path / "s3"), tool_name="Bash",
+                                   tool_input={"command": "ls"}, ts=now + 1))
+    ws.append_event(conftest.event("UserPromptSubmit", sid="s2",
+                                   cwd=str(tmp_path / "s2"), prompt="go",
+                                   ts=now + 2))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, url + "/")
+        try:
+            page.wait_for_function("document.querySelectorAll('.row').length === 3")
+            drawn = page.evaluate(
+                "[...document.querySelectorAll('#rows .row')].map((r) => r.dataset.id)")
+            assert drawn == ["s3", "s2", "s1"], drawn
+            # The daemon's own order is another, or this proves nothing.
+            assert page.evaluate("state.sessions.map((s) => s.id)") != drawn
+            page.click('.row[data-id="s3"]')
+            page.wait_for_function("state.chosen === 's3'")
+            walked = []
+            for key in ("j", "j", "j", "k", "k", "k"):
+                page.press("body", key)
+                walked.append(page.evaluate("state.chosen"))
+            assert walked == ["s2", "s1", "s1", "s2", "s3", "s3"], walked
+        finally:
+            browser.close()
+
+
+def test_a_drag_on_an_edge_starts_only_by_hand_and_always_stops(page_at):
+    """A drag started on any button, held no capture, and stopped only on
+    `pointerup`. A right-click on the grip opens the context menu on Linux
+    and macOS, and the menu takes the `pointerup`: the sidebar then followed
+    the mouse with no button held. A touch the browser cancels did the
+    same. A headless browser has no context menu, so the test says what the
+    drag does at each step rather than waiting for a menu."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            grip = page.locator("#grip").bounding_box()
+            x, y = grip["x"] + grip["width"] / 2, grip["y"] + 200
+            width = "getComputedStyle(document.documentElement)" \
+                    ".getPropertyValue('--sidebar-w')"
+            dragging = "document.body.classList.contains('dragging')"
+            page.evaluate("""() => document.getElementById('grip')
+              .addEventListener('pointerdown', (at) => { window.__id = at.pointerId; })""")
+            held = "document.getElementById('grip').hasPointerCapture(window.__id)"
+            page.mouse.move(x, y)
+            page.mouse.down(button="right")
+            assert not page.evaluate(dragging), "a right press started a drag"
+            page.mouse.up(button="right")
+
+            for stop in ("pointercancel", "lostpointercapture"):
+                page.mouse.move(x, y)
+                page.mouse.down()
+                assert page.evaluate(dragging)
+                assert page.evaluate(held), "the grip did not capture the pointer"
+                before = page.evaluate(width)
+                # Sent by hand: this Chromium, driven from here, sends
+                # neither a cancel nor a lost capture of its own.
+                page.evaluate("""(name) => document.getElementById('grip')
+                  .dispatchEvent(new PointerEvent(name,
+                                 {bubbles: true, pointerId: window.__id}))""", stop)
+                page.mouse.move(x + 80, y, steps=4)
+                assert not page.evaluate(dragging), stop
+                assert page.evaluate(width) == before, stop
+                page.mouse.up()
+        finally:
+            browser.close()
+
+
 def test_the_chosen_row_is_tinted_all_the_way_down(page_at):
     """It was an inset shadow with a 40 px spread, which fills inward from each
     edge and leaves a stripe of untinted row down the middle of anything taller
@@ -915,6 +996,40 @@ def test_an_alert_switched_on_mid_turn_still_reports_that_turn(ws, page_at):
             browser.close()
 
 
+def test_an_alert_names_the_session_as_its_row_does(ws, page_at):
+    """The row and the tab's title name a session by `rowName`: the reader's
+    name, or else where it stands. The alerts used `label`, which leads with
+    the title Claude Code writes from the first prompt -- a title `/rename`
+    never reaches -- so the alert named a session the list did not."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            page.wait_for_function("state.sessions.length === 1")
+            page.click("#settings")
+            page.click("#alertdone")
+            page.wait_for_function("document.getElementById('alertdone').checked")
+            now = time.time()
+            ws.append_event(conftest.event("UserPromptSubmit", prompt="go", ts=now))
+            daemon.tick()
+            page.wait_for_function("state.sessions[0].state === 'working'")
+            ws.append_event(conftest.event("Stop", ts=now + 1))
+            daemon.tick()
+            page.wait_for_function("window.__told.length === 1")
+            ws.append_event(conftest.event(
+                "PermissionRequest", tool_name="Bash",
+                tool_input={"command": "rm -rf build"}, ts=now + 2))
+            daemon.tick()
+            page.wait_for_function("window.__told.length === 2")
+            name = page.evaluate("rowName(state.sessions[0])")
+            titles = [one[0] for one in page.evaluate("window.__told")]
+            assert titles == [name + " has finished", name + " needs you"], titles
+            # The fixture's status line names it; that name is not the row's.
+            assert not any("A session" in one for one in titles), titles
+        finally:
+            browser.close()
+
+
 def test_the_two_switches_are_remembered_apart(page_at):
     _, path = page_at
     with sync_playwright() as play:
@@ -1219,6 +1334,36 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
         finally:
             browser.close()
 
+
+
+def test_the_enter_that_ends_a_composition_keeps_no_name(rows_at):
+    """The Enter that picks a word in an input method is the input
+    method's. Taken as the reader's, it kept half a name."""
+    daemon, _, _ = rows_at
+    with sync_playwright() as play:
+        browser, page = open_rows(play, rows_at)
+        try:
+            page.dblclick('.row[data-id="fresh"] .name')
+            page.fill('.row[data-id="fresh"] input.rowname', "\u65e5\u672c")
+            for how in ("composing", "safari"):
+                page.evaluate("""([box, how]) => {
+                  const press = new KeyboardEvent('keydown', {key: 'Enter',
+                    bubbles: true, cancelable: true,
+                    isComposing: how === 'composing'});
+                  if (how === 'safari') {
+                    Object.defineProperty(press, 'keyCode', {value: 229});
+                  }
+                  document.querySelector(box).dispatchEvent(press);
+                }""", ['.row[data-id="fresh"] input.rowname', how])
+            page.wait_for_timeout(300)          # proving nothing was kept
+            assert "fresh" not in daemon.store.names
+            assert page.locator('.row[data-id="fresh"] input.rowname').count() == 1
+            page.keyboard.press("Enter")
+            page.wait_for_function(
+                """document.querySelector('.row[data-id="fresh"] .name')
+                   .textContent === '\u65e5\u672c'""")
+        finally:
+            browser.close()
 
 
 def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):

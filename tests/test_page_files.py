@@ -494,9 +494,15 @@ def test_no_highlighter_still_shows_the_file(repo_page):
             show_tab(page, "files")
             page.evaluate("hljsAsked = Promise.resolve(null);")
             page.click(".filelist button:has-text('code.py')")
-            page.wait_for_timeout(400)
+            # Wait for the text, not for a time: 400 ms was too short on a
+            # loaded machine, one run in 36 at `-n 12`, before this change
+            # as after it.
+            page.wait_for_function(
+                "document.querySelectorAll('.filebody .code .dline .dtext')"
+                ".length === 2")
             assert code_text(page).strip() == (
                 "print(1)\nprint(2)")
+            page.wait_for_timeout(400)          # proving no paint comes
             assert page.locator(".filebody .code .dtext span").count() == 0
         finally:
             browser.close()
@@ -778,6 +784,39 @@ def test_a_directory_is_a_place_to_go_too(big_page):
             # And the box closed itself on the way.
             assert page.locator(".goto").count() == 0
             assert page.input_value("#find") == ""
+        finally:
+            browser.close()
+
+
+#: Where the tree's last drawn row ends, and where the list's view does.
+TREE_FOOT = """() => {
+  const list = document.querySelector('.filelist.files');
+  const rows = list.querySelectorAll('button');
+  return {rows: rows[rows.length - 1].getBoundingClientRect().bottom,
+          view: list.getBoundingClientRect().top + list.clientHeight};
+}"""
+
+
+def test_a_tall_file_tree_is_drawn_to_its_foot(big_page):
+    """The tree draws only the rows in view, and the window was 80 rows,
+    2,240 px, whatever the list's height. A list taller than that -- a
+    portrait or 4K screen, or a browser zoomed out -- showed empty space
+    under the last row, before a scroll and after one. And a window made
+    taller fires no scroll, so the rows it uncovers are drawn on the
+    resize."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, big_page)
+        try:
+            show_tab(page, "files")
+            page.wait_for_selector(".filelist.files button")
+            page.set_viewport_size({"width": 1600, "height": 2600})
+            page.wait_for_function(
+                f"(() => {{ const at = ({TREE_FOOT})(); return at.rows >= at.view; }})()")
+            page.evaluate("document.querySelector('.filelist.files').scrollTop = 40000")
+            page.wait_for_function(
+                "document.querySelector('.filelist.files').dataset.first > 1000")
+            at = page.evaluate(TREE_FOOT)
+            assert at["rows"] >= at["view"], at
         finally:
             browser.close()
 
@@ -1280,6 +1319,38 @@ def test_a_part_of_a_path_already_on_screen_still_answers(repo_page):
                    }""")
             # The file is still the one being read; only the mark moved.
             assert page.evaluate("state.files.path").endswith("SAMPLING.md")
+        finally:
+            browser.close()
+
+
+def test_go_to_marks_the_letters_it_matched_in_any_script(repo_page):
+    """`fuzzy` finds the letters in the lower-cased name, and `putName`
+    marked them in the name as it is. "İ" lower-cases to two code units, so
+    every mark after it stood one letter late: `notes` lit `b|t|e|s|.`. And
+    a mark took one code unit, which is half an emoji: `🎉p` lit a broken
+    character."""
+    root, _ = repo_page
+    (root / "docs").mkdir()
+    (root / "docs" / "\u0130stanbul-notes.md").write_text("# notes\n")
+    (root / "\U0001f389party.txt").write_text("party\n")
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "names")
+    lit = """(title) => [...document.querySelectorAll('.goto button')]
+      .filter((row) => row.title === title)
+      .map((row) => [...row.querySelectorAll('b.lit')].map((b) => b.textContent))[0]"""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "files")
+            for query, title, want in (
+                    ("notes", "docs/\u0130stanbul-notes.md", list("notes")),
+                    ("stan", "docs/\u0130stanbul-notes.md", list("stan")),
+                    ("\U0001f389p", "\U0001f389party.txt", ["\U0001f389", "p"])):
+                page.fill("#find", query)
+                page.wait_for_function(
+                    "(t) => [...document.querySelectorAll('.goto button')]"
+                    ".some((row) => row.title === t)", arg=title)
+                assert page.evaluate(lit, title) == want, query
         finally:
             browser.close()
 
