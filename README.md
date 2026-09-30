@@ -149,6 +149,11 @@ wostuast serve --open
 >
 > Then open <http://127.0.0.1:7331> on your own machine. Opening a port in a
 > firewall does not work: wostuast listens only on `127.0.0.1`, on purpose.
+>
+> A slow link is fine. wostuast packs what it sends with gzip, so `ssh -C`
+> adds little. A tab you come back to gets only what changed. The first
+> look at the Files tab of a big repository is the largest thing it sends:
+> the names of all the files, once per session.
 
 <details>
 <summary><b>Uninstall</b></summary>

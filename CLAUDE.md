@@ -66,7 +66,7 @@ after the tests go red.
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
 | `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `drawReviewBar`, `reviewText` | The review |
-| `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push | The daemon and the page |
+| `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
 | a new test | **How to work here** — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |
 | the tests to run before a push | **How to work here**, "Before the push" — the changed files under load, not the whole suite three times |
@@ -2327,6 +2327,34 @@ update the comment with its own text, and read it back.
   by chance, once. `test_a_stream_decides_its_opening_before_it_says_anything`,
   `test_a_block_read_while_no_stream_was_open_is_fetched`,
   `test_a_tool_result_read_while_no_stream_was_open_is_fetched`.
+- **The page is read over an ssh tunnel, so nothing big goes twice.** At
+  200 KiB/s the first look at a Files tab of 53,000 files took twenty
+  seconds, and the way back to the Transcript tab five. Three causes, three
+  fixes, each measured with Chromium's own throttle:
+  - **`reply` packs text with gzip** (`takes_gzip`, `PACKED_KINDS`,
+    `PACK_MIN`): 2.5 MB of names went as 109 KB. Only text: a picture from
+    `raw` is packed already. The import is inside `reply`, for the hook's
+    sake, and an `Accept-Encoding` it cannot read is a no.
+  - **The transcript fetch says what it holds** (`?have=<run>.<version>`),
+    and the daemon answers `same` with no blocks. **Only `state.turns.whole`
+    may send it**: pushes alone are pieces, and their version is the
+    daemon's own. A session chosen on another tab gathers pushes before any
+    fetch, and a stream that opens on more than is held while another tab
+    is up has lost pushes. Either named as what is held came back `same`
+    and the tab showed the pieces.
+  - **`load` clears the last tab's poll timer first.** Only `repoll` did,
+    after the load: the Files tab's two-second poll fired into the
+    Transcript tab while its fetch was out and fetched it all again.
+  A test that holds the transcript route matches it with `TRANSCRIPT`, a
+  pattern that takes a query: the glob `**/transcript` does not, and held
+  nothing once `?have=` was there.
+  `test_text_is_packed_for_a_client_that_takes_gzip`,
+  `test_a_picture_is_never_packed`,
+  `test_a_transcript_the_page_holds_whole_is_not_sent_again`,
+  `test_coming_back_to_the_transcript_fetches_only_what_moved`,
+  `test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole`,
+  `test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole`,
+  `test_the_last_tabs_poll_does_not_fetch_the_transcript_again`.
 - **A failed transcript fetch is not an empty transcript.** `ask` gives
   null, and the page drew "Nothing in this transcript yet.", forgot the
   reader's places, and asked no more, because the tab polls nothing. Now

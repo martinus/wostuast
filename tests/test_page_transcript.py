@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import pytest
@@ -1755,6 +1756,12 @@ def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
 # --- the fetch and the stream race ---------------------------------------------
 
 
+#: The transcript route, with a query or without: a page that holds the
+#: transcript whole asks with `?have=`, and a glob of `**/transcript` does
+#: not match that, so a test holding the request held nothing.
+TRANSCRIPT = re.compile(r"/transcript(\?.*)?$")
+
+
 def hold_next_transcript(page, how_many=1):
     """Hold the next transcript requests, and let the ones after them go.
     The answer is built when `fetch()` is called on a held one, which is the
@@ -1768,7 +1775,7 @@ def hold_next_transcript(page, how_many=1):
         else:
             route.continue_()
 
-    page.route("**/transcript", hold)
+    page.route(TRANSCRIPT, hold)
     return held
 
 
@@ -1801,7 +1808,7 @@ def test_a_block_pushed_while_the_transcript_is_fetched_is_kept(page_at):
             append_blocks(daemon, ["Pushed while the answer was on its way."])
             page.wait_for_function(f"state.turns.blocks.length > {count}")
             route.fulfill(response=answer)
-            page.unroute("**/transcript")
+            page.unroute(TRANSCRIPT)
             page.wait_for_function(
                 """() => [...document.querySelectorAll('.turn')].some(
                      one => one.innerText.includes('on its way'))""")
@@ -1825,10 +1832,10 @@ def test_a_transcript_fetch_that_fails_keeps_what_is_held(page_at):
             before = page.evaluate("document.querySelectorAll('.turn').length")
             page.evaluate("state.turns.open = new Set([1])")
             show_tab(page, "files")
-            page.route("**/transcript", lambda route: route.abort())
+            page.route(TRANSCRIPT, lambda route: route.abort())
             page.click('.tab[data-tab="transcript"]')
             page.wait_for_timeout(300)             # the failed answer is in
-            page.unroute("**/transcript")
+            page.unroute(TRANSCRIPT)
             assert page.evaluate(
                 "document.querySelectorAll('.turn').length") == before
             assert page.evaluate("state.turns.open.size") == 1
@@ -1888,7 +1895,7 @@ def test_a_block_read_while_no_stream_was_open_is_fetched(page_at):
             page.evaluate("resubscribe()")
             page.wait_for_function("state.turns.told !== null")
             route.fulfill(response=answer)
-            page.unroute("**/transcript")
+            page.unroute(TRANSCRIPT)
             page.wait_for_function(
                 """() => [...document.querySelectorAll('.turn')].some(
                      one => one.innerText.includes('the fetch was out'))""")
@@ -2052,7 +2059,7 @@ def test_only_the_newest_transcript_fetch_lands(page_at):
             second.fulfill(response=newer)
             page.wait_for_function("state.turns.early === null")
             first.fulfill(response=older)
-            page.unroute("**/transcript")
+            page.unroute(TRANSCRIPT)
             page.wait_for_timeout(500)           # proving it did not go
             assert page.evaluate(has_text("PUSHED BETWEEN"))
         finally:
@@ -2069,7 +2076,7 @@ def test_failing_fetches_keep_one_retry_not_one_each(page_at):
         try:
             wait_for_map(page)
             asked = []
-            page.route("**/transcript",
+            page.route(TRANSCRIPT,
                        lambda route: (asked.append(1), route.abort()))
             for _ in range(4):
                 page.click('.tab[data-tab="files"]')
@@ -2078,6 +2085,129 @@ def test_failing_fetches_keep_one_retry_not_one_each(page_at):
             before = len(asked)
             page.wait_for_timeout(4500)          # proving it did not happen
             assert len(asked) - before <= 3, len(asked) - before
+        finally:
+            browser.close()
+
+
+def asks_for_transcript(page):
+    """Every transcript request the page makes, as its address."""
+    asked = []
+    page.on("request", lambda request: asked.append(request.url)
+            if request.url.split("?")[0].endswith("/transcript") else None)
+    return asked
+
+
+def test_coming_back_to_the_transcript_fetches_only_what_moved(page_at):
+    """Coming back to the Transcript tab fetched the whole transcript every
+    time -- 856 KB for four hundred rounds, five seconds at 200 KiB/s --
+    while the pushes had kept the page up to date on the other tab. The
+    page now names what it holds, and the daemon answers `same`."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            show_tab(page, "files")
+            append_blocks(daemon, ["Pushed while the Files tab was up."])
+            page.wait_for_function(has_text("Pushed while the Files tab was up."))
+            asked = asks_for_transcript(page)
+            with page.expect_response(TRANSCRIPT) as came:
+                page.click('.tab[data-tab="transcript"]')
+            assert came.value.json().get("same") is True, came.value.url
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn')].some(
+                     one => one.innerText.includes('Files tab was up'))""")
+            assert page.evaluate("state.turns.blocks.every(Boolean)")
+            assert len(asked) == 1 and "have=" in asked[0], asked
+        finally:
+            browser.close()
+
+
+def test_the_last_tabs_poll_does_not_fetch_the_transcript_again(page_at):
+    """Only `repoll` cleared the poll timer, and it runs once a load is
+    over. On a slow link the Files tab's two-second poll fired while the
+    transcript was still on its way, and fetched the whole of it a second
+    time: two downloads of 856 KB for one click."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            show_tab(page, "files")
+            held = hold_next_transcript(page, 5)
+            # In one task, so the Files tab's timer is surely set when the
+            # click lands, and fires while the transcript is on its way.
+            page.evaluate("""() => {
+              TABS.files.poll = 200;
+              repoll();
+              document.querySelector('.tab[data-tab="transcript"]').click();
+            }""")
+            wait_for_request(page, held)
+            page.wait_for_timeout(700)          # proving it did not happen
+            count = len(held)
+            for route in held:
+                route.continue_()
+            page.unroute(TRANSCRIPT)
+            assert count == 1, f"{count} transcript fetches for one click"
+        finally:
+            browser.close()
+
+
+def test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole(pair_at):
+    """A session chosen while another tab is up holds nothing, and the pushes
+    it gathers there are pieces. Their version is the daemon's own, so named
+    as what is held they came back `same`, and the tab showed the pieces:
+    only a fetch that answered whole may say what the page holds."""
+    daemon, path = pair_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function(
+                "document.querySelectorAll('.row').length === 2")
+            page.evaluate("choose('s1')")
+            wait_for_map(page)
+            count = page.evaluate("state.turns.blocks.length")
+            assert count > 0
+            show_tab(page, "files")
+            page.evaluate("choose('s2')")
+            page.evaluate("choose('s1')")
+            page.wait_for_function("state.chosen === 's1' && state.tab === 'files'")
+            wait_for_watching(daemon)
+            append_blocks(daemon, ["A piece, pushed alone."])
+            page.wait_for_function(has_text("A piece, pushed alone."))
+            asked = asks_for_transcript(page)
+            page.click('.tab[data-tab="transcript"]')
+            page.wait_for_function(
+                f"state.turns.landed && state.turns.blocks.length === {count + 1}"
+                " && state.turns.blocks.every(Boolean)")
+            assert "have=" not in asked[-1], asked
+        finally:
+            browser.close()
+
+
+def test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole(page_at):
+    """A stream that reopens says what the daemon holds. Off the Transcript
+    tab that waits for the tab -- but a push after it made the version look
+    whole, and the blocks sent to nobody meanwhile were never asked for."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            show_tab(page, "files")
+            page.evaluate("""() => { state.stream.close(); state.stream = null;
+                                     state.streamUrl = ''; }""")
+            append_blocks(daemon, ["Said while nobody listened."])
+            page.evaluate("resubscribe()")
+            wait_for_watching(daemon)       # its opening is on the way first
+            append_blocks(daemon, ["Said once the stream was back."])
+            page.wait_for_function(has_text("Said once the stream was back."))
+            asked = asks_for_transcript(page)
+            page.click('.tab[data-tab="transcript"]')
+            page.wait_for_function(has_text("Said while nobody listened."))
+            assert "have=" not in asked[-1], asked
         finally:
             browser.close()
 
@@ -2118,11 +2248,11 @@ def test_a_failed_fetch_does_not_take_a_sessions_place(page_at, ws,
             page.evaluate("choose('s1')")
             page.wait_for_function(showing, arg="s1 line 79")
             page.evaluate(scroll, 900)
-            page.route("**/transcript", lambda route: route.abort())
+            page.route(TRANSCRIPT, lambda route: route.abort())
             page.evaluate("choose('s2')")
             page.wait_for_function("state.turns.failed === true")
             page.wait_for_timeout(300)           # the scroll event is in
-            page.unroute("**/transcript")
+            page.unroute(TRANSCRIPT)
             assert page.evaluate("state.turns.down") == 600
             page.wait_for_function("state.turns.failed === false")
             page.wait_for_function(
