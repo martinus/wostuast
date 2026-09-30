@@ -105,6 +105,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   0.2 KB. So **the order the names are sent in must depend only on which files
   exist**: `in_order` is pinned-then-name. Put a changed tier back into it and
   the tag moves on every save. The reader's order is the page's, in `dirFiles`.
+  - **A listing held is handed over without the gate.** The read behind
+    holds the root's gate for all its git calls, up to four at
+    `LIST_TIMEOUT`, and `Files.of` took the gate before it looked at what
+    was held: with `ls-files` slowed to 1.5 s, the poll after the one that
+    started the read waited 4.4 s, with an HTTP thread held. It reads
+    `held` under `lock` now, and takes the gate only when nothing is held,
+    where it looks once more, so two first asks read git once.
+    `test_a_stale_listing_does_not_wait_for_the_read_behind_it` holds git
+    with an event rather than a sleep, and
+    `test_two_first_asks_read_git_once`.
 - **An icon is measured against its box, not eyeballed.** `putIcon` draws
   into a `0 0 14 14` viewBox and an `svg` clips to its viewport, so a stroke
   -- 1.2 wide, reaching 0.6 past the line it is drawn on -- must end by 13.4.

@@ -825,6 +825,27 @@ def test_a_password_the_url_parse_missed_is_hidden_all_the_same(ws, repo):
     assert remote.startswith("https://proxy.example.com/")
 
 
+def test_a_remote_of_a_megabyte_costs_the_tick_no_time(ws, repo):
+    """The remote is read on the tick thread, and an agent can write any
+    line into the config. A megabyte of `a.token.` took the secret patterns
+    8.5 s whole; the hover shows the start of it, and only that is looked
+    at. What is left is reading the file, which `config_value` does a
+    character at a time: 0.23 s for the megabyte, and linear. CPU time, so
+    a loaded machine does not fail it, and a second, so a slow one does
+    not."""
+    import time
+
+    git(repo, "remote", "add", "origin", "https://example.com/x.git")
+    config = repo / ".git" / "config"
+    config.write_text(config.read_text().replace(
+        "https://example.com/x.git", "https://example.com/" + "a.token." * 125_000))
+    start = time.process_time()
+    remote = ws.remote_url(str(repo / ".git"))
+    assert time.process_time() - start < 1.0
+    assert remote.startswith("https://example.com/a.token.")
+    assert len(remote) <= ws.REMOTE_SHOWN
+
+
 def test_a_key_without_a_value_does_not_hide_the_remote(ws, repo):
     """git reads a key alone on a line, `fsmonitor` under `[core]` say, as
     true. `configparser` called it an error, and the remote came back

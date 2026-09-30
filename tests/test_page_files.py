@@ -894,6 +894,55 @@ def test_a_file_of_a_few_thousand_lines_is_drawn_whole_and_coloured(long_page):
             browser.close()
 
 
+def test_a_bundle_on_one_line_is_not_coloured_and_says_so(repo_page):
+    """A minified bundle of 500 KB is one line, so `CODE_WHOLE` let it
+    through, and highlight.js held the page for 1.2 to 4 s on each save.
+    A long text with a long line is drawn without colour, and says so in
+    the note a windowed file shows. A hand-written file as long, whose
+    lines are short, keeps its colour: a plain cap on the characters took
+    it from ordinary source files. `paintedLines` is what refuses, so a
+    diff and a slice keep to it too."""
+    root, _ = repo_page
+    bundle = "".join(f"function f{n}(a){{return a+{n}}}" for n in range(5000))
+    root.joinpath("app.min.js").write_text(bundle + "\n")
+    root.joinpath("long.py").write_text(
+        "".join(f"value_{n} = compute({n})  # step {n}\n" for n in range(3000)))
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "a bundle and a long file")
+    stub = "'<span class=\"hljs-keyword\">x</span>'"
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            assert page.evaluate("PAINT_MAX") < len(bundle)
+            assert page.evaluate("PAINT_MAX") < root.joinpath("long.py").stat().st_size
+            open_code(page, stub, "long.py")
+            page.wait_for_selector(".filebody .code .hljs-keyword")
+            assert page.locator(".filebody .note").count() == 0
+
+            page.click(".filelist button:has-text('app.min.js')")
+            page.wait_for_selector(".filebody .note")
+            assert page.locator(".filebody .note").inner_text().startswith(
+                "Lines of more than 1,000 characters are too slow to colour.")
+            assert page.locator(".filebody .code .dline").count() == 1
+            # Whatever the paint would do, it has done once the highlighter
+            # is in and a task has passed.
+            painted = page.evaluate("""async () => {
+              await hljsReady();
+              await new Promise((go) => setTimeout(go));
+              return document.querySelectorAll('.filebody .code .hljs-keyword').length;
+            }""")
+            assert painted == 0
+            assert code_text(page) == bundle
+            # Every painter asks `paintedLines`: the Diff tab, a slice.
+            refused = page.evaluate("""async (text) => {
+              const lib = await hljsReady();
+              return paintedLines(lib, 'javascript', text, 1);
+            }""", bundle)
+            assert refused is None
+        finally:
+            browser.close()
+
+
 def test_the_header_says_what_the_file_is(repo_page):
     """Type, size and when it last changed — all of it already in hand: the
     type the page worked out to paint it, the rest from the one stat the

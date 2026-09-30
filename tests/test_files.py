@@ -1076,6 +1076,71 @@ def test_a_stale_listing_is_handed_over_and_read_again_behind(ws, seeded):
     assert "later.md" in names, "it was not read again behind"
 
 
+def slowed_listing(ws):
+    """A runner whose `ls-files` waits to be let go, and says when one has
+    started: git slowed at will, so a test need not guess how long it is."""
+    import threading
+
+    inside, release, asked = threading.Event(), threading.Event(), []
+
+    def slow(args, **rest):
+        if "ls-files" in args:
+            asked.append(args)
+            inside.set()
+            release.wait(30)
+        return ws.run(args, **rest)
+    return slow, inside, release, asked
+
+
+def test_a_stale_listing_does_not_wait_for_the_read_behind_it(ws, seeded):
+    """The read behind holds the root's gate for all of its git calls, up
+    to four at `LIST_TIMEOUT`, and the poll after the one that started it
+    waited on that gate: with `ls-files` slowed to 1.5 s, 4.4 s for a
+    listing that was already held."""
+    import threading
+
+    files = ws.Files()
+    first = files.of(str(seeded))
+    root = ws.worktree_root(str(seeded))
+    files.held[root].read_at -= ws.LIST_FRESH + 1
+    slow, inside, release, _ = slowed_listing(ws)
+    try:
+        assert files.of(str(seeded), runner=slow) is first
+        assert inside.wait(15), "no read was started behind"
+        got = []
+        asker = threading.Thread(
+            target=lambda: got.append(files.of(str(seeded), runner=slow)), daemon=True)
+        asker.start()
+        asker.join(10)
+        assert got == [first], "the next poll waited for the read behind it"
+    finally:
+        release.set()
+
+
+def test_two_first_asks_read_git_once(ws, seeded):
+    """With nothing held, the first ask reads and the second waits for it,
+    and gets what it read rather than asking git again."""
+    import threading
+
+    files = ws.Files()
+    slow, inside, release, asked = slowed_listing(ws)
+    got = []
+    ask = lambda: got.append(files.of(str(seeded), runner=slow))  # noqa: E731
+    one = threading.Thread(target=ask, daemon=True)
+    one.start()
+    try:
+        assert inside.wait(15), "the first ask did not read"
+        two = threading.Thread(target=ask, daemon=True)
+        two.start()
+        time.sleep(0.3)            # proving the second asks git for nothing
+    finally:
+        release.set()
+    one.join(15)
+    two.join(15)
+    assert len(got) == 2 and got[0] is got[1]
+    assert len(asked) == 3         # tracked, untracked, ignored: one listing
+
+
 def test_the_tag_follows_the_names_and_not_the_changes(ws, seeded):
     files = ws.Files()
     first = files.of(str(seeded))

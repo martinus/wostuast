@@ -1353,6 +1353,45 @@ def test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole(ws):
     assert "token=***" in ws.tool_target("WebFetch", {"url": "https://h/?token=abc123"})
 
 
+def test_a_long_word_costs_a_summary_no_time(ws):
+    """`[\\w.-]*token[\\w.-]*=` backtracked over every way to split a long
+    word with dots in it, on the one thread that folds every event, and
+    again on every start: 20 KB of `abcdefghi.` took 3.3 s, 1,600
+    characters of `a.token.` a second. The patterns have bounds, and a
+    summary hides only what it can show. CPU time, not the clock, so a
+    loaded machine does not fail it; the slowest input comes last."""
+    hostile = ["abcdefghi." * 2000,
+               "echo " + ".".join(f"auth{n}" for n in range(500)),
+               "a.token." * 200,
+               "a.token." * 125_000]          # a megabyte: only the cut helps
+    for text in hostile:
+        for tool, given in (("Bash", {"command": text}), ("WebFetch", {"url": text})):
+            start = time.process_time()
+            ws.tool_target(tool, given)
+            took = time.process_time() - start
+            assert took < 0.2, f"{tool} over {len(text)} characters took {took:.2f} s"
+    # The patterns on their own: each star round a keyword, and a scheme.
+    for text in ("a.token." * 250, "token-" * 400 + "a" * 20_000, "a." * 10_000):
+        start = time.process_time()
+        ws.hide_secrets(text)
+        took = time.process_time() - start
+        assert took < 0.2, f"{text[:8]} took {took:.2f} s"
+
+
+def test_a_secret_is_hidden_as_far_as_the_row_can_show(ws):
+    """Only the start of a long command is looked at, and that start is
+    what `clip` keeps and some way past it: a secret whose `@` stands far
+    after the cut still stands on the row, half of it, if the `@` is not
+    looked at. And one at the start of a megabyte is hidden."""
+    token = "t" * 700                          # a JSON Web Token is this long
+    command = "git clone https://me:" + token + "@example.com/r"
+    assert ws.tool_target("Bash", {"command": command}) == \
+        ws.clip("git clone https://***@example.com/r", 60)
+    heredoc = "curl -u me:hunter2 https://h <<EOF\n" + "line of text\n" * 90_000 + "EOF"
+    shown = ws.tool_target("Bash", {"command": heredoc})
+    assert "hunter2" not in shown and shown.startswith("curl -u *** https://h")
+
+
 def clear_events(end_ts=2000.0, start_ts=2000.1, **new):
     """The two events of one `/clear`, as Claude Code 2.1.282 sends them:
     the old session ends, a new one starts in the same pane and process."""

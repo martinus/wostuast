@@ -190,6 +190,25 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   rather than implying the page is safe from them.
   `test_a_summary_hides_what_looks_like_a_credential`,
   `test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole`.
+  - **A long command costs the summary no time.** `SECRET_SHAPES` had
+    `[\w.-]*token[\w.-]*=`, and two stars round a part that can fail try
+    every split of a word: 1,600 characters of `a.token.` took 1 s, 20 KB
+    of `abcdefghi.` 3.3 s, and 8,000 characters two minutes. It ran on the
+    one thread that folds every event, and again on every start, because
+    the log is never thrown away. Those two stars are `{0,64}` now, and a
+    URL's scheme `{0,31}` (1.3 s over 20 KB of `a.` before), and
+    `clip_hidden` gives the patterns only the start of the text: what
+    `clip` keeps and `SECRET_REACH` characters past it, because a URL's
+    `@` or a name's `=` can stand after the cut with the secret before it
+    on the row. A text shorter than that is hidden whole, as before.
+    **Still hidden before the cut, never after**: that is the scar above.
+    A name with more than 64 characters before its keyword is no longer
+    seen. `remote_url` goes through `clip_hidden` too, at `REMOTE_SHOWN`:
+    it is read on the tick thread, and an agent can write any line into a
+    config. `test_a_long_word_costs_a_summary_no_time` and
+    `test_a_remote_of_a_megabyte_costs_the_tick_no_time` count CPU time,
+    not the clock, so a loaded machine does not fail them;
+    `test_a_secret_is_hidden_as_far_as_the_row_can_show`.
 - **The page never builds HTML from what a program printed.** A `!`
   command's output and a slash command's answer reach it as text, and
   `putShell` puts them in a `pre` as text: a program can print `<img>`.
