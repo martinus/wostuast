@@ -1793,3 +1793,37 @@ def test_two_sessions_on_one_file_each_get_their_own_scroller(repo_page, served,
             assert rebuilt
         finally:
             browser.close()
+
+
+def test_another_session_in_the_worktree_does_not_fetch_its_names_again(
+        ws, served, repo_page):
+    """The names are the worktree's, not the session's, and a session choice
+    blanked them: every switch -- to another session in the same worktree,
+    or back to the first -- fetched every name again, seconds each on an ssh
+    tunnel. The page keeps them by worktree and asks with the tag held."""
+    repo, _ = repo_page
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(repo),
+                                   ts=time.time(), pane="%8", pid=2))
+    served[0].store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            page.wait_for_function(
+                "document.querySelectorAll('.row').length === 2")
+            page.evaluate("choose('s1')")
+            show_tab(page, "files")
+            page.wait_for_function("state.files.tag !== ''")
+            names = page.evaluate("state.files.names.length")
+            assert names > 0
+            for other in ("s2", "s1"):
+                with page.expect_response(re.compile(r"/files\?")) as came:
+                    # A session puts back the tab it was left on.
+                    page.evaluate(f"choose('{other}'); showTab('files')")
+                assert "have=&" not in came.value.url + "&", came.value.url
+                assert "names" not in came.value.json(), other
+                page.wait_for_function(
+                    f"state.chosen === '{other}'"
+                    f" && state.files.names.length === {names}")
+                page.wait_for_selector(".filelist button .name")
+        finally:
+            browser.close()

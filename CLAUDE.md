@@ -1413,7 +1413,10 @@ update the comment with its own text, and read it back.
   the place in it, the directories opened by hand, the expanded tool blocks
   and diff files. Not the listing, the text or the diff — those are fetched
   again, because by the time the reader comes back they have moved, and they
-  are also the big things: 52,799 names is 1.7 MB, per session. **Not
+  are also the big things: 52,799 names is 1.7 MB, per session. **The names
+  are the exception, kept once per worktree** (`state.listings`, see the ssh
+  tunnel bullet): they are the worktree's, not the session's, and are
+  asked for again with their tag, so what comes back is only what moved. **Not
   `places`** — `state.files.places` is the list of things to go to, and one
   word for two ideas is how one of them gets shadowed.
 - **`usePlace` writes onto a state that has just been blanked**, so every
@@ -2360,6 +2363,17 @@ update the comment with its own text, and read it back.
     fetch, and a stream that opens on more than is held has lost pushes.
     Either named as what is held came back `same` and the tab showed the
     pieces. Any gap clears `whole`; only a fetch that lands sets it.
+  - **The Review tab's poll is answered `same` while the diff stands**
+    (`answer_tag`, `state.diffTag`): the whole diff came every five seconds.
+    The tag is a hash of the answer itself, so nothing the page draws can be
+    left out of it, and a tag sent for another question can never match.
+    It is sent only while `diffRaw` holds an answer -- every place that
+    drops the answer empties that -- and a `same` still reaches the retry of
+    an untracked file's read at the end of `loadDiff`.
+  - **The file names are kept per worktree, not per session**
+    (`keepListing`, `adoptListing`, `state.listings`, by `worktree_path`):
+    a session choice blanked them, so every switch -- to another session in
+    the same worktree, or back -- fetched every name again.
   - **`load` clears the last tab's poll timer first**, and re-arms one
     only for the tab it loaded. Only `repoll` cleared it, after the load:
     the Files tab's two-second poll fired into the Transcript tab while its
@@ -2375,7 +2389,10 @@ update the comment with its own text, and read it back.
   `test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole`,
   `test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole`,
   `test_the_last_tabs_poll_does_not_fetch_the_transcript_again`,
-  `test_a_load_that_ends_after_the_switch_sets_no_timer`.
+  `test_a_load_that_ends_after_the_switch_sets_no_timer`,
+  `test_a_diff_the_page_holds_is_not_sent_again`,
+  `test_a_poll_of_a_diff_that_stands_is_answered_short`,
+  `test_another_session_in_the_worktree_does_not_fetch_its_names_again`.
 - **A failed transcript fetch is not an empty transcript.** `ask` gives
   null, and the page drew "Nothing in this transcript yet.", forgot the
   reader's places, and asked no more, because the tab polls nothing. Now

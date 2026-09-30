@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 
+import re
 import time
 
 import pytest
@@ -1134,5 +1135,35 @@ def test_the_pickers_say_how_many_commits_and_stand_apart_from_against(repo_page
                 one.startswith("against") for one in out["names"]), out
             same = [one.replace('"', "'") for one in [*out["font"], out["narrow"]]]
             assert same[0] == same[1] == same[2], out
+        finally:
+            browser.close()
+
+
+def test_a_poll_of_a_diff_that_stands_is_answered_short(repo_page):
+    """The Review tab asks every five seconds, and the whole diff came back
+    every time, changed or not: on a slow link the one transfer that never
+    stopped. The page sends back the tag of the diff it holds and gets
+    `same`; a diff that moved comes whole and is drawn."""
+    repo, _ = repo_page
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            page.wait_for_function("state.diffRaw !== '' && state.diffTag !== ''")
+            drawn = page.evaluate("state.diffAt")
+            with page.expect_response(re.compile(r"/diff\?")) as came:
+                page.evaluate("() => { load(); }")
+            assert "have=" in came.value.url, came.value.url
+            assert came.value.json().get("same") is True
+            assert page.evaluate("state.diffAt") == drawn
+            assert page.locator(".dline").count() > 0
+
+            (repo / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+            page.evaluate("() => { load(); }")
+            page.wait_for_function(f"state.diffAt > {drawn}")
+            page.wait_for_function(
+                "[...document.querySelectorAll('.dline')].some("
+                "l => l.textContent.includes('print(3)'))")
         finally:
             browser.close()
