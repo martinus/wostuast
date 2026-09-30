@@ -85,6 +85,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   and reads the config file rather than asking git: a third git run on every
   poll for a line that almost never changes. `git@host:path` holds no secret
   and stays. `test_the_remote_is_read_and_never_carries_a_password`.
+  - **Read the value the way git reads it** (`config_value`). git takes
+    `url = "https://me:tok@host/r.git"`, and `git config` writes the quotes
+    itself around a value that holds `;` or `#`. `configparser` kept them,
+    `urlsplit` then found no scheme, and the token went to the page whole.
+    **Then `hide_secrets` runs over the result** as a second guard, for a
+    shape the first one does not see: a URL inside the URL is not in its
+    netloc. `test_a_quoted_remote_url_carries_no_password`,
+    `test_a_password_the_url_parse_missed_is_hidden_all_the_same`.
+  - **A key with no `=` is git's "true", not an error.** Without
+    `allow_no_value`, one `fsmonitor` line under `[core]` made the whole
+    file a parse error, and the remote came back empty.
+    `test_a_key_without_a_value_does_not_hide_the_remote`.
 - **A one-line summary of a command hides what looks like a credential.**
   The row's last line is a command as the agent ran it, and `curl -s -u
   me:token` stood on a screen that is shared and screenshotted. `tool_target`
@@ -205,6 +217,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   Ignored files are asked the same way. Never swap either check for a pattern
   that tries to spot a bad path. **Both readers go through it**, so a new one
   cannot be given one check and not the other.
+  - **And nothing inside a `.git` is read, though it is in the worktree.**
+    git lists a tracked link, `notes.md -> ../.git/config`, and never what
+    it points at, so both checks passed and the Files tab showed the
+    config, with a remote's token in it. `worktree_target` refuses a real
+    path with any part named `.git`, in any case: a filesystem that ignores
+    case opens `.GIT/config` as `.git/config`. A git directory outside the
+    worktree is `inside`'s to refuse.
+    `test_a_link_into_the_git_directory_is_refused`.
 - **`serve` leaves an example `links.json` and never writes over one.**
   JSON has no comments, so the example is a working entry — and a
   deliberately inert one, because nobody's work has a ticket called

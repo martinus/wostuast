@@ -413,6 +413,31 @@ def test_a_link_that_leaves_the_worktree_is_refused(ws, seeded, tmp_path):
     assert ws.read_worktree_file(str(seeded), "link.md") is None
 
 
+def test_a_link_into_the_git_directory_is_refused(ws, seeded):
+    """git lists a tracked link and never what it points at, and `.git` is
+    inside the worktree, so both checks passed and the Files tab showed
+    `.git/config` -- with a remote's token in it, which `remote_url` keeps
+    off the page. Upper case too: a filesystem that ignores case opens
+    `.GIT/config` as `.git/config`. This one does not, so a folder of that
+    name stands in for it."""
+    git(seeded, "remote", "add", "origin", "https://me:ghp_secret@example.com/r.git")
+    (seeded / ".oa").mkdir()
+    (seeded / "elsewhere" / ".GIT").mkdir(parents=True)
+    (seeded / "elsewhere" / ".GIT" / "config").write_text("[core]\n")
+    links = {".oa/cfg.md": "../.git/config", "head.md": ".git/HEAD",
+             "upper.md": "elsewhere/.GIT/config", "hooks": ".git/hooks"}
+    for name, to in links.items():
+        (seeded / name).symlink_to(to)
+    git(seeded, "add", *links)       # git will not take a `.GIT` of its own
+    listed = [one.path for one in ws.worktree_files(str(seeded)).files]
+    for name in (".oa/cfg.md", "head.md", "upper.md"):
+        assert name in listed, name
+        assert ws.read_worktree_file(str(seeded), name) is None, name
+    assert ws.read_worktree_file(str(seeded), "hooks/pre-commit.sample") is None
+    (seeded / "fine.md").symlink_to("notes.md")
+    assert ws.read_worktree_file(str(seeded), "fine.md").text == "# notes\n"
+
+
 def test_a_long_file_is_cut(ws, seeded, monkeypatch):
     monkeypatch.setattr(ws, "FILE_MAX_BYTES", 20)
     (seeded / "notes.md").write_text("x" * 100)
@@ -561,6 +586,22 @@ def test_no_newline_at_end_of_file_is_passed_over(ws):
     one = ws.parse_diff(text)[0]
     assert one.added == 1 and one.removed == 1
     assert len(one.hunks[0].lines) == 2
+
+
+def test_a_hunk_ends_when_the_lines_it_counts_have_come(ws):
+    """`diff.submodule=log` writes a submodule's log after the file before
+    it, with no header: `  > message` read as that file's eleventh line.
+    What follows a hunk whose counts are used up is not the file's."""
+    text = ("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n"
+            "@@ -9,2 +9,3 @@\n 9\n 10\n+11\n"
+            "Submodule sub 1111111..2222222:\n  > a message\n  > another\n"
+            "diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n"
+            "@@ -1 +1 @@\n-one\n\\ No newline at end of file\n+one\n"
+            " not a line either\n")
+    first, second = ws.parse_diff(text)
+    assert [line.text for line in first.hunks[0].lines] == ["9", "10", "11"]
+    assert [line.text for line in second.hunks[0].lines] == ["one", "one"]
+    assert first.added == 1 and second.added == 1 and second.removed == 1
 
 
 def test_a_form_feed_inside_a_line_does_not_split_it(ws):
