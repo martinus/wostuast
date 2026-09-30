@@ -911,6 +911,31 @@ def test_the_send_bar_stands_only_on_the_review_tab_and_only_with_a_review(
             browser.close()
 
 
+def test_the_send_bar_stays_short_and_scrolls(repo_page):
+    """The diff is what is read on this tab. The two boxes of the send bar
+    grew to 40 and 30 per cent of the window, and on a notebook they took
+    two fifths of it from the diff. Now four lines of the comment on the
+    whole, five of the message, and then each scrolls."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.set_viewport_size({"width": 1366, "height": 768})
+            comment_on_first_line(page, "\n".join("line %d" % n for n in range(30)))
+            page.wait_for_selector("#reviewbar:not([hidden]) #reviewsay")
+            page.fill("#overall", "\n".join("word %d" % n for n in range(20)))
+            page.wait_for_function("state.review.overall.startsWith('word 0')")
+            got = page.evaluate("""() => ['overall', 'reviewsay'].map((id) => {
+              const box = $(id);
+              return [box.getBoundingClientRect().height,
+                      box.scrollHeight > box.clientHeight];
+            })""")
+            (over, over_scrolls), (said, said_scrolls) = got
+            assert over <= 4 * 18 + 14 + 1 and over_scrolls, got
+            assert said <= 5 * 18 + 14 + 1 and said_scrolls, got
+        finally:
+            browser.close()
+
+
 def test_what_is_sent_is_the_word_on_the_whole_over_what_the_bar_shows(
         repo_page):
     """The bar shows the comment on the whole review, which is typed, over

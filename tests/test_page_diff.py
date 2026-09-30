@@ -435,14 +435,109 @@ def test_the_older_and_newer_buttons_step_through_the_commits(repo_page):
             older, newer = page.locator(".diffbar .step").all()
             # Nothing to step from while everything is shown.
             assert older.is_disabled() and newer.is_disabled()
+            where = page.locator(".diffbar .stepat")
+            # Hidden, and not only empty: an empty span still takes a gap.
+            assert where.evaluate("e => e.hidden") is True
             pick(page, page.evaluate("state.diff.commits[0].sha"))
             assert page.locator(".diffhead").first.inner_text().startswith("third")
             assert newer.is_disabled() and not older.is_disabled()
+            # Which of how many, the oldest first.
+            assert where.inner_text() == "2 / 2"
             older.click()
             page.wait_for_function(
                 "document.querySelector('.diffhead')?.firstChild.textContent"
                 " === 'second'")
             assert older.is_disabled() and not newer.is_disabled()
+            assert where.inner_text() == "1 / 2"
+        finally:
+            browser.close()
+
+
+def test_another_commit_is_read_from_its_top(repo_page):
+    """Stepping to the next commit left the pane where the last one had been
+    read to, somewhere in the middle of a diff the reader had not started.
+    Another commit starts at its top; the same one, drawn again by a poll,
+    keeps the place."""
+    root, _ = repo_page
+    (root / "code.py").write_text("".join("print(%d)\n" % n for n in range(200)))
+    conftest.git_in(root, "commit", "-qam", "third")
+    (root / "code.py").write_text("".join("print(%d)\n" % -n for n in range(200)))
+    conftest.git_in(root, "commit", "-qam", "fourth")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function("(state.diff || {}).commits?.length === 3")
+            pick(page, page.evaluate("state.diff.commits[0].sha"))
+            page.wait_for_function(
+                "document.querySelector('.diffscroll').scrollHeight > 3000")
+            page.evaluate("document.querySelector('.diffscroll').scrollTop = 2000")
+            # A poll draws the same commit again, and the place stands.
+            page.evaluate("() => { state.diffAt += 1; draw(); }")
+            page.wait_for_function(
+                "document.querySelector('.diffscroll').scrollTop === 2000")
+            page.click(".diffbar .step >> nth=0")
+            page.wait_for_function(
+                "document.querySelector('.diffhead')?.firstChild.textContent"
+                " === 'third'")
+            page.wait_for_timeout(100)      # past the frame a place is put back in
+            assert page.evaluate(
+                "document.querySelector('.diffscroll').scrollTop") == 0
+        finally:
+            browser.close()
+
+
+def test_a_commit_message_is_markdown_and_its_text_is_one_click_away(repo_page):
+    """An agent writes its commit messages in Markdown, and the tab drew the
+    source. It is drawn now, and "as text" shows it as it was written; this
+    browser keeps the choice. The lines `reflow` keeps are kept in both, and
+    the click fills the message again and rebuilds nothing else."""
+    root, _ = repo_page
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+    conftest.git_in(root, "commit", "-qam", "print three", "-m",
+                    "It **refuses** a push:\n\n- `one`\n- two\n\n"
+                    "Reviewed-by: someone\nRefs: OA-12")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function("(state.diff || {}).commits?.length === 2")
+            pick(page, page.evaluate("state.diff.commits[0].sha"))
+            message = page.locator(".diffhead.commit .message")
+            assert message.locator("strong").inner_text() == "refuses"
+            assert message.locator("li").count() == 2
+            assert message.locator("code").inner_text() == "one"
+            assert "Reviewed-by: someone\nRefs: OA-12" in message.inner_text()
+            pressed = """() => [...document.querySelectorAll(
+              '.diffhead .readas button')].map((b) => b.getAttribute('aria-pressed'))"""
+            assert page.evaluate(pressed) == ["true", "false"]
+            # In the subject's line, at its right end.
+            got = page.evaluate("""() => {
+              const head = document.querySelector('.diffhead.commit');
+              const range = document.createRange();
+              range.selectNodeContents(head.firstChild);
+              const subject = range.getBoundingClientRect();
+              const choice = head.querySelector('.readas').getBoundingClientRect();
+              const about = head.querySelector('.about').getBoundingClientRect();
+              return [subject.bottom > choice.top && subject.top < choice.bottom,
+                      head.getBoundingClientRect().right - choice.right,
+                      choice.bottom <= about.top + 1];
+            }""")
+            assert got[0] and got[1] < 40 and got[2], got
+            page.evaluate("document.querySelector('.dfile').dataset.kept = 'yes'")
+            page.click(".diffhead .readas button[data-value='true']")
+            assert message.evaluate("e => e.textContent") == (
+                "It **refuses** a push:\n\n- `one`\n- two\n\n"
+                "Reviewed-by: someone\nRefs: OA-12")
+            assert page.evaluate(pressed) == ["false", "true"]
+            assert page.evaluate("document.querySelector('.dfile').dataset.kept") == "yes"
+            # Kept in this browser: the next commit drawn is text too.
+            page.reload()
+            page.wait_for_function("!!window.marked")
+            show_tab(page, "diff")
+            page.wait_for_function("(state.diff || {}).commits?.length === 2")
+            pick(page, page.evaluate("state.diff.commits[0].sha"))
+            assert page.locator(".diffhead.commit .message.astext").count() == 1
         finally:
             browser.close()
 
@@ -664,7 +759,9 @@ def test_one_commit_shows_its_whole_message(repo_page):
             pick(page, page.evaluate("state.diff.commits[0].sha"))
             head = page.locator(".diffhead.commit")
             assert head.evaluate("e => e.firstChild.textContent") == "Print three"
-            # As it was written: the lines and the blank line between them.
+            # As it was written, a click away: the lines and the blank line
+            # between them.
+            page.click(".diffhead .readas button[data-value='true']")
             assert head.locator(".message").evaluate("e => e.textContent") == \
                 "Two was not enough.\n\n- one\n- two"
             assert head.locator(".message").evaluate(
@@ -1078,6 +1175,8 @@ def test_a_commit_message_wraps_at_the_window_and_links_its_tickets(repo_page, w
             page.wait_for_function("state.links.length === 1")
             pick(page, page.evaluate("state.diff.commits[0].sha"))
             head = page.locator(".diffhead.commit")
+            # The lines as they were joined, which the text shows.
+            page.click(".diffhead .readas button[data-value='true']")
             message = head.locator(".message")
             assert message.evaluate("e => e.textContent") == (
                 "Two was not enough, and the reader asked for a third one,"
