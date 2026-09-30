@@ -7972,11 +7972,29 @@ body:not(.show-thinking) .thinking { display: none; }
    whole -- so it does not shrink, and the commit picker, whose subject can
    be cut and still be known, takes what room is left. */
 .pickbase { max-width: 36ch; flex-shrink: 0; }
-/* One control in two halves, so it reads as a choice and not two actions. */
-.diffbar .sides { margin-left: auto; display: flex; flex-shrink: 0; }
-.diffbar .sides .verb:first-child { border-radius: 5px 0 0 5px; }
-.diffbar .sides .verb:last-child { border-radius: 0 5px 5px 0; margin-left: -1px; }
-.diffbar .sides .verb[aria-pressed="true"] {
+/* How the diff is drawn -- columns, tab width, long lines -- in one menu at
+   the end of the bar. The bar was cramped on a notebook with the column
+   switch alone in it, and the tab width and wrap were wanted too; the
+   reader chose the menu, which gives the pickers their room back. */
+.diffbar .viewmenu { margin-left: auto; position: relative; flex-shrink: 0; }
+.viewmenu .viewbtn { margin-left: 0; }
+.viewpop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+  display: grid; grid-template-columns: max-content max-content;
+  gap: 8px 14px; align-items: center; padding: 10px 12px;
+  background: var(--raised); border: 1px solid var(--edge-bright);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--ink) 16%, transparent);
+}
+.viewpop[hidden] { display: none; }
+.viewrow { display: contents; }
+.viewlabel { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+/* One control in parts, so it reads as a choice and not as actions. */
+.viewpop .choice { display: flex; }
+.viewpop .choice .verb { border-radius: 0; margin-left: -1px; }
+.viewpop .choice .verb:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.viewpop .choice .verb:last-child { border-radius: 0 5px 5px 0; }
+.viewpop .choice .verb[aria-pressed="true"] {
   background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
 }
 /* The small label look: the path above a file. */
@@ -8110,11 +8128,34 @@ body:not(.show-thinking) .thinking { display: none; }
    `:not(.windowed)` is the exclusion itself rather than a promise made in
    three other places: a windowed file's rows are a grid the scrollbar is read
    against, and a wrapped row is not one row tall. */
-:root[data-wrap="yes"] .filebody .code:not(.windowed) .dline {
-  white-space: pre-wrap; min-width: 0; overflow-wrap: anywhere;
+:root[data-wrap="yes"] .filebody .code:not(.windowed) .dline,
+:root[data-wrap="yes"] .dfile .dlines:not(.sides) .dline {
+  display: flex; white-space: pre-wrap; min-width: 0;
+}
+/* Wrapped, the text is the part that shrinks: the rest of a long line stands
+   under the text, not under the line numbers. The same two places: the Files
+   tab and the one-column diff. The side-by-side diff always wraps, in its
+   own grid (`.half`). */
+:root[data-wrap="yes"] .filebody .code:not(.windowed) .dline :is(.ln, .sign),
+:root[data-wrap="yes"] .dfile .dlines:not(.sides) .dline :is(.ln, .sign) {
+  flex: none;
+}
+:root[data-wrap="yes"] .filebody .code:not(.windowed) .dline .dtext,
+:root[data-wrap="yes"] .dfile .dlines:not(.sides) .dline .dtext {
+  flex: 1; min-width: 0; overflow-wrap: anywhere;
 }
 .dline { padding: 0 20px 0 0; white-space: pre; min-width: max-content; }
 .dline { position: relative; }
+/* The line's text is a box of its own, so a tab is measured from where the
+   text starts. In one row with the numbers and the sign, a tab ran from the
+   start of the row: a line indented by one tab stood one space in, after
+   the `+`, and a second tab jumped to where the stops happened to fall. */
+.dline .dtext { display: inline-block; vertical-align: top; }
+/* One column is a grid of one track, as wide as the widest row: a row is
+   `min-width: max-content`, and a block is only as wide as the pane, so
+   scrolled sideways a short line's colour stopped at the pane's edge and
+   only the long lines went on. Every row is now the track's width. */
+.dlines:not(.sides) { display: grid; grid-template-columns: auto; }
 .dline.context { color: var(--ink-mute); }
 .dline .sign { color: var(--ink-faint); }
 .dline.added .sign, .dline.added .ln, .half.added .ln { color: var(--working); }
@@ -8817,6 +8858,8 @@ const ICONS = {
   copy: "M4.6 4.2V2.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H9.8"
         + "M1.6 5.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z",
   check: "M2.4 7.4l3 3 6.2-6.6",
+  // How a diff is drawn: three rails, each with its knob somewhere else.
+  sliders: "M1.6 3.5h10.8M1.6 7h10.8M1.6 10.5h10.8M4.5 2v3M9.5 5.5v3M6 9v3",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -12394,14 +12437,7 @@ function putDiffBar(pane) {
   };
   step("\u2039 older", "the commit before this one", 1);
   step("newer \u203a", "the commit after this one", -1);
-  const sides = put(bar, "span", "sides");
-  sides.setAttribute("role", "group");
-  for (const [value, word] of [["unified", "one column"], ["split", "side by side"]]) {
-    const button = put(sides, "button", "verb quiet", word);
-    button.type = "button";
-    button.dataset.sides = value;
-    button.addEventListener("click", () => keepSides(value));
-  }
+  putViewMenu(bar);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
   // long pull request keeps its place in the list beside it. Once a frame at
@@ -12412,6 +12448,82 @@ function putDiffBar(pane) {
     queued = true;
     requestAnimationFrame(() => { queued = false; markDiffFile(); });
   });
+}
+
+// How the diff is drawn, in one menu at the end of the bar: one column or
+// two, the tab width, and whether a long line wraps. The tab width and wrap
+// are the Files tab's own (`readingNow`), kept on the root: one setting for
+// both tabs, obeyed by the CSS, so nothing is rebuilt -- a rebuild would
+// take an open comment box with it. Only the columns rebuild, through
+// `keepSides`, which refuses while a comment is being written.
+function putViewMenu(bar) {
+  const menu = put(bar, "span", "viewmenu");
+  const open = put(menu, "button", "theme viewbtn");
+  open.type = "button";
+  open.title = "how the diff is drawn: columns, tab width, long lines";
+  open.setAttribute("aria-label", "how the diff is drawn");
+  open.setAttribute("aria-haspopup", "true");
+  open.setAttribute("aria-expanded", "false");
+  putIcon(open, "sliders");
+  const pop = put(menu, "div", "viewpop");
+  pop.hidden = true;
+  const choice = (label, name, options, pick) => {
+    const row = put(pop, "div", "viewrow");
+    put(row, "span", "viewlabel", label);
+    const group = put(row, "span", "choice " + name);
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", label);
+    for (const [value, word] of options) {
+      const button = put(group, "button", "verb quiet", word);
+      button.type = "button";
+      button.dataset.value = String(value);
+      button.addEventListener("click", () => { pick(value); paintViewMenu(bar); });
+    }
+  };
+  choice("columns", "sides", [["unified", "one"], ["split", "two"]], keepSides);
+  choice("tab width", "tabwidth", TAB_WIDTHS.map((width) => [width, String(width)]),
+         (tab) => keepReading({ ...readingNow(), tab }));
+  choice("long lines", "wrapping", [[false, "scroll"], [true, "wrap"]],
+         (wrap) => keepReading({ ...readingNow(), wrap }));
+  open.addEventListener("click", () => {
+    pop.hidden = !pop.hidden;
+    open.setAttribute("aria-expanded", String(!pop.hidden));
+    paintViewMenu(bar);
+  });
+  pop.addEventListener("keydown", (press) => {
+    if (press.key !== "Escape") return;
+    closeViewMenu(menu);
+    open.focus();
+  });
+}
+
+function closeViewMenu(menu) {
+  menu.querySelector(".viewpop").hidden = true;
+  menu.querySelector(".viewbtn").setAttribute("aria-expanded", "false");
+}
+
+// A press anywhere but on the menu closes it, as a menu does.
+document.addEventListener("pointerdown", (press) => {
+  for (const menu of document.querySelectorAll(".viewmenu")) {
+    if (!menu.contains(press.target)) closeViewMenu(menu);
+  }
+});
+
+function paintViewMenu(bar) {
+  const reading = readingNow();
+  const now = { sides: state.sides, tabwidth: String(reading.tab),
+                wrapping: String(reading.wrap) };
+  for (const [name, value] of Object.entries(now)) {
+    for (const button of bar.querySelectorAll(`.viewpop .${name} button`)) {
+      button.setAttribute("aria-pressed", String(button.dataset.value === value));
+    }
+  }
+  // Two columns always wrap: they cannot share one sideways scrollbar.
+  const split = state.sides === "split";
+  for (const button of bar.querySelectorAll(".viewpop .wrapping button")) {
+    button.disabled = split;
+    button.title = split ? "two columns always wrap" : "";
+  }
 }
 
 function commitsOf(report) {
@@ -12491,9 +12603,7 @@ function fillDiffBar(bar) {
   const [older, newer] = bar.querySelectorAll(".step");
   older.disabled = at < 0 || at + 1 >= commits.length;
   newer.disabled = at <= 0;
-  for (const button of bar.querySelectorAll(".sides button")) {
-    button.setAttribute("aria-pressed", String(button.dataset.sides === state.sides));
-  }
+  paintViewMenu(bar);
 }
 
 // A commit message is wrapped by hand at about 72 columns, and drawn as it

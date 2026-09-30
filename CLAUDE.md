@@ -64,7 +64,7 @@ after the tests go red.
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
-| `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff` | The worktree tabs, the Diff tab's own bullets |
+| `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `putViewMenu`, `.dtext` | The worktree tabs, the Diff tab's own bullets |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `drawReviewBar`, `reviewText` | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
@@ -1730,11 +1730,33 @@ update the comment with its own text, and read it back.
   "against main" was cut to "against ma", and a branch name is read whole
   where a commit subject can be cut and still be known.
   `test_the_pickers_say_how_many_commits_and_stand_apart_from_against`.
-- **Two columns wrap; one column scrolls.** A pair of halves cannot share a
-  sideways scrollbar, and two bars drift apart, so `.dlines.sides` hides the
-  overflow and the halves wrap. The `+` is on the new half only — a comment
-  is about the file as it is — and a side with no line is hatched, not
-  closed up, so the columns stay level.
+- **Two columns wrap; one column scrolls unless the reader wraps it.** A
+  pair of halves cannot share a sideways scrollbar, and two bars drift
+  apart, so `.dlines.sides` hides the overflow and the halves wrap. The `+`
+  is on the new half only — a comment is about the file as it is — and a
+  side with no line is hatched, not closed up, so the columns stay level.
+  - **The line's text is a box of its own** (`.dline .dtext`, an inline
+    block; a flex item when wrapped). In one row with the numbers and the
+    sign, a tab was measured from the start of the row: a line indented by
+    one tab stood one space in after the `+`. A wrapped line's rest then
+    stands under its text, not under the numbers -- on the Files tab too.
+  - **One column is a grid of one `auto` track** (`.dlines:not(.sides)`):
+    a row is `min-width: max-content`, and a block row was only as wide as
+    the pane, so scrolled sideways a short line's colour stopped at the
+    pane's edge. `minmax(100%, max-content)` does not do it: the track never
+    grows past the pane. A comment stays readable in it because `.onLine`
+    is sticky and 680 px at most.
+  - **How the diff is drawn is one menu at the end of the bar**
+    (`putViewMenu`, `paintViewMenu`, `.viewpop`): the columns, the tab
+    width and long lines. The bar was cramped on a notebook with the column
+    switch alone, and the reader chose the menu over two more buttons. The
+    tab width and wrap are the Files tab's own (`readingNow`, on the root),
+    so neither rebuilds anything; the columns go through `keepSides`. Wrap
+    is disabled in two columns, which always wrap.
+  `test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts`,
+  `test_scrolled_sideways_every_line_keeps_its_colour`,
+  `test_a_long_line_wraps_under_its_own_text_in_one_column`,
+  `test_the_view_menu_opens_and_closes_as_a_menu_does`.
 - **The two changed-file counts are about different things, and stay that
   way.** The sidebar's comes from `git status` in git's default untracked
   mode, which collapses a wholly-untracked directory into one entry; the

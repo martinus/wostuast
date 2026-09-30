@@ -496,7 +496,7 @@ def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page):
         try:
             show_tab(page, "diff")
             page.wait_for_selector(".dline")
-            page.click(".diffbar .sides button[data-sides='split']")
+            view_menu(page, "sides", "split")
             page.wait_for_selector(".dline.pair")
             pairs = page.eval_on_selector_all(
                 ".diffhead.uncommitted ~ .dfile .dline.pair", """els => els.map(
@@ -517,7 +517,7 @@ def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page):
             show_tab(page, "diff")
             page.wait_for_selector(".dline.pair")
             assert page.get_attribute(
-                ".diffbar .sides button[data-sides='split']",
+                ".viewpop .sides button[data-value='split']",
                 "aria-pressed") == "true"
         finally:
             browser.close()
@@ -1165,5 +1165,144 @@ def test_a_poll_of_a_diff_that_stands_is_answered_short(repo_page):
             page.wait_for_function(
                 "[...document.querySelectorAll('.dline')].some("
                 "l => l.textContent.includes('print(3)'))")
+        finally:
+            browser.close()
+
+
+def view_menu(page, choice, value):
+    """Open the Review tab's view menu and press one of its choices."""
+    if page.locator(".viewpop").is_hidden():
+        page.click(".diffbar .viewbtn")
+    page.click(f".viewpop .{choice} button[data-value='{value}']")
+
+
+def tabbed_change(root):
+    """A change indented by tabs, with one line too long for the pane."""
+    (root / "code.py").write_text(
+        "print(1)\nprint(2)\nif x:\n\ty = 1\n\t\tz = 2\n"
+        "long = '" + "x" * 400 + "'\n")
+
+
+def lead(page, text):
+    """How far the line holding `text` stands in from the start of its text,
+    in widths of one character: what its leading tabs drew as."""
+    return page.evaluate("""(text) => {
+      const cell = [...document.querySelectorAll('.dline .dtext')]
+        .find((one) => one.textContent.trim() === text.trim()
+                       && one.textContent.startsWith('\\t'));
+      const node = cell.firstChild.nodeType === 3 ? cell.firstChild
+        : document.createTreeWalker(cell, NodeFilter.SHOW_TEXT).nextNode();
+      const at = node.textContent.search(/[^\\t]/);
+      const range = document.createRange();
+      range.setStart(node, at); range.setEnd(node, at + 1);
+      const ch = range.getBoundingClientRect().width;
+      return (range.getBoundingClientRect().left
+              - cell.getBoundingClientRect().left) / ch;
+    }""", text)
+
+
+def test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts(
+        repo_page):
+    """The numbers, the sign and the text stood in one row, so a tab ran from
+    the start of the row: a line indented by one tab stood one space in,
+    after the `+`, and the reader read it as a single space."""
+    root, _ = repo_page
+    tabbed_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline .dtext:has-text('z = 2')")
+            assert abs(lead(page, "\ty = 1") - 4) < 0.2
+            assert abs(lead(page, "\t\tz = 2") - 8) < 0.2
+            view_menu(page, "tabwidth", "8")
+            assert page.evaluate(
+                "document.documentElement.style.getPropertyValue('--tab-w')") == "8"
+            assert abs(lead(page, "\ty = 1") - 8) < 0.2
+        finally:
+            browser.close()
+
+
+def test_scrolled_sideways_every_line_keeps_its_colour(repo_page):
+    """A row was only as wide as the pane unless its own text was longer, so
+    scrolled sideways a short added line's green stopped at the pane's edge
+    and only the long one went on. Every row of one column is as wide as the
+    widest."""
+    root, _ = repo_page
+    tabbed_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline .dtext:has-text('z = 2')")
+            widths = page.evaluate("""() => {
+              const block = [...document.querySelectorAll('.dlines')].find(
+                (one) => one.textContent.includes('z = 2'));
+              return [block.scrollWidth, block.clientWidth,
+                      [...block.querySelectorAll('.dline')].map(
+                        (row) => row.getBoundingClientRect().width)];
+            }""")
+            wide, pane, rows = widths
+            assert wide > pane + 100, widths    # it does scroll sideways
+            assert min(rows) >= wide - 1, widths
+        finally:
+            browser.close()
+
+
+def test_a_long_line_wraps_under_its_own_text_in_one_column(repo_page):
+    """Wrap was the Files tab's alone, and one column only scrolled. Wrapped,
+    the rest of the line stands under the text, not under the numbers."""
+    root, _ = repo_page
+    tabbed_change(root)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline .dtext:has-text('z = 2')")
+            view_menu(page, "wrapping", "true")
+            got = page.evaluate("""() => {
+              const cell = [...document.querySelectorAll('.dline .dtext')]
+                .find((one) => one.textContent.startsWith("long = '"));
+              const block = cell.closest('.dlines');
+              const rects = [...cell.getClientRects()];
+              const range = document.createRange();
+              range.selectNodeContents(cell);
+              const lines = [...range.getClientRects()];
+              return [block.scrollWidth - block.clientWidth, lines.length,
+                      Math.min(...lines.map((r) => r.left)),
+                      cell.getBoundingClientRect().left];
+            }""")
+            spill, lines, left, start = got
+            assert spill <= 1, got
+            assert lines > 1, got
+            assert left >= start - 1, got     # never under the numbers
+            # Two columns always wrap, so there it is not a choice.
+            view_menu(page, "sides", "split")
+            page.wait_for_selector(".dline.pair")
+            assert page.locator(
+                ".viewpop .wrapping button[data-value='true']").is_disabled()
+        finally:
+            browser.close()
+
+
+def test_the_view_menu_opens_and_closes_as_a_menu_does(repo_page):
+    """How the diff is drawn is one menu at the end of the bar, the reader's
+    choice over two more buttons in a bar already cramped on a notebook."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            assert page.locator(".viewpop").is_hidden()
+            page.click(".diffbar .viewbtn")
+            assert page.locator(".viewpop").is_visible()
+            assert page.get_attribute(".diffbar .viewbtn", "aria-expanded") == "true"
+            page.mouse.click(10, 700)
+            assert page.locator(".viewpop").is_hidden()
+            page.click(".diffbar .viewbtn")
+            page.focus(".viewpop .tabwidth button[data-value='2']")
+            page.keyboard.press("Escape")
+            assert page.locator(".viewpop").is_hidden()
+            assert page.get_attribute(".diffbar .viewbtn", "aria-expanded") == "false"
         finally:
             browser.close()
