@@ -240,9 +240,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   that reads an empty answer asks**: `worktree_files` did, and
   `worktree_diff`, `whole_file_diff` and `git_facts` did not -- a timed-out
   `--show-toplevel` came back as a worktree with nothing changed, and a
-  stalled `git_facts` wrote empty facts over the known ones. `diff_base`
-  returns whether `for-each-ref` failed beside the base, because "no such
-  names" is said on the page as a fact.
+  stalled `git_facts` wrote empty facts over the known ones. `pick_base`
+  returns whether `for-each-ref` failed (`failed`) beside the base, because
+  "no such names" is said on the page as a fact.
   `test_a_root_git_could_not_find_is_not_an_empty_worktree`,
   `test_a_base_git_could_not_look_for_is_not_no_base`,
   `test_a_git_that_does_not_answer_at_all_has_failed`.

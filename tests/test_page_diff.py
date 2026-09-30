@@ -75,7 +75,7 @@ def test_a_worktree_with_no_default_branch_says_why_there_is_one_half(ws, repo,
     import subprocess
 
     # A repository whose branch is not main or master and which has no
-    # remote, so `diff_base` finds nothing at all.
+    # remote, so `pick_base` finds nothing at all.
     subprocess.run(["git", "-C", str(repo), "branch", "-m", "scratch"],
                    check=True, capture_output=True)
     # A change to a tracked file: the uncommitted half draws a heading only

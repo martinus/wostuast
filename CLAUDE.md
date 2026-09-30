@@ -75,7 +75,7 @@ bullets beside it are the same part's other scars.
 | `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of` | topics/safety: `settings.json` is the user's file, not ours |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
-| `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | topics/decisions |
+| `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite | topics/decisions |
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `Session.permission`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
@@ -215,7 +215,7 @@ This list exists because each entry was re-implemented once already.
 | walk a diff's lines with their numbers | `walkHunks(one, onHunk, onLine)` |
 | the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]`; the list also carries the tab's name as a class |
 | the rounds of a conversation | `rounds()`, `shownRounds()` (filtered), `glimpse(text)` |
-| a review comment's identity | `anchorOf(path, side, line)`, `lineAnchor`, `commentAt` |
+| a review comment's identity | `anchorOf(path, line)`, `lineAnchor`, `commentAt`; a line of a drawn diff, `diffLineAnchor` |
 | "3 min ago" | `ago(when)` — `40s`, `4min`, `2h 15min`, `2d 6h`; two units once the first is coarse |
 | one session's route | `apiUrl(id, what, query)` |
 | the reader's ticket links in some text | `linkTickets(root)` — after any scrub |
@@ -242,7 +242,8 @@ transcript record — `you`, `claude`, `think`, `tool`, `result` — and
 `conftest.records(...)` makes them the lines of a file; never hand-write
 those either, because a hand-written one ended in a backslash and an `n`
 rather than a newline and the reader waited on it for ever. `browser.py` has `open_page`, `show_tab`, `open_diff`,
-`comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`.
+`comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`,
+`spy_on_note`.
 
 **CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a
 button that only changes what is on screen), `.choice` (one control in

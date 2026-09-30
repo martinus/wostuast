@@ -20,6 +20,7 @@ from browser import (
     wait_for_watching,
     renew_stream,
     daemon_transcript,
+    spy_on_note,
 )
 
 pytestmark = skip_without_browser
@@ -1408,9 +1409,7 @@ def test_showing_thinking_says_what_it_did(page_at):
             # a push is allowed to take a passing word back — and asserting
             # on the key rather than on `toggleThinking()` is the only way to
             # hold that `t` is bound to the thing that speaks.
-            page.evaluate("""() => { window.__said = [];
-              const real = note;
-              note = (text) => { window.__said.push(text); real(text); }; }""")
+            spy_on_note(page)
 
             page.keyboard.press("t")
             page.wait_for_selector(".turn.thinking", state="visible")

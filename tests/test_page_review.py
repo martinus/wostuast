@@ -21,6 +21,7 @@ from browser import (
     numbers,
     open_diff,
     comment_on_first_line,
+    spy_on_note,
 )
 
 pytestmark = skip_without_browser
@@ -1600,13 +1601,6 @@ def test_the_bar_stays_while_the_word_on_the_whole_is_typed_away(repo_page):
             assert page.evaluate("$('reviewbar').hidden") is True
         finally:
             browser.close()
-
-
-def spy_on_note(page):
-    """Every word `note` says, kept in `window.__said`."""
-    page.evaluate("""() => { window.__said = []; const real = note;
-      note = (text, ...rest) => { window.__said.push(text);
-                                  return real(text, ...rest); }; }""")
 
 
 BOX_TEXT = "document.querySelector('.commentbox textarea')?.value ?? null"
