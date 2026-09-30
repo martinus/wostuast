@@ -1488,6 +1488,96 @@ def test_one_decline_at_a_time_per_session(ws, declining):
     assert seen == []
 
 
+def test_a_send_never_answers_a_permission_dialog(ws, declining):
+    """The dialog's cursor starts on "1. Yes", and a digit picks an option:
+    the send typed "1" and pressed Enter into it, which approves -- the one
+    thing this page may never do. `decline` waits for proof that the dialog
+    closed; a send has none, so it is refused while the row is amber for a
+    dialog, and while a No is on its way."""
+    daemon, base, seen, closes, key, _ = declining
+    status, body = post(base + "/api/session/s1/send", {"text": "1"},
+                        token=daemon.token)
+    assert status == 409 and "permission dialog" in body["error"], body
+    assert seen == []
+
+
+def test_no_send_goes_in_while_a_no_is_on_its_way(ws, in_tmux):
+    daemon, base, seen = in_tmux
+    daemon.declining.add("s1")
+    status, body = post(base + "/api/session/s1/send", {"text": "go on"},
+                        token=daemon.token)
+    assert status == 409 and "No is already on its way" in body["error"], body
+    assert seen == []
+
+
+def test_two_sends_at_once_do_not_mix_in_the_pane(ws, served, monkeypatch):
+    """The page's `sending` guard is per browser tab. Two tabs, or a tab and
+    a script, ran two HTTP threads, and with a tmux that takes a moment the
+    pane got "first", "second", Enter, Enter: one prompt of both. One goes
+    in, and the other is refused, whole."""
+    import threading
+
+    seen = []
+
+    def runner(args, **rest):
+        seen.append(list(args))
+        time.sleep(0.2)
+        return ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="%7", pid=1))
+    daemon.store.refresh()
+    answers = []
+    start = threading.Barrier(2)
+
+    def send(text):
+        start.wait()
+        answers.append(post(base + "/api/session/s1/send", {"text": text},
+                            token=daemon.token))
+
+    both = [threading.Thread(target=send, args=(text,))
+            for text in ("first message", "second message")]
+    for one in both:
+        one.start()
+    for one in both:
+        one.join()
+    assert sorted(status for status, _ in answers) == [200, 409], answers
+    refused = [body for status, body in answers if status == 409][0]
+    assert "already being typed" in refused["error"]
+    typed_now = [one[-1] for one in seen]
+    assert len(typed_now) == 2 and typed_now[1] == "Enter", typed_now
+    # And the session is given back: the next send goes in.
+    status, _ = post(base + "/api/session/s1/send", {"text": "third"},
+                     token=daemon.token)
+    assert status == 200
+
+
+def test_nothing_else_is_typed_while_an_answer_or_a_no_goes_in(
+        ws, declining, monkeypatch):
+    """An answer is keys `KEY_GAP` apart, and a No waits up to
+    `DECLINE_WAIT` between its Escape and its reason: a send, a second
+    answer or a No landing in between mixed its keys with theirs."""
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    daemon, base, seen, closes, key, _ = declining
+    assert daemon.claim("s1") == ""            # a send, on its way
+    status, body = post(base + "/api/session/s1/decline", {"key": key},
+                        token=daemon.token)
+    assert status == 409 and "already being typed" in body["error"], body
+    asking(ws, daemon)
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_two", "picks": [[1], [1]]},
+                        token=daemon.token)
+    assert status == 409 and "already being typed" in body["error"], body
+    assert seen == []
+    daemon.release("s1")
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_two", "picks": [[1], [1]]},
+                        token=daemon.token)
+    assert status == 200, body
+    assert daemon.typing == set() and daemon.declining == set()
+
+
 def test_a_no_given_in_the_terminal_ends_the_wait(ws, declining):
     """Saying No fires no hook, and only the page's own No had the daemon
     watch for it: a No typed in the terminal left the row amber, over an

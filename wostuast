@@ -1203,12 +1203,18 @@ class Store:
         # a session in another directory, so it is the one that may move this.
         if session.cwd and (not session.home or name == "SessionStart"):
             session.home = session.cwd
-        pane = str(event.get("pane") or "")
-        if pane and PANE_PATTERN.match(pane):
-            session.pane = pane
-        pid = to_int(event.get("pid"))
-        if pid:
-            session.pid = pid
+        # A hook writes both keys on every event, and an empty one is news:
+        # it says "not in tmux" or "no process found" *now*. A session that
+        # ran in pane %5, ended, and was resumed in a plain terminal kept %5
+        # when only a pane that was there counted -- and the page typed into
+        # whatever %5 held by then, a shell or another agent. A kept pid made
+        # `mark_dead` bury the resumed session as killed. The daemon's own
+        # records (`Declined`) carry neither key, and change neither.
+        if "pane" in event:
+            pane = str(event.get("pane") or "")
+            session.pane = pane if PANE_PATTERN.match(pane) else ""
+        if "pid" in event:
+            session.pid = to_int(event.get("pid"))
 
         handler = _HANDLERS.get(name)
         was = session.state
@@ -3098,8 +3104,16 @@ PASTE_END = "\x1b[201~"
 #: may act on and an agent may write; U+2028 and U+2029 are line breaks that
 #: `"\n" in text` does not see, so they would have gone out unpasted. The rule
 #: is "nothing below a space reaches a terminal", and these are below one.
+#:
+#: **And every lone surrogate.** JSON can carry one, and `subprocess` hands
+#: an argument to tmux with `surrogateescape`, so the pair U+DCC2 U+DC9B
+#: left as the bytes c2 9b -- which is U+009B, CSI -- measured in a real
+#: pane. A high one made the encode fail and the send with it. No character
+#: a person typed is one. The pattern is a raw string, so the source holds
+#: the escape and `re` reads it: in a plain string it would be the character
+#: itself, which Python 3.13 will not put in a bytecode cache.
 CONTROL_CHARS = re.compile(
-    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
 
 #: The header a POST carries its token in. A cross-origin request cannot add a
 #: header of its own without asking us first, and we never say yes — so a page
@@ -5250,6 +5264,14 @@ def tmux_send(pane: str, text: str,
     dash as an option of its own. Empty text is refused, because a bare Enter
     into an agent's prompt is a keystroke nobody asked for.
 
+    **Except a `;` at the very end.** tmux reads an argument that ends in
+    `;` as the end of a command before `-l` or `--` are looked at: "use
+    foo();" arrived as "use foo()", ";" as nothing but the Enter, and
+    "path\\;" as "path;". That last `;` goes as `\\;`, which tmux turns
+    back into the one `;` and nothing else. Measured on tmux 3.4 with the
+    bytes read out of a pane, for ";", ";;", "a ;", "path\\;" and "a\\\\;":
+    what arrived was what was written. A `;` anywhere else is only a `;`.
+
     A newline typed into a terminal *is* Enter, so a message of two lines
     would submit its first line and leave the second sitting on the prompt —
     measured against a real shell, which ran it. Text with a newline in it is
@@ -5273,6 +5295,8 @@ def tmux_send(pane: str, text: str,
     body = text
     if "\n" in text:
         body = PASTE_START + text + PASTE_END
+    if body.endswith(";"):
+        body = body[:-1] + "\\;"
     if runner(["tmux", "send-keys", "-t", pane, "-l", "--", body]) is None:
         return False
     return runner(["tmux", "send-keys", "-t", pane, "Enter"]) is not None
@@ -5365,12 +5389,42 @@ class Daemon:
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
         #: -- another tab -- would press a second Escape into what came next.
         self.declining: set[str] = set()
+        #: Sessions something is being typed into: a send, an answer or a No
+        #: (`claim`). The page's `sending` guard is per browser tab, and two
+        #: tabs -- or a tab and a script -- ran two HTTP threads at once: the
+        #: pane got "first", "second", Enter, Enter, one prompt of both.
+        self.typing: set[str] = set()
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.started = time.time()
 
     def session(self, session_id: str) -> Session | None:
         return self.store.sessions.get(session_id)
+
+    def claim(self, session_id: str, no: bool = False) -> str:
+        """Take a session for one thing typed into it: "" when taken, else why not.
+
+        Refused, never queued: the second one was asked for before the first
+        landed, and what it would type into is not what its sender saw. `no`
+        marks a decline, which `declined_in_terminal` and `send` look for.
+        `release` gives the session back, always in a `finally`.
+        """
+        with self.lock:
+            if session_id in self.declining:
+                return "a No is already on its way to this session"
+            if session_id in self.typing:
+                return ("something is already being typed into this session;"
+                        " wait for it to land")
+            self.typing.add(session_id)
+            if no:
+                self.declining.add(session_id)
+        return ""
+
+    def release(self, session_id: str) -> None:
+        """Give back what `claim` took. Only its holder may hold `declining`."""
+        with self.lock:
+            self.typing.discard(session_id)
+            self.declining.discard(session_id)
 
     def transcript(self, session_id: str) -> Transcript | None:
         """The transcript reader for a session, made on first use."""
@@ -5897,7 +5951,16 @@ class Serving:
         if why:
             self.reply_json({"id": session_id, "error": why}, 400)
             return
-        landed = tmux_keys(session.pane, keys)
+        # A second submit, or a send, while these keys go in one at a time
+        # `KEY_GAP` apart, mixed its keys with them in the pane.
+        busy = self.daemon.claim(session_id)
+        if busy:
+            self.reply_json({"id": session_id, "error": busy}, 409)
+            return
+        try:
+            landed = tmux_keys(session.pane, keys)
+        finally:
+            self.daemon.release(session_id)
         if landed < len(keys):
             # Some keys may have landed: say so, rather than "nothing went
             # in", which would send the reader back to answer twice.
@@ -5968,19 +6031,14 @@ class Serving:
                              "error": "that request was answered in the"
                                       " terminal already"}, 409)
             return
-        with self.daemon.lock:
-            busy = session_id in self.daemon.declining
-            self.daemon.declining.add(session_id)
+        busy = self.daemon.claim(session_id, no=True)
         if busy:
-            self.reply_json({"id": session_id,
-                             "error": "a No is already on its way to this"
-                                      " session"}, 409)
+            self.reply_json({"id": session_id, "error": busy}, 409)
             return
         try:
             self.press_decline(session_id, session.pane, shown, call, reason)
         finally:
-            with self.daemon.lock:
-                self.daemon.declining.discard(session_id)
+            self.daemon.release(session_id)
 
     def press_decline(self, session_id: str, pane: str, shown: dict[str, Any],
                       call: str, reason: str) -> None:
@@ -6051,6 +6109,28 @@ class Serving:
             self.reply_json({"id": session_id,
                              "error": "this session is over"}, 409)
             return
+        # A permission dialog is up, and its cursor starts on "1. Yes": the
+        # Enter after the text says Yes, and a text that starts with a digit
+        # picks that option. `decline` waits for proof that the dialog closed
+        # before it types; a send has no such proof, so it waits for the row.
+        # The same test as the row's, so the page and this agree.
+        if session.state == "needs_you" and session.permission:
+            self.reply_json({"id": session_id,
+                             "error": "a permission dialog is open in the"
+                                      " terminal: answer it there, or say No,"
+                                      " then send"}, 409)
+            return
+        busy = self.daemon.claim(session_id)
+        if busy:
+            self.reply_json({"id": session_id, "error": busy}, 409)
+            return
+        try:
+            self.press_send(session_id, session.pane, text)
+        finally:
+            self.daemon.release(session_id)
+
+    def press_send(self, session_id: str, pane: str, text: str) -> None:
+        """`send`'s keys, and the answer that says how they went."""
         # "It did not work" and nothing else on the page is how this arrives
         # for a reader: `done: false` carries no `error`, so `said` clears the
         # slot and writes nothing into it. A refusal from tmux is something
@@ -6061,7 +6141,7 @@ class Serving:
         # already sitting on the agent's prompt, and "nothing went in" would
         # send the reader back to type it a second time -- so the message says
         # to look, which is the only thing that settles it.
-        if not tmux_send(session.pane, text):
+        if not tmux_send(pane, text):
             self.reply_json({"id": session_id,
                              "error": "tmux did not answer. Look at the pane"
                                       " before sending again: the text may be"
@@ -9558,12 +9638,21 @@ function drawAsking() {
   }
   // The rows arrive about once a second while an agent works. Rebuilding
   // under a button the reader is about to press is how a click lands on the
-  // wrong option, and a disabled button would come back enabled.
-  if (!fresh(box, "ask", s.id + "\n" + ask.id)) return;
+  // wrong option. Painted, though, as `drawPermission` paints its No: submit
+  // is held while something is on its way to the session, and that ends
+  // with no click on the bar.
+  if (!fresh(box, "ask", s.id + "\n" + ask.id)) {
+    paintPicks(box, ask);
+    return;
+  }
   // A pick belongs to the question it was made for. A different question
-  // arriving takes the old picks with it rather than submitting them.
-  if (state.picked.id !== ask.id) {
-    state.picked = { id: ask.id, at: ask.questions.map(() => []) };
+  // arriving takes the old picks with it rather than submitting them. An ask
+  // with no id matches the empty picks the page starts with, so the shape is
+  // asked as well: `paintPicks` threw on a question with no list of picks,
+  // and took `drawHeader` -- jump, the send box, the strip -- down with it.
+  if (state.picked.id !== ask.id
+      || state.picked.at.length !== ask.questions.length) {
+    state.picked = { id: ask.id, at: ask.questions.map(() => []), pressed: false };
   }
   box.replaceChildren();
   ask.questions.forEach((one, which) => {
@@ -9646,6 +9735,12 @@ function drawPermission(box, s, permission) {
     put(field, "div", "askprevhead", name);
     put(field, "pre", "askprevbody", text);
   }
+  // The send box is away while this is up, and this is where the reader
+  // looks for it. The daemon refuses a send here too (`send`).
+  if (s.pane) {
+    put(block, "p", "asknote",
+        "The send box is back when this dialog closes: its Enter would say Yes.");
+  }
   const foot = put(box, "div", "asksend permsend");
   // Absent with no pane, like jump everywhere else: there is nothing to open.
   if (s.pane) {
@@ -9702,8 +9797,7 @@ async function submitDecline(id, permission, box) {
   // One thing typed into a session at a time: the send box and a No share
   // the guard, because a send landing between the Escape and the proof
   // would be typed into a dialog that may still be up.
-  if (!no || no.disabled || sending.has(id)) return;
-  sending.add(id);
+  if (!no || no.disabled || !startSending(id)) return;
   no.disabled = true;
   no.dataset.busy = "1";
   const reason = why && !why.disabled ? why.value : "";
@@ -9711,7 +9805,7 @@ async function submitDecline(id, permission, box) {
   try {
     answer = await tell(id, "decline", { key: permission.key, reason });
   } finally {
-    sending.delete(id);
+    doneSending(id);
   }
   no.dataset.busy = "";
   if (!answer || !answer.done) {
@@ -9743,11 +9837,13 @@ function paintPicks(box, ask) {
     if (!pane) return;
     const at = picked[which].length ? picked[which][0] : 0;
     const option = ask.questions[which].options[at];
-    pane.querySelector(".askprevhead").textContent =
-      "preview of " + (at + 1) + ". " + option.label;
+    // Only when it moved: this runs on every push now, and text set again
+    // takes away what the reader has selected in it.
+    setText(pane.querySelector(".askprevhead"),
+            "preview of " + (at + 1) + ". " + option.label);
     const body = pane.querySelector(".askprevbody");
     // `textContent`, never markup: an agent wrote this.
-    body.textContent = previewText(option);
+    setText(body, previewText(option));
     body.classList.toggle("none", !option.preview);
   });
   const ready = picked.every((at) => at.length > 0);
@@ -9764,16 +9860,32 @@ function paintPicks(box, ask) {
   // Keys go by position, so a question the daemon could not keep whole --
   // an option left out moves every key after it -- is shown and not typed.
   const whole = ask.answerable !== false;
-  send.disabled = !ready || !canType || !whole;
+  // Held while its keys are on their way, and once they went in. A click on
+  // an option, or a look at another tab, painted submit back on while the
+  // first answer's keys were still going in `KEY_GAP` apart; a second
+  // submit mixed its keys with them. After they went in, the question
+  // stays until the `PostToolUse` says so, and a second set of keys would
+  // land on whatever the agent does next.
+  const busy = !!s && sending.has(s.id);
+  const pressed = state.picked.pressed === true;
+  send.disabled = !ready || !canType || !whole || busy || pressed;
   send.textContent = "submit";
   // Said before it is pressed, not after. These are keystrokes into a live
   // terminal, and the reader is the one answerable for them.
-  says.textContent = !canType
+  setText(says, !canType
     ? "this session is not in tmux, so nothing can be pressed"
     : !whole ? "this question is too large to answer here; answer it in the terminal"
+    : pressed ? "pressed. If the question stays, answer it in the terminal"
+    : busy ? "waiting for what is on its way to this session"
     : ready
     ? "presses " + askKeys(ask, picked).map((keys) => keys.join(" ")).join(", then ")
-    : (picked.length > 1 ? "pick an answer to each" : "pick an answer");
+    : (picked.length > 1 ? "pick an answer to each" : "pick an answer"));
+}
+
+// Text into a node only when it is not already there. Assigning the same
+// words again replaces the text node, and a selection in it goes too.
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
 }
 
 // What the preview box says for one option, in Claude Code's own words where
@@ -9828,16 +9940,23 @@ function askKeys(ask, picked) {
 // that a missed keystroke left standing.
 async function submitAsk(id, ask, box) {
   const send = box.querySelector(".asksend .verb");
-  send.disabled = true;
+  // One thing typed into a session at a time, as the send box and a No:
+  // a message landing between the answer's keys is typed into the dialog.
+  if (!send || send.disabled || !startSending(id)) return;
   const picks = state.picked.at.map((at) => at.map((one) => one + 1));
-  const answer = await tell(id, "answer", { ask: ask.id, picks });
-  if (!answer || answer.error) {
-    said(answer);
-    send.disabled = false;
-    return;
+  let answer;
+  try {
+    answer = await tell(id, "answer", { ask: ask.id, picks });
+  } finally {
+    // Marked before the guard lets go, which paints the bar again: for a
+    // moment in between, submit was on for keys that had gone in.
+    if (answer && !answer.error && state.picked.id === ask.id) {
+      state.picked.pressed = true;
+    }
+    doneSending(id);
   }
   said(answer);              // an earlier refusal is no longer news
-  note("pressed " + (answer.keys || []).join(" "));
+  if (answer && !answer.error) note("pressed " + (answer.keys || []).join(" "));
 }
 
 // Show or hide what the agent was thinking, and say which.
@@ -9895,8 +10014,11 @@ function drawHeader() {
   $("jump").hidden = !s || !s.pane;
   drawReviewBar();
   const was = $("sendbar").hidden;
+  // And away while a permission dialog is up: its cursor starts on "1. Yes",
+  // so the Enter after a message approves, and a digit picks an option. The
+  // dialog's bar says so where the box stood; the daemon refuses it anyway.
   $("sendbar").hidden = !s || !s.pane || state.tab !== "transcript"
-    || s.state === "ended" || s.state === "dead";
+    || s.state === "ended" || s.state === "dead" || !!s.permission;
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
   // layout it has just made dirty. What is in the box cannot change without
@@ -14383,6 +14505,8 @@ function drawReviewBar() {
   const s = current();
   const why = !(s && s.pane)
     ? "this session is not running in tmux, so there is nowhere to send it"
+    : s.permission
+    ? "a permission dialog is open in the terminal: its Enter would say Yes"
     : !state.review.comments.length ? "nothing to send yet: comment on a line first"
     : "";
   const send = $("sendreview");
@@ -14409,18 +14533,34 @@ $("reviewbar").addEventListener("submit", (event) => {
 // press twice in: a double-click on the review's send, or a second Enter in
 // the send box, typed the whole text into the pane a second time -- and on
 // two HTTP threads the text and the Enter of each can interleave into one
-// prompt. `submitAsk` has disabled its button while it waits from the start.
+// prompt. The question's submit and a No go through it too, and the daemon
+// holds the same rule for every tab at once (`claim`).
 const sending = new Set();
+
+// Take a session for one send: false when one is already on its way. The
+// question's submit is held while anything is on its way to its session,
+// and nothing else paints it when that starts or ends: an agent waiting on
+// a question pushes nothing.
+function startSending(id) {
+  if (sending.has(id)) return false;
+  sending.add(id);
+  drawAsking();
+  return true;
+}
+
+function doneSending(id) {
+  sending.delete(id);
+  drawAsking();
+}
 
 async function submitReview() {
   const id = state.chosen;
-  if (sending.has(id)) return;
-  sending.add(id);
+  if (!startSending(id)) return;
   let answer;
   try {
     answer = await tell(id, "send", { text: reviewText() });
   } finally {
-    sending.delete(id);
+    doneSending(id);
   }
   if (!answer || answer.error) {
     said({ error: (answer && answer.error) || "it was not sent" });
@@ -15223,8 +15363,7 @@ async function sendTyped() {
   const box = $("say");
   const text = box.value;
   const id = state.chosen;
-  if (!id || !text.trim() || sending.has(id)) return;
-  sending.add(id);
+  if (!id || !text.trim() || !startSending(id)) return;
   // Out of the box the moment it goes, and back in front of whatever was
   // typed since if it did not. Clearing on the answer took the words typed
   // while the send was on its way, which had gone nowhere; and a box still
@@ -15235,7 +15374,7 @@ async function sendTyped() {
   try {
     answer = await tell(id, "send", { text });
   } finally {
-    sending.delete(id);
+    doneSending(id);
   }
   said(answer);
   if (!answer || !answer.done) {

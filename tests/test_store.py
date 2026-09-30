@@ -54,6 +54,31 @@ def test_rows_are_replaced_whole_not_edited(ws, store):
     assert held[0]["state"] == "done"     # the old list is untouched
 
 
+def test_a_resume_outside_tmux_takes_the_old_pane_and_pid_away(ws, store):
+    """A session ran in pane %5 and ended. Resumed later in a plain terminal,
+    its hook wrote `"pane": ""` -- and only a pane that was there counted, so
+    the row kept %5, and jump, send and an answer went to whatever %5 held by
+    then: a shell, which runs the text, or another agent. A pid of 0 kept the
+    old, dead pid, and `mark_dead` buried the running session as killed.
+    The daemon's own `Declined` record carries neither key, and must take
+    neither away."""
+    ws.append_event(event("SessionStart", pane="%5", pid=4242, ts=1000.0))
+    ws.append_event(event("SessionEnd", reason="other", ts=1001.0))
+    ws.append_event(event("SessionStart", source="resume", pane="", pid=0,
+                          ts=1002.0))
+    store.refresh(now=1002.0, alive=lambda pid: False)
+    session = store.sessions["s1"]
+    assert (session.pane, session.pid) == ("", 0)
+    assert store.rows[0]["pane"] == "" and store.rows[0]["state"] == "done"
+
+    ws.append_event(event("SessionStart", source="resume", pane="%9", pid=77,
+                          ts=1003.0))
+    ws.append_event({"session_id": "s1", "hook_event_name": "Declined",
+                     "key": "1.000000", "ts": 1004.0})
+    store.refresh(now=1004.0, alive=lambda pid: True)
+    assert (session.pane, session.pid) == ("%9", 77)
+
+
 def recorded_stop_failure(**changes):
     """The `StopFailure` Claude Code 2.1.285 sent, as this test's session."""
     import json

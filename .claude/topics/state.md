@@ -91,7 +91,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   on a phone in a pocket. `state.picked` holds the indexes picked for each
   question -- one for a single-choice question, any number for a
   multiple-choice one -- **with the ask's id**, so a pick made for one question is never submitted for the
-  next, and it survives a look at another tab -- the bar is built again when
+  next, **and with its shape**: an ask with no id (a `PreToolUse` with no
+  `tool_use_id`) matched the empty picks the page starts with, `paintPicks`
+  read a pick list that was not there, and the throw took `drawHeader` and
+  the first transcript load with it
+  (`test_a_question_with_no_id_does_not_stop_the_page`). It survives a look at another tab -- the bar is built again when
   it comes back, and half an answer lost that way is a page you cannot trust
   with the other half. `paintPicks` is everything that changes on a click, so
   picking never rebuilds the bar: a rebuild under the hand is how a click
@@ -107,7 +111,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the one waiting. `test_the_page_says_the_keys_the_daemon_presses` holds
   the preview and the presses together. **It does not clear the question**:
   that happens when the daemon sees the `PostToolUse`, because clearing on
-  the click would hide a question a missed keystroke left standing.
+  the click would hide a question a missed keystroke left standing. Submit
+  stays off meanwhile (`state.picked.pressed`), and the bar says to answer
+  in the terminal if the question stays: `safety.md`, "One send at a time".
 - **The keys are Claude Code's dialog's, measured, and never a finger's
   guess.** Against 2.1.281 in tmux, with a fake Messages API asking: a digit
   answers a single-choice question **and moves on**; a multiple-choice
@@ -385,6 +391,19 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   row's worktree is the top of the worktree** once git has said where that
   is (`GitFacts.root`), so a session started in `src` still reads
   `richpalm`; `place` stays where it started, because it is a name.
+- **A hook's empty `pane` and its `pid` of 0 are news, not gaps.** `cmd_hook`
+  writes both keys on every event. `Store.apply` took a pane only when
+  there was one, so a session that ran in `%5`, ended, and was resumed in
+  a plain terminal kept `%5`: the page offered jump, send and an answer,
+  and `tmux_send` typed into whatever `%5` held by then -- a shell, which
+  runs the text, or another agent. After a tmux restart the ids start again
+  at `%0`, so the old one can name any pane. A kept pid made `mark_dead`
+  bury the resumed session as killed. Now a key that is there is taken,
+  empty or not, and a pane that is not a pane id is taken as none. **A
+  record that lacks the keys changes neither**: the daemon's own `Declined`
+  carries neither. Everything that asks "is it in tmux" reads the empty
+  pane as no: `in_tmux`, the row, the page's `s.pane`, `ls`, `link_clear`.
+  `test_a_resume_outside_tmux_takes_the_old_pane_and_pid_away`.
 - **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
   is no `/proc` — on macOS, always. Such a session is taken for gone after
   `QUIET_MAX`. One with a pid is never buried for being quiet.

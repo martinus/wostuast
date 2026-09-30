@@ -32,15 +32,40 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   press twice in, and a double-click on the review's send, or a second Enter
   in the send box, typed the text into the pane twice -- on two HTTP threads
   the text and the Enter of each can even interleave into one prompt.
-  `sending` holds the sessions a send is on its way to, and `submitReview`
-  and `sendTyped` both go through it, as `submitAsk` always disabled its
-  button. **The send box empties the moment the text goes**, and a refusal
+  `sending` holds the sessions a send is on its way to, and `submitReview`,
+  `sendTyped`, `submitAsk` and `submitDecline` all go through it
+  (`startSending`, `doneSending`). **Not "`submitAsk` disables its button",
+  which this rule said until #226**: the button did not stay disabled. A
+  click on an option ran `paintPicks`, which turned submit back on while
+  the first answer's keys still went in `KEY_GAP` apart, and so did a look
+  at another tab, which builds the bar again. A second submit made the pane
+  read `3 1 2 2 Enter Enter`. Now `paintPicks` holds submit while anything
+  is on its way to the session, and after its keys went in
+  (`state.picked.pressed`), because the question stays until its
+  `PostToolUse`, and a second set of keys lands on whatever the agent does
+  next. `drawAsking` paints an unchanged bar, and a send starting or ending
+  calls it, because an agent waiting on a question pushes nothing.
+  **The send box empties the moment the text goes**, and a refusal
   puts it back in front of whatever was typed since. Clearing on the answer
   took the words typed while the send was on its way, which had gone
   nowhere; and a box still holding the sent text, edited meanwhile, sent it
   a second time. `test_a_double_click_sends_a_review_once`,
   `test_enter_twice_sends_once_and_keeps_what_came_after`,
-  `test_a_refused_send_comes_back_in_front_of_what_was_typed_since`.
+  `test_a_refused_send_comes_back_in_front_of_what_was_typed_since`,
+  `test_submit_stays_off_while_its_keys_go_in_and_after`,
+  `test_submit_waits_for_a_message_on_its_way_and_comes_back`.
+  - **The daemon holds the same rule, for every tab at once.** `sending`
+    lives in one browser tab. Two tabs, or a tab and a script, ran two HTTP
+    threads, and a tmux that takes a moment put "first", "second", Enter,
+    Enter into the pane: one prompt of both. An answer's keys mixed with a
+    send the same way. `Daemon.claim` takes the session for `send`,
+    `answer` and `decline`, and `release` gives it back in a `finally`.
+    The second one is refused with 409, never queued: it was asked for
+    before the first landed, so what it would type into is not what its
+    sender saw. `claim` also sets `declining` for a No, so a send is
+    refused while a No is on its way.
+    `test_two_sends_at_once_do_not_mix_in_the_pane`,
+    `test_nothing_else_is_typed_while_an_answer_or_a_no_goes_in`.
 - **The daemon answers on localhost only.** Binding to 127.0.0.1 is not enough —
   a site can point its own name at 127.0.0.1. `Serving.ours()` checks Host, and
   a request without one is refused: an empty Host used to pass, which made the
@@ -125,6 +150,19 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   holds it. A long message is refused, never cut, and never split across two
   sends: a bracketed paste broken in half leaves the rest arriving as
   keystrokes, which is the scar below.
+- **A `;` at the end of a send goes as `\;`.** tmux reads an argument that
+  ends in `;` as the end of a command, and it does so before `-l` and `--`
+  count. Measured on tmux 3.4 with a raw `cat` in the pane: "use foo();"
+  arrived as "use foo()", ";" as nothing but the Enter, and "path\;" as
+  "path;". `tmux_send` sends the last `;` as `\;`, and tmux turns that back
+  into one `;`. It is the one escape `tmux_send` makes, because every other
+  escape of ours arrives as characters. A `;` anywhere else is only a `;`,
+  and a text with a newline ends in the paste marker, so it needs nothing.
+  The reason of a No goes through `tmux_send` too.
+  `test_a_semicolon_at_the_end_is_sent_as_tmux_reads_it`, and
+  `test_what_arrives_is_what_was_written`, which reads the bytes out of a
+  real pane (it skips where there is no tmux). Measure again on a real pane
+  before you change this: do not reason it out from tmux's source.
 - **A verb tmux refused says so, and says only what it knows.** `send` and
   `jump` both used to answer `{"done": false}` with no `error`, and `said`
   clears the slot for an answer that carries none — so the reader asked for
@@ -174,7 +212,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   be told from a dialog still up** -- its result comes when it ends -- so
   there the Escape stops it, and the page says that before every press.
   **One decline at a time**: the page's `sending` guard, which the send box
-  shares, and `Daemon.declining` for a second tab. A reason half written is
+  shares, and `Daemon.claim`, which sets `Daemon.declining`, for a second tab. A reason half written is
   kept across a look at another tab (`state.declineWhy`), as the question
   bar keeps its picks.
   `test_a_decline_is_escape_then_the_reason_once_the_dialog_closed`,
@@ -186,6 +224,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_one_decline_at_a_time_per_session`,
   `test_a_no_waits_for_a_send_already_on_its_way`,
   `test_a_reason_half_written_survives_a_look_at_another_tab`.
+  - **And no send goes into a dialog that is up.** The send box stayed on
+    screen under a dialog, and `send` refused only a session that was
+    over: "1" went in, then Enter, which is Yes. So `send` refuses while
+    the row shows a dialog (`needs_you` and `Session.permission`, the
+    row's own test) and while a No is on its way. The page hides the send
+    box in the same state, and the dialog's bar says where it went; the
+    review's send is off and says why in its `title`. The daemon's refusal
+    is the rule, and the page only saves the reader the round trip.
+    `test_a_send_never_answers_a_permission_dialog`,
+    `test_no_send_goes_in_while_a_no_is_on_its_way`,
+    `test_the_send_box_is_away_while_a_permission_dialog_is_up`,
+    `test_the_review_is_not_sent_into_a_permission_dialog`.
 - **A control that cannot work is disabled where it stands, and says why.**
   Everything on this page works with no tmux — the sidebar, all three tabs,
   alerts, the spend on the strip. The things that do not are the ones that
@@ -200,7 +250,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters, keeping tab and newline. "Below a space" includes the C1 block
   above `\x7f` — NEL and CSI are controls, and U+2028 is a line break that
-  `"\n" in text` does not see, so it went out unpasted.
+  `"\n" in text` does not see, so it went out unpasted. **So is every lone
+  surrogate**: JSON can carry one, and `subprocess` hands an argument to
+  tmux with `surrogateescape`, so U+DCC2 U+DC9B left as the bytes c2 9b,
+  which is U+009B, CSI -- measured in a real pane. A high one made the
+  encode fail, and the whole send with it. `CONTROL_CHARS` holds the
+  range; `test_a_lone_surrogate_never_reaches_a_terminal`.
   A bracketed paste ends at `ESC [ 2 0 1 ~`,
   and a review quotes lines an agent wrote, so those bytes would end the paste
   and leave the rest arriving as keystrokes — with any newline as Enter. A
