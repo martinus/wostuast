@@ -11,6 +11,7 @@ import pytest
 
 import conftest
 from browser import (
+    settings,
     skip_without_browser,
     sync_playwright,
     fresh_context,
@@ -135,24 +136,27 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
             page.goto(path, wait_until="domcontentloaded")
             page.wait_for_selector(".row", timeout=15000)
             dark = page.evaluate("getComputedStyle(document.body).backgroundColor")
-            assert page.get_attribute("#theme", "data-choice") == "auto"
+            chosen = "document.documentElement.dataset.themeChoice"
+            assert page.evaluate(chosen) == "system"
 
-            page.locator("#theme").click()           # auto -> light
+            settings(page, "colours", "light")
             page.wait_for_timeout(150)
             light = page.evaluate("getComputedStyle(document.body).backgroundColor")
             assert light != dark, "light on a dark machine did nothing"
-            assert page.get_attribute("#theme", "data-choice") == "light"
+            assert page.evaluate(chosen) == "light"
+            assert page.get_attribute(
+                "#setpop .colours button[data-value='light']", "aria-pressed") == "true"
 
             page.reload(wait_until="domcontentloaded")
             page.wait_for_selector(".row", timeout=15000)
             assert page.evaluate(
                 "getComputedStyle(document.body).backgroundColor") == light
-            assert page.get_attribute("#theme", "data-choice") == "light"
+            assert page.evaluate(chosen) == "light"
 
-            page.locator("#theme").click()           # light -> dark
-            page.locator("#theme").click()           # dark -> auto
+            settings(page, "colours", "dark")
+            settings(page, "colours", "system")
             page.wait_for_timeout(150)
-            assert page.get_attribute("#theme", "data-choice") == "auto"
+            assert page.evaluate(chosen) == "system"
             assert page.evaluate(
                 "getComputedStyle(document.body).backgroundColor") == dark
         finally:
@@ -174,8 +178,8 @@ def test_the_tab_icon_follows_the_browser_and_not_the_page(page_at):
             before = page.evaluate(href)
             assert before.startswith("data:image/png")
 
-            page.locator("#theme").click()
-            page.locator("#theme").click()
+            settings(page, "colours", "dark")
+            settings(page, "colours", "light")
             assert page.evaluate(href) == before, "the page's theme moved it"
 
             page.emulate_media(color_scheme="dark")
@@ -290,16 +294,43 @@ def test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list(page_at):
                       headBottom: box('.sidebar-head').bottom,
                       brand: head.querySelector('.brand').textContent,
                       version: head.querySelector('.version').textContent,
-                      bell: !!document.querySelector('.tabs #bell svg'),
-                      theme: !!document.querySelector('.tabs #theme svg'),
-                      words: document.querySelector('.tabs #bell').textContent
-                        + document.querySelector('.tabs #theme').textContent};
+                      settings: !!document.querySelector('.tabs #settings svg'),
+                      words: document.querySelector('.tabs #settings').textContent};
             }""")
             assert out["topbar"] == 0
             assert out["tabsTop"] == 0
             assert abs(out["tabsBottom"] - out["headBottom"]) <= 1, out
             assert out["brand"] == "wostuast"
             assert " · " in out["version"] and "__" not in out["version"]
-            assert out["bell"] and out["theme"] and out["words"] == ""
+            assert out["settings"] and out["words"] == ""
+        finally:
+            browser.close()
+
+
+def test_every_settings_label_stands_level_with_what_it_names(page_at):
+    """A label is read along the line it stands on. With a padding to line
+    it up with a button, "alerts" stood 5 px under its first checkbox, and
+    the reader saw it. Measured from the text, not the boxes: a checkbox
+    row and a button row are not the same height."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.click("#settings")
+            page.wait_for_selector("#setpop:not([hidden]) .setlabel")
+            gaps = page.evaluate("""() => {
+              const mid = (node) => {
+                const walk = document.createTreeWalker(node, NodeFilter.SHOW_TEXT,
+                  { acceptNode: (t) => t.data.trim() ? 1 : 3 });
+                const range = document.createRange();
+                range.selectNodeContents(walk.nextNode());
+                const box = range.getClientRects()[0];
+                return box.top + box.height / 2;
+              };
+              return [...document.querySelectorAll("#setpop .setlabel")].map(
+                (label) => [label.textContent.trim(),
+                            mid(label.nextElementSibling) - mid(label)]);
+            }""")
+            assert len(gaps) == 5, gaps
+            assert all(abs(gap) <= 1 for _, gap in gaps), gaps
         finally:
             browser.close()

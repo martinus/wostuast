@@ -478,7 +478,9 @@ def test_alerts_are_off_until_you_ask(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            assert page.get_attribute("#bell", "aria-label") == "alerts off"
+            assert page.get_attribute("#settings", "data-alerts") == "off"
+            # Said on the button, as the crossed-out bell used to say it.
+            assert page.locator("#settings .offmark").is_visible()
             assert page.evaluate("Notification.permission") != "granted"
         finally:
             browser.close()
@@ -800,11 +802,12 @@ def test_the_needs_you_alert_is_on_as_soon_as_alerts_are(page_at):
     with sync_playwright() as play:
         browser, page = alerts_page(play, path)
         try:
-            page.click("#bell")
-            page.wait_for_selector("#alerts", state="visible")
+            page.click("#settings")
+            page.wait_for_selector("#setpop", state="visible")
             assert page.is_checked("#alertneeds")
             assert not page.is_checked("#alertdone")
-            assert page.get_attribute("#bell", "aria-label") == "alerts on"
+            assert page.get_attribute("#settings", "data-alerts") == "on"
+            assert page.locator("#settings .offmark").is_hidden()
         finally:
             browser.close()
 
@@ -848,7 +851,7 @@ def test_a_finished_agent_is_said_only_when_it_was_working(ws, page_at):
         browser, page = alerts_page(play, path)
         try:
             page.wait_for_function("state.sessions.length === 1")
-            page.click("#bell")
+            page.click("#settings")
             page.click("#alertdone")
             page.wait_for_function("document.getElementById('alertdone').checked")
             # A real second pass over sessions that are sitting at "done".
@@ -900,7 +903,7 @@ def test_an_alert_switched_on_mid_turn_still_reports_that_turn(ws, page_at):
             assert page.evaluate("window.__told.length") == 0
 
             # On, with the turn already running.
-            page.click("#bell")
+            page.click("#settings")
             page.click("#alertdone")
             page.wait_for_function("document.getElementById('alertdone').checked")
 
@@ -917,7 +920,7 @@ def test_the_two_switches_are_remembered_apart(page_at):
     with sync_playwright() as play:
         browser, page = alerts_page(play, path)
         try:
-            page.click("#bell")
+            page.click("#settings")
             page.click("#alertneeds")      # off, from its default on
             page.click("#alertdone")       # on
             page.wait_for_function(
@@ -927,8 +930,8 @@ def test_the_two_switches_are_remembered_apart(page_at):
             assert json.loads(kept) == {"needs": False, "done": True}, kept
             page.reload(wait_until="domcontentloaded")
             page.wait_for_selector(".row")
-            page.click("#bell")
-            page.wait_for_selector("#alerts", state="visible")
+            page.click("#settings")
+            page.wait_for_selector("#setpop", state="visible")
             assert not page.is_checked("#alertneeds")
             assert page.is_checked("#alertdone")
         finally:
@@ -942,17 +945,17 @@ def test_the_alert_panel_shuts_from_anywhere(page_at):
     with sync_playwright() as play:
         browser, page = alerts_page(play, path)
         try:
-            for shut in ("body click", "escape", "the bell"):
-                page.click("#bell")
-                page.wait_for_selector("#alerts", state="visible")
+            for shut in ("body click", "escape", "the button"):
+                page.click("#settings")
+                page.wait_for_selector("#setpop", state="visible")
                 if shut == "body click":
                     page.mouse.click(700, 500)
                 elif shut == "escape":
                     page.keyboard.press("Escape")
                 else:
-                    page.click("#bell")
-                page.wait_for_selector("#alerts", state="hidden")
-                assert page.get_attribute("#bell", "aria-expanded") == "false", shut
+                    page.click("#settings")
+                page.wait_for_selector("#setpop", state="hidden")
+                assert page.get_attribute("#settings", "aria-expanded") == "false", shut
         finally:
             browser.close()
 
@@ -985,7 +988,7 @@ def test_turning_needs_you_on_brings_no_backlog(ws, page_at):
         browser, page = alerts_page(play, path)
         try:
             page.wait_for_function("state.sessions.length === 1")
-            page.click("#bell")
+            page.click("#settings")
             page.click("#alertneeds")
             page.wait_for_function("!document.getElementById('alertneeds').checked")
             now = time.time()
