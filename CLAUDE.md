@@ -72,11 +72,11 @@ bullets beside it are the same part's other scars.
 | About to touch | Read |
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
-| `install`, `save_settings`, `write_atomic` | topics/safety: `settings.json` is the user's file, not ours |
+| `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of` | topics/safety: `settings.json` is the user's file, not ours |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | topics/decisions |
-| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
+| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `Session.permission`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | topics/safety: the page never trusts what an agent wrote |

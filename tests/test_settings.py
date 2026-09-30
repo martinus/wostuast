@@ -272,11 +272,40 @@ def test_a_chained_status_line_is_recognised_as_ours(ws):
     assert not ws.is_ours("their-line.sh --then 'x'", "status")
 
 
-def test_uninstall_removes_a_chained_status_line(ws):
-    settings = {"statusLine": {"type": "command",
-                               "command": "wostuast status --then 'mine.sh'"}}
-    assert ws.remove_status_line(settings) == ["removed status line"]
-    assert "statusLine" not in settings
+def test_uninstall_puts_back_the_status_line_it_wrapped(ws):
+    """`install` tells a user with a status line to wrap it in ours with
+    `--then`. `uninstall` deleted the whole entry, and the user's own line
+    with it (#234). It goes back, read the way the shell reads the advice,
+    and every other key of the entry stays."""
+    theirs = "echo \"it's $PWD\" --fancy"
+    settings = {"statusLine": {"type": "command", "command": theirs, "padding": 2}}
+    notes = ws.add_status_line(settings, "/home/m/.local/bin/wostuast status")
+    advice = [n for n in notes if "--then" in n][0].strip()
+    settings["statusLine"]["command"] = advice          # the user follows it
+    assert ws.remove_status_line(settings) == [
+        f"put your own status line back: {theirs}"]
+    assert settings["statusLine"] == {"type": "command", "command": theirs,
+                                      "padding": 2}
+
+    for wrapped in ("wostuast status --then=mine.sh",
+                    "wostuast status --th mine.sh",
+                    "wostuast status --then \"wostuast status --then 'mine.sh'\""):
+        settings = {"statusLine": {"type": "command", "command": wrapped}}
+        ws.remove_status_line(settings)
+        assert settings["statusLine"]["command"] == "mine.sh", wrapped
+
+
+def test_uninstall_removes_a_plain_status_line_and_leaves_one_it_cannot_read(ws):
+    for plain in ("wostuast status", "wostuast status --then ''",
+                  "wostuast status --then 'wostuast status'"):
+        settings = {"statusLine": {"type": "command", "command": plain}}
+        assert ws.remove_status_line(settings) == ["removed status line"], plain
+        assert "statusLine" not in settings
+    broken = "wostuast status --then 'mine.sh"      # a shell cannot run it either
+    settings = {"statusLine": {"type": "command", "command": broken}}
+    assert ws.remove_status_line(settings) == [
+        "left your status line: wostuast could not read it"]
+    assert settings["statusLine"]["command"] == broken
 
 
 def test_a_path_with_a_space_is_still_quoted(ws, tmp_path, monkeypatch):

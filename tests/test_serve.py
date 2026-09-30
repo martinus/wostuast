@@ -230,6 +230,53 @@ def read_events(url, count, timeout=10, then=None):
     return got
 
 
+def test_a_stream_too_slow_to_keep_up_is_closed_and_never_given_a_gap(
+        ws, served):
+    """A stream that cannot take its pushes as fast as they come fills its
+    queue, and `Client.put` dropped the oldest one and said nothing. The page
+    then took the newer pushes, its `version` passed the lost block, and
+    neither a fetch (`?have=` answers `same`) nor a reconnect (its opening is
+    not ahead) asked for it again: a block gone for good (#235). Now the
+    stream closes at the first push it cannot keep, so what arrived has no
+    gap, and the page reconnects behind the daemon and fetches."""
+    import socket as sockets
+    from urllib.parse import urlparse
+
+    daemon, base = served
+    where = urlparse(base)
+    sock = sockets.socket()
+    # A small window, so the daemon's writer blocks after a few pushes, as
+    # it does behind a slow ssh tunnel, and its queue fills.
+    sock.setsockopt(sockets.SOL_SOCKET, sockets.SO_RCVBUF, 4096)
+    sock.settimeout(10)
+    sock.connect((where.hostname, where.port))
+    try:
+        sock.sendall(b"GET /api/events?watch=s1 HTTP/1.1\r\n"
+                     b"Host: localhost\r\n\r\n")
+        got = b""
+        while b"event: sessions" not in got:       # the stream is in the hub
+            got += sock.recv(4096)
+        pad = "x" * (256 * 1024)
+        for n in range(60):
+            daemon.hub.send("transcript", {"id": "s1", "n": n, "pad": pad}, "s1")
+        closed = False
+        while True:
+            try:
+                piece = sock.recv(1 << 20)
+            except (TimeoutError, OSError):
+                break
+            if not piece:
+                closed = True
+                break
+            got += piece
+    finally:
+        sock.close()
+    numbers = [int(n) for n in re.findall(rb'"n": (\d+)', got)]
+    assert numbers and numbers == list(range(len(numbers))), numbers
+    assert len(numbers) < 60
+    assert closed, "the stream went on after a push it could not keep"
+
+
 def test_a_lone_surrogate_in_a_transcript_breaks_nothing(ws, served,
                                                         transcript_file):
     """Claude Code cuts a string between the halves of an emoji and writes
@@ -375,12 +422,16 @@ def test_a_client_is_dropped_when_it_goes(served):
     assert daemon.hub.watchers() == set()
 
 
-def test_a_slow_client_loses_old_messages_rather_than_growing(ws, served):
+def test_a_slow_client_is_closed_rather_than_growing(ws, served):
+    """It never grows, and it keeps nothing after a message it lost: the
+    stream closes on the wake-up left in the queue."""
     daemon, _ = served
     client = daemon.hub.add()
     for i in range(ws.CLIENT_BACKLOG * 3):
         client.put(f"message {i}")
     assert client.queue.qsize() <= ws.CLIENT_BACKLOG
+    assert client.lost
+    assert [client.queue.get_nowait() for _ in range(client.queue.qsize())] == [""]
 
 
 def test_a_broken_tick_does_not_stop_the_daemon(served, monkeypatch):
@@ -1290,6 +1341,23 @@ def test_a_name_needs_the_token_like_every_other_post(ws, served):
     assert ws.read_names() == {}
 
 
+def test_a_name_too_large_to_read_keeps_the_name_there_was(ws, served):
+    """`asked()` does not read a body over `POST_MAX` and hands the route
+    `{}`, and `name` read that as "take the name away": a paste of 70,000
+    characters into the rename box answered `{"name": "", "done": true}`
+    and emptied `names.json` (#235). It is refused, as `send` and
+    `decline` refuse theirs."""
+    daemon, base = served
+    ws.append_event(event("SessionStart", sid="s1", cwd="/w/one", pane="%7", pid=1))
+    daemon.store.refresh()
+    post(f"{base}/api/session/s1/name", {"name": "kept"}, token=daemon.token)
+    status, body = post(f"{base}/api/session/s1/name", {"name": "x" * 70000},
+                        token=daemon.token)
+    assert status == 413, (status, body)
+    assert "large" in body["error"]
+    assert ws.read_names() == {"s1": "kept"}
+
+
 def test_a_session_with_no_pane_can_still_be_named(ws, served):
     """Unlike the tmux verbs: naming touches no terminal, and naming a session
     that has ended is the point of naming one at all."""
@@ -1355,6 +1423,68 @@ def test_a_body_too_large_to_read_does_not_frame_the_next_request(in_tmux):
     assert b"403" in out.split(b"\r\n")[0]
     assert b'"sessions"' not in out
     assert seen == []
+
+
+HIDDEN = b"GET /api/nothing HTTP/1.1\r\nHost: localhost\r\n\r\n"
+
+
+@pytest.mark.parametrize("head, body", [
+    # The body's end is not in a Content-Length, and http.server reads none.
+    (b"POST /api/session/s1/send HTTP/1.1\r\nTransfer-Encoding: chunked\r\n",
+     b"%x\r\n" % len(HIDDEN) + HIDDEN + b"\r\n0\r\n\r\n"),
+    (b"POST /api/session/s1/send HTTP/1.1\r\nContent-Length: many\r\n", HIDDEN),
+    (b"POST /api/session/s1/send HTTP/1.1\r\nContent-Length: -5\r\n", HIDDEN),
+    (b"POST /api/session/s1/send HTTP/1.1\r\nContent-Length: 0\r\n"
+     b"Content-Length: 50\r\n", HIDDEN),
+    # A GET's body is never read at all.
+    (b"GET /api/links HTTP/1.1\r\nContent-Length: %d\r\n" % len(HIDDEN), HIDDEN),
+    (b"GET /api/links HTTP/1.1\r\nTransfer-Encoding: chunked\r\n",
+     b"%x\r\n" % len(HIDDEN) + HIDDEN + b"\r\n0\r\n\r\n"),
+], ids=["chunked", "a-length-that-is-not-a-number", "a-negative-length",
+        "two-lengths", "a-get-with-a-body", "a-chunked-get"])
+def test_a_body_that_is_not_read_does_not_frame_the_next_request(in_tmux, head,
+                                                                 body):
+    """The rule above, for every body `asked()` does not read (#235). A
+    chunked POST read as length 0, and the request inside its body was
+    answered as the next one on that socket: one request, two answers. A
+    body on a GET, and a length that does not parse, did the same. Not
+    reading such a body is fine; keeping the connection open under it is
+    not."""
+    daemon, base, seen = in_tmux
+    out = raw_exchange(base, head + b"Host: localhost\r\n\r\n" + body)
+    assert only_one_answer(out)
+    assert seen == []
+
+
+def only_one_answer(out):
+    """True when the socket carried one answer and nothing after it.
+
+    Counting status lines is not enough: a chunk's size line, read as the
+    next request, is answered as HTTP/0.9, which has no status line.
+    """
+    head, _, rest = out.partition(b"\r\n\r\n")
+    length = re.search(rb"(?im)^content-length: *(\d+)", head)
+    assert head.startswith(b"HTTP/1.") and length, out[:600]
+    assert rest[int(length.group(1)):] == b"", out[:600]
+    return True
+
+
+def test_a_body_that_is_not_read_is_not_taken_for_an_empty_one(ws, in_tmux):
+    """The route sees `{}` for a body it never read, and `name` reads `{}`
+    as "take the name away". So a POST whose body was not read is refused,
+    token or no token, and nothing is changed."""
+    daemon, base, seen = in_tmux
+    daemon.store.rename("s1", "kept")
+    body = b'{"name": ""}'
+    request = (b"POST /api/session/s1/name HTTP/1.1\r\n"
+               b"Host: localhost\r\n"
+               b"X-Wostuast-Token: " + daemon.token.encode() + b"\r\n"
+               b"Transfer-Encoding: chunked\r\n\r\n"
+               + b"%x\r\n" % len(body) + body + b"\r\n0\r\n\r\n")
+    out = raw_exchange(base, request)
+    assert only_one_answer(out)
+    assert b" 400 " in out.split(b"\r\n")[0], out[:200]
+    assert ws.read_names() == {"s1": "kept"}
 
 
 def test_an_origin_that_will_not_parse_is_refused_quietly(in_tmux):

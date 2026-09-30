@@ -1181,6 +1181,8 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
             page.dblclick('.row[data-id="fresh"] .name')
             box = page.locator('.row[data-id="fresh"] input.rowname')
             assert box.input_value() == "agent/bluefox"
+            # No more than the daemon keeps: a longer paste reached it (#235).
+            assert box.evaluate("b => b.maxLength") == ws.NAME_MAX
             page.keyboard.type("retry work")
             # A push that fills the row again and moves it to the top, as a
             # dialog coming up does, with the box still open.

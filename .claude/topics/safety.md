@@ -17,6 +17,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   *is* the timeout nothing was armed at all, and the status line cancelled
   its alarm before it logged. Both arm `LOG_TIMEOUT` over the logging.
   `test_a_failure_is_logged_under_a_deadline_even_after_a_timeout`.
+  **And an outer `try` catches that alarm too** (#235): it can fire after
+  `log` returns and before `stand_down` cancels it, and there it was
+  outside every `try` -- a traceback on stderr, and exit 1 from a hook.
+  `stand_down` is in a `finally`, and an alarm fires once, so nothing is
+  armed when the outer `except` runs.
+  `test_an_alarm_after_the_log_returns_escapes_nothing`.
 - **Every POST carries a token.** A cross-origin `fetch` may POST to a loopback
   port unasked, and the effect here is `tmux send-keys` into a live terminal.
   `allowed()` wants three things to agree: Host, an Origin that is ours when
@@ -135,6 +141,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   three answers on one connection. Refusing to read the body closes the
   connection. The handler has a socket timeout for the other half of it — a
   `Content-Length` announced and never sent held a thread for ever.
+  **The same for every body whose end is not known** (#235): a chunked POST
+  was read as length 0, and a GET's body is never read, and with keep-alive
+  the request written inside either was answered as the next one.
+  `body_length` gives None for a `Transfer-Encoding`, a `Content-Length`
+  that is not plain digits (`int()` takes " -5" and "5_0"), and two that
+  disagree; `asked()` then closes the connection, and so does `route_get`
+  for any body at all. A test counts status lines no more: a chunk's size
+  line, read as a request, is answered as HTTP/0.9, which has none, so
+  `only_one_answer` checks that nothing follows the first answer's body.
+  `test_a_body_that_is_not_read_does_not_frame_the_next_request`.
 - **The page never trusts what an agent wrote.** Markdown goes into an inert
   `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
   events use `textContent`. Assigning `innerHTML` first fires `onerror` before
@@ -248,7 +264,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `send` refused it as "there is nothing to send", which is the opposite of
   what happened. `too_big` is set beside it, and cleared at the top of
   `asked()` rather than only set: with keep-alive one handler object serves
-  every request on a connection.
+  every request on a connection. **Every route that reads `{}` as an answer
+  checks it**: `name` did not, and read a 70,000-character paste as "take
+  the name away" (#235). The rename box has `maxLength` at `NAME_MAX` too,
+  which `test_a_row_is_renamed_where_it_stands` holds in step. A body not
+  read because its end is not known (`unread`) is refused in `route_post`,
+  before any route sees it.
+  `test_a_name_too_large_to_read_keeps_the_name_there_was`,
+  `test_a_body_that_is_not_read_is_not_taken_for_an_empty_one`.
 - **Interrupt is Escape, and never Ctrl-C.** Claude Code's own
   documentation: Escape stops the current response or tool call mid-turn and
   "Claude keeps the work done so far"; Ctrl-C "interrupts a running
@@ -430,6 +453,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_settings_file_that_is_a_link_stays_a_link`,
   `test_the_settings_are_never_on_disk_where_others_can_read_them`,
   `test_a_temporary_left_by_a_writer_that_died_is_not_trusted`.
+  - **`uninstall` gives back a status line it wrapped** (#234). `install`
+    tells a user with a line of their own to write
+    `wostuast status --then '<theirs>'`, `is_ours` counts that line as
+    ours, and `uninstall` deleted the whole entry, their command with it.
+    `remove_status_line` puts `<theirs>` back as the command and keeps the
+    entry's other keys. `then_of` reads `--then` as the shell and argparse
+    do: `shell_words`, then `--then X`, `--then=X`, or a short form such as
+    `--th`, the last one winning. A line a shell cannot split is left alone.
+    `test_uninstall_puts_back_the_status_line_it_wrapped`,
+    `test_uninstall_removes_a_plain_status_line_and_leaves_one_it_cannot_read`.
 - **Anything printed to a terminal is scrubbed, like anything sent to one.**
   `ls`'s last column is a `Notification` message or a tool summary — text an
   agent wrote. `table` takes the control characters out, in the one place a
@@ -451,6 +484,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   every request, and a push wrote an HTTP 500 into the middle of the stream.
   Everything that leaves the daemon encodes with `"replace"`: `reply_json`
   and `stream`. `test_a_lone_surrogate_in_a_transcript_breaks_nothing`.
+  **And no number JSON cannot hold**: `float` takes "nan" and "inf", and
+  `json.loads` makes them out of `NaN` and `1e999`. `json.dumps` then
+  wrote `NaN` into a sessions push, and the page's `JSON.parse` threw on
+  every one (#235). `to_float` gives nought for a number that is not
+  finite. `test_a_number_that_is_not_finite_never_reaches_the_page`.
   Never write the escape for one in source, not even in a comment: in a normal
   string it is the character, and Python 3.13 will not put a module holding one
   in a bytecode cache. CI was green on four versions and red on the fifth, over
