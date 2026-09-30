@@ -698,6 +698,47 @@ def test_a_new_or_deleted_file_with_no_lines_is_added_or_deleted(ws, seeded):
         ("new-empty", "", "added")]
 
 
+def test_a_type_change_is_joined_only_where_git_writes_one(ws):
+    """A deletion and then an addition of the same path, with modes of two
+    kinds, is one entry (#241). A submodule is a kind too. A binary half has
+    no lines, and the other half's still show. Two halves of two paths, or
+    of one kind, are left as they are."""
+    def half(path, gone, mode, lines=(), binary=False):
+        text = f"diff --git a/{path} b/{path}\n"
+        text += f"{'deleted' if gone else 'new'} file mode {mode}\n"
+        if binary:
+            return text + f"Binary files a/{path} and /dev/null differ\n"
+        if lines:
+            text += (f"--- a/{path}\n+++ /dev/null\n" if gone
+                     else f"--- /dev/null\n+++ b/{path}\n")
+            count = len(lines)
+            text += (f"@@ -1,{count} +0,0 @@\n" if gone
+                     else f"@@ -0,0 +1,{count} @@\n")
+            text += "".join(("-" if gone else "+") + line + "\n" for line in lines)
+        return text
+
+    sub = ws.parse_diff(half("m", True, "100644", ["x"])
+                        + half("m", False, "160000", ["Subproject commit 45"]))
+    assert [(one.path, one.status, one.old_kind, one.new_kind,
+             one.added, one.removed) for one in sub] == [
+        ("m", "typechange", "file", "submodule", 1, 1)]
+    back = ws.parse_diff(half("m", True, "160000", ["Subproject commit 45"])
+                         + half("m", False, "100755", ["x", "y"]))
+    assert [(one.old_kind, one.new_kind) for one in back] == [("submodule", "file")]
+    binary = ws.parse_diff(half("logo.png", True, "100644", binary=True)
+                           + half("logo.png", False, "120000", ["store/logo"]))
+    assert [(one.status, one.binary, one.old_kind, one.new_kind,
+             [hunk.header for hunk in one.hunks]) for one in binary] == [
+        ("typechange", False, "file", "link", ["@@ -0,0 +1,1 @@"])]
+    two = ws.parse_diff(half("a", True, "100644", ["x"])
+                        + half("b", False, "120000", ["a"]))
+    assert [(one.path, one.status) for one in two] == [
+        ("a", "deleted"), ("b", "added")]
+    same = ws.parse_diff(half("a", True, "100644", ["x"])
+                         + half("a", False, "100755", ["y"]))
+    assert [one.status for one in same] == ["deleted", "added"]
+
+
 def test_a_name_with_a_space_is_read_from_the_marker_lines(ws):
     text = ("diff --git a/my file.md b/my file.md\n"
             "--- a/my file.md\n+++ b/my file.md\n@@ -1 +1 @@\n-a\n+b\n")

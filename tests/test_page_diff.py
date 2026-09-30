@@ -184,6 +184,75 @@ def test_a_new_or_deleted_file_with_no_lines_says_what_happened(repo_page):
             browser.close()
 
 
+def test_a_file_that_became_a_link_is_one_row_one_block_and_one_comment(
+        repo_page):
+    """git writes a type change as a deletion and an addition of one path,
+    and the tab drew both: two rows with one `data-key`, marked together; a
+    click on either went to the second block; and a comment on the file
+    stood on both blocks, because the anchor is the path. #241."""
+    root, _ = repo_page
+    git = conftest.git_in
+    (root / "notes.txt").write_text("one\ntwo\nthree\n")
+    git(root, "add", "notes.txt")
+    git(root, "commit", "-qm", "notes")
+    (root / "notes.txt").unlink()
+    (root / "notes.txt").symlink_to("README.md")
+    key = "uncommitted\nnotes.txt"
+    block = ".diffhead.uncommitted ~ .dfile:has(.path:text-is('notes.txt'))"
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(block)
+            said = page.evaluate("""(key) => {
+              const rows = [...document.querySelectorAll('.filelist.diff button')]
+                .filter((row) => row.dataset.key === key);
+              const blocks = [...document.querySelectorAll(
+                '.diffhead.uncommitted ~ .dfile')].filter((one) =>
+                  one.querySelector('.path').textContent === 'notes.txt');
+              const scroll = document.querySelector('.diffscroll');
+              return {
+                rows: rows.map((row) => [row.classList.contains('typechange'),
+                                         row.title]),
+                blocks: blocks.map((one) => [
+                  one.querySelector('.what').textContent,
+                  [...one.querySelectorAll('.dline')].map((line) =>
+                    line.querySelector('.addnote') ? 'plus' : 'none')]),
+                goes: scroll.blocks.get(key) === blocks[0],
+                // In the colour of a modified file, the README beside it.
+                colours: [
+                  [blocks[0].querySelector('.what'), document.querySelector(
+                    '.diffhead.uncommitted ~ .dfile .what.modified')],
+                  [rows[0].querySelector('.icon'), document.querySelector(
+                    '.filelist.diff button.modified .icon')],
+                ].map(([one, other]) => [getComputedStyle(one).color,
+                                         getComputedStyle(other).color]),
+              };
+            }""", key)
+            assert said["rows"] == [
+                [True, "notes.txt \u2014 was a file, now a link"]], said
+            # The old lines, then the link, and a `+` on the link alone.
+            assert said["blocks"] == [
+                ["file \u2192 link", ["none", "none", "none", "plus"]]], said
+            assert said["goes"], said
+            for one, other in said["colours"]:
+                assert one == other, said
+            # A comment on the whole file stands once in this half. The
+            # committed half shows it too, on the file the branch added.
+            page.locator(block + " .onFile .addnote").click(force=True)
+            page.fill(".commentbox textarea", "why a link?")
+            page.click(".commentbox button:text-is('save')")
+            page.wait_for_selector(block + " .comment .says")
+            shown = page.evaluate("""() => [...document.querySelectorAll(
+              '.diffhead.uncommitted ~ .dfile')].filter((one) =>
+                one.querySelector('.path').textContent === 'notes.txt')
+              .flatMap((one) => [...one.querySelectorAll('.comment .says')])
+              .map((one) => one.textContent)""")
+            assert shown == ["why a link?"], shown
+        finally:
+            browser.close()
+
+
 def test_the_diff_colours_what_changed(repo_page):
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)

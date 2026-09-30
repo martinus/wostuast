@@ -88,7 +88,7 @@ bullets beside it are the same part's other scars.
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `move`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | topics/daemon-and-page: the transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | topics/tab-state |
-| `worktree_files`, `walk_ignored`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
+| `worktree_files`, `walk_ignored`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext`, `putMessage`, `putReadAs`, `stepat` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `inWorktree`, `diffLineAnchor`, `drawReviewBar`, `reviewText`, `unsent` | topics/review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | topics/daemon-and-page |

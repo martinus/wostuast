@@ -4087,6 +4087,10 @@ class DiffFile:
     removed: int = 0
     binary: bool = False
     hunks: list[Hunk] = field(default_factory=list)
+    #: What the file was and what it is, for a type change only (`status`
+    #: "typechange"): "file", "link" or "submodule". See `join_type_change`.
+    old_kind: str = ""
+    new_kind: str = ""
 
 
 @dataclass
@@ -4273,6 +4277,10 @@ def parse_diff(text: str) -> list[DiffFile]:
     current: DiffFile | None = None
     hunk: Hunk | None = None
     left = [-1, -1]          # old and new lines the hunk still has to come
+    # The mode of a file that went and of one that came, by the entry's
+    # place in `files`: what `join_type_change` needs to see a type change.
+    gone: dict[int, str] = {}
+    came: dict[int, str] = {}
     lines = text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()       # the newline that ends the last line, not a line
@@ -4324,8 +4332,10 @@ def parse_diff(text: str) -> list[DiffFile]:
             # An empty or a binary file has no `---`/`+++` to say it is new,
             # and the `diff --git` line names it twice: it read as modified.
             current.old_path = ""
+            came[len(files) - 1] = line[len("new file mode "):].strip()
         elif line.startswith("deleted file mode "):
             current.path = ""       # `name_change` puts the name back
+            gone[len(files) - 1] = line[len("deleted file mode "):].strip()
         elif line.startswith("rename from "):
             current.old_path = unquote_path(line[len("rename from "):])
         elif line.startswith("rename to "):
@@ -4334,7 +4344,62 @@ def parse_diff(text: str) -> list[DiffFile]:
             current.binary = True
     for one in files:
         name_change(one)
-    return files
+    return join_type_change(files, gone, came)
+
+
+#: What a git mode says a path is. Every other mode is a file: 100644 and
+#: 100755 only differ by the execute bit, which git shows as a mode change.
+MODE_KINDS = {"120000": "link", "160000": "submodule"}
+
+
+def join_type_change(files: list[DiffFile], gone: dict[int, str],
+                     came: dict[int, str]) -> list[DiffFile]:
+    """One entry for a path whose type changed, not two.
+
+    git writes a file that became a link -- or a link that became a file, or
+    a submodule either way -- as two diffs of the same path: one that deletes
+    it, with `deleted file mode 100644`, and one that adds it, with `new file
+    mode 120000`. Two entries with one path shared one `data-key` in the
+    list, so both rows were marked together and a click on either went to
+    the second block; `whole_file_diff` found the first; and a comment on the
+    file stood on both blocks, because the anchor is the path.
+
+    The two halves are next to each other, and git writes nothing else that
+    way without `-B`, which `git_diff` does not pass. The kinds must differ
+    too, so nothing else is ever joined. The joined entry has one hunk, the
+    old lines removed and then the new lines added, `@@ -1,N +1,M @@`, as a
+    file rewritten whole is drawn: the old side is numbered from 1 and the
+    new side from 1, so a `+` stands on the new lines with the numbers the
+    file has on disk, and a removed line gets none, as everywhere.
+    """
+    joined: list[DiffFile] = []
+    at = 0
+    while at < len(files):
+        one = files[at]
+        after = files[at + 1] if at + 1 < len(files) else None
+        was = MODE_KINDS.get(gone.get(at, ""), "file")
+        now = MODE_KINDS.get(came.get(at + 1, ""), "file")
+        if (after is None or one.status != "deleted" or after.status != "added"
+                or at not in gone or at + 1 not in came
+                or one.path != after.path or was == now):
+            joined.append(one)
+            at += 1
+            continue
+        lines = [line for hunk in one.hunks + after.hunks for line in hunk.lines]
+        old = sum(1 for line in lines if line.kind == "removed")
+        new = sum(1 for line in lines if line.kind == "added")
+        # A side with no lines is `0,0`, as git writes an empty one.
+        header = (f"@@ -{'1' if old else '0'},{old}"
+                  f" +{'1' if new else '0'},{new} @@")
+        joined.append(DiffFile(
+            path=one.path, old_path=one.path, status="typechange",
+            added=one.added + after.added, removed=one.removed + after.removed,
+            # A binary half has no lines; the other half's are still shown.
+            binary=(one.binary or after.binary) and not lines,
+            hunks=[Hunk(header=header, lines=lines)] if lines else [],
+            old_kind=was, new_kind=now))
+        at += 2
+    return joined
 
 
 def name_change(one: DiffFile) -> None:
@@ -9118,8 +9183,9 @@ body:not(.show-thinking) .thinking { display: none; }
 .dfile .what.added, .filelist.diff button.added .icon,
 .filelist.diff button.untracked .icon { color: var(--working); }
 .dfile .what.deleted, .filelist.diff button.deleted .icon { color: var(--hot); }
-.dfile .what.modified, .dfile .what.renamed,
-.filelist.diff button.modified .icon, .filelist.diff button.renamed .icon {
+.dfile .what.modified, .dfile .what.renamed, .dfile .what.typechange,
+.filelist.diff button.modified .icon, .filelist.diff button.renamed .icon,
+.filelist.diff button.typechange .icon {
   color: var(--done);
 }
 .filelist.diff button.deleted .name { text-decoration: line-through; }
@@ -13805,6 +13871,9 @@ function drawDiffList(list, shown = list.shown) {
       row.classList.add(one.status);
       if (one.status === "renamed") {
         row.title = one.old_path + " \u2192 " + one.path;
+      } else if (one.status === "typechange") {
+        row.title = one.path + " \u2014 was a " + one.old_kind
+          + ", now a " + one.new_kind;
       }
       putCounts(put(row, "span", "counts"), one);
       row.addEventListener("click", () => goToDiffFile(row.dataset.key));
@@ -14078,11 +14147,19 @@ async function readLoose(path) {
   draw();
 }
 
+// What happened to a file, in the header's words. A type change is one
+// entry for both halves (`join_type_change`), and says what the path was
+// and what it is: "file \u2192 link". The CSS writes it in capitals.
+function statusWord(one) {
+  return one.status === "typechange"
+    ? one.old_kind + " \u2192 " + one.new_kind : one.status;
+}
+
 function drawDiffFile(pane, one, atHead = false, section = "") {
   const node = put(pane, "div", "dfile");
   const head = put(node, "button", "name");
   head.type = "button";
-  put(head, "span", "what " + one.status, one.status);
+  put(head, "span", "what " + one.status, statusWord(one));
   put(head, "span", "path", one.status === "renamed"
     ? one.old_path + " \u2192 " + one.path : one.path);
   putCounts(head, one);
