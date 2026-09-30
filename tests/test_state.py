@@ -1371,7 +1371,11 @@ def test_a_long_word_costs_a_summary_no_time(ws):
             took = time.process_time() - start
             assert took < 0.2, f"{tool} over {len(text)} characters took {took:.2f} s"
     # The patterns on their own: each star round a keyword, and a scheme.
-    for text in ("a.token." * 250, "token-" * 400 + "a" * 20_000, "a." * 10_000):
+    # A `=` in front, so the `TOKEN=` shape is tried and not skipped; 80 KB
+    # of `a.` with none, where it must be skipped (`"=" in text`): tried
+    # there, it cost 0.4 s here and more on a runner.
+    for text in ("= " + "a.token." * 250, "= " + "token-" * 400 + "a" * 20_000,
+                 "a." * 40_000):
         start = time.process_time()
         ws.hide_secrets(text)
         took = time.process_time() - start

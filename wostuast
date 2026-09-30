@@ -1006,7 +1006,7 @@ SECRET_SHAPES = [
     # `TOKEN=…`, `?api_key=…`, `--password=…`: a name that says secret.
     (re.compile(r"(?i)\b([\w.-]{0,64}(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|"
                 r"access[_-]?key|auth)[\w.-]{0,64}\s*=\s*)(\"[^\"]*\"|'[^']*'|[^\s&\"']+)"),
-     r"\1***"),
+     r"\1***", "="),
     (re.compile(r"(?i)(--?(?:password|passwd|token|secret|api-?key)\s+)(\S+)"), r"\1***"),
     # Tokens that say what they are by their shape alone.
     (re.compile(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}"
@@ -1016,8 +1016,17 @@ SECRET_SHAPES = [
 
 
 def hide_secrets(text: str) -> str:
-    """A command with the credentials in it hidden, for a one-line summary."""
-    for shape, keep in SECRET_SHAPES:
+    """A command with the credentials in it hidden, for a one-line summary.
+
+    A shape may name a character it cannot match without, and is skipped
+    when the text has none. The `TOKEN=` shape tries a keyword at each of
+    64 places after every word boundary: bounded, but 20 KB of `a.` still
+    cost it 0.21 s of CPU on a CI runner, and a test with a budget of
+    0.2 s failed on it. `"=" in text` runs in C and says the same no.
+    """
+    for shape, keep, *needs in SECRET_SHAPES:
+        if needs and needs[0] not in text:
+            continue
         text = shape.sub(keep, text)
     return text
 
