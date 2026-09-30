@@ -759,7 +759,9 @@ def test_one_commit_shows_its_whole_message(repo_page):
             pick(page, page.evaluate("state.diff.commits[0].sha"))
             head = page.locator(".diffhead.commit")
             assert head.evaluate("e => e.firstChild.textContent") == "Print three"
-            # As it was written: the lines and the blank line between them.
+            # As it was written, a click away: the lines and the blank line
+            # between them.
+            page.click(".diffhead .readas button[data-value='true']")
             assert head.locator(".message").evaluate("e => e.textContent") == \
                 "Two was not enough.\n\n- one\n- two"
             assert head.locator(".message").evaluate(
