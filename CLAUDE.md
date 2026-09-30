@@ -1305,7 +1305,9 @@ update the comment with its own text, and read it back.
   SHA-256 -- never a number to raise by hand, and the same bytes
   `install_behind` compares.
   `test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list`,
-  `test_the_page_says_which_copy_is_running`.
+  `test_the_page_says_which_copy_is_running`. **Nor a strip of keys under
+  the rows**: it said in two cramped lines what `?` shows in full, and the
+  reader asked for it to go. `test_the_session_list_ends_with_its_rows`.
 - **A row says what nothing else on the page says, in four lines that are
   the same on every row.** The reader chose each line. The name; the
   repository and the worktree, with the remote and the path on a hover; the
