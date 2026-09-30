@@ -62,7 +62,13 @@ handed**: `page.evaluate("load()")` with the request held by a route never
 returned, and the test hung past every timeout, because `evaluate` has
 none. Call it without returning it: `"() => { load(); }"`. And one route
 handler that holds the first request and answers the rest, never
-`unroute` with one held — it answers the held one itself.
+`unroute` with one held — it answers the held one itself. **A mark that
+shows for a set time is written down by the page, not waited for**: the
+copy button's tick (`putCodeCopies`, `.copycode.done`) lasts 1.4 s, and
+`test_a_code_block_copies_itself_from_a_button_that_shows_on_hover` spent
+longer than that under load on the steps between the click and its wait.
+A `MutationObserver` set before the click keeps `window.__done`, and the
+test waits for that.
 
 **A change a stream test expects goes out after the first event, never
 after a sleep.** `test_a_change_is_pushed` made its change from a thread
@@ -71,6 +77,17 @@ after the push: it began on the new state, and the read waited for a second
 event that never came. `read_events(..., then=change)` runs the change once
 the first event is in, and `stream` joins the hub before it writes that
 event, so nothing pushed after it is lost.
+- **In a browser test, `wait_for_watching(daemon)` comes before the first
+  `daemon.tick()`.** `open_page` and `wait_for_map` prove the fetch
+  answered, not that the stream listens: `showTab` fetches and *then*
+  subscribes, a tick in that gap pushes to nobody, and no fixture runs a
+  ticker to push it again. Three transcript tests appended and ticked
+  straight after `open_page` and went red at `-n 12` about one run in
+  three, on `main` as well: `test_a_search_keeps_its_place_while_the_agent_works`,
+  `test_the_top_of_the_transcript_is_a_place_too` and
+  `test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it`.
+  A test about what happens while nobody listens leaves the wait out on
+  purpose, and says so.
 
 **`open_page` returns once the transcript has answered; `show_tab` is not
 the tab's content arriving.** `open_page` waits for `state.turns.landed` --
