@@ -112,9 +112,14 @@ TCP_TABLES = ("/proc/net/tcp", "/proc/net/tcp6")
 #: position, so a table that changes during the read can skip a line.
 PEER_READS = 3
 
-#: The state column of a closed connection, in `TCP_TABLES`. Nobody owns it,
-#: and the kernel writes uid 0 for it, so it is never the answer.
-TIME_WAIT = "06"
+#: The inode column of a socket that no process holds, in `TCP_TABLES`. The
+#: kernel writes uid 0 on such a line, so it is never the answer: a
+#: connection in `TIME_WAIT`, and a client that closed its end after it sent
+#: a request (#254). Measured as `nobody` on 6.18: connect, send and close
+#: leave `05 uid 0 inode 0`; open, `01 uid 65534`; a client that only shut
+#: down its write half, `05 uid 65534` and its inode. So not "state `01`
+#: only": that refused a client of our own that can still read the answer.
+NO_INODE = "0"
 
 #: The one user let in besides the daemon's own. In WSL2's default NAT mode
 #: a Windows browser reaches 127.0.0.1 in the Linux VM through a relay that
@@ -1127,9 +1132,14 @@ SECRET_SHAPES = [
                 r"x-auth-token|private-token)(\s*:\s*)[^\"'\n]+"), r"\1\2***"),
     # Not `token` as a word: `grep -rn token include/` is a search.
     (re.compile(r"(?i)\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1\2***"),
-    # `TOKEN=…`, `?api_key=…`, `--password=…`: a name that says secret.
+    # `TOKEN=…`, `?api_key=…`, `--password=…`: a name that says secret. A
+    # quoted value may end at the end of the text: `clip_hidden` can cut
+    # inside the quotes, and a value with no closing quote then matched
+    # nothing and stood on the row (#254). A quote that is not closed is
+    # hidden to the end, cut or not.
     (re.compile(r"(?i)\b([\w.-]{0,64}(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|"
-                r"access[_-]?key|auth)[\w.-]{0,64}\s*=\s*)(\"[^\"]*\"|'[^']*'|[^\s&\"']+)"),
+                r"access[_-]?key|auth)[\w.-]{0,64}\s*=\s*)"
+                r"(\"[^\"]*(?:\"|\Z)|'[^']*(?:'|\Z)|[^\s&\"']+)"),
      r"\1***", "="),
     (re.compile(r"(?i)(--?(?:password|passwd|token|secret|api-?key)\s+)(\S+)"), r"\1***"),
     # Tokens that say what they are by their shape alone.
@@ -5538,12 +5548,41 @@ def words_of(command: str) -> list[str]:
     return command.split() if words is None else words
 
 
+#: A command in the parts a shell reads differently: a single-quoted part, a
+#: double-quoted part, one escaped character, and the rest. A quote that is
+#: not closed runs to the end, and `shlex` then refuses the whole line.
+QUOTED_PARTS = re.compile(r"""'[^']*'?|"(?:[^"\\]|\\.)*"?|\\.?|[^'"\\]+""", re.S)
+
+#: What a backslash and the character after it become inside double quotes,
+#: where `shlex` and a POSIX shell do not agree. `shlex` already reads `\"`
+#: and `\\` as a shell does, and every other pair stays as it is.
+DOUBLE_QUOTED = {"$": "$", "`": "`", "\n": ""}
+
+
 def shell_words(command: str) -> list[str] | None:
-    """Split a command the way a shell would, or None when a shell could not."""
+    """Split a command the way a shell would, or None when a shell could not.
+
+    `shlex` does that, except inside double quotes. There a POSIX shell
+    drops the backslash before `$`, `` ` ``, `"`, `\\` and a newline, and
+    `shlex` drops it before `"` and `\\` only. So `--then "echo \\$HOME"`
+    came back from `then_of` as `echo \\$HOME`, and after `uninstall` the
+    status line printed that text (#254). The rest comes off here first, in
+    the double-quoted parts only (`DOUBLE_QUOTED`). A single-quoted part,
+    which is what `install` writes, is not changed.
+    """
     import shlex
 
+    def posix(part: re.Match[str]) -> str:
+        text = part.group()
+        if not text.startswith('"'):
+            return text
+        # Pair by pair from the left, so `\\$` is an escaped backslash
+        # and then a `$`, as a shell reads it.
+        return re.sub(r"\\(.)", lambda pair: DOUBLE_QUOTED.get(
+            pair.group(1), pair.group()), text, flags=re.S)
+
     try:
-        return shlex.split(command)
+        return shlex.split(QUOTED_PARTS.sub(posix, command))
     except ValueError:
         return None
 
@@ -6333,9 +6372,14 @@ def table_address(host: str, port: int, six: bool = False) -> str:
 def socket_owner(table: str, local: tuple[str, int],
                  remote: tuple[str, int]) -> int | None:
     """The uid of the socket from `local` to `remote`, read off the text of
-    `/proc/net/tcp` or `/proc/net/tcp6`. None when no open socket has both.
+    `/proc/net/tcp` or `/proc/net/tcp6`. None when no socket that a process
+    holds has both.
 
     Both ends must match, so another connection is never taken for this one.
+    A line with no inode (`NO_INODE`) is skipped: no process holds that
+    socket, so it cannot read an answer, and the kernel writes uid 0 on it,
+    which is root's and was let in. Another user sent a request and closed
+    the socket before the daemon looked, and the request was served (#254).
     The table can hold tens of thousands of lines, so it is searched, not
     split: `find` runs in C, and only a line that holds both ends is split.
     The needle is the two addresses with a space either side, and no other
@@ -6350,7 +6394,7 @@ def socket_owner(table: str, local: tuple[str, int],
             start = table.rfind("\n", 0, at) + 1
             end = table.find("\n", at)
             fields = table[start:end if end != -1 else len(table)].split()
-            if len(fields) > 7 and fields[3] != TIME_WAIT:
+            if len(fields) > 9 and fields[9] != NO_INODE:
                 try:
                     return int(fields[7])
                 except ValueError:
@@ -6669,6 +6713,12 @@ class Serving:
         number, or two of them that do not agree: `int()` takes " -5", "+5"
         and "5_0", and another reader of the same bytes may not. No header
         at all is a body of nought.
+
+        **Nor a number of more than 18 digits.** `int()` refuses a text of
+        more than 4,300 digits with a `ValueError`, and `guarded` answered
+        500 and kept the connection: the bytes after the headers were read
+        as the next request (#254). 18 digits is more than any body, and
+        `int()` takes it always.
         """
         if self.headers.get("Transfer-Encoding") is not None:
             return None
@@ -6679,7 +6729,7 @@ class Serving:
         if len(given) > 1:
             return None
         text = given.pop()
-        if not (text.isascii() and text.isdigit()):
+        if not (text.isascii() and text.isdigit()) or len(text) > 18:
             return None
         return int(text)
 
@@ -6704,6 +6754,9 @@ class Serving:
             pass
         except Exception as error:
             log(f"request {self.path} failed: {error!r}")
+            # Closed: a request that failed half way may have left its body
+            # in the socket, and that would be read as the next request.
+            self.close_connection = True
             try:
                 self.reply_json({"error": "something went wrong"}, 500)
             except OSError:
@@ -6805,12 +6858,29 @@ class Serving:
         session = self.in_tmux(session_id)
         if session is None:
             return
+        # A body not read is `{}`, which has no `ask`, and "that question is
+        # no longer waiting" said the opposite of what happened (#254).
+        if self.too_big:
+            self.reply_json({"id": session_id,
+                             "error": "that answer is too large to accept"},
+                            413)
+            return
         # Its pane has moved on: the agent that asked is gone, and the keys
         # would land in whatever runs there now. `_bury` clears the question
         # too; this is the half that holds whatever a row still carries.
         if session.state in GONE_STATES:
             self.reply_json({"id": session_id,
                              "error": "this session is over"}, 409)
+            return
+        # A permission dialog is up as well as the question: one batch of
+        # calls can hold both. Its cursor starts on "1. Yes", and the keys
+        # are digits and Enter, so they could say Yes to it. The same test
+        # as `send`'s and the row's (#254).
+        if session.state == "needs_you" and session.permission:
+            self.reply_json({"id": session_id,
+                             "error": "a permission dialog is open in the"
+                                      " terminal: answer it there, or say No,"
+                                      " then answer the question"}, 409)
             return
         ask = session.asking
         # An ask with no id could be matched by anything that sends none.

@@ -87,9 +87,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     request from another uid with 403 and `STRANGER`, before it reads a
     byte of a body: the page, the stream, every route. `socket_owner`
     matches both ends, so another connection from the same port is never
-    taken for this one, and skips a `TIME_WAIT` line, which nobody owns and
-    the kernel lists as uid 0. It reads `/proc/net/tcp6` too, because a
-    client on an IPv6 socket reaches 127.0.0.1 as `::ffff:127.0.0.1`.
+    taken for this one. It reads `/proc/net/tcp6` too, because a client on
+    an IPv6 socket reaches 127.0.0.1 as `::ffff:127.0.0.1`.
+  - **A line with no inode is nobody's** (`NO_INODE`, #254). No process
+    holds that socket, and the kernel lists it as uid 0, which is root's,
+    and root is let in. The first rule skipped only `TIME_WAIT`, and
+    another user got past it: connect, send a request, close. Measured as
+    `nobody` on 6.18: open, the line is `01 uid 65534`; closed, `05 uid 0
+    inode 0`. With the daemon under load the table is read after the
+    close, and the request was served. **Not "state `01` only"**: a
+    client that shuts down only its write half is `05` too, with its own
+    uid and inode, and it can still read the answer, so that rule refuses
+    the owner for nothing. A socket with no inode cannot read an answer,
+    so refusing it costs the owner nothing. `TIME_WAIT` lines have no
+    inode either, so one test covers both.
   - **`another_user` refuses whatever it cannot prove, except a machine
     with no table.** No table at all is macOS, and stays as it was: README
     says so. An empty table is not a real one either, because a real one
@@ -115,7 +126,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     nothing: it can read the token, the state files and every transcript
     already, and it can attach to the daemon itself. The live test sets
     `ROOT_UID` to -1, because the suite may run as root.
-    `test_root_is_let_in_too`.
+    `test_root_is_let_in_too`. **WSL2's mirrored mode is not proven**: a
+    Windows browser's socket may not be in Linux's table at all, and then
+    the owner is refused every time. There was no WSL to measure on, and
+    README says so. Do not let a missing line in to fix it: that is the
+    hole the rules above close.
   - **An ssh tunnel is the owner.** sshd opens the forwarded connection from
     the session process, which runs as the user who logged in, and a socket
     belongs to the user that made it. Reasoned from OpenSSH's privilege
@@ -126,9 +141,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_only_the_daemons_own_user_is_let_in`,
   `test_a_line_the_kernel_skipped_once_is_looked_for_again`,
   `test_a_connection_from_another_user_gets_nothing`,
-  `test_a_table_that_cannot_be_read_refuses`, and
-  `test_a_real_request_from_another_user_is_refused`, which needs root and
-  `setpriv` and skips without them: CI runs as a normal user.
+  `test_a_table_that_cannot_be_read_refuses`,
+  `test_a_socket_no_process_holds_is_nobodys`, and two that need root and
+  `setpriv` and skip without them, because CI runs as a normal user:
+  `test_a_real_request_from_another_user_is_refused`, and
+  `test_a_request_from_another_user_that_closed_first_is_refused`, which
+  makes the table read late so that it comes after the close every time.
 - **A check must fail closed, and nothing may run outside the guard.** Both
   checks used to sit in front of the `try`, where `Origin: http://[::1` or one
   byte above 0x7f in the token header killed the thread — no status line, a
@@ -151,6 +169,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   line, read as a request, is answered as HTTP/0.9, which has none, so
   `only_one_answer` checks that nothing follows the first answer's body.
   `test_a_body_that_is_not_read_does_not_frame_the_next_request`.
+  **Nor a length of more than 18 digits** (#254). `isdigit()` took 5,000
+  digits, `int()` refused them (Python reads no number of more than 4,300
+  digits), and `guarded` answered 500 and kept the connection: the bytes
+  after the headers were answered as the next request. So `body_length`
+  refuses the length before `int()` sees it, and **`guarded` closes the
+  connection on every 500** as well, because a request that fails half
+  way may leave its body in the socket.
+  `test_a_length_too_long_to_be_a_number_is_not_read`,
+  `test_a_request_that_fails_closes_its_connection`.
 - **The page never trusts what an agent wrote.** Markdown goes into an inert
   `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
   events use `textContent`. Assigning `innerHTML` first fires `onerror` before
@@ -306,6 +333,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_a_remote_of_a_megabyte_costs_the_tick_no_time` count CPU time,
     not the clock, so a loaded machine does not fail them;
     `test_a_secret_is_hidden_as_far_as_the_row_can_show`.
+    - **So a quoted value may end at the end of the text** (#254). The
+      cut can fall inside the quotes of `API_TOKEN="…"`, and the `TOKEN=`
+      shape wanted the closing quote: nothing matched, and the row showed
+      the secret's start. Its quoted values are `"[^"]*(?:"|\Z)` and
+      `'[^']*(?:'|\Z)` now, so a quote that is not closed is hidden to
+      the end, cut or not. No other shape in `SECRET_SHAPES` wants a
+      closing quote. `test_a_quoted_secret_cut_by_the_clip_is_hidden_to_the_end`.
     - **Bounded was not cheap enough: a shape with a needed character is
       skipped without it.** The `TOKEN=` shape tries a keyword at each of
       64 places after every word boundary, and 20 KB of `a.` still cost
@@ -355,11 +389,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `asked()` rather than only set: with keep-alive one handler object serves
   every request on a connection. **Every route that reads `{}` as an answer
   checks it**: `name` did not, and read a 70,000-character paste as "take
-  the name away" (#235). The rename box has `maxLength` at `NAME_MAX` too,
+  the name away" (#235). `answer` did not either, and said "that question
+  is no longer waiting" about a question that was (#254). The rename box
+  has `maxLength` at `NAME_MAX` too,
   which `test_a_row_is_renamed_where_it_stands` holds in step. A body not
   read because its end is not known (`unread`) is refused in `route_post`,
   before any route sees it.
   `test_a_name_too_large_to_read_keeps_the_name_there_was`,
+  `test_an_answer_too_large_to_read_says_that`,
   `test_a_body_that_is_not_read_is_not_taken_for_an_empty_one`.
 - **Interrupt is Escape, and never Ctrl-C.** Claude Code's own
   documentation: Escape stops the current response or tool call mid-turn and
@@ -416,6 +453,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     box in the same state, and the dialog's bar says where it went; the
     review's send is off and says why in its `title`. The daemon's refusal
     is the rule, and the page only saves the reader the round trip.
+    **`answer` refuses in the same state** (#254): one batch of calls can
+    hold a question and a command that asks for permission, and the
+    answer's keys are digits and Enter. Whether Claude Code shows both at
+    once was not measured; the refusal costs nothing when it does not.
+    `test_an_answer_never_goes_into_a_permission_dialog`,
     `test_a_send_never_answers_a_permission_dialog`,
     `test_no_send_goes_in_while_a_no_is_on_its_way`,
     `test_the_send_box_is_away_while_a_permission_dialog_is_up`,
@@ -558,8 +600,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     entry's other keys. `then_of` reads `--then` as the shell and argparse
     do: `shell_words`, then `--then X`, `--then=X`, or a short form such as
     `--th`, the last one winning. A line a shell cannot split is left alone.
+    **`shell_words` is `shlex` and one more step** (#254): inside double
+    quotes a shell drops the backslash before `$`, a backquote, `"`, `\`
+    and a newline, and `shlex` drops it only before `"` and `\`. So
+    `--then "echo \$HOME"` came back as `echo \$HOME`. `QUOTED_PARTS`
+    finds the double-quoted parts and `DOUBLE_QUOTED` takes the rest off,
+    pair by pair from the left. A single-quoted line, which `install`
+    writes, comes back exactly.
     `test_uninstall_puts_back_the_status_line_it_wrapped`,
-    `test_uninstall_removes_a_plain_status_line_and_leaves_one_it_cannot_read`.
+    `test_uninstall_removes_a_plain_status_line_and_leaves_one_it_cannot_read`,
+    `test_a_double_quoted_status_line_comes_back_as_a_shell_reads_it`.
 - **Anything printed to a terminal is scrubbed, like anything sent to one.**
   `ls`'s last column is a `Notification` message or a tool summary — text an
   agent wrote. `table` takes the control characters out, in the one place a

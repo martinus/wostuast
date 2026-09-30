@@ -377,7 +377,10 @@ The page can type into a terminal, so it is careful about who may use it.
   who logged in.
 - Root is let in because of WSL2. There, a Windows browser reaches the
   Linux side through a relay that runs as root. Root can read all of your
-  files anyway, so this gives it nothing new.
+  files anyway, so this gives it nothing new. This is for WSL2's default
+  network mode (NAT). In mirrored mode, wostuast may refuse your own
+  browser, because Linux may not list its connection. This was not tested.
+  If you get `403` there, use NAT mode.
 - On macOS, wostuast cannot ask which user opened a connection. Any account
   on the Mac can read the page and act on it. Do not run `serve` on a Mac
   that other people log in to.

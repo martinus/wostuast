@@ -72,7 +72,7 @@ bullets beside it are the same part's other scars.
 | About to touch | Read |
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
-| `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of` | topics/safety: `settings.json` is the user's file, not ours |
+| `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: `settings.json` is the user's file, not ours |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite | topics/decisions |

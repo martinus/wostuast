@@ -295,6 +295,34 @@ def test_uninstall_puts_back_the_status_line_it_wrapped(ws):
         assert settings["statusLine"]["command"] == "mine.sh", wrapped
 
 
+def test_a_double_quoted_status_line_comes_back_as_a_shell_reads_it(ws):
+    r"""Inside double quotes a shell drops the backslash before `$`, a
+    backquote, `"`, `\` and a newline, and `shlex` kept it before the first
+    two: `--then "echo \$HOME"` came back as `echo \$HOME`, and the status
+    line printed that text (#254). A backslash before anything else stays,
+    as it does in a shell; a single-quoted line comes back exactly."""
+    for wrapped, theirs in (
+            ('wostuast status --then "echo \\$HOME \\`date\\` \\"q\\" \\\\ \\a"',
+             'echo $HOME `date` "q" \\ \\a'),
+            ('wostuast status --then "a\\\\\\$b"', "a\\$b"),
+            ('wostuast status --then "one\\\ntwo"', "onetwo"),
+            ("wostuast status --then 'echo \\$HOME \"x\" \\`y\\`'",
+             'echo \\$HOME "x" \\`y\\`'),
+            ("wostuast status --then \\$x", "$x")):
+        assert ws.then_of(wrapped) == theirs, wrapped
+        settings = {"statusLine": {"type": "command", "command": wrapped}}
+        ws.remove_status_line(settings)
+        assert settings["statusLine"]["command"] == theirs, wrapped
+    # What `install` advises comes back exactly, whatever the line holds.
+    for theirs in ('echo "\\$HOME \\`x\\`" \'it\'"\'"\'s\'', "printf '%s\\n' \"$PWD\""):
+        settings = {"statusLine": {"type": "command", "command": theirs}}
+        notes = ws.add_status_line(settings, "/home/m/.local/bin/wostuast status")
+        settings["statusLine"]["command"] = [
+            n for n in notes if "--then" in n][0].strip()
+        ws.remove_status_line(settings)
+        assert settings["statusLine"]["command"] == theirs, theirs
+
+
 def test_uninstall_removes_a_plain_status_line_and_leaves_one_it_cannot_read(ws):
     for plain in ("wostuast status", "wostuast status --then ''",
                   "wostuast status --then 'wostuast status'"):
