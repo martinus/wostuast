@@ -76,13 +76,13 @@ bullets beside it are the same part's other scars.
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `agent_pid`, `cmd_status`, `diff_base`, the event log's shape, polling, a library, SQLite | topics/decisions |
-| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending` | topics/safety: the token, localhost, framing, what may reach a terminal |
+| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS` | topics/safety: the token, localhost, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `Session.permission`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
 | the Markdown scrub, `linkTickets`, anything that inserts what an agent wrote | topics/safety: the page never trusts what an agent wrote |
 | `remote_url`, `config_value`, `hide_secrets`, `tool_target` | topics/safety: a remote URL and a command reach the page without their secrets |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `SHOWN_AS`, the `raw` route | topics/safety: a path out of the page is input |
-| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | topics/state |
+| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear`, `Session.pane`, `Session.pid` | topics/state |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |

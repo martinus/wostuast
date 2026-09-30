@@ -508,6 +508,123 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
             browser.close()
 
 
+def hold(page, pattern):
+    """Hold the first request to `pattern`, let the rest through, and hand
+    back the list the held one lands in. Never `unroute` with one held."""
+    held = []
+    page.route(pattern, lambda route: held.append(route) if not held
+               else route.continue_())
+    return held
+
+
+def wait_until(page, check):
+    """Let the page run until `check()` says yes. `wait_for_function` cannot
+    see a Python list, and a sleep here would starve the route handler."""
+    for _ in range(750):
+        if check():
+            return
+        page.wait_for_timeout(20)
+    raise AssertionError("it never happened")
+
+
+SUBMIT = "#asking .asksend .verb"
+
+
+def test_submit_stays_off_while_its_keys_go_in_and_after(ws, in_pane):
+    """The keys go in one at a time, `KEY_GAP` apart. A click on an option in
+    that time painted submit back on, and so did a look at another tab; a
+    second submit made the pane read 3 1 2 2 Enter Enter. After the keys
+    went in, the question stays until its `PostToolUse`, and a second set
+    would land on whatever the agent does next."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            page.click(option(1, 3))
+            page.click(option(2, 2))
+            held = hold(page, "**/answer")
+            page.click(SUBMIT)
+            wait_until(page, lambda: held)
+            page.click(option(1, 1))
+            assert page.locator(SUBMIT).is_disabled()
+            show_tab(page, "diff")
+            show_tab(page, "transcript")
+            page.wait_for_selector("#asking .askopt")
+            assert page.locator(SUBMIT).is_disabled()
+            held[0].continue_()
+            wait_until(page, lambda: len(pressed(seen)) >= 3)
+            page.wait_for_function(
+                "document.querySelector('#asking .asksays').textContent"
+                ".startsWith('pressed')")
+            page.click(option(1, 2))
+            assert page.locator(SUBMIT).is_disabled()
+            page.wait_for_timeout(500)        # proving nothing more went in
+            assert pressed(seen) == ["3", "2", "Enter"], seen
+        finally:
+            browser.close()
+
+
+def test_submit_waits_for_a_message_on_its_way_and_comes_back(ws, in_pane):
+    """A message from the send box landing between the answer's keys is
+    typed into the dialog, so submit is held while one is on its way -- and
+    painted back on when it has landed, although nothing else is pushed: an
+    agent waiting on a question sends no events."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            page.click(option(1, 1))
+            page.click(option(2, 1))
+            assert not page.locator(SUBMIT).is_disabled()
+            held = hold(page, "**/send")
+            page.fill("#say", "one more thing")
+            page.press("#say", "Enter")
+            wait_until(page, lambda: held)
+            assert page.locator(SUBMIT).is_disabled()
+            assert page.inner_text("#asking .asksays") == \
+                "waiting for what is on its way to this session"
+            held[0].continue_()
+            page.wait_for_function(
+                f"!document.querySelector('{SUBMIT}').disabled")
+            assert page.inner_text("#asking .asksays") == \
+                "presses 1, then 1, then Enter"
+        finally:
+            browser.close()
+
+
+def test_a_question_with_no_id_does_not_stop_the_page(ws, in_pane):
+    """A `PreToolUse` with no `tool_use_id` makes an ask whose id is "",
+    which matched the empty picks the page starts with: `paintPicks` read
+    a pick list that was not there, threw, and took `drawHeader` with it --
+    no jump, no send box. No real payload without the id has been seen;
+    the page must not depend on that."""
+    daemon, base, seen = in_pane
+    ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
+                     "tool_name": "AskUserQuestion", "tool_input": ASKED,
+                     "ts": time.time()})
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking .askopt")
+            # Drawn once, and nothing pushed since: the agent is waiting.
+            assert page.locator("#jump").is_visible()
+            assert page.locator("#sendbar").is_visible()
+            blew_up = []
+            page.on("pageerror", lambda error: blew_up.append(str(error)))
+            page.click(option(1, 2))
+            page.wait_for_timeout(300)      # proving nothing threw
+            assert not blew_up, blew_up
+            assert page.locator(option(1, 2)).evaluate(
+                "one => one.classList.contains('chosen')")
+        finally:
+            browser.close()
+
+
 def test_a_session_with_no_question_shows_no_bar(ws, in_pane):
     """It is not the header bar that was taken away. It stands for one thing
     only, and it costs nothing the rest of the time."""
@@ -1039,6 +1156,51 @@ def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
             browser.close()
 
 
+def test_the_send_box_is_away_while_a_permission_dialog_is_up(ws, in_pane):
+    """The dialog's cursor starts on "1. Yes", so the Enter after a message
+    approves, and a message that starts with a digit picks that option. The
+    box goes, the dialog's bar says why where it stood, and it comes back
+    when the dialog closes."""
+    daemon, base, seen = in_pane
+    now_permission(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .permfield")
+            assert page.locator("#sendbar").is_hidden()
+            assert "send box is back when this dialog closes" in \
+                page.locator("#asking .askone").inner_text()
+            # A Yes in the terminal: the call runs and reports back.
+            ws.append_event(conftest.event(
+                "PostToolUse", tool_name="Bash", tool_use_id="toolu_b1",
+                tool_input={"command": BUILD}, pane="%7",
+                cwd=daemon.store.sessions["s1"].cwd, ts=time.time()))
+            daemon.tick()
+            page.wait_for_selector("#sendbar:not([hidden])", timeout=15000)
+        finally:
+            browser.close()
+
+
+def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
+    """The review goes through `send` too, and ends in the same Enter. Its
+    button is off while the dialog is up, and says why where it stands."""
+    daemon, base, seen = in_pane
+    now_permission(ws, daemon)
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            show_tab(page, "diff")
+            page.evaluate("""([one]) => { state.review.comments.push(one);
+              keepReview(); }""",
+              [{"anchor": "code.py\n1", "quoted": "x", "note": "later"}])
+            page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
+            assert page.locator("#sendreview").is_disabled()
+            assert "permission dialog" in page.get_attribute(
+                "#sendreview", "title")
+        finally:
+            browser.close()
+
+
 def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
     """Ctrl+Enter presses the box's own button: the send box left it out on
     purpose and sent nothing, and the reason for a No had only its button.
@@ -1046,13 +1208,10 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
     it was 26 px beside a box of 32, bottoms aligned, and the tops read as a
     mistake."""
     daemon, base, seen = in_pane
-    # A dialog whose call the page can name, or it offers no reason. Before
-    # the page opens: `now_permission` folds the events itself, so no tick
-    # after it has anything new to push.
+    # A dialog whose call the page can name, or it offers no reason.
     path = daemon.store.sessions["s1"].transcript_path
     with open(path, "a") as handle:
         handle.write(conftest.records(conftest.record("tool", BUILD, tool_id="toolu_b1")))
-    now_permission(ws, daemon)
     level = """(sel) => { const box = document.querySelector(sel);
       const a = box.getBoundingClientRect();
       const b = box.nextElementSibling.getBoundingClientRect();
@@ -1074,6 +1233,11 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
             page.keyboard.press("Control+Enter")
             assert pressed(lambda one: "hello there" in one), seen
 
+            # The dialog after the send: while it is up there is no send
+            # box. `now_permission` folds the events itself, so no tick
+            # after it has anything new to push; this pushes the rows.
+            now_permission(ws, daemon)
+            daemon.hub.send("sessions", daemon.sessions_payload())
             page.wait_for_selector("#asking:not([hidden]) .permwhy")
             assert max(page.evaluate(level, "#asking .permwhy")) < 1
             page.fill("#asking .permwhy", "no thanks")

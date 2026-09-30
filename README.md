@@ -69,7 +69,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 - **You can say No to a permission request.** The page shows the whole
   request: every field, not a clipped line. Press **no**, and add what the
   agent should do instead if you want to. It never offers **yes**: approving
-  stays in the terminal, one click away.
+  stays in the terminal, one click away. While the dialog is up, the send
+  box is gone, because its Enter would say yes.
 - **You review its work like a pull request.** Click the `+` beside a line in
   the diff or in a file, and write what you want changed. The comments collect
   into one review. You read the whole message, then send it to the agent in

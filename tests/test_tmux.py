@@ -162,6 +162,93 @@ def test_a_line_of_only_control_characters_is_not_sent(ws):
     assert said == []
 
 
+@pytest.mark.parametrize("text, sent", [
+    ("use foo();", "use foo()\\;"),
+    (";", "\\;"),
+    (";;", ";\\;"),
+    ("path\\;", "path\\\\;"),
+    ("a;b", "a;b"),
+])
+def test_a_semicolon_at_the_end_is_sent_as_tmux_reads_it(ws, asked, text, sent):
+    """tmux reads an argument that ends in `;` as the end of a command, even
+    after `-l --`: "use foo();" arrived as "use foo()". The last `;` goes as
+    `\\;`, which tmux turns back into one `;`. On a real tmux, where there
+    is one, `test_what_arrives_is_what_was_written` holds the same."""
+    assert ws.tmux_send("%7", text, runner=asked) is True
+    assert asked.seen[0] == ["tmux", "send-keys", "-t", "%7", "-l", "--", sent]
+
+
+def test_a_lone_surrogate_never_reaches_a_terminal(ws, asked):
+    """JSON can carry one, and `subprocess` hands it to tmux with
+    `surrogateescape`: U+DCC2 U+DC9B left as the bytes c2 9b, which is CSI.
+    A high one made the encode fail, and the whole send with it."""
+    text = "x" + chr(0xDC9B) + "31m" + chr(0xDCC2) + chr(0xDC9B) + "y" + chr(0xD800)
+    assert ws.tmux_send("%7", text, runner=asked) is True
+    assert asked.seen[0][-1] == "x31my"
+    assert ws.tmux_send("%7", chr(0xDC9B) + chr(0xD800), runner=asked) is False
+
+
+@pytest.fixture
+def real_pane(ws, tmp_path, monkeypatch):
+    """A pane of a tmux server of this test's own, running a raw `cat` into a
+    file, so a test reads the bytes that arrived. Skipped with no tmux."""
+    import os
+    import shutil
+    import subprocess
+    import time
+
+    if shutil.which("tmux") is None:
+        pytest.skip("tmux is not installed")
+    name = f"wostuast-test-{os.getpid()}-{time.monotonic_ns()}"
+    out, ready = tmp_path / "arrived", tmp_path / "ready"
+
+    def tmux(*args):
+        return subprocess.run(["tmux", "-L", name, *args], capture_output=True,
+                               text=True, timeout=10, check=True).stdout.strip()
+
+    # Raw, or the terminal turns the Enter into a newline on its way to
+    # `cat`; and a key sent before `stty` has run is read the cooked way.
+    tmux("-f", "/dev/null", "new-session", "-d",
+         f"stty raw -echo && : > '{ready}' && exec cat > '{out}'")
+    try:
+        # `TMUX` names the server a plain `tmux` talks to, so `tmux_send`
+        # reaches this one and never the reader's own.
+        monkeypatch.setenv("TMUX", tmux("display-message", "-p",
+                                         "#{socket_path}") + ",0,0")
+        pane = tmux("display-message", "-p", "#{pane_id}")
+        deadline = time.monotonic() + 10
+        while not ready.exists():
+            assert time.monotonic() < deadline, "the pane never went raw"
+            time.sleep(0.02)
+
+        def arrived(count):
+            deadline = time.monotonic() + 10
+            while out.read_bytes().count(b"\r") < count:
+                assert time.monotonic() < deadline, out.read_bytes()
+                time.sleep(0.02)
+            return out.read_bytes()
+
+        yield pane, arrived
+    finally:
+        subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True,
+                       timeout=10)
+
+
+def test_what_arrives_is_what_was_written(ws, real_pane):
+    """Measured on tmux 3.4 with the bytes read out of a pane: every text
+    that ends in `;` lost it, "path\\;" arrived as "path;", and a pair of lone
+    surrogates arrived as c2 9b, CSI. What arrives is what was written, or
+    what was written without its controls, and nothing else."""
+    pane, arrived = real_pane
+    texts = ["use foo();", ";", ";;", "a ;", "path\\;", "a\\\\;", "a;b"]
+    for text in texts:
+        assert ws.tmux_send(pane, text)
+    bad = "x" + chr(0xDC9B) + "31m" + chr(0xDCC2) + chr(0xDC9B) + "y"
+    assert ws.tmux_send(pane, bad)
+    wanted = [one.encode() for one in texts] + [b"x31my"]
+    assert arrived(len(wanted)).split(b"\r")[:-1] == wanted
+
+
 # --- interrupt ----------------------------------------------------------------
 
 
