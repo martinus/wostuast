@@ -310,6 +310,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   on screen between two spacers; a redraw costs 5 ms. **Below that length
   nothing changes**, so an ordinary file keeps the browser's own find and a
   copy of the whole thing, and the page says which of the two you got.
+  - **A long file of long lines is drawn whole and not painted.** A
+    minified bundle of 500 KB is one line, so `CODE_WHOLE` let it through,
+    and highlight.js held the page for 1.2 s on one machine and 4 s on
+    another, on every save of a watch build: sidebar, alerts and stream
+    all stopped. The cost follows the highlighted answer, and code on long
+    lines is dense: 90 KB of a bundle cost about as much as 290 KB of
+    hand-written code in 5,000 lines. So `tooDenseToPaint` refuses a text over
+    `PAINT_MAX` characters that has a line over `LONG_LINE`. **Not a cap on
+    the characters alone**: 10 of 25 ordinary source files of 2,000 to
+    5,000 lines in the standard library are over 100 KB, and they would
+    have lost their colour -- the scar `CODE_WHOLE` carries from 2,000.
+    `paintedLines` asks, so the Files tab, a diff and a slice all keep to
+    it, and `drawFiles` says so in the note a windowed file shows.
+    `test_a_bundle_on_one_line_is_not_coloured_and_says_so`.
 - **On the Files tab the pane scrolls sideways, not the rows.** A scroller on
   `.dlines` put the horizontal bar under the last line of the file, where in a
   file of any length nobody ever scrolls to. The pane scrolls both ways, so the

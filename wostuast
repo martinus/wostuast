@@ -983,9 +983,17 @@ def path_label(cwd: str, repo: str = "") -> str:
 #: row whole. Each pattern keeps the part that says what was there (group
 #: 1) and hides the rest. It catches the shapes it knows, and no more: a
 #: secret in a shape not listed here still shows.
+#:
+#: **A star before a part that can fail tries every length it can take.**
+#: `[\w.-]*token[\w.-]*=` tried every split of a long word: 1,600
+#: characters of `a.token.` took a second, 8,000 two minutes, on the one
+#: thread that folds every event, and again on every start, because the log
+#: is never thrown away. A scheme's `[a-z0-9+.-]*` before `://` took 1.3 s
+#: over 20 KB of `a.`. So those stars have a bound, and `clip_hidden` gives
+#: these patterns only the part of a text a summary can show.
 SECRET_SHAPES = [
     # A user, and a password, in a URL: `https://me:token@host`.
-    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@\"']+@"), r"\1***@"),
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^/\s@\"']+@"), r"\1***@"),
     # curl's and wget's user: only with a colon in it, so `sort -u file` and
     # `git add -u` are left as they are.
     (re.compile(r"(\s(?:-u|--user|--proxy-user)(?:\s+|=)[\"']?)[^\s\"':]+:[^\s\"']+"),
@@ -996,8 +1004,8 @@ SECRET_SHAPES = [
     # Not `token` as a word: `grep -rn token include/` is a search.
     (re.compile(r"(?i)\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1\2***"),
     # `TOKEN=…`, `?api_key=…`, `--password=…`: a name that says secret.
-    (re.compile(r"(?i)\b([\w.-]*(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|"
-                r"access[_-]?key|auth)[\w.-]*\s*=\s*)(\"[^\"]*\"|'[^']*'|[^\s&\"']+)"),
+    (re.compile(r"(?i)\b([\w.-]{0,64}(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|"
+                r"access[_-]?key|auth)[\w.-]{0,64}\s*=\s*)(\"[^\"]*\"|'[^']*'|[^\s&\"']+)"),
      r"\1***"),
     (re.compile(r"(?i)(--?(?:password|passwd|token|secret|api-?key)\s+)(\S+)"), r"\1***"),
     # Tokens that say what they are by their shape alone.
@@ -1012,6 +1020,33 @@ def hide_secrets(text: str) -> str:
     for shape, keep in SECRET_SHAPES:
         text = shape.sub(keep, text)
     return text
+
+
+#: How far past the cut a summary still looks for a secret, in the
+#: characters `clip` keeps. A URL's `@` or a name's `=` can stand after the
+#: cut, and the part before it on the row; a JSON Web Token as a URL's
+#: password is several hundred characters.
+SECRET_REACH = 1000
+
+
+def clip_hidden(text: str, width: int) -> str:
+    """`clip`, with the secrets hidden first, in only what it can show.
+
+    Hidden before the cut: a secret cut in half no longer looks like one,
+    and its first half would stand on the row. But only in the first
+    `width` + `SECRET_REACH` characters `clip` would keep: the patterns
+    cost time in the length of the text, a command can be a heredoc of a
+    megabyte, and nothing after that can reach the row. A text shorter
+    than that is hidden whole, exactly as before.
+    """
+    limit = width + SECRET_REACH
+    kept = 0
+    for word in re.finditer(r"\S+", text):
+        if kept + word.end() - word.start() >= limit:
+            text = text[: word.start() + limit - kept]
+            break
+        kept += word.end() - word.start() + 1       # and the one space
+    return clip(hide_secrets(text), width)
 
 
 def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
@@ -1032,9 +1067,7 @@ def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
             data.get("file_path") or data.get("notebook_path") or data.get("path")
         )
     if tool_name == "Bash":
-        # Hidden before the cut: a secret cut in half no longer looks like
-        # one, and its first half would stand on the row.
-        return clip(hide_secrets(str(data.get("command") or "")), 60)
+        return clip_hidden(str(data.get("command") or ""), 60)
     if tool_name in ("Grep", "Glob"):
         return clip(str(data.get("pattern") or ""), 60)
     if tool_name == "Task":
@@ -1052,7 +1085,7 @@ def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
         return clip(", ".join(one for one in heads if one), 60)
     if not data:
         return ""
-    return clip(hide_secrets(json.dumps(data, ensure_ascii=False, default=str)), 80)
+    return clip_hidden(json.dumps(data, ensure_ascii=False, default=str), 80)
 
 
 #: The most of one question, and of one ask, that is kept. A question is
@@ -2954,6 +2987,11 @@ def parse_status_branch(header: str) -> tuple[str, int, int]:
     return branch.strip(), ahead, behind
 
 
+#: The most of a remote's URL the row's hover shows. Longer is not a URL
+#: anybody reads, and the secret patterns cost time in its length.
+REMOTE_SHOWN = 500
+
+
 def remote_url(git_dir: str) -> str:
     """Where the repository is fetched from, read from its config file.
 
@@ -2973,9 +3011,11 @@ def remote_url(git_dir: str) -> str:
     itself when a value holds `#` or `;`. With the quotes left on,
     `urlsplit` found no scheme, took nothing out, and the token went to the
     page. So the result goes through `hide_secrets` as well, a second guard
-    for a shape the first one did not see. A key with no `=` (`fsmonitor`
-    under `[core]`) is git's "true"; without `allow_no_value` it was a
-    parse error, and one such line hid the remote.
+    for a shape the first one did not see -- through `clip_hidden`, so a
+    remote of a megabyte, which an agent can write, costs the tick thread
+    no more than one of a line. A key with no `=` (`fsmonitor` under
+    `[core]`) is git's "true"; without `allow_no_value` it was a parse
+    error, and one such line hid the remote.
     """
     import configparser
     import urllib.parse
@@ -3005,7 +3045,7 @@ def remote_url(git_dir: str) -> str:
             return ""
         host = parts.netloc.rpartition("@")[2]
         url = urllib.parse.urlunsplit(parts._replace(netloc=host))
-    return hide_secrets(url)
+    return clip_hidden(url, REMOTE_SHOWN)
 
 
 def config_value(raw: str) -> str:
@@ -3731,13 +3771,19 @@ class Files:
         if not root:
             return Listing(tree=Worktree(failed=not git_answers(runner)))
         gate = self.gate(root)
-        with gate:
+        # What is held is asked for under the short lock, never the gate:
+        # the gate is held for the whole of a re-read behind, up to four git
+        # calls at `LIST_TIMEOUT`, and the poll after the one that started it
+        # waited 4.4 s for a listing it already had.
+        with self.lock:
             held = self.held.get(root)
-            if held is None:
-                return self.read(root, runner)   # nothing to show; this waits
-            if time.time() - held.read_at <= LIST_FRESH:
-                return held
-        self.behind(root, runner, gate)          # something to show already
+        if held is None:
+            with gate:                           # nothing to show; this waits
+                held = self.held.get(root)       # unless a reader got it first
+                if held is None:
+                    return self.read(root, runner)
+        if time.time() - held.read_at > LIST_FRESH:
+            self.behind(root, runner, gate)      # something to show already
         return held
 
     def read(self, root: str, runner: Callable[..., str | None]) -> Listing:
@@ -11204,6 +11250,7 @@ async function paintLines(box, path, text, sniffed) {
 // The Files tab paints a whole file through here, the Diff tab one side of
 // one hunk.
 function paintedLines(lib, language, text, want) {
+  if (tooDenseToPaint(text)) return null;
   let lines;
   try {
     const done = lib.highlight(text, { language, ignoreIllegals: true });
@@ -12456,6 +12503,34 @@ function countNote(note, many) {
 // much is the page's own business, and a test can say so without having to
 // build a file of five thousand lines to ask the question.
 let CODE_WHOLE = 5000;
+
+// A file of few lines can still be too much to colour: a minified bundle of
+// 500 KB is one line, so CODE_WHOLE lets it through, and highlight.js took
+// 1.2 to 4 s over it on the main thread -- the sidebar, the alerts and the
+// stream all stopped -- again on each save of a watch build. What colouring
+// costs follows the size of the highlighted answer, and code on long lines
+// is dense: 90 KB of a bundle cost about as much as 290 KB of hand-written
+// code in 5,000 lines. So a text over PAINT_MAX characters is not coloured
+// when a line in it is longer than LONG_LINE -- and a hand-written file,
+// whose lines are short, keeps its colour up to CODE_WHOLE lines, as before.
+// A plain cap on the characters would have taken the colour from 10 of 25
+// ordinary source files of 2,000 to 5,000 lines, measured in the standard
+// library: the scar CODE_WHOLE already carries. `paintedLines` asks, so the
+// Files tab, a diff and a slice all keep to it.
+let PAINT_MAX = 100000;
+const LONG_LINE = 1000;
+
+function tooDenseToPaint(text) {
+  if (text.length <= PAINT_MAX) return false;
+  for (let from = 0; from < text.length;) {
+    let end = text.indexOf("\n", from);
+    if (end < 0) end = text.length;
+    if (end - from > LONG_LINE) return true;
+    from = end + 1;
+  }
+  return false;
+}
+
 const CODE_H = 21;          // one row, exactly. `.dlines` sets the same number
 const CODE_SHOWN = 160;     // a tall screenful, and some either side
 
@@ -12650,6 +12725,7 @@ function drawFiles(box) {
   const body = asCode ? state.files.text.replace(/\n$/, "") : "";
   const rows = asCode ? linesOf(body) : null;
   const windowed = !!rows && rows.length > CODE_WHOLE;
+  const plain = !!rows && !windowed && tooDenseToPaint(body);
   const where = putWhere(pane, state.files.path);
   putAbout(where, windowed);
   if (isDoc) putAsText(where);          // last, so it stands at the right end
@@ -12693,6 +12769,12 @@ function drawFiles(box) {
       put(view, "div", "note", rows.length + " lines — too many to draw at"
           + " once. Only the ones on screen are here, so this file has no"
           + " colour and your browser's own find will not see the rest.");
+    }
+    if (plain) {
+      put(view, "div", "note", "Lines of more than "
+          + LONG_LINE.toLocaleString("en") + " characters are too slow to"
+          + " colour. Colouring them would stop this page each time the file"
+          + " changes, so this file has no colour.");
     }
     const code = put(view, "div", "code" + (windowed ? " windowed" : ""));
     code.dataset.path = state.files.path;
