@@ -102,6 +102,88 @@ def test_a_worktree_with_no_default_branch_says_why_there_is_one_half(ws, repo,
             browser.close()
 
 
+def test_a_branch_with_no_commit_in_common_says_so_and_not_that_git_failed(
+        ws, repo, served):
+    """An orphan branch, or a shallow clone cut above where the branch
+    began: `git diff main...HEAD` has no merge base. The tab said "git did
+    not answer" under an empty committed half on every poll, for ever."""
+    git = conftest.git_in
+    git(repo, "checkout", "-q", "--orphan", "pages")
+    git(repo, "commit", "-qm", "pages")
+    (repo / "README.md").write_text("# readme\n\nhello\n\nand more\n")
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(repo), pane="%7",
+                                   pid=1, ts=time.time()))
+    daemon.store.refresh()
+    with sync_playwright() as play:
+        browser, page = open_page(play, base + "/")
+        try:
+            show_tab(page, "diff")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.diffbody .note')]
+                     .some((one) => one.textContent
+                       .includes('no commit in common with main'))""")
+            notes = page.eval_on_selector_all(
+                ".diffbody .note", "els => els.map(e => e.textContent)")
+            assert not any("did not answer" in one for one in notes), notes
+            heads = page.eval_on_selector_all(
+                ".diffhead", "els => els.map(e => e.firstChild.textContent)")
+            assert heads == ["not committed yet"], heads
+            # With nothing waiting either, it is not "nothing has changed
+            # against main": nothing was compared with main. Drawn and read
+            # in one call, so a poll cannot land between the two.
+            empty = page.evaluate("""() => {
+              state.diff = {sections: [], untracked: [], base: 'main',
+                            unrelated: true};
+              state.diffAt += 1;
+              draw();
+              const one = document.querySelector('.diffbody .empty');
+              return one && one.textContent;
+            }""")
+            assert empty == "Nothing is waiting to be committed.", empty
+        finally:
+            browser.close()
+
+
+def test_a_new_or_deleted_file_with_no_lines_says_what_happened(repo_page):
+    """git writes no `---`/`+++` for an empty or a binary file, so a new one
+    and a deleted one read as "modified", and a new empty file as
+    "modified -- The content did not change." """
+    root, _ = repo_page
+    git = conftest.git_in
+    (root / "logo.bin").write_bytes(b"\x89PNG\0old")
+    git(root, "add", "logo.bin")
+    git(root, "commit", "-qm", "a logo")
+    git(root, "rm", "-q", "logo.bin")
+    (root / "EMPTY").write_text("")
+    (root / "icon.bin").write_bytes(b"\x89PNG\0new")
+    git(root, "add", "EMPTY", "icon.bin")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(
+                ".diffhead.uncommitted ~ .dfile:has(.path:text-is('EMPTY'))")
+            said = page.evaluate("""() => Object.fromEntries(
+              [...document.querySelectorAll('.diffhead.uncommitted ~ .dfile')]
+                .map((one) => [one.querySelector('.path').textContent,
+                               [one.querySelector('.what').textContent,
+                                one.querySelector('.dbody .note')
+                                  ?.textContent || '']]))""")
+            assert said["EMPTY"] == ["added", "A new, empty file."], said
+            assert said["icon.bin"][0] == "added", said
+            assert said["logo.bin"][0] == "deleted", said
+            # The list's icons carry the same word, as a class.
+            rows = page.eval_on_selector_all(
+                ".filelist.diff button[data-key^='uncommitted']",
+                "els => els.map(e => [e.dataset.key.split('\\n')[1],"
+                " e.classList.contains('added'), e.classList.contains('deleted')])")
+            assert ["EMPTY", True, False] in rows, rows
+            assert ["logo.bin", False, True] in rows, rows
+        finally:
+            browser.close()
+
+
 def test_the_diff_colours_what_changed(repo_page):
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)

@@ -56,6 +56,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   change has no `---`/`+++` to put the name right, and the last ` b/` in
   `a/Plan b/logo.png b/Plan b/logo.png` made it a rename to `logo.png`.
   `diff_header_paths`, `test_a_folder_ending_in_b_does_not_make_a_rename`.
+  - **A file with no lines says it came or went only in its mode line.**
+    A new or deleted file that is empty or binary has no `---`/`+++`, and
+    `diff --git` names it twice, so `name_change` called it modified: a
+    new empty file read "modified -- The content did not change." and a
+    new logo "modified". `parse_diff` reads `new file mode` and `deleted
+    file mode` for that, and `drawDiffFile` says "A new, empty file." or
+    "The file was empty.". "did not change" is left for a mode change.
+    `test_a_new_or_deleted_file_with_no_lines_is_added_or_deleted`,
+    `test_a_new_or_deleted_file_with_no_lines_says_what_happened`.
 - **A cut goes back to the last newline, and the cap counts bytes.** A cut
   inside a `diff --git` line parsed as a file that does not exist, reported as
   a rename. `run` returns text, so a cap on `len()` counts code points and let
@@ -163,6 +172,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_listing_git_failed_on_keeps_the_open_file`,
   `test_a_file_read_git_failed_on_is_not_drawn_as_its_text`; `reload_git` puts a failed directory back on the
   list rather than over what it already knew.
+  - **`pick_base` keeps a count only when git gave one.** A timed-out
+    `%(ahead-behind)` was kept in `Daemon.ranks` as None, so the fallback
+    base -- `main`, for a branch cut from `release` -- stood until HEAD or
+    a ref moved, with a git that could count on every poll after. And the
+    request threads share `ranks`: `key in ranks` and then `ranks[key]`
+    raised KeyError, and answered 500, when another thread cleared it
+    between the two. One `ranks.get(key)` has no gap.
+    `test_a_ranking_git_failed_on_is_not_kept`,
+    `test_a_ranking_cleared_by_another_thread_is_not_an_error`.
 - **`run` gives None for "the command failed" and for "it could not run".**
   Outside a repository git *fails*, so an empty answer is not by itself a
   failure. Two ways to tell them apart: another call that already worked on
@@ -194,6 +212,22 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   only when the log failed, and the uncommitted half is then measured
   against `empty_tree`, in `whole_file_diff` too.
   `test_a_repository_with_no_commit_yet_shows_what_is_staged`.
+  - **So is a branch with no commit in common with its base.** An orphan
+    branch (`gh-pages`), and a shallow clone whose history stops before
+    the branch began: `git diff base...HEAD` fails with "no merge base",
+    and the tab said git did not answer, on every poll, for ever. When the
+    three dots fail, `no_common_commit` asks `git merge-base`, which exits
+    1 for "none" and 128 for a failure. `run` gives None for both, so it
+    is told that 1 is an answer: `ok=(0, 1)`. **Never widen `run`'s
+    default**: every other caller reads a non-zero status as a failure.
+    The committed half is then left out, `DiffReport.unrelated` is set,
+    and the page says why in a note, as it does with no base. The
+    branch's commits (`base..HEAD`) are all the commits the clone holds,
+    so each one can still be picked. A commit at a shallow clone's edge
+    has no parent in the clone, and is shown against the empty tree, as
+    `git show` shows it.
+    `test_a_branch_with_no_commit_in_common_is_not_a_failure`,
+    `test_a_branch_with_no_commit_in_common_says_so_and_not_that_git_failed`.
 - **The Diff tab says what each half is a diff of, in words.** The headings
   were `origin/main...HEAD` and "not committed yet" — precise, and readable
   only if you already know what three dots mean, so nobody could tell whether
