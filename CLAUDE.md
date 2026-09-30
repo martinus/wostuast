@@ -1328,9 +1328,13 @@ update the comment with its own text, and read it back.
     alerts, the tab width, long lines and the diff's columns. It was a
     bell, a colours button, a menu on the Review bar and two links over
     every file, and the reader chose one menu from pictures. **The colours
-    buttons wear the colours they give** (`--swatch-*`, the two themes' own
-    values in the first `:root`, kept in step with `--bg` and `--ink` by
-    hand), so they read the same in either theme. **Alerts off is a mark on
+    buttons wear the colours they give** (`--light-bg`, `--dark-ink` and
+    the rest, in the first `:root`, which the theme blocks read for `--bg`
+    and `--ink`), so they read the same in either theme. **Each label
+    stands on the first line of what it names**: the grid lines up
+    baselines, because a padding that lined a label up with a button left
+    "alerts" 5 px under the first checkbox.
+    `test_every_settings_label_stands_level_with_what_it_names`. **Alerts off is a mark on
     the button** (`.offmark`, `data-alerts`, set by `drawBell`): off was
     the one thing the bell said at a glance. A choice changes the page in
     place: the colours and reading are on the root, the columns go through

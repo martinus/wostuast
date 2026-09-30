@@ -305,3 +305,32 @@ def test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list(page_at):
             assert out["settings"] and out["words"] == ""
         finally:
             browser.close()
+
+
+def test_every_settings_label_stands_level_with_what_it_names(page_at):
+    """A label is read along the line it stands on. With a padding to line
+    it up with a button, "alerts" stood 5 px under its first checkbox, and
+    the reader saw it. Measured from the text, not the boxes: a checkbox
+    row and a button row are not the same height."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.click("#settings")
+            page.wait_for_selector("#setpop:not([hidden]) .setlabel")
+            gaps = page.evaluate("""() => {
+              const mid = (node) => {
+                const walk = document.createTreeWalker(node, NodeFilter.SHOW_TEXT,
+                  { acceptNode: (t) => t.data.trim() ? 1 : 3 });
+                const range = document.createRange();
+                range.selectNodeContents(walk.nextNode());
+                const box = range.getClientRects()[0];
+                return box.top + box.height / 2;
+              };
+              return [...document.querySelectorAll("#setpop .setlabel")].map(
+                (label) => [label.textContent.trim(),
+                            mid(label.nextElementSibling) - mid(label)]);
+            }""")
+            assert len(gaps) == 5, gaps
+            assert all(abs(gap) <= 1 for _, gap in gaps), gaps
+        finally:
+            browser.close()
