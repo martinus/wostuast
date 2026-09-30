@@ -5324,13 +5324,18 @@ def inside(root: Path | str, path: Path | str) -> Path | None:
     flattens every `..`, so one comparison answers a question that a pattern
     over the raw text can only guess at. Both callers share it so it cannot drift.
     """
-    # A link loop (`a -> b`, `b -> a`, both tracked) raises RuntimeError
-    # before Python 3.13, and OSError after. It is not inside anything: the
-    # read answered 500 before.
+    # A link loop (`a -> b`, `b -> a`, both tracked) is not inside anything:
+    # the read answered 500 before. `resolve` raises RuntimeError on one up
+    # to Python 3.12. On 3.13 it raises nothing and hands back the path as
+    # far as it got, which is still a link -- and a path resolved to its end
+    # never is one. So both are asked, and CI's 3.13 job showed why.
     try:
         top = Path(root).resolve()
         target = Path(path).resolve()
+        looped = target.is_symlink()
     except (OSError, RuntimeError):
+        return None
+    if looped:
         return None
     return target if target.is_relative_to(top) else None
 

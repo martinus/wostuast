@@ -457,8 +457,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   that tries to spot a bad path. **Both readers go through it**, so a new one
   cannot be given one check and not the other. **A link loop is not inside
   anything, and not an error**: `Path.resolve` raises RuntimeError on one
-  before Python 3.13 and OSError after, and `inside` caught only OSError,
-  so a tracked `a -> b`, `b -> a` answered 500. It catches both.
+  up to Python 3.12, and `inside` caught only OSError, so a tracked
+  `a -> b`, `b -> a` answered 500. It catches both. **On 3.13 `resolve`
+  raises nothing**: it hands back the path as far as it got, which is still
+  a link and is inside the root, so the catch alone passed on 3.12 and was
+  red on CI's 3.13 job. A path resolved to its end is never a link, so
+  `inside` also asks `is_symlink()` of what `resolve` gave.
   `test_a_link_loop_is_not_inside_and_is_not_an_error`.
   - **And nothing inside a `.git` is read, though it is in the worktree.**
     git lists a tracked link, `notes.md -> ../.git/config`, and never what
