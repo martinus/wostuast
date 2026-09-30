@@ -1281,20 +1281,22 @@ update the comment with its own text, and read it back.
     needs you" -- leaving you to look for whom -- and "wostuast" alone over
     four agents sitting ready. The names are `rowName`'s, so the tab and the
     list agree.
-  - **The icon is a terminal that is a robot's head** (`paintIcon`): the
-    reader chose it from pictures of eight. It was a dot in the state's
-    colour, and "ready" was the blue of the Jira and Bitbucket tabs beside
-    it; a dot said nothing about what the tab was. The status line is the
-    state -- grey when nothing waits, because "ready" is not news, green,
-    amber -- and the eyes and the mouth are cut out, so either bar shows
-    through them.
+  - **The icon is a robot, and the whole of it is the state**
+    (`paintIcon`): the bar's own ink when nothing waits, because "ready" is
+    not news, green, amber. The reader chose it from pictures. It was a dot
+    in the state's colour, and "ready" was the blue of the Jira and
+    Bitbucket tabs beside it; a dot said nothing about what the tab was.
+    Then a robot over a status line in the state's colour, and the line was
+    too thin to see in a tab bar. One eye is big and one small, for a look
+    that doubts a little, over a wide, quiet smile -- all cut out, so either
+    bar shows through them.
   - **It follows the browser's light or dark, never the page's theme**
     (`tabBarIsDark`, the `--tab-*` colours, which no theme block sets). It
     stands in the browser's tab bar: painted from the page's palette, a page
     set to light in a dark browser put a dark robot on a dark bar. The
     media query's `change` redraws it, whatever the page's theme is.
   `test_the_tab_title_names_who_needs_you`,
-  `test_the_tab_icon_is_a_robot_whose_status_line_is_the_state`,
+  `test_the_tab_icon_is_a_robot_in_the_states_colour`,
   `test_the_tab_icon_says_the_state_in_the_bar_it_stands_in`,
   `test_the_tab_icon_follows_the_browser_and_not_the_page`.
 - **There is no bar across the top.** The name and the version head the
