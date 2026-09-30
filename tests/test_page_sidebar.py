@@ -146,8 +146,10 @@ def test_a_hidden_session_still_counts(pair_at, ws):
             daemon.tick()
             page.wait_for_function("document.title.includes(' asks ')")
             assert page.locator(".row").count() == 1, "the filter stopped working"
+            # The row's name, cut as the title cuts it: this one is a long
+            # temporary path.
             name = page.evaluate(
-                "rowName(state.sessions.find((one) => one.id === 's1'))")
+                "clip(rowName(state.sessions.find((one) => one.id === 's1')), 30)")
             assert page.title() == name + " asks \u00b7 wostuast"
         finally:
             browser.close()
