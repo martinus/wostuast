@@ -344,37 +344,42 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
             browser.close()
 
 
-TAB_ICON_PIXELS = """([colour, ink]) => {
+TAB_ICON_PIXELS = """(colour) => {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 32;
   const pen = canvas.getContext('2d');
-  paintIcon(pen, colour, ink);
+  paintIcon(pen, colour);
   const at = (x, y) => [...pen.getImageData(x, y, 1, 1).data];
-  return {status: at(16, 28), body: at(3, 12), antenna: at(16, 2),
-          eye: at(9, 13), mouth: at(16, 19), outside: at(2, 2)};
+  return {body: at(3, 12), chin: at(16, 29.5), antenna: at(16, 2),
+          big: at(13.5, 16.5), small: at(23, 17.5), beside: at(26.5, 17.5),
+          mouth: at(16, 26), corner: at(9, 24.5), outside: at(2, 2)};
 }"""
 
 
-def test_the_tab_icon_is_a_robot_whose_status_line_is_the_state(page_at):
+def test_the_tab_icon_is_a_robot_in_the_states_colour(page_at):
     """The icon was a dot in the state's colour, and "ready" was the blue of
-    the Jira and Bitbucket tabs beside it. It is a terminal that is a
-    robot's head: an antenna, two eyes and a mouth cut out of it, so the
-    tab bar shows through them, and a status line in the state's colour."""
+    the Jira and Bitbucket tabs beside it; then a robot over a status line
+    in the state's colour, which was too thin to see in a tab bar. The
+    whole robot is the colour now. One eye is big and one small, and a wide
+    smile: all three cut out, so the tab bar shows through them."""
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:
-            seen = page.evaluate(TAB_ICON_PIXELS, ["#e0a642", "#3c4043"])
-            assert seen["status"] == [0xe0, 0xa6, 0x42, 255], seen
-            assert seen["body"] == [0x3c, 0x40, 0x43, 255], seen
-            assert seen["antenna"][:3] == [0x3c, 0x40, 0x43], seen
-            assert seen["eye"][3] == 0 and seen["mouth"][3] == 0, seen
+            seen = page.evaluate(TAB_ICON_PIXELS, "#e37400")
+            amber = [0xe3, 0x74, 0x00, 255]
+            assert seen["body"] == amber and seen["chin"] == amber, seen
+            assert seen["antenna"] == amber, seen
+            # The big eye reaches where the small one's side does not.
+            assert seen["big"][3] == 0 and seen["small"][3] == 0, seen
+            assert seen["beside"] == amber, seen
+            assert seen["mouth"][3] == 0 and seen["corner"][3] == 0, seen
             assert seen["outside"][3] == 0, seen
         finally:
             browser.close()
 
 
 def favicon_pixels(page):
-    """The status line and the body of the icon the tab has now."""
+    """The colour of the icon the tab has now, from its body."""
     return page.evaluate("""async () => {
       const image = new Image();
       image.src = document.querySelector("link[rel='icon']").href;
@@ -384,15 +389,15 @@ def favicon_pixels(page):
       const pen = canvas.getContext('2d');
       pen.drawImage(image, 0, 0);
       const at = (x, y) => [...pen.getImageData(x, y, 1, 1).data].slice(0, 3);
-      return {status: at(16, 28), body: at(3, 12)};
+      return {body: at(3, 12)};
     }""")
 
 
 def test_the_tab_icon_says_the_state_in_the_bar_it_stands_in(ws, pair_at):
-    """Grey while nothing waits, amber when an agent needs you. The icon
-    stands in the browser's tab bar, not on the page, so its ink follows
-    the browser's light or dark -- a page forced light in a dark browser
-    drew a dark robot on a dark bar."""
+    """The bar's own ink while nothing waits, amber when an agent needs
+    you. The icon stands in the browser's tab bar, not on the page, so its
+    colours follow the browser's light or dark -- a page forced light in a
+    dark browser drew a dark robot on a dark bar."""
     daemon, path = pair_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -400,7 +405,6 @@ def test_the_tab_icon_says_the_state_in_the_bar_it_stands_in(ws, pair_at):
             page.emulate_media(color_scheme="light")
             page.evaluate("() => { applyTheme('dark'); redrawIcon(); }")
             quiet = favicon_pixels(page)
-            assert quiet["status"] != [0xe0, 0xa6, 0x42], quiet
             assert quiet["body"] == [0x3c, 0x40, 0x43], "a light bar's ink"
 
             ws.append_event(conftest.event(
@@ -408,20 +412,16 @@ def test_the_tab_icon_says_the_state_in_the_bar_it_stands_in(ws, pair_at):
                 tool_input={"command": "ls ~"}, ts=time.time()))
             daemon.tick()
             page.wait_for_function("document.title.includes(' asks ')")
-            assert favicon_pixels(page)["status"] == [0xe0, 0xa6, 0x42]
+            assert favicon_pixels(page)["body"] == [0xe3, 0x74, 0x00]
 
             page.emulate_media(color_scheme="dark")
-            page.wait_for_function("""async () => {
-              const image = new Image();
-              image.src = document.querySelector("link[rel='icon']").href;
-              await image.decode();
-              const canvas = document.createElement('canvas');
-              canvas.width = canvas.height = 32;
-              const pen = canvas.getContext('2d');
-              pen.drawImage(image, 0, 0);
-              return pen.getImageData(3, 12, 1, 1).data[0] === 0xe3;
-            }""")
-            assert favicon_pixels(page)["status"] == [0xe0, 0xa6, 0x42]
+            # A loop in Python, not `wait_for_function`: that took the
+            # promise an async check gives back as a yes, at once.
+            for _ in range(250):
+                if favicon_pixels(page)["body"] == [0xfc, 0xad, 0x4d]:
+                    break
+                page.wait_for_timeout(20)
+            assert favicon_pixels(page)["body"] == [0xfc, 0xad, 0x4d]
         finally:
             browser.close()
 

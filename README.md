@@ -48,9 +48,9 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 - **You see who needs you.** The session list is grouped by state, most urgent
   first. The browser tab tells you too, when it is in the background. Its
   title names the sessions that need you, or else says how many are working
-  or ready. Its icon is a small robot in a terminal, whose bottom line is
-  grey when nothing waits, green while an agent works, and amber when one
-  needs you. Your browser can also notify you.
+  or ready. Its icon is a small robot with one big eye and one small eye.
+  The whole robot is grey when nothing waits, green while an agent works,
+  and amber when one needs you. Your browser can also notify you.
 - **Each session is one card.** It shows the session's name and its age,
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or

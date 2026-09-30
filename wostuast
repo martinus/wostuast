@@ -6864,11 +6864,13 @@ PAGE = r"""<!doctype html>
   --needs-soft: rgba(224,166,66,.28); --working-soft: rgba(107,191,138,.18);
   /* The browser tab's icon. It stands in the browser's tab bar, not on this
      page, so it follows the browser's colours and never the page's theme:
-     no theme block below sets these. The ink is the robot, the three states
-     its status line. Grey is quiet on purpose: "ready" is not news, and
-     amber stands out best in a row of tabs that are all blue. */
-  --tab-ink-light: #3c4043; --tab-ink-dark: #e3e3e3;
-  --tab-quiet: #9aa0a6; --tab-working: #3f9e64; --tab-needs: #e0a642;
+     no theme block below sets these. The whole robot is the state, one
+     colour for a light bar and one for a dark one. Ready is the bar's own
+     ink on purpose: "ready" is not news, and amber stands out best in a row
+     of tabs that are all blue. */
+  --tab-ready-light: #3c4043; --tab-ready-dark: #e3e3e3;
+  --tab-working-light: #1e8e3e; --tab-working-dark: #5bb974;
+  --tab-needs-light: #e37400; --tab-needs-dark: #fcad4d;
   --done-soft: rgba(91,155,213,.16);
   --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
@@ -9676,30 +9678,35 @@ function clip(text, most) {
   return text.length > most ? text.slice(0, most - 1) + "\u2026" : text;
 }
 
-// The robot: a terminal with an antenna, two eyes and a cursor for a mouth,
-// over its status line in the state's colour. The eyes and the mouth are
-// cut out, so the tab shows through them in either tab bar. 32 x 32, for a
+// The robot: a head with an antenna, one big eye and one small one -- a
+// look that doubts a little -- and a wide, quiet smile. The whole of it is
+// the state's colour: a line under it in that colour was too thin to see in
+// a tab bar. The eyes and the mouth are cut out, so the tab shows through
+// them in either bar. The reader chose it from pictures. 32 x 32, for a
 // screen of twice the density; the browser draws it at 16.
-function paintIcon(pen, colour, ink) {
+function paintIcon(pen, colour) {
   const box = (x, y, w, h, r) => {
     pen.beginPath(); pen.moveTo(x + r, y); pen.arcTo(x + w, y, x + w, y + h, r);
     pen.arcTo(x + w, y + h, x, y + h, r); pen.arcTo(x, y + h, x, y, r);
     pen.arcTo(x, y, x + w, y, r); pen.closePath();
   };
+  const disc = (x, y, r) => {
+    pen.beginPath(); pen.arc(x, y, r, 0, Math.PI * 2); pen.fill();
+  };
   pen.clearRect(0, 0, 32, 32);
-  pen.fillStyle = ink;
-  box(14.8, 2.5, 2.4, 5, 1); pen.fill();
-  pen.beginPath(); pen.arc(16, 2.6, 2.4, 0, Math.PI * 2); pen.fill();
-  box(1, 7, 30, 16, 4); pen.fill();
+  pen.fillStyle = pen.strokeStyle = colour;
+  pen.lineWidth = 2.6; pen.lineCap = "round";
+  pen.beginPath(); pen.moveTo(16, 8); pen.lineTo(16, 3); pen.stroke();
+  disc(16, 3, 2.8);
+  box(0.5, 8, 31, 23, 6); pen.fill();
   pen.save();
   pen.globalCompositeOperation = "destination-out";
-  box(7, 11, 5.5, 5.5, 1.5); pen.fill();
-  box(19.5, 11, 5.5, 5.5, 1.5); pen.fill();
-  pen.lineWidth = 2.6; pen.lineCap = "round";
-  pen.beginPath(); pen.moveTo(12, 19.5); pen.lineTo(20, 19.5); pen.stroke();
+  disc(10, 16.5, 4.6);
+  disc(23, 17.5, 2.6);
+  pen.lineWidth = 2.8;
+  pen.beginPath(); pen.moveTo(9, 24.5);
+  pen.quadraticCurveTo(16, 27.7, 23, 24.5); pen.stroke();
   pen.restore();
-  pen.fillStyle = colour;
-  box(1, 25, 30, 6, 2.5); pen.fill();
 }
 
 // Which bar the icon stands in. The browser's own light or dark, which is
@@ -9727,9 +9734,9 @@ function drawIcon(state_) {
   if (!pen) return;
   const palette = getComputedStyle(document.documentElement);
   const read = (name) => palette.getPropertyValue("--tab-" + name).trim();
-  paintIcon(pen, read(state_ === "needs_you" ? "needs"
-                      : state_ === "working" ? "working" : "quiet"),
-            read(dark ? "ink-dark" : "ink-light"));
+  const shown = state_ === "needs_you" ? "needs"
+                : state_ === "working" ? "working" : "ready";
+  paintIcon(pen, read(shown + (dark ? "-dark" : "-light")));
   let link = document.querySelector("link[rel='icon']");
   if (!link) {
     link = document.createElement("link");
