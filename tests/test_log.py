@@ -173,6 +173,41 @@ def test_a_failure_is_logged_under_a_deadline_even_after_a_timeout(
     assert signal.alarm(0) == 0          # and nothing is left armed after
 
 
+@pytest.mark.parametrize("which", ["hook", "status"])
+def test_an_alarm_after_the_log_returns_escapes_nothing(ws, monkeypatch,
+                                                        capsys, which):
+    """`LOG_TIMEOUT` is armed over the logging, and it can fire after `log`
+    has returned and before `stand_down` cancels it. That was outside every
+    `try`: a traceback on stderr, and exit 1 from a hook (#235)."""
+    import signal
+
+    def broken(*args, **kwargs):
+        raise ValueError("not JSON")
+
+    monkeypatch.setattr(ws, "read_stdin_json", broken)
+    monkeypatch.setattr(ws.sys, "stdin", io.StringIO('{"session_id": "s1"}'))
+    monkeypatch.setattr(ws, "write_status", broken)
+    monkeypatch.setattr(ws, "log", lambda text: None)
+    real = ws.stand_down
+    cancels = []
+
+    def fires_first():
+        cancels.append(1)
+        real()
+        if len(cancels) == 1:            # the alarm won the race, this once
+            raise TimeoutError("gave up after 1 s")
+
+    monkeypatch.setattr(ws, "stand_down", fires_first)
+    if which == "hook":
+        assert ws.cmd_hook(None) == 0
+        assert capsys.readouterr().out == ""
+    else:
+        assert ws.cmd_status(argparse.Namespace()) == 0
+        assert capsys.readouterr().out.strip()   # a line, as ever
+    assert cancels
+    assert signal.alarm(0) == 0          # and nothing is left armed after
+
+
 def fill_until_one_rotation(ws, make_event):
     """Append events until the log rotates exactly once. Returns how many."""
     written = 0

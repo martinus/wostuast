@@ -26,6 +26,21 @@ def test_a_payload_with_odd_types_does_not_crash(ws):
     assert status.context_pct is None
 
 
+def test_a_number_that_is_not_finite_never_reaches_the_page(ws):
+    """`float` takes "nan" and "inf", and Python's JSON reader turns `NaN`
+    and `1e999` into them. `json.dumps` then writes `NaN` and `Infinity`,
+    which are not JSON: the page's `JSON.parse` threw on every sessions
+    push, and the sidebar stood still (#235). They read as no number."""
+    payload = json.loads('{"session_id": "s", "cost": {"total_cost_usd": 1e999},'
+                         ' "context_window": {"used_percentage": NaN}}')
+    for strange in ("nan", "inf", "-Infinity", float("nan"), 1e999):
+        assert ws.to_float(strange) == 0.0, strange
+    status = ws.status_from_payload(payload, now=1.0)
+    from dataclasses import asdict
+    json.dumps(asdict(status), allow_nan=False)     # what `JSON.parse` takes
+    assert ws.to_float("41.5") == 41.5
+
+
 def test_the_agent_name_is_kept(ws):
     status = ws.status_from_payload({"agent": {"name": "code-architect"}}, now=1.0)
     assert status.agent == "code-architect"

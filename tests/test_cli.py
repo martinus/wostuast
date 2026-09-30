@@ -8,6 +8,8 @@ import re
 import threading
 import time
 
+import pytest
+
 import conftest
 
 
@@ -127,6 +129,8 @@ def test_doctor_and_serve_say_when_the_installed_copy_is_another_version(
     # `serve` says it on the way up, where the reader is looking. The server
     # stops at once, the way ctrl-c stops it.
     class Stops:
+        server_address = ("127.0.0.1", 7331)
+
         def serve_forever(self):
             raise KeyboardInterrupt
 
@@ -174,6 +178,54 @@ def test_serve_says_so_when_the_port_is_taken(ws, capsys):
         assert "cannot listen" in capsys.readouterr().err
     finally:
         held.close()
+
+
+@pytest.mark.parametrize("port", ["-1", "65536", "70000", "many"])
+def test_serve_refuses_a_port_that_is_not_one_without_a_traceback(
+        ws, capsys, monkeypatch, port):
+    """A port out of range reached `bind`, whose `OverflowError` is not an
+    `OSError`, and `serve` died with a traceback (#235). argparse says what
+    is wrong, and nothing is started."""
+    started = []
+    monkeypatch.setattr(ws, "make_server",
+                        lambda daemon, port: started.append(port))
+    with pytest.raises(SystemExit) as stopped:
+        ws.main(["serve", "--port", port])
+    assert stopped.value.code == 2
+    err = capsys.readouterr().err
+    assert "--port" in err and "Traceback" not in err
+    assert started == []
+
+
+def test_serve_says_the_port_it_got_when_asked_for_any(ws, capsys,
+                                                      monkeypatch):
+    """`--port 0` asks the system for a free port, and `serve` printed
+    `http://127.0.0.1:0/` and `ssh -N -L 0:127.0.0.1:0`: two lines that
+    lead nowhere (#235). It prints the port the socket has."""
+    made = ws.make_server
+    got = []
+
+    def make(daemon, port):
+        server = made(daemon, port)
+        got.append(server.server_address[1])
+
+        def stop():
+            raise KeyboardInterrupt
+
+        # `shutdown` waits for a loop that never ran: close the socket alone.
+        server.serve_forever = stop
+        server.shutdown = lambda: None
+        return server
+
+    monkeypatch.setattr(ws, "make_server", make)
+    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
+    assert ws.main(["serve", "--port", "0"]) == 0
+    out = capsys.readouterr().out
+    port = got[0]
+    assert port != 0
+    assert f"http://127.0.0.1:{port}/" in out
+    assert f"-L {port}:127.0.0.1:{port} " in out
+    assert ":0/" not in out and " 0:" not in out
 
 
 def test_hook_and_status_skip_the_argument_parser(ws, monkeypatch):
@@ -336,6 +388,8 @@ def test_serve_says_what_is_wrong_with_the_links_file(ws, capsys, monkeypatch):
     write_links(ws, "not json at all")
 
     class Fake:
+        server_address = ("127.0.0.1", 7331)
+
         def serve_forever(self):
             raise KeyboardInterrupt
 
@@ -357,6 +411,8 @@ def test_serve_says_nothing_about_a_links_file_it_can_use(ws, capsys,
     write_links(ws, json.dumps([{"match": r"OK-(\d+)", "url": "https://t/$1"}]))
 
     class Fake:
+        server_address = ("127.0.0.1", 7331)
+
         def serve_forever(self):
             raise KeyboardInterrupt
 
@@ -446,6 +502,8 @@ def test_serve_says_how_much_history_it_read_and_how_long_it_took(
     size = sum(path.stat().st_size for path in ws.event_files())
 
     class Fake:
+        server_address = ("127.0.0.1", 7331)
+
         def serve_forever(self):
             raise KeyboardInterrupt
 

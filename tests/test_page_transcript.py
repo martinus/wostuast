@@ -1904,6 +1904,41 @@ def test_a_block_read_while_no_stream_was_open_is_fetched(page_at):
             browser.close()
 
 
+def test_a_push_the_stream_could_not_keep_is_fetched_after_it_closes(page_at):
+    """A stream too slow for its pushes lost the oldest one, and the page,
+    taking the newer ones, never asked for it again (#235). Now the daemon
+    closes that stream at the push it cannot keep, and the page's reconnect
+    opens behind the daemon and fetches the block."""
+    import queue
+
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_map(page)
+            wait_for_watching(daemon)
+            client = next(one for one in daemon.hub.clients
+                          if one.watching == "s1")
+            keep = client.queue.put_nowait
+            refused = []
+
+            def full_once(message):
+                if not refused:            # the queue is full, this once
+                    refused.append(message)
+                    raise queue.Full
+                keep(message)
+
+            client.queue.put_nowait = full_once
+            append_blocks(daemon, ["Lost in the queue."])
+            assert refused and client.lost
+            page.wait_for_function(
+                """() => [...document.querySelectorAll('.turn')].some(
+                     one => one.innerText.includes('Lost in the queue'))""")
+            assert client not in daemon.hub.clients
+        finally:
+            browser.close()
+
+
 def test_a_scroll_left_over_from_another_transcript_is_not_its_place(pair_at):
     """`.turnbody` keeps the last session's blocks until the new ones land,
     and its listener wrote any scroll into the new session's place -- one

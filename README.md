@@ -310,11 +310,11 @@ is depends on your window manager.
 | Command | What it does |
 | --- | --- |
 | `wostuast install` | Copy to `~/.local/bin`, and register the hooks and the status line. |
-| `wostuast uninstall` | Remove our hooks and our status line. Keep the event log. |
+| `wostuast uninstall` | Remove our hooks and our status line. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
 | `wostuast ls` | List the sessions, in the same order as the page. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
 | `wostuast shapes` | List what in your transcripts of the last 7 days the page cannot show: record types it does not read, and Claude Code's own tags it leaves showing. It prints names and counts, never your text, so you can paste the output into a bug report. `--days` reads further back. |
-| `wostuast serve` | Start the daemon and serve the page on `127.0.0.1:7331`. `--port` picks another port, `--open` opens a browser. |
+| `wostuast serve` | Start the daemon and serve the page on `127.0.0.1:7331`. `--port` picks another port (`0` lets the system pick a free one, and `serve` prints it), `--open` opens a browser. |
 | `wostuast hook` / `status` | Claude Code calls these. You do not. |
 
 `install` also registers `wostuast status` as your Claude Code status line, but
@@ -322,6 +322,7 @@ only if you do not have one. The status line carries the session's
 context usage and its spend; hooks carry neither. Without it, wostuast
 still works, but sessions have no context bar and no spend. If you
 keep your own status line, `install` tells you the line to add to it.
+`uninstall` then puts your own line back.
 
 ## Files
 

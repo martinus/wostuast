@@ -2048,10 +2048,19 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
 
 
 def to_float(value: Any) -> float:
+    """A number, or nought for anything that is not a finite one.
+
+    `float` takes "nan" and "inf", and `json.loads` makes them out of `NaN`
+    and `1e999`. `json.dumps` then writes `NaN` and `Infinity`, which are not
+    JSON, and the page's `JSON.parse` threw on every sessions push (#235).
+    """
+    import math
+
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return 0.0
+    return number if math.isfinite(number) else 0.0
 
 
 def opt_float(value: Any) -> float | None:
@@ -4856,7 +4865,8 @@ def write_status(session_id: str, status: Status) -> None:
 
 #: How long a name may be. Longer than `label` shows, so nothing is lost by
 #: being clipped on screen, and short enough that the file cannot be used as a
-#: place to keep something else.
+#: place to keep something else. The rename box on the page has the same
+#: number as its `maxLength`; `test_a_row_is_renamed_where_it_stands` holds them.
 NAME_MAX = 120
 
 
@@ -5129,12 +5139,18 @@ def hook_entry(command: str) -> dict[str, Any]:
 
 def words_of(command: str) -> list[str]:
     """Split a command the way a shell would, and fall back to plain spaces."""
+    words = shell_words(command)
+    return command.split() if words is None else words
+
+
+def shell_words(command: str) -> list[str] | None:
+    """Split a command the way a shell would, or None when a shell could not."""
     import shlex
 
     try:
         return shlex.split(command)
     except ValueError:
-        return command.split()
+        return None
 
 
 def is_ours(command: Any, verb: str) -> bool:
@@ -5258,13 +5274,52 @@ def add_status_line(settings: dict[str, Any], command: str) -> list[str]:
     return ["added status line"]
 
 
+def then_of(command: str) -> str | None:
+    """The user's own status line inside `wostuast status --then '<theirs>'`.
+
+    A shell unquotes the line before argparse sees `--then`, so it is read
+    here the same way: split like a shell, then take the word after `--then`,
+    or after `--then=`, or after a short form argparse also takes (`--th`).
+    The last one wins, as in argparse. None when there is none.
+    """
+    words = shell_words(command)
+    if words is None:
+        return None
+    found = None
+    rest = iter(words[2:])
+    for word in rest:
+        name, equals, value = word.partition("=")
+        if len(name) < 3 or not "--then".startswith(name):
+            continue
+        found = value if equals else next(rest, None)
+    return found
+
+
 def remove_status_line(settings: dict[str, Any]) -> list[str]:
-    """Remove the status line only when it is ours."""
+    """Remove the status line only when it is ours, and give back the user's.
+
+    `install` tells a user who has a status line to change it to
+    `wostuast status --then '<theirs>'`. That line is ours, and deleting the
+    whole entry took their own command with it (#234). So `<theirs>` goes back
+    as the command, and every other key of the entry stays as it was. A line
+    that a shell cannot split is left alone: it is not ours to guess at.
+    """
     current = settings.get("statusLine")
-    if isinstance(current, dict) and is_ours(current.get("command"), "status"):
+    if not (isinstance(current, dict) and is_ours(current.get("command"), "status")):
+        return []
+    command = current["command"]
+    if shell_words(command) is None:
+        return ["left your status line: wostuast could not read it"]
+    theirs = then_of(command)
+    # A line wrapped twice (install's advice followed twice) is unwrapped
+    # to the user's own, never to a line that runs a program being removed.
+    while theirs and is_ours(theirs, "status") and shell_words(theirs) is not None:
+        theirs = then_of(theirs)
+    if not theirs:
         del settings["statusLine"]
         return ["removed status line"]
-    return []
+    current["command"] = theirs
+    return [f"put your own status line back: {theirs}"]
 
 
 def load_settings(path: Path) -> tuple[dict[str, Any], int | str, bool]:
@@ -5536,16 +5591,35 @@ class Client:
         self.queue: Any = queue.Queue(maxsize=CLIENT_BACKLOG)
         self.full, self.empty = queue.Full, queue.Empty
         self.watching = watching
+        #: Set when a message could not be kept. `stream` then closes.
+        self.lost = False
 
     def put(self, message: str) -> None:
-        """Queue a message, and drop the oldest rather than block or grow."""
+        """Queue a message. A client too slow to take it is closed, never
+        given a gap.
+
+        It used to drop the oldest message and go on. A transcript push is
+        only the blocks that changed, so the page lost a block, took the
+        newer pushes, and held a `version` past it: a fetch was answered
+        `same` and a reconnect's opening was not ahead, so nothing asked for
+        it again (#235). Closed at the first message it cannot keep, the
+        page holds only what came before it, and the reconnect's opening
+        is ahead of that, so the page fetches the whole transcript again.
+        """
+        if self.lost:
+            return
         try:
             self.queue.put_nowait(message)
         except self.full:
+            self.lost = True
             try:
-                self.queue.get_nowait()
-                self.queue.put_nowait(message)
-            except (self.empty, self.full):
+                while True:
+                    self.queue.get_nowait()
+            except self.empty:
+                pass
+            try:
+                self.queue.put_nowait("")    # wakes a `stream` waiting on it
+            except self.full:
                 pass
 
 
@@ -6168,10 +6242,15 @@ class Serving:
         # object serves every request on a connection, so a flag left standing
         # would answer for the next one.
         self.too_big = False
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
+        self.unread = False
+        length = self.body_length()
+        if length is None:
+            # A body whose end is not known is never read, so it would be
+            # read as the next request, the same as a body too large (#235).
+            # `unread` tells the route it was never looked at.
+            self.close_connection = True
+            self.unread = True
+            return {}
         if length > POST_MAX:
             self.close_connection = True
             # Said out loud, because the routes see only the empty body this
@@ -6186,6 +6265,28 @@ class Serving:
         except (ValueError, UnicodeDecodeError):
             return {}
         return body if isinstance(body, dict) else {}
+
+    def body_length(self) -> int | None:
+        """The length of the body, or None when its end cannot be known.
+
+        `http.server` reads no chunked body, so a `Transfer-Encoding` makes
+        the end unknown. So does a `Content-Length` that is not a plain
+        number, or two of them that do not agree: `int()` takes " -5", "+5"
+        and "5_0", and another reader of the same bytes may not. No header
+        at all is a body of nought.
+        """
+        if self.headers.get("Transfer-Encoding") is not None:
+            return None
+        given = {value.strip() for value in
+                 self.headers.get_all("Content-Length") or []}
+        if not given:
+            return 0
+        if len(given) > 1:
+            return None
+        text = given.pop()
+        if not (text.isascii() and text.isdigit()):
+            return None
+        return int(text)
 
     def guarded(self, route: Callable[[], None]) -> None:
         """Run a request with nothing outside the guard.
@@ -6233,6 +6334,12 @@ class Serving:
                 self.reply_json({"error": "that did not come from this page"},
                                 403)
             return
+        if self.unread:
+            # The route would see `{}` and take it for an empty body: `name`
+            # read it as "take the name away".
+            self.reply_json({"error": "wostuast reads a body only when a"
+                                      " Content-Length gives its size"}, 400)
+            return
         parts = urlparse(self.path).path.strip("/").split("/")
         if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
             verb = POST_VERBS.get(parts[3])
@@ -6275,6 +6382,12 @@ class Serving:
         """
         session = self.known(session_id)
         if session is None:
+            return
+        if self.too_big:
+            # `asked()` hands over `{}` for a body it did not read, and an
+            # empty name is "take the name away" (#235).
+            self.reply_json({"id": session_id,
+                             "error": "that name is too large to accept"}, 413)
             return
         asked = body.get("name")
         given = self.daemon.store.rename(
@@ -6518,6 +6631,11 @@ class Serving:
     def route_get(self) -> None:
         from urllib.parse import parse_qs, urlparse
 
+        # A GET's body is never read, so a connection that carried one is
+        # closed after the answer: kept open, the body was read as the next
+        # request, and one GET got two answers (#235).
+        if self.body_length() != 0:
+            self.close_connection = True
         if not self.ours():
             self.reply_json({"error": "wostuast answers on localhost only"}, 403)
             return
@@ -6704,6 +6822,11 @@ class Serving:
                     message = client.queue.get(timeout=15.0)
                 except client.empty:
                     message = ": still here\n\n"  # a comment keeps it open
+                if client.lost:
+                    # A message was not kept, so nothing after it may go
+                    # out (`Client.put`). The browser opens a new stream.
+                    self.close_connection = True
+                    break
                 # "replace", as in `reply_json`: a strict encode raised a
                 # ValueError none of the handlers below catch, and `guarded`
                 # then wrote a whole HTTP 500 into the open stream.
@@ -6816,27 +6939,33 @@ def cmd_hook(args: argparse.Namespace) -> int:
     how directories get deleted. Exit 0 whatever happens, and say anything
     worth saying in the log file.
     """
+    # The outer `try` is for an alarm that fires after `log` returns and
+    # before `stand_down` cancels it: outside every `try`, that was a
+    # traceback on stderr and exit 1 (#235). An alarm fires once, so nothing
+    # is armed by the time the outer `except` runs.
     try:
-        give_up_after(HOOK_TIMEOUT)
-        record = read_stdin_json()
-        record["pane"] = os.environ.get("TMUX_PANE", "")
-        record["pid"] = agent_pid()
-        record["shell_pid"] = os.getppid()
-        append_event(record, stamp=True)    # `ts`, under the log's lock
-        stand_down()
-    except BaseException as error:  # a hook must never block Claude Code
-        # A deadline stays armed over the logging. `log` opens and writes a
-        # file, and the failure being logged may be that the filesystem is not
-        # answering — cancelling the alarm first and then writing is how a hook
-        # holds Claude Code for ever, which is the one thing it may not do.
-        # Armed again, and not merely left: an alarm fires once, so when the
-        # failure *is* the timeout, nothing was armed at all.
-        give_up_after(LOG_TIMEOUT)
         try:
-            log(f"hook failed: {error!r}")
-        except BaseException:
-            pass
-        stand_down()
+            give_up_after(HOOK_TIMEOUT)
+            record = read_stdin_json()
+            record["pane"] = os.environ.get("TMUX_PANE", "")
+            record["pid"] = agent_pid()
+            record["shell_pid"] = os.getppid()
+            append_event(record, stamp=True)    # `ts`, under the log's lock
+            stand_down()
+        except BaseException as error:  # a hook must never block Claude Code
+            # A deadline stays armed over the logging. `log` opens and writes
+            # a file, and the failure being logged may be that the filesystem
+            # is not answering — cancelling the alarm first and then writing
+            # is how a hook holds Claude Code for ever, which is the one thing
+            # it may not do. Armed again, and not merely left: an alarm fires
+            # once, so when the failure *is* the timeout, nothing was armed.
+            give_up_after(LOG_TIMEOUT)
+            try:
+                log(f"hook failed: {error!r}")
+            finally:
+                stand_down()
+    except BaseException:
+        pass
     return 0
 
 
@@ -6850,24 +6979,28 @@ def cmd_status(args: argparse.Namespace) -> int:
     command, whose output is what the terminal shows.
     """
     raw = ""
+    payload: dict[str, Any] = {}
     try:
-        give_up_after(HOOK_TIMEOUT)
-        raw = sys.stdin.read()
-        payload = json.loads(raw) if raw.strip() else {}
-        if not isinstance(payload, dict):
-            payload = {}
-        status = status_from_payload(payload)
-        write_status(str(payload.get("session_id") or ""), status)
-        stand_down()
-    except BaseException as error:
-        # The same as the hook's: a fresh deadline over the logging, which
-        # the failure may be about. Cancelling first left none at all.
-        give_up_after(LOG_TIMEOUT)
         try:
-            log(f"status failed: {error!r}")
-        except BaseException:
-            pass
-        stand_down()
+            give_up_after(HOOK_TIMEOUT)
+            raw = sys.stdin.read()
+            payload = json.loads(raw) if raw.strip() else {}
+            if not isinstance(payload, dict):
+                payload = {}
+            status = status_from_payload(payload)
+            write_status(str(payload.get("session_id") or ""), status)
+            stand_down()
+        except BaseException as error:
+            # The same as the hook's: a fresh deadline over the logging, which
+            # the failure may be about. Cancelling first left none at all.
+            payload = {}
+            give_up_after(LOG_TIMEOUT)
+            try:
+                log(f"status failed: {error!r}")
+            finally:
+                stand_down()
+    except BaseException:
+        # The hook's outer `try`, for an alarm between `log` and `stand_down`.
         payload = {}
 
     then = getattr(args, "then", None)
@@ -7347,6 +7480,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print("another wostuast may already be running.", file=sys.stderr)
         return 1
 
+    # The port the socket has, not the one asked for: `--port 0` asks the
+    # system for a free one, and printed `http://127.0.0.1:0/` (#235).
+    port = server.server_address[1]
     where = f"http://{BIND_HOST}:{port}/"
     made = write_example_links()
     # Said here because the page cannot make you look at it and `doctor` is
@@ -7404,6 +7540,25 @@ def open_browser(where: str) -> None:
 # --- command line ------------------------------------------------------------
 
 
+def port_number(text: str) -> int:
+    """`--port`, checked where argparse can say what is wrong with it.
+
+    A port out of range reached `bind`, whose `OverflowError` is not an
+    `OSError`, so `serve` died with a traceback (#235). Nought is allowed:
+    the system picks a free port, and `serve` prints the one it got.
+    """
+    import argparse
+
+    try:
+        number = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not 0 <= number <= 65535:
+        raise argparse.ArgumentTypeError(
+            f"{number} is not a port: use 1 to 65535, or 0 for any free one")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     import argparse
 
@@ -7435,8 +7590,9 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("--days", type=float, default=SHAPES_DAYS,
                              help=f"how far back to read (default {SHAPES_DAYS})")
         if name == "serve":
-            sub.add_argument("--port", type=int, default=DEFAULT_PORT,
-                             help=f"the port to listen on (default {DEFAULT_PORT})")
+            sub.add_argument("--port", type=port_number, default=DEFAULT_PORT,
+                             help=f"the port to listen on (default {DEFAULT_PORT};"
+                                  " 0 picks a free one)")
             sub.add_argument("--open", action="store_true",
                              help="open the page in a browser")
     return parser
@@ -9764,6 +9920,12 @@ function renameRow(row) {
   box.autocomplete = "off";
   box.spellcheck = false;
   box.placeholder = "a name  \u00b7  enter to keep";
+  // The daemon's `NAME_MAX`, and `test_a_row_is_renamed_where_it_stands`
+  // holds the two in step. The daemon keeps no more than that, and a paste
+  // over `POST_MAX` was a body it did not read, which `name` once took for
+  // "take the name away" (#235). The box counts UTF-16 units and the daemon
+  // characters, so a name of emoji stops sooner here, never later.
+  box.maxLength = 120;
   box.setAttribute("aria-label", "a name for this session");
   box.value = rowName(s);
   slot.replaceChildren(box);

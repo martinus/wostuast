@@ -39,6 +39,13 @@ it. The reason is the part to weigh before undoing one.
   The daemon polls the log and the transcripts; the Files and Diff tabs poll
   from the browser, and only while on screen.
 - **Port 7331**, on 127.0.0.1 only (`DEFAULT_PORT`, `BIND_HOST`).
+  `--port 0` lets the system pick a free port, and `serve` prints the one
+  the socket has (`server_address`), in the address and in the `ssh -L`
+  line: it printed `:0` in both. `port_number` checks the range in
+  argparse, because a port out of range reached `bind` as an
+  `OverflowError`, which is not an `OSError`, and `serve` died with a
+  traceback (#235). `test_serve_says_the_port_it_got_when_asked_for_any`,
+  `test_serve_refuses_a_port_that_is_not_one_without_a_traceback`.
 - **No SQLite.** `sqlite3` is in the standard library and imports faster
   than `json`, so it is not a dependency question. The write path is: one
   short-lived hook writing one row took 2 ms, and 32 at once 20 ms median

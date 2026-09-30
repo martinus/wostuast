@@ -464,6 +464,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   by chance, once. `test_a_stream_decides_its_opening_before_it_says_anything`,
   `test_a_block_read_while_no_stream_was_open_is_fetched`,
   `test_a_tool_result_read_while_no_stream_was_open_is_fetched`.
+  - **A stream too slow for its pushes is closed, never given a gap.**
+    `Client.put` dropped the oldest message when `CLIENT_BACKLOG` were
+    queued, and said nothing. A push is only the blocks that changed, so
+    the page lost a block and took the newer pushes; its `version` passed
+    the lost one, a fetch was answered `same`, and a reconnect's opening
+    was not ahead. Measured with a small receive window: pushes 3, 4 and 6
+    to 11 never came, and the stream went on. Now the first message it
+    cannot keep sets `Client.lost`, empties the queue, and `stream` closes
+    without writing another. **Closing only on the next write is not
+    enough**: whatever went out after the lost push would carry the page
+    past it again. The browser reconnects behind the daemon, and the
+    opening makes it fetch (#235).
+    `test_a_stream_too_slow_to_keep_up_is_closed_and_never_given_a_gap`,
+    `test_a_push_the_stream_could_not_keep_is_fetched_after_it_closes`.
 - **The page is read over an ssh tunnel, so nothing big goes twice.** At
   200 KiB/s the first look at a Files tab of 53,000 files took twenty
   seconds, and the way back to the Transcript tab five. Three causes, three
