@@ -157,6 +157,22 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the query means you meant the path. `findPath` also forgives one letter of a
   five-plus query; `fuzzy` forgives none by default, because the session filter
   runs through it and a short haystack cannot afford it.
+  - **A mark is a place in the name as it is, and a whole character.**
+    `fuzzy` searches the lower-cased name, and `putName` marked those places
+    in the name as written. "İ" lower-cases to two code units, so every mark
+    after it stood one letter late: `notes` lit "btes." in
+    `İstanbul-notes.md`. `unlowered` maps the places back, only when the
+    lengths differ, so an ordinary name pays nothing. And `putName` took
+    `text[index]`, one UTF-16 unit, which is half an emoji; it takes the
+    whole code point now.
+    `test_go_to_marks_the_letters_it_matched_in_any_script`.
+- **The tree's window is as tall as the list, and a resize fills it.** The
+  window was `ROWS_SHOWN`, 80 rows or 2,240 px, whatever the list's height,
+  and a portrait or 4K screen, or a browser zoomed out, showed empty space
+  under the last row. `fillList` takes the rows the list can show and eight
+  more at each end, and never fewer than `ROWS_SHOWN`. A window made taller
+  sends no scroll event, so a `ResizeObserver` on the list calls `fillList`
+  too. `test_a_tall_file_tree_is_drawn_to_its_foot`.
 - **Search every name, or say you cannot.** Sending the first 5000 of 52,799 made
   a search find 16 files and miss a thousand: a wrong answer that looks right.
 - **A git call that failed must not render as an empty answer.** "No files" and

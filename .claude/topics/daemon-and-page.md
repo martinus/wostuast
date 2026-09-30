@@ -399,6 +399,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `line-height: 1.5`, stood 1.5 px taller than its button.
   `test_ctrl_enter_saves_a_comment_and_sends_the_review`,
   `test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level`.
+  - **The Enter that ends an IME composition is the input method's**
+    (`composing`). In Japanese or Chinese, Enter picks the word; the send
+    box and the rename box took it as the reader's, and could send half a
+    message into a terminal or keep half a name. Chromium says so in
+    `isComposing`. Safari sends that Enter after the composition has ended,
+    and says so only in `keyCode` 229, so both are read. The guard only
+    stops a send, so it takes nothing from the send box's checks.
+    `test_the_enter_that_ends_a_composition_sends_nothing`,
+    `test_the_enter_that_ends_a_composition_keeps_no_name`.
 - **Enter jumps, except on a button a keyboard reached.** The keys handler
   jumped to the pane from wherever the focus was, so a keyboard could press
   nothing on the page. But a click leaves the focus on the button it pressed,

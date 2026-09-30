@@ -17,6 +17,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   only moves when a turn begins, ends, or stops on a question. **Inside a
   group the daemon's order stands**, which is by `Session.settled`, newest
   first.
+  - **`j` and `k` walk the rows as they are drawn.** `move` walked the
+    daemon's order, and that differs from the list as soon as a group holds
+    two rows: from a needs-you row on top, `j` jumped over the working row
+    under it, and `k` went down. `listedSessions` puts the groups in order
+    once, with a stable sort, and `drawSessions` and `move` both read it.
+    `test_j_and_k_walk_the_rows_in_the_order_they_are_drawn`.
 - **`settled` is not `since`, and that is the whole point.** `since` is the
   last event, which for a working session moves every few seconds: two busy
   agents would swap places while you read them. `settled` is the moment the
@@ -77,7 +83,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     working", "4 ready". A tab cuts its title's end off, and it said "(1)
     needs you" -- leaving you to look for whom -- and "wostuast" alone over
     four agents sitting ready. The names are `rowName`'s, so the tab and the
-    list agree.
+    list agree. **So are the alerts'** (`notifyAbout`): they used `label`,
+    which leads with the title Claude Code writes, and so named a session
+    that was not in the list.
+    `test_an_alert_names_the_session_as_its_row_does`.
   - **The icon is a robot, and the whole of it is the state**
     (`paintIcon`): the bar's own ink when nothing waits, because "ready" is
     not news, green, amber. The reader chose it from pictures. It was a dot
@@ -205,6 +214,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     stands between the row and the grip, and cut the tab from its content
     in both themes. The wheel and `j` `k` scroll without it.
   `test_the_chosen_row_is_a_tab_of_the_content_beside_it`.
+- **A drag on an edge starts only on the main button, and ends every way a
+  press can end** (`dragWidth`, for the session list's edge and every split
+  tab's). It started on any button and ended only on `pointerup`. A
+  right-click opens the context menu on Linux and macOS, the menu takes the
+  `pointerup`, and the column then followed the mouse with no button held,
+  with `body.dragging` on, until the next click. A touch the browser takes
+  for a scroll ends in `pointercancel`, not `pointerup`. So the grip
+  captures the pointer, and `pointercancel` and `lostpointercapture` end
+  the drag too. A headless browser opens no menu, and Chromium driven by
+  Playwright sends no lost capture of its own, so the test sends those
+  events by hand.
+  `test_a_drag_on_an_edge_starts_only_by_hand_and_always_stops`.
 - **Rows are kept and filled in again, never rebuilt.** A row can only fade
   into its new colour if it is the same row, and the needs-you pulse can
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
