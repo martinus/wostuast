@@ -6804,6 +6804,13 @@ PAGE = r"""<!doctype html>
   --needs: #e0a642; --needs-warm: #f0c068; --working: #6bbf8a; --done: #5b9bd5;
   --gone: #6f7385;
   --needs-soft: rgba(224,166,66,.28); --working-soft: rgba(107,191,138,.18);
+  /* The browser tab's icon. It stands in the browser's tab bar, not on this
+     page, so it follows the browser's colours and never the page's theme:
+     no theme block below sets these. The ink is the robot, the three states
+     its status line. Grey is quiet on purpose: "ready" is not news, and
+     amber stands out best in a row of tabs that are all blue. */
+  --tab-ink-light: #3c4043; --tab-ink-dark: #e3e3e3;
+  --tab-quiet: #9aa0a6; --tab-working: #3f9e64; --tab-needs: #e0a642;
   --done-soft: rgba(91,155,213,.16);
   --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
@@ -8624,7 +8631,6 @@ function applyTheme(choice) {
     button.title = "colours: " + word + "  \u00b7  c  \u00b7  click for "
       + { system: "light", light: "dark", dark: "auto" }[choice];
   }
-  redrawIcon();
 }
 
 function nextTheme() {
@@ -8633,6 +8639,7 @@ function nextTheme() {
 
 window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
   if (themeChoice() === "system") applyTheme("system");
+  redrawIcon();          // the tab bar changed colour, whatever this page shows
 });
 
 // A folder and a page, drawn rather than fetched: no icon font, no image, and
@@ -9135,9 +9142,7 @@ function drawCounts() {
   }
   const needs = (tally.get("needs_you") || { n: 0 }).n;
   const working = (tally.get("working") || { n: 0 }).n;
-  document.title = needs
-    ? "(" + needs + ") needs you · wostuast"
-    : working ? working + " working · wostuast" : "wostuast";
+  document.title = tabTitle(state.sessions);
   drawIcon(needs ? "needs_you" : working ? "working"
     : state.sessions.length ? "done" : "gone");
   // About every session, filter or no filter: "who needs me" must not
@@ -9592,33 +9597,90 @@ function money(dollars) {
                       : "$" + Math.round(dollars);
 }
 
-// --- the tab icon, drawn here so it follows the colours ---------------------
+// --- the tab icon and the tab's title --------------------------------------
+//
+// The tab is what the reader sees from another tab, so it says who needs
+// them in its words and what state the lot is in in its colour. It was a
+// dot in the state's colour and the word "wostuast": the blue of "ready"
+// sat beside the blue of Jira and Bitbucket, and the dot said nothing about
+// what the tab was. The reader chose a terminal that is a robot's head --
+// the agents live in terminals -- from pictures of eight.
+
+// The title leads with what matters, because a tab cuts its end off: the
+// names of the sessions that need you, or else how many work, or else how
+// many are ready. By the name on the row, so the tab and the list agree.
+function tabTitle(sessions) {
+  const needs = sessions.filter((s) => s.state === "needs_you");
+  if (needs.length) {
+    const names = needs.slice(0, 2).map((s) => clip(rowName(s), 30));
+    const more = needs.length > 2 ? " +" + (needs.length - 2) : "";
+    return names.join(", ") + more
+      + (needs.length === 1 ? " asks" : " need you") + " \u00b7 wostuast";
+  }
+  const working = sessions.filter((s) => s.state === "working").length;
+  if (working) return working + " working \u00b7 wostuast";
+  const ready = sessions.filter((s) => s.state === "done").length;
+  return ready ? ready + " ready \u00b7 wostuast" : "wostuast";
+}
+
+function clip(text, most) {
+  return text.length > most ? text.slice(0, most - 1) + "\u2026" : text;
+}
+
+// The robot: a terminal with an antenna, two eyes and a cursor for a mouth,
+// over its status line in the state's colour. The eyes and the mouth are
+// cut out, so the tab shows through them in either tab bar. 32 x 32, for a
+// screen of twice the density; the browser draws it at 16.
+function paintIcon(pen, colour, ink) {
+  const box = (x, y, w, h, r) => {
+    pen.beginPath(); pen.moveTo(x + r, y); pen.arcTo(x + w, y, x + w, y + h, r);
+    pen.arcTo(x + w, y + h, x, y + h, r); pen.arcTo(x, y + h, x, y, r);
+    pen.arcTo(x, y, x + w, y, r); pen.closePath();
+  };
+  pen.clearRect(0, 0, 32, 32);
+  pen.fillStyle = ink;
+  box(14.8, 2.5, 2.4, 5, 1); pen.fill();
+  pen.beginPath(); pen.arc(16, 2.6, 2.4, 0, Math.PI * 2); pen.fill();
+  box(1, 7, 30, 16, 4); pen.fill();
+  pen.save();
+  pen.globalCompositeOperation = "destination-out";
+  box(7, 11, 5.5, 5.5, 1.5); pen.fill();
+  box(19.5, 11, 5.5, 5.5, 1.5); pen.fill();
+  pen.lineWidth = 2.6; pen.lineCap = "round";
+  pen.beginPath(); pen.moveTo(12, 19.5); pen.lineTo(20, 19.5); pen.stroke();
+  pen.restore();
+  pen.fillStyle = colour;
+  box(1, 25, 30, 6, 2.5); pen.fill();
+}
+
+// Which bar the icon stands in. The browser's own light or dark, which is
+// what this media query answers -- the page's theme may be the other one.
+function tabBarIsDark() {
+  return !window.matchMedia("(prefers-color-scheme: light)").matches;
+}
 
 let iconWas = "";
 
-// The icon is painted out of the palette, but it is only kept against the
-// state it shows — so a theme change left a dark-theme dot on a light page.
 function redrawIcon() {
-  const was = iconWas;
+  const was = iconWas.split(" ")[0];
   iconWas = "";
   if (was) drawIcon(was);
 }
 
 function drawIcon(state_) {
-  if (state_ === iconWas) return;
-  iconWas = state_;
-  const size = 32;
+  const dark = tabBarIsDark();
+  const key = state_ + " " + dark;
+  if (key === iconWas) return;
+  iconWas = key;
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
+  canvas.width = canvas.height = 32;
   const pen = canvas.getContext("2d");
   if (!pen) return;
-  const shade = getComputedStyle(document.documentElement)
-    .getPropertyValue("--" + (state_ === "needs_you" ? "needs"
-      : state_ === "working" ? "working" : state_ === "done" ? "done" : "gone")).trim();
-  pen.beginPath();
-  pen.arc(size / 2, size / 2, size / 2 - 3, 0, Math.PI * 2);
-  pen.fillStyle = shade || "#8b8f9e";
-  pen.fill();
+  const palette = getComputedStyle(document.documentElement);
+  const read = (name) => palette.getPropertyValue("--tab-" + name).trim();
+  paintIcon(pen, read(state_ === "needs_you" ? "needs"
+                      : state_ === "working" ? "working" : "quiet"),
+            read(dark ? "ink-dark" : "ink-light"));
   let link = document.querySelector("link[rel='icon']");
   if (!link) {
     link = document.createElement("link");

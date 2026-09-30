@@ -60,7 +60,7 @@ after the tests go red.
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
-| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen` | The sidebar |
+| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
@@ -166,7 +166,7 @@ settings.json · output helpers · ansi · **tmux verbs** · **the daemon** ·
 commands · command line · the page.
 
 Page: asking the daemon · dragging an edge · the two fetched scripts · colours ·
-**the sidebar** · tab icon · notifications · **the transcript** · painting code ·
+**the sidebar** · the tab icon and title · notifications · **the transcript** · painting code ·
 **the Files tab** · finding a file · the tree · a file too long to draw whole ·
 how a file is drawn · **the Diff tab** · **the review** ·
 keeping a review · **the review on the Review tab** · the tabs · talking to the
@@ -1275,6 +1275,28 @@ update the comment with its own text, and read it back.
   **They are not on the page itself**: a strip over it said "1 ready" and
   "3 sessions" beside groups that already said so, and the reader asked for
   the room. The browser tab's title and icon, and the alerts, are what count.
+  - **The title names who needs you, and leads with it** (`tabTitle`):
+    "fix-login asks", "fix-login, api-retry +1 need you", or else "2
+    working", "4 ready". A tab cuts its title's end off, and it said "(1)
+    needs you" -- leaving you to look for whom -- and "wostuast" alone over
+    four agents sitting ready. The names are `rowName`'s, so the tab and the
+    list agree.
+  - **The icon is a terminal that is a robot's head** (`paintIcon`): the
+    reader chose it from pictures of eight. It was a dot in the state's
+    colour, and "ready" was the blue of the Jira and Bitbucket tabs beside
+    it; a dot said nothing about what the tab was. The status line is the
+    state -- grey when nothing waits, because "ready" is not news, green,
+    amber -- and the eyes and the mouth are cut out, so either bar shows
+    through them.
+  - **It follows the browser's light or dark, never the page's theme**
+    (`tabBarIsDark`, the `--tab-*` colours, which no theme block sets). It
+    stands in the browser's tab bar: painted from the page's palette, a page
+    set to light in a dark browser put a dark robot on a dark bar. The
+    media query's `change` redraws it, whatever the page's theme is.
+  `test_the_tab_title_names_who_needs_you`,
+  `test_the_tab_icon_is_a_robot_whose_status_line_is_the_state`,
+  `test_the_tab_icon_says_the_state_in_the_bar_it_stands_in`,
+  `test_the_tab_icon_follows_the_browser_and_not_the_page`.
 - **There is no bar across the top.** The name and the version head the
   session list (`.sidebar-head`, as tall as `.tabs`, so the two rules under
   them are one line), and the bell and the colours are icons at the end of
