@@ -66,10 +66,63 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     refused while a No is on its way.
     `test_two_sends_at_once_do_not_mix_in_the_pane`,
     `test_nothing_else_is_typed_while_an_answer_or_a_no_goes_in`.
-- **The daemon answers on localhost only.** Binding to 127.0.0.1 is not enough —
-  a site can point its own name at 127.0.0.1. `Serving.ours()` checks Host, and
-  a request without one is refused: an empty Host used to pass, which made the
-  check skippable by leaving the header out.
+- **The daemon answers on localhost only, and only to its own user and
+  root.** Binding to 127.0.0.1 is not enough — a site can point its own
+  name at 127.0.0.1. `Serving.ours()` checks Host, and a request without
+  one is refused: an empty Host used to pass, which made the check
+  skippable by leaving the header out.
+  - **127.0.0.1 is open to every account on the machine.** `GET /` gave the
+    page, token and all, to anybody who asked. A review of the whole file
+    showed it: as `nobody`, it read every transcript and sent `!id` into
+    the owner's agent (issue #227). The Host, Origin and token checks keep
+    out other *sites*; only the uid keeps out other *users*. On Linux,
+    `Serving.handle` reads the owner of the other end of the connection out
+    of `/proc/net/tcp`, once per connection, and `guarded` answers every
+    request from another uid with 403 and `STRANGER`, before it reads a
+    byte of a body: the page, the stream, every route. `socket_owner`
+    matches both ends, so another connection from the same port is never
+    taken for this one, and skips a `TIME_WAIT` line, which nobody owns and
+    the kernel lists as uid 0. It reads `/proc/net/tcp6` too, because a
+    client on an IPv6 socket reaches 127.0.0.1 as `::ffff:127.0.0.1`.
+  - **`another_user` refuses whatever it cannot prove, except a machine
+    with no table.** No table at all is macOS, and stays as it was: README
+    says so. An empty table is not a real one either, because a real one
+    lists our own listening socket, and nobody else can empty it.
+    Everything else that is not our uid or root's is a no. A line that is
+    not there: the other end is open as long as the connection is, so that
+    is not normal -- but the kernel writes the table a page at a time and
+    resumes by position, so a table that changes during the read can skip
+    a line, and it is read `PEER_READS` times first. Measured: no miss in
+    300 reads with four threads opening and closing connections. A table
+    that is there and cannot be read: running out of files is something
+    another user can cause, so `read_table` gives None only for a file that
+    is not there, and `handle` refuses on any exception.
+  - **In the connection's thread, never in the accept loop.** The kernel
+    writes the whole table on every read: 6 ms at 4,400 lines, 10 ms at
+    6,400, 92 ms at 69,000 (most of them `TIME_WAIT`), and the search
+    after it is a tenth of that. In `verify_request` every browser would
+    wait for it. A keep-alive connection pays it once.
+  - **Root is let in too (`ROOT_UID`).** In WSL2's default NAT mode, a
+    Windows browser reaches 127.0.0.1 in the Linux VM through a relay that
+    runs as root inside the VM, so a check for our own uid alone refused the
+    owner there; other forwarders that run as root do the same. Root gains
+    nothing: it can read the token, the state files and every transcript
+    already, and it can attach to the daemon itself. The live test sets
+    `ROOT_UID` to -1, because the suite may run as root.
+    `test_root_is_let_in_too`.
+  - **An ssh tunnel is the owner.** sshd opens the forwarded connection from
+    the session process, which runs as the user who logged in, and a socket
+    belongs to the user that made it. Reasoned from OpenSSH's privilege
+    separation, not measured: the machine that wrote this had no sshd. A
+    browser run as another account is refused, and the 403 says why.
+  `test_a_socket_is_found_by_both_of_its_ends`,
+  `test_a_client_on_an_ipv6_socket_is_found_in_tcp6`,
+  `test_only_the_daemons_own_user_is_let_in`,
+  `test_a_line_the_kernel_skipped_once_is_looked_for_again`,
+  `test_a_connection_from_another_user_gets_nothing`,
+  `test_a_table_that_cannot_be_read_refuses`, and
+  `test_a_real_request_from_another_user_is_refused`, which needs root and
+  `setpriv` and skips without them: CI runs as a normal user.
 - **A check must fail closed, and nothing may run outside the guard.** Both
   checks used to sit in front of the `try`, where `Origin: http://[::1` or one
   byte above 0x7f in the token header killed the thread — no status line, a

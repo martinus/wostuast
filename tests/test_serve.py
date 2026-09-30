@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -825,6 +829,190 @@ def test_jump_picks_the_window_and_the_pane(in_tmux):
     status, body = post(f"{base}/api/session/s1/jump", token=daemon.token)
     assert status == 200 and body["done"] is True
     assert seen[0] == ["tmux", "select-window", "-t", "%7"]
+
+
+# --- another user on the same machine (issue #227) ---------------------------
+#
+# 127.0.0.1 is open to every account on the machine, and `GET /` hands out the
+# page with the token in it. So the daemon reads the owner of the other end of
+# each connection out of /proc/net/tcp, and answers its own user only.
+
+# Lines as Linux 6.18 wrote them on x86, for a connection from `nobody`
+# (uid 65534) at 127.0.0.1:38242 to a daemon run by root at 127.0.0.1:7427.
+# The kernel prints each word of an address in the machine's byte order.
+LISTENING = ("   4: 0100007F:1D03 00000000:0000 0A 00000000:00000000 00:00000000"
+             " 00000000     0        0 494468 1 00000000a3dbac1d 100 0 0 10 0")
+THEIR_END = ("   8: 0100007F:9562 0100007F:1D03 01 00000000:00000000 02:0000170C"
+             " 00000000 65534        0 496535 2 000000001e7172b0 20 4 28 11 -1")
+OUR_END = ("  15: 0100007F:1D03 0100007F:9562 01 00000000:00000000 00:00000000"
+           " 00000000     0        0 498793 1 00000000225510a4 20 4 31 12 -1")
+# A closed connection with the same two ends: the kernel lists it as uid 0.
+CLOSED = ("   9: 0100007F:9562 0100007F:1D03 06 00000000:00000000 03:000011F4"
+          " 00000000     0        0 0 3 000000005efeac10")
+# The same client port to another server port, owned by somebody else again.
+ELSEWHERE = ("  11: 0100007F:9562 0100007F:1D04 01 00000000:00000000 00:00000000"
+             " 00000000  1001        0 498800 1 0000000000000000 20 4 31 12 -1")
+HEADER = ("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when"
+          " retrnsmt   uid  timeout inode")
+PEER, OURS = ("127.0.0.1", 0x9562), ("127.0.0.1", 0x1D03)
+
+little_endian = pytest.mark.skipif(
+    sys.byteorder != "little", reason="the lines above are as x86 writes them")
+
+
+def table(*lines):
+    return "\n".join((HEADER,) + lines) + "\n"
+
+
+@little_endian
+def test_a_socket_is_found_by_both_of_its_ends(ws):
+    """Both ends, or the other connection from the same port would answer,
+    and a closed one with the same ends is nobody's and reads as root."""
+    text = table(LISTENING, CLOSED, ELSEWHERE, OUR_END, THEIR_END)
+    assert ws.table_address("127.0.0.1", 7427) == "0100007F:1D03"
+    assert ws.socket_owner(text, PEER, OURS) == 65534
+    assert ws.socket_owner(text, OURS, PEER) == 0
+    assert ws.socket_owner(text, PEER, ("127.0.0.1", 0x1D04)) == 1001
+    assert ws.socket_owner(text, ("127.0.0.1", 1), OURS) is None
+    assert ws.socket_owner(table(LISTENING, CLOSED), PEER, OURS) is None
+
+
+@little_endian
+def test_a_client_on_an_ipv6_socket_is_found_in_tcp6(ws):
+    """A dual-stack client reaches 127.0.0.1 as ::ffff:127.0.0.1, and Linux
+    lists it in /proc/net/tcp6, in the shape of `tcp6_seq_show`."""
+    mapped = "0000000000000000FFFF00000100007F"
+    line = (f"   0: {mapped}:9562 {mapped}:1D03 01 00000000:00000000"
+            " 00:00000000 00000000  1000        0 12345 1 0000000000000000"
+            " 20 4 30 10 -1")
+    assert ws.table_address("127.0.0.1", 0x9562, six=True) == f"{mapped}:9562"
+    assert ws.socket_owner(table(line), PEER, OURS) == 1000
+
+    reads = {"/proc/net/tcp": table(LISTENING, OUR_END),
+             "/proc/net/tcp6": table(line)}
+    assert ws.another_user(PEER, OURS, 1000, reads.get) is False
+    assert ws.another_user(PEER, OURS, 0, reads.get) is True
+
+
+@little_endian
+def test_only_the_daemons_own_user_is_let_in(ws):
+    """Its own user, yes; any other, no; one the table does not list, no --
+    the other end is open as long as the connection is, so that is not
+    normal. No table at all is a machine without /proc, and stays as it was.
+    """
+    def reading(text):
+        asked = []
+
+        def read(path):
+            asked.append(path)
+            return text
+        return read, asked
+
+    whole = table(LISTENING, OUR_END, THEIR_END)
+    assert ws.another_user(PEER, OURS, 65534, reading(whole)[0], ("t",)) is False
+    assert ws.another_user(PEER, OURS, 0, reading(whole)[0], ("t",)) is True
+
+    read, asked = reading(table(LISTENING, OUR_END))
+    assert ws.another_user(PEER, OURS, 65534, read, ("t",)) is True
+    assert len(asked) == ws.PEER_READS, "a line not found was not read again"
+
+    assert ws.another_user(PEER, OURS, 65534, lambda path: None, ("t",)) is False
+    # A real table always lists our own listening socket, so an empty one
+    # is not a real table: nothing to check against, as with none at all.
+    assert ws.another_user(PEER, OURS, 65534, reading(table())[0], ("t",)) is False
+
+
+@little_endian
+def test_root_is_let_in_too(ws):
+    """In WSL2's default NAT mode a Windows browser reaches 127.0.0.1 in the
+    VM through a relay that runs as root there, so an own-uid-only check
+    refused the owner. Root can read the token and every transcript anyway."""
+    by_root = THEIR_END.replace(" 65534 ", "     0 ")
+    text = table(LISTENING, OUR_END, by_root)
+    assert ws.socket_owner(text, PEER, OURS) == 0
+    assert ws.another_user(PEER, OURS, 1000, lambda path: text, ("t",)) is False
+    assert ws.another_user(PEER, OURS, 1000, lambda path: table(
+        LISTENING, OUR_END, THEIR_END), ("t",)) is True
+
+
+@little_endian
+def test_a_line_the_kernel_skipped_once_is_looked_for_again(ws):
+    """The kernel writes the table a page at a time and resumes by position,
+    so a table that changes during the read can leave a line out."""
+    answers = [table(LISTENING), table(LISTENING, OUR_END, THEIR_END)]
+    assert ws.another_user(PEER, OURS, 65534, lambda path: answers.pop(0),
+                       ("t",)) is False
+
+
+needs_tables = pytest.mark.skipif(
+    not os.path.exists("/proc/net/tcp"),
+    reason="no /proc/net/tcp here, so the daemon cannot tell who connects")
+
+
+@needs_tables
+def test_a_connection_from_another_user_gets_nothing(ws, in_tmux,
+                                                    monkeypatch):
+    """The page, the stream, the JSON and every POST -- the token included.
+    The daemon is told it runs as another user, so this runs as anybody."""
+    daemon, base, seen = in_tmux
+    with urllib.request.urlopen(f"{base}/", timeout=5) as answer:
+        assert daemon.token.encode() in answer.read(), "the owner is refused"
+
+    daemon.uid = os.getuid() + 1
+    # Root is let in as well, and this suite may run as root.
+    monkeypatch.setattr(ws, "ROOT_UID", -1)
+    for path in ("/", "/api/events", "/api/sessions",
+                 "/api/session/s1/transcript"):
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(f"{base}{path}", timeout=5)
+        assert caught.value.code == 403, path
+        said = caught.value.read()
+        assert daemon.token.encode() not in said, path
+        assert json.loads(said)["error"] == ws.STRANGER, path
+    status, body = post(f"{base}/api/session/s1/send", {"text": "!id"},
+                        token=daemon.token, origin="http://127.0.0.1:1234")
+    assert (status, body["error"]) == (403, ws.STRANGER)
+    assert seen == [], "another user typed into the terminal"
+
+
+@needs_tables
+def test_a_table_that_cannot_be_read_refuses(ws, served, monkeypatch,
+                                             tmp_path):
+    """Running out of files is something another user can cause, so a table
+    that is there and cannot be read is a no, never the way it was before.
+    Only a table that is not there at all is a machine without one."""
+    _, base = served
+    assert ws.read_table(str(tmp_path / "no-such-table")) is None
+    with pytest.raises(OSError):
+        ws.read_table(str(tmp_path))  # there, and not a file one can read
+
+    def cannot(path):
+        raise OSError(24, "Too many open files")
+    monkeypatch.setattr(ws, "read_table", cannot)
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        urllib.request.urlopen(f"{base}/api/sessions", timeout=5)
+    assert caught.value.code == 403
+
+
+@needs_tables
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0,
+                    reason="only root can run a request as another user")
+@pytest.mark.skipif(shutil.which("setpriv") is None, reason="needs setpriv")
+def test_a_real_request_from_another_user_is_refused(ws, served):
+    """Not a daemon told it is somebody else: a request made as `nobody`."""
+    daemon, base = served
+    ask = ("import urllib.request, urllib.error, sys\n"
+           "try:\n"
+           f"    urllib.request.urlopen('{base}/', timeout=5)\n"
+           "    print(200)\n"
+           "except urllib.error.HTTPError as e:\n"
+           "    print(e.code, e.read().decode())\n")
+    done = subprocess.run(
+        ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups",
+         sys.executable, "-c", ask],
+        capture_output=True, text=True, timeout=30)
+    assert done.stdout.startswith("403"), done.stdout + done.stderr
+    assert daemon.token not in done.stdout
 
 
 def test_the_token_is_in_the_page_and_is_not_the_mark(served):
