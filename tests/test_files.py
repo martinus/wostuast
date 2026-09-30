@@ -670,6 +670,34 @@ def test_nothing_before_the_first_file_header_is_read(ws):
     assert ws.parse_diff("warning: something\n+not a line\n") == []
 
 
+def test_a_new_or_deleted_file_with_no_lines_is_added_or_deleted(ws, seeded):
+    """An empty or a binary file has no `---`/`+++` lines, and `diff --git`
+    names it twice, so a new one and a deleted one both read as modified:
+    "modified -- The content did not change." for a new empty file. Only
+    the mode lines say it came or went."""
+    (seeded / "old.bin").write_bytes(b"a\0b")
+    (seeded / "was-empty").write_text("")
+    git(seeded, "add", ".")
+    git(seeded, "commit", "-qm", "two to delete")
+    git(seeded, "rm", "-q", "old.bin", "was-empty")
+    (seeded / "new.bin").write_bytes(b"c\0d")
+    git(seeded, "add", "new.bin")
+    # Apart from the deleted empty file, or git pairs the two as a rename.
+    report = ws.worktree_diff(str(seeded), of="uncommitted")
+    shown = {(one.path, one.old_path, one.status, one.binary)
+             for one in report.sections[0].files}
+    assert shown == {("old.bin", "old.bin", "deleted", True),
+                     ("was-empty", "was-empty", "deleted", False),
+                     ("new.bin", "", "added", True)}, shown
+    git(seeded, "commit", "-qm", "gone")
+    (seeded / "new-empty").write_text("")
+    git(seeded, "add", "new-empty")
+    report = ws.worktree_diff(str(seeded), of="uncommitted")
+    assert [(one.path, one.old_path, one.status)
+            for one in report.sections[0].files] == [
+        ("new-empty", "", "added")]
+
+
 def test_a_name_with_a_space_is_read_from_the_marker_lines(ws):
     text = ("diff --git a/my file.md b/my file.md\n"
             "--- a/my file.md\n+++ b/my file.md\n@@ -1 +1 @@\n-a\n+b\n")
@@ -720,6 +748,17 @@ def test_a_diff_git_could_not_read_is_not_an_empty_diff(ws, seeded):
     report = ws.worktree_diff(str(seeded), runner=broken)
     assert report.failed is True
     assert all(not section.files for section in report.sections)
+    # Only the committed half failed, on a branch with a commit in common
+    # with its base: `merge-base` answers, so it is not "no common commit".
+    feature(seeded)
+
+    def three_dots(args, **rest):
+        if any(part.endswith("...HEAD") for part in args):
+            return None
+        return ws.run(args, **rest)
+
+    report = ws.worktree_diff(str(seeded), runner=three_dots)
+    assert report.failed is True and report.unrelated is False
 
 
 def test_a_diff_that_worked_is_not_marked_failed(ws, seeded):
@@ -786,6 +825,63 @@ def test_an_origin_head_that_points_nowhere_is_not_the_base(ws, seeded, tmp_path
     report = ws.worktree_diff(str(clone))
     assert report.failed is False and report.base == "origin/main"
     assert [one.subject for one in report.commits] == ["x"]
+
+
+def test_run_takes_an_exit_status_it_is_told_is_an_answer(ws, tmp_path):
+    """`run` gives None for any status but 0. `git merge-base` says "no
+    commit in common" with 1 and fails with 128, and only a caller that
+    names 1 can tell the two apart."""
+    assert ws.run(["sh", "-c", "exit 1"]) is None
+    assert ws.run(["sh", "-c", "exit 1"], ok=(0, 1)) == ""
+    assert ws.run(["sh", "-c", "exit 128"], ok=(0, 1)) is None
+    assert ws.run(["sh", "-c", "echo yes"], ok=(0, 1)) == "yes\n"
+
+
+@pytest.mark.parametrize("layout", ["orphan", "shallow"])
+def test_a_branch_with_no_commit_in_common_is_not_a_failure(ws, seeded,
+                                                            tmp_path, layout):
+    """`git diff base...HEAD` fails with "no merge base" on an orphan branch
+    and in a shallow clone that does not reach back to where the branch
+    began. The report said `failed` on every poll, and the page said git
+    did not answer, for ever. `merge-base` exits 1 for "none": an answer."""
+    root = seeded
+    if layout == "orphan":
+        git(seeded, "checkout", "-q", "--orphan", "pages")
+        git(seeded, "rm", "-rqf", ".")
+        (seeded / "index.html").write_text("page\n")
+        git(seeded, "add", ".")
+        git(seeded, "commit", "-qm", "pages")
+        mine = ["pages"]
+    else:
+        git(seeded, "checkout", "-qb", "feature", "HEAD~1")
+        for n in range(3):
+            (seeded / f"f{n}.txt").write_text("f\n")
+            git(seeded, "add", ".")
+            git(seeded, "commit", "-qm", f"f{n}")
+        git(seeded, "checkout", "-q", "main")
+        for n in range(3):
+            (seeded / f"m{n}.txt").write_text("m\n")
+            git(seeded, "add", ".")
+            git(seeded, "commit", "-qm", f"m{n}")
+        root = tmp_path / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "2",
+                        "--no-single-branch", f"file://{seeded}", str(root)],
+                       check=True, capture_output=True)
+        git(root, "checkout", "-q", "feature")
+        # Only what the clone holds, down to where it was cut.
+        mine = ["f2", "f1"]
+    report = ws.worktree_diff(str(root))
+    assert report.failed is False and report.unrelated is True
+    assert report.base in ("main", "origin/main"), report.bases
+    assert [one.name for one in report.sections] == ["uncommitted"]
+    assert [one.subject for one in report.commits] == mine
+
+    # A `merge-base` that failed is not "none": it is still a failure.
+    def stalled(args, **rest):
+        return None if "merge-base" in args else ws.run(args, **rest)
+
+    report = ws.worktree_diff(str(root), runner=stalled)
+    assert report.failed is True and report.unrelated is False
 
 
 def test_a_base_git_could_not_look_for_is_not_no_base(ws, seeded):
@@ -1495,6 +1591,41 @@ def test_the_ranking_is_counted_once_while_nothing_moves(ws, seeded):
     git(seeded, "commit", "-qm", "more")
     ws.worktree_diff(str(seeded), runner=spy, ranks=ranks)
     assert len(counted) == 2
+
+
+def test_a_ranking_git_failed_on_is_not_kept(ws, seeded):
+    """A count that timed out was kept as None, so the fallback base --
+    `main`, for a branch cut from `release` -- stood until HEAD or a ref
+    moved, and every later poll had a git that could count."""
+    backport(seeded)
+    stalls = [1]
+
+    def once(args, **rest):
+        if any("ahead-behind" in part for part in args) and stalls:
+            stalls.pop()
+            return None                     # as a timeout does
+        return ws.run(args, **rest)
+
+    ranks = {}
+    assert ws.worktree_diff(str(seeded), runner=once, ranks=ranks).base == "main"
+    assert ws.worktree_diff(str(seeded), runner=once, ranks=ranks).base == "release"
+
+
+def test_a_ranking_cleared_by_another_thread_is_not_an_error(ws, seeded):
+    """The request threads share `Daemon.ranks`. `key in ranks`, then
+    `ranks[key]`, raised KeyError when another thread cleared it between
+    the two, and the request answered 500. One `get` has no gap."""
+    feature(seeded)
+
+    class Cleared(dict):
+        def __contains__(self, key):
+            found = super().__contains__(key)
+            self.clear()                    # another thread, just then
+            return found
+
+    ranks = Cleared()
+    ws.worktree_diff(str(seeded), ranks=ranks)
+    assert ws.worktree_diff(str(seeded), ranks=ranks).base == "main"
 
 
 def test_a_pick_stands_when_the_ranking_cannot_be_counted(ws, seeded,

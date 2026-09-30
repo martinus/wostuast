@@ -2753,8 +2753,14 @@ class Transcript:
 # --- git facts: what git says about the agent's directory --------------------
 
 
-def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT) -> str | None:
+def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT,
+        ok: Sequence[int] = (0,)) -> str | None:
     """Run a command and return its stdout, unchanged. None on any failure.
+
+    `ok` is the exit statuses that are an answer. Only 0 by default. A caller
+    that knows a command says "no" with another status names it: `git
+    merge-base` exits 1 when two commits have no commit in common, and 128
+    when it fails. None cannot tell those two apart.
 
     It does not strip, and it does not translate: read as bytes and decoded
     here. `text=True` reads with universal newlines, which turned a lone CR
@@ -2788,7 +2794,7 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
         )
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
-    if done.returncode != 0:
+    if done.returncode not in ok:
         return None
     # A diff may hold bytes that are not UTF-8.
     return done.stdout.decode("utf-8", "replace")
@@ -3935,6 +3941,10 @@ class DiffReport:
     untracked: list[str] = field(default_factory=list)
     cut: bool = False
     failed: bool = False    # git did not answer; "nothing changed" would lie
+    #: HEAD and the base have no commit in common, so there is no committed
+    #: half: an orphan branch, or a shallow clone that does not reach back to
+    #: where the branch began. git said so; it is not a failure.
+    unrelated: bool = False
     #: What the reader can pick, newest first. The branch's own commits, or
     #: when it has none -- a session working on the default branch itself --
     #: the last few commits of HEAD, and then `recent` says so.
@@ -4054,7 +4064,9 @@ def parse_diff(text: str) -> list[DiffFile]:
     character in front.
 
     Only what the page shows is read. The index line, the mode lines and
-    `\\ No newline at end of file` are passed over.
+    `\\ No newline at end of file` are passed over -- except `new file mode`
+    and `deleted file mode`, which are all that says a file with no lines,
+    empty or binary, came or went.
 
     Split on `\\n` and nothing else. `str.splitlines()` also breaks on a form
     feed, a vertical tab, `\\x1c`-`\\x1e` and `\\u0085`, and git does not escape
@@ -4114,6 +4126,12 @@ def parse_diff(text: str) -> list[DiffFile]:
         elif line.startswith("+++ "):
             # Empty means the file is gone.
             current.path = diff_side(line[4:].removesuffix("\t"))
+        elif line.startswith("new file mode "):
+            # An empty or a binary file has no `---`/`+++` to say it is new,
+            # and the `diff --git` line names it twice: it read as modified.
+            current.old_path = ""
+        elif line.startswith("deleted file mode "):
+            current.path = ""       # `name_change` puts the name back
         elif line.startswith("rename from "):
             current.old_path = unquote_path(line[len("rename from "):])
         elif line.startswith("rename to "):
@@ -4225,10 +4243,10 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
     at = (runner(["git", "-C", cwd, "rev-parse", "--verify", "--quiet", "HEAD"])
           or "").strip()
     key = (cwd, at, current, hash(listing))
-    if ranks is not None and key in ranks:
-        counts = ranks[key]
-    else:
-        counts = None
+    # One read: the request threads share `ranks`, and a `clear()` between
+    # `key in ranks` and `ranks[key]` raised KeyError, which answered 500.
+    counts = ranks.get(key) if ranks is not None else None
+    if counts is None:
         counted = runner(["git", "-C", cwd, "for-each-ref",
                           "--format=%(refname:short)%09%(ahead-behind:HEAD)",
                           "refs/remotes/", "refs/heads/"],
@@ -4240,7 +4258,10 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
                 numbers = both.split()
                 if len(numbers) == 2 and numbers[0].isdigit() and numbers[1].isdigit():
                     counts[name] = (int(numbers[0]), int(numbers[1]))
-        if ranks is not None:
+        # A count git failed on is not kept. Kept, one timeout named the
+        # fallback base -- `main` for a branch cut from `release` -- until
+        # HEAD or a ref moved.
+        if ranks is not None and counts is not None:
             if len(ranks) > 64:
                 ranks.clear()
             ranks[key] = counts
@@ -4414,6 +4435,21 @@ def has_head(root: str, runner: Callable[..., str | None] = run) -> bool:
                    "HEAD"]) is not None
 
 
+def no_common_commit(root: str, ref: str,
+                     runner: Callable[..., str | None] = run) -> bool:
+    """Whether HEAD and `ref` have no commit in common.
+
+    `git diff ref...HEAD` fails with "no merge base" on an orphan branch,
+    such as `gh-pages`, and in a shallow clone whose history stops before the
+    branch began. That is an answer. Taken as a failure, the tab said "git
+    did not answer" on every poll, for ever. `merge-base` exits 1 for "none",
+    and prints nothing; any other failure is still None. Asked only after
+    the diff failed, so a branch with a base never pays for it.
+    """
+    return runner(["git", "-C", root, "merge-base", ref, "HEAD"],
+                  ok=(0, 1)) == ""
+
+
 def empty_tree(root: str, runner: Callable[..., str | None] = run) -> str:
     """The tree with nothing in it, which a root commit is measured against.
 
@@ -4446,13 +4482,17 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         report.failed = not git_answers(runner)
         return report
 
-    def section(name: str, title: str, about: str, *args: str) -> list[DiffFile]:
+    def ask(*args: str) -> tuple[str | None, bool]:
         # Three lines of context, said rather than assumed: the page reads
         # fewer than three after the last change as the end of the file, and
         # a reader's `diff.context` would otherwise move that line. The `--`
         # says the arguments are revisions: a file named `HEAD` made git
         # refuse `HEAD` as ambiguous, and the tab failed on every poll.
-        text, cut = git_diff(root, [*args, f"-U{DIFF_CONTEXT}", "--"], runner)
+        return git_diff(root, [*args, f"-U{DIFF_CONTEXT}", "--"], runner)
+
+    def section(name: str, title: str, about: str, *args: str,
+                answer: tuple[str | None, bool] | None = None) -> list[DiffFile]:
+        text, cut = answer or ask(*args)
         report.cut = report.cut or cut
         report.failed = report.failed or text is None
         files = parse_diff(text or "")
@@ -4510,10 +4550,16 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     if of == "uncommitted":
         report.of = of
     elif choice.ref and not unborn:
-        section("committed", "committed on this branch",
-                f"every commit this branch has that {report.base} has not"
-                f" \u2014 and nothing that landed on {report.base} since",
-                choice.ref + "...HEAD")
+        answer = ask(choice.ref + "...HEAD")
+        # No commit in common is git's answer, and the half is left out: the
+        # page says why. Anything else that failed is still a failure.
+        if answer[0] is None and no_common_commit(root, choice.ref, runner):
+            report.unrelated = True
+        else:
+            section("committed", "committed on this branch",
+                    f"every commit this branch has that {report.base} has not"
+                    f" \u2014 and nothing that landed on {report.base} since",
+                    answer=answer)
     # With no commit, against the empty tree: the staged files are in the
     # index, so they are not untracked, and `HEAD` is not there to diff to.
     section("uncommitted", "not committed yet",
@@ -13222,6 +13268,15 @@ function drawDiff(box) {
         + " tab shows only what is not committed. git had no origin/HEAD and"
         + " no main or master.");
   }
+  // An orphan branch, or a shallow clone: git says HEAD and the base share
+  // no commit, so there is no committed half. It used to read as git not
+  // answering, on every poll, for ever.
+  if (state.diff && report.unrelated && !report.of) {
+    put(scroll, "div", "note", "This branch has no commit in common with "
+        + report.base + ", so this tab shows only what is not committed. It"
+        + " may be an orphan branch, or a shallow clone that does not reach"
+        + " back to where the branch began.");
+  }
   if (report.failed) {
     put(scroll, "div", "note", "git did not answer here, so this may not be the"
         + " whole diff. It is tried again in a few seconds.");
@@ -13230,6 +13285,7 @@ function drawDiff(box) {
     put(empty, "p", null, state.find ? "No changed file matches."
       : report.of === "uncommitted" ? "Nothing is waiting to be committed."
       : report.of ? "This commit changes no file."
+      : report.unrelated ? "Nothing is waiting to be committed."
       : report.base ? "Nothing has changed against " + report.base + "."
       : "Nothing has changed, and there is no branch to compare against.");
   }
@@ -13357,8 +13413,12 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
     put(body, "div", "note", "Binary file. There is nothing to show.");
     return node;
   }
+  // A file with no lines has no hunk either way: new and empty, gone and
+  // empty, or only its mode changed. Only the last is "did not change".
   if (!one.hunks.length) {
-    put(body, "div", "note", "The content did not change.");
+    put(body, "div", "note", one.status === "added" ? "A new, empty file."
+        : one.status === "deleted" ? "The file was empty."
+        : "The content did not change.");
     return node;
   }
   const size = one.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
