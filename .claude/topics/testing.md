@@ -111,6 +111,8 @@ back, so reading it after a keypress is a race. Reassigning `note` in the
 page and keeping every word in an array holds both halves at once: that the
 key is bound to the thing that speaks, and what it said. Calling the function
 directly instead proves only the second, and then nothing guards the binding.
+`spy_on_note(page)` in `tests/browser.py` does the reassigning, into
+`window.__said`; two test files each wrote it out for themselves.
 
 **The live slot is repainted on every push, so read it in the same
 `evaluate` that writes it.** `note()` borrows the slot and the stream is

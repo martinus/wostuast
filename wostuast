@@ -3143,7 +3143,6 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         paths = git("rev-parse", "--show-toplevel")
     found = [line for line in (paths or "").split("\n")
              if line and not line.startswith("-")]
-    paths = "\n".join(found) if paths is not None else None
     if found:
         common = found[0]
         if not os.path.isabs(common):
@@ -3153,7 +3152,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         facts.remote = remote_url(common)
 
     status = git("status", "--porcelain", "--branch")
-    if not paths:
+    if not found:
         # Neither `rev-parse` answered. Outside a repository that is the
         # answer; on a stalled machine it is not one, and taken for one it
         # wrote empty facts over known ones and was not asked again. `status`
@@ -4554,14 +4553,6 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
     # diff into a file of that name. A full name starts with `refs/`.
     choice.ref = refs.get(choice.name, "")
     return choice
-
-
-def diff_base(cwd: str, runner: Callable[..., str | None] = run,
-              wanted: str = "", ranks: dict[Any, Any] | None = None
-              ) -> tuple[str, bool]:
-    """The base `pick_base` chose, and whether git failed to answer."""
-    choice = pick_base(cwd, runner, wanted, ranks)
-    return choice.name, choice.failed
 
 
 def git_diff(

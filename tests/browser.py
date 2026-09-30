@@ -216,6 +216,15 @@ def renew_stream(page, act):
 def two_rows(page):
     page.wait_for_function("document.querySelectorAll('.row').length === 2")
 
+
+def spy_on_note(page):
+    """Every word `note` says, kept in `window.__said`. The live slot is
+    repainted on every push, so reading `#live` after a keypress is a race;
+    this is not (.claude/topics/testing.md, "spy on `note`")."""
+    page.evaluate("""() => { window.__said = []; const real = note;
+      note = (text, ...rest) => { window.__said.push(text);
+                                  return real(text, ...rest); }; }""")
+
 # --- line numbers -----------------------------------------------------------
 
 

@@ -821,21 +821,24 @@ def test_a_directory_without_git_has_no_untracked_files(ws, tmp_path):
 
 
 def test_the_base_falls_back_to_main(ws, seeded):
-    assert ws.diff_base(str(seeded)) == ("main", False)
+    choice = ws.pick_base(str(seeded))
+    assert (choice.name, choice.failed) == ("main", False)
 
 
 def test_the_base_is_what_the_remote_says(ws, seeded, tmp_path):
     clone = tmp_path / "clone"
     subprocess.run(["git", "clone", "-q", str(seeded), str(clone)], check=True,
                    capture_output=True)
-    assert ws.diff_base(str(clone)) == ("origin/main", False)
+    choice = ws.pick_base(str(clone))
+    assert (choice.name, choice.failed) == ("origin/main", False)
 
 
 def test_a_repository_without_a_base_says_so(ws, tmp_path):
     root = tmp_path / "fresh"
     root.mkdir()
     git(root, "init", "-q", "-b", "wip")
-    assert ws.diff_base(str(root)) == ("", False)
+    choice = ws.pick_base(str(root))
+    assert (choice.name, choice.failed) == ("", False)
 
 
 def test_an_origin_head_that_points_nowhere_is_not_the_base(ws, seeded, tmp_path):
@@ -851,11 +854,13 @@ def test_an_origin_head_that_points_nowhere_is_not_the_base(ws, seeded, tmp_path
     git(clone, "update-ref", "refs/remotes/origin/trunk", "HEAD")
     git(clone, "symbolic-ref", "refs/remotes/origin/HEAD",
         "refs/remotes/origin/trunk")
-    assert ws.diff_base(str(clone)) == ("origin/trunk", False)
+    choice = ws.pick_base(str(clone))
+    assert (choice.name, choice.failed) == ("origin/trunk", False)
     git(clone, "update-ref", "-d", "refs/remotes/origin/trunk")
     git(clone, "symbolic-ref", "refs/remotes/origin/HEAD",
         "refs/remotes/origin/master")
-    assert ws.diff_base(str(clone)) == ("origin/main", False)
+    choice = ws.pick_base(str(clone))
+    assert (choice.name, choice.failed) == ("origin/main", False)
     # A clone carries no identity of its own, and CI has no global one.
     git(clone, "config", "user.email", "t@example.com")
     git(clone, "config", "user.name", "t")
@@ -932,7 +937,8 @@ def test_a_base_git_could_not_look_for_is_not_no_base(ws, seeded):
     def broken(args, **rest):
         return None if "for-each-ref" in args else ws.run(args, **rest)
 
-    assert ws.diff_base(str(seeded), runner=broken) == ("", True)
+    choice = ws.pick_base(str(seeded), runner=broken)
+    assert (choice.name, choice.failed) == ("", True)
     assert ws.worktree_diff(str(seeded), runner=broken).failed is True
 
 
@@ -1572,7 +1578,8 @@ def test_a_git_that_cannot_rank_falls_back_to_the_usual_names(ws, seeded):
             return None
         return ws.run(args, **rest)
 
-    assert ws.diff_base(str(seeded), runner=old) == ("main", False)
+    choice = ws.pick_base(str(seeded), runner=old)
+    assert (choice.name, choice.failed) == ("main", False)
 
 
 def feature(seeded, name="feature"):
