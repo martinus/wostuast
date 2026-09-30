@@ -429,6 +429,28 @@ def test_code_is_painted(repo_page):
             browser.close()
 
 
+@pytest.mark.parametrize("body, rows", [
+    (b"print(1)\r\nprint(2)\r\n", "print(1)\nprint(2)"),
+    (b"print(1)\nx = 1\ry = 2\n", "print(1)\nx = 1y = 2"),
+])
+def test_a_file_with_a_carriage_return_is_painted(repo_page, body, rows):
+    """The HTML parser reads CR LF, and a lone CR, as a line break. So the
+    painted answer of a file saved on Windows had one line more than the
+    file had rows, and the page painted nothing, with no word why. Every CR
+    comes off before the highlighter; rows are cut on LF, so none moves."""
+    root, _ = repo_page
+    (root / "code.py").write_bytes(body)
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
+            page.wait_for_selector(".filebody .code .hljs-keyword")
+            assert page.locator(".filebody .code .dline").count() == 2
+            assert code_text(page) == rows
+        finally:
+            browser.close()
+
+
 def test_the_page_does_not_trust_the_highlighter_either(repo_page):
     """Its output goes through the same inert template the Markdown does. A
     span dressed as our own chrome, an attribute, and an element that is not a

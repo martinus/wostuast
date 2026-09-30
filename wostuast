@@ -8380,6 +8380,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .prose p { margin: 0 0 8px; }
 .prose ul, .prose ol { margin: 0 0 8px; padding-left: 22px; }
 .prose li { margin: 3px 0; }
+.prose li.task { list-style: none; }
 .prose code {
   font-family: var(--mono); font-size: 12.5px; padding: 1px 5px;
   border-radius: 4px; background: var(--chosen); color: var(--needs-warm);
@@ -8415,6 +8416,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .prose table { border-collapse: collapse; margin: 0 0 8px; }
 .prose th, .prose td { border: 1px solid var(--edge); padding: 4px 10px; text-align: left; }
+.prose [align="center"] { text-align: center; }
+.prose [align="right"] { text-align: right; }
 
 /* A group of tool calls belongs to the words above it: the agent says what it
    is about to do, and then does it. Measured, the gaps used to be 16 px above
@@ -11064,15 +11067,20 @@ function linkOne(text, room) {
   const holder = document.createDocumentFragment();
   let from = 0;
   let made = 0;
+  // Each pattern's next match, kept while it is still ahead of `from`: a
+  // search from further back that found nothing before it finds the same.
+  const ahead = new Map();
   while (from < text.length && made < room) {
     // The earliest match among every pattern, so two patterns that overlap
     // give the same answer whichever order they are written in.
     let best = null;
     for (const one of state.links) {
-      one.re.lastIndex = from;
-      const hit = one.re.exec(text);
-      // A pattern that can match nothing would never move `from` on.
-      if (hit && hit[0] && (!best || hit.index < best.hit.index)) {
+      let hit = ahead.get(one);
+      if (hit === undefined || (hit && hit.index < from)) {
+        hit = nextMatch(one.re, text, from);
+        ahead.set(one, hit);
+      }
+      if (hit && (!best || hit.index < best.hit.index)) {
         best = { one, hit };
       }
     }
@@ -11100,12 +11108,31 @@ function linkOne(text, room) {
   return { holder, made };
 }
 
+// The first match of `re` at `from` or after it that is not empty.
+//
+// A pattern such as `(PROJ-)?\d*` matches nothing at every place that is not
+// a ticket, and `exec` gives that empty match first. Taking it as "no match"
+// made no links at all from such a pattern, and nothing said why. So an
+// empty match moves the search on by one and asks again. This walks the
+// text one place at a time, but only for a pattern that matches nothing
+// there, and `linkOne` keeps each answer until it is passed.
+function nextMatch(re, text, from) {
+  re.lastIndex = from;
+  let hit = re.exec(text);
+  while (hit && !hit[0]) {
+    if (hit.index >= text.length) return null;
+    re.lastIndex = hit.index + 1;
+    hit = re.exec(text);
+  }
+  return hit;
+}
+
 //: What may be a link on this page. A page an agent wrote is not a place to
 //: follow a `javascript:` or a `data:` from.
-const LINKABLE = /^(https?:|#)/i;
+const LINKABLE = /^https?:/i;
 
 //: The same question for a link this page builds itself, which always goes
-//: somewhere else -- `#` belongs to Markdown an agent wrote, not to a ticket.
+//: somewhere else.
 const AWAY = /^https?:\/\//i;
 
 // A link that leaves this page leaves it in a new tab, and takes nothing of
@@ -11115,12 +11142,19 @@ function opensAway(link) {
   link.rel = "noopener noreferrer";
 }
 
+// A `#` link is its words and nothing more. The scrub takes every id off a
+// heading, so it has nowhere to jump to in the text. As a link it opened a
+// second copy of this page in a new tab, and `goToLink` read `#install` as
+// the name of a session.
 function safeLinks(root) {
   for (const link of root.querySelectorAll("a")) {
-    if (!LINKABLE.test(link.getAttribute("href") || "")) {
-      link.removeAttribute("href");
-    } else {
+    const href = link.getAttribute("href") || "";
+    if (LINKABLE.test(href)) {
       opensAway(link);
+    } else if (href.startsWith("#")) {
+      link.replaceWith(...link.childNodes);
+    } else {
+      link.removeAttribute("href");
     }
   }
 }
@@ -11158,15 +11192,57 @@ const ALLOWED = new Set([
   "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "SPAN", "DIV",
 ]);
 
+//: The attributes that may stay, each with the one test its value must
+//: pass. None of them holds free text. `start` is the number a list starts
+//: at: steps split by a code fence are three lists, and without it they
+//: read 1, 1, 1. Nine digits is the most CommonMark takes. `align` is a
+//: table column's side, so a column of numbers stands to the right.
+//: Maps and not objects: an attribute named `constructor` found the one
+//: every object has, and kept itself.
+const SIDES = ["left", "center", "right"];
+const KEPT = new Map([
+  // Where an `href` may go is for `safeLinks` to say.
+  ["A", new Map([["href", () => true]])],
+  ["OL", new Map([["start", (value) => /^[0-9]{1,9}$/.test(value)]])],
+  ["TH", new Map([["align", (value) => SIDES.includes(value)]])],
+  ["TD", new Map([["align", (value) => SIDES.includes(value)]])],
+]);
+
+// What an element that may not stay is shown as. Its own text, except for
+// the two that have none: a task list's box is a mark, and a picture is
+// its `alt`. Both become text, so neither can load or run anything.
+function textFor(child) {
+  if (child.tagName === "INPUT" && child.getAttribute("type") === "checkbox") {
+    return child.hasAttribute("checked") ? "\u2611" : "\u2610";
+  }
+  if (child.tagName === "IMG") return child.getAttribute("alt") || "";
+  return child.textContent || "";
+}
+
 function scrub(node) {
   for (const child of Array.from(node.children)) {
     if (!ALLOWED.has(child.tagName)) {
-      child.replaceWith(document.createTextNode(child.textContent || ""));
+      // A task's box stands where the bullet stood, as it does on GitHub:
+      // "• ☑ done" read as two marks for one item. The class is ours, put
+      // on after the item's own attributes were taken, so an agent's
+      // `class="task"` on an item with no box does not stay.
+      if (child.tagName === "INPUT" && child.getAttribute("type") === "checkbox"
+          && node.nodeType === Node.ELEMENT_NODE) {
+        const item = node.closest("li");
+        if (item) item.classList.add("task");
+      }
+      child.replaceWith(document.createTextNode(textFor(child)));
       continue;
     }
+    const kept = KEPT.get(child.tagName);
     for (const name of Array.from(child.getAttributeNames())) {
-      if (child.tagName === "A" && name === "href") continue;
+      const test = kept && kept.get(name);
+      if (test && test(child.getAttribute(name))) continue;
       child.removeAttribute(name);
+    }
+    // Written again from the number, so what stays is ours: "007" is 7.
+    if (child.hasAttribute("start")) {
+      child.setAttribute("start", String(Number(child.getAttribute("start"))));
     }
     scrub(child);
   }
@@ -11415,7 +11491,11 @@ function paintedLines(lib, language, text, want) {
   if (tooDenseToPaint(text)) return null;
   let lines;
   try {
-    const done = lib.highlight(text, { language, ignoreIllegals: true });
+    // Without any CR. The HTML parser in `paintedInto` reads CR LF and a
+    // lone CR as a line break, so a Windows file had one more line than
+    // rows and was never painted. Rows are cut on LF only, so no line moves.
+    const done = lib.highlight(text.replace(/\r/g, ""),
+                               { language, ignoreIllegals: true });
     lines = cutIntoLines(paintedInto(document.createElement("template"),
                                      done.value));
   } catch (error) {
@@ -11472,9 +11552,11 @@ function placeInHash() {
   try {
     if (cut < 0) return raw ? { id: decodeURIComponent(raw), seq: null } : null;
     if (cut < 1) return null;
-    const seq = Number(raw.slice(cut + 1));
-    if (!Number.isInteger(seq) || seq < 0) return null;
-    return { id: decodeURIComponent(raw.slice(0, cut)), seq };
+    // Digits and nothing else. `Number("")` is 0, so `#s1/` was a link to
+    // the first block, and `Number` takes " 3", "1e2" and "0x10" too.
+    const tail = raw.slice(cut + 1);
+    if (!/^[0-9]+$/.test(tail)) return null;
+    return { id: decodeURIComponent(raw.slice(0, cut)), seq: Number(tail) };
   } catch (error) {
     return null;              // a hash somebody typed by hand
   }

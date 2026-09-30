@@ -53,6 +53,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the address names another session**: rewritten always, a link to one
   reply lost its `/<seq>` the moment it opened, and
   `test_a_reply_is_a_link_you_can_open_in_another_tab` went red.
+  **`seq` is digits and nothing else** (`placeInHash`): `Number("")` is 0,
+  so `#s1/` was a link to the first block, and `Number` takes " 3", "1e2"
+  and "0x10" too. `test_a_link_to_a_block_is_digits_and_nothing_else`.
 - **A session can be chosen before the session list exists.** The address bar
   holds a link at startup, so `choose` runs with `state.sessions` empty —
   `current()` is null and every tab draws its empty state. The `sessions`
@@ -119,7 +122,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     numbers twice. `echo_of` drops it -- only straight after, only once, and
     not after "(no content)": `/init` sends its prompt as an `isMeta` record
     with no answer before it, measured, and that one is shown.
-    `tests/fixtures/local_command.jsonl`.
+    `tests/fixtures/local_command.jsonl`. **`<local-command-stderr>` is
+    not read yet, on purpose**: the 2.1.285 bundle writes one for a command
+    that failed, with `commandOutcome` `failed`, but no record of it has
+    been read on any machine, and `payloads.md` says a shape is recorded,
+    never guessed. Record one before handling it.
     `test_a_slash_command_and_what_it_answered_are_one_block`,
     `test_a_slash_command_is_drawn_with_what_it_answered`.
 - **`wostuast shapes` is how a new Claude Code shape is found before the
@@ -181,7 +188,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   not on it, and this page's own send box is how most of them are typed.
   `add_queued` reads it through `read_user_text`; `origin.kind` human is a
   prompt, a peer's message or a task's news a note, and every other
-  attachment stays out. `test_a_message_queued_while_the_agent_works_is_drawn`.
+  attachment stays out. **One with no `commandMode` is a note**, and stays
+  one until such a record is read: 441 read on one machine, 2.1.276 to
+  2.1.285, all carried it. A note is still shown, and the reader's rail on
+  words that are not theirs is the worse mistake.
+  `test_a_message_queued_while_the_agent_works_is_drawn`.
 - **`isMeta` is Claude Code speaking, never the reader.** A Stop hook's
   answer, a whole skill's body, "Continue from where you left off.", an
   image's caption: each came as a `user` record with `isMeta`, wore the

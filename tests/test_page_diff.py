@@ -771,6 +771,25 @@ def test_the_diff_is_painted_and_keeps_its_word_marks(repo_page):
             browser.close()
 
 
+def test_a_diff_of_a_file_with_windows_line_ends_is_painted(repo_page):
+    """A CRLF file's diff lines end in CR, and the HTML parser in
+    `paintedInto` reads that as one more line break: each side of a hunk
+    came back with more lines than it has rows, and none was painted."""
+    root, _ = repo_page
+    (root / "code.py").write_bytes(b"print(10)\r\nprint(2)\r\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            page.evaluate(PAINT_EVERY_LINE)
+            show_tab(page, "diff")
+            last = page.locator(".dfile:has(.path:text-is('code.py'))").last
+            last.locator(".dline.added .dtext .hljs-keyword").first.wait_for()
+            assert last.locator(".dline.added .dtext").all_inner_texts() == [
+                "print(10)", "print(2)"]
+        finally:
+            browser.close()
+
+
 def test_the_list_is_a_tree_and_the_pane_reads_in_its_order(repo_page):
     """Folders first, then files, at every level -- and the pane beside it in
     the same order, so the two read the same way down. A folder holding only
