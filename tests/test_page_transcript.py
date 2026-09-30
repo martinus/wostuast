@@ -262,12 +262,20 @@ def test_a_code_block_copies_itself_from_a_button_that_shows_on_hover(page_at):
             page.wait_for_function(f"({shown})() === '1'")
             assert page.evaluate("""() => [...document.querySelectorAll(
               '.prose .copycode')].every((one) => !one.closest('pre'))""")
+            # The tick shows for 1.4 s. A loaded runner spent longer than
+            # that on the steps between the click and a wait for it, so the
+            # page writes down that it came, and the test reads that.
+            box.locator(".copycode").evaluate("""(button) => {
+              window.__done = false;
+              new MutationObserver(() => {
+                if (button.classList.contains('done')) window.__done = true;
+              }).observe(button, {attributes: true}); }""")
             box.locator(".copycode").click()
             page.wait_for_function("window.__copied.length === 1")
             code = box.locator("pre").evaluate("(pre) => pre.textContent")
             assert page.evaluate("window.__copied[0]") == code
             assert "len(hits) > 1" in code
-            page.wait_for_selector(".prose .codebox .copycode.done")
+            page.wait_for_function("window.__done")
         finally:
             browser.close()
 
@@ -389,6 +397,7 @@ def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_a
         browser, page = open_page(play, path)
         try:
             wait_for_map(page)
+            wait_for_watching(daemon)
             assert page.locator(".turn").count() > 1
             held = daemon_transcript(daemon)
 
@@ -556,6 +565,7 @@ def test_a_search_keeps_its_place_while_the_agent_works(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
+            wait_for_watching(daemon)
             append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
             page.wait_for_function(
                 "document.querySelectorAll('.turn').length > 50")
@@ -2171,6 +2181,7 @@ def test_the_top_of_the_transcript_is_a_place_too(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
+            wait_for_watching(daemon)
             append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
             page.wait_for_function(
                 "document.querySelectorAll('.turn').length > 50")
