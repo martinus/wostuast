@@ -39,6 +39,7 @@ HOOK_EVENTS: tuple[str, ...] = (
     "PermissionRequest",
     "Notification",
     "Stop",
+    "StopFailure",
     "SubagentStop",
     "PreCompact",
     "SessionEnd",
@@ -1441,7 +1442,7 @@ class Store:
 
 def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
     """True when this event suggests the working tree may have changed."""
-    if event_name == "Stop":
+    if event_name in ("Stop", "StopFailure"):
         return True
     if event_name in ("PostToolUse", "PostToolUseFailure"):
         return str(event.get("tool_name") or "") in WRITING_TOOLS
@@ -1801,6 +1802,47 @@ def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     session.last_event = "stopped"
 
 
+#: What each `error` of a `StopFailure` means, for when Claude Code sends no
+#: words of its own. The names are Claude Code's, read off 2.1.285.
+STOP_FAILURES = {
+    "authentication_failed": "not logged in",
+    "oauth_org_not_allowed": "organisation not allowed",
+    "account_on_hold": "account on hold",
+    "verification_required": "verification needed",
+    "billing_error": "billing problem",
+    "rate_limit": "usage limit reached",
+    "overloaded": "the API is overloaded",
+    "invalid_request": "the API refused the request",
+    "model_not_found": "model not found",
+    "server_error": "the API failed",
+    "unknown": "an API error",
+    "max_output_tokens": "the reply was too long",
+    "cloud_credential_error": "cloud credentials",
+}
+
+
+def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None:
+    """A turn an API error ended: a spend limit, a login, an overload.
+
+    Claude Code fires this *instead of* `Stop`, so without it the row read
+    "working" over an agent that had stopped, until the next prompt. The
+    agent cannot go on until the reader does something -- raises a limit,
+    logs in, or says go on -- which is what amber means. The reason is
+    Claude Code's own sentence, which it also writes into the transcript:
+    `last_assistant_message`, measured on 2.1.285. `error` is the fallback.
+    """
+    _clear_attention(session)
+    session.calls.clear()
+    error = str(event.get("error") or "unknown")
+    said = str(event.get("last_assistant_message") or event.get("error_details")
+               or "")
+    words = clip(said.strip().split("\n")[0], 200)
+    session.state = "needs_you"
+    session.attention_since = ts
+    session.reason = "stopped: " + (words or STOP_FAILURES.get(error, error))
+    session.last_event = f"stopped by an API error ({error})"
+
+
 def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     agent = str(event.get("agent_type") or "subagent")
     session.last_event = f"{agent} finished"
@@ -1829,6 +1871,7 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "Declined": _on_declined,
     "Notification": _on_notification,
     "Stop": _on_stop,
+    "StopFailure": _on_stop_failure,
     "SubagentStop": _on_subagent_stop,
     "PreCompact": _on_pre_compact,
     "SessionEnd": _on_session_end,

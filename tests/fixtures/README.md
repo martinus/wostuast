@@ -20,12 +20,24 @@ Each event adds its own fields:
 | `PermissionRequest` | `tool_name`, `tool_input`, `permission_suggestions` |
 | `Notification` | `message`, `title`, `notification_type` |
 | `Stop` | `stop_hook_active` |
+| `StopFailure` | `error`, `last_assistant_message`, `error_details` (optional) |
 | `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_transcript_path`, `agent_type` |
 | `PreCompact` | `trigger` (manual, auto), `custom_instructions` |
 | `SessionEnd` | `reason` (clear, logout, prompt_input_exit, other, bypass_permissions_disabled) |
 
 `notification_type` is one of `permission_prompt`, `idle_prompt`,
 `auth_success`, `elicitation_dialog`.
+
+`StopFailure` fires *instead of* `Stop` when an API error ends the turn,
+measured on 2.1.285 (`stop_failure.jsonl`, recorded with a model that does
+not exist): no `Stop` came. `last_assistant_message` is Claude Code's own
+sentence about the error, the one it also writes into the transcript, and
+`error_details` was not sent. `error` is one of `authentication_failed`,
+`oauth_org_not_allowed`, `account_on_hold`, `verification_required`,
+`billing_error`, `rate_limit`, `overloaded`, `invalid_request`,
+`model_not_found`, `server_error`, `unknown`, `max_output_tokens`,
+`cloud_credential_error` -- read off the 2.1.285 schema, and only
+`model_not_found` recorded. Claude Code ignores what the hook prints.
 
 A slash command fires no hook at all: `/model opus` changes the model and
 the log says nothing, measured on 2.1.283. The status line sends the new
