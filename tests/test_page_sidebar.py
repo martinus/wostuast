@@ -155,6 +155,19 @@ def test_a_hidden_session_still_counts(pair_at, ws):
             browser.close()
 
 
+def test_the_session_list_ends_with_its_rows(page_at):
+    """A strip of keys stood under the rows and said, in two cramped lines,
+    what ? says in full. The reader found it odd and never needed it, so the
+    list ends with its last row."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            assert page.evaluate(
+                "document.querySelector('.sidebar').lastElementChild.id") == "rows"
+        finally:
+            browser.close()
+
+
 def test_f_puts_the_cursor_in_the_session_filter(page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
@@ -287,7 +300,9 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
             assert all(abs(a - b) < 0.5
                        for a, b in zip(moved["gap"], moved["want"])), moved
 
-            page.set_viewport_size({"width": 1100, "height": 420})
+            # Short enough that the list scrolls: it runs to the foot of the
+            # page now that no strip of keys stands under it.
+            page.set_viewport_size({"width": 1100, "height": 350})
 
             # The list's bar only while the pointer is on the list: anywhere
             # else it stands between the row and the content.
@@ -312,8 +327,9 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
                 - (list.top - grip.getBoundingClientRect().top)) < 0.5;
             }""")
             # Scrolled out of it, the line is whole again. A shorter window,
-            # so the list can scroll that far.
-            page.set_viewport_size({"width": 1100, "height": 330})
+            # so the list can scroll that far -- shorter again since the
+            # strip of keys under the list went, and the list got its room.
+            page.set_viewport_size({"width": 1100, "height": 250})
             page.evaluate("document.getElementById('rows').scrollTop = 1e6")
             page.wait_for_function("""() => {
               const row = document.querySelector('.row.chosen');
