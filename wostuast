@@ -99,6 +99,30 @@ PROMPT_WIDTH = 500
 BIND_HOST = "127.0.0.1"
 DEFAULT_PORT = 7331
 
+#: Where Linux lists every TCP socket with the user that owns it. The daemon
+#: reads the line of the other end of each connection and answers only its
+#: own user: 127.0.0.1 is open to every account on the machine.
+#: `/proc/net/tcp6` is there because a client on an IPv6 socket reaches
+#: 127.0.0.1 as `::ffff:127.0.0.1`. .claude/topics/safety.md: "The daemon
+#: answers on localhost only, and only to its own user".
+TCP_TABLES = ("/proc/net/tcp", "/proc/net/tcp6")
+
+#: How many times a connection's owner is looked for before the connection
+#: is refused. The kernel writes the table a page at a time and resumes by
+#: position, so a table that changes during the read can skip a line.
+PEER_READS = 3
+
+#: The state column of a closed connection, in `TCP_TABLES`. Nobody owns it,
+#: and the kernel writes uid 0 for it, so it is never the answer.
+TIME_WAIT = "06"
+
+#: The one user let in besides the daemon's own. In WSL2's default NAT mode
+#: a Windows browser reaches 127.0.0.1 in the Linux VM through a relay that
+#: runs as root inside the VM, and other root forwarders do the same. Root
+#: gains nothing by it: it can read the token, the state files and every
+#: transcript already, and it can attach to the daemon itself.
+ROOT_UID = 0
+
 #: How often the daemon looks for new events.
 TICK = 1.0
 
@@ -5429,6 +5453,10 @@ class Daemon:
         # token can send one that acts. It is made here and printed into the
         # page, and it lives as long as the daemon does.
         self.token = secrets.token_urlsafe(32)
+        #: The only user this daemon answers. 127.0.0.1 is open to every
+        #: account on the machine, and the token is in the page any of them
+        #: can fetch. `Serving.handle` compares each connection against it.
+        self.uid = os.getuid()
         self.version = own_version()
         self.transcripts: dict[str, Transcript] = {}
         #: Sessions a decline is being pressed into. It waits up to
@@ -5666,6 +5694,109 @@ def clip_lines(text: str, limit: int) -> str:
     return "\n".join(lines[:limit]) + f"\n… {rest} more line{'s' if rest > 1 else ''}"
 
 
+def table_address(host: str, port: int, six: bool = False) -> str:
+    """An IPv4 address and a port as `/proc/net/tcp` writes them.
+
+    The kernel prints each 32-bit word of the address as a number in the
+    machine's own byte order, so 127.0.0.1 is `0100007F` on x86. With `six`
+    it is the IPv4-mapped IPv6 address, as `/proc/net/tcp6` writes it.
+    """
+    raw = bytes(int(part) for part in host.split("."))
+    if six:
+        raw = bytes(10) + b"\xff\xff" + raw
+    words = "".join(f"{int.from_bytes(raw[at:at + 4], sys.byteorder):08X}"
+                    for at in range(0, len(raw), 4))
+    return f"{words}:{port:04X}"
+
+
+def socket_owner(table: str, local: tuple[str, int],
+                 remote: tuple[str, int]) -> int | None:
+    """The uid of the socket from `local` to `remote`, read off the text of
+    `/proc/net/tcp` or `/proc/net/tcp6`. None when no open socket has both.
+
+    Both ends must match, so another connection is never taken for this one.
+    The table can hold tens of thousands of lines, so it is searched, not
+    split: `find` runs in C, and only a line that holds both ends is split.
+    The needle is the two addresses with a space either side, and no other
+    field of a line has that shape, so a line it finds is a line whose
+    second and third fields are these two ends.
+    """
+    for six in (False, True):
+        near, far = table_address(*local, six), table_address(*remote, six)
+        needle = f" {near} {far} "
+        at = table.find(needle)
+        while at != -1:
+            start = table.rfind("\n", 0, at) + 1
+            end = table.find("\n", at)
+            fields = table[start:end if end != -1 else len(table)].split()
+            if len(fields) > 7 and fields[3] != TIME_WAIT:
+                try:
+                    return int(fields[7])
+                except ValueError:
+                    return None
+            at = table.find(needle, at + 1)
+    return None
+
+
+def read_table(path: str) -> str | None:
+    """The text of one TCP table, or None when this machine has no such file.
+
+    Any other failure is raised: a table that is there and cannot be read is
+    not the same as a machine without one, and the caller refuses on it.
+    """
+    try:
+        with open(path, encoding="ascii", errors="replace") as table:
+            return table.read()
+    except FileNotFoundError:
+        return None
+
+
+def another_user(peer: tuple[str, int], ours: tuple[str, int], uid: int,
+                 read: Callable[[str], str | None] | None = None,
+                 tables: Sequence[str] = TCP_TABLES) -> bool:
+    """Whether the other end of a connection belongs to another user.
+
+    `peer` is the address the connection came from and `ours` the one it
+    came to, so the other end's socket is the line from `peer` to `ours`.
+    Three answers, and the order matters:
+
+    - No table at all, or tables with no lines in them: false, as before
+      this check existed. macOS has no `/proc`. A real table always lists
+      our own listening socket, so an empty one is not a real table, and
+      nobody else can make ours empty.
+    - The line is there: true unless its uid is ours or root's
+      (`ROOT_UID`, for the WSL2 relay).
+    - The table is there and the line is not: true. The other end is open
+      for as long as this connection is, so a missing line is not normal.
+      The kernel can skip a line when the table changes during the read,
+      so it is read again first, `PEER_READS` times in all.
+
+    `read_table` is looked up when called, not taken as a default, so a
+    test can put a table that fails in its place.
+    """
+    read = read or read_table
+    for _ in range(PEER_READS):
+        listed = False
+        for path in tables:
+            text = read(path)
+            if text is None:
+                continue
+            listed = listed or text.count("\n") > 1
+            owner = socket_owner(text, peer, ours)
+            if owner is not None:
+                # Root too: WSL2's relay from a Windows browser runs as
+                # root, and root can read everything here anyway.
+                return owner not in (uid, ROOT_UID)
+        if not listed:
+            return False
+    return True
+
+
+#: What a connection from another user gets, on every route. It says why, so
+#: a reader whose own browser runs as another account can tell what happened.
+STRANGER = "wostuast answers only the user who runs it"
+
+
 class Serving:
     """Every route the daemon answers, and none of the HTTP plumbing.
 
@@ -5681,6 +5812,33 @@ class Serving:
     """
 
     daemon: Daemon           # set on the subclass, in `make_server`
+
+    #: Whether this connection comes from another user. `handle` sets it once
+    #: per connection; until then it is true, so a request that got past
+    #: `handle` somehow is refused rather than served.
+    stranger = True
+
+    def handle(self) -> None:
+        """Look up who is at the other end, once for the whole connection.
+
+        127.0.0.1 is open to every account on the machine, and `GET /` hands
+        out the page with the token in it. So the Host, Origin and token
+        checks keep other *sites* out, and only this keeps other *users*
+        out. It runs here, in the connection's own thread, and not in the
+        server's accept loop: a table of 64,000 lines takes about 80 ms to
+        read, and the accept loop would make every other browser wait.
+
+        A failure is a refusal. An exception here is something nobody
+        expected, and running out of files is one another user can cause.
+        """
+        try:
+            self.stranger = another_user(self.client_address[:2],
+                                         self.connection.getsockname()[:2],
+                                         self.daemon.uid)
+        except Exception as error:
+            log(f"could not tell which user connected: {error!r}")
+            self.stranger = True
+        super().handle()  # type: ignore[misc]  # BaseHTTPRequestHandler's
 
     def log_message(self, fmt: str, *args: Any) -> None:
         pass  # the access log goes nowhere; our own log has what matters
@@ -5886,6 +6044,13 @@ class Serving:
         their own now; this is what catches whatever nobody thought of.
         """
         try:
+            # Before anything else, the body too: nothing another user sends
+            # is read, and the connection closes after this answer. Inside
+            # the `try`, so this check fails closed like the others.
+            if self.stranger:
+                self.close_connection = True
+                self.reply_json({"error": STRANGER}, 403)
+                return
             route()
         except (BrokenPipeError, ConnectionResetError):
             pass

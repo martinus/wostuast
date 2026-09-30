@@ -368,6 +368,18 @@ The page can type into a terminal, so it is careful about who may use it.
 
 - It listens on `127.0.0.1` only, and refuses a request whose `Host` header is
   not its own.
+- On Linux, it answers only the user who runs it, and root. `127.0.0.1` is
+  open to every account on the machine, so wostuast asks the kernel which
+  user opened each connection. Another user gets `403` and nothing else: no
+  page, no sessions, no token. A browser that you run as another account
+  gets the same. An SSH tunnel works, because `sshd` connects as the user
+  who logged in.
+- Root is let in because of WSL2. There, a Windows browser reaches the
+  Linux side through a relay that runs as root. Root can read all of your
+  files anyway, so this gives it nothing new.
+- On macOS, wostuast cannot ask which user opened a connection. Any account
+  on the Mac can read the page and act on it. Do not run `serve` on a Mac
+  that other people log in to.
 - Every action carries a token that the daemon prints into the page. A token
   from before a restart is refused, and the page tells you to reload.
 - No other site can show the page in a frame.
@@ -390,9 +402,12 @@ off for a session with no pane, and the page says why.
 <details>
 <summary><b>Does it work on macOS?</b></summary>
 
-Yes. On Linux, wostuast checks that an agent's process is still alive. macOS has
-no `/proc` to check, so there a quiet session is taken as ended after twelve
-hours.
+Yes, with two differences. On Linux, wostuast checks that an agent's process
+is still alive. macOS has no `/proc` to check, so there a quiet session is
+taken as ended after twelve hours.
+
+On Linux, the page answers only the user who runs `serve`, and root. On
+macOS, every account on the Mac can open it and act on it. See [Safety](#safety).
 
 </details>
 
