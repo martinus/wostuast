@@ -1313,6 +1313,39 @@ def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
             browser.close()
 
 
+def test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole(ws, in_pane):
+    """The reason for a No is a box one row high. Its placeholder was wider
+    than the box at 1,100 px, and wrapped onto a second row that did not
+    show: "(optional)" stood cut in half under the first. And a long reason
+    wrapped onto rows nobody could see, because the box did not grow as the
+    send box does. The placeholder, typed in, needs no second row, and a
+    long reason makes the box as tall as it is."""
+    daemon, base, seen = in_pane
+    path = daemon.store.sessions["s1"].transcript_path
+    with open(path, "a") as handle:
+        handle.write(conftest.records(conftest.record("tool", BUILD, tool_id="toolu_b1")))
+    now_permission(ws, daemon)
+    rows = """() => { const box = document.querySelector('#asking .permwhy');
+      return [box.clientHeight, box.scrollHeight]; }"""
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.set_viewport_size({"width": 1100, "height": 700})
+            page.wait_for_selector("#asking:not([hidden]) .permwhy")
+            page.evaluate("""() => { const box = document.querySelector('#asking .permwhy');
+              box.value = box.placeholder; }""")
+            shown, needed = page.evaluate(rows)
+            assert needed <= shown, "the placeholder wraps onto a hidden row"
+
+            page.fill("#asking .permwhy", "do not delete the folder; move it to "
+                      "the archive and tell me what is in it first")
+            shown, needed = page.evaluate(rows)
+            assert shown > 40, "a long reason did not grow the box"
+            assert needed <= shown, "a long reason wraps onto a hidden row"
+        finally:
+            browser.close()
+
+
 def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
     """Ctrl+Enter presses the box's own button: the send box left it out on
     purpose and sent nothing, and the reason for a No had only its button.

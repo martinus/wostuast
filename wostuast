@@ -8774,7 +8774,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* A request is read whole, so a long command wraps rather than running off
    the side: a preview keeps its layout, and this has none to keep. */
 .permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
-.permsend .permwhy { flex: 1 1 260px; }
+/* At least as wide as its placeholder, when the row has room: the box is
+   one row high, and a placeholder wider than the box wrapped onto a second
+   row that did not show -- "(optional)" stood cut in half under the first.
+   `--fits` is the placeholder's length, set where the placeholder is, so
+   new words cannot outgrow it; `ch` is one character of this mono font, and
+   24 px is the padding and the border. Wider than it fits, the box takes a
+   row of its own rather than shrinking. */
+.permsend .permwhy {
+  flex: 1 1 260px; min-width: min(100%, calc(var(--fits, 0ch) + 24px));
+}
 .permsend .asksays { flex-basis: 100%; }
 .asksays { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
 .asknum {
@@ -10789,11 +10798,15 @@ function drawPermission(box, s, permission) {
   const why = put(foot, "textarea", "say permwhy");
   why.rows = 1;
   why.placeholder = "what it should do instead (optional)";
+  why.style.setProperty("--fits", why.placeholder.length + "ch");
   // Kept for this dialog across a look at another tab, which builds the
   // bar again: half a reason lost that way is the question bar's scar.
   if (state.declineWhy.key === permission.key) why.value = state.declineWhy.text;
+  // It grows with what is typed, as every other box here does: one row
+  // high, a long reason wrapped onto rows nobody could see.
   why.addEventListener("input", () => {
     state.declineWhy = { key: permission.key, text: why.value };
+    fitSay(why);
   });
   const no = put(foot, "button", "verb permno");
   no.type = "button";
@@ -10802,6 +10815,7 @@ function drawPermission(box, s, permission) {
   submitOnCtrlEnter(why, no);
   put(foot, "span", "asksays");
   paintDecline(box, s, permission);
+  fitSay(why);   // a reason kept from before, or a placeholder on a narrow bar
 }
 
 // What pressing no would do, said before it is pressed.
@@ -16729,10 +16743,13 @@ $("sendbar").addEventListener("submit", (press) => {
 // Height has to go back to nothing first, or a box that has grown can never
 // shrink again: scrollHeight would only ever report the height it already has.
 // It leaves the border out, and every box is `border-box`, so the 2 px of
-// border are added back or the last line scrolls. The review's two boxes are
-// sized here too.
+// border are added back or the last line scrolls. The review's two boxes and
+// the reason for a No are sized here too. An empty box is as tall as its
+// placeholder: Chromium counts the placeholder in `scrollHeight`.
 function fitSay(box = $("say")) {
-  if (box.closest("form").hidden) return;  // a box nobody can see measures nothing
+  // A box nobody can see measures nothing, and would be sized to 2 px. The
+  // reason for a No stands in no form, so its form cannot be asked.
+  if (!box.getClientRects().length) return;
   box.style.height = "auto";
   box.style.height = (box.scrollHeight + 2) + "px";
 }
