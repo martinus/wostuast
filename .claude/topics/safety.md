@@ -47,7 +47,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   at another tab, which builds the bar again. A second submit made the pane
   read `3 1 2 2 Enter Enter`. Now `paintPicks` holds submit while anything
   is on its way to the session, and after its keys went in
-  (`state.picked.pressed`), because the question stays until its
+  (`state.answered`), because the question stays until its
   `PostToolUse`, and a second set of keys lands on whatever the agent does
   next. `drawAsking` paints an unchanged bar, and a send starting or ending
   calls it, because an agent waiting on a question pushes nothing.
@@ -433,7 +433,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   be told from a dialog still up** -- its result comes when it ends -- so
   there the Escape stops it, and the page says that before every press.
   **One decline at a time**: the page's `sending` guard, which the send box
-  shares, and `Daemon.claim`, which sets `Daemon.declining`, for a second tab. A reason half written is
+  shares, and `Daemon.claim`, which sets `Daemon.declining`, for a second tab.
+  **No is off while something else is on its way, and says so**
+  (`paintDecline`), as submit on a question is: `submitDecline` refused
+  then, and a No that could be pressed did nothing, with no word why. A
+  No of its own is marked (`dataset.busy`) before it takes the guard, so
+  the bar does not say it waits for itself. A reason half written is
   kept across a look at another tab (`state.declineWhy`), as the question
   bar keeps its picks.
   `test_a_decline_is_escape_then_the_reason_once_the_dialog_closed`,

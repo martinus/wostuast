@@ -67,6 +67,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     **Both boxes stay short and scroll**, four lines and five: at the send
     box's 40vh they took two fifths of a notebook's screen from the diff.
     `test_the_send_bar_stays_short_and_scrolls`.
+    - **A send takes the sent words out of the whole-review box, with the
+      focus in it or not.** `drawReviewBar` leaves the box alone while it
+      has the focus, so the caret does not jump under the reader's typing.
+      Ctrl+Enter sends from inside that box: the sent words stayed in it,
+      the bar stayed up, and what was typed next went into
+      `state.review.overall` after them, so the next review started with
+      words already sent. `submitReview` sets the box from what `unsent`
+      leaves, and blurs it when nothing is left, so the bar goes.
+      `test_ctrl_enter_in_the_whole_review_box_empties_it`.
     The message is in view beside the button, which is what "the preview
     cannot be skipped" means now. `reviewText` is the message and has no
     heading: the reader asked for "# Review" to go, and the box for naming

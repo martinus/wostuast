@@ -112,8 +112,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the preview and the presses together. **It does not clear the question**:
   that happens when the daemon sees the `PostToolUse`, because clearing on
   the click would hide a question a missed keystroke left standing. Submit
-  stays off meanwhile (`state.picked.pressed`), and the bar says to answer
+  stays off meanwhile (`state.answered`), and the bar says to answer
   in the terminal if the question stays: `safety.md`, "One send at a time".
+  - **An answered question is kept by its ask id, outside
+    `state.picked`.** The picks are one for the whole page, and a flag in
+    them (`state.picked.pressed`) did not survive a look at another
+    session with a question: `drawAsking` built the picks again for that
+    question, and again with the flag off for the first one on the way
+    back. After a new pick, submit was on for a question whose keys had
+    gone in. `state.answered` holds the ids whose keys went in, per ask and
+    so per session, and `paintPicks` reads it. `forgetAnswered` drops an id
+    no session still asks, on every `sessions` push.
+    `test_an_answered_question_stays_answered_after_a_look_at_another`.
 - **The keys are Claude Code's dialog's, measured, and never a finger's
   guess.** Against 2.1.281 in tmux, with a fake Messages API asking: a digit
   answers a single-choice question **and moves on**; a multiple-choice
@@ -452,14 +462,23 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   next line. The cut walks the scrubbed fragment, never a string of HTML, and
   a line count that disagrees with the file paints nothing: colour on the wrong
   lines is worse than none.
-  **So every CR comes off before the highlighter** (`paintedLines`). The HTML
+  **So no CR goes into the highlighter** (`paintedLines`). The HTML
   parser in `paintedInto` reads CR LF, and a lone CR, as a line break, so a
   file saved on Windows had one line more than rows, and the page painted
   none of it, with no word why. Rows are cut on LF only, so no line moves.
+  **A CR that ends a line goes, and one inside a line becomes a space,
+  never nothing.** A line ends before an LF or at the end of the text: a
+  hunk's side is its lines joined, so its last one stops on a bare CR, and
+  a space there was one character more than the row. CSS draws a CR in the
+  plain row as a space. Taken out, `a\rb` -- progress
+  output in a log -- read `ab` once coloured, and on the Review tab every
+  word mark after the CR stood one place late, because `wordDiff` counts
+  the CR. A space keeps the length and what the reader sees.
   The Files tab, each side of a hunk on the Review tab, and a file shown in
   part all paint through `paintedLines`, so the one line covers the three.
   `test_a_file_with_a_carriage_return_is_painted`,
-  `test_a_diff_of_a_file_with_windows_line_ends_is_painted`.
+  `test_a_diff_of_a_file_with_windows_line_ends_is_painted`,
+  `test_a_lone_carriage_return_keeps_the_word_marks_in_place`.
 - **Reading the open file asks git twice and `file` once — and two of those
   are remembered.** The Files tab polls every two seconds, so the answers that
   cannot have changed must not be asked again: `Files.root_of` holds where the
