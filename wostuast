@@ -3015,6 +3015,17 @@ REJECTED = "The user doesn't want to proceed with this tool use"
 #: The most a POST body may be.
 POST_MAX = 64 * 1024
 
+#: Which answers are packed with gzip: text, never a picture or a video,
+#: which are packed already. Measured on 53,000 made-up file names, 2.4 MB:
+#: level 1 took 20 ms for 548 KB, level 6 79 ms for 397 KB, level 9 242 ms
+#: for 380 KB. At 200 KiB/s the 150 KB between 1 and 6 is most of a second,
+#: and the 79 ms is paid once, on the first visit to the Files tab.
+PACKED_KINDS = ("application/json", "text/")
+PACK_LEVEL = 6
+#: Below this an answer goes as it is: the header and the packing cost more
+#: than they save.
+PACK_MIN = 1024
+
 #: The most text one `send` may type, **in bytes**. Longer is refused rather
 #: than cut: what arrives in the terminal must be what the user wrote, or
 #: nothing.
@@ -5392,9 +5403,27 @@ class Serving:
 
     def reply(self, code: int, body: bytes, kind: str,
               cache: str = "no-store") -> None:
+        # Text is packed, and only text. The page reaches this daemon through
+        # an ssh tunnel as often as not, and on a slow one the first visit
+        # to the Files tab carried 3.3 MB of file names -- twenty seconds at
+        # 200 KiB/s, where packed it is about a twentieth. A picture or a
+        # video from `raw` is packed already, and is never text.
+        packable = kind.startswith(PACKED_KINDS)
+        packed = packable and len(body) > PACK_MIN and self.takes_gzip()
+        if packed:
+            # Imported here, not at the top: the hook runs this file on every
+            # tool call and pays for every import it makes.
+            import gzip
+            body = gzip.compress(body, PACK_LEVEL)
         self.send_response(code)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
+        if packable:
+            # A cache between here and the browser must not hand a packed
+            # answer to a client that cannot unpack it.
+            self.send_header("Vary", "Accept-Encoding")
+        if packed:
+            self.send_header("Content-Encoding", "gzip")
         # `raw` serves a worktree file, and the type it is given comes from
         # the end of its name. A browser that sniffed the bytes instead could
         # read a file called `a.png` as something else entirely, on the origin
@@ -5412,6 +5441,27 @@ class Serving:
         self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(body)
+
+    def takes_gzip(self) -> bool:
+        """True when the request says gzip is welcome, and not with `q=0`.
+
+        A header it cannot read is a no: an unpacked answer always works. So
+        is a request whose headers were never read, which a refusal can be.
+        """
+        headers = getattr(self, "headers", None)
+        said = headers.get("Accept-Encoding", "") if headers else ""
+        for part in (said or "").split(","):
+            name, _, params = part.partition(";")
+            if name.strip().lower() not in ("gzip", "*"):
+                continue
+            weight = params.replace(" ", "").lower()
+            if not weight.startswith("q="):
+                return True
+            try:
+                return float(weight[2:]) > 0
+            except ValueError:
+                return False
+        return False
 
     def reply_json(self, data: Any, code: int = 200) -> None:
         # "replace", because a lone surrogate is reachable: Claude Code cuts a
@@ -5885,6 +5935,14 @@ class Serving:
                              "missing": "no transcript for this session"})
             return
         blocks, run, version = found
+        # The page says which reading it holds, and how far. Coming back to
+        # the Transcript tab fetched the whole of it every time, 856 KB for
+        # four hundred rounds, while the pushes had kept the page up to date
+        # all along. A reading still the same is answered with no blocks.
+        if query.get("have", [""])[0] == f"{run}.{version}":
+            self.reply_json({"id": session_id, "run": run, "version": version,
+                             "same": True})
+            return
         self.reply_json({"id": session_id, "run": run, "version": version,
                          "blocks": blocks_json(blocks)})
 
@@ -11883,6 +11941,7 @@ function blankTurns() {
     told: null,         // how long the stream said the transcript is, meanwhile
     failed: false,      // the last fetch failed; "nothing yet" would lie
     version: 0,         // the daemon's count of changes read, as far as held
+    whole: false,       // blocks are a fetch and every push since, no gap
     // Whether a fetch has answered for this session yet, with blocks, with
     // none, or with a failure. A session with no transcript is answered
     // with no `run`, so nothing else tells "empty" from "not asked yet" --
@@ -14213,11 +14272,19 @@ async function ask(id, what, query, raw) {
 }
 
 async function load() {
+  // A timer belongs to the tab that set it. Only `repoll` cleared it, once a
+  // load was over: on a slow link the Files tab's two-second poll fired into
+  // the Transcript tab while its fetch was still out, and fetched the whole
+  // transcript again, 856 KB of it. So it goes first, and a load that ends
+  // after the reader has moved to another tab sets none for that tab.
+  clearTimeout(state.poll);
+  state.poll = 0;
   if (!state.chosen) { draw(); return; }
+  const tab = state.tab;
   try {
-    await TABS[state.tab].load();
+    await TABS[tab].load();
   } finally {
-    repoll();
+    if (state.tab === tab) repoll();
   }
 }
 
@@ -14261,7 +14328,16 @@ async function loadTranscript() {
   // put its older snapshot back without them.
   const early = [];
   state.turns.early = early;
-  const body = await ask(want, "transcript");
+  // What is held, when the pushes have kept it whole: the daemon answers
+  // `same` and no blocks when nothing moved. Coming back to this tab took the
+  // whole transcript every time, five seconds on a slow link, for blocks the
+  // page already had. Only `whole` may say so: pushes alone are pieces -- a
+  // session chosen from another tab collects them before any fetch, and a
+  // push of a new reading starts over from nothing -- and their version
+  // would pass for the lot.
+  const turns = state.turns;
+  const body = await ask(want, "transcript",
+                         turns.whole ? `?have=${turns.run}.${turns.version}` : "");
   if (state.chosen !== want) return;        // the reader moved on while we waited
   if (state.turns.early !== early) return;  // a newer fetch is out, or landed
   state.turns.early = null;
@@ -14278,7 +14354,8 @@ async function loadTranscript() {
     return;
   }
   state.turns.failed = false;
-  const blocks = body.blocks || [];
+  // `same` is what was held, and the pushes that landed since are in it too.
+  const blocks = body.same ? state.turns.blocks : body.blocks || [];
   const run = body.run !== undefined ? body.run : -1;
   let version = body.version || 0;
   // A push from another reading means this snapshot is older than the file:
@@ -14299,6 +14376,7 @@ async function loadTranscript() {
   if (state.turns.run !== -1 && run !== state.turns.run) forgetPlaces();
   state.turns.run = run;
   state.turns.version = version;
+  state.turns.whole = true;
   state.turns.landed = true;
   draw();
   // The stream opened while this was on its way, and said what it holds.
@@ -14499,10 +14577,15 @@ function resubscribe() {
     // into a stream the browser had closed -- was sent to nobody. A count of
     // blocks would not do: a tool result is written into its call's block.
     if (body.opening) {
+      // Pushes went to nobody. What is held is pieces now, whatever tab is
+      // up: a later push would raise `version` and make them look whole.
+      // Only a fetch that lands says `whole` again.
+      const behind = body.run !== state.turns.run
+                     || body.version > state.turns.version;
+      if (behind) state.turns.whole = false;
       if (state.tab !== "transcript") return;   // fetched when it is shown
       if (state.turns.early) { state.turns.told = body; return; }
-      if (body.run !== state.turns.run
-          || body.version > state.turns.version) loadTranscript();
+      if (behind) loadTranscript();
       return;
     }
     if (state.turns.early) state.turns.early.push(body);
@@ -14524,6 +14607,7 @@ function resubscribe() {
       // that changed; with nothing held (a fetch still on its way, or one
       // that failed) block 3 was put at index 0 as though it were the whole.
       state.turns.blocks = [];
+      state.turns.whole = false;
       mergeBlocks(body.blocks || []);
       state.turns.nodes = [];
       if (held) forgetPlaces();

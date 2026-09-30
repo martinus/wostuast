@@ -193,6 +193,18 @@ def wait_for_watching(daemon, session_id="s1", seconds=15):
         _time.sleep(0.02)
     raise AssertionError(f"the page never subscribed to {session_id}")
 
+def renew_stream(page, act):
+    """Run `act` in the page, which opens a new stream, and wait until that
+    stream has said its first word.
+
+    `wait_for_watching` cannot see this: the daemon lists a closed stream
+    until a write to it fails, so it answered at once, and the next push
+    went to the dead socket. The page can: the first word sets `state.live`,
+    and the opening comes in the same write."""
+    page.evaluate(f"() => {{ state.live = ''; {act}; }}")
+    page.wait_for_function("state.live === 'live'", timeout=WAIT or 15000)
+
+
 def two_rows(page):
     page.wait_for_function("document.querySelectorAll('.row').length === 2")
 

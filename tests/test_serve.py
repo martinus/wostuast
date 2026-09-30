@@ -108,6 +108,77 @@ def test_a_transcript_is_served(ws, served, transcript_file):
     assert body["blocks"][0]["text"] == "hello there"
 
 
+def test_a_transcript_the_page_holds_whole_is_not_sent_again(
+        ws, served, transcript_file):
+    """Coming back to the Transcript tab fetched the whole of it every time:
+    856 KB for four hundred rounds, five seconds on a slow link, for blocks
+    the pushes had already brought. A page that names the reading it holds
+    gets `same` and no blocks; one that names anything else gets them all."""
+    daemon, base = served
+    path = transcript_file("s1", [conftest.record("you", "hello there")])
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    _, first = get(f"{base}/api/session/s1/transcript")
+    held = f"{first['run']}.{first['version']}"
+    _, again = get(f"{base}/api/session/s1/transcript?have={held}")
+    assert again["same"] is True and "blocks" not in again
+    assert (again["run"], again["version"]) == (first["run"], first["version"])
+    stale = f"{first['run']}.{first['version'] - 1}"
+    _, behind = get(f"{base}/api/session/s1/transcript?have={stale}")
+    assert "same" not in behind
+    assert [b["text"] for b in behind["blocks"]] == ["hello there"]
+    # Something new read on the way is news, even to a page that was whole.
+    with path.open("a") as out:
+        out.write(conftest.records(conftest.record("you", "and again")))
+    _, moved = get(f"{base}/api/session/s1/transcript?have={held}")
+    assert "same" not in moved
+    assert [b["text"] for b in moved["blocks"]] == ["hello there", "and again"]
+
+
+def fetch_packed(url, accept):
+    """The answer's headers and its bytes as they came, before any unpacking."""
+    request = urllib.request.Request(url)
+    if accept is not None:
+        request.add_header("Accept-Encoding", accept)
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return response.headers, response.read()
+
+
+def test_text_is_packed_for_a_client_that_takes_gzip(ws, served,
+                                                    transcript_file):
+    """The page reaches the daemon through an ssh tunnel as often as not,
+    and on one at 200 KiB/s the first look at the Files tab of 53,000 files
+    took twenty seconds. Text packs to about a twentieth. A client that did
+    not ask for gzip, or said `q=0`, gets the bytes as they are."""
+    import gzip
+
+    daemon, base = served
+    headers, body = fetch_packed(f"{base}/", "gzip, deflate, br")
+    assert headers["Content-Encoding"] == "gzip"
+    assert "Accept-Encoding" in headers["Vary"]
+    assert int(headers["Content-Length"]) == len(body)
+    page = gzip.decompress(body)
+    assert b"<!doctype html>" in page.lower()
+    assert len(body) * 3 < len(page)
+    for accept in (None, "identity", "gzip;q=0", "br, gzip; q=0.0"):
+        headers, body = fetch_packed(f"{base}/", accept)
+        assert headers["Content-Encoding"] is None, accept
+        assert b"<!doctype html>" in body.lower()
+    headers, _ = fetch_packed(f"{base}/", "*")
+    assert headers["Content-Encoding"] == "gzip"
+    # JSON too, which is what the Files tab and the transcript are.
+    path = transcript_file("s1", [conftest.record("you", "hello there " * 200)])
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    headers, body = fetch_packed(f"{base}/api/session/s1/transcript", "gzip")
+    assert headers["Content-Encoding"] == "gzip"
+    assert json.loads(gzip.decompress(body))["blocks"][0]["kind"] == "prompt"
+    # A small answer is not worth the packing.
+    headers, body = fetch_packed(f"{base}/api/session/nope/transcript", "gzip")
+    assert headers["Content-Encoding"] is None
+    assert json.loads(body)["blocks"] == []
+
+
 def test_a_session_without_a_transcript_says_so(ws, served):
     daemon, base = served
     ws.append_event(event("SessionStart"))
@@ -1157,6 +1228,21 @@ def test_a_picture_is_served_with_the_type_its_name_says(repo_session):
         assert answer.headers["X-Content-Type-Options"] == "nosniff"
         assert answer.headers.get("Access-Control-Allow-Origin") is None
         assert answer.read() == raw
+
+
+def test_a_picture_is_never_packed(repo_session):
+    """Only text is packed. A picture or a video is packed already, and
+    gzip over it costs time and saves nothing."""
+    root, base = repo_session
+    raw = conftest.tiny_png() + bytes(8192)
+    (root / "big.png").write_bytes(raw)
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "big")
+    headers, body = fetch_packed(f"{base}/api/session/s1/raw?path=big.png",
+                                 "gzip")
+    assert headers["Content-Type"] == "image/png"
+    assert headers["Content-Encoding"] is None
+    assert body == raw
 
 
 def test_the_raw_route_serves_nothing_that_could_be_a_document(repo_session):
