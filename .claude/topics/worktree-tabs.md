@@ -65,6 +65,29 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     "The file was empty.". "did not change" is left for a mode change.
     `test_a_new_or_deleted_file_with_no_lines_is_added_or_deleted`,
     `test_a_new_or_deleted_file_with_no_lines_says_what_happened`.
+  - **A path whose type changed is one entry, not two.** git writes a
+    file that became a link -- or a link that became a file, or a
+    submodule either way -- as two diffs of the same path: a deletion
+    with `deleted file mode 100644`, then an addition with `new file mode
+    120000` (`T` in `--name-status`). Two entries shared one `data-key`,
+    so both rows were marked together, a click on either went to the
+    second block, `whole_file_diff` found the first half, and a comment
+    on the file stood on both blocks. `join_type_change` makes one entry,
+    status `typechange`, with `old_kind` and `new_kind` from `MODE_KINDS`
+    ("file", "link", "submodule"), and one hunk `@@ -1,N +1,M @@`: the old
+    lines removed, then the new lines added, as for a file rewritten
+    whole. So the page needs nothing new but the label, `statusWord`
+    ("FILE → LINK"), in the colour of a modified file. A `+` stands on the
+    new lines with the numbers they have on disk; a removed line gets
+    none, as everywhere (`review.md`). **Only two halves next to each
+    other, of one path, of two kinds, are joined**: without `-B`, which
+    `git_diff` does not pass, git writes nothing else that way. A binary
+    half has no lines, and the other half's lines are still drawn.
+    `git status` writes a type change as one `T` record, so the sidebar's
+    count and the Files tab's dots needed nothing.
+    `test_a_file_that_became_a_link_is_one_entry`,
+    `test_a_type_change_is_joined_only_where_git_writes_one`,
+    `test_a_file_that_became_a_link_is_one_row_one_block_and_one_comment`.
 - **A cut goes back to the last newline, and the cap counts bytes.** A cut
   inside a `diff --git` line parsed as a file that does not exist, reported as
   a rename. `run` returns text, so a cap on `len()` counts code points and let

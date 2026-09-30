@@ -712,6 +712,58 @@ def test_a_submodule_is_its_own_file_and_its_log_is_not_lines_of_another(
     assert files["sub"].status == "modified"
 
 
+def test_a_file_that_became_a_link_is_one_entry(ws, repo):
+    """git writes a type change as a deletion and an addition of the same
+    path. Two entries shared one key in the list, a click on either went to
+    the second, `whole_file_diff` found the first, and a comment on the file
+    stood on both. #241. A committed one each way, and one not committed
+    from an empty file, whose old side has no lines."""
+    (repo / "notes.txt").write_text("one\ntwo\nthree\n")
+    os.symlink("README.md", repo / "was-link")
+    (repo / "empty").write_text("")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "three to change")
+    git(repo, "checkout", "-qb", "side")
+    (repo / "notes.txt").unlink()
+    os.symlink("README.md", repo / "notes.txt")
+    (repo / "was-link").unlink()
+    (repo / "was-link").write_text("now\na file\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "types")
+    (repo / "empty").unlink()
+    os.symlink("notes.txt", repo / "empty")
+    report = ws.worktree_diff(str(repo), base="main")
+    committed, uncommitted = report.sections
+
+    def shown(one):
+        return (one.path, one.old_path, one.status, one.old_kind,
+                one.new_kind, one.added, one.removed,
+                [(hunk.header, [line.kind for line in hunk.lines])
+                 for hunk in one.hunks])
+
+    assert [shown(one) for one in committed.files] == [
+        ("notes.txt", "notes.txt", "typechange", "file", "link", 1, 3,
+         [("@@ -1,3 +1,1 @@", ["removed"] * 3 + ["added"])]),
+        ("was-link", "was-link", "typechange", "link", "file", 2, 1,
+         [("@@ -1,1 +1,2 @@", ["removed", "added", "added"])]),
+    ]
+    assert [shown(one) for one in uncommitted.files] == [
+        ("empty", "empty", "typechange", "file", "link", 1, 0,
+         [("@@ -0,0 +1,1 @@", ["added"])]),
+    ]
+    # The whole file of each is that one entry, not its first half.
+    whole = ws.whole_file_diff(str(repo), "committed", "notes.txt", base="main")
+    assert shown(whole.file) == shown(committed.files[0])
+    whole = ws.whole_file_diff(str(repo), "uncommitted", "empty")
+    assert shown(whole.file) == shown(uncommitted.files[0])
+    # One commit shown alone joins them too, and its map to the disk reads
+    # the path once.
+    sha = report.commits[0].sha
+    one = ws.worktree_diff(str(repo), of=sha, base="main")
+    assert [each.path for each in one.sections[0].files] == ["notes.txt", "was-link"]
+    assert [each.status for each in one.sections[0].files] == ["typechange"] * 2
+
+
 def test_a_file_named_head_does_not_break_the_diff_tab(ws, repo):
     """git refuses `HEAD` as "both revision and filename" when a file of
     that name stands at the top of the worktree, and the tab failed on
