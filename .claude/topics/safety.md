@@ -221,18 +221,57 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   and reads the config file rather than asking git: a third git run on every
   poll for a line that almost never changes. `git@host:path` holds no secret
   and stays. `test_the_remote_is_read_and_never_carries_a_password`.
-  - **Read the value the way git reads it** (`config_value`). git takes
-    `url = "https://me:tok@host/r.git"`, and `git config` writes the quotes
-    itself around a value that holds `;` or `#`. `configparser` kept them,
-    `urlsplit` then found no scheme, and the token went to the page whole.
+  - **Read the file by git's own rules, never with `configparser`**
+    (`config_entries`, `config_section`, `config_value`, after git's
+    `config.c`). `configparser` is a different syntax, and each difference
+    was a bug. It kept the quotes of `url = "https://me:tok@host/r.git"`
+    (`git config` writes them itself around a value that holds `;` or `#`),
+    so `urlsplit` found no scheme and the token went to the page whole. It
+    refused a key with no `=`, which is git's "true", and the remote came
+    back empty; `allow_no_value` fixed that and made it worse (#252): a
+    key with no `=`, then a line indented further, is a continuation of a
+    value that is None to it, and it raised AttributeError before Python
+    3.13, out of `git_facts` and out of every tick (`worktree-tabs.md`,
+    "A git call that failed"). And it kept the `\` that continues a value
+    onto the next line, so `https://me:pw\` + `@host/r.git` lost its `@`,
+    and neither guard found the password.
+    - **What the reader does**: `[section]`, `[section "sub"]` and the old
+      `[section.sub]`; the section and the key in any case, the quoted
+      subsection as written; `key = value`, a key with no `=` (value
+      None), a key on the header's line; `#` and `;` comments outside
+      quotes; double quotes; the escapes `\"`, `\\`, `\n`, `\t`, `\b`;
+      a `\` at the end of a line that joins the next one. A file git
+      refuses -- an unknown escape, a quote still open at the end of the
+      line, a header that ends on its line -- gives None, and the remote
+      "". **It never raises**: bytes that are not UTF-8 are replaced, and
+      a file over `CONFIG_MAX` is not read, because it is read on the tick
+      thread (measured: a megabyte of bare keys, the worst shape, 0.5 s of
+      CPU; a megabyte-long URL 0.01 s).
+    - **What it leaves out**: `[include]` and `includeIf` are not
+      followed, and `insteadOf` is not applied: a hover that shows the
+      file's own line is still true. Whitespace other than a space inside
+      a value is kept, where git 2.43 turns each into a space; a NUL ends
+      git's value and not this one. None of them moves a URL's `@`.
+    - **The first `url` of a remote is the one shown**: git fetches from
+      it (`git remote get-url`). `configparser` kept the last. `origin`,
+      or else the first remote with a URL.
+    - **Only `<git_dir>/config` is read.** `remote_url` tried
+      `<dir>/config`, then `<dir>/.git/config`, and when only
+      `--show-toplevel` answered `git_facts` gave it the top of the
+      worktree, so a file of the project named `config` was read as the
+      repository's. `git_facts` now gives it `<top>/.git` then.
     **Then `hide_secrets` runs over the result** as a second guard, for a
     shape the first one does not see: a URL inside the URL is not in its
-    netloc. `test_a_quoted_remote_url_carries_no_password`,
-    `test_a_password_the_url_parse_missed_is_hidden_all_the_same`.
-  - **A key with no `=` is git's "true", not an error.** Without
-    `allow_no_value`, one `fsmonitor` line under `[core]` made the whole
-    file a parse error, and the remote came back empty.
-    `test_a_key_without_a_value_does_not_hide_the_remote`.
+    netloc. `test_the_config_is_read_as_git_reads_it` compares every entry
+    with `git config --list` on hand-made files and 400 seeded random
+    ones; `test_a_quoted_remote_url_carries_no_password`,
+    `test_a_password_the_url_parse_missed_is_hidden_all_the_same`,
+    `test_a_key_without_a_value_does_not_hide_the_remote`,
+    `test_a_bare_key_then_an_indented_line_stops_nothing`,
+    `test_a_url_continued_on_the_next_line_carries_no_password`,
+    `test_the_first_url_of_a_remote_is_the_one_shown`,
+    `test_a_config_git_refuses_or_too_big_gives_no_remote`,
+    `test_the_top_of_the_worktree_is_not_read_as_its_config`.
 - **A one-line summary of a command hides what looks like a credential.**
   The row's last line is a command as the agent ran it, and `curl -s -u
   me:token` stood on a screen that is shared and screenshotted. `tool_target`
@@ -416,7 +455,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `:(literal)` prefix, the `--`, and comparing the answer to what was asked for.
   Ignored files are asked the same way. Never swap either check for a pattern
   that tries to spot a bad path. **Both readers go through it**, so a new one
-  cannot be given one check and not the other.
+  cannot be given one check and not the other. **A link loop is not inside
+  anything, and not an error**: `Path.resolve` raises RuntimeError on one
+  up to Python 3.12, and `inside` caught only OSError, so a tracked
+  `a -> b`, `b -> a` answered 500. It catches both. **On 3.13 `resolve`
+  raises nothing**: it hands back the path as far as it got, which is still
+  a link and is inside the root, so the catch alone passed on 3.12 and was
+  red on CI's 3.13 job. A path resolved to its end is never a link, so
+  `inside` also asks `is_symlink()` of what `resolve` gave.
+  `test_a_link_loop_is_not_inside_and_is_not_an_error`.
   - **And nothing inside a `.git` is read, though it is in the worktree.**
     git lists a tracked link, `notes.md -> ../.git/config`, and never what
     it points at, so both checks passed and the Files tab showed the

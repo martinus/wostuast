@@ -221,6 +221,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_listing_git_failed_on_keeps_the_open_file`,
   `test_a_file_read_git_failed_on_is_not_drawn_as_its_text`; `reload_git` puts a failed directory back on the
   list rather than over what it already knew.
+  - **An exception is a failure too, and one directory's stops no other**
+    (#252). `git_facts` raised for one directory -- `remote_url`, on a
+    config `configparser` could not read -- and the exception left
+    `pool.map` in `git_facts_many` with the whole batch. `refresh` raised
+    before it replaced the rows, on every tick, so while that session was
+    known no row changed state and no new session was shown, for all
+    sessions; `ls` ended in a traceback. `git_facts_or_failed` turns
+    anything `git_facts` raises into `GitFacts(failed=True)`, with the
+    error in `raised`, so the directory is asked again after the
+    cool-down like any other failure. The `Store` logs it once a
+    directory (`git_raised`): a failure is asked every `GIT_MIN_INTERVAL`,
+    and would fill the log. This is the second guard: the first is that
+    `remote_url` never raises (`safety.md`).
+    `test_one_directory_that_raises_stops_no_other`.
   - **`pick_base` keeps a count only when git gave one.** A timed-out
     `%(ahead-behind)` was kept in `Daemon.ranks` as None, so the fallback
     base -- `main`, for a branch cut from `release` -- stood until HEAD or
