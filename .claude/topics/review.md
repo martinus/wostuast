@@ -21,7 +21,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **The tree lists the comments** under the files (`putCommentList`), as
     the transcript's map lists rounds: the note's first line and its
     `path:line`, and a click goes to it (`goToComment`), opening its file
-    first when it is shut. `delete review` stands on the heading and takes
+    first when it is shut. **It scrolls a frame after the draw** that
+    opened the file: `drawDiff` puts the reader's place back in a frame,
+    so a scroll at once was undone, and from anywhere but the top only a
+    second click went to the comment.
+    `test_a_comment_in_a_shut_file_is_gone_to_from_anywhere_in_the_pane`.
+    `delete review` stands on the heading and takes
     two presses. A comment is gone to here and never on the Files tab: the
     jump to a line there (`goToLine`, `lineTop`, `showLine`) went with the
     old tab, and nothing else asked for a line.
@@ -36,10 +41,19 @@ obvious alternative is wrong, then the symbols and the test that holds it.
       edited is a box with no anchor, a shut file draws no lines, and the
       find box takes files out. Asked of the pane, each moved a comment to
       "elsewhere", and one being edited stood there beside its own box.
+    - **And the lines round a comment elsewhere draw nothing the diff
+      draws** (`drawn` on the file `fillElsewhere` hands `fillDiffFile`,
+      read in `putLineReview`). A slice reached a line the diff above
+      showed with its own comment: the comment stood twice, and "edit" on
+      the lower copy opened the box on the upper one.
+      `test_a_comment_the_diff_shows_is_not_drawn_again_under_elsewhere`.
     - **The lines are read once, and only a changed file is read again.**
       `state.reviewFiles` is forgotten per file the new diff lists
       (`forgetChanged`) -- a file it does not list cannot have moved --
-      and a read that failed is not kept. The lines arriving fill the
+      and a read that failed is not kept. **A 404 is JSON too**:
+      `readElsewhere` kept a `missing` answer, which a timed-out
+      `is_listed` also gives, as a file with no lines, and asked no more.
+      `test_a_file_elsewhere_that_was_said_to_be_missing_is_asked_for_again`. The lines arriving fill the
       section's own box (`.offdiff`, `fillElsewhere`), not the whole diff,
       and `paintSlices` paints a file once per read. Forgetting every
       file on every diff redrew the whole pane twice a poll while an
@@ -67,6 +81,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   from HEAD to disk — by `inWorktree`, and a line that is no longer on disk
   gets no `+`, like a removed one. Anchoring to HEAD's number was wrong at the
   moment of writing, not because the file moved afterwards.
+  **The name is carried too**: a file moved and not committed is listed
+  there under its new name, and `laterFile` matches it on `old_path`, the
+  name on HEAD's side. Matched on `path`, a comment kept a name not on
+  disk, was sent with it, and the same line had a second anchor in the
+  other half. `inWorktree` answers the path and the line, `pathNow` the
+  path for a comment on the whole file, and `diffLineAnchor` is the one
+  way a drawn line and `diffAnchors` make an anchor. `goToComment` finds
+  the file by `pathNow` too, or a shut file under its old name stayed shut.
+  `test_a_comment_on_a_file_renamed_since_the_commit_goes_to_the_new_name`.
 - **One comment, drawn one way.** `putComment` builds it everywhere: a
   person icon, the note in the prose face, and edit and delete in `.acts` at
   the right, faint until the pointer is on it, on a faint tint of the
@@ -86,7 +109,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **`state.writing` must not outlive its box.** It is cleared when the file or
   the tab it was on goes away, and the guards ask the DOM (`writingIn`) rather
   than the flag: a box open on another tab froze a tab that had nothing on
-  screen to close.
+  screen to close. **Nor may it go before its box**: `showTab` cleared it
+  for the tab already on screen too -- a click on its label, `r`, `3` --
+  and the box stood with no flag, so the guards let the next poll or pick
+  rebuild the diff and take what was typed. It is cleared only when the
+  tab changes.
+  `test_a_click_on_the_tab_on_screen_keeps_a_half_written_comment`.
 - **What the reader opened lives outside the node.** `state.diffOpen`, like the
   transcript's `state.open`. A `let open` inside `drawDiffFile` was thrown away
   on every rebuild, so a big file snapped shut each time the agent saved.
@@ -96,7 +124,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_file_shut_in_one_half_stays_open_in_the_other`.
 - **An async answer belongs to the session that asked.** `submitReview` blanked
   whatever review was current when `tmux send-keys` returned, and removed its
-  key from storage. The sent review is cleared by its own id.
+  key from storage. The sent review is cleared by its own id. **And only
+  what was sent is cleared** (`unsent`, from a copy taken before the send):
+  a comment saved while `send-keys` ran was cleared with the rest and never
+  sent. `test_a_comment_saved_while_the_review_is_on_its_way_is_kept`.
 - **There is no Session tab, and no bar over the tabs.** The bar said the
   branch, the pane, the model and the state -- three of which the chosen row
   says one column to the left, at a cost of 56 pixels on every tab. The tab
@@ -114,6 +145,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   that draws.
 - **The diff does not rebuild while a comment box is open.** It would take what
   is being typed with it, and move the code the comment is about.
+  **Every control that rebuilds waits and says why** (`busyWriting`): a
+  pick, the column switch, the base picker, and also "+" on another line,
+  "edit" and "delete" on another comment, and Send. Those four did not,
+  and the box went with its text -- Send's without a word, into a review
+  that did not hold it. Waiting, rather than saving the box first, is how
+  the others already behave, and a box may hold half a sentence nobody
+  meant to send. **The `storage` event waits too**: it drew the tab when
+  the focus was not in a field, and a box open with the focus elsewhere
+  was built again from the stored note. Closing the box draws the tab.
+  `test_another_comment_waits_while_a_box_holds_text`,
+  `test_send_waits_while_a_box_holds_text`,
+  `test_another_window_does_not_rebuild_a_box_that_is_open`.
 - **The draft lives in the browser.** A review is yours until you submit it, and
   the daemon serves every browser the same page. `recallReview` checks the shape
   of what comes back: storage is not a place to trust blindly. **Two windows

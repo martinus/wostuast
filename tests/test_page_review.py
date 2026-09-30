@@ -1600,3 +1600,287 @@ def test_the_bar_stays_while_the_word_on_the_whole_is_typed_away(repo_page):
             assert page.evaluate("$('reviewbar').hidden") is True
         finally:
             browser.close()
+
+
+def spy_on_note(page):
+    """Every word `note` says, kept in `window.__said`."""
+    page.evaluate("""() => { window.__said = []; const real = note;
+      note = (text, ...rest) => { window.__said.push(text);
+                                  return real(text, ...rest); }; }""")
+
+
+BOX_TEXT = "document.querySelector('.commentbox textarea')?.value ?? null"
+
+
+def test_a_click_on_the_tab_on_screen_keeps_a_half_written_comment(repo_page):
+    """`showTab` cleared `state.writing` for the box on the tab being left.
+    A click on the tab already shown, or its key, left nothing: the box
+    stayed on screen, the guards said nothing was being written, and the
+    next poll or pick rebuilt the diff and took the text with it."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.locator(".dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "HALF WRITTEN NOTE")
+            page.click(".tab[data-tab='diff']")
+            page.evaluate("document.activeElement.blur()")
+            page.keyboard.press("r")
+            page.keyboard.press("3")
+            assert page.evaluate("state.tab") == "diff"
+            # What a poll with a changed diff, or a pick, does next.
+            page.evaluate("() => { state.diffAt += 1; draw(); }")
+            assert page.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE"
+            assert page.evaluate("state.writing") is not None
+        finally:
+            browser.close()
+
+
+def test_another_comment_waits_while_a_box_holds_text(repo_page):
+    """"+" on another line, and "edit" or "delete" on another comment, each
+    rebuild the diff, and the box went with what was typed in it. Picks,
+    the column switch and the base picker already wait and say why; these
+    three do the same now."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "a saved one")
+            page.locator(".dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "HALF WRITTEN NOTE")
+            writing = page.evaluate("state.writing")
+            spy_on_note(page)
+            page.locator(".dline .addnote").first.click(force=True)
+            assert page.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE", "plus"
+            page.click(".diffscroll .comment button:text-is('edit')")
+            assert page.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE", "edit"
+            page.click(".diffscroll .comment button:text-is('delete')")
+            assert page.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE", "delete"
+            assert page.evaluate("state.writing") == writing
+            assert page.evaluate("state.review.comments.length") == 1
+            assert page.evaluate("window.__said") == [
+                "Save or cancel the comment first."] * 3
+        finally:
+            browser.close()
+
+
+def test_a_comment_in_a_shut_file_is_gone_to_from_anywhere_in_the_pane(
+        repo_page):
+    """`goToComment` opens a file shut for its size and draws, and
+    `drawDiff` then puts the old place back a frame later -- after the
+    scroll to the comment. From the top it worked; from 1,500 px down the
+    pane went back there, and only a second click went to it."""
+    root, _ = repo_page
+    root.joinpath("code.py").write_text(
+        "".join(f"x{n} = {n}\n" for n in range(700)))
+    root.joinpath("README.md").write_text(
+        "".join(f"line {n}\n" for n in range(200)))
+    in_view = """() => {
+      const scroll = document.querySelector('.diffscroll');
+      const one = [...scroll.querySelectorAll('.comment')].find(
+        (node) => node.dataset.anchor === 'code.py\\n300');
+      if (!one) return false;
+      const at = one.getBoundingClientRect();
+      const on = scroll.getBoundingClientRect();
+      return at.top >= on.top && at.bottom <= on.bottom;
+    }"""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.wait_for_selector(".dfile .why:text('hidden')")
+            add_comment(page, "code.py\n300", "far down a shut file",
+                        quoted="x299 = 299")
+            assert page.locator(".diffscroll .comment").count() == 0
+            page.evaluate(
+                "document.querySelector('.diffscroll').scrollTop = 1500")
+            page.wait_for_function(
+                "document.querySelector('.diffscroll').scrollTop === 1500")
+            page.click(".filelist.diff button.said")
+            # Past the frame `drawDiff` puts its place back in.
+            page.evaluate("""() => new Promise((done) =>
+              requestAnimationFrame(() => requestAnimationFrame(done)))""")
+            assert page.evaluate(in_view) is True
+        finally:
+            browser.close()
+
+
+def test_a_comment_on_a_file_renamed_since_the_commit_goes_to_the_new_name(
+        repo_page):
+    """The branch committed `code.py`, and the agent moved it and did not
+    commit. A comment on the committed half kept the old name, a file not
+    on disk; the message sent that name, and the same line in the other
+    half took a second comment. It is the file's name now."""
+    root, _ = repo_page
+    conftest.git_in(root, "mv", "code.py", "ringbuf.py")
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            page.wait_for_function(
+                "document.querySelectorAll('.diffhead.committed').length === 1")
+            assert page.evaluate(CLICK_COMMITTED, "print(2)") == "clicked"
+            page.wait_for_selector(".commentbox textarea")
+            assert page.evaluate("state.writing") == "ringbuf.py\n2"
+            page.fill(".commentbox textarea", "about print two")
+            page.click(".commentbox button:text-is('save')")
+            page.wait_for_selector(".diffscroll .comment")
+            # The diff draws it, so it does not stand again at the foot.
+            assert page.locator(".diffhead.elsewhere").count() == 0
+            assert "## ringbuf.py:2" in page.evaluate("reviewText()")
+            # The whole file too: its comment is about the file as it is.
+            page.evaluate("""() => document.querySelector(
+              '.diffhead.committed ~ .dfile .onFile .addnote').click()""")
+            page.wait_for_function("state.writing === 'ringbuf.py\\n0'")
+            page.keyboard.press("Escape")
+            page.wait_for_selector(".commentbox", state="detached")
+            # Its row goes to it with the old name's file shut: the file
+            # is found by the name on disk.
+            page.click(".diffhead.committed ~ .dfile > .name")
+            page.evaluate("state.diffAt += 1; draw();")
+            page.wait_for_function(
+                "document.querySelectorAll('.diffscroll .comment').length === 0")
+            page.click(".filelist.diff button.said")
+            page.wait_for_selector(".diffscroll .comment")
+        finally:
+            browser.close()
+
+
+def test_a_comment_the_diff_shows_is_not_drawn_again_under_elsewhere(long_page):
+    """A comment elsewhere stands with the lines round it, and those lines
+    were drawn with every comment on them -- also one the diff above
+    already shows. It stood twice, and "edit" on the lower copy opened the
+    box on the upper one."""
+    root, _ = long_page
+    text = root.joinpath("long.py").read_text().split("\n")
+    text[19] = "changed = 19"              # line 20, so the hunk starts at 17
+    root.joinpath("long.py").write_text("\n".join(text))
+    card = ".offdiff .dfile:has(.path:text-is('long.py'))"
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+            add_comment(page, "long.py\n16", "off the diff", quoted="line15 = 15")
+            add_comment(page, "long.py\n17", "on the diff", quoted="line16 = 16")
+            page.wait_for_selector(f"{card} .dline")
+            # The slice round line 16 reaches line 17.
+            assert "line16 = 16" in page.locator(f"{card} .dline").all_inner_texts()[-1]
+            drawn = page.evaluate("""() => [...document.querySelectorAll(
+              '.diffscroll .comment')].map((one) => one.dataset.anchor)""")
+            assert sorted(drawn) == ["long.py\n16", "long.py\n17"], drawn
+            assert page.locator(f"{card} .addnote").count() == 2, (
+                "lines 14 and 15 are offered one; 17 is on the diff")
+        finally:
+            browser.close()
+
+
+def test_a_file_elsewhere_that_was_said_to_be_missing_is_asked_for_again(
+        long_page):
+    """A timed-out `is_listed` answers `missing` with a 404, and that was
+    kept as the file's lines: the comment stood with its quoted line alone,
+    and nothing asked again until another session was chosen."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, long_page)
+        try:
+            asked = file_reads(page)
+            first = []
+
+            def once(route):
+                if not first:
+                    first.append(route.request.url)
+                    route.fulfill(status=404, content_type="application/json",
+                                  body='{"missing": "that file is not in '
+                                       'this worktree"}')
+                else:
+                    route.continue_()
+
+            page.route("**/file?path=long.py*", once)
+            add_comment(page, "long.py\n12", "about line twelve",
+                        quoted="line11 = 11")
+            show_tab(page, "diff")
+            card = ".diffscroll .dfile:has(.path:text-is('long.py'))"
+            page.wait_for_selector(f"{card} .comment .quoted")
+            page.wait_for_function("!state.reviewFiles.get('long.py')?.asking")
+            assert not page.evaluate("!!state.reviewFiles.get('long.py')")
+            page.evaluate("() => { state.diffRaw = ''; loadDiff(); }")
+            page.wait_for_selector(f"{card} .dline")
+            assert len(asked) == 2, asked
+        finally:
+            browser.close()
+
+
+def test_a_comment_saved_while_the_review_is_on_its_way_is_kept(repo_page):
+    """`tmux send-keys` takes a moment, and the review that stood when it
+    came back was cleared -- with a comment saved in that moment, which
+    was never sent."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "sent with the review")
+            stub_send(page, [{"done": True}], delay=600)
+            page.click("#sendreview")
+            page.wait_for_function("window.__sent.length === 1")
+            add_comment(page, "README.md\n1", "written while it went",
+                        quoted="# The readme")
+            page.wait_for_function("!sending.has(state.chosen)")
+            page.wait_for_function(
+                "!state.review.comments.some((one) => one.note"
+                " === 'sent with the review')")
+            assert [one["note"] for one in page.evaluate(
+                "state.review.comments")] == ["written while it went"]
+            assert "written while it went" not in page.evaluate("window.__sent[0]")
+        finally:
+            browser.close()
+
+
+def test_send_waits_while_a_box_holds_text(repo_page):
+    """Send cleared the review and closed the box, and a note typed into a
+    box and never saved went with it, sent nowhere and said nowhere."""
+    with sync_playwright() as play:
+        browser, page = open_diff(play, repo_page)
+        try:
+            comment_on_first_line(page, "a saved one")
+            stub_send(page, [{"done": True}])
+            page.locator(".dline .addnote").first.click(force=True)
+            page.wait_for_selector(".commentbox textarea")
+            page.fill(".commentbox textarea", "HALF WRITTEN NOTE")
+            spy_on_note(page)
+            page.click("#sendreview")
+            page.wait_for_timeout(300)     # proving that nothing is sent
+            assert page.evaluate("window.__sent.length") == 0
+            assert page.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE"
+            assert page.evaluate("state.review.comments.length") == 1
+            assert page.evaluate("window.__said") == [
+                "Save or cancel the comment first."]
+        finally:
+            browser.close()
+
+
+def test_another_window_does_not_rebuild_a_box_that_is_open(repo_page):
+    """A change from another window drew the tab again when the focus was
+    not in a field. A box that was open with the focus elsewhere was built
+    again from the stored note, and what was typed in it was lost."""
+    with sync_playwright() as play:
+        browser, first = open_diff(play, repo_page)
+        try:
+            second = first.context.new_page()
+            second.goto(repo_page[1], wait_until="domcontentloaded")
+            second.wait_for_selector(".row")
+            second.wait_for_function("state.chosen === 's1'")
+            first.locator(".dline .addnote").first.click(force=True)
+            first.wait_for_selector(".commentbox textarea")
+            first.fill(".commentbox textarea", "HALF WRITTEN NOTE")
+            first.evaluate("document.activeElement.blur()")
+            second.evaluate("""() => {
+              state.review.comments.push({ anchor: 'README.md\\n1',
+                note: "the second window's note", quoted: '# The readme' });
+              keepReview();
+            }""")
+            first.wait_for_function("state.review.comments.length === 1")
+            assert first.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE"
+            # Closed, the tab takes up what the other window kept.
+            first.click(".commentbox button:text-is('cancel')")
+            first.wait_for_function("""() => [...document.querySelectorAll(
+              '.diffscroll .comment')].some(
+                (one) => one.dataset.anchor === 'README.md\\n1')""")
+        finally:
+            browser.close()

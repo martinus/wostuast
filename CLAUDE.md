@@ -90,7 +90,7 @@ bullets beside it are the same part's other scars.
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | topics/tab-state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext`, `putMessage`, `putReadAs`, `stepat` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
-| `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `drawReviewBar`, `reviewText` | topics/review |
+| `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `inWorktree`, `diffLineAnchor`, `drawReviewBar`, `reviewText`, `unsent` | topics/review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | topics/daemon-and-page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** below |
 | a new test, or one red only under load | topics/testing — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |

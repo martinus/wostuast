@@ -289,9 +289,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   from its top**: `drawDiff` keeps the place only when `scroll.dataset.of`
   says the same diff is drawn again, and says nought otherwise -- a pane
   emptied and refilled in one task keeps its offset, so the next commit
-  opened where the last had been read to.
+  opened where the last had been read to. **The same diff is the same
+  session's**: `of` is "" for all changes in every session, so the next
+  session's diff opened where the last one was read to. The key is
+  `state.chosen` and `of`.
   `test_the_older_and_newer_buttons_step_through_the_commits`,
-  `test_another_commit_is_read_from_its_top`.
+  `test_another_commit_is_read_from_its_top`,
+  `test_another_sessions_diff_is_read_from_its_top`.
 - **The pane reads in the tree's order, not git's.** `treeOrder` puts
   folders first at every level, and both the list and the pane go through
   it, so the two read the same way down. git's order is plain path order,
@@ -309,6 +313,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `paintDiff` calls `markWords` again from `cell.words`. Take that out and
   the marks go the moment the colour arrives, which nothing but
   `test_the_diff_is_painted_and_keeps_its_word_marks` would notice offline.
+  - **A word is split by code point, not by UTF-16 unit** (`WORD` has the
+    `u` flag). Without it an emoji was two halves of a pair; for one face
+    changed to another the mark took the second half only, and the line
+    drew two broken glyphs. `test_an_emoji_that_changed_is_marked_whole`.
 - **Lines hidden between changes come from the same diff with the whole
   file as context, never from reading the file.** `whole_file_diff` is the
   section's own `git diff` with `-U1000000` and the path as a literal
@@ -325,6 +333,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   with `hunkSig` of the diff it belongs to, and `withMore` drops it the
   moment the hunks move: the agent saves, and a kept file would put old
   lines between new changes. `test_shown_lines_come_again_from_the_file_as_it_now_is`.
+  **Another base keeps them** (`keepBase`): the lines are HEAD's and the
+  disk's, and no base moves those. Clearing them would also close what
+  was opened in the uncommitted half, which no base touches.
   **A whole file that failed, or came back cut, is kept against draws but
   not against a click**: kept through one, every later click on a band
   added a range, drew, and showed and said nothing. `revealLines` lets it
