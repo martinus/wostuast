@@ -60,11 +60,11 @@ after the tests go red.
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear` | State |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | The daemon and the page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `fold`, `forget_quiet`, `reload_git` | State: the log is never thrown away |
-| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon` | The sidebar |
+| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `putSettings`, `paintSettings`, `drawBell` | The sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
-| `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `putViewMenu`, `.dtext` | The worktree tabs, the Diff tab's own bullets |
+| `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext` | The worktree tabs, the Diff tab's own bullets |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `drawReviewBar`, `reviewText` | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
@@ -215,8 +215,8 @@ rather than a newline and the reader waited on it for ever. `browser.py` has `op
 `comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`.
 
 **CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a
-button that only changes what is on screen), `.link` (small text button, now
-only the file header's reading toggles), `.acts` (what you can do to a comment,
+button that only changes what is on screen), `.link` (small text button),
+`.acts` (what you can do to a comment,
 at its right edge), `.find`/`.findslot`,
 `.empty`, `.nohits`, `.note`, `.dot`, `.comment`. **Every colour is a variable**
 and a `:root` block is the only place a colour may be a number —
@@ -1150,7 +1150,10 @@ update the comment with its own text, and read it back.
   rules out anyway. Both live on the root element, so the cascade obeys them and **neither
   control rebuilds anything** — `redrawCode` clears the key that guards an
   open comment box, so a preference that redrew took half a written comment
-  with it. `recallReading` checks the shape of what comes back.
+  with it. `recallReading` checks the shape of what comes back. **The
+  controls are the settings menu's**, one place for the Files and the Review
+  tabs; a windowed file, which cannot wrap, says "too long to wrap" while
+  wrap is on, and the CSS shows it (`.nowrap`), so nothing is rebuilt.
 - **`BIG_LINES` and `CODE_WHOLE` answer one question in two shapes**. The Diff tab closes a long file; the Files tab windows one. A diff
   stacks many files of differing height in one pane, so it has no grid for a
   scrollbar to be read against. Do not quietly make either into the other.
@@ -1313,13 +1316,29 @@ update the comment with its own text, and read it back.
   `test_the_tab_icon_follows_the_browser_and_not_the_page`.
 - **There is no bar across the top.** The name and the version head the
   session list (`.sidebar-head`, as tall as `.tabs`, so the two rules under
-  them are one line), and the bell and the colours are icons at the end of
-  the tab row, their words in `aria-label` and `title`. The version is
+  them are one line), and the settings are one icon at the end of the tab
+  row, its words in `aria-label` and `title`. The version is
   `own_version`: the day the running file was written and the start of its
   SHA-256 -- never a number to raise by hand, and the same bytes
   `install_behind` compares.
   `test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list`,
-  `test_the_page_says_which_copy_is_running`. **Nor a strip of keys under
+  `test_the_page_says_which_copy_is_running`.
+  - **Everything about this screen, in this browser, is one menu**
+    (`putSettings`, `paintSettings`, `#setpop`): the colours, the two
+    alerts, the tab width, long lines and the diff's columns. It was a
+    bell, a colours button, a menu on the Review bar and two links over
+    every file, and the reader chose one menu from pictures. **The colours
+    buttons wear the colours they give** (`--swatch-*`, the two themes' own
+    values in the first `:root`, kept in step with `--bg` and `--ink` by
+    hand), so they read the same in either theme. **Alerts off is a mark on
+    the button** (`.offmark`, `data-alerts`, set by `drawBell`): off was
+    the one thing the bell said at a glance. A choice changes the page in
+    place: the colours and reading are on the root, the columns go through
+    `keepSides`. The alert boxes keep their ids, so `setAlert` works as it
+    did. `c` still cycles the colours (`nextTheme`).
+    `test_the_settings_say_what_is_chosen_and_change_it_in_place`,
+    `test_the_alert_panel_shuts_from_anywhere`,
+    `test_alerts_are_off_until_you_ask`. **Nor a strip of keys under
   the rows**: it said in two cramped lines what `?` shows in full, and the
   reader asked for it to go. `test_the_session_list_ends_with_its_rows`.
 - **A row says what nothing else on the page says, in four lines that are
@@ -1746,17 +1765,13 @@ update the comment with its own text, and read it back.
     pane's edge. `minmax(100%, max-content)` does not do it: the track never
     grows past the pane. A comment stays readable in it because `.onLine`
     is sticky and 680 px at most.
-  - **How the diff is drawn is one menu at the end of the bar**
-    (`putViewMenu`, `paintViewMenu`, `.viewpop`): the columns, the tab
-    width and long lines. The bar was cramped on a notebook with the column
-    switch alone, and the reader chose the menu over two more buttons. The
-    tab width and wrap are the Files tab's own (`readingNow`, on the root),
-    so neither rebuilds anything; the columns go through `keepSides`. Wrap
-    is disabled in two columns, which always wrap.
+  - **How the diff is drawn is in the settings menu** (**The sidebar**,
+    `putSettings`): the columns, the tab width and long lines. The Review
+    bar was cramped on a notebook with the column switch alone in it.
   `test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts`,
   `test_scrolled_sideways_every_line_keeps_its_colour`,
   `test_a_long_line_wraps_under_its_own_text_in_one_column`,
-  `test_the_view_menu_opens_and_closes_as_a_menu_does`.
+  `test_the_settings_say_what_is_chosen_and_change_it_in_place`.
 - **The two changed-file counts are about different things, and stay that
   way.** The sidebar's comes from `git status` in git's default untracked
   mode, which collapses a wholly-untracked directory into one entry; the

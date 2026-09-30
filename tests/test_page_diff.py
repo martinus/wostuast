@@ -12,6 +12,7 @@ import pytest
 
 import conftest
 from browser import (
+    settings,
     skip_without_browser,
     sync_playwright,
     open_page,
@@ -496,7 +497,7 @@ def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page):
         try:
             show_tab(page, "diff")
             page.wait_for_selector(".dline")
-            view_menu(page, "sides", "split")
+            settings(page, "sides", "split")
             page.wait_for_selector(".dline.pair")
             pairs = page.eval_on_selector_all(
                 ".diffhead.uncommitted ~ .dfile .dline.pair", """els => els.map(
@@ -516,8 +517,9 @@ def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page):
             page.wait_for_selector(".row")
             show_tab(page, "diff")
             page.wait_for_selector(".dline.pair")
+            page.click("#settings")
             assert page.get_attribute(
-                ".viewpop .sides button[data-value='split']",
+                "#setpop .sides button[data-value='split']",
                 "aria-pressed") == "true"
         finally:
             browser.close()
@@ -1169,13 +1171,6 @@ def test_a_poll_of_a_diff_that_stands_is_answered_short(repo_page):
             browser.close()
 
 
-def view_menu(page, choice, value):
-    """Open the Review tab's view menu and press one of its choices."""
-    if page.locator(".viewpop").is_hidden():
-        page.click(".diffbar .viewbtn")
-    page.click(f".viewpop .{choice} button[data-value='{value}']")
-
-
 def tabbed_change(root):
     """A change indented by tabs, with one line too long for the pane."""
     (root / "code.py").write_text(
@@ -1215,7 +1210,7 @@ def test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts(
             page.wait_for_selector(".dline .dtext:has-text('z = 2')")
             assert abs(lead(page, "\ty = 1") - 4) < 0.2
             assert abs(lead(page, "\t\tz = 2") - 8) < 0.2
-            view_menu(page, "tabwidth", "8")
+            settings(page, "tabwidth", "8")
             assert page.evaluate(
                 "document.documentElement.style.getPropertyValue('--tab-w')") == "8"
             assert abs(lead(page, "\ty = 1") - 8) < 0.2
@@ -1259,7 +1254,7 @@ def test_a_long_line_wraps_under_its_own_text_in_one_column(repo_page):
         try:
             show_tab(page, "diff")
             page.wait_for_selector(".dline .dtext:has-text('z = 2')")
-            view_menu(page, "wrapping", "true")
+            settings(page, "wrapping", "true")
             got = page.evaluate("""() => {
               const cell = [...document.querySelectorAll('.dline .dtext')]
                 .find((one) => one.textContent.startsWith("long = '"));
@@ -1276,33 +1271,30 @@ def test_a_long_line_wraps_under_its_own_text_in_one_column(repo_page):
             assert spill <= 1, got
             assert lines > 1, got
             assert left >= start - 1, got     # never under the numbers
-            # Two columns always wrap, so there it is not a choice.
-            view_menu(page, "sides", "split")
-            page.wait_for_selector(".dline.pair")
-            assert page.locator(
-                ".viewpop .wrapping button[data-value='true']").is_disabled()
         finally:
             browser.close()
 
 
-def test_the_view_menu_opens_and_closes_as_a_menu_does(repo_page):
-    """How the diff is drawn is one menu at the end of the bar, the reader's
-    choice over two more buttons in a bar already cramped on a notebook."""
+def test_the_settings_say_what_is_chosen_and_change_it_in_place(repo_page):
+    """Everything about this screen is one menu at the end of the tab row:
+    it was a bell, a colours button, a menu on the Review bar and two links
+    over every file. It says what is chosen, and a choice changes the page
+    without rebuilding what is being read."""
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
             show_tab(page, "diff")
             page.wait_for_selector(".dline")
-            assert page.locator(".viewpop").is_hidden()
-            page.click(".diffbar .viewbtn")
-            assert page.locator(".viewpop").is_visible()
-            assert page.get_attribute(".diffbar .viewbtn", "aria-expanded") == "true"
-            page.mouse.click(10, 700)
-            assert page.locator(".viewpop").is_hidden()
-            page.click(".diffbar .viewbtn")
-            page.focus(".viewpop .tabwidth button[data-value='2']")
-            page.keyboard.press("Escape")
-            assert page.locator(".viewpop").is_hidden()
-            assert page.get_attribute(".diffbar .viewbtn", "aria-expanded") == "false"
+            assert page.locator(".diffbar .viewmenu, .filebody .reading").count() == 0
+            page.click("#settings")
+            pressed = """() => [...document.querySelectorAll(
+              '#setpop button[aria-pressed="true"]')].map((b) => b.dataset.value)"""
+            assert page.evaluate(pressed) == ["system", "4", "false", "unified"]
+            drawn = page.evaluate("state.diffAt")
+            settings(page, "tabwidth", "2")
+            settings(page, "sides", "split")
+            page.wait_for_selector(".dline.pair")
+            assert page.evaluate(pressed) == ["system", "2", "false", "split"]
+            assert page.evaluate("state.diffAt") == drawn
         finally:
             browser.close()

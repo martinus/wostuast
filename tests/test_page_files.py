@@ -12,6 +12,7 @@ import pytest
 
 import conftest
 from browser import (
+    settings,
     open_file,
     code_text,
     skip_without_browser,
@@ -957,10 +958,10 @@ def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(repo_page):
                 "getComputedStyle(document.querySelector('.dlines')).tabSize") == "4"
             assert page.evaluate(wrapped) == "pre"
 
-            page.click(".filebody .where .link:text('tab 4')")
+            settings(page, "tabwidth", "8")
             page.wait_for_function(
                 "getComputedStyle(document.querySelector('.dlines')).tabSize === '8'")
-            page.click(".filebody .where .link:text('wrap')")
+            settings(page, "wrapping", "true")
             page.wait_for_function(f"{wrapped} === 'pre-wrap'")
 
             page.reload(wait_until="domcontentloaded")
@@ -982,8 +983,9 @@ def test_a_windowed_file_says_it_cannot_wrap(long_page):
         try:
             open_file(page, "long.py")
             page.wait_for_selector(".code.windowed")
-            assert page.eval_on_selector(
-                ".filebody .where .link:text('wrap')", "el => el.disabled") is True
+            assert page.locator(".filebody .nowrap").is_hidden()
+            settings(page, "wrapping", "true")
+            page.wait_for_selector(".filebody .nowrap:text('too long to wrap')")
         finally:
             browser.close()
 
@@ -1021,8 +1023,8 @@ def test_changing_how_a_file_is_drawn_keeps_a_comment_being_written(repo_page):
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "half a thought")
 
-            page.click(".filebody .where .link:text('tab 4')")
-            page.click(".filebody .where .link:text('wrap')")
+            settings(page, "tabwidth", "8")
+            settings(page, "wrapping", "true")
             page.wait_for_function(
                 "getComputedStyle(document.querySelector('.filebody .dline'))"
                 ".whiteSpace === 'pre-wrap'")

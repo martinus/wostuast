@@ -193,6 +193,14 @@ def wait_for_watching(daemon, session_id="s1", seconds=15):
         _time.sleep(0.02)
     raise AssertionError(f"the page never subscribed to {session_id}")
 
+def settings(page, choice, value):
+    """Open the settings menu at the end of the tab row, if it is shut, and
+    press one of its choices: `colours`, `tabwidth`, `wrapping`, `sides`."""
+    if page.locator("#setpop").is_hidden():
+        page.click("#settings")
+    page.click(f"#setpop .{choice} button[data-value='{value}']")
+
+
 def renew_stream(page, act):
     """Run `act` in the page, which opens a new stream, and wait until that
     stream has said its first word.

@@ -257,11 +257,24 @@ jumps to the agent's tmux pane (or press <kbd>Enter</kbd>).
 
 ### Alerts
 
-The **bell** at the end of the tab row opens two switches. One tells you when an agent needs
+The **settings** button at the end of the tab row holds two switches for alerts. One tells you when an agent needs
 you. The other tells you when an agent has finished. The first is on as soon as
 you allow alerts, because that is what this tool is for. The second is off
 until you turn it on. Both use your browser's own notifications, so the
 browser asks for permission the first time. Your choice stays in that browser.
+While alerts are off, the settings button carries a small crossed-out bell.
+
+### Settings
+
+The **settings** button (the sliders, at the end of the tab row) holds
+everything about this screen, and your choices stay in this browser:
+
+- **colours**: auto, light or dark. Each button shows the colours it gives.
+- **alerts**: see above.
+- **tab width**: 2, 4 or 8, for the Files and the Review tabs.
+- **long lines**: scroll or wrap, for the Files tab and the one-column diff.
+  A very long file is drawn a part at a time and cannot wrap; it says so.
+- **diff columns**: one, or two side by side. Two columns always wrap.
 
 ## Keys
 
@@ -280,7 +293,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
 | <kbd>s</kbd> | Type into the agent's terminal |
 | <kbd>t</kbd> | Show or hide the agent's thinking, and say how much there is |
-| <kbd>c</kbd> | Colours: auto, light, dark (the last button in the tab row does the same) |
+| <kbd>c</kbd> | Colours: auto, light, dark (also in the settings menu) |
 | <kbd>Esc</kbd> | Clear a box, or close the help |
 
 **Jump** puts the cursor in the agent's pane. To also raise your terminal

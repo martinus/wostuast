@@ -6933,6 +6933,11 @@ PAGE = r"""<!doctype html>
   --tab-ready-light: #3c4043; --tab-ready-dark: #e3e3e3;
   --tab-working-light: #1e8e3e; --tab-working-dark: #5bb974;
   --tab-needs-light: #e37400; --tab-needs-dark: #fcad4d;
+  /* The colours buttons wear the colours they give, whichever theme the
+     page is in, so they are the two themes' own values and no theme block
+     sets them. Kept in step with `--bg` and `--ink` below by hand. */
+  --swatch-light-bg: #f6f5f1; --swatch-light-ink: #2f3138;
+  --swatch-dark-bg: #14151a; --swatch-dark-ink: #d6d8e0;
   --done-soft: rgba(91,155,213,.16);
   --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
@@ -7068,27 +7073,90 @@ body {
 /* `display` above beats the browser's own rule for `hidden`: the `.sendbar`
    scar. Jump is absent for a session with no pane, not disabled. */
 .theme[hidden] { display: none; }
-/* The bell and what hangs under it. The slot is what the panel is measured
-   from, so the panel follows the button wherever the strip puts it. */
-.bellslot { position: relative; margin-left: 12px; display: flex; }
-.alerts {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
-  min-width: 232px; padding: 10px; border-radius: 6px;
-  border: 1px solid var(--edge-bright); background: var(--panel);
-  box-shadow: 0 4px 14px var(--shadow);
-  display: flex; flex-direction: column; gap: 2px;
+/* Everything about this screen, in this browser, in one menu at the end of
+   the tab row: colours, alerts, and how code is drawn. It was a bell, a
+   colours button, a menu on the Review bar and two links over every file;
+   the reader chose one menu from pictures. The slot is what the menu is
+   measured from. */
+.setslot { position: relative; margin-left: 6px; display: flex; align-self: center; }
+.setslot .theme { margin-left: 0; position: relative; }
+/* Alerts off, said on the button: the bell was an icon of its own, and off
+   was the one thing it said at a glance. */
+.setslot .offmark {
+  position: absolute; right: -4px; bottom: -4px; width: 13px; height: 13px;
+  border-radius: 50%; background: var(--bg); display: flex;
+  align-items: center; justify-content: center;
 }
-.alerts[hidden] { display: none; }
-.alertnote {
-  padding: 2px 6px 8px; color: var(--ink-faint); font-size: 11px;
-  line-height: 1.5;
+.setslot .offmark .icon { width: 10px; height: 10px; stroke-width: 1.4; color: var(--ink-faint); }
+.setslot .offmark[hidden] { display: none; }
+.setpop {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 30;
+  display: grid; grid-template-columns: max-content max-content;
+  gap: 10px 16px; align-items: start; padding: 14px 16px;
+  background: var(--raised); border: 1px solid var(--edge-bright); border-radius: 8px;
+  box-shadow: 0 6px 20px var(--shadow);
 }
-.alertone {
-  display: flex; align-items: center; gap: 8px; padding: 5px 6px;
-  border-radius: 5px; color: var(--ink); font-size: 12px; cursor: pointer;
+.setpop[hidden] { display: none; }
+.setpop .icon {
+  width: 14px; height: 14px; fill: none; stroke: currentColor; flex: none;
+  stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round;
 }
-.alertone:hover { background: var(--raised); color: var(--ink-bright); }
-.alertone input { margin: 0; cursor: pointer; accent-color: var(--needs); }
+.setpop .setlabel {
+  display: flex; align-items: center; gap: 7px; padding-top: 6px;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+}
+.setpop .rule { grid-column: 1 / -1; border-top: 1px solid var(--edge); margin: 0 -16px; }
+/* One control in parts, so it reads as a choice and not as actions. */
+.setpop .choice { display: flex; }
+.setpop .choice .verb {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 0; margin-left: -1px;
+}
+.setpop .choice .verb:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.setpop .choice .verb:last-child { border-radius: 0 5px 5px 0; }
+.setpop .choice .verb[aria-pressed="true"] {
+  background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
+}
+/* The colours, each in the colours it gives -- and so the same in either
+   theme -- with a ring on the one chosen. Auto is both, cut corner to
+   corner. */
+.setpop .choice.colours { gap: 6px; }
+.setpop .choice.colours .verb {
+  height: 30px; padding: 0 12px; margin-left: 0; border-radius: 6px;
+  border-color: var(--edge-bright);
+}
+.setpop .choice.colours .light,
+.setpop .choice.colours .light[aria-pressed="true"] {
+  background: var(--swatch-light-bg); color: var(--swatch-light-ink);
+}
+.setpop .choice.colours .dark,
+.setpop .choice.colours .dark[aria-pressed="true"] {
+  background: var(--swatch-dark-bg); color: var(--swatch-dark-ink);
+}
+.setpop .choice.colours .auto,
+.setpop .choice.colours .auto[aria-pressed="true"] {
+  background: linear-gradient(135deg, var(--swatch-light-bg) 0 50%,
+                              var(--swatch-dark-bg) 50% 100%);
+  color: var(--swatch-light-ink);
+}
+.setpop .choice.colours .auto span {
+  background: var(--swatch-light-bg); padding: 0 3px; border-radius: 3px;
+}
+.setpop .choice.colours .verb[aria-pressed="true"] {
+  outline: 2px solid var(--needs); outline-offset: 1px;
+}
+.setpop .checks {
+  display: flex; flex-direction: column; gap: 5px;
+  font-family: var(--sans); font-size: 13px; color: var(--ink);
+}
+.setpop .checks label { display: flex; gap: 7px; align-items: center; cursor: pointer; }
+.setpop .checks input { margin: 0; cursor: pointer; accent-color: var(--needs); }
+.setpop .checks .needs .icon { color: var(--needs); }
+.setpop .checks .done .icon { color: var(--working); }
+.setpop .alertnote {
+  font-family: var(--sans); font-size: 12px; color: var(--ink-faint);
+  max-width: 30ch; line-height: 1.4;
+}
 .dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%;
   transition: background .2s ease, border-color .2s ease; }
 .dot.needs_you { background: var(--needs); }
@@ -7972,31 +8040,7 @@ body:not(.show-thinking) .thinking { display: none; }
    whole -- so it does not shrink, and the commit picker, whose subject can
    be cut and still be known, takes what room is left. */
 .pickbase { max-width: 36ch; flex-shrink: 0; }
-/* How the diff is drawn -- columns, tab width, long lines -- in one menu at
-   the end of the bar. The bar was cramped on a notebook with the column
-   switch alone in it, and the tab width and wrap were wanted too; the
-   reader chose the menu, which gives the pickers their room back. */
-.diffbar .viewmenu { margin-left: auto; position: relative; flex-shrink: 0; }
-.viewmenu .viewbtn { margin-left: 0; }
-.viewpop {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
-  display: grid; grid-template-columns: max-content max-content;
-  gap: 8px 14px; align-items: center; padding: 10px 12px;
-  background: var(--raised); border: 1px solid var(--edge-bright);
-  border-radius: 8px;
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--ink) 16%, transparent);
-}
-.viewpop[hidden] { display: none; }
-.viewrow { display: contents; }
-.viewlabel { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
-/* One control in parts, so it reads as a choice and not as actions. */
-.viewpop .choice { display: flex; }
-.viewpop .choice .verb { border-radius: 0; margin-left: -1px; }
-.viewpop .choice .verb:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
-.viewpop .choice .verb:last-child { border-radius: 0 5px 5px 0; }
-.viewpop .choice .verb[aria-pressed="true"] {
-  background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
-}
+
 /* The small label look: the path above a file. */
 .filebody .where {
   font-family: var(--narrow); font-size: 12px; letter-spacing: .04em;
@@ -8012,11 +8056,8 @@ body:not(.show-thinking) .thinking { display: none; }
 }
 .filebody .where .link { margin-top: 0; flex-shrink: 0; }
 /* What is known about the file, after its name: the type, the size, when it
-   last changed. `auto` pushes the controls to the far end. */
+   last changed. */
 .filebody .where .whatis { color: var(--ink-mute); flex-shrink: 0; }
-.filebody .where .reading { margin-left: auto; display: flex; gap: 10px;
-  align-items: baseline; flex-shrink: 0; }
-.filebody .where .reading .link[aria-pressed="true"] { color: var(--needs); }
 .link:disabled { opacity: .5; cursor: default; }
 /* One piece of the path. Text nodes separate them, so the whole line is still
    one string to select and copy. */
@@ -8123,6 +8164,10 @@ body:not(.show-thinking) .thinking { display: none; }
    one pane, so a bar at the bottom of the screen would belong to whichever
    block happened to be under it. */
 .filebody .dlines { overflow-x: visible; }
+.filebody .nowrap {
+  display: none; margin-left: auto; flex-shrink: 0; color: var(--ink-faint);
+}
+:root[data-wrap="yes"] .filebody .nowrap { display: inline; }
 /* Wrapped: the line breaks instead of running off the side. On the root, like
    the theme, because it is about this browser and not about a tab — and
    `:not(.windowed)` is the exclusion itself rather than a promise made in
@@ -8395,18 +8440,11 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button type="button" class="theme" id="jump" hidden
                 title="jump to its tmux pane  ⏎"
                 aria-label="jump to its tmux pane"></button>
-        <div class="bellslot">
-          <button type="button" class="theme" id="bell"
-                  aria-expanded="false"></button>
-          <div class="alerts" id="alerts" hidden>
-            <div class="alertnote" id="alertnote"></div>
-            <label class="alertone"><input type="checkbox" id="alertneeds">
-              <span>an agent needs you</span></label>
-            <label class="alertone"><input type="checkbox" id="alertdone">
-              <span>an agent has finished</span></label>
-          </div>
+        <div class="setslot">
+          <button type="button" class="theme" id="settings"
+                  aria-haspopup="true" aria-expanded="false"></button>
+          <div class="setpop" id="setpop" hidden></div>
         </div>
-        <button type="button" class="theme" id="theme"></button>
       </div>
       <div class="content" id="content"></div>
       <div class="asking" id="asking" hidden></div>
@@ -8778,18 +8816,7 @@ function applyTheme(choice) {
   } catch (error) {
     // A browser that refuses storage still gets the colours, just not the memory.
   }
-  const button = $("theme");
-  if (button) {
-    // An icon, and the word for it on the pointer and for a screen reader:
-    // the strip it stands in has no room for the word.
-    const word = { system: "auto", light: "light", dark: "dark" }[choice];
-    button.replaceChildren();
-    putIcon(button, { system: "themeAuto", light: "sun", dark: "moon" }[choice]);
-    button.dataset.choice = word;
-    button.setAttribute("aria-label", "colours: " + word);
-    button.title = "colours: " + word + "  \u00b7  c  \u00b7  click for "
-      + { system: "light", light: "dark", dark: "auto" }[choice];
-  }
+  paintSettings();
 }
 
 function nextTheme() {
@@ -8858,8 +8885,16 @@ const ICONS = {
   copy: "M4.6 4.2V2.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H9.8"
         + "M1.6 5.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z",
   check: "M2.4 7.4l3 3 6.2-6.6",
-  // How a diff is drawn: three rails, each with its knob somewhere else.
+  // Settings: three rails, each with its knob somewhere else.
   sliders: "M1.6 3.5h10.8M1.6 7h10.8M1.6 10.5h10.8M4.5 2v3M9.5 5.5v3M6 9v3",
+  // The rows of the settings menu, and two of their choices.
+  palette: "M7 1.8a5.2 5.2 0 1 0 0 10.4c.9 0 1.2-.7.9-1.4-.4-.8.1-1.6 1-1.6h1.2"
+    + "a2.1 2.1 0 0 0 2.1-2.1A5.2 5.2 0 0 0 7 1.8zM4.4 6.2h.01M6.2 4.2h.01M8.8 4.4h.01",
+  tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
+  scroll: "M1.8 5h6M1.8 9h10.4M9.8 6.6L12.2 9l-2.4 2.4",
+  wrap: "M1.8 3.6h10.4M1.8 7h8.2a2 2 0 0 1 0 4H6.6M8.2 9.4L6.6 11l1.6 1.6M1.8 10.6h2.4",
+  oneColumn: "M3.4 2.2h7.2v9.6H3.4z",
+  twoColumns: "M1.8 2.2h10.4v9.6H1.8zM7 2.2v9.6",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -9928,17 +9963,15 @@ function anyAlert() {
 }
 
 function drawBell() {
-  const button = $("bell");
+  const button = $("settings");
   if (!button) return;
   const can = "Notification" in window;
-  button.disabled = !can;
   const on = can && alertsCan() && anyAlert();
   const word = !can ? "no alerts" : on ? "alerts on" : "alerts off";
-  button.replaceChildren();
-  putIcon(button, on ? "bell" : "bellOff");
-  button.dataset.state = word;
-  button.setAttribute("aria-label", word);
-  button.title = word + "  \u00b7  what to be told about";
+  button.querySelector(".offmark").hidden = on;
+  button.dataset.alerts = on ? "on" : "off";
+  button.setAttribute("aria-label", "settings, " + word);
+  button.title = "settings: colours, alerts, how code is drawn  \u00b7  " + word;
   const want = alertsWanted();
   $("alertneeds").checked = want.needs;
   $("alertdone").checked = want.done;
@@ -9966,9 +9999,82 @@ async function setAlert(which, on) {
   drawBell();
 }
 
-function showAlerts(open) {
-  $("alerts").hidden = !open;
-  $("bell").setAttribute("aria-expanded", String(open));
+function showSettings(open) {
+  $("setpop").hidden = !open;
+  $("settings").setAttribute("aria-expanded", String(open));
+  if (open) paintSettings();
+}
+
+// The settings menu, built once: the colours, the two alerts, and how code
+// is drawn -- the tab width and long lines (the Files tab and the Review
+// tab, on the root, so nothing is rebuilt: a rebuild would take an open
+// comment box with it), and the diff's columns, through `keepSides`, which
+// refuses while a comment is being written. The alert boxes keep their ids,
+// so `drawBell` and `setAlert` work as they did under the bell.
+function putSettings() {
+  const pop = $("setpop");
+  const label = (text, icon) => {
+    const one = put(pop, "span", "setlabel");
+    putIcon(one, icon);
+    one.appendChild(document.createTextNode(text));
+  };
+  const choice = (name, options, pick) => {
+    const group = put(pop, "span", "choice " + name);
+    group.setAttribute("role", "group");
+    for (const [value, word, icon, cls] of options) {
+      const button = put(group, "button", "verb quiet" + (cls ? " " + cls : ""));
+      button.type = "button";
+      button.dataset.value = String(value);
+      if (icon) putIcon(button, icon);
+      put(button, "span", null, word);
+      button.addEventListener("click", () => { pick(value); paintSettings(); });
+    }
+    return group;
+  };
+  label("colours", "palette");
+  choice("colours", [["system", "auto", "themeAuto", "auto"],
+                     ["light", "light", "sun", "light"],
+                     ["dark", "dark", "moon", "dark"]], applyTheme)
+    .setAttribute("aria-label", "colours");
+  label("alerts", "bell");
+  const checks = put(pop, "div", "checks");
+  for (const [id, word, icon, cls] of [
+    ["alertneeds", "an agent needs you", "person", "needs"],
+    ["alertdone", "an agent has finished", "check", "done"]]) {
+    const one = put(checks, "label", cls);
+    const box = put(one, "input");
+    box.type = "checkbox";
+    box.id = id;
+    putIcon(one, icon);
+    one.appendChild(document.createTextNode(word));
+  }
+  put(checks, "span", "alertnote").id = "alertnote";
+  put(pop, "div", "rule");
+  label("tab width", "tabWidth");
+  choice("tabwidth", TAB_WIDTHS.map((width) => [width, String(width)]),
+         (tab) => keepReading({ ...readingNow(), tab }));
+  label("long lines", "wrap");
+  choice("wrapping", [[false, "scroll", "scroll"], [true, "wrap", "wrap"]],
+         (wrap) => keepReading({ ...readingNow(), wrap }));
+  label("diff columns", "twoColumns");
+  choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
+         keepSides);
+  const button = $("settings");
+  putIcon(button, "sliders");
+  putIcon(put(button, "span", "offmark"), "bellOff");
+}
+
+function paintSettings() {
+  const pop = $("setpop");
+  if (!pop || !pop.firstChild) return;
+  const reading = readingNow();
+  const now = { colours: themeChoice(), tabwidth: String(reading.tab),
+                wrapping: String(reading.wrap), sides: state.sides };
+  for (const [name, value] of Object.entries(now)) {
+    for (const button of pop.querySelectorAll(`.${name} button`)) {
+      button.setAttribute("aria-pressed", String(button.dataset.value === value));
+    }
+  }
 }
 
 function notifyAbout(sessions) {
@@ -12217,42 +12323,12 @@ function putAbout(where, rows, windowed) {
   const when = whenOf(state.files.mtime);
   if (when) facts.push(when);
   if (facts.length) put(where, "span", "whatis", facts.join(" · "));
-  // A binary file and a rendered document have no rows, so neither control
-  // would do anything to what is on screen. A control that quietly does
-  // nothing is worse than no control.
-  if (!rows) return;
-
-  const reading = readingNow();
-  const box = put(where, "span", "reading");
-  const tab = put(box, "button", "link", "tab " + reading.tab);
-  tab.type = "button";
-  tab.title = "how wide a tab is drawn";
-  tab.addEventListener("click", () => {
-    const now = readingNow();
-    const at = TAB_WIDTHS.indexOf(now.tab);
-    now.tab = TAB_WIDTHS[(at + 1) % TAB_WIDTHS.length];
-    keepReading(now);
-    // Only the label: `tab-size` reads `--tab-w` from the root, so the rows
-    // redraw themselves. Rebuilding the pane here would re-highlight the
-    // whole file for a number — and would take an open comment box with it,
-    // because `redrawCode` clears the very key that guards one.
-    tab.textContent = "tab " + now.tab;
-  });
-  const wrap = put(box, "button", "link", "wrap");
-  wrap.type = "button";
-  // A windowed file's rows are a grid the scrollbar is read against, and a
-  // wrapped row is not one row tall. The CSS is what enforces that; this says
-  // so, rather than letting the reader press something inert.
-  wrap.disabled = windowed;
-  wrap.title = windowed ? "a file drawn a window at a time cannot wrap"
-                        : "break a long line instead of scrolling sideways";
-  wrap.setAttribute("aria-pressed", String(reading.wrap && !windowed));
-  wrap.addEventListener("click", () => {
-    const now = readingNow();
-    now.wrap = !now.wrap;
-    keepReading(now);
-    wrap.setAttribute("aria-pressed", String(now.wrap));
-  });
+  // How a file is drawn -- the tab width and long lines -- is the settings
+  // menu's now, one place for the Files and the Review tabs. A windowed file
+  // cannot wrap, and says so while wrap is on: its rows are a grid the
+  // scrollbar is read against. The CSS shows the note, so turning wrap on or
+  // off rebuilds nothing.
+  if (rows && windowed) put(where, "span", "nowrap", "too long to wrap");
 }
 
 // Open the tree down to a path, and ask the list to move to it. A filter hides
@@ -12437,7 +12513,6 @@ function putDiffBar(pane) {
   };
   step("\u2039 older", "the commit before this one", 1);
   step("newer \u203a", "the commit after this one", -1);
-  putViewMenu(bar);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
   // long pull request keeps its place in the list beside it. Once a frame at
@@ -12450,81 +12525,6 @@ function putDiffBar(pane) {
   });
 }
 
-// How the diff is drawn, in one menu at the end of the bar: one column or
-// two, the tab width, and whether a long line wraps. The tab width and wrap
-// are the Files tab's own (`readingNow`), kept on the root: one setting for
-// both tabs, obeyed by the CSS, so nothing is rebuilt -- a rebuild would
-// take an open comment box with it. Only the columns rebuild, through
-// `keepSides`, which refuses while a comment is being written.
-function putViewMenu(bar) {
-  const menu = put(bar, "span", "viewmenu");
-  const open = put(menu, "button", "theme viewbtn");
-  open.type = "button";
-  open.title = "how the diff is drawn: columns, tab width, long lines";
-  open.setAttribute("aria-label", "how the diff is drawn");
-  open.setAttribute("aria-haspopup", "true");
-  open.setAttribute("aria-expanded", "false");
-  putIcon(open, "sliders");
-  const pop = put(menu, "div", "viewpop");
-  pop.hidden = true;
-  const choice = (label, name, options, pick) => {
-    const row = put(pop, "div", "viewrow");
-    put(row, "span", "viewlabel", label);
-    const group = put(row, "span", "choice " + name);
-    group.setAttribute("role", "group");
-    group.setAttribute("aria-label", label);
-    for (const [value, word] of options) {
-      const button = put(group, "button", "verb quiet", word);
-      button.type = "button";
-      button.dataset.value = String(value);
-      button.addEventListener("click", () => { pick(value); paintViewMenu(bar); });
-    }
-  };
-  choice("columns", "sides", [["unified", "one"], ["split", "two"]], keepSides);
-  choice("tab width", "tabwidth", TAB_WIDTHS.map((width) => [width, String(width)]),
-         (tab) => keepReading({ ...readingNow(), tab }));
-  choice("long lines", "wrapping", [[false, "scroll"], [true, "wrap"]],
-         (wrap) => keepReading({ ...readingNow(), wrap }));
-  open.addEventListener("click", () => {
-    pop.hidden = !pop.hidden;
-    open.setAttribute("aria-expanded", String(!pop.hidden));
-    paintViewMenu(bar);
-  });
-  pop.addEventListener("keydown", (press) => {
-    if (press.key !== "Escape") return;
-    closeViewMenu(menu);
-    open.focus();
-  });
-}
-
-function closeViewMenu(menu) {
-  menu.querySelector(".viewpop").hidden = true;
-  menu.querySelector(".viewbtn").setAttribute("aria-expanded", "false");
-}
-
-// A press anywhere but on the menu closes it, as a menu does.
-document.addEventListener("pointerdown", (press) => {
-  for (const menu of document.querySelectorAll(".viewmenu")) {
-    if (!menu.contains(press.target)) closeViewMenu(menu);
-  }
-});
-
-function paintViewMenu(bar) {
-  const reading = readingNow();
-  const now = { sides: state.sides, tabwidth: String(reading.tab),
-                wrapping: String(reading.wrap) };
-  for (const [name, value] of Object.entries(now)) {
-    for (const button of bar.querySelectorAll(`.viewpop .${name} button`)) {
-      button.setAttribute("aria-pressed", String(button.dataset.value === value));
-    }
-  }
-  // Two columns always wrap: they cannot share one sideways scrollbar.
-  const split = state.sides === "split";
-  for (const button of bar.querySelectorAll(".viewpop .wrapping button")) {
-    button.disabled = split;
-    button.title = split ? "two columns always wrap" : "";
-  }
-}
 
 function commitsOf(report) {
   return (report && report.commits) || [];
@@ -12603,7 +12603,6 @@ function fillDiffBar(bar) {
   const [older, newer] = bar.querySelectorAll(".step");
   older.disabled = at < 0 || at + 1 >= commits.length;
   newer.disabled = at <= 0;
-  paintViewMenu(bar);
 }
 
 // A commit message is wrapped by hand at about 72 columns, and drawn as it
@@ -14882,7 +14881,7 @@ document.addEventListener("keydown", (press) => {
     for (const box of document.querySelectorAll("dialog")) {
       if (box.open) box.close();
     }
-    showAlerts(false);       // not a dialog, and it closes the same way
+    showSettings(false);     // not a dialog, and it closes the same way
     return;
   }
   if (press.metaKey || press.ctrlKey || press.altKey) return;
@@ -14953,12 +14952,12 @@ document.addEventListener("visibilitychange", repoll);
 for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
-$("theme").addEventListener("click", nextTheme);
+putSettings();
 putIcon($("jump"), "terminal");
 $("jump").addEventListener("click", jumpToPane);
-$("bell").addEventListener("click", (press) => {
+$("settings").addEventListener("click", (press) => {
   press.stopPropagation();            // or the listener below shuts it again
-  showAlerts($("alerts").hidden);
+  showSettings($("setpop").hidden);
 });
 $("alertneeds").addEventListener("change", (press) => {
   setAlert("needs", press.target.checked);
@@ -14969,7 +14968,7 @@ $("alertdone").addEventListener("change", (press) => {
 // A panel that only its own button can close is a panel you have to go back
 // to. Anywhere else on the page, and Escape, shut it.
 document.addEventListener("click", (press) => {
-  if (!$("alerts").hidden && !press.target.closest(".bellslot")) showAlerts(false);
+  if (!$("setpop").hidden && !press.target.closest(".setslot")) showSettings(false);
 });
 
 async function jumpToPane() {
