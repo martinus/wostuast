@@ -54,6 +54,51 @@ def test_rows_are_replaced_whole_not_edited(ws, store):
     assert held[0]["state"] == "done"     # the old list is untouched
 
 
+def recorded_stop_failure(**changes):
+    """The `StopFailure` Claude Code 2.1.285 sent, as this test's session."""
+    import json
+    from conftest import FIXTURES
+
+    line = json.loads((FIXTURES / "stop_failure.jsonl").read_text())
+    line.update(session_id="s1", cwd="/w/repo/dir", pane="%1", pid=4242)
+    line.update(changes)
+    return line
+
+
+def test_an_api_error_ends_the_turn_and_says_why(ws, store):
+    """Claude Code fires `StopFailure` instead of `Stop` when an API error --
+    a spend limit, a login, an overload -- ends the turn. It was not
+    registered, so the row read "working" over an agent that had stopped,
+    and the error was in the transcript and nowhere on the row. The agent
+    cannot go on until the reader acts, so it is amber, with Claude Code's
+    own sentence as the reason; the next prompt takes it back to work."""
+    assert "StopFailure" in ws.HOOK_EVENTS
+    ws.append_event(event("UserPromptSubmit", prompt="go", ts=1000.0))
+    ws.append_event(recorded_stop_failure(ts=1005.0))
+    store.refresh(now=1005.0, alive=lambda p: True)
+    row = store.rows[0]
+    assert row["state"] == "needs_you", row
+    assert row["reason"] == ("stopped: There's an issue with the selected "
+                             "model (claude-nonexistent-model-9). It may not "
+                             "exist or you may not have access to it."), row
+    assert row["since"] == 1005.0
+
+    ws.append_event(event("UserPromptSubmit", prompt="go on", ts=1010.0))
+    store.refresh(now=1010.0, alive=lambda p: True)
+    assert store.rows[0]["state"] == "working"
+    assert "stopped" not in store.rows[0]["reason"]
+
+
+def test_an_api_error_with_no_words_is_named_by_its_kind(ws, store):
+    """`last_assistant_message` is what the recorded payload carried; one
+    without it still says what stopped the agent, from `error`."""
+    ws.append_event(event("UserPromptSubmit", prompt="go", ts=1000.0))
+    ws.append_event(recorded_stop_failure(
+        ts=1005.0, error="rate_limit", last_assistant_message=""))
+    store.refresh(now=1005.0, alive=lambda p: True)
+    assert store.rows[0]["reason"] == "stopped: usage limit reached"
+
+
 def test_git_runs_once_and_then_waits(ws, monkeypatch):
     calls: list[list[str]] = []
 

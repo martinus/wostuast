@@ -847,6 +847,18 @@ update the comment with its own text, and read it back.
   read for the message that means a dialog, never assumed to be one:
   `auth_success` ("Logged in as …") took the row amber with nothing that
   could ever clear it.
+  - **A turn an API error ended is amber too** (`_on_stop_failure`). Claude
+    Code fires `StopFailure` *instead of* `Stop` -- a spend limit, a login,
+    an overload -- and it was not registered: the row read "working" over
+    an agent that had stopped, and the error stood in the transcript and
+    nowhere in the log. The agent cannot go on until the reader acts, so it
+    is amber, and the reason is Claude Code's own sentence,
+    `last_assistant_message` in the payload recorded on 2.1.285
+    (`tests/fixtures/stop_failure.jsonl`); `STOP_FAILURES` names an `error`
+    that comes without one. An install from before has not registered it,
+    and `doctor` says so.
+    `test_an_api_error_ends_the_turn_and_says_why`,
+    `test_an_api_error_with_no_words_is_named_by_its_kind`.
 - **A question is a question, not a permission.** `AskUserQuestion` is a tool,
   so `PreToolUse` and then `PermissionRequest` carry the whole of it in
   `tool_input` -- every question, every option, every description. It used to

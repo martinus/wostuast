@@ -50,7 +50,9 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   title names the sessions that need you, or else says how many are working
   or ready. Its icon is a small robot with one big eye and one small eye.
   The whole robot is grey when nothing waits, green while an agent works,
-  and amber when one needs you. Your browser can also notify you.
+  and amber when one needs you. Your browser can also notify you. An agent
+  that an API error stopped, for example a spend limit or a failed login,
+  needs you too: its card says the error.
 - **Each session is one card.** It shows the session's name and its age,
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or
