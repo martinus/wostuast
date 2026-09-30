@@ -1396,6 +1396,21 @@ def test_a_secret_is_hidden_as_far_as_the_row_can_show(ws):
     assert "hunter2" not in shown and shown.startswith("curl -u *** https://h")
 
 
+@pytest.mark.parametrize("quote", ['"', "'"])
+def test_a_quoted_secret_cut_by_the_clip_is_hidden_to_the_end(ws, quote):
+    """`clip_hidden` looks at the start of a long command only, and the cut
+    can fall inside the quotes. The value then had no closing quote, the
+    `TOKEN=` shape matched nothing, and the row showed the secret's start
+    (#254). A quote that is not closed is hidden to the end."""
+    command = (f"export API_TOKEN={quote}hunter2-" + "x" * 1100 + f"{quote}"
+               " && ./deploy.sh")
+    shown = ws.tool_target("Bash", {"command": command})
+    assert "hunter2" not in shown and shown.startswith("export API_TOKEN=***"), shown
+    assert ws.hide_secrets(f"PASSWORD={quote}hunter2 and more") == "PASSWORD=***"
+    # A short one, closed, is hidden as before, and what follows it stays.
+    assert ws.hide_secrets(f"TOKEN={quote}a b{quote} make") == "TOKEN=*** make"
+
+
 def clear_events(end_ts=2000.0, start_ts=2000.1, **new):
     """The two events of one `/clear`, as Claude Code 2.1.282 sends them:
     the old session ends, a new one starts in the same pane and process."""

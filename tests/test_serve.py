@@ -928,6 +928,32 @@ def test_a_socket_is_found_by_both_of_its_ends(ws):
     assert ws.socket_owner(table(LISTENING, CLOSED), PEER, OURS) is None
 
 
+# The same ends after the client sent a request and closed its socket, as
+# Linux 6.18 lists them: FIN_WAIT2, uid 0, inode 0 -- no process holds it.
+# And after the client only shut down its write half: FIN_WAIT2 too, but
+# its own uid and inode, and it can still read the answer.
+ORPHANED = ("8974: 0100007F:9562 0100007F:1D03 05 00000000:00000000 03:00001755"
+            " 00000000     0        0 0 3 0000000024776677")
+HALF_SHUT = ("9083: 0100007F:9562 0100007F:1D03 05 00000000:00000000 00:00000000"
+             " 00000000 65534        0 1847845 1 00000000015d2ef5 20 0 0 12 -1")
+
+
+@little_endian
+def test_a_socket_no_process_holds_is_nobodys(ws):
+    """Another user connected, sent a request and closed the socket before
+    the daemon looked. The kernel then lists it with uid 0, which is root's
+    and was let in, and the request was served (#254). A line with no inode
+    is skipped, as a `TIME_WAIT` line is. A client that only shut down its
+    write half still holds its socket, and is still who it is."""
+    assert ws.socket_owner(table(LISTENING, OUR_END, ORPHANED), PEER, OURS) is None
+    reads = lambda path: table(LISTENING, OUR_END, ORPHANED)
+    assert ws.another_user(PEER, OURS, 1000, reads, ("t",)) is True
+    assert ws.another_user(PEER, OURS, 0, reads, ("t",)) is True
+    half = table(LISTENING, OUR_END, HALF_SHUT)
+    assert ws.socket_owner(half, PEER, OURS) == 65534
+    assert ws.another_user(PEER, OURS, 65534, lambda path: half, ("t",)) is False
+
+
 @little_endian
 def test_a_client_on_an_ipv6_socket_is_found_in_tcp6(ws):
     """A dual-stack client reaches 127.0.0.1 as ::ffff:127.0.0.1, and Linux
@@ -1064,6 +1090,47 @@ def test_a_real_request_from_another_user_is_refused(ws, served):
         capture_output=True, text=True, timeout=30)
     assert done.stdout.startswith("403"), done.stdout + done.stderr
     assert daemon.token not in done.stdout
+
+
+@needs_tables
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0,
+                    reason="only root can run a request as another user")
+@pytest.mark.skipif(shutil.which("setpriv") is None, reason="needs setpriv")
+def test_a_request_from_another_user_that_closed_first_is_refused(
+        ws, served, monkeypatch):
+    """As `nobody`: connect, send a request, close. Under load the daemon
+    reads the table after the close, and the line then says uid 0 (#254).
+    The read is made late here, so it comes after the close every time.
+    The daemon is told it runs as another user than root, as the owner of
+    a real machine is, and root stays let in."""
+    daemon, base = served
+    daemon.uid = 12345
+    assert ws.ROOT_UID == 0
+    real_read, said = ws.read_table, []
+
+    def late(path):
+        time.sleep(0.5)
+        return real_read(path)
+
+    def recorded(*args, **rest):
+        said.append(ws_another_user(*args, **rest))
+        return said[-1]
+
+    ws_another_user = ws.another_user
+    monkeypatch.setattr(ws, "read_table", late)
+    monkeypatch.setattr(ws, "another_user", recorded)
+    port = base.rsplit(":", 1)[1]
+    ask = ("import socket\n"
+           f"s = socket.create_connection(('127.0.0.1', {port}))\n"
+           "s.sendall(b'GET /api/sessions HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n')\n"
+           "s.close()\n")
+    subprocess.run(["setpriv", "--reuid=65534", "--regid=65534",
+                    "--clear-groups", sys.executable, "-c", ask],
+                   check=True, capture_output=True, timeout=30)
+    deadline = time.monotonic() + 15
+    while not said and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert said == [True], "a closed socket of another user was let in"
 
 
 def test_the_token_is_in_the_page_and_is_not_the_mark(served):
@@ -1456,6 +1523,39 @@ def test_a_body_that_is_not_read_does_not_frame_the_next_request(in_tmux, head,
     assert seen == []
 
 
+@pytest.mark.parametrize("head, first", [
+    (b"POST /api/session/s1/send HTTP/1.1\r\n", b" 403 "),
+    (b"GET /api/links HTTP/1.1\r\n", b" 200 "),
+], ids=["a-post", "a-get"])
+def test_a_length_too_long_to_be_a_number_is_not_read(in_tmux, head, first):
+    """`isdigit()` took 5,000 digits and `int()` refused them: Python reads
+    no number of more than 4,300 digits. The daemon answered 500 and kept
+    the connection, and the bytes after the headers were answered as the
+    next request (#254). Now such a body is one whose end is not known:
+    the answer the request would get anyway, and the connection closed."""
+    daemon, base, seen = in_tmux
+    out = raw_exchange(base, head + b"Host: localhost\r\nContent-Length: "
+                       + b"9" * 5000 + b"\r\n\r\n" + HIDDEN)
+    assert only_one_answer(out)
+    assert first in out.split(b"\r\n")[0], out[:200]
+    assert seen == []
+
+
+def test_a_request_that_fails_closes_its_connection(in_tmux, monkeypatch):
+    """A request that fails half way may leave its body in the socket, so
+    the 500 closes the connection: what follows is never read as a request
+    of its own (#254)."""
+    daemon, base, seen = in_tmux
+
+    def broken():
+        raise RuntimeError("nobody thought of this")
+    monkeypatch.setattr(daemon, "sessions_payload", broken)
+    out = raw_exchange(base, b"GET /api/sessions HTTP/1.1\r\nHost: localhost"
+                       b"\r\n\r\n" + HIDDEN)
+    assert only_one_answer(out)
+    assert b" 500 " in out.split(b"\r\n")[0], out[:200]
+
+
 def only_one_answer(out):
     """True when the socket carried one answer and nothing after it.
 
@@ -1645,6 +1745,42 @@ def test_an_answer_for_a_question_no_longer_waiting_presses_nothing(
     status, _ = post(base + "/api/session/s1/answer",
                      {"ask": "toolu_two", "picks": [[1], [1]]})
     assert status == 403
+    assert seen == []
+
+
+def test_an_answer_too_large_to_read_says_that(ws, in_tmux):
+    """A body over `POST_MAX` is not read, and the route sees `{}`, which
+    has no `ask`: it was refused as "that question is no longer waiting",
+    and the question was waiting (#254)."""
+    daemon, base, seen = in_tmux
+    asking(ws, daemon)
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_two", "picks": [[1], [1]],
+                         "pad": "x" * ws.POST_MAX}, token=daemon.token)
+    assert status == 413 and "large" in body["error"], (status, body)
+    assert seen == []
+
+
+def test_an_answer_never_goes_into_a_permission_dialog(ws, in_tmux, monkeypatch):
+    """One batch of calls can hold a question and a command that asks for
+    permission. The answer's keys are digits and Enter, and the dialog's
+    cursor starts on "1. Yes", so they could approve the command. The
+    answer is refused while the row shows a dialog, as `send` is (#254)."""
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    daemon, base, seen = in_tmux
+    asking(ws, daemon)
+    for one in (event("PreToolUse", tool_name="Bash", tool_use_id="toolu_b1",
+                      tool_input={"command": "rm -rf build"}, pane="%7"),
+                event("PermissionRequest", tool_name="Bash",
+                      tool_input={"command": "rm -rf build"}, pane="%7")):
+        ws.append_event(one)
+    daemon.store.refresh()
+    held = daemon.store.sessions["s1"]
+    assert held.asking and held.permission and held.state == "needs_you"
+    status, body = post(base + "/api/session/s1/answer",
+                        {"ask": "toolu_two", "picks": [[1], [1]]},
+                        token=daemon.token)
+    assert status == 409 and "permission dialog" in body["error"], body
     assert seen == []
 
 
