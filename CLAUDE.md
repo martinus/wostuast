@@ -2311,7 +2311,11 @@ update the comment with its own text, and read it back.
   holds.** A tick between a fetch's snapshot and the stream joining the hub
   sends to nobody, and so does one while a dropped stream reconnects, or
   one into a stream the browser closed and the hub has not noticed yet --
-  `wait_for_watching` exists in the tests for exactly that gap.
+  `wait_for_watching` exists in the tests for exactly that gap. **It cannot
+  see a stream the page has just replaced**: the daemon lists the closed one
+  until a write to it fails, so it answers at once and the next push goes
+  to the dead socket. After `resubscribe` or `choose`, a test clears
+  `state.live` and waits for the new stream's first word to set it again.
   `Serving.stream` sends it (`transcript_held`) after joining, so what is
   read after it is pushed and what was read before it is counted; the page
   fetches when it holds less, or keeps it in `state.turns.told` for the

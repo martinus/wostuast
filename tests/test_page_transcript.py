@@ -2170,10 +2170,14 @@ def test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole(pair_at):
             count = page.evaluate("state.turns.blocks.length")
             assert count > 0
             show_tab(page, "files")
-            page.evaluate("choose('s2')")
-            page.evaluate("choose('s1')")
-            page.wait_for_function("state.chosen === 's1' && state.tab === 'files'")
-            wait_for_watching(daemon)
+            # Each choice opens a new stream, and the daemon can still list
+            # the one closed before it; the new one's first word says it
+            # has joined.
+            page.evaluate(
+                "() => { state.live = ''; choose('s2'); choose('s1'); }")
+            page.wait_for_function(
+                "state.live === 'live' && state.chosen === 's1'"
+                " && state.tab === 'files'")
             append_blocks(daemon, ["A piece, pushed alone."])
             page.wait_for_function(has_text("A piece, pushed alone."))
             asked = asks_for_transcript(page)
@@ -2200,8 +2204,11 @@ def test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole(page_at):
             page.evaluate("""() => { state.stream.close(); state.stream = null;
                                      state.streamUrl = ''; }""")
             append_blocks(daemon, ["Said while nobody listened."])
-            page.evaluate("resubscribe()")
-            wait_for_watching(daemon)       # its opening is on the way first
+            # The closed stream can still be on the daemon's list, so the
+            # daemon cannot say when the new one has joined; the page can.
+            # Its first word comes in one write with the opening.
+            page.evaluate("() => { state.live = ''; resubscribe(); }")
+            page.wait_for_function("state.live === 'live'")
             append_blocks(daemon, ["Said once the stream was back."])
             page.wait_for_function(has_text("Said once the stream was back."))
             asked = asks_for_transcript(page)
@@ -2474,6 +2481,11 @@ def test_the_way_back_is_an_arrow_in_the_middle(page_at):
             wait_for_map(page)
             wait_for_watching(daemon)
             append_rounds(daemon, 12)
+            # The rounds first: scrolled up before they land, the pane is
+            # still at its foot, and follows them down.
+            page.wait_for_function(
+                "[...document.querySelectorAll('.turn')].some("
+                "one => one.innerText.includes('answer 11'))")
             page.eval_on_selector(".turnbody", "el => el.scrollTop = 0")
             page.wait_for_selector(".tofoot", state="visible")
             out = page.evaluate("""() => {
