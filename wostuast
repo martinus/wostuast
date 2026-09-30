@@ -16256,9 +16256,11 @@ async function jumpToPane() {
   said(await tell(state.chosen, "jump"));
 }
 
-// The box is cleared only once the daemon says the text went in. Clearing it
-// first and then failing loses what the user typed, and they typed it at a
-// terminal they cannot see.
+// The box is cleared the moment the text goes, and a refusal puts the text
+// back in front of whatever was typed since, so a failure loses nothing the
+// reader typed at a terminal they cannot see. An empty box is therefore the
+// send starting, not the send landing: `sending` is what says it is still on
+// its way.
 async function sendTyped() {
   const box = $("say");
   const text = box.value;

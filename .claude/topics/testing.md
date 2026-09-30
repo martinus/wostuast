@@ -88,6 +88,23 @@ switched sessions in between saved the top.
 `test_open_page_returns_once_the_transcript_has_answered` slows the
 daemon's answer, so the gap is there every time.
 
+- **An empty send box is the send starting, not landing.** `sendTyped`
+  empties `#say` in the same call as the Enter, before the POST leaves --
+  on purpose, so words typed meanwhile are not lost (topics/safety, "One
+  send at a time"). `test_the_enter_that_ends_a_composition_sends_nothing`
+  waited for the empty box and then read the fake tmux's `seen`: 20 runs in
+  144 red at `-n 12`, every one with `seen` empty at the assert and both
+  `send-keys` in it by the time pytest printed the fixture. Holding
+  `**/send` for 300 ms makes it red every time. A comment above `sendTyped`
+  still said the box cleared "only once the daemon says the text went in",
+  which is where the wrong wait came from. Wait for the keys in `seen`
+  (`wait_until`), then `sending.size === 0` -- the lock is let go in the
+  same turn that puts a refused text back, so the box can be read after it.
+  `test_the_send_box_types_into_the_terminal` slept 500 ms for the same
+  thing and waits the same way now. The other half of the rule holds the
+  other way round: because the box empties at once, a box still full right
+  after a composing Enter is proof nothing was sent, with no sleep in it.
+
 **To hold what a key *says*, spy on `note`, not on `#live`.** The slot is
 repainted on every push and the stream is allowed to take a passing word
 back, so reading it after a keypress is a race. Reassigning `note` in the
