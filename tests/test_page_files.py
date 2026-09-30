@@ -144,6 +144,40 @@ def test_a_file_in_a_generated_directory_is_found_by_name(ws, repo_page,
             browser.close()
 
 
+def test_a_document_is_read_as_markdown_or_text_from_the_right_of_its_path(repo_page):
+    """A document is drawn as Markdown, and its lines are one click away, so
+    a comment can go on one. The control is the Review tab's for a commit
+    message, and it stands where that one does: at the right end of the line
+    that names what is read. It was a link after the path."""
+    repo, path = repo_page
+    (repo / "PLAN.md").write_text("# The plan\n\nFirst **this**.\n")
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            show_tab(page, "files")
+            page.click(".filelist button:has-text('PLAN.md')")
+            page.wait_for_selector(".filebody .prose h1")
+            pressed = """() => [...document.querySelectorAll(
+              '.filebody .where .readas button')].map((b) => b.getAttribute('aria-pressed'))"""
+            assert page.evaluate(pressed) == ["true", "false"]
+            got = page.evaluate("""() => {
+              const where = document.querySelector('.filebody .where');
+              const box = where.getBoundingClientRect();
+              const choice = where.querySelector('.readas').getBoundingClientRect();
+              const path = where.querySelector('.crumbs').getBoundingClientRect();
+              return [box.right - choice.right,
+                      path.bottom > choice.top && path.top < choice.bottom];
+            }""")
+            assert got[0] < 40 and got[1], got
+            page.click(".filebody .where .readas button[data-value='true']")
+            page.wait_for_selector(".filebody .code .dline")
+            assert page.evaluate(pressed) == ["false", "true"]
+            page.click(".filebody .where .readas button[data-value='false']")
+            page.wait_for_selector(".filebody .prose h1")
+        finally:
+            browser.close()
+
+
 def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)

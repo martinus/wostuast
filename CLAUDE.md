@@ -64,7 +64,7 @@ after the tests go red.
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | The transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | Tab state |
 | `worktree_files`, `walk_ignored`, `Files`, a diff, a git call, `ICONS` | The worktree tabs |
-| `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext` | The worktree tabs, the Diff tab's own bullets |
+| `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext`, `putMessage`, `stepat` | The worktree tabs, the Diff tab's own bullets |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `drawReviewBar`, `reviewText` | The review |
 | `drawTranscript`, `drawFiles`, `drawHeader`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | The daemon and the page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** |
@@ -197,6 +197,8 @@ This list exists because each entry was re-implemented once already.
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
 | a binary file the browser can show | `putMedia(parent, path, found)` — `found.shown` is the daemon's answer |
 | a folder or a page icon | `putIcon(parent, "dir" \| "dirOpen" \| "file")` — SVG, so not `put` |
+| a choice of a few, one in force | `putChoice(parent, name, options, pick)`, then `paintChoice(group, value)` |
+| Markdown or text, over what is read | `putReadAs(parent, asText, pick, textTitle)` |
 | the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
 | a diff's files in the order its tree reads | `treeOrder(found, pathOf)` — folders first at every level |
@@ -215,7 +217,10 @@ rather than a newline and the reader waited on it for ever. `browser.py` has `op
 `comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`.
 
 **CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a
-button that only changes what is on screen), `.link` (small text button),
+button that only changes what is on screen), `.choice` (one control in
+parts, the part in force pressed: `putChoice` and `paintChoice` build and
+paint it, the settings menu and `putReadAs` use it), `.link` (small text
+button),
 `.acts` (what you can do to a comment,
 at its right edge), `.find`/`.findslot`,
 `.empty`, `.nohits`, `.note`, `.dot`, `.comment`. **Every colour is a variable**
@@ -1688,6 +1693,14 @@ update the comment with its own text, and read it back.
   it. Picking and the column switch both rebuild the diff, so both refuse
   while a comment box is open and say so (`busyWriting`) — a rebuild takes
   what is typed, and a switch that silently did nothing reads as broken.
+  **Between older and newer, "5 / 9"** (`.stepat`): which commit, oldest
+  first, so the branch's first commit is 1. **And another commit is read
+  from its top**: `drawDiff` keeps the place only when `scroll.dataset.of`
+  says the same diff is drawn again, and says nought otherwise -- a pane
+  emptied and refilled in one task keeps its offset, so the next commit
+  opened where the last had been read to.
+  `test_the_older_and_newer_buttons_step_through_the_commits`,
+  `test_another_commit_is_read_from_its_top`.
 - **The pane reads in the tree's order, not git's.** `treeOrder` puts
   folders first at every level, and both the list and the pane go through
   it, so the two read the same way down. git's order is plain path order,
@@ -1746,6 +1759,22 @@ update the comment with its own text, and read it back.
   is the meaning; it stays `pre-wrap` in the fixed face for them. The whole
   heading goes through `linkTickets`, so a ticket in the subject is a link
   too. `test_a_commit_message_wraps_at_the_window_and_links_its_tickets`.
+  **It is drawn as Markdown, and the text is one click away**
+  (`putMessage`, `MESSAGE_KEY`): an agent writes its messages in Markdown,
+  and the tab drew the source; the reader asked for both. A line `reflow`
+  keeps is a hard break in the Markdown too, or a trailer ran into the line
+  above it. The click fills the message again and nothing else, because a
+  rebuild takes a comment half written. Without `marked` it is the text,
+  and the control is not there.
+  - **The control is the Files tab's, and stands where that one does**
+    (`putReadAs`): "Markdown | text", with icons, at the right end of the
+    line that names what is read -- the subject here, the path there. The
+    reader asked for the two to look and feel the same, and chose the place.
+    `.diffhead.commit` is a grid so the control can stand in the subject's
+    line while the subject stays the head's first child, which the tests
+    read.
+  `test_a_commit_message_is_markdown_and_its_text_is_one_click_away`,
+  `test_a_document_is_read_as_markdown_or_text_from_the_right_of_its_path`.
 - **The pickers say what they hold, in the narrow face.** "all changes"
   carries the count of the branch's own commits -- not the recent ones on
   the default branch, which are no part of it. "against" stands beside the
@@ -1851,6 +1880,9 @@ update the comment with its own text, and read it back.
     the whole review, typed (`state.review.overall`); under it the message
     as it goes after that comment, `reviewText(false)`, in a box that
     cannot be edited -- a comment is edited where it stands; and **Send**.
+    **Both boxes stay short and scroll**, four lines and five: at the send
+    box's 40vh they took two fifths of a notebook's screen from the diff.
+    `test_the_send_bar_stays_short_and_scrolls`.
     The message is in view beside the button, which is what "the preview
     cannot be skipped" means now. `reviewText` is the message and has no
     heading: the reader asked for "# Review" to go, and the box for naming

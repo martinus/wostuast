@@ -7064,7 +7064,7 @@ body {
   border: 1px solid var(--edge); background: none; color: var(--ink-mute);
   cursor: pointer;
 }
-.theme .icon, .setpop .icon {
+.theme .icon, .setpop .icon, .choice .icon {
   width: 14px; height: 14px; fill: none; stroke: currentColor; flex: none;
   stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round;
 }
@@ -7107,17 +7107,17 @@ body {
 .setpop .setlabel .icon { align-self: center; }
 .setpop .rule { align-self: center; grid-column: 1 / -1; border-top: 1px solid var(--edge); margin: 0 -16px; }
 /* One control in parts, so it reads as a choice and not as actions. */
-.setpop .choice { display: flex; }
+.choice { display: flex; }
 /* Its words on a line box, not flex: a flex button takes its baseline from
    its first item, the icon, and the label beside it lined up 3 px low. */
-.setpop .choice .verb {
+.choice .verb {
   display: inline-block; line-height: 20px;
   border-radius: 0; margin-left: -1px;
 }
-.setpop .choice .verb .icon { vertical-align: middle; margin: -2px 6px 0 0; }
-.setpop .choice .verb:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
-.setpop .choice .verb:last-child { border-radius: 0 5px 5px 0; }
-.setpop .choice .verb[aria-pressed="true"] {
+.choice .verb .icon { vertical-align: middle; margin: -2px 6px 0 0; }
+.choice .verb:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.choice .verb:last-child { border-radius: 0 5px 5px 0; }
+.choice .verb[aria-pressed="true"] {
   background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
 }
 /* The colours, each in the colours it gives -- and so the same in either
@@ -8042,6 +8042,11 @@ body:not(.show-thinking) .thinking { display: none; }
    whole -- so it does not shrink, and the commit picker, whose subject can
    be cut and still be known, takes what room is left. */
 .pickbase { max-width: 36ch; flex-shrink: 0; }
+.diffbar .stepat {
+  flex-shrink: 0; font-family: var(--mono); font-size: 12px;
+  color: var(--ink-mute); font-variant-numeric: tabular-nums;
+}
+.diffbar .stepat[hidden] { display: none; }
 
 /* The small label look: the path above a file. */
 .filebody .where {
@@ -8085,15 +8090,33 @@ body:not(.show-thinking) .thinking { display: none; }
   text-transform: none; letter-spacing: 0; font-size: 13.5px;
   color: var(--ink-bright);
 }
-/* The rest of the commit message, under its subject, as it was written:
-   git bodies are wrapped by hand, and lists and paragraphs are made of
-   blank lines and dashes, so the lines are kept and the face is fixed. */
+/* The rest of the commit message, under its subject: as Markdown, in the
+   face the transcript reads in, or as it was written, where lists and
+   paragraphs are made of blank lines and dashes, so the lines are kept and
+   the face is fixed (`putMessage`). */
 .diffhead .message {
-  margin: 10px 0 4px; white-space: pre-wrap;
-  overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px;
-  line-height: 1.55; letter-spacing: 0; text-transform: none;
-  color: var(--ink-soft);
+  margin: 10px 0 4px; overflow-wrap: anywhere; font-family: var(--sans);
+  font-size: 13.5px; line-height: 1.55; letter-spacing: 0;
+  text-transform: none; color: var(--ink-soft);
 }
+.diffhead .message .prose > :first-child { margin-top: 0; }
+.diffhead .message .prose > :last-child { margin-bottom: 0; }
+.diffhead .message.astext {
+  white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px;
+}
+/* Markdown or text, at the right end of the subject's line: the subject,
+   its sha, room, and the control; the sentence and the message under them
+   run the whole width. A grid, so the control can stand anywhere among the
+   head's children and the subject stays its first. */
+.diffhead.commit {
+  display: grid; grid-template-columns: minmax(0, max-content) auto 1fr auto;
+  align-items: baseline;
+}
+.diffhead.commit > :is(.about, .message) { grid-column: 1 / -1; }
+.diffhead .readas { grid-column: 4; grid-row: 1; margin-left: 12px; }
+.readas[hidden] { display: none; }
+/* On the Files tab it is the last thing on the path's line. */
+.filebody .where .readas { margin-left: auto; }
 .diffhead .sha {
   margin-left: 10px; font-family: var(--mono); text-transform: none;
   letter-spacing: 0; color: var(--ink-mute);
@@ -8285,8 +8308,13 @@ body:not(.show-thinking) .thinking { display: none; }
 .reviewbar .saycol {
   flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
 }
-.reviewbar .overall { font-family: var(--sans); font-size: 14px; }
-.reviewbar .reviewsay { font-size: 12px; max-height: 30vh; }
+/* Short, and then they scroll: the diff is what is read here, and on a
+   notebook the two boxes at the send box's 40vh took two fifths of the
+   screen from it. Four lines of the comment, five of the message. */
+.reviewbar .overall {
+  font-family: var(--sans); font-size: 14px; max-height: calc(4 * 18px + 14px);
+}
+.reviewbar .reviewsay { font-size: 12px; max-height: calc(5 * 18px + 14px); }
 /* The comments on the tab's list: who wrote it, the first line of the note,
    and under it the place, in the list's own face. */
 .filelist.diff .head.said {
@@ -8893,6 +8921,11 @@ const ICONS = {
   scroll: "M1.8 5h6M1.8 9h10.4M9.8 6.6L12.2 9l-2.4 2.4",
   wrap: "M1.8 3.6h10.4M1.8 7h8.2a2 2 0 0 1 0 4H6.6M8.2 9.4L6.6 11l1.6 1.6M1.8 10.6h2.4",
   oneColumn: "M3.4 2.2h7.2v9.6H3.4z",
+  // Markdown, by its own mark: an M and an arrow down in a box. And text as
+  // it was written, which is lines.
+  markdown: "M1.2 3.2h11.6v7.6H1.2zM3.2 8.8V5.2l1.6 1.9 1.6-1.9v3.6M9.8 5.2v3.6"
+            + "M8.4 7.4l1.4 1.4 1.4-1.4",
+  plain: "M2 3.4h10M2 6h10M2 8.6h10M2 11.2h6",
   twoColumns: "M1.8 2.2h10.4v9.6H1.8zM7 2.2v9.6",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
@@ -10017,19 +10050,8 @@ function putSettings() {
     putIcon(one, icon);
     put(one, "span", null, text);
   };
-  const choice = (name, options, pick) => {
-    const group = put(pop, "span", "choice " + name);
-    group.setAttribute("role", "group");
-    for (const [value, word, icon] of options) {
-      const button = put(group, "button", "verb quiet");
-      button.type = "button";
-      button.dataset.value = String(value);
-      if (icon) putIcon(button, icon);
-      put(button, "span", null, word);
-      button.addEventListener("click", () => { pick(value); paintSettings(); });
-    }
-    return group;
-  };
+  const choice = (name, options, pick) => putChoice(
+    pop, name, options, (value) => { pick(value); paintSettings(); });
   label("colours", "palette");
   choice("colours", [["system", "auto", "themeAuto"], ["light", "light", "sun"],
                      ["dark", "dark", "moon"]], applyTheme)
@@ -10069,10 +10091,44 @@ function paintSettings() {
   const now = { colours: themeChoice(), tabwidth: String(reading.tab),
                 wrapping: String(reading.wrap), sides: state.sides };
   for (const [name, value] of Object.entries(now)) {
-    for (const button of pop.querySelectorAll(`.${name} button`)) {
-      button.setAttribute("aria-pressed", String(button.dataset.value === value));
-    }
+    paintChoice(pop.querySelector("." + name), value);
   }
+}
+
+// One control in parts, the part in force pressed: the settings menu's, and
+// Markdown or text over a document and over a commit message. One builder,
+// so they look and answer alike. `paintChoice` says which is in force.
+function putChoice(parent, name, options, pick) {
+  const group = put(parent, "span", "choice " + name);
+  group.setAttribute("role", "group");
+  for (const [value, word, icon, title] of options) {
+    const button = put(group, "button", "verb quiet");
+    button.type = "button";
+    button.dataset.value = String(value);
+    if (title) button.title = title;
+    if (icon) putIcon(button, icon);
+    put(button, "span", null, word);
+    button.addEventListener("click", () => pick(value));
+  }
+  return group;
+}
+
+function paintChoice(group, value) {
+  for (const button of group.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.value === String(value)));
+  }
+}
+
+// Markdown or the text as it was written, at the right end of the line that
+// names what is read: a document's path on the Files tab, a commit's subject
+// on the Review tab. The reader asked for the two to look and feel the same.
+function putReadAs(parent, asText, pick, textTitle) {
+  const group = putChoice(parent, "readas", [
+    [false, "Markdown", "markdown", "draw it as Markdown"],
+    [true, "text", "plain", textTitle]], (value) => pick(value === true));
+  group.setAttribute("aria-label", "read as");
+  paintChoice(group, asText);
+  return group;
 }
 
 function notifyAbout(sessions) {
@@ -12024,8 +12080,8 @@ function drawFiles(box) {
   const rows = asCode ? linesOf(body) : null;
   const windowed = !!rows && rows.length > CODE_WHOLE;
   const where = putWhere(pane, state.files.path);
-  if (isDoc) putAsText(where);
   putAbout(where, windowed);
+  if (isDoc) putAsText(where);          // last, so it stands at the right end
   // Everything below the header, and the only thing that scrolls. It is built
   // with the file, so the listener a windowed file needs goes on with it.
   const view = put(pane, "div", "filescroll");
@@ -12361,16 +12417,11 @@ function goToInList(list) {
 // rendered document has no line to hang a comment on: the paragraph you want
 // to remark on came from a line that is no longer there. This gives it back.
 function putAsText(where) {
-  const verb = put(where, "button", "link",
-                   state.files.asText ? "read as Markdown" : "read as text");
-  verb.type = "button";
-  verb.title = state.files.asText
-    ? "render this document"
-    : "show the lines, so they can be commented on";
-  verb.addEventListener("click", () => {
-    state.files.asText = !state.files.asText;
+  putReadAs(where, state.files.asText, (asText) => {
+    if (asText === state.files.asText) return;
+    state.files.asText = asText;
     redrawCode();
-  });
+  }, "show the lines, so they can be commented on");
 }
 
 function forgetFile(path) {
@@ -12509,6 +12560,9 @@ function putDiffBar(pane) {
     button.addEventListener("click", () => stepCommit(by));
   };
   step("\u2039 older", "the commit before this one", 1);
+  // Which commit of how many, oldest first, so the first commit of a branch
+  // is 1: stepping through a review, "5 / 9" says how far there is to go.
+  put(bar, "span", "stepat");
   step("newer \u203a", "the commit after this one", -1);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
@@ -12600,6 +12654,12 @@ function fillDiffBar(bar) {
   const [older, newer] = bar.querySelectorAll(".step");
   older.disabled = at < 0 || at + 1 >= commits.length;
   newer.disabled = at <= 0;
+  const where = bar.querySelector(".stepat");
+  where.hidden = at < 0;
+  where.textContent = at < 0 ? "" : (commits.length - at) + " / " + commits.length;
+  where.title = at < 0 ? "" : "commit " + (commits.length - at) + " of the "
+    + commits.length + (report.recent ? " last ones" : " on this branch")
+    + ", oldest first";
 }
 
 // A commit message is wrapped by hand at about 72 columns, and drawn as it
@@ -12617,6 +12677,47 @@ function reflow(text) {
     }
     return out.join("\n");
   }).join("\n\n");
+}
+
+// A commit message is Markdown more often than not -- an agent writes it --
+// and read as Markdown by default; the reader can see it as the text it was
+// written as, and this browser keeps which (`MESSAGE_KEY`). Either way it
+// goes through `reflow` first, and a line `reflow` keeps is a hard break in
+// Markdown too: a trailer or an indented line keeps its own line in both.
+// The toggle fills the message again and nothing else, so it never takes a
+// comment half written with a rebuild.
+const MESSAGE_KEY = "wostuast-message-as";
+
+function messageAsText() {
+  try { return localStorage.getItem(MESSAGE_KEY) === "text"; }
+  catch (error) { return false; }
+}
+
+function putMessage(head, body) {
+  const box = put(head, "div", "message");
+  // In the subject's line, at its right end: `.diffhead.commit` is a grid
+  // that puts it there, wherever it stands among the head's children.
+  const toggle = putReadAs(head, messageAsText(), (asText) => {
+    if (asText === messageAsText()) return;
+    try { localStorage.setItem(MESSAGE_KEY, asText ? "text" : "markdown"); }
+    catch (error) { }
+    fill();
+  }, "show the message as it was written");
+  const fill = () => {
+    // Without `marked` there is no Markdown to draw, and the text as written
+    // is the fallback, lines and all -- not Markdown source run together.
+    toggle.hidden = !window.marked;
+    const asText = messageAsText() || !window.marked;
+    box.classList.toggle("astext", asText);
+    paintChoice(toggle, asText);
+    const text = reflow(body);
+    box.replaceChildren();
+    if (asText) box.textContent = text;
+    else markdown(box, text.split(/\n{2,}/).map(
+      (para) => para.split("\n").join("  \n")).join("\n\n"));
+    linkTickets(box);
+  };
+  fill();
 }
 
 // A diff's files in the order its tree reads: at each level the folders
@@ -12808,6 +12909,11 @@ function drawDiff(box) {
   // Both places are read before either column is rebuilt, while nothing on
   // the page needs laying out again to answer.
   const place = scroll.scrollTop;
+  // Another commit, or another half, is another diff, and it is read from
+  // its top. Only a redraw of the same one keeps the reader's place: stepping
+  // to the next commit left the pane where the last one had been read to.
+  const same = scroll.dataset.of === (report.of || "");
+  scroll.dataset.of = report.of || "";
   drawDiffList(list, found);
   scroll.replaceChildren();
   // Every block by the key its row in the list carries, in the order they
@@ -12831,7 +12937,7 @@ function drawDiff(box) {
     }
     // The whole message, not only its subject: the why of a commit is in
     // the body, and a subject alone is the one line that says least.
-    if (one && report.body) put(head, "div", "message", reflow(report.body));
+    if (one && report.body) putMessage(head, report.body);
     // The reader's ticket links, in the subject and the message alike.
     linkTickets(head);
     // `at_commit`: the new side is a commit and not the file on disk, so a
@@ -12889,6 +12995,10 @@ function drawDiff(box) {
   if (state.goTo && picked) {
     if (state.looseText !== null) state.goTo = false;
     requestAnimationFrame(() => picked.scrollIntoView({ block: "start" }));
+  } else if (!same) {
+    // Said, not left to the emptying: a pane refilled in the same task keeps
+    // its offset, and the next commit opened 2,000 px down.
+    scroll.scrollTop = 0;
   } else if (place) {
     requestAnimationFrame(() => { scroll.scrollTop = place; });
   }
