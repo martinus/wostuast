@@ -3382,6 +3382,14 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     return tree
 
 
+def answer_tag(answer: dict[str, Any]) -> str:
+    """A short name for one answer, as `reply_json` would write it."""
+    import hashlib
+
+    body = json.dumps(answer, ensure_ascii=False, default=str)
+    return hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16]
+
+
 def listing_tag(names: str) -> str:
     """A short name for one set of file names, given them already joined.
 
@@ -6061,9 +6069,20 @@ class Serving:
         of = query.get("of", [""])[0]
         # The base the reader picked, used only if git lists that name.
         base = query.get("base", [""])[0]
-        self.reply_json(dict(asdict(worktree_diff(session.cwd, of=of, base=base,
-                                                  ranks=self.daemon.ranks)),
-                             id=session_id))
+        found = dict(asdict(worktree_diff(session.cwd, of=of, base=base,
+                                          ranks=self.daemon.ranks)),
+                     id=session_id)
+        # The tab asks every five seconds, and the answer is the whole diff:
+        # on a slow link the one transfer that never stopped. The page sends
+        # back the tag of the answer it holds, and one that still stands is
+        # answered with no diff. A hash of the answer itself, so everything
+        # the page draws from it is in the tag -- a field left out of a tag
+        # built by hand would change on the screen of nobody.
+        tag = answer_tag(found)
+        if query.get("have", [""])[0] == tag:
+            self.reply_json({"id": session_id, "tag": tag, "same": True})
+            return
+        self.reply_json(dict(found, tag=tag))
 
     def whole(self, session_id: str, query: dict[str, list[str]]) -> None:
         """One file of the Diff tab with every line of it, for showing the
@@ -8459,6 +8478,11 @@ const state = {
   writing: null,        // the anchor of the comment box that is open, if any
   pruned: false,        // whether the stored reviews have been swept once
   diffRaw: "",          // the last answer, as it arrived, to compare against
+  diffTag: "",          // its tag, sent back so an answer that stands is short
+  // Every worktree's file names, by its top: a session in the same worktree,
+  // or the same session again, asks with the tag held and is answered
+  // without them. See `keepListing`.
+  listings: new Map(),
   diffAt: 0,            // bumped when that answer changes, so keys stay short
   poll: 0,
   transcriptRetry: 0,   // the one timer asking again for a transcript that failed
@@ -14435,8 +14459,33 @@ async function loadTranscript() {
   if (told && (told.run !== run || told.version > version)) loadTranscript();
 }
 
+// Every worktree's names, kept by its top (`worktree_path`: git's answer,
+// or where the session started until git has said) and not by session. They are the
+// one big thing the Files tab sends -- 53,000 names are about half a megabyte
+// packed -- and a session choice blanked them, so every switch between two
+// sessions, or back to one, fetched the lot again: seconds each on an ssh
+// tunnel. The names are the worktree's, not the session's, so a session in
+// a worktree already read asks with its tag and gets none back.
+function keepListing(root) {
+  if (!root) return;
+  const held = state.files;
+  state.listings.set(root, {
+    tag: held.tag, names: held.names, known: held.known,
+    skipped: held.skipped, tree: held.tree, places: held.places,
+  });
+}
+
+function adoptListing() {
+  const s = current();
+  const held = s && s.worktree_path ? state.listings.get(s.worktree_path) : null;
+  if (!held) return;
+  Object.assign(state.files, held);
+}
+
 async function loadFiles() {
   const want = state.chosen;
+  // Nothing held for this session yet: what this page has of its worktree.
+  if (!state.files.tag) adoptListing();
   // Both are asked for on every poll. The listing used to come every other
   // one, because it carried every name in the repository each time; now it
   // carries them only when they have moved, so asking often is nearly free
@@ -14477,6 +14526,7 @@ async function loadFiles() {
     // are not worth walking once per keystroke to add the folders back.
     state.files.places = state.files.names.concat(
       [...state.files.tree.keys()].filter(Boolean));
+    if (!body.failed) keepListing(current() && current().worktree_path);
   }
   state.files.marked = dirsWithChanges(state.files.changed);
   if (!state.files.known.has(state.files.path)
@@ -14533,13 +14583,22 @@ async function loadDiff() {
   const query = new URLSearchParams();
   if (of) query.set("of", of);
   if (base) query.set("base", base);
+  // The tag of the answer held. Only while one is: every place that drops
+  // the answer empties `diffRaw`, so none of them can send a tag for a diff
+  // the page no longer has.
+  if (state.diffRaw && state.diffTag) query.set("have", state.diffTag);
   const raw = await ask(want, "diff",
                         query.toString() ? "?" + query.toString() : "", true);
   if (raw === null || state.chosen !== want || state.diffOf !== of
       || recallBase() !== base) return;
+  let body = null;
   if (raw !== state.diffRaw) {
-    let body = null;
     try { body = JSON.parse(raw); } catch (error) { return; }
+  }
+  // The diff held still stands: nothing to take in and nothing new to draw,
+  // but an untracked file not yet read is still asked for below.
+  const stands = body && body.same && state.diffRaw && body.tag === state.diffTag;
+  if (body && !stands) {
     // A session that has gone answers with an error, not a report. Drawing
     // that as if it were one is how the tab used to go blank and stay blank.
     if (!body.sections) return;
@@ -14553,6 +14612,7 @@ async function loadDiff() {
       state.diffGone = true;
     }
     state.diffRaw = raw;
+    state.diffTag = body.tag || "";
     state.diff = body;
     forgetChanged(body);
     state.diffAt += 1;

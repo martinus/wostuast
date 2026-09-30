@@ -583,6 +583,25 @@ def test_the_diff_is_served(repo_session):
     assert changed[0]["hunks"][0]["lines"][-1]["kind"] == "added"
 
 
+def test_a_diff_the_page_holds_is_not_sent_again(repo_session):
+    """The Review tab asks every five seconds, and the answer was the whole
+    diff every time: on a slow link the one transfer that never stopped. The
+    page sends back the tag of the diff it holds, and a diff that still
+    stands is answered with no diff; one that moved comes whole, tag and
+    all."""
+    root, base = repo_session
+    (root / "README.md").write_text("# readme\n\nchanged\n")
+    _, first = get(f"{base}/api/session/s1/diff")
+    tag = first["tag"]
+    assert tag and first["sections"]
+    _, again = get(f"{base}/api/session/s1/diff?have={tag}")
+    assert again == {"id": "s1", "tag": tag, "same": True}
+    (root / "README.md").write_text("# readme\n\nchanged again\n")
+    _, moved = get(f"{base}/api/session/s1/diff?have={tag}")
+    assert "same" not in moved and moved["tag"] != tag
+    assert moved["sections"][1]["files"][0]["path"] == "README.md"
+
+
 def test_a_session_that_is_gone_is_a_404_on_every_new_route(served):
     _, base = served
     for verb in ("files", "file", "diff"):
