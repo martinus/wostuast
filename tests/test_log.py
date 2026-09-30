@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import io
 import json
 import os
@@ -603,6 +604,109 @@ def test_a_rotation_never_writes_over_an_archive(ws, monkeypatch):
 
     assert (folder / "events.1.jsonl").read_text() == "KEEP ME\n"
     assert (folder / "events.2.jsonl").read_text().startswith("x" * 200)
+
+
+def fail_to_list(ws, monkeypatch, error=None) -> None:
+    """`os.listdir` fails, as it does for a process out of descriptors."""
+    def listdir(path):
+        raise error or OSError(errno.EMFILE, "Too many open files", str(path))
+
+    monkeypatch.setattr(ws.os, "listdir", listdir)
+
+
+def test_a_rotation_with_no_listing_writes_the_event_where_it_is(
+        ws, monkeypatch):
+    """With no listing the next number is not known, so the log is not
+    rotated this time. The hook then opened the live file again and waited
+    on its own lock: a `flock` belongs to the open file, not the process,
+    and only the deadline let it go, with the event lost. The thread is the
+    hook here, and the join is its deadline."""
+    import threading
+
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 100)
+    ws.append_event({"session_id": "s", "n": 0, "pad": "x" * 200})
+    with monkeypatch.context() as short:
+        fail_to_list(ws, short)
+        hook = threading.Thread(target=ws.append_event,
+                                args=({"session_id": "s", "n": 1},), daemon=True)
+        hook.start()
+        hook.join(10)
+        assert not hook.is_alive(), "the hook waited on its own lock"
+    assert ws.archived_events_paths() == []
+    assert [e["n"] for e in ws.read_events()] == [0, 1]
+
+
+def test_the_hooks_deadline_in_the_listing_is_not_a_failed_listing(
+        ws, monkeypatch):
+    """The deadline raises `TimeoutError`, which is an `OSError`. Taken for
+    a failed listing, the hook went on to write after its deadline."""
+    ws.append_event({"session_id": "s"})
+    fail_to_list(ws, monkeypatch, TimeoutError("gave up after 5 s"))
+    with pytest.raises(TimeoutError):
+        ws.archive_log(ws.events_path())
+
+
+def test_a_listing_that_fails_is_not_a_log_with_no_archives(
+        ws, monkeypatch, capsys):
+    """`ls` read only the live file, and every session that started before
+    the last rotation lost where it started. It says it cannot read the
+    log instead, and `doctor` says so too."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 300)
+    for n in range(12):
+        ws.append_event({"session_id": "s", "n": n, "pad": "z" * 40})
+    assert ws.archived_events_paths()
+    fail_to_list(ws, monkeypatch)
+    with pytest.raises(OSError):
+        list(ws.read_events())
+    assert ws.cmd_ls(argparse.Namespace()) == 1
+    assert "cannot read the event log" in capsys.readouterr().err
+    ws.cmd_doctor(None)
+    assert "cannot read the event log" in capsys.readouterr().out
+
+
+def test_a_log_under_two_names_is_read_once(ws, monkeypatch):
+    """A rotation stopped between its `os.link` and its `os.unlink` leaves
+    one file under two names, and the next rotation gives it a third.
+    `ls` read it under each (#253: [0, 1, 2, 3, 0, 1, 2, 3, 4])."""
+    for n in range(3):
+        ws.append_event({"session_id": "s", "n": n})
+    unlink = ws.os.unlink
+    monkeypatch.setattr(ws.os, "unlink", lambda path: (_ for _ in ()).throw(
+        OSError(errno.EIO, "cut short")))
+    assert not ws.archive_log(ws.events_path())
+    monkeypatch.setattr(ws.os, "unlink", unlink)
+    assert [e["n"] for e in ws.read_events()] == [0, 1, 2], "before the next"
+    ws.append_event({"session_id": "s", "n": 3})
+    assert ws.archive_log(ws.events_path())
+    ws.append_event({"session_id": "s", "n": 4})
+    assert len(ws.archived_events_paths()) == 2
+    assert [e["n"] for e in ws.read_events()] == [0, 1, 2, 3, 4]
+    assert ws.count_events() == 5
+
+
+def test_a_rotation_between_the_listing_and_the_live_file_is_read(
+        ws, monkeypatch):
+    """`read_events` listed the archives and then opened the live name. A
+    rotation in between left the newest archive out: it was not listed, and
+    the live name was already the new file. The live file is opened first
+    now, and what it held is read through the handle."""
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 10 ** 9)
+    for n in range(3):
+        ws.append_event({"session_id": "s", "n": n})
+    listing = ws.archived_events_paths
+    rotated: list[int] = []
+
+    def then_rotate():
+        found = listing()
+        if not rotated:
+            rotated.append(1)
+            assert ws.archive_log(ws.events_path())
+            ws.append_event({"session_id": "s", "n": 3})
+        return found
+
+    monkeypatch.setattr(ws, "archived_events_paths", then_rotate)
+    assert [e["n"] for e in ws.read_events()] == [0, 1, 2]
+    assert rotated
 
 
 def test_a_temporary_left_by_a_writer_that_died_is_not_trusted(ws, tmp_path):

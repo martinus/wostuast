@@ -570,7 +570,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   getting its lock, another hook can rotate it away — and then the lock is on
   the archive. A hook that did not notice renamed the fresh log on top of the
   archive: every event ever recorded, gone. `still_the_file` is that check, and
-  `append_event` opens again when it fails.
+  `append_event` opens again when it fails. **And it belongs to the open
+  file, not to the process**: a second `open` of the log in the hook that
+  holds its lock waits for ever. So `append_event` opens the fresh log only
+  when `archive_log` says it moved the old one, and otherwise writes into
+  the file it holds (#253).
+  `test_a_rotation_with_no_listing_writes_the_event_where_it_is`.
 - **An event must survive what is in it.** A lone surrogate — legal in a JS
   string, so reachable in a tool response — makes a strict UTF-8 encoder
   refuse the whole line. Surrogates are replaced; a `SessionStart` lost that

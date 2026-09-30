@@ -147,6 +147,9 @@ TAIL_CHUNK = 1024 * 1024
 #: in its order; a file that failed once for want of a descriptor (EMFILE)
 #: is read on the next pass. It used to be marked finished at the first
 #: failure, and its events were not read until the daemon started again.
+#: Only a pass that read nothing of it counts. An archive on a slow disk
+#: that gives a piece and then fails is moving, and it used to be given up
+#: after ten passes all the same.
 ARCHIVE_TRIES = 10
 
 #: How many started and unfinished tool calls a session keeps, to find the
@@ -258,26 +261,39 @@ def events_path() -> Path:
 ARCHIVE_NAME = re.compile(r"\Aevents\.(\d+)\.jsonl\Z")
 
 
-def archived_events_paths() -> list[Path]:
-    """Every archive of the event log, oldest first.
+def archived_events_paths() -> list[Path] | None:
+    """Every archive of the event log, oldest first, or None if the folder
+    could not be listed.
 
     By number and not by name: as text, `events.10` sorts before `events.9`,
     and the tenth archive is where history would have started coming back in
     the wrong order.
+
+    **A listing that failed is not an empty one.** It returned `[]` for any
+    error, and a daemon short of descriptors (EMFILE) then read the live
+    file as if no archive were waiting: the newest archive, just rotated,
+    came on the next pass from its top, after the newer events -- a
+    permission dialog already answered came back amber, with a No button on
+    it. No folder yet is no archives. The hook's deadline is not a failed
+    listing: it goes on out, so the hook stops as the deadline says.
     """
     folder = state_dir()
     try:
         names = os.listdir(folder)
-    except OSError:
+    except FileNotFoundError:
         return []
+    except TimeoutError:
+        raise
+    except OSError:
+        return None
     numbered = sorted((int(found.group(1)), name) for name in names
                       if (found := ARCHIVE_NAME.match(name)))
     return [folder / name for _, name in numbered]
 
 
-def event_files() -> list[Path]:
-    """The whole event log, oldest first: every archive, then the live file."""
-    return archived_events_paths() + [events_path()]
+def file_key(info: os.stat_result) -> tuple[int, int]:
+    """Which file this is, whatever it is called: its device and inode."""
+    return (info.st_dev, info.st_ino)
 
 
 def archive_number(path: Path) -> int:
@@ -454,7 +470,7 @@ def still_the_file(handle: Any, target: Path) -> bool:
         there = os.stat(target)
     except OSError:
         return False
-    return (ours.st_dev, ours.st_ino) == (there.st_dev, there.st_ino)
+    return file_key(ours) == file_key(there)
 
 
 def append_event(record: dict[str, Any], stamp: bool = False) -> None:
@@ -503,11 +519,14 @@ def append_event(record: dict[str, Any], stamp: bool = False) -> None:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             if not still_the_file(handle, target):
                 continue      # someone rotated while we waited; open the new one
-            if os.fstat(handle.fileno()).st_size > EVENTS_MAX_BYTES:
-                archive_log(target)
+            if (os.fstat(handle.fileno()).st_size > EVENTS_MAX_BYTES
+                    and archive_log(target)):
                 # The handle still points at the file we just renamed. Open the
                 # fresh one, so this event lands there rather than in the
-                # archive. It is created 0600, like every file we make.
+                # archive. It is created 0600, like every file we make. Only
+                # when the rename happened: a second handle on the same file
+                # waits on our own lock for ever, because a `flock` belongs
+                # to the open file and not to the process.
                 with open_private(target) as fresh:
                     fcntl.flock(fresh.fileno(), fcntl.LOCK_EX)
                     fresh.write(line())
@@ -517,8 +536,10 @@ def append_event(record: dict[str, Any], stamp: bool = False) -> None:
             return
 
 
-def archive_log(target: Path) -> None:
+def archive_log(target: Path) -> bool:
     """Move the live log to the next archive number, and never over one.
+    True when it moved; False when the log is still where it was, and the
+    event is written there.
 
     The caller holds the log's lock, which is what keeps two hooks from
     archiving the same file. The name is still worked out from a listing and
@@ -528,8 +549,16 @@ def archive_log(target: Path) -> None:
     recorded. `os.link` refuses a name that is taken, so a taken name costs
     one more try and nothing else. A filesystem with no hard links is left
     to `os.replace` on a name that was free when it was listed.
+
+    No listing, no rotation: the next number is not known, and a number
+    tried from 1 up fills a gap with the newest file. The log grows a
+    little past the limit and the next hook rotates it. An `unlink` that
+    fails leaves one file under two names, and it is still the live log;
+    the readers read it once (`EventFollower.new_lines`, `log_handles`).
     """
     archives = archived_events_paths()
+    if archives is None:
+        return False
     number = archive_number(archives[-1]) + 1 if archives else 1
     for _ in range(1000):
         archive = target.with_name(f"events.{number}.jsonl")
@@ -543,32 +572,83 @@ def archive_log(target: Path) -> None:
                 number += 1
                 continue
             os.replace(target, archive)
-            return
-        os.unlink(target)
-        return
-
-
-def count_events() -> int:
-    """How many lines the log holds. It counts newlines, it does not parse."""
-    total = 0
-    for path in event_files():
+            return True
         try:
-            with open(path, "rb") as handle:
-                total += sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
-        except OSError:
-            continue
-    return total
+            os.unlink(target)
+        except TimeoutError:
+            raise
+        except OSError as error:
+            log(f"the log is now named twice, as {archive.name} too: {error}")
+            return False
+        return True
+    return False
 
 
-def read_events() -> Iterator[dict[str, Any]]:
-    """Read the whole log from the start, oldest file first.
+def log_handles() -> Iterator[Any]:
+    """Every file of the event log, open to read, oldest first, each once.
 
     The archives come first because they hold the older events. Reading only
     the current file would lose the SessionStart of every session that began
     before the last rotation, and with it their cwd, pane and pid.
+
+    The live file is opened *before* the archives are listed, as in
+    `EventFollower.new_lines`. Listed first, a rotation in between left the
+    newest archive out: it was not in the listing, and the live name was
+    already the new file. Opened first, a rotation in between makes the
+    file held the newest archive, and it is read once, through the handle,
+    last. **Each file is read once, by its device and inode**: a rotation
+    stopped between its `os.link` and its `os.unlink` leaves one file
+    under two names, and the next rotation gives it a third, and every read
+    of the log read all of it twice. A file gone between the listing and
+    the open is skipped. A listing that fails raises: a history read
+    without its archives looks whole and is not.
     """
-    for path in event_files():
-        yield from read_event_file(path)
+    try:
+        live = open(events_path(), "rb")
+    except FileNotFoundError:
+        live = None
+    try:
+        archives = archived_events_paths()
+        if archives is None:
+            raise OSError(f"cannot list the event log's archives in {state_dir()}")
+        seen = {file_key(os.fstat(live.fileno()))} if live is not None else set()
+        for path in archives:
+            try:
+                handle = open(path, "rb")
+            except FileNotFoundError:
+                continue
+            with handle:
+                key = file_key(os.fstat(handle.fileno()))
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield handle
+        if live is not None:
+            yield live
+    finally:
+        if live is not None:
+            live.close()
+
+
+def count_events() -> int:
+    """How many lines the log holds. It counts newlines, it does not parse."""
+    return measure_log()[0]
+
+
+def measure_log() -> tuple[int, int, int]:
+    """How many lines the log holds, in how many files, of how many bytes."""
+    lines = files = size = 0
+    for handle in log_handles():
+        files += 1
+        size += os.fstat(handle.fileno()).st_size
+        lines += sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
+    return lines, files, size
+
+
+def read_events() -> Iterator[dict[str, Any]]:
+    """Read the whole log from the start, oldest file first, each file once."""
+    for handle in log_handles():
+        yield from json_objects(handle)
 
 
 def json_objects(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
@@ -588,18 +668,6 @@ def json_objects(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
             continue
         if isinstance(record, dict):
             yield record
-
-
-def read_event_file(target: Path) -> Iterator[dict[str, Any]]:
-    """Read one log file from the start. A missing file is empty.
-
-    It streams the file line by line: this one is used on a whole log, and
-    only needs a line at a time.
-    """
-    if not target.exists():
-        return
-    with open(target, "rb") as handle:
-        yield from json_objects(handle)
 
 
 # --- following files: read what is new, keep a half-written last line --------
@@ -704,10 +772,11 @@ class EventFollower:
     any number of rotations. Each pass lists the archives -- one `listdir` --
     and reads the ones it has not finished, oldest first, then the live file.
 
-    An archive is never written again once it has its name, so one read to
-    its end is the last. The live file that has just become an archive is
-    recognised by its inode and its tail is handed over with its place in
-    it: a tail that only knew names read all 20 MB again on every rotation.
+    An archive is not written again once the live name has left it, so one
+    read to its end is the last. The live file that has just become an
+    archive is recognised by its inode and its tail is handed over with its
+    place in it: a tail that only knew names read all 20 MB again on every
+    rotation.
 
     **Every line is read once, and in the order of the log**, because
     `Store.apply` folds every event it is given and drops none by its time
@@ -721,20 +790,23 @@ class EventFollower:
         self.live = Tail(events_path())
         self.archives: dict[Path, Tail] = {}
         self.finished: set[Path] = set()
-        #: How many passes each archive has failed to be read on.
+        #: The files read to their end, by device and inode. One file can
+        #: have two archive names (`new_lines` says how), and the second is
+        #: finished without a read.
+        self.done_files: set[tuple[int, int]] = set()
+        #: How many names were finished that way, so `files_read` counts
+        #: files and not names.
+        self.second_names = 0
+        #: How many passes in a row each archive gave nothing on.
         self.failed: dict[Path, int] = {}
         #: What has been read, for the start of `serve` to say: the events,
         #: and the bytes of every archive already finished with.
         self.events = 0
         self.finished_bytes = 0
 
-    def archive_tail(self, path: Path) -> Tail:
+    def archive_tail(self, path: Path, key: tuple[int, int] | None) -> Tail:
         """The tail for an archive: the live one, if this is the live file."""
-        try:
-            info = path.stat()
-        except OSError:
-            return Tail(path)
-        if (info.st_dev, info.st_ino) == self.live.key:
+        if key is not None and key == self.live.key:
             handed, self.live = self.live, Tail(events_path())
             handed.path = path
             return handed
@@ -761,28 +833,74 @@ class EventFollower:
         then dropped every one of them it saw as old -- an open question
         with no bar, a prompt, where the session started.
 
+        **A listing that fails reads nothing this pass**, not even the live
+        file (`archived_events_paths` gives None). Read as "no archives", it
+        let the live tail start on a new file while the archive of the old
+        one waited unread, and that archive then came from its top, after
+        the newer events.
+
+        **Each file is read once, by its device and inode, whatever it is
+        called.** A rotation stopped between its `os.link` and its
+        `os.unlink` -- the hook's deadline, a crash -- leaves the live file
+        under two names, and the next rotation gives it a third. Read by
+        name, the running follower read it from the top once it saw the
+        archive, and every start read it twice over. So the newest archives
+        that are the file the live handle holds are not read as archives:
+        it is still the live file, and it is read once, through the handle.
+        And an archive whose file was read to its end under another name is
+        finished without a read.
+
         An archive that cannot be read (`Tail.whole` is False) stops the
         pass, so nothing after it comes first, and is tried again on the
-        next one, up to `ARCHIVE_TRIES`. It used to be marked finished at
-        once, and skipped until the daemon started again.
+        next one. After `ARCHIVE_TRIES` passes in a row that read none of
+        it, it is given up. It used to be marked finished at once, and
+        skipped until the daemon started again.
         """
         while True:
             try:
                 live = open(self.live.path, "rb")
             except OSError:
                 live = None
-            pending = [path for path in archived_events_paths()
-                       if path not in self.finished]
+            listed = archived_events_paths()
+            holding = None
+            if live is not None:
+                try:
+                    holding = file_key(os.fstat(live.fileno()))
+                except OSError:
+                    listed = None           # not known what it holds: wait
+            if listed is None:
+                if live is not None:
+                    live.close()
+                return
+            pending: list[tuple[Path, tuple[int, int] | None]] = []
+            for path in listed:
+                if path in self.finished:
+                    continue
+                try:
+                    key: tuple[int, int] | None = file_key(path.stat())
+                except OSError:
+                    key = None            # the read that follows says why
+                pending.append((path, key))
+            while pending and holding is not None and pending[-1][1] == holding:
+                pending.pop()
             if not pending:
                 break
             if live is not None:
                 live.close()
-            for path in pending:
+            for path, key in pending:
+                if key is not None and key in self.done_files:
+                    self.finished.add(path)   # its first name, just read
+                    self.second_names += 1
+                    continue
                 tail = self.archives.get(path)
                 if tail is None:
-                    tail = self.archives[path] = self.archive_tail(path)
+                    tail = self.archives[path] = self.archive_tail(path, key)
+                before = tail.consumed
                 yield from tail.lines()
                 if not tail.whole:
+                    if tail.consumed > before:
+                        self.failed.pop(path, None)   # it moved: not a failure
+                        return
                     tries = self.failed[path] = self.failed.get(path, 0) + 1
                     if tries < ARCHIVE_TRIES:
                         return
@@ -791,6 +909,9 @@ class EventFollower:
                 # Read to its end, and nothing will be added to it: the tail
                 # is done with, and only how much it read is kept.
                 self.finished.add(path)
+                done = tail.key if tail.key != (0, 0) else key
+                if done is not None:
+                    self.done_files.add(done)
                 del self.archives[path]
                 self.failed.pop(path, None)
                 self.finished_bytes += tail.consumed
@@ -806,7 +927,7 @@ class EventFollower:
         """How many files have been read from, and how many bytes."""
         size = (self.finished_bytes + self.live.consumed
                 + sum(tail.consumed for tail in self.archives.values()))
-        count = (len(self.finished) + len(self.archives)
+        count = (len(self.finished) - self.second_names + len(self.archives)
                  + (1 if self.live.consumed else 0))
         return count, size
 
@@ -7308,7 +7429,11 @@ def run_status_line(command: str, payload: str) -> str:
 def cmd_ls(args: argparse.Namespace) -> int:
     """Print one row per session, in the order of the sidebar."""
     drop_old_status()
-    sessions = build_sessions()
+    try:
+        sessions = build_sessions()
+    except OSError as error:        # a history read in part would look whole
+        print(f"cannot read the event log: {error}", file=sys.stderr)
+        return 1
     if not sessions:
         print("no sessions yet.")
         print("start a Claude Code session in tmux; run `wostuast doctor` to check the setup.")
@@ -7563,13 +7688,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
            f"cannot write {directory}: {trouble}")
 
     events = events_path()
-    count = count_events()
-    held = [path for path in event_files() if path.exists()]
-    size = sum(path.stat().st_size for path in held)
-    report(events.exists(),
-           f"event log {events} with {count} events"
-           f" in {len(held)} file{'s' if len(held) != 1 else ''} ({size_label(size)})",
-           f"no events yet at {events}; run a Claude Code session", fatal=False)
+    try:
+        count, held, size = measure_log()
+        report(events.exists(),
+               f"event log {events} with {count} events"
+               f" in {held} file{'s' if held != 1 else ''} ({size_label(size)})",
+               f"no events yet at {events}; run a Claude Code session", fatal=False)
+    except OSError as error:
+        report(False, "", f"cannot read the event log: {error}", fatal=False)
 
     path = settings_path()
     settings: dict[str, Any] = {}
