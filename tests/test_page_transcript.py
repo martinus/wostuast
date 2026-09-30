@@ -63,6 +63,159 @@ def test_hostile_markdown_cannot_run(page_at):
             browser.close()
 
 
+#: What an agent writes in a plan, and what the scrub took the meaning out
+#: of: a task list, steps split by a code fence, a column of numbers, a
+#: picture, and a table of contents.
+PLAN_MARKDOWN = """- [x] read the issue
+- [ ] fix the scrub
+
+1. Build it:
+
+```sh
+make
+```
+
+2. Run the tests.
+
+| file | lines |
+| :--- | ---: |
+| wostuast | 15810 |
+
+See ![the diagram](diagram.png) and the [install notes](#install).
+"""
+
+
+def test_markdown_keeps_task_boxes_step_numbers_sides_and_picture_words(page_at):
+    """The scrub took every attribute and put an `input` and an `img` back as
+    their text, which is empty: a plan's done and not done read the same,
+    steps read 1, 1, and a picture left "See  and". A `#` link opened a
+    second copy of the page and read `install` as a session."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("!!window.marked")
+            seen = page.evaluate("""(text) => {
+              const box = document.createElement('div');
+              document.body.appendChild(box);
+              const node = markdown(box, text);
+              const side = (cell) => getComputedStyle(cell).textAlign;
+              const out = {
+                items: [...node.querySelectorAll('ul li')]
+                  .map((one) => one.textContent.trim()),
+                starts: [...node.querySelectorAll('ol')]
+                  .map((one) => one.getAttribute('start')),
+                sides: [...node.querySelectorAll('th, td')].map(side),
+                boxes: node.querySelectorAll('input, img').length,
+                links: node.querySelectorAll('a').length,
+                last: node.lastElementChild.textContent,
+                bullets: [...node.querySelectorAll('ul li')]
+                  .map((one) => getComputedStyle(one).listStyleType),
+                plain: getComputedStyle(markdown(box, '- a point')
+                  .querySelector('li')).listStyleType,
+              };
+              box.remove();
+              return out;
+            }""", PLAN_MARKDOWN)
+            # The box stands where the bullet stood; a plain item keeps it.
+            assert seen["bullets"] == ["none", "none"], seen
+            assert seen["plain"] == "disc", seen
+            assert seen["items"] == ["\u2611 read the issue",
+                                     "\u2610 fix the scrub"], seen
+            assert seen["starts"] == [None, "2"], seen
+            assert seen["sides"] == ["left", "right", "left", "right"], seen
+            assert seen["boxes"] == 0, seen
+            assert seen["links"] == 0, seen
+            assert seen["last"] == "See the diagram and the install notes.", seen
+        finally:
+            browser.close()
+
+
+def test_the_scrub_keeps_only_values_it_has_checked(page_at):
+    """What the scrub now keeps is a number and a side, and it turns a box
+    and a picture into text. Written by hand, each of them can carry
+    something else; none of it may stay. marked escapes raw HTML, so this
+    goes into the scrub the way `markdown` puts marked's answer there."""
+    _, path = page_at
+    hostile = (
+        '<ol start="1 onmouseover=window.PWNED=1"><li>a</li></ol>'
+        '<ol start="-5"><li>b</li></ol>'
+        '<ol start="99999999999999999999"><li>c</li></ol>'
+        '<ol start="007" onclick="window.PWNED=2"><li>d</li></ol>'
+        '<ul start="3"><li class="task">e</li></ul>'
+        '<table><tr><td align="right onmouseover=window.PWNED=3">f</td>'
+        '<th align="justify">g</th><th align="center" style="color:red">h</th>'
+        '<td align="left" constructor="x" __proto__="y">i</td></tr></table>'
+        '<p><img src="x" onerror="window.PWNED=4" alt="a picture">'
+        '<input type="checkbox" checked autofocus onfocus="window.PWNED=5">'
+        '<input type="text" value="typed"></p>'
+        '<p><a href="javascript:window.PWNED=6">js</a>'
+        '<a href="JaVaScRiPt:window.PWNED=7">js2</a>'
+        '<a href="#s1" onclick="window.PWNED=8">anchor</a>'
+        '<a href="https://example.org/">away</a></p>'
+    )
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            seen = page.evaluate("""(hostile) => {
+              const holder = document.createElement('template');
+              holder.innerHTML = hostile;
+              scrub(holder.content);
+              const node = document.createElement('div');
+              node.className = 'prose';
+              node.replaceChildren(holder.content);
+              safeLinks(node);
+              document.body.appendChild(node);
+              const kept = [];
+              for (const one of node.querySelectorAll('*')) {
+                for (const name of one.getAttributeNames()) {
+                  kept.push([one.tagName, name, one.getAttribute(name)]);
+                }
+              }
+              const out = {kept, text: node.textContent,
+                           elements: node.querySelectorAll('img, input').length};
+              node.remove();
+              return out;
+            }""", hostile)
+            assert page.evaluate("window.PWNED ?? null") is None
+            assert seen["elements"] == 0, seen
+            assert sorted(seen["kept"]) == sorted([
+                ["OL", "start", "7"],
+                ["TH", "align", "center"],
+                ["TD", "align", "left"],
+                ["A", "href", "https://example.org/"],
+                ["A", "target", "_blank"],
+                ["A", "rel", "noopener noreferrer"],
+            ]), seen["kept"]
+            assert "a picture\u2611" in seen["text"], seen["text"]
+            assert "jsjs2anchoraway" in seen["text"], seen["text"]
+        finally:
+            browser.close()
+
+
+def test_a_link_to_a_block_is_digits_and_nothing_else(page_at):
+    """`Number("")` is 0, so `#s1/` was read as a link to the first block,
+    and `Number` also takes " 3", "1e2" and "0x10"."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            seen = page.evaluate("""() => {
+              const read = (hash) => {
+                history.replaceState(null, '', hash);
+                return placeInHash();
+              };
+              const out = ['#s1/', '#s1/%203', '#s1/1e2', '#s1/0x10', '#s1/4',
+                           '#s1'].map(read);
+              history.replaceState(null, '', '#s1');
+              return out;
+            }""")
+            assert seen == [None, None, None, None, {"id": "s1", "seq": 4},
+                            {"id": "s1", "seq": None}], seen
+        finally:
+            browser.close()
+
+
 def test_raw_html_is_shown_rather_than_swallowed(page_at):
     """The reader should see what the agent saw, as text."""
     with sync_playwright() as play:
@@ -951,6 +1104,49 @@ def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
             }""")
             assert seen == {"links": 0, "images": 0, "text": "OA-1 and QSP-2"}
             assert page.evaluate("window.PWNED ?? null") is None
+        finally:
+            browser.close()
+
+
+def test_a_pattern_that_can_match_nothing_still_makes_its_links(ws, page_at):
+    """`(PROJ-)?\\d*` matches nothing at every place that is not a ticket,
+    and `exec` gives that empty match first. It was taken for "no match",
+    so the pattern made no links at all and nothing said why."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text(json.dumps([
+        {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
+    ]), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.wait_for_function("state.links.length === 1")
+            seen = page.evaluate("""() => {
+              const made = (links, text) => {
+                state.links = links;
+                const box = document.createElement('div');
+                box.textContent = text;
+                linkTickets(box);
+                return [[...box.querySelectorAll('a')].map((a) => a.textContent),
+                        box.textContent];
+              };
+              return [
+                made([{re: /(PROJ-)?\\d*/g, url: 'https://t/$0'}],
+                     'see PROJ-12 and PROJ-34'),
+                // Beside a pattern that cannot match nothing, the earliest
+                // match still wins.
+                made([{re: /x*/g, url: 'https://t/x'},
+                      {re: /OA-\\d+/g, url: 'https://t/$0'}],
+                     'OA-1 then xx then OA-2'),
+                // One that only ever matches nothing makes nothing, and ends.
+                made([{re: /\\b/g, url: 'https://t/b'}], 'a b c'),
+              ];
+            }""")
+            assert seen == [
+                [["PROJ-12", "PROJ-34"], "see PROJ-12 and PROJ-34"],
+                [["OA-1", "xx", "OA-2"], "OA-1 then xx then OA-2"],
+                [[], "a b c"],
+            ], seen
         finally:
             browser.close()
 

@@ -404,6 +404,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   next line. The cut walks the scrubbed fragment, never a string of HTML, and
   a line count that disagrees with the file paints nothing: colour on the wrong
   lines is worse than none.
+  **So every CR comes off before the highlighter** (`paintedLines`). The HTML
+  parser in `paintedInto` reads CR LF, and a lone CR, as a line break, so a
+  file saved on Windows had one line more than rows, and the page painted
+  none of it, with no word why. Rows are cut on LF only, so no line moves.
+  The Files tab, each side of a hunk on the Review tab, and a file shown in
+  part all paint through `paintedLines`, so the one line covers the three.
+  `test_a_file_with_a_carriage_return_is_painted`,
+  `test_a_diff_of_a_file_with_windows_line_ends_is_painted`.
 - **Reading the open file asks git twice and `file` once — and two of those
   are remembered.** The Files tab polls every two seconds, so the answers that
   cannot have changed must not be asked again: `Files.root_of` holds where the

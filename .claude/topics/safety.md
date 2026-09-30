@@ -155,6 +155,37 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `<template>`, is scrubbed to an allowlist, and only then inserted. Values from
   events use `textContent`. Assigning `innerHTML` first fires `onerror` before
   any scrub runs — that was real.
+  - **The scrub keeps three attributes, and each passes a test on its
+    value** (`KEPT`, a `Map` of `Map`s). `href` on `A`, which `safeLinks`
+    then decides on; `start` on `OL`, one to nine digits, written again
+    from the number; `align` on `TH` and `TD`, only `left`, `center` or
+    `right`. No new tag, no new URL scheme, and no attribute that holds
+    free text. The scrub took every attribute before, and that took the
+    meaning with it: steps split by a code fence are three lists, and read
+    1, 1, 1; a column of numbers stood to the left. **A `Map`, not an
+    object**: an attribute named `constructor` found the function every
+    object has, passed its "test", and stayed. **`.prose th, .prose td`
+    sets `text-align: left`**, and a rule in a style sheet wins over
+    `align`, so `.prose [align=…]` puts it back.
+  - **A task box and a picture become text, not nothing** (`textFor`). An
+    element the scrub refuses becomes its own text, and `INPUT` and `IMG`
+    have none: done and not done read the same, and "see ![the
+    diagram](x.png)" read "see  here". A checkbox is ☑ or ☐, a picture is
+    its `alt`. Both are text nodes, so neither loads or runs anything.
+    **The box stands where the bullet stood**, as on GitHub: "• ☑ done"
+    was two marks for one item. The scrub gives the item the class `task`
+    (`.prose li.task` hides the bullet), and gives it after the item's own
+    attributes were taken, so an agent's `class="task"` on an item with no
+    box does not stay. The class is ours and says nothing an agent wrote.
+  - **A `#` link is its words** (`safeLinks`). The scrub takes the ids off
+    headings, so the link has nowhere to go in the text. As a link it
+    opened a second copy of this page in a new tab, and `goToLink` read
+    `#install` as a session. Only `http(s)` is a link now (`LINKABLE`);
+    anything else keeps its `a` with no `href`, as before.
+  `test_markdown_keeps_task_boxes_step_numbers_sides_and_picture_words`,
+  `test_the_scrub_keeps_only_values_it_has_checked`, which feeds the scrub
+  a hostile `start`, `align`, `img onerror` and `javascript:` by hand,
+  because marked escapes raw HTML before the scrub sees it.
 - **An autolink runs after the scrub, over text nodes, and checks its own
   href.** `linkTickets` builds one anchor at a time and never parses
   anything, so a `url` template can put text on the page and nothing else.
@@ -162,6 +193,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   already refused anything else: the two sides are far apart and only one of
   them is the one that inserts. `links.json` is the reader's own file, in
   the state directory — never a per-worktree one, which an agent could write.
+  **A pattern that can match nothing still makes its links** (`nextMatch`).
+  `(PROJ-)?\d*` matches nothing at every place that is not a ticket, and
+  `exec` gives that empty match first. `linkOne` took it for no match, so
+  the pattern made no links, and neither the page nor `doctor` said why.
+  An empty match now moves the search on by one. Refusing such a pattern
+  instead was the other choice, and it is worse: whether a pattern *can*
+  match nothing cannot be asked of it simply, and this one works as
+  written once the empty matches are stepped over. `linkOne` keeps each
+  pattern's next match until it is passed, so the step costs one walk of
+  the text, not one a link.
+  `test_a_pattern_that_can_match_nothing_still_makes_its_links`.
 - **Nothing can time a regular expression out in a browser.** `risky_pattern`
   spots the one shape that backtracks catastrophically — a quantifier inside
   a quantified group — and `LINKS_MAX` caps the links in one block, and that
@@ -225,6 +267,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_a_remote_of_a_megabyte_costs_the_tick_no_time` count CPU time,
     not the clock, so a loaded machine does not fail them;
     `test_a_secret_is_hidden_as_far_as_the_row_can_show`.
+    - **Bounded was not cheap enough: a shape with a needed character is
+      skipped without it.** The `TOKEN=` shape tries a keyword at each of
+      64 places after every word boundary, and 20 KB of `a.` still cost
+      0.21 s of CPU on a CI runner, over the test's 0.2 s. It cannot match
+      without `=`, so its entry names `"="` and `hide_secrets` skips it
+      when the text has none: `in` runs in C. The test's inputs for that
+      shape start with `= `, or the skip would hide its stars from the
+      test.
 - **The page never builds HTML from what a program printed.** A `!`
   command's output and a slash command's answer reach it as text, and
   `putShell` puts them in a `pre` as text: a program can print `<img>`.
