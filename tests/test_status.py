@@ -10,7 +10,6 @@ def test_the_recorded_payload_gives_name_model_and_context(ws, recorded_status):
     assert status.name == "warmhare"
     assert status.model == "Opus 5"
     assert status.context_pct == 41.0
-    assert status.version == "2.1.276"
     assert status.ts == 5.0
 
 

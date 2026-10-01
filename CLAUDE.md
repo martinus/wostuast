@@ -242,7 +242,7 @@ This list exists because each entry was re-implemented once already.
 | which words of a changed line changed, and marking them | `wordDiff(was, now)` → two lists of runs or null, then `markWords(cell, runs)` |
 
 **Python helpers**: `path_label`, `clip`, `run` (subprocess with a timeout),
-`private_dir`/`private_file`, `safe_transcript`, `worktree_root`, `is_listed`,
+`private_dir`, `safe_transcript`, `worktree_root`, `is_listed`,
 `inside`, `CONTROL_CHARS`, `ESCAPE_CODES`, `GONE_STATES`, `STATE_WORDS`.
 
 **Test helpers**: `conftest.event(name, sid=..., **extra)` builds a hook event —

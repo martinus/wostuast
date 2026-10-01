@@ -295,7 +295,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     only ever gets a new file, so a finished inode comes back as the live
     file only when an archive was deleted and its inode used again, and a
     follower that skipped it would be blind until a restart.
-    `log_handles` does the same for `read_events` and `count_events`, and
+    `log_handles` does the same for `read_events` and `measure_log`, and
     it opens the live file *before* it lists the archives, like
     `new_lines`: listed first, a rotation in between left the newest
     archive out. `archive_log` takes a failed `unlink` as no rotation, so

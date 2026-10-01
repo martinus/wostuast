@@ -213,7 +213,6 @@ def test_pre_compact_keeps_the_state_and_is_remembered(ws):
         event("PreCompact", trigger="auto", ts=1500.0),
     )
     assert session.state == "working"
-    assert session.last_compaction == 1500.0
     assert "compacted" in session.last_event
 
 
@@ -271,7 +270,6 @@ def test_recorded_log_gives_the_expected_sessions(ws, recorded_events):
     assert len(by_id) == 2
     first = by_id["7f2a1c4e-0000-4000-8000-000000000001"]
     assert first.state == "done"
-    assert first.last_compaction > 0
     assert first.pane == "%7"
     second = by_id["9b3d2f10-0000-4000-8000-000000000002"]
     assert second.state == "ended"
@@ -1338,7 +1336,7 @@ def test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole(ws):
                    event("PermissionRequest", tool_name="Bash",
                          tool_input={"command": command}, ts=1000.1))
     row = ws.row(session)
-    said = [row["last_event"], row["last_tool"], row["reason"]]
+    said = [row["last_event"], session.last_tool, row["reason"]]
     assert all("hunter2" not in one for one in said), said
     assert any("https://***" in one for one in said), said
     assert row["permission"]["fields"][0] == ["command", command]

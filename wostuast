@@ -234,14 +234,6 @@ def private_dir(path: Path) -> None:
         pass
 
 
-def private_file(path: Path) -> None:
-    """Keep a file we just wrote to this user alone."""
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
-
-
 def open_private(path: Path) -> Any:
     """Open a file for appending, and create it 0600 if it is not there.
 
@@ -667,11 +659,6 @@ def log_handles() -> Iterator[Any]:
             live.close()
 
 
-def count_events() -> int:
-    """How many lines the log holds. It counts newlines, it does not parse."""
-    return measure_log()[0]
-
-
 def measure_log() -> tuple[int, int, int]:
     """How many lines the log holds, in how many files, of how many bytes."""
     lines = files = size = 0
@@ -1012,7 +999,6 @@ class Status:
     #: you cannot. `None` is "the status line did not say", which is not 0.
     cost_usd: float | None = None
     agent: str = ""
-    version: str = ""
 
 
 @dataclass
@@ -1076,7 +1062,6 @@ class Session:
     #: `cleared_into`.
     cleared_into: str = ""
     cleared_from: str = ""
-    last_compaction: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -1837,8 +1822,6 @@ def row(session: Session) -> dict[str, Any]:
         # can read what they are declining. Only while the row is amber.
         "permission": session.permission if session.state == "needs_you" else None,
         "last_event": session.last_event,
-        "last_tool": session.last_tool,
-        "last_prompt": session.last_prompt,
         "since": round(session.since, 3),
         "name": session.mine or session.status.name,
         # Whether that name is one the reader set here. The page shows the
@@ -1850,11 +1833,9 @@ def row(session: Session) -> dict[str, Any]:
         # lands, so it never makes a row differ by itself -- which is the
         # rule this dict is built by.
         "cost_usd": session.status.cost_usd,
-        "end_reason": session.end_reason,
         # The session a `/clear` turned this one into. The page follows it
         # when the link appears while the reader is watching this one.
         "cleared_into": session.cleared_into,
-        "has_transcript": bool(session.transcript_path),
     }
 
 
@@ -2199,7 +2180,6 @@ def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> Non
 
 
 def _on_pre_compact(session: Session, event: dict[str, Any], ts: float) -> None:
-    session.last_compaction = ts
     trigger = str(event.get("trigger") or "")
     session.last_event = f"context compacted ({trigger})" if trigger else "context compacted"
 
@@ -5287,7 +5267,6 @@ def status_from_payload(payload: dict[str, Any], now: float | None = None) -> St
         context_pct=opt_float(nested("context_window").get("used_percentage")),
         cost_usd=opt_float(nested("cost").get("total_cost_usd")),
         agent=str(nested("agent").get("name") or ""),
-        version=str(payload.get("version") or ""),
     )
 
 
@@ -5607,7 +5586,6 @@ def read_status(session_id: str) -> Status:
         context_pct=opt_float(payload.get("context_pct")),
         cost_usd=opt_float(payload.get("cost_usd")),
         agent=str(payload.get("agent") or ""),
-        version=str(payload.get("version") or ""),
     )
 
 
