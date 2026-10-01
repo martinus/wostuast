@@ -143,6 +143,14 @@ it. The reason is the part to weigh before undoing one.
   was undone by it, and three guards and a numbering of the pushes were
   built before the second channel was taken out (`keepSetting`,
   `tell_config`; topics/sidebar has the scar).
+- **The transcript keeps its two channels, a GET and the push.** It is the
+  one state that comes both ways: the GET is the snapshot, the push is what
+  came after it, and guards order the two (`state.turns.early`, `told`,
+  `TRANSCRIPT_RETRY`; topics/daemon-and-page holds their scars). Sending it
+  on the stream only would take the guards out, but it needs zlib of its own
+  on SSE to keep "nothing big goes twice" over ssh, and it rewrites the most
+  delicate part of the page. The guards work and are tested, so the owner
+  closed #295 as not planned. Read #295 before proposing it again.
 - **What the reader is typing is the reader's until they close it.** A push
   never rebuilds a box, a row or a list that the reader is editing; it is
   drawn from the state again when it opens (`putLinkRows` from

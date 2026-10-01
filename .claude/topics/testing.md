@@ -82,7 +82,13 @@ three of them broke out, asserted nothing, and ran on into `held[0]`: an
 holds for `stub_send(page, answers, delay)` (`/send` answered from a
 list, or with no `answers` slowed and passed on), `write_records`
 (transcript lines built by `conftest.record`) and `comment_on_first_line`
-(#281). **A mark that
+(#281). **A route handler runs only while Playwright waits.** `kept()`
+waits for `settings.json` by polling it in Python, and nothing in that loop
+gives Playwright a turn, so the `hold` handler that should let the second
+POST through never ran and the test waited out its timeout. Wait with
+`page.expect_response(...)` first, then read the file:
+`test_two_quick_changes_reach_the_file_in_the_order_they_were_made` is the
+shape. **A mark that
 shows for a set time is written down by the page, not waited for**: the
 copy button's tick (`putCodeCopies`, `.copycode.done`) lasts 1.4 s, and
 `test_a_code_block_copies_itself_from_a_button_that_shows_on_hover` spent
