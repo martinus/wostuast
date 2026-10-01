@@ -3874,21 +3874,27 @@ def in_order(names: set[str]) -> list[str]:
                    if name not in PINNED_FILES]
 
 
-def worktree_root(cwd: str, runner: Callable[..., str | None] = run) -> str:
-    """The top of the worktree this directory sits in, or "" if it is not in
-    one.
+def worktree_root(cwd: str, runner: Callable[..., str | None] = run) -> str | None:
+    """The top of the worktree this directory sits in, "" if it is not in
+    one, and None when git did not answer.
 
     Everything else works from here, never from the agent's own directory.
     git reports a diff with paths relative to the root whatever directory it
     was run in, so a session standing in a subdirectory would otherwise get a
     file list and a diff that do not agree with each other.
+
+    The None is asked here, once, rather than at every door that reads an
+    empty answer: four doors each asked `git_answers` after it, and the ones
+    that forgot read a stalled git as a worktree with nothing in it.
     """
     if not cwd or not os.path.isdir(cwd):
         return ""
     top = runner(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
+    if not top:
+        return "" if git_answers(runner) else None
     # Only the newline. `strip()` took the space off `/x/proj `, and the tab
     # then read nothing -- or, when `/x/proj` also existed, another repository.
-    return top.rstrip("\n") if top else ""
+    return top.rstrip("\n")
 
 
 def git_answers(runner: Callable[..., str | None] = run) -> bool:
@@ -3910,19 +3916,31 @@ def changed_files(
     cwd: str, runner: Callable[..., str | None] = run
 ) -> set[str] | None:
     """The files git says differ from the last commit, untracked ones included.
-    None when git did not answer.
+    None when git did not answer."""
+    told = status_names(cwd, runner)
+    return None if told is None else told[0]
+
+
+def status_names(
+    cwd: str, runner: Callable[..., str | None] = run
+) -> tuple[set[str], set[str]] | None:
+    """What `git status` says: every changed name, untracked ones included,
+    and the untracked ones alone. None when git did not answer.
 
     `-z` gives one NUL-terminated record per file: two status letters, a
     space, then the name. A rename or a copy is followed by one more record
     holding the old name on its own, with no status in front of it — so which
     record is which has to be counted, not guessed at from its length. Both
-    names are kept: the agent touched both ends of a rename.
+    names are kept: the agent touched both ends of a rename. An untracked
+    file is `??`, and its name is the one `ls-files --others
+    --exclude-standard` gives, a nested repository's `sub/` included.
     """
     out = runner(["git", "-C", cwd, "status", "--porcelain", "-z",
                   "--untracked-files=all"], timeout=LIST_TIMEOUT)
     if out is None:
         return None
-    names = set()
+    names: set[str] = set()
+    untracked: set[str] = set()
     bare = False
     for record in out.split("\0"):
         if not record:
@@ -3933,8 +3951,10 @@ def changed_files(
             continue
         if len(record) > 3:
             names.add(record[3:])
+            if record.startswith("?? "):
+                untracked.add(record[3:])
         bare = "R" in record[:2] or "C" in record[:2]
-    return names
+    return names, untracked
 
 
 def git_names(
@@ -3976,22 +3996,33 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     sort those few — asking the disk about every file, every poll, would cost
     far more than the answer is worth.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     tree = Worktree()
-    tree.root = root or worktree_root(cwd, runner)
-    if not tree.root:
+    found = root or worktree_root(cwd, runner)
+    if not found:
         # "No files" and "git did not answer" look the same here and mean
         # opposite things. Every other git call in this function sets
         # `failed`; this was the one door left open, and the page drew the
         # plain empty state over a worktree it simply could not read.
-        tree.failed = not git_answers(runner)
+        tree.failed = found is None
         return tree
-    parts = [
-        git_names(tree.root, [], runner),
-        git_names(tree.root, ["--others", "--exclude-standard"], runner),
-        git_names(tree.root, ["--others", "--ignored", "--exclude-standard",
-                              "--directory"], runner),
-    ]
-    touched = changed_files(tree.root, runner)
+    tree.root = found
+    # Three calls, at once: each walks the worktree, and one after another
+    # they cost 138 ms on fifty thousand files where the slowest alone is 56.
+    # The untracked names come from `status`, which prints every one of them
+    # as a `??` record: an `ls-files --others --exclude-standard` beside it
+    # walked the whole worktree again for the same names.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        tracked = pool.submit(git_names, tree.root, [], runner)
+        ignored = pool.submit(git_names, tree.root,
+                              ["--others", "--ignored", "--exclude-standard",
+                               "--directory"], runner)
+        status = pool.submit(status_names, tree.root, runner)
+    told = status.result()
+    parts = [tracked.result(), None if told is None else sorted(told[1]),
+             ignored.result()]
+    touched = None if told is None else told[0]
     tree.failed = touched is None or any(part is None for part in parts)
     names: set[str] = set()
     for part in parts:
@@ -4080,7 +4111,7 @@ class Files:
         self.gates: dict[str, Any] = {}
         self.lock = threading.Lock()
 
-    def root_of(self, cwd: str, runner: Callable[..., str | None]) -> str:
+    def root_of(self, cwd: str, runner: Callable[..., str | None]) -> str | None:
         """Where this directory's worktree starts, asked once.
 
         `git rev-parse` is cheap but it is still a process, and this ran on
@@ -4154,7 +4185,7 @@ class Files:
         """The listing for the worktree this directory sits in."""
         root = self.root_of(cwd, runner)
         if not root:
-            return Listing(tree=Worktree(failed=not git_answers(runner)))
+            return Listing(tree=Worktree(failed=root is None))
         gate = self.gate(root)
         # What is held is asked for under the short lock, never the gate:
         # the gate is held for the whole of a re-read behind, up to four git
@@ -5095,9 +5126,9 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     report = DiffReport()
     root = worktree_root(cwd, runner)
     if not root:
-        # Not a repository, or git did not answer; `worktree_files` asks the
-        # same at the same door. Unasked, a timeout read as "nothing changed".
-        report.failed = not git_answers(runner)
+        # Not a repository, or git did not answer. Unasked, a timeout read
+        # as "nothing changed".
+        report.failed = root is None
         return report
 
     def ask(*args: str) -> tuple[str | None, bool]:
@@ -5225,7 +5256,7 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
         return found
     root = worktree_root(cwd, runner)
     if not root:
-        found.failed = not git_answers(runner)
+        found.failed = root is None
         return found
     # The full name, as `worktree_diff` gives git: a short one can start
     # with `-` and be read as an option.
@@ -7625,7 +7656,7 @@ class Serving:
             return
         seen = [safe_transcript(one.transcript_path)
                 for one in list(self.daemon.store.sessions.values())]
-        found = self.daemon.commands.of(session.cwd, worktree_root(session.cwd),
+        found = self.daemon.commands.of(session.cwd, worktree_root(session.cwd) or "",
                                         [path for path in seen if path])
         self.reply_json({"id": session_id,
                          "commands": [asdict(one) for one in found]})

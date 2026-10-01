@@ -138,6 +138,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_a_stale_listing_does_not_wait_for_the_read_behind_it` holds git
     with an event rather than a sleep, and
     `test_two_first_asks_read_git_once`.
+  - **The untracked names are `status`'s `??` records, and the three
+    calls run at once** (#293). An `ls-files --others --exclude-standard`
+    beside `status --untracked-files=all` walked the worktree a second time
+    for the same names, measured equal with a rename, a nested repository
+    and names holding a space, a tab and a quote. `status_names` gives the
+    changed names and the untracked ones; `worktree_files` runs it with the
+    tracked and the ignored listing in a `ThreadPoolExecutor`: 138 ms in
+    sequence on fifty thousand files, about 56 at once. `failed` is still
+    set when any one of them gives None.
+    `test_the_untracked_names_are_the_ones_status_gives`.
 - **An icon is measured against its box, not eyeballed.** `putIcon` draws
   into a `0 0 14 14` viewBox and an `svg` clips to its viewport, so a stroke
   -- 1.2 wide, reaching 0.6 past the line it is drawn on -- must end by 13.4.
@@ -254,7 +264,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   that reads an empty answer asks**: `worktree_files` did, and
   `worktree_diff`, `whole_file_diff` and `git_facts` did not -- a timed-out
   `--show-toplevel` came back as a worktree with nothing changed, and a
-  stalled `git_facts` wrote empty facts over the known ones. `pick_base`
+  stalled `git_facts` wrote empty facts over the known ones. **So
+  `worktree_root` asks it, once, for every door** (#290): None is "git did
+  not answer", "" is "not a repository", and a caller writes
+  `failed = root is None`. `git_facts` still asks for itself, because it
+  decides from `rev-parse` and `status` together.
+  `test_every_door_learns_from_the_root_which_kind_of_nothing_it_is`. `pick_base`
   returns whether `for-each-ref` failed (`failed`) beside the base, because
   "no such names" is said on the page as a fact.
   `test_a_root_git_could_not_find_is_not_an_empty_worktree`,
