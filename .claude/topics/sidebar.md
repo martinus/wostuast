@@ -129,7 +129,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     the `settings` event): the POST's own answer is not applied, because
     two quick changes can be answered out of order and the older answer
     would undo the newer one, while the pushes go out in the order the file
-    was written. Every open page gets the push, the one that made the
+    was written. **And a push older than an answer is dropped**
+    (`newerSettings`, `serial` and `run` from `config_told`): the pushes
+    and the answer come on different connections, and under load an older
+    push landed after a newer answer, the link rows were rebuilt from the
+    file before the change, and a red row went.
+    `test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept` was
+    red one run in three at `-n 12` until then;
+    `test_an_older_settings_push_is_dropped` holds it alone. Every open page gets the push, the one that made the
     change too, and a hand edit of the file arrives the same way
     (`tell_config`). A change of the diff's columns from the file waits
     while a comment is being written (`takeSides`), as `keepSides` does.

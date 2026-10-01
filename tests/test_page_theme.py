@@ -391,11 +391,13 @@ def test_the_page_starts_in_the_colours_of_the_file(ws, page_at):
             # Read the moment the body is made: the head's script has run
             # and the page's own, at the end of the body, has not. The
             # colours the first paint has.
+            # The whole document is watched: this runs before `<html>` is
+            # there, and observing the element that is not yet made threw.
             page.add_init_script("""new MutationObserver((seen, watch) => {
               if (!document.body) return;
               window.firstTheme = document.documentElement.dataset.theme;
               watch.disconnect();
-            }).observe(document.documentElement, { childList: true });""")
+            }).observe(document, { childList: true, subtree: true });""")
             page.goto(url, wait_until="domcontentloaded")
             seen = [page.evaluate("window.firstTheme")]
             assert seen == ["light"], seen
@@ -427,5 +429,32 @@ def test_the_whole_settings_menu_is_in_the_proportional_face(page_at):
             wide = page.evaluate("document.getElementById('setpop').offsetWidth")
             page.fill("#linklist .linkurl", "https://t.example/" + "x" * 400)
             assert page.evaluate("document.getElementById('setpop').offsetWidth") == wide
+        finally:
+            browser.close()
+
+
+def test_an_older_settings_push_is_dropped(ws, page_at):
+    """The pushes and a POST's answer come on different connections. Under
+    load a push of the file before a change landed after the answer to it,
+    and put the page back. A push from another daemon -- one restarted --
+    numbers afresh, and is taken."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            # No stream, so the number can only come from the answer: the
+            # answer is the one that must count, because the push of the
+            # same change may be the one still on its way.
+            page.evaluate("state.stream.close()")
+            settings(page, "tabwidth", "8")
+            kept(ws, "tab_width", 8)
+            page.wait_for_function("state.settingsSerial >= 1")
+            tab = "getComputedStyle(document.documentElement).getPropertyValue('--tab-w').trim()"
+            page.evaluate("""() => takeSettings({run: state.settingsRun,
+              serial: state.settingsSerial - 1, tab_width: 2, links: [],
+              trouble: []})""")
+            assert page.evaluate(tab) == "8"
+            page.evaluate("""() => takeSettings({run: 'another', serial: 0,
+              tab_width: 2, links: [], trouble: []})""")
+            assert page.evaluate(tab) == "2"
         finally:
             browser.close()

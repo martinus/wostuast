@@ -494,7 +494,8 @@ def test_the_settings_file_is_private(ws):
 def test_the_settings_in_the_page_cannot_end_its_script(ws):
     """A link is the reader's text and goes into a `<script>`. Written as it
     is, `</script>` in one ended the script there."""
-    text = ws.page_json({"links": [{"match": "</script><b>&", "url": " \ud800"}]})
+    text = ws.page_json({"links": [{"match": "</script><b>&",
+                                    "url": "\u2028" + chr(0xD800)}]})
     assert "<" not in text and ">" not in text and "&" not in text
     assert text.isascii()
     assert json.loads(text)["links"][0]["match"] == "</script><b>&"

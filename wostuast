@@ -6260,6 +6260,13 @@ class Daemon:
         #: -- another browser, or a hand in an editor -- goes out on the next
         #: tick (`tell_config`).
         self.config_seen = config_stamp()
+        #: Which push of the settings this is, and which daemon sent it.
+        #: The pushes and a POST's answer come on different connections, so
+        #: an older push could land after a newer answer and put the page
+        #: back: a red link row was rebuilt away under load. The page drops
+        #: a push older than one it has (`newerSettings`).
+        self.config_serial = 0
+        self.config_run = secrets.token_hex(4)
         self.transcripts: dict[str, Transcript] = {}
         #: Sessions a decline is being pressed into. It waits up to
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
@@ -6439,19 +6446,30 @@ class Daemon:
         self.forget_gone()
         self.files.forget(LISTING_KEPT)
 
-    def tell_config(self, force: bool = False) -> None:
-        """Send the settings to every browser when the file has changed.
+    def config_told(self) -> dict[str, Any]:
+        """The settings, with their place in the line of pushes."""
+        return dict(config_payload(), serial=self.config_serial,
+                    run=self.config_run)
+
+    def tell_config(self, force: bool = False) -> dict[str, Any] | None:
+        """Send the settings to every browser when the file has changed, and
+        hand back what was sent.
 
         Every open page is one reader's screen, so a change in one tab is a
         change in all of them, and a file edited by hand reaches the page
         without a reload. A stat a tick, never a read, until it changes.
+        **Numbered and sent under the lock**, so the numbers go out in the
+        order they were given.
         """
         with self.config_lock:
             now = config_stamp()
             if now == self.config_seen and not force:
-                return
+                return None
             self.config_seen = now
-        self.hub.send("settings", config_payload())
+            self.config_serial += 1
+            told = self.config_told()
+            self.hub.send("settings", told)
+        return told
 
     def forget_gone(self) -> None:
         """Drop the readers of sessions that are no longer shown.
@@ -6979,8 +6997,8 @@ class Serving:
         if why:
             self.reply_json({"error": why}, 400)
             return
-        self.daemon.tell_config(force=True)
-        self.reply_json(dict(config_payload(), refused=refused, done=True))
+        told = self.daemon.tell_config(force=True) or {}
+        self.reply_json(dict(told, refused=refused, done=True))
 
     def in_tmux(self, session_id: str) -> Session | None:
         """The session, when it is one the verbs can reach at all."""
@@ -7295,7 +7313,8 @@ class Serving:
         if path == "/":
             page = (PAGE.replace(TOKEN_MARK, self.daemon.token)
                     .replace(VERSION_MARK, self.daemon.version)
-                    .replace(SETTINGS_MARK, page_json(config_payload())))
+                    .replace(SETTINGS_MARK,
+                             page_json(self.daemon.config_told())))
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
@@ -7303,7 +7322,7 @@ class Serving:
             # The reader's own, not a session's, so it hangs off nothing. It
             # is read from disk here rather than held, because a person may
             # edit the file.
-            self.reply_json(config_payload())
+            self.reply_json(self.daemon.config_told())
         elif path == "/api/events":
             self.stream(query.get("watch", [""])[0])
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -9998,6 +10017,10 @@ const state = {
   // rows in the menu -- which would take a red row with it (`paintLinks`).
   linksSent: null,
   linksSaving: 0,       // how many saves of the links are on their way
+  // Which push of the settings this page has, and from which daemon:
+  // `newerSettings`.
+  settingsRun: "",
+  settingsSerial: 0,
   // What is wrong with `settings.json`, if anything. It stands in the live
   // slot behind everything else.
   linkTrouble: [],
@@ -10330,12 +10353,33 @@ async function keepSetting(change) {
   state.settings = { ...state.settings, ...change };
   const answer = await post("/api/settings", change);
   said(answer);
+  // Not applied, but counted: a push older than this answer is the file
+  // before this change, and must not put the page back.
+  if (answer && !answer.error && newerSettings(answer)) heardSettings(answer);
   return answer;
+}
+
+// Whether a push is not older than what this page has heard. The pushes and
+// a POST's answer come on different connections, and under load an older
+// push landed after a newer answer: the menu's rows were rebuilt from the
+// file before the change, then again from the file after it, and a red row,
+// which is in neither, was gone. A different daemon numbers afresh, so its
+// pushes are always taken.
+function newerSettings(body) {
+  return !body || body.run !== state.settingsRun
+    || !(body.serial < state.settingsSerial);
+}
+
+function heardSettings(body) {
+  state.settingsRun = body.run;
+  state.settingsSerial = body.serial;
 }
 
 // Make the page what the file says. `first` is the page starting: nothing is
 // drawn yet, so nothing is drawn again.
 function takeSettings(body, first) {
+  if (!newerSettings(body)) return;
+  if (body) heardSettings(body);
   state.settings = body && typeof body === "object" ? body : {};
   const colours = setting("colours");
   showTheme(colours === "light" || colours === "dark" ? colours : "system");
@@ -11813,15 +11857,20 @@ async function saveLinks() {
   state.linksSaving += 1;
   const answer = await keepSetting({ links: sent });
   state.linksSaving -= 1;
-  const refused = new Set();
   for (const one of (answer && answer.refused) || []) {
-    refused.add(one.at);
     if (rows[one.at]) sayLink(rows[one.at], linkWords(one.trouble) + " \u00b7 not saved", true);
   }
-  if (answer && !answer.error) {
-    // What the file now holds, which the push will bring: no rebuild then.
-    state.linksSent = JSON.stringify(
-      sent.filter((one, at) => !refused.has(at)).map((one) => [one.match, one.url]));
+  // What the file now holds, from the answer, which the push will bring
+  // too: no rebuild then. And the page's own copy is set to it, because
+  // `keepSetting` put in what was *sent*, a refused link with it -- compared
+  // with that, the rows were rebuilt without the red one's reason, and the
+  // push after rebuilt them again without it. Only when this answer is the
+  // newest the page has heard: after a newer push, that push is the truth.
+  if (answer && !answer.error && answer.run === state.settingsRun
+      && answer.serial === state.settingsSerial) {
+    const now = Array.isArray(answer.links) ? answer.links : [];
+    state.settings = { ...state.settings, links: now };
+    state.linksSent = JSON.stringify(now.map((one) => [one.match, one.url]));
   }
   paintLinks();
 }

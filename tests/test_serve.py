@@ -2127,10 +2127,17 @@ def test_a_setting_is_written_and_every_page_hears_of_it(ws, served):
     assert status == 200 and body["done"] is True, body
     assert body["tab_width"] == 8
     assert json.loads(ws.config_path().read_text()) == {"tab_width": 8}
-    assert [one["tab_width"] for one in settings_pushed(client)] == [8]
+    pushed = settings_pushed(client)
+    assert [one["tab_width"] for one in pushed] == [8]
+    # The answer is the push, number and all, so the page can drop a push
+    # older than it. The next one is numbered after it.
+    assert (body["serial"], body["run"]) == (pushed[0]["serial"], pushed[0]["run"])
     # And the tick that follows does not say it twice.
     daemon.tell_config()
     assert settings_pushed(client) == []
+    status, body = post(f"{base}/api/settings", {"tab_width": 2},
+                        token=daemon.token)
+    assert body["serial"] == pushed[0]["serial"] + 1
 
 
 def test_a_file_changed_by_hand_reaches_the_page(ws, served):

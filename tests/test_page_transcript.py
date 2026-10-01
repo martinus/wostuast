@@ -2969,7 +2969,7 @@ def test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept(ws, page_at):
             page.evaluate(r"""() => {
               const row = document.querySelector('#linklist .linkrow:last-child');
               const [match, url] = row.querySelectorAll('input');
-              match.value = 'NO-(\d+)';
+              match.value = 'NO-(\\d+)';
               url.value = 'ftp://t.example/';
               url.dispatchEvent(new Event('change'));
             }""")
