@@ -22,6 +22,7 @@ from browser import (
     open_diff,
     comment_on_first_line,
     spy_on_note,
+    stub_send,
 )
 
 pytestmark = skip_without_browser
@@ -31,11 +32,7 @@ def test_a_diff_line_can_be_commented_on(repo_page):
         browser, page = open_diff(play, repo_page)
         try:
             assert page.locator(".comment").count() == 0
-            page.locator(".dline .addnote").first.click(force=True)
-            page.wait_for_selector(".commentbox textarea")
-            page.fill(".commentbox textarea", "use a signed type here")
-            page.click(".commentbox button:text-is('save')")
-            page.wait_for_selector(".comment")
+            comment_on_first_line(page, "use a signed type here")
             assert "use a signed type here" in page.locator(".comment").inner_text()
             # It is written down, not held in the node it was drawn on.
             assert page.evaluate("state.review.comments.length") == 1
@@ -84,10 +81,7 @@ def test_a_comment_survives_the_diff_being_read_again(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .addnote").first.click(force=True)
-            page.fill(".commentbox textarea", "look again")
-            page.click(".commentbox button:text-is('save')")
-            page.wait_for_selector(".comment")
+            comment_on_first_line(page, "look again")
             page.evaluate("state.diffAt += 1; draw()")
             assert page.locator(".comment").count() == 1
             assert "look again" in page.locator(".comment").inner_text()
@@ -115,10 +109,7 @@ def test_a_comment_can_be_edited_and_emptied_away(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .addnote").first.click(force=True)
-            page.fill(".commentbox textarea", "first thought")
-            page.click(".commentbox button:text-is('save')")
-            page.wait_for_selector(".comment")
+            comment_on_first_line(page, "first thought")
 
             page.click(".comment button:text-is('edit')")            # edit
             page.wait_for_selector(".commentbox textarea")
@@ -142,10 +133,7 @@ def test_cancel_leaves_the_comment_as_it_was(repo_page):
     with sync_playwright() as play:
         browser, page = open_diff(play, repo_page)
         try:
-            page.locator(".dline .addnote").first.click(force=True)
-            page.fill(".commentbox textarea", "kept")
-            page.click(".commentbox button:text-is('save')")
-            page.wait_for_selector(".comment")
+            comment_on_first_line(page, "kept")
             page.click(".comment button:text-is('edit')")
             page.fill(".commentbox textarea", "thrown away")
             page.click(".commentbox button:text-is('cancel')")         # cancel
@@ -203,10 +191,7 @@ def test_nothing_is_sent_yet(repo_page):
             page.evaluate("window.__posts = []; const real = window.fetch;"
                           " window.fetch = (u, o) => { window.__posts.push(String(u));"
                           " return real(u, o); };")
-            page.locator(".dline .addnote").first.click(force=True)
-            page.fill(".commentbox textarea", "do not send me")
-            page.click(".commentbox button:text-is('save')")
-            page.wait_for_selector(".comment")
+            comment_on_first_line(page, "do not send me")
             sent = page.evaluate("window.__posts.filter((u) => u.includes('/send'))")
             assert sent == []
         finally:
@@ -301,17 +286,7 @@ def test_submitting_sends_it_and_empties_the_review(repo_page):
         browser, page = open_diff(play, repo_page)
         try:
             comment_on_first_line(page, "change this please")
-            page.evaluate("""() => {
-              window.__sent = [];
-              const real = window.fetch;
-              window.fetch = (url, opts) => {
-                if (String(url).endsWith("/send")) {
-                  window.__sent.push(JSON.parse(opts.body).text);
-                  return Promise.resolve(new Response('{"done": true}'));
-                }
-                return real(url, opts);
-              };
-            }""")
+            stub_send(page, [{"done": True}])
             page.click("#sendreview")
             page.wait_for_function("window.__sent.length === 1")
             assert "change this please" in page.evaluate("window.__sent[0]")
@@ -321,24 +296,6 @@ def test_submitting_sends_it_and_empties_the_review(repo_page):
             assert page.locator("#reviewbar").is_hidden()
         finally:
             browser.close()
-
-
-def stub_send(page, answers, delay=0):
-    """`/send` answered from a list, one per call, after `delay` ms; every
-    text sent is kept in `window.__sent`."""
-    page.evaluate("""([answers, delay]) => {
-      window.__sent = [];
-      const real = window.fetch;
-      window.fetch = (url, opts) => {
-        if (String(url).endsWith("/send")) {
-          window.__sent.push(JSON.parse(opts.body).text);
-          const body = answers[Math.min(window.__sent.length, answers.length) - 1];
-          return new Promise((done) => setTimeout(
-            () => done(new Response(JSON.stringify(body))), delay));
-        }
-        return real(url, opts);
-      };
-    }""", [answers, delay])
 
 
 def test_a_double_click_sends_a_review_once(repo_page):

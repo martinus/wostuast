@@ -21,6 +21,7 @@ from browser import (
     numbers,
     rgb,
     contrast,
+    wait_until,
 )
 
 pytestmark = skip_without_browser
@@ -1302,10 +1303,7 @@ def test_a_diff_asked_for_before_the_base_was_picked_does_not_land(
             # A poll, with no pick. Not awaited: its promise waits on the
             # request held here, and `evaluate` would wait with it.
             page.evaluate("() => { load(); }")
-            for _ in range(300):
-                if held:
-                    break
-                page.wait_for_timeout(20)
+            wait_until(page, lambda: held)
             page.select_option(".pickbase", "main")
             page.wait_for_function(
                 f"() => [...document.querySelectorAll('{committed}')]"

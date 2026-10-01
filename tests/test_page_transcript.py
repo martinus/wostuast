@@ -22,6 +22,9 @@ from browser import (
     renew_stream,
     daemon_transcript,
     spy_on_note,
+    write_records,
+    hold,
+    wait_until,
 )
 
 pytestmark = skip_without_browser
@@ -346,11 +349,8 @@ def test_the_session_the_page_picks_for_you_is_watched(page_at, ws):
             before = page.locator(".turn").count()
             assert page.locator(".row.chosen").count() == 1
 
-            with open(daemon_transcript(daemon), "a") as handle:
-                handle.write(json.dumps({
-                    "type": "assistant", "timestamp": "2026-09-18T14:09:00.000Z",
-                    "message": {"role": "assistant", "content": [
-                        {"type": "text", "text": "A brand new line."}]}}) + "\n")
+            write_records(daemon, conftest.record(
+                "claude", "A brand new line.", ts="2026-09-18T14:09:00.000Z"))
             daemon.tick()
             # For what the push carries, not for a length of time: a fixed
             # wait on a loaded runner is a wait that runs out.
@@ -403,10 +403,8 @@ def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_a
             held = daemon_transcript(daemon)
 
             spare = held.parent / "rewritten.jsonl"
-            spare.write_text(json.dumps({
-                "type": "assistant", "timestamp": "2026-09-18T15:00:00.000Z",
-                "message": {"role": "assistant", "content": [
-                    {"type": "text", "text": "The only line now."}]}}) + "\n")
+            spare.write_text(conftest.records(conftest.record(
+                "claude", "The only line now.", ts="2026-09-18T15:00:00.000Z")))
             spare.replace(held)          # a new inode, as a rewrite makes
 
             daemon.tick()
@@ -547,12 +545,8 @@ def test_marked_is_pinned_too(page_at):
 
 def append_blocks(daemon, texts):
     """Write assistant turns onto the session's transcript and push them."""
-    with open(daemon_transcript(daemon), "a") as handle:
-        for text in texts:
-            handle.write(json.dumps({
-                "type": "assistant", "timestamp": "2026-09-18T14:09:00.000Z",
-                "message": {"role": "assistant",
-                            "content": [{"type": "text", "text": text}]}}) + "\n")
+    write_records(daemon, *[conftest.record(
+        "claude", text, ts="2026-09-18T14:09:00.000Z") for text in texts])
     daemon.tick()
 
 
@@ -860,18 +854,14 @@ def test_the_transcript_has_a_list_of_rounds_beside_it(page_at):
 def append_rounds(daemon, many):
     """Whole rounds — a prompt and a long reply to it — so the transcript is
     taller than the pane and an early round is really off screen."""
-    with open(daemon_transcript(daemon), "a") as handle:
-        for n in range(many):
-            handle.write(json.dumps({
-                "type": "user", "timestamp": "2026-09-18T14:10:00.000Z",
-                "message": {"role": "user", "content": f"round {n} please"}})
-                + "\n")
-            handle.write(json.dumps({
-                "type": "assistant", "timestamp": "2026-09-18T14:11:00.000Z",
-                "message": {"role": "assistant", "content": [
-                    {"type": "text",
-                     "text": f"answer {n}\n\n" + "filler line\n" * 12}]}})
-                + "\n")
+    made = []
+    for n in range(many):
+        made.append(conftest.record("you", f"round {n} please",
+                                    ts="2026-09-18T14:10:00.000Z"))
+        made.append(conftest.record("claude",
+                                    f"answer {n}\n\n" + "filler line\n" * 12,
+                                    ts="2026-09-18T14:11:00.000Z"))
+    write_records(daemon, *made)
     daemon.tick()
 
 
@@ -1245,19 +1235,18 @@ def test_a_message_sent_to_a_busy_agent_reads_as_what_you_typed(ws, page_at):
     daemon, path = page_at
     typed = ("also creating a worktree would be slower, so many files.\n"
              "Is there a way to keep the corpus out of it?")
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(json.dumps({
-            "type": "user", "timestamp": "2026-09-18T14:21:00.000Z",
-            "message": {"role": "user", "content":
-                        "<system-reminder>\n"
-                        "The user sent a new message while you were working:\n"
-                        + typed + "\n\n"
-                        "This is how Claude Code surfaces messages the user"
-                        " sends mid-turn \u2014 within the running turn, often"
-                        " alongside the next tool result, rather than as a"
-                        " separate conversation turn. Address the message above"
-                        " as you continue this turn.\n"
-                        "</system-reminder>"}}) + "\n")
+    write_records(daemon, conftest.record(
+        "you",
+        "<system-reminder>\n"
+        "The user sent a new message while you were working:\n"
+        + typed + "\n\n"
+        "This is how Claude Code surfaces messages the user"
+        " sends mid-turn \u2014 within the running turn, often"
+        " alongside the next tool result, rather than as a"
+        " separate conversation turn. Address the message above"
+        " as you continue this turn.\n"
+        "</system-reminder>",
+        ts="2026-09-18T14:21:00.000Z"))
     daemon.tick()
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1288,17 +1277,14 @@ def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
     to wear your rail and your tint, and it filled the map beside the
     transcript with rows for things you never said."""
     daemon, path = page_at
-    with open(daemon_transcript(daemon), "a") as handle:
-        for text in (
+    write_records(daemon, *[conftest.record(
+        "you", text, ts="2026-09-18T14:20:00.000Z") for text in (
             "<task-notification>The sweep is done</task-notification>",
             "<command-name>/reload-plugins</command-name>"
             "<command-message>reload-plugins</command-message>"
             "<command-args></command-args>",
             "<local-command-stdout>(no content)</local-command-stdout>",
-        ):
-            handle.write(json.dumps({
-                "type": "user", "timestamp": "2026-09-18T14:20:00.000Z",
-                "message": {"role": "user", "content": text}}) + "\n")
+        )])
     daemon.tick()
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1400,10 +1386,8 @@ def test_a_one_line_message_sits_in_the_middle_of_its_block(page_at):
     — and a stretched bubble is as tall as that whatever is in it. One line
     then sat 14 px below the top with 41 px under it."""
     daemon, path = page_at
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(json.dumps({
-            "type": "user", "timestamp": "2026-09-18T14:20:00.000Z",
-            "message": {"role": "user", "content": "do the issues"}}) + "\n")
+    write_records(daemon, conftest.record(
+        "you", "do the issues", ts="2026-09-18T14:20:00.000Z"))
     daemon.tick()
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1438,21 +1422,14 @@ def test_a_group_of_tool_calls_belongs_to_the_words_above_it(page_at):
     equal, so the group read as belonging to neither, and to the reply below
     it, which is the thing you next want to read."""
     daemon, path = page_at
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(json.dumps({
-            "type": "assistant", "timestamp": "2026-09-18T14:20:01.000Z",
-            "message": {"role": "assistant", "content": [
-                {"type": "text", "text": "First I will look around."}]}}) + "\n")
-        for n in range(3):
-            handle.write(json.dumps({
-                "type": "assistant", "timestamp": "2026-09-18T14:20:02.000Z",
-                "message": {"role": "assistant", "content": [
-                    {"type": "tool_use", "id": f"t{n}", "name": "Bash",
-                     "input": {"command": f"ls dir{n}"}}]}}) + "\n")
-        handle.write(json.dumps({
-            "type": "assistant", "timestamp": "2026-09-18T14:20:03.000Z",
-            "message": {"role": "assistant", "content": [
-                {"type": "text", "text": "Now I know what is there."}]}}) + "\n")
+    write_records(
+        daemon,
+        conftest.record("claude", "First I will look around.",
+                        ts="2026-09-18T14:20:01.000Z"),
+        *[conftest.record("tool", f"ls dir{n}", ts="2026-09-18T14:20:02.000Z",
+                          tool="Bash", tool_id=f"t{n}") for n in range(3)],
+        conftest.record("claude", "Now I know what is there.",
+                        ts="2026-09-18T14:20:03.000Z"))
     daemon.tick()
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1481,16 +1458,15 @@ def test_a_thought_between_two_tool_calls_leaves_no_trace(page_at):
     daemon, path = page_at
 
     def said(kind, text, **rest):
-        return conftest.records(conftest.record(
-            kind, text, ts="2026-09-18T14:20:02.000Z", **rest))
+        return conftest.record(kind, text, ts="2026-09-18T14:20:02.000Z", **rest)
 
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(said("claude", "First I will look around."))
-        for n in range(3):
-            handle.write(said("think", f"Now dir{n}."))
-            handle.write(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
-        handle.write(said("think", "That is all of them."))
-        handle.write(said("claude", "Now I know what is there."))
+    made = [said("claude", "First I will look around.")]
+    for n in range(3):
+        made.append(said("think", f"Now dir{n}."))
+        made.append(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
+    made.append(said("think", "That is all of them."))
+    made.append(said("claude", "Now I know what is there."))
+    write_records(daemon, *made)
     daemon.tick()
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1534,7 +1510,7 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
     now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
 
     def said(kind, text, ts=now, **rest):
-        return conftest.records(conftest.record(kind, text, ts=ts, **rest))
+        return conftest.record(kind, text, ts=ts, **rest)
 
     def tick_until(words):
         daemon.tick()
@@ -1548,18 +1524,18 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
             page.set_viewport_size({"width": 1500, "height": 900})
             wait_for_map(page)
             wait_for_watching(daemon)
-            with open(daemon_transcript(daemon), "a") as handle:
-                handle.write(said("claude", "Now the tests for the split:"))
+            write_records(daemon, said("claude", "Now the tests for the split:"))
             tick_until("the split")
-            with open(daemon_transcript(daemon), "a") as handle:
-                for n in range(3):
-                    handle.write(said("think", f"Now dir{n}."))
-                    handle.write(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
-                handle.write(said("claude", "They all pass."))
-                old = "2026-09-18T14:30:00.000Z"
-                handle.write(said("claude", "One more look.", ts=old))
-                handle.write(said("tool", "ls again", ts=old, tool_id="t9"))
-                handle.write(said("claude", "Done.", ts=old))
+            made = []
+            for n in range(3):
+                made.append(said("think", f"Now dir{n}."))
+                made.append(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
+            made.append(said("claude", "They all pass."))
+            old = "2026-09-18T14:30:00.000Z"
+            made.append(said("claude", "One more look.", ts=old))
+            made.append(said("tool", "ls again", ts=old, tool_id="t9"))
+            made.append(said("claude", "Done.", ts=old))
+            write_records(daemon, *made)
             tick_until("Done.")
             # A block that has just arrived slides in, and while it moves it
             # is a stacking context of its own: nothing inside it can stand
@@ -1654,13 +1630,12 @@ def test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant(page_at
     daemon, path = page_at
     now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
     old = "2026-09-18T14:30:00.000Z"
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(conftest.records(
-            conftest.record("you", "Give me the command.", ts=now),
-            conftest.record("claude", "Run this one.", ts=now),
-            conftest.record("you", "And then?", ts=now),
-            conftest.record("you", "An old prompt.", ts=old),
-            conftest.record("claude", "An old reply.", ts=old)))
+    write_records(daemon,
+                  conftest.record("you", "Give me the command.", ts=now),
+                  conftest.record("claude", "Run this one.", ts=now),
+                  conftest.record("you", "And then?", ts=now),
+                  conftest.record("you", "An old prompt.", ts=old),
+                  conftest.record("claude", "An old reply.", ts=old))
     daemon.tick()
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1821,12 +1796,8 @@ def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
               state.turns.at = 2;
               state.turns.open = new Set([1]);
             }""")
-            with open(daemon_transcript(daemon), "a") as handle:
-                handle.write(json.dumps({
-                    "type": "assistant",
-                    "timestamp": "2026-09-18T14:30:00.000Z",
-                    "message": {"role": "assistant", "content": [
-                        {"type": "text", "text": "Pushed."}]}}) + "\n")
+            write_records(daemon, conftest.record(
+                "claude", "Pushed.", ts="2026-09-18T14:30:00.000Z"))
             daemon.tick()
             page.wait_for_function(
                 "() => state.turns.run !== -1")
@@ -1854,24 +1825,12 @@ def hold_next_transcript(page, how_many=1):
     The answer is built when `fetch()` is called on a held one, which is the
     moment the daemon takes its snapshot. `unroute` would answer a held
     request itself, so the route stays until the test is done."""
-    held = []
-
-    def hold(route):
-        if len(held) < how_many:
-            held.append(route)
-        else:
-            route.continue_()
-
-    page.route(TRANSCRIPT, hold)
-    return held
+    return hold(page, TRANSCRIPT, how_many)
 
 
 def wait_for_request(page, held):
-    for _ in range(500):
-        if held:
-            return held[0]
-        page.wait_for_timeout(20)
-    raise AssertionError("the page never asked for the transcript")
+    wait_until(page, lambda: held)
+    return held[0]
 
 
 def test_a_block_pushed_while_the_transcript_is_fetched_is_kept(page_at):
@@ -2079,12 +2038,6 @@ def test_the_top_of_the_transcript_is_a_place_too(page_at):
             browser.close()
 
 
-def write_records(daemon, *made):
-    """Records from `conftest.record`, onto the session's transcript, unread."""
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(conftest.records(*made))
-
-
 def has_text(text):
     return ("() => state.turns.blocks.some(b => b && b.text === "
             + json.dumps(text) + ")")
@@ -2170,10 +2123,7 @@ def test_only_the_newest_transcript_fetch_lands(page_at):
             older = first.fetch()
             page.click('.tab[data-tab="files"]')
             page.click('.tab[data-tab="transcript"]')
-            for _ in range(500):
-                if len(held) > 1:
-                    break
-                page.wait_for_timeout(20)
+            wait_until(page, lambda: len(held) > 1)
             second = held[1]
             newer = second.fetch()
             write_records(daemon, conftest.record("claude", "PUSHED BETWEEN"))
@@ -2293,16 +2243,10 @@ def test_a_load_that_ends_after_the_switch_sets_no_timer(page_at):
             page.route(re.compile(r"/diff(\?.*)?$"),
                        lambda route: diffs.append(route))
             page.evaluate("() => { TABS.diff.poll = 100; load(); }")
-            for _ in range(250):
-                if files:
-                    break
-                page.wait_for_timeout(20)
+            wait_until(page, lambda: files)
             assert files, "the Files tab never asked"
             page.click('.tab[data-tab="diff"]')
-            for _ in range(250):
-                if diffs:
-                    break
-                page.wait_for_timeout(20)
+            wait_until(page, lambda: diffs)
             files[0].continue_()                 # the Files load ends now
             page.wait_for_timeout(600)           # proving it did not happen
             count = len(diffs)
@@ -2544,18 +2488,16 @@ def test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face(page_at):
 def append_markdown_rounds(daemon, many):
     """Rounds whose replies are much taller drawn as Markdown than as text:
     a heading, a list and a code block each."""
-    with open(daemon_transcript(daemon), "a") as handle:
-        for n in range(many):
-            handle.write(json.dumps({
-                "type": "user", "timestamp": "2026-09-18T14:10:00.000Z",
-                "message": {"role": "user", "content": f"round {n} please"}})
-                + "\n")
-            handle.write(json.dumps({
-                "type": "assistant", "timestamp": "2026-09-18T14:11:00.000Z",
-                "message": {"role": "assistant", "content": [{"type": "text",
-                    "text": f"## Answer {n}\n\n- one\n- two\n\n"
-                            "```python\nprint(1)\nprint(2)\n```\n\n"
-                            + "More words. " * 30}]}}) + "\n")
+    made = []
+    for n in range(many):
+        made.append(conftest.record("you", f"round {n} please",
+                                    ts="2026-09-18T14:10:00.000Z"))
+        made.append(conftest.record(
+            "claude", f"## Answer {n}\n\n- one\n- two\n\n"
+                      "```python\nprint(1)\nprint(2)\n```\n\n"
+                      + "More words. " * 30,
+            ts="2026-09-18T14:11:00.000Z"))
+    write_records(daemon, *made)
     daemon.tick()
 
 

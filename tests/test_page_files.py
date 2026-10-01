@@ -21,6 +21,7 @@ from browser import (
     show_tab,
     numbers,
     open_code,
+    wait_until,
 )
 
 pytestmark = skip_without_browser
@@ -1865,10 +1866,7 @@ def test_a_file_read_git_failed_on_is_not_drawn_as_its_text(ws, repo_page,
             page.on("request", lambda one: asked.append(one.url)
                     if "/file?" in one.url else None)
             monkeypatch.setattr(ws, "is_listed", lambda *a, **k: False)
-            for _ in range(300):                 # two answers, so one refused
-                if len(asked) >= 2:
-                    break
-                page.wait_for_timeout(50)
+            wait_until(page, lambda: len(asked) >= 2)   # two answers, so one refused
             page.wait_for_timeout(300)
             shown = page.locator(".filebody .code").inner_text()
             assert "not in this worktree" not in shown, shown
@@ -1912,10 +1910,7 @@ def test_a_first_read_that_failed_says_so_and_is_not_the_file(ws, repo_page,
             page.route("**/file?*", lambda route: route.abort() if held
                        else held.append(route))
             page.click(".filelist button:has-text('code.py')")
-            for _ in range(300):
-                if held:
-                    break
-                page.wait_for_timeout(20)
+            wait_until(page, lambda: held)
             page.evaluate("draw()")
             assert page.locator(body).inner_text() == "reading…"
             held[0].abort()

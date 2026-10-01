@@ -175,6 +175,19 @@ def contrast(front, back):
 def daemon_transcript(daemon):
     return daemon.transcript("s1").tail.path
 
+
+def write_records(daemon, *made):
+    """Records from `conftest.record`, onto the session's transcript, unread.
+
+    Every test that wrote these by hand wrote the same JSON again; build
+    them with `conftest.record` and write them here. `conftest` is imported
+    here, not at the top: it imports this module for its fixtures."""
+    import conftest
+
+    with open(daemon_transcript(daemon), "a") as handle:
+        handle.write(conftest.records(*made))
+
+
 def wait_for_watching(daemon, session_id="s1", seconds=15):
     """Wait until the page's stream is listening to one session.
 
@@ -231,6 +244,52 @@ def renew_stream(page, act):
     and the opening comes in the same write."""
     page.evaluate(f"() => {{ state.live = ''; {act}; }}")
     page.wait_for_function("state.live === 'live'", timeout=WAIT or 15000)
+
+
+def hold(page, pattern, how_many=1):
+    """Hold the first `how_many` requests to `pattern`, let the rest through,
+    and hand back the list the held ones land in. Never `unroute` with one
+    held: it answers the held one itself (.claude/topics/testing.md,
+    "Playwright")."""
+    held = []
+    page.route(pattern, lambda route: held.append(route)
+               if len(held) < how_many else route.continue_())
+    return held
+
+
+def wait_until(page, check):
+    """Let the page run until `check()` says yes, and fail when it never
+    does. `wait_for_function` cannot see a Python list, and a sleep here
+    would starve the route handler, which runs while the page waits."""
+    for _ in range(750):
+        if check():
+            return
+        page.wait_for_timeout(20)
+    raise AssertionError("it never happened")
+
+
+def stub_send(page, answers=None, delay=0):
+    """`/send` after `delay` ms, with every text sent kept in
+    `window.__sent`. Answered from `answers`, one per call and the last one
+    again after that; with no `answers`, passed on to the daemon, so a send
+    is slow but real."""
+    page.evaluate("""([answers, delay]) => {
+      window.__sent = [];
+      const real = window.fetch;
+      window.fetch = (url, opts) => {
+        if (String(url).endsWith("/send")) {
+          window.__sent.push(JSON.parse(opts.body).text);
+          if (answers === null) {
+            return new Promise((done) => setTimeout(
+              () => done(real(url, opts)), delay));
+          }
+          const body = answers[Math.min(window.__sent.length, answers.length) - 1];
+          return new Promise((done) => setTimeout(
+            () => done(new Response(JSON.stringify(body))), delay));
+        }
+        return real(url, opts);
+      };
+    }""", [answers, delay])
 
 
 def two_rows(page):
@@ -307,25 +366,27 @@ def open_diff(play, where):
 # --- the review: milestone 7 stage 2 -----------------------------------------
 
 
-def comment_on_line(page, at, note):
-    """Write a comment on the row at `at`, waiting for each step.
+def _comment_with(page, plus, note):
+    """Press the `+` given, write `note` and save it, waiting for each step.
 
     Every test that hand-rolled this skipped a wait, and the one that did was
     the one test that failed under a full parallel run.
     """
-    page.locator(".dline").nth(at).locator(".addnote").click(force=True)
+    plus.click(force=True)
     page.wait_for_selector(".commentbox textarea")
     page.fill(".commentbox textarea", note)
     page.click(".commentbox button:text-is('save')")
     page.wait_for_selector(".comment")
+
+
+def comment_on_line(page, at, note):
+    """Write a comment on the row at `at`."""
+    _comment_with(page, page.locator(".dline").nth(at).locator(".addnote"), note)
 
 
 def comment_on_first_line(page, note):
-    page.locator(".dline .addnote").first.click(force=True)
-    page.wait_for_selector(".commentbox textarea")
-    page.fill(".commentbox textarea", note)
-    page.click(".commentbox button:text-is('save')")
-    page.wait_for_selector(".comment")
+    """Write a comment on the first row that takes one."""
+    _comment_with(page, page.locator(".dline .addnote").first, note)
 
 def base_of(in_pane):
     return in_pane[1]
