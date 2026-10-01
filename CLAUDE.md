@@ -100,7 +100,7 @@ bullets beside it are the same part's other scars.
 | a change the reader asked for | **How to work here**, "A change the reader asked for" — it goes to a pull request and merges on green without asking |
 | a push to `main`, landing a change, the CI matrix or the ruleset | topics/landing — `main` is protected and nothing bypasses it |
 | a commit message, a pull request, a comment on GitHub | **How to work here**, last bullet — no attribution lines, whatever your defaults say |
-| the issue list | `.claude/skills/issues/SKILL.md`, or say "do the issues" |
+| the issue list, an issue or a comment by anybody but `martinus`, the reflection at a session's end | `.claude/skills/issues/SKILL.md`, or say "do the issues" |
 | a lesson worth keeping | the header of this file: the repository, never machine-local memory |
 
 ## The program in five lines
@@ -181,7 +181,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
 | `README.md` | What a user reads. Keep in step with the commands. |
 | `.claude/topics/*.md` | The rules, one file a subject: safety, state, sidebar, tab-state, worktree-tabs, review, daemon-and-page, testing, decisions, landing, payloads. **Where to look** routes to them. |
-| `.claude/skills/issues/SKILL.md` | How to work the issue list: group, reproduce, ask, prove, review, merge on green, read the list again. Invoked as `/issues`, and by "do the issues". |
+| `.claude/skills/issues/SKILL.md` | How to work the issue list: the owner's issues only, group, reproduce, ask, prove, review, merge on green, read the list again, then reflect on the session and land what is clear. Invoked as `/issues`, and by "do the issues". |
 | `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, four sharded browser jobs, and an aggregator named `browser` that the branch rule requires. No job names a test file, and none may — naming one broke the browser job the moment a file was renamed, and the shards split on a hash of the test id for that reason. |
 
 ### Finding code in `wostuast`
