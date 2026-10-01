@@ -508,6 +508,45 @@ def test_readers_are_dropped_when_their_session_goes(ws, served, transcript_file
     assert daemon.transcripts == {}
 
 
+def test_a_reader_nobody_needs_goes_and_its_run_counts_on(ws, served,
+                                                          transcript_file,
+                                                          monkeypatch):
+    """`declined_in_terminal` makes a reader for every session that shows a
+    dialog, watched or not, and it stayed until the session left the store:
+    a week of transcripts in memory (#294). One nobody watches, with no
+    dialog up, goes once it has been idle; and the next reader of that
+    session counts on from its run, so a `have` the page still holds for
+    the old one cannot match it."""
+    daemon, _ = served
+    ws.append_event(event("SessionStart",
+                          transcript_path=str(transcript_file("s1"))))
+    daemon.store.refresh()
+    first = daemon.transcript("s1")
+    assert first is not None and first.run == 0
+
+    daemon.forget_gone()
+    assert "s1" in daemon.transcripts           # asked for a moment ago
+
+    monkeypatch.setattr(ws, "READER_IDLE", 0.0)
+    ws.append_event(event("PreToolUse", tool_name="Bash", tool_use_id="t1",
+                          tool_input={"command": "make"}, ts=1001.0))
+    ws.append_event(event("PermissionRequest", tool_name="Bash",
+                          tool_input={"command": "make"}, ts=1002.0))
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].dialog
+    daemon.forget_gone()
+    assert "s1" in daemon.transcripts           # a dialog is up: it is read
+
+    ws.append_event(event("PostToolUse", tool_name="Bash", tool_use_id="t1",
+                          tool_input={"command": "make"}, ts=1003.0))
+    daemon.store.refresh()
+    held = daemon.store.sessions["s1"]
+    assert not held.dialog, (held.state, held.permission)
+    daemon.forget_gone()
+    assert "s1" not in daemon.transcripts       # idle, unwatched, no dialog
+    assert daemon.transcript("s1").run == 1
+
+
 def test_a_transcript_outside_the_claude_directory_is_refused(ws, served, tmp_path):
     """The path comes out of the log, so it is input, not fact."""
     daemon, base = served

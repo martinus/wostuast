@@ -2889,6 +2889,9 @@ class Transcript:
         #: to nothing changes no block, so there is nothing to push — and the
         #: page would go on showing a conversation the file no longer holds.
         self.run_sent = -1
+        #: When something last asked for this reader (`Daemon.transcript`),
+        #: on the monotonic clock. `forget_gone` drops one idle that long.
+        self.used = time.monotonic()
 
     def read_new(self) -> list[Block]:
         """Parse whatever has been appended. Returns every block that changed.
@@ -3673,6 +3676,11 @@ IGNORED_MAX = 2000
 #: How long a listing nobody has asked about is kept. It holds every name in
 #: a repository, so it does not sit there for the life of the daemon.
 LISTING_KEPT = 300.0
+
+#: How long a transcript reader nobody watches, and no dialog needs, is kept
+#: after it was last asked for (`Daemon.forget_gone`). Long enough for the
+#: page's fetch and the stream that follows it; a reader holds every block.
+READER_IDLE = 60.0
 
 #: How long a listing is served before git is asked again. The Files tab polls
 #: every two seconds, a worktree may have several browsers on it, and a walk of
@@ -6556,15 +6564,21 @@ class Commands:
         with self.lock:
             for path in paths:
                 tail = self.tails.setdefault(path, Tail(path))
-                lines = tail.read_new()
                 counts = self.counts.setdefault(path, Counter())
-                if tail.restarted:
-                    counts.clear()
+                # Streamed, and filtered as it streams: `read_new` built a
+                # list of every line of every transcript of the week, on
+                # the first `/` after a start, to keep a few of them (#294).
+                # `restarted` is known once the generator has begun.
+                found: Counter[str] = Counter()
                 for record in json_objects(
-                        line for line in lines if b"<command-name>" in line):
+                        line for line in tail.lines()
+                        if b"<command-name>" in line):
                     name = command_used(record)
                     if name:
-                        counts[name] += 1
+                        found[name] += 1
+                if tail.restarted:
+                    counts.clear()
+                counts.update(found)
                 total.update(counts)
         return total
 
@@ -6701,6 +6715,9 @@ class Daemon:
         #: tick (`tell_config`).
         self.config_seen = config_stamp()
         self.transcripts: dict[str, Transcript] = {}
+        #: The run of a reader `forget_gone` dropped, by session, so the next
+        #: reader of that session counts on from it. An int each, not blocks.
+        self.runs: dict[str, int] = {}
         #: Sessions a decline is being pressed into. It waits up to
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
         #: -- another tab -- would press a second Escape into what came next.
@@ -6767,9 +6784,12 @@ class Daemon:
             # name, so this is a different reading of the same session and
             # `seq` starts again. Say so, or the page patches the new blocks
             # over the head of the old ones and leaves the old tail below.
-            held = Transcript(str(path), session.cwd,
-                              run=held.run + 1 if held else 0)
+            # A reader `forget_gone` dropped counts on from its run too: a
+            # new one at run 0 could match a `have` the page still holds.
+            last = held.run if held else self.runs.get(session_id, -1)
+            held = Transcript(str(path), session.cwd, run=last + 1)
             self.transcripts[session_id] = held
+        held.used = time.monotonic()
         return held
 
     def read_transcript(
@@ -6907,14 +6927,30 @@ class Daemon:
             self.hub.send("settings", config_payload())
 
     def forget_gone(self) -> None:
-        """Drop the readers of sessions that are no longer shown.
+        """Drop the readers nobody needs.
 
-        A reader holds every block of a transcript. Without this they pile up
-        for as long as the daemon runs, one for every session ever selected.
+        A reader holds every block of a transcript, the tool results whole.
+        It was dropped only when its session left the `Store`, up to
+        `SESSION_MAX_AGE` -- a week -- and `declined_in_terminal` makes one
+        for every session that shows a dialog, watched or not: nearly every
+        session, so the daemon held a week of transcripts (#294). Now a
+        reader goes once no browser watches its session, no dialog is up,
+        and nothing has asked for it for `READER_IDLE`: the page fetches
+        before it subscribes, and a reader dropped in between would only be
+        read again. The run is kept (`runs`), so the next reader of that
+        session counts on from it.
         """
+        watched = self.hub.watchers()
+        now = time.monotonic()
         with self.lock:
-            for session_id in list(self.transcripts):
-                if session_id not in self.store.sessions:
+            for session_id, reader in list(self.transcripts.items()):
+                session = self.store.sessions.get(session_id)
+                if session is None:
+                    del self.transcripts[session_id]
+                    self.runs.pop(session_id, None)
+                elif (session_id not in watched and not session.dialog
+                      and now - reader.used > READER_IDLE):
+                    self.runs[session_id] = reader.run
                     del self.transcripts[session_id]
 
     def catch_up(self) -> str:

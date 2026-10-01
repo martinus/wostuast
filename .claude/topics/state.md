@@ -72,6 +72,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   too and its `PostToolUse` says so, and not for a session in `declining`,
   whose No the page is pressing and records itself. Read again on the same
   tick, so the row goes out no longer amber.
+  - **The reader it makes does not stay for a week** (#294). Each dialog
+    made a reader, watched or not, and `forget_gone` dropped one only when
+    its session left the `Store`: the daemon held every transcript of the
+    week, tool results whole. Now a reader goes once no browser watches its
+    session, no dialog is up (`Session.dialog`), and nothing has asked for
+    it for `READER_IDLE` -- not at once, because the page fetches before it
+    subscribes. Its run is kept in `Daemon.runs`, and the next reader of
+    that session counts on from it: one that began at run 0 again could
+    match a `have` the page still held for the old one, and the tab would
+    stand on blocks the file no longer ends with.
+    `test_a_reader_nobody_needs_goes_and_its_run_counts_on`.
   `test_a_no_given_in_the_terminal_ends_the_wait`,
   `test_a_yes_in_the_terminal_is_not_taken_for_a_no`,
   `test_a_permission_request_reaches_the_page_whole`,
