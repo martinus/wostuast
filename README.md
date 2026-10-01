@@ -100,7 +100,7 @@ flowchart LR
     end
     A1 -- "hook: one JSON line" --> L[("events.jsonl")]
     A2 -- "hook: one JSON line" --> L
-    L -- "tail" --> D["wostuast serve<br/>127.0.0.1:7331"]
+    L -- "tail" --> D["wostuast<br/>127.0.0.1:7331"]
     D -- "page + live updates" --> B["your browser"]
     B -- "jump · send · answer · no" --> D
     D -- "keys, through tmux" --> tmux
@@ -109,7 +109,7 @@ flowchart LR
 1. Claude Code runs a **hook** on every event. The hook appends one JSON line to
    `~/.local/state/wostuast/events.jsonl` and exits. It does not need the daemon
    to run, so nothing is lost while the daemon is down.
-2. **`wostuast serve`** reads that log and the agents' transcripts, and serves
+2. **`wostuast`** reads that log and the agents' transcripts, and serves
    one page on `127.0.0.1`. The page updates itself. There is no reload button,
    because there is nothing to reload.
 3. When you act on the page, the daemon types into the agent's tmux pane.
@@ -125,8 +125,7 @@ write: the page writes your settings file when you change a setting.
 small hook it runs on every event to `~/.local/share/wostuast/hook.py`, and adds
 its hooks to `~/.claude/settings.json`. It changes nothing else in that file.
 The hook file is made from the program, so a hook takes about 30 ms, not the
-120 ms it takes to start the whole program. Run `install` again after an
-update: it writes both files again, and `doctor` says when they are old.
+120 ms it takes to start the whole program.
 
 ```sh
 python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/main/wostuast)" install
@@ -136,17 +135,28 @@ python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/mai
 > Restart your Claude Code sessions after the install. A running session does
 > not pick up new hooks.
 
-**2. Check the setup.** `doctor` says what is missing, if anything.
+**2. Start it.** One command checks the setup, brings the program, the hook
+file and the hooks up to date when they are behind, and serves the page. A
+green line is right, a yellow one changed or is worth a look, and a red one
+stops it. `wostuast doctor` is the long form of the check.
 
 ```sh
-wostuast doctor
+wostuast --open
 ```
 
-**3. Open the page.**
-
-```sh
-wostuast serve --open
 ```
+wostuast · 2026-10-01 · 2a5ca39
+  ✓ python 3.11.15 · tmux · git
+  ✓ 12 hooks → ~/.local/share/wostuast/hook.py
+
+  ▶ http://127.0.0.1:7331/      ctrl-c stops
+    another computer: ssh -N -L 7331:127.0.0.1:7331 you@this-machine
+  · read 48,210 events from 3 files (61.2 MB) in 2.4 s
+```
+
+It writes nothing that is already right, so a start with nothing to fix
+leaves `~/.claude/settings.json` alone. After it did update something,
+restart your Claude Code sessions.
 
 > [!TIP]
 > **On another machine?** Forward the port over SSH:
@@ -301,7 +311,7 @@ the settings:
 A change applies at once. The page writes it to
 `~/.config/wostuast/settings.json` (or `$XDG_CONFIG_HOME/wostuast/`), and
 the menu shows that path at the bottom. Every open page gets the change,
-in every browser. You can also edit the file by hand while `serve` runs:
+in every browser. You can also edit the file by hand while `wostuast` runs:
 the page gets the change in about a second.
 
 ## Keys
@@ -328,12 +338,12 @@ is depends on your window manager.
 
 | Command | What it does |
 | --- | --- |
-| `wostuast install` | Copy to `~/.local/bin`, write the hook file to `~/.local/share/wostuast/hook.py`, and register the hooks and the status line. |
+| `wostuast` | Check the setup, bring the program, the hook file and the hooks up to date when they are behind, and serve the page on `127.0.0.1:7331`. `--port` picks another port (`0` lets the system pick a free one, and it prints the one it got), `--open` opens a browser. This was `wostuast serve`. |
+| `wostuast install` | Copy to `~/.local/bin`, write the hook file to `~/.local/share/wostuast/hook.py`, and register the hooks and the status line. A bare `wostuast` does this too, when something is behind. |
 | `wostuast uninstall` | Remove our hooks, our status line and the hook file. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
 | `wostuast ls` | List the sessions, in the same order as the page. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
 | `wostuast shapes` | List what in your transcripts of the last 7 days the page cannot show: record types it does not read, and Claude Code's own tags it leaves showing. It prints names and counts, never your text, so you can paste the output into a bug report. `--days` reads further back. |
-| `wostuast serve` | Start the daemon and serve the page on `127.0.0.1:7331`. `--port` picks another port (`0` lets the system pick a free one, and `serve` prints it), `--open` opens a browser. |
 | `wostuast hook` / `status` | Claude Code calls these. You do not. |
 
 `install` also registers `wostuast status` as your Claude Code status line, but
@@ -391,7 +401,7 @@ In the file, the links look like this:
 > [!CAUTION]
 > **In the file, write every backslash twice.** The file is JSON, so `\d`
 > must be written `\\d`. The menu does this for you. If the file has a
-> problem, wostuast says so: `serve` prints it, the page shows it at the end
+> problem, wostuast says so: the start prints it, the page shows it at the end
 > of the tab row, and `doctor` reports it. Keep patterns simple, because a
 > browser cannot stop a regular expression once it starts.
 
@@ -418,7 +428,7 @@ The page can type into a terminal, so it is careful about who may use it.
   browser, because Linux may not list its connection. This was not tested.
   If you get `403` there, use NAT mode.
 - On macOS, wostuast cannot ask which user opened a connection. Any account
-  on the Mac can read the page and act on it. Do not run `serve` on a Mac
+  on the Mac can read the page and act on it. Do not run `wostuast` on a Mac
   that other people log in to.
 - Every action carries a token that the daemon prints into the page. A token
   from before a restart is refused, and the page tells you to reload.
@@ -446,7 +456,7 @@ Yes, with two differences. On Linux, wostuast checks that an agent's process
 is still alive. macOS has no `/proc` to check, so there a quiet session is
 taken as ended after twelve hours.
 
-On Linux, the page answers only the user who runs `serve`, and root. On
+On Linux, the page answers only the user who runs `wostuast`, and root. On
 macOS, every account on the Mac can open it and act on it. See [Safety](#safety).
 
 </details>
@@ -503,7 +513,7 @@ the `/clear` stays under **History**, whole.
 ## No screenshots
 
 A screenshot of this page is a screenshot of somebody's agents, and made-up
-ones would show a tool nobody is using. Run `wostuast serve --open` instead:
+ones would show a tool nobody is using. Run `wostuast --open` instead:
 one command, and it shows you your own.
 
 ## Status

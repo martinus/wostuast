@@ -150,7 +150,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **A check must fail closed, and nothing may run outside the guard.** Both
   checks used to sit in front of the `try`, where `Origin: http://[::1` or one
   byte above 0x7f in the token header killed the thread — no status line, a
-  traceback into the terminal running `serve`, from a request nobody had
+  traceback into the terminal running `wostuast`, from a request nobody had
   authenticated. They refuse a header they cannot read; `guarded()` catches
   the rest, and it wraps the whole of a request.
 - **A body that is not read stays in the socket.** `asked()` refuses one over
@@ -529,7 +529,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **Our `settings.json` is written by the page, and by nothing else.**
   `config_path` puts it in `$XDG_CONFIG_HOME/wostuast/` or
   `~/.config/wostuast/`, where a person looks; `WOSTUAST_CONFIG` moves it
-  for tests, a seam and never a setting. `serve` writes nothing there: it
+  for tests, a seam and never a setting. The start writes nothing there: it
   left an example `links.json` once, and the menu made that pointless.
   `POST /api/settings` is checked like the verbs -- the token, this machine,
   this user -- because any site can POST to a loopback port, and it writes
@@ -604,14 +604,22 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   machine can read it, and that window does not close if the process dies in
   it. The log holds every prompt and every command an agent ran.
 - **The hooks and the status line run the installed copy, not the checkout,
-  and `serve` says when the two differ.** `install` copies this file to
+  and a start mends it when the two differ.** `install` copies this file to
   `install_path()`. A reader who pulled and restarted `serve` had a page
   that could show the session's spend, beside a status line — run by the
   copy from the day before — that never wrote it down. The page showed no
   cost and nothing said why; the reader's own status line printed the
   number, so the payload plainly carried it. `install_behind` compares the
-  bytes; `serve` prints it on the way up and `doctor` counts it as a
-  problem. `test_doctor_and_serve_say_when_the_installed_copy_is_another_version`.
+  bytes, and `doctor` counts it as a problem. **A bare `wostuast` writes
+  what is behind before it serves** (#275, `bring_up_to_date`): the
+  program, the hook file, the hooks and the status line -- and nothing
+  that is already right. Claude Code's `settings.json` is saved only when
+  its parsed content changed, because a start runs every day and the file
+  is the user's (the bullet below). A file it cannot read stops the start,
+  in red, before anything is served.
+  `test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version`,
+  `test_a_start_with_nothing_behind_writes_nothing`,
+  `test_a_start_stops_on_a_settings_file_it_cannot_read`.
   - **The hooks run a file made from the program, never a copy kept by
     hand** (#271). `hook_source` takes the definitions named in
     `HOOK_PARTS` out of the program's source with `ast`, between

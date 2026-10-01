@@ -72,7 +72,7 @@ bullets beside it are the same part's other scars.
 | About to touch | Read |
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
-| `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
+| `install`, `bring_up_to_date`, `cmd_serve`'s start, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
 | `hook_source`, `HOOK_PARTS`, `HOOK_HEAD`, `hook_path`, `hook_command`, `is_hook_file`, `write_program`, `install_behind`, `hook_files_missing` | topics/safety: the hooks run the installed copy, and the hook file is made from it |
 | `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety: our `settings.json`, written from the page; topics/sidebar for the menu |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
@@ -108,8 +108,9 @@ bullets beside it are the same part's other scars.
 ## The program in five lines
 
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
-`wostuast serve` tails that log into a `Store`, and serves one page over HTTP +
-SSE. The page shows a session list and three tabs: Transcript, Files, and
+A bare `wostuast` (`cmd_serve`) checks the setup, writes what is behind
+(`bring_up_to_date`), then tails that log into a `Store` and serves one page
+over HTTP + SSE. The page shows a session list and three tabs: Transcript, Files, and
 Review, which is the diff with the review written on it (`data-tab="diff"`).
 Four things go back to the terminal, all through tmux: jump, send, the
 keys that answer a question, and a No to a permission dialog, which is an
@@ -291,7 +292,7 @@ python3 tests/perturb.py breaks.json            # prove the new tests: each brea
 for i in 1 2 3; do python3 -m pytest -q -n 12 tests/test_page_review.py; done  # the test files you changed, under load
 python3 -m pytest -q -n auto --ignore-glob='tests/test_page_*'   # every test that drives no browser
 python3 -m pytest -q -n auto          # the whole suite: only when a shared part changed (below). Needs pytest-xdist.
-./wostuast doctor / ls / serve
+./wostuast doctor / ls        # and ./wostuast --port 0: check, update, serve
 ```
 
 **A browser test that skips has not run.** When the `pytest` on the PATH
