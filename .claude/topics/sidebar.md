@@ -127,38 +127,40 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     asked, because a url in the fixed face made the menu as wide as the
     longest link. **A choice is shown at once, then kept** (`keepSetting`,
     `POST /api/settings`), and **made so by the push** (`takeSettings` on
-    the `settings` event): the POST's own answer is not applied, because
-    two quick changes can be answered out of order and the older answer
-    would undo the newer one, while the pushes go out in the order the file
-    was written. **And a push older than an answer is dropped**
-    (`newerSettings`, `serial` and `run` from `config_told`): the pushes
-    and the answer come on different connections, and under load an older
-    push landed after a newer answer, the link rows were rebuilt from the
-    file before the change, and a red row went.
-    `test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept` was
-    red one run in three at `-n 12` until then;
-    `test_an_older_settings_push_is_dropped` holds it alone. Every open page gets the push, the one that made the
-    change too, and a hand edit of the file arrives the same way
-    (`tell_config`). A change of the diff's columns from the file waits
+    the `settings` event). **The POST's answer carries no settings**, only
+    `done` and the `refused` links: the pushes go out in the order the file
+    was written, under `config_lock`, and an answer that carried the
+    settings came on another connection, landed before an older push, and
+    was undone by it. A numbering of the pushes was tried for that and
+    taken out again: one line needs no numbers. Every open page gets the
+    push, the one that made the change too, and a hand edit of the file
+    arrives the same way (`tell_config`). A change of the diff's columns from the file waits
     while a comment is being written (`takeSides`), as `keepSides` does.
   - **The ticket links are rows in the menu, saved on leave or Enter**
-    (`putLinkRow`, `saveLinks`, `paintLinks`): the reader chose that over a
+    (`putLinkRow`, `saveLinks`, `putLinkRows`): the reader chose that over a
     save button and over saving each keystroke, which linked half a
     pattern for a moment. Each row is "find", a regular expression, and
     "link to"; under it, the first match on the page and where it goes
-    (`paintExamples`, only while the menu is open, because it reads the
-    page's text), or why it is not saved, in red, with the box it is about
-    (`sayLink`, `data-bad`). **The page checks only what only it can**: a
+    (`paintExamples`, when the menu opens and after a save, never on a
+    push, because it reads the text of the whole page), or why it is not
+    saved, in red, with the box it is about (`sayLink`, `data-bad`, the
+    `field` the daemon names with `trouble_field` -- read from the
+    message's words, the wrong box went red when a pattern held them). **The page checks only what only it can**: a
     half row, and a pattern this browser will not compile (`linkProblem`).
     The rest is `link_trouble` in the daemon, once; `save_config` keeps
     the good links, leaves out the bad and names them by index
     (`refused`), so one mistake does not cost the other links. **The rows
-    are not rebuilt from the file while a save is on its way, while the
-    reader is in one of them, or when the file is what this page just
-    wrote** (`state.linksSaving`, `state.linksSent`): a rebuild drops a red
-    row, which is in no file. **× is taken out after its click has gone
-    up the page**: removed first, the click came from nowhere and the
-    listener that shuts the menu on an outside click shut it. **The colours
+    are the file's when the menu opens, and the reader's while it is open**
+    (`putLinkRows`, from `showSettings`): a push never rebuilds them. A
+    rebuild took a red row, a half-filled one and an empty new one, none
+    of which is in any file; three guards each covered one way a push
+    could land (a save on its way, this page's own write, an older push
+    after an answer), the last was red one run in three at `-n 12`, and
+    the guards still missed the empty row.
+    `test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept`.
+    **The outside click is read from the click's path**
+    (`composedPath`), not from where its target is now: × takes its own
+    row out, its target then had no place on the page, and the menu shut. **The colours
     buttons wear the colours they give** (`--light-bg`, `--dark-ink` and
     the rest, in the first `:root`, which the theme blocks read for `--bg`
     and `--ink`), so they read the same in either theme. **Each label

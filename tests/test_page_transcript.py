@@ -2959,7 +2959,7 @@ def test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept(ws, page_at):
             type_link(page, r"OK-(\d+)", "https://t.example/$1")
             kept(ws, "links", [{"match": r"OK-(\d+)", "url": "https://t.example/$1"}])
             type_link(page, "(a+)+b", "https://t.example/")
-            page.wait_for_selector("#linklist .linkrow.bad")
+            page.wait_for_selector("#linklist .linkrow[data-bad='match']")
             rows = link_rows(page)
             assert rows[1][:2] == ["(a+)+b", "https://t.example/"], rows
             assert "quantifier" in rows[1][2] and "not saved" in rows[1][2], rows
@@ -3008,5 +3008,26 @@ def test_a_bad_link_in_the_file_is_shown_red_as_written(ws, page_at):
             rows = link_rows(page)
             assert rows[0][0] == "BAD-(" and rows[0][3] == "match", rows
             assert "“find” is not a regular expression" in rows[0][2], rows
+        finally:
+            browser.close()
+
+
+def test_the_rows_are_the_readers_while_the_menu_is_open(ws, page_at):
+    """A push never rebuilds them: an empty new row is in no file, nor is a
+    red one, and a rebuild took both. They are the file's again when the
+    menu opens."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.click("#settings")
+            page.click("#setpop .linkadd")
+            ws.save_config({"links": [{"match": r"OA-(\d+)", "url": "https://t/$1"}]})
+            daemon.tell_config()
+            page.wait_for_function("(state.settings.links || []).length === 1")
+            assert link_rows(page) == [["", "", "", ""]]
+            page.keyboard.press("Escape")
+            page.click("#settings")
+            assert [one[:2] for one in link_rows(page)] == [[r"OA-(\d+)", "https://t/$1"]]
         finally:
             browser.close()

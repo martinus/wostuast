@@ -3673,9 +3673,7 @@ TOKEN_MARK = "__WOSTUAST_TOKEN__"
 VERSION_MARK = "__WOSTUAST_VERSION__"
 
 #: Where the reader's settings go into the page, so the first paint already
-#: has their colours. Replaced last, because the links in it are the reader's
-#: own text: replaced first, a link holding the token's mark would have had
-#: the token written into it.
+#: has their colours. The marks are put in in one pass (`route_get`).
 SETTINGS_MARK = '"__WOSTUAST_SETTINGS__"'
 
 #: How Claude Code answers a call whose dialog was told No, as the call's
@@ -5298,6 +5296,10 @@ NAME_MAX = 120
 #: is a mistake, and refusing it is cheaper than explaining the slowness.
 LINK_PATTERN_MAX = 200
 
+#: The most a link's url may be. A url template longer than this is a
+#: mistake, and the file is written whole on every change.
+LINK_URL_MAX = 2000
+
 def risky_pattern(pattern: str) -> bool:
     """A quantifier inside a group that is itself quantified: `(a+)+`.
 
@@ -5335,6 +5337,8 @@ def link_trouble(one: Any) -> str:
     """
     if not isinstance(one, dict):
         return "not an object with `match` and `url`"
+    if set(one) - {"match", "url"}:
+        return "a link is only `match` and `url`"
     match = one.get("match")
     url = one.get("url")
     if not isinstance(match, str) or not match:
@@ -5343,6 +5347,8 @@ def link_trouble(one: Any) -> str:
         return "`url` is missing or not text"
     if len(match) > LINK_PATTERN_MAX:
         return f"`match` is longer than {LINK_PATTERN_MAX} characters"
+    if len(url) > LINK_URL_MAX:
+        return f"`url` is longer than {LINK_URL_MAX} characters"
     if not url.startswith(("http://", "https://")):
         return "`url` does not start with http:// or https://"
     try:
@@ -5353,6 +5359,12 @@ def link_trouble(one: Any) -> str:
         return ("`match` has a quantifier inside a quantified group, which can"
                 " be slow enough to freeze the page")
     return ""
+
+
+def trouble_field(why: str) -> str:
+    """Which box of the menu's row a link's trouble is about. The messages
+    are ours, so they name the key; the menu paints that box red."""
+    return "url" if "`url`" in why else "match"
 
 
 #: What each setting may be, in the words the menu uses, so the file reads
@@ -5369,9 +5381,9 @@ SETTING_WORDS: dict[str, tuple[Any, ...]] = {
 #: the page draws, so a list this long is a mistake, not a use.
 LINKS_KEPT = 100
 
-#: The most a link's url may be. A url template longer than this is a
-#: mistake, and the file is written whole on every change.
-LINK_URL_MAX = 2000
+#: Every key that is ours, judged by `config_trouble`. Any other key in the
+#: file is kept and left alone.
+SETTING_KEYS = {*SETTING_WORDS, "alerts", "links"}
 
 
 def config_trouble(key: str, value: Any) -> str:
@@ -5399,6 +5411,26 @@ def config_trouble(key: str, value: Any) -> str:
     return f"`{key}` is not a setting"
 
 
+def read_config() -> tuple[dict[str, Any] | None, str]:
+    """The file as written, or None and why it cannot be used. A missing
+    file is no settings. One reader for `load_config` and `save_config`, so
+    the two cannot disagree about what an unreadable file is."""
+    path = config_path()
+    if not path.exists():
+        return {}, ""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        return None, f"cannot read {path}: {error}"
+    except ValueError as error:
+        return None, (f"{path} is not valid JSON: {error}."
+                      " A backslash in a pattern has to be doubled: `\\\\d`,"
+                      " not `\\d`.")
+    if not isinstance(payload, dict):
+        return None, f"{path} is not an object of settings"
+    return payload, ""
+
+
 def load_config() -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     """The usable settings, every link as written, and what is wrong.
 
@@ -5418,24 +5450,15 @@ def load_config() -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     for you. The file is never repaired: guessing is a worse surprise than
     the message.
     """
+    payload, why = read_config()
+    if payload is None:
+        return {}, [], [why]
     path = config_path()
-    if not path.exists():
-        return {}, [], []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as error:
-        return {}, [], [f"cannot read {path}: {error}"]
-    except ValueError as error:
-        return {}, [], [f"{path} is not valid JSON: {error}."
-                        " A backslash in a pattern has to be doubled: `\\\\d`,"
-                        " not `\\d`."]
-    if not isinstance(payload, dict):
-        return {}, [], [f"{path} is not an object of settings"]
     good: dict[str, Any] = {}
     links: list[dict[str, str]] = []
     trouble: list[str] = []
     for key, value in payload.items():
-        if key not in SETTING_WORDS and key not in ("alerts", "links"):
+        if key not in SETTING_KEYS:
             continue                 # kept in the file, and not ours to judge
         why = config_trouble(key, value)
         if why:
@@ -5446,7 +5469,8 @@ def load_config() -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
                 if isinstance(one, dict):
                     links.append({"match": str(one.get("match") or ""),
                                   "url": str(one.get("url") or ""),
-                                  "trouble": why})
+                                  "trouble": why,
+                                  "field": trouble_field(why) if why else ""})
                 if why:
                     trouble.append(f"link {at + 1} in {path}: {why}")
         else:
@@ -5517,27 +5541,18 @@ def save_config(change: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         kept = []
         for at, one in enumerate(change["links"]):
             why = link_trouble(one)
-            if not why and set(one) - {"match", "url"}:
-                why = "a link is only `match` and `url`"
-            if not why and len(one["url"]) > LINK_URL_MAX:
-                why = f"`url` is longer than {LINK_URL_MAX} characters"
             if why:
-                refused.append({"at": at, "trouble": why})
+                refused.append({"at": at, "trouble": why,
+                                "field": trouble_field(why)})
             else:
-                kept.append({"match": one["match"], "url": one["url"]})
+                kept.append(one)
         change = dict(change, links=kept)
-    path = config_path()
-    held: Any = {}
-    if path.exists():
-        try:
-            held = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            return f"{path} cannot be read, so it is left alone: {error}", []
-        if not isinstance(held, dict):
-            return (f"{path} is not an object of settings, so it is left"
-                    " alone"), []
+    held, why = read_config()
+    if held is None:
+        return f"{why} -- so it is left alone", []
     held.update(change)
-    write_atomic(path, json.dumps(held, indent=2, ensure_ascii=False) + "\n",
+    write_atomic(config_path(),
+                 json.dumps(held, indent=2, ensure_ascii=False) + "\n",
                  private=True)
     return "", refused
 
@@ -6260,13 +6275,6 @@ class Daemon:
         #: -- another browser, or a hand in an editor -- goes out on the next
         #: tick (`tell_config`).
         self.config_seen = config_stamp()
-        #: Which push of the settings this is, and which daemon sent it.
-        #: The pushes and a POST's answer come on different connections, so
-        #: an older push could land after a newer answer and put the page
-        #: back: a red link row was rebuilt away under load. The page drops
-        #: a push older than one it has (`newerSettings`).
-        self.config_serial = 0
-        self.config_run = secrets.token_hex(4)
         self.transcripts: dict[str, Transcript] = {}
         #: Sessions a decline is being pressed into. It waits up to
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
@@ -6446,30 +6454,22 @@ class Daemon:
         self.forget_gone()
         self.files.forget(LISTING_KEPT)
 
-    def config_told(self) -> dict[str, Any]:
-        """The settings, with their place in the line of pushes."""
-        return dict(config_payload(), serial=self.config_serial,
-                    run=self.config_run)
-
-    def tell_config(self, force: bool = False) -> dict[str, Any] | None:
-        """Send the settings to every browser when the file has changed, and
-        hand back what was sent.
+    def tell_config(self, force: bool = False) -> None:
+        """Send the settings to every browser when the file has changed.
 
         Every open page is one reader's screen, so a change in one tab is a
         change in all of them, and a file edited by hand reaches the page
         without a reload. A stat a tick, never a read, until it changes.
-        **Numbered and sent under the lock**, so the numbers go out in the
-        order they were given.
+        **Sent under the lock**, so the pushes go out in the order the file
+        was written: the push is the one way the settings reach a page that
+        is open, and so one line, in order.
         """
         with self.config_lock:
             now = config_stamp()
             if now == self.config_seen and not force:
-                return None
+                return
             self.config_seen = now
-            self.config_serial += 1
-            told = self.config_told()
-            self.hub.send("settings", told)
-        return told
+            self.hub.send("settings", config_payload())
 
     def forget_gone(self) -> None:
         """Drop the readers of sessions that are no longer shown.
@@ -6997,8 +6997,12 @@ class Serving:
         if why:
             self.reply_json({"error": why}, 400)
             return
-        told = self.daemon.tell_config(force=True) or {}
-        self.reply_json(dict(told, refused=refused, done=True))
+        self.daemon.tell_config(force=True)
+        # Only what the push cannot say. The settings themselves come by the
+        # push, so the page has one line of them, in order: an answer that
+        # carried them came on another connection, and could land before
+        # an older push and be undone by it.
+        self.reply_json({"refused": refused, "done": True})
 
     def in_tmux(self, session_id: str) -> Session | None:
         """The session, when it is one the verbs can reach at all."""
@@ -7311,18 +7315,17 @@ class Serving:
         query = parse_qs(url.query)
         parts = path.strip("/").split("/")
         if path == "/":
-            page = (PAGE.replace(TOKEN_MARK, self.daemon.token)
-                    .replace(VERSION_MARK, self.daemon.version)
-                    .replace(SETTINGS_MARK,
-                             page_json(self.daemon.config_told())))
+            marks = {TOKEN_MARK: self.daemon.token,
+                     VERSION_MARK: self.daemon.version,
+                     SETTINGS_MARK: page_json(config_payload())}
+            # One pass, so no mark is looked for in what another put in: the
+            # settings are the reader's text, and a link holding the token's
+            # mark would have had the token written into it.
+            page = re.sub("|".join(map(re.escape, marks)),
+                          lambda hit: marks[hit[0]], PAGE)
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
-        elif path == "/api/settings":
-            # The reader's own, not a session's, so it hangs off nothing. It
-            # is read from disk here rather than held, because a person may
-            # edit the file.
-            self.reply_json(self.daemon.config_told())
         elif path == "/api/events":
             self.stream(query.get("watch", [""])[0])
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -8312,9 +8315,10 @@ PAGE = r"""<!doctype html>
 // page (`page_json`). Still the bare mark when nothing replaced it, so it is
 // read only when it is an object.
 var SETTINGS = "__WOSTUAST_SETTINGS__";
+if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
 // Before anything is painted, so the page never flashes the wrong colours.
 (function () {
-  var held = SETTINGS && typeof SETTINGS === "object" ? SETTINGS.colours : "";
+  var held = SETTINGS.colours;
   var choice = held === "light" || held === "dark" ? held : "system";
   var system = window.matchMedia("(prefers-color-scheme: light)").matches
     ? "light" : "dark";
@@ -8603,14 +8607,9 @@ body {
   line-height: 1.4; overflow-wrap: anywhere;
 }
 .setpop .linksays:empty { display: none; }
-.setpop .linkrow.bad .linksays { color: var(--hot); }
+.setpop .linkrow:is([data-bad="match"], [data-bad="url"]) .linksays { color: var(--hot); }
 .setpop .linksays a { color: var(--done); }
-.setpop .linkadd {
-  align-self: flex-start; padding: 3px 10px; border-radius: 5px;
-  border: 1px dashed var(--edge-bright); background: none; color: var(--ink-mute);
-  font-family: var(--sans); font-size: 12px; cursor: pointer;
-}
-.setpop .linkadd:hover { color: var(--needs); border-color: var(--needs); }
+.setpop .linkadd { align-self: flex-start; border-style: dashed; }
 /* Where all of it is kept, across both columns, so a person can open it. */
 .setpop .where {
   grid-column: 1 / -1; display: flex; align-items: center; gap: 6px;
@@ -10007,20 +10006,12 @@ const state = {
   cleared: new Set(),
   // The reader's `settings.json` as this page last heard it: from the page
   // as it was served, then from every `settings` push. See `takeSettings`.
-  settings: SETTINGS && typeof SETTINGS === "object" ? SETTINGS : {},
+  settings: SETTINGS,
   // The reader's own autolinks, compiled once a change. `linksKey` says
   // which, for the redraw keys: a count stayed the same when a pattern
   // changed, and the rows kept their old links.
   links: [],
   linksKey: "[]",
-  // The links this page last sent, so their own push does not rebuild the
-  // rows in the menu -- which would take a red row with it (`paintLinks`).
-  linksSent: null,
-  linksSaving: 0,       // how many saves of the links are on their way
-  // Which push of the settings this page has, and from which daemon:
-  // `newerSettings`.
-  settingsRun: "",
-  settingsSerial: 0,
   // What is wrong with `settings.json`, if anything. It stands in the live
   // slot behind everything else.
   linkTrouble: [],
@@ -10346,41 +10337,21 @@ function setting(key) {
 }
 
 // Send one change. It is shown already, and the push that follows makes it
-// so on every page. The answer is not applied: two quick changes can be
-// answered out of order, and the older answer would undo the newer one,
-// while the pushes go out in the order the file was written.
+// so on every page. The answer carries no settings, only whether it worked
+// and which links were refused: the settings come by the push alone, one
+// line in the order the file was written. An answer on its own connection
+// landed before an older push, and that push put the page back.
 async function keepSetting(change) {
   state.settings = { ...state.settings, ...change };
   const answer = await post("/api/settings", change);
   said(answer);
-  // Not applied, but counted: a push older than this answer is the file
-  // before this change, and must not put the page back.
-  if (answer && !answer.error && newerSettings(answer)) heardSettings(answer);
   return answer;
-}
-
-// Whether a push is not older than what this page has heard. The pushes and
-// a POST's answer come on different connections, and under load an older
-// push landed after a newer answer: the menu's rows were rebuilt from the
-// file before the change, then again from the file after it, and a red row,
-// which is in neither, was gone. A different daemon numbers afresh, so its
-// pushes are always taken.
-function newerSettings(body) {
-  return !body || body.run !== state.settingsRun
-    || !(body.serial < state.settingsSerial);
-}
-
-function heardSettings(body) {
-  state.settingsRun = body.run;
-  state.settingsSerial = body.serial;
 }
 
 // Make the page what the file says. `first` is the page starting: nothing is
 // drawn yet, so nothing is drawn again.
 function takeSettings(body, first) {
-  if (!newerSettings(body)) return;
-  if (body) heardSettings(body);
-  state.settings = body && typeof body === "object" ? body : {};
+  state.settings = body;
   const colours = setting("colours");
   showTheme(colours === "light" || colours === "dark" ? colours : "system");
   applyReading(readingWanted());
@@ -10404,10 +10375,10 @@ function themeChoice() {
   return document.documentElement.dataset.themeChoice || "system";
 }
 
+// The colours only. Whoever changed them paints the menu, once.
 function showTheme(choice) {
   document.documentElement.dataset.themeChoice = choice;
   document.documentElement.dataset.theme = choice === "system" ? systemTheme() : choice;
-  paintSettings();
 }
 
 // The reader's pick: shown, and kept.
@@ -10418,6 +10389,7 @@ function applyTheme(choice) {
 
 function nextTheme() {
   applyTheme(THEME_ORDER[(THEME_ORDER.indexOf(themeChoice()) + 1) % THEME_ORDER.length]);
+  paintSettings();
 }
 
 window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
@@ -11671,9 +11643,17 @@ async function setAlert(which, on) {
 }
 
 function showSettings(open) {
+  // The link rows are the file's when the menu opens, and the reader's
+  // while it is open: a push never rebuilds them. A rebuild took a red row,
+  // a half-filled one and an empty new one, none of which is in any file;
+  // three guards each covered one way a push could land, and missed others.
+  if (open && $("setpop").hidden) putLinkRows();
   $("setpop").hidden = !open;
   $("settings").setAttribute("aria-expanded", String(open));
-  if (open) paintSettings();
+  if (open) {
+    paintSettings();
+    paintExamples();
+  }
 }
 
 // The settings menu, built once: the colours, the two alerts, and how code
@@ -11723,7 +11703,7 @@ function putSettings() {
   label("links", "link");
   const links = put(pop, "div", "linkedit");
   put(links, "div", "linklist").id = "linklist";
-  const add = put(links, "button", "linkadd", "+ add a link");
+  const add = put(links, "button", "verb quiet linkadd", "+ add a link");
   add.type = "button";
   add.addEventListener("click", () => {
     putLinkRow($("linklist"), { match: "", url: "", trouble: "" })
@@ -11757,7 +11737,6 @@ function paintSettings() {
     paintChoice(pop.querySelector("." + name), value);
   }
   $("settingspath").textContent = setting("path") || "";
-  paintLinks();
 }
 
 // --- the ticket links, in the settings menu ---------------------------------
@@ -11803,23 +11782,20 @@ function putLinkRow(list, one) {
   drop.type = "button";
   drop.title = "remove this link";
   drop.setAttribute("aria-label", "remove this link");
-  // Taken out after this click has gone up the page: gone first, the click
-  // came from nowhere, and the listener that shuts the menu on a click
-  // outside it shut it.
   drop.addEventListener("click", () => {
-    setTimeout(() => { row.remove(); saveLinks(); });
+    row.remove();
+    saveLinks();
   });
-  if (one.trouble) sayLink(row, linkWords(one.trouble), true);
+  if (one.trouble) sayLink(row, linkWords(one.trouble), one.field || "match");
   return row;
 }
 
 // What a row says under its boxes: why it is not saved, or nothing, and
-// then `paintExamples` writes what it links.
-function sayLink(row, text, bad) {
+// then `paintExamples` writes what it links. `field` is the box the trouble
+// is about, which wears the red; the daemon names it (`trouble_field`).
+function sayLink(row, text, field) {
   row.dataset.said = text ? "yes" : "";
-  row.classList.toggle("bad", Boolean(bad));
-  // The box the trouble is about wears the red.
-  row.dataset.bad = !bad ? "" : /link to/.test(text) ? "url" : "match";
+  row.dataset.bad = field || "";
   row.querySelector(".linksays").textContent = text;
 }
 
@@ -11827,8 +11803,8 @@ function sayLink(row, text, bad) {
 // browser will not compile. Everything else is the daemon's `link_trouble`,
 // the one check there is, so a second copy cannot drift from it.
 function linkProblem(match, url) {
-  if (!match && !url) return { say: "", bad: false, send: false };
-  if (!match || !url) return { say: "fill in both to save it", bad: false, send: false };
+  if (!match && !url) return { say: "", field: "", send: false };
+  if (!match || !url) return { say: "fill in both to save it", field: "", send: false };
   try {
     new RegExp(match, "g");
   } catch (error) {
@@ -11836,9 +11812,9 @@ function linkProblem(match, url) {
     // group", the pattern again and the flags; the reason is the last part.
     const why = error.message.replace(/^Invalid regular expression: \/.*\/[a-z]*: /, "");
     return { say: "\u201cfind\u201d is not a regular expression: " + why
-                  + " \u00b7 not saved", bad: true, send: false };
+                  + " \u00b7 not saved", field: "match", send: false };
   }
-  return { say: "", bad: false, send: true };
+  return { say: "", field: "", send: true };
 }
 
 async function saveLinks() {
@@ -11847,49 +11823,25 @@ async function saveLinks() {
   for (const row of $("linklist").querySelectorAll(".linkrow")) {
     const [match, url] = row.querySelectorAll("input");
     const problem = linkProblem(match.value, url.value);
-    sayLink(row, problem.say, problem.bad);
+    sayLink(row, problem.say, problem.field);
     if (!problem.send) continue;
     sent.push({ match: match.value, url: url.value });
     rows.push(row);
   }
-  // While it is on its way, a push is the file before or after this
-  // change, and either would rebuild the rows and take a red one with it.
-  state.linksSaving += 1;
   const answer = await keepSetting({ links: sent });
-  state.linksSaving -= 1;
   for (const one of (answer && answer.refused) || []) {
-    if (rows[one.at]) sayLink(rows[one.at], linkWords(one.trouble) + " \u00b7 not saved", true);
+    if (rows[one.at]) sayLink(rows[one.at], linkWords(one.trouble) + " \u00b7 not saved", one.field);
   }
-  // What the file now holds, from the answer, which the push will bring
-  // too: no rebuild then. And the page's own copy is set to it, because
-  // `keepSetting` put in what was *sent*, a refused link with it -- compared
-  // with that, the rows were rebuilt without the red one's reason, and the
-  // push after rebuilt them again without it. Only when this answer is the
-  // newest the page has heard: after a newer push, that push is the truth.
-  if (answer && !answer.error && answer.run === state.settingsRun
-      && answer.serial === state.settingsSerial) {
-    const now = Array.isArray(answer.links) ? answer.links : [];
-    state.settings = { ...state.settings, links: now };
-    state.linksSent = JSON.stringify(now.map((one) => [one.match, one.url]));
-  }
-  paintLinks();
+  paintExamples();
 }
 
-// The rows, from the file -- unless the reader is in one of them, or this is
-// the file this page has just written.
-function paintLinks() {
+// The rows, from the file, as the menu opens (`showSettings`).
+function putLinkRows() {
   const list = $("linklist");
-  if (!list || state.linksSaving) return;
-  const links = Array.isArray(setting("links")) ? setting("links") : [];
-  const key = JSON.stringify(links.map((one) => [one.match, one.url]));
-  if (key === state.linksSent) {
-    list.dataset.drawn = key;
-  } else if (!list.contains(document.activeElement) && fresh(list, "drawn", key)) {
-    list.replaceChildren();
-    for (const one of links) putLinkRow(list, one);
-    state.linksSent = null;
+  list.replaceChildren();
+  for (const one of Array.isArray(setting("links")) ? setting("links") : []) {
+    putLinkRow(list, one);
   }
-  if (!$("setpop").hidden) paintExamples();
 }
 
 // Under each good row, the first thing on this page it links, and where to:
@@ -11911,10 +11863,9 @@ function paintExamples() {
       continue;
     }
     put(says, "span", null, hit[0] + " \u2192 ");
-    const link = put(says, "a", null, where.replace(/^https?:\/\//i, ""));
+    const link = put(says, "a", null, where.replace(AWAY, ""));
     link.href = where;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
+    opensAway(link);
   }
 }
 
@@ -17203,7 +17154,13 @@ $("alertdone").addEventListener("change", (press) => {
 // A panel that only its own button can close is a panel you have to go back
 // to. Anywhere else on the page, and Escape, shut it.
 document.addEventListener("click", (press) => {
-  if (!$("setpop").hidden && !press.target.closest(".setslot")) showSettings(false);
+  // The path the click took, not where its target is now: a button that
+  // takes itself out (a link row's ×) has no place left on the page, and
+  // its click read as one from outside the menu.
+  if (!$("setpop").hidden
+      && !press.composedPath().some((one) => one.classList && one.classList.contains("setslot"))) {
+    showSettings(false);
+  }
 });
 
 async function jumpToPane() {

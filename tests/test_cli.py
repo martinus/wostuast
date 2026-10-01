@@ -317,11 +317,14 @@ def test_only_a_usable_autolink_reaches_the_page(ws, tmp_path):
         "not an object",
         {"match": "x" * 300, "url": "https://tickets/"},       # far too long
         {"match": "(a+)+b", "url": "https://tickets/"},         # backtracks
+        {"match": "OA-1", "url": "https://t/", "x": 1},        # not a link's key
     ]}))
     assert usable_links(ws) == [
         {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"}]
     # Every other one is trouble, the one that is not even an object too.
-    assert len(ws.load_config()[2]) == 7
+    # One check for the file and for a POST: a key the POST refuses is
+    # refused here too.
+    assert len(ws.load_config()[2]) == 8
 
 
 def test_the_menu_is_handed_a_bad_link_as_written(ws):

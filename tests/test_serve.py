@@ -70,21 +70,23 @@ def test_the_page_is_served(served):
         assert b"<!doctype html>" in response.read().lower()
 
 
-def test_the_settings_route_carries_the_settings_and_the_trouble(ws, served):
-    """The usable settings, every link as written with what is wrong with it,
-    and where the file is. The trouble too, because the page cannot tell "no
-    links" from "your file is broken" on its own -- and the difference is the
-    whole of the reader's problem."""
+def test_the_page_carries_the_settings_and_the_trouble(ws, served):
+    """The usable settings, every link as written with what is wrong with it
+    and which box that is about, and where the file is. The trouble too,
+    because the page cannot tell "no links" from "your file is broken" on
+    its own -- and the difference is the whole of the reader's problem."""
     _, base = served
     ws.config_path().parent.mkdir(parents=True, exist_ok=True)
     ws.config_path().write_text(json.dumps({"colours": "dark", "links": [
         {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
         {"match": "BAD-(", "url": "https://tickets/"},
     ]}), encoding="utf-8")
-    status, body = get(f"{base}/api/settings")
-    assert status == 200
+    with urllib.request.urlopen(f"{base}/", timeout=5) as response:
+        page = response.read().decode("utf-8")
+    body = json.loads(page.split("var SETTINGS = ", 1)[1].split(";\n", 1)[0])
     assert body["colours"] == "dark"
     assert [one["trouble"] == "" for one in body["links"]] == [True, False]
+    assert [one["field"] for one in body["links"]] == ["", "match"]
     assert len(body["trouble"]) == 1 and "link 2" in body["trouble"][0]
     assert body["path"].endswith("settings.json")
 
@@ -93,15 +95,20 @@ def test_the_page_is_served_with_the_settings_in_it(ws, served):
     """So the first paint has the reader's colours: a fetch after the page
     has drawn is a flash of the wrong ones."""
     _, base = served
+    daemon, _ = served
     ws.save_config({"colours": "light",
-                    "links": [{"match": "</script>(\\d+)", "url": "https://t/$1"}]})
+                    "links": [{"match": "</script>(\\d+)", "url": "https://t/$1"},
+                              {"match": "__WOSTUAST_TOKEN__", "url": "https://t/"}]})
     with urllib.request.urlopen(f"{base}/", timeout=5) as response:
         page = response.read().decode("utf-8")
     assert "__WOSTUAST_SETTINGS__" not in page
     held = page.split("var SETTINGS = ", 1)[1].split(";\n", 1)[0]
     assert json.loads(held)["colours"] == "light"
-    # The reader's text cannot end the script it stands in.
+    # The reader's text cannot end the script it stands in, and a mark in
+    # it is not filled in: the marks go in in one pass.
     assert "</script>(" not in page
+    assert json.loads(held)["links"][1]["match"] == "__WOSTUAST_TOKEN__"
+    assert page.count(daemon.token) == 1
 
 
 def test_sessions_are_json(ws, served):
@@ -1522,8 +1529,8 @@ HIDDEN = b"GET /api/nothing HTTP/1.1\r\nHost: localhost\r\n\r\n"
     (b"POST /api/session/s1/send HTTP/1.1\r\nContent-Length: 0\r\n"
      b"Content-Length: 50\r\n", HIDDEN),
     # A GET's body is never read at all.
-    (b"GET /api/settings HTTP/1.1\r\nContent-Length: %d\r\n" % len(HIDDEN), HIDDEN),
-    (b"GET /api/settings HTTP/1.1\r\nTransfer-Encoding: chunked\r\n",
+    (b"GET /api/sessions HTTP/1.1\r\nContent-Length: %d\r\n" % len(HIDDEN), HIDDEN),
+    (b"GET /api/sessions HTTP/1.1\r\nTransfer-Encoding: chunked\r\n",
      b"%x\r\n" % len(HIDDEN) + HIDDEN + b"\r\n0\r\n\r\n"),
 ], ids=["chunked", "a-length-that-is-not-a-number", "a-negative-length",
         "two-lengths", "a-get-with-a-body", "a-chunked-get"])
@@ -1543,7 +1550,7 @@ def test_a_body_that_is_not_read_does_not_frame_the_next_request(in_tmux, head,
 
 @pytest.mark.parametrize("head, first", [
     (b"POST /api/session/s1/send HTTP/1.1\r\n", b" 403 "),
-    (b"GET /api/settings HTTP/1.1\r\n", b" 200 "),
+    (b"GET /api/sessions HTTP/1.1\r\n", b" 200 "),
 ], ids=["a-post", "a-get"])
 def test_a_length_too_long_to_be_a_number_is_not_read(in_tmux, head, first):
     """`isdigit()` took 5,000 digits and `int()` refused them: Python reads
@@ -2125,19 +2132,15 @@ def test_a_setting_is_written_and_every_page_hears_of_it(ws, served):
     status, body = post(f"{base}/api/settings", {"tab_width": 8},
                         token=daemon.token)
     assert status == 200 and body["done"] is True, body
-    assert body["tab_width"] == 8
     assert json.loads(ws.config_path().read_text()) == {"tab_width": 8}
-    pushed = settings_pushed(client)
-    assert [one["tab_width"] for one in pushed] == [8]
-    # The answer is the push, number and all, so the page can drop a push
-    # older than it. The next one is numbered after it.
-    assert (body["serial"], body["run"]) == (pushed[0]["serial"], pushed[0]["run"])
+    assert [one["tab_width"] for one in settings_pushed(client)] == [8]
+    # The settings come by the push alone, one line in order. An answer
+    # that carried them came on another connection, and could land before
+    # an older push and be undone by it.
+    assert set(body) == {"done", "refused"}, body
     # And the tick that follows does not say it twice.
     daemon.tell_config()
     assert settings_pushed(client) == []
-    status, body = post(f"{base}/api/settings", {"tab_width": 2},
-                        token=daemon.token)
-    assert body["serial"] == pushed[0]["serial"] + 1
 
 
 def test_a_file_changed_by_hand_reaches_the_page(ws, served):
@@ -2169,8 +2172,9 @@ def test_a_refused_link_is_named_in_the_answer(ws, served):
         {"match": "(a+)+", "url": "https://t/"},
         {"match": r"OK-(\d+)", "url": "https://t/$1"}]}, token=daemon.token)
     assert status == 200, body
-    assert [one["at"] for one in body["refused"]] == [0]
-    assert [one["match"] for one in body["links"]] == [r"OK-(\d+)"]
+    assert [(one["at"], one["field"]) for one in body["refused"]] == [(0, "match")]
+    held = json.loads(ws.config_path().read_text())
+    assert [one["match"] for one in held["links"]] == [r"OK-(\d+)"]
 
 
 def test_a_setting_too_large_to_read_says_that(ws, served):

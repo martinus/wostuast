@@ -537,10 +537,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   hook event keeps its fields. Written whole with
   `write_atomic(private=True)`: the links say where the reader's tickets
   live. **Into the page it goes through `page_json`**, ASCII with `<`, `>`
-  and `&` escaped, and replaced after the token: a link is the reader's
-  text, a `</script>` in it ended the script, a lone surrogate answered the
-  page 500, and a link holding the token's mark would have had the token
-  written into it. `test_a_change_is_written_and_keeps_what_it_did_not_touch`,
+  and `&` escaped, and the marks are replaced in one pass (`route_get`):
+  a link is the reader's text, a `</script>` in it ended the script, a
+  lone surrogate answered the page 500, and with one `replace` after
+  another a link holding the token's mark would have had the token
+  written into it. **Every check of a link is `link_trouble`**, the
+  extra keys and the url's length too: two of them lived in `save_config`
+  alone, so a hand-written link the POST would refuse loaded as good.
+  `read_config` is the one reader, for loading and for saving. `test_a_change_is_written_and_keeps_what_it_did_not_touch`,
   `test_a_file_that_cannot_be_read_is_never_written_over`,
   `test_the_settings_in_the_page_cannot_end_its_script`,
   `test_a_setting_needs_the_token`.
@@ -556,7 +560,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   escape, so the file never parses. `load_config` returns the usable
   settings, every link *as written* with its own `trouble` -- so the menu
   shows a bad one in red rather than dropping it from sight -- and what is
-  wrong. `serve` prints it, `/api/settings` and the push carry it, the page
+  wrong. `serve` prints it, the page as served and the push carry it, the page
   says it in the live slot, `doctor` says it. **The file is never repaired**: guessing at
   a backslash somebody meant is a worse surprise than the message. And the
   page adds its own trouble — a pattern Python compiled and this browser
