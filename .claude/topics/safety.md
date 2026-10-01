@@ -727,8 +727,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `json.loads` turns the escape Claude Code wrote into a real one, and a
   strict encode refused the whole answer -- the transcript answered 500 on
   every request, and a push wrote an HTTP 500 into the middle of the stream.
-  Everything that leaves the daemon encodes with `"replace"`: `reply_json`
-  and `stream`. `test_a_lone_surrogate_in_a_transcript_breaks_nothing`.
+  Everything that leaves the daemon is written by `wire_json` and goes out
+  through `wire_bytes`, which encodes with `"replace"`: `reply_json`,
+  `Hub.send`, `answer_tag` and both writes of `stream`. They were three
+  spellings, and the stream's opening was the one left strict (#289).
+  `page_json` is the other road out, ASCII, because it stands inside the
+  page. `test_a_lone_surrogate_in_a_transcript_breaks_nothing`,
+  `test_a_lone_surrogate_in_the_sessions_breaks_no_stream`.
   **And no number JSON cannot hold**: `float` takes "nan" and "inf", and
   `json.loads` makes them out of `NaN` and `1e999`. `json.dumps` then
   wrote `NaN` into a sessions push, and the page's `JSON.parse` threw on
