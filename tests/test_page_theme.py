@@ -11,6 +11,7 @@ import pytest
 
 import conftest
 from browser import (
+    kept,
     settings,
     skip_without_browser,
     sync_playwright,
@@ -330,7 +331,101 @@ def test_every_settings_label_stands_level_with_what_it_names(page_at):
                 (label) => [label.textContent.trim(),
                             mid(label.nextElementSibling) - mid(label)]);
             }""")
-            assert len(gaps) == 5, gaps
+            assert len(gaps) == 6, gaps
             assert all(abs(gap) <= 1 for _, gap in gaps), gaps
+        finally:
+            browser.close()
+
+
+# --- the settings, kept in one file -------------------------------------------
+
+
+def test_a_setting_reaches_every_open_page_and_survives_a_reload(ws, page_at):
+    """The reader asked for one file in place of each browser's own memory:
+    a choice made in one page is kept in `settings.json`, and every other
+    open page takes it from the push, without a reload."""
+    daemon, url = page_at
+    with sync_playwright() as play:
+        browser = fresh_context(play)
+        try:
+            one = browser.new_page()
+            two = browser.new_page()
+            for page in (one, two):
+                page.goto(url, wait_until="domcontentloaded")
+                page.wait_for_selector(".row")
+                page.wait_for_function("state.live === 'live'")
+            settings(one, "tabwidth", "8")
+            settings(one, "colours", "light")
+            settings(one, "wrapping", "true")
+            kept(ws, "tab_width", 8)
+            kept(ws, "colours", "light")
+            kept(ws, "long_lines", "wrap")
+            two.wait_for_function("""() => {
+              const root = document.documentElement;
+              return root.style.getPropertyValue('--tab-w') === '8'
+                && root.dataset.theme === 'light' && root.dataset.wrap === 'yes';
+            }""")
+            # And a file changed by hand reaches the page the same way: the
+            # tick sees it. No fixture runs a ticker, so the test ticks.
+            ws.config_path().write_text(json.dumps({"colours": "dark"}),
+                                        encoding="utf-8")
+            daemon.tell_config()
+            two.wait_for_function("""() => {
+              const root = document.documentElement;
+              return root.dataset.theme === 'dark'
+                && root.style.getPropertyValue('--tab-w') === '4';
+            }""")
+        finally:
+            browser.close()
+
+
+def test_the_page_starts_in_the_colours_of_the_file(ws, page_at):
+    """They are in the page as it is served, so the first paint is right: a
+    fetch after it would be a flash of the wrong colours."""
+    ws.save_config({"colours": "light", "tab_width": 2, "diff_columns": "two"})
+    _, url = page_at
+    with sync_playwright() as play:
+        browser = fresh_context(play, scheme="dark")
+        try:
+            page = browser.new_page()
+            # Read the moment the body is made: the head's script has run
+            # and the page's own, at the end of the body, has not. The
+            # colours the first paint has.
+            page.add_init_script("""new MutationObserver((seen, watch) => {
+              if (!document.body) return;
+              window.firstTheme = document.documentElement.dataset.theme;
+              watch.disconnect();
+            }).observe(document.documentElement, { childList: true });""")
+            page.goto(url, wait_until="domcontentloaded")
+            seen = [page.evaluate("window.firstTheme")]
+            assert seen == ["light"], seen
+            page.wait_for_selector(".row")
+            page.click("#settings")
+            assert page.get_attribute(
+                "#setpop .tabwidth button[data-value='2']", "aria-pressed") == "true"
+            assert page.get_attribute(
+                "#setpop .sides button[data-value='split']", "aria-pressed") == "true"
+            assert page.inner_text("#settingspath").endswith("settings.json")
+        finally:
+            browser.close()
+
+
+def test_the_whole_settings_menu_is_in_the_proportional_face(page_at):
+    """The reader asked for it: in the fixed face a long url made the menu as
+    wide as the link."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, page_at)
+        try:
+            page.click("#settings")
+            page.click("#setpop .linkadd")
+            faces = page.eval_on_selector_all(
+                "#setpop .setlabel, #setpop .verb, #setpop input, #setpop .where",
+                "els => [...new Set(els.map((one) => getComputedStyle(one).fontFamily))]")
+            assert faces and all("Mono" not in one and "monospace" not in one
+                                 for one in faces), faces
+            # And a long url does not make it wider.
+            wide = page.evaluate("document.getElementById('setpop').offsetWidth")
+            page.fill("#linklist .linkurl", "https://t.example/" + "x" * 400)
+            assert page.evaluate("document.getElementById('setpop').offsetWidth") == wide
         finally:
             browser.close()

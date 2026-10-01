@@ -201,6 +201,26 @@ def settings(page, choice, value):
     page.click(f"#setpop .{choice} button[data-value='{value}']")
 
 
+def kept(ws, key, want, seconds=15):
+    """Wait until `settings.json` holds `want` under `key`. A choice is shown
+    at once and written after, by a POST the page does not wait on, so the
+    file is the thing to wait for, not the page."""
+    import json as _json
+    import time as _time
+
+    until = _time.monotonic() + seconds
+    held = None
+    while _time.monotonic() < until:
+        try:
+            held = _json.loads(ws.config_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            held = None
+        if isinstance(held, dict) and held.get(key) == want:
+            return
+        _time.sleep(0.02)
+    raise AssertionError(f"settings.json never held {key}={want!r}: {held!r}")
+
+
 def renew_stream(page, act):
     """Run `act` in the page, which opens a new stream, and wait until that
     stream has said its first word.

@@ -426,13 +426,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   The CSS is what enforces it — `:not(.windowed)` — rather than a ternary in
   one function and a promise in two comments. The control being disabled is a
   courtesy on top of that.
-- **How a file is drawn is the reader's, and lives in this browser.** Tab width
-  and wrap are about this screen and these eyes, not about a session, so they
-  go in `localStorage` like the theme — not a config option, which goal 4
-  rules out anyway. Both live on the root element, so the cascade obeys them and **neither
+- **How a file is drawn is the reader's, and is kept in our `settings.json`.**
+  Tab width and wrap are about these eyes, not about a session, so they are
+  the menu's, like the theme (`tab_width`, `long_lines`). Both live on the
+  root element, so the cascade obeys them and **neither
   control rebuilds anything** — `redrawCode` clears the key that guards an
   open comment box, so a preference that redrew took half a written comment
-  with it. `recallReading` checks the shape of what comes back. **The
+  with it. `readingWanted` falls back to the default for anything the file
+  does not answer. **The
   controls are the settings menu's**, one place for the Files and the Review
   tabs; a windowed file, which cannot wrap, says "too long to wrap" while
   wrap is on, and the CSS shows it (`.nowrap`), so nothing is rebuilt.

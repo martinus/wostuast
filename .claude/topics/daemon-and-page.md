@@ -668,7 +668,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **The context bar is its own slot, beside `#live` and never in it.**
   `paintLive` is the one writer of that slot and four things already want it
   — what the stream is doing, something you asked for and did not get, a
-  `links.json` that cannot be used, and a passing word over them. A fifth
+  `settings.json` that cannot be used, and a passing word over them. A fifth
   would be the race that rule was written after. `drawContext` is called from `drawHeader`, so it arrives with
   everything else a push carries and no fifth call site can forget it, and it
   redraws only when the number moves — the push is about once a second and

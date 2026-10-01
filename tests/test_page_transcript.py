@@ -12,6 +12,7 @@ import pytest
 
 import conftest
 from browser import (
+    kept,
     skip_without_browser,
     sync_playwright,
     open_page,
@@ -961,12 +962,11 @@ def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
 # --- the reader's own autolinks ----------------------------------------------
 
 def test_a_ticket_id_becomes_a_link(ws, page_at, tmp_path):
-    """The whole of #92: a pattern and a url in `links.json`, and a ticket id
+    """The whole of #92: a pattern and a url in the ticket links, and a ticket id
     in what the agent wrote becomes a link to it."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.save_config({"links": [
         {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"},
-    ]), encoding="utf-8")
+    ]})
     daemon, path = page_at
     append_blocks(daemon, [
         "Fixed OA-73219 and QSP-52811.\n\n"
@@ -999,10 +999,9 @@ def test_a_ticket_id_becomes_a_link(ws, page_at, tmp_path):
 def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
     """A prompt is plain text, not Markdown, so it goes through the same
     walker rather than through `markdown`."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.save_config({"links": [
         {"match": r"OA-(\d+)", "url": "https://tickets/browse/OA-$1"},
-    ]), encoding="utf-8")
+    ]})
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1022,14 +1021,14 @@ def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
             browser.close()
 
 
-def test_a_links_file_the_daemon_cannot_use_says_so(ws, page_at):
+def test_a_settings_file_the_daemon_cannot_use_says_so(ws, page_at):
     """A file you wrote and got wrong must never look like a file you never
     wrote. Without this the page is identical either way: no links, no clue,
     and `doctor` is something you had no reason to run. It is said on the
     live slot, and an answer that worked does not take it away: nothing the
     reader does on the page mends the file."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text("not json at all", encoding="utf-8")
+    ws.config_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.config_path().write_text("not json at all", encoding="utf-8")
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1041,18 +1040,17 @@ def test_a_links_file_the_daemon_cannot_use_says_so(ws, page_at):
               said({ done: true });
               return [$("live").textContent, $("live").title];
             }""")
-            assert "links.json" in slot[0], slot
+            assert "settings.json" in slot[0], slot
             assert "not valid JSON" in slot[1], slot
         finally:
             browser.close()
 
 
-def test_a_links_file_that_works_says_nothing(ws, page_at):
+def test_a_settings_file_that_works_says_nothing(ws, page_at):
     """A note on every page would be noise, and noise is not read."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.save_config({"links": [
         {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
-    ]), encoding="utf-8")
+    ]})
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1071,16 +1069,16 @@ def test_a_pattern_this_browser_cannot_use_says_so_too(ws, page_at):
     with sync_playwright() as play:
         browser, page = open_page(play, path)
         try:
-            # The answer is taken and the page asked in one go, with no
-            # push in between: the word has to arrive because `loadLinks`
+            # The settings are taken and the page asked in one go, with no
+            # push in between: the word has to arrive because `takeLinks`
             # said it, not because something else happened to.
-            said = page.evaluate("""async () => {
-              // What the daemon serves, with a pattern Python compiles and
+            said = page.evaluate("""() => {
+              // What the daemon pushes, with a pattern Python compiles and
               // this browser does not: `(?P<x>)` is Python's alone.
-              window.fetch = async () => ({json: async () => ({
-                links: [{match: '(?P<id>OA-1)', url: 'https://tickets/'}],
-                trouble: []})});
-              await loadLinks();
+              takeSettings({
+                links: [{match: '(?P<id>OA-1)', url: 'https://tickets/',
+                         trouble: ''}],
+                trouble: []});
               return state.linkTrouble.join(" ");
             }""")
             assert "(?P<id>OA-1)" in said, said
@@ -1092,10 +1090,9 @@ def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
     """It walks text nodes and builds one anchor at a time, with an href this
     side checks again — so a url template that is not http(s), or one that
     tries to be markup, produces text and no link."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.save_config({"links": [
         {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
-    ]), encoding="utf-8")
+    ]})
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1123,10 +1120,9 @@ def test_a_pattern_that_can_match_nothing_still_makes_its_links(ws, page_at):
     """`(PROJ-)?\\d*` matches nothing at every place that is not a ticket,
     and `exec` gives that empty match first. It was taken for "no match",
     so the pattern made no links at all and nothing said why."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.save_config({"links": [
         {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
-    ]), encoding="utf-8")
+    ]})
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1165,10 +1161,9 @@ def test_a_pattern_that_can_match_nothing_still_makes_its_links(ws, page_at):
 def test_a_block_of_many_ticket_ids_is_linked_all_the_way_down(ws, page_at):
     """A file of release notes went past the old cap of forty, and the links
     simply stopped halfway with nothing saying why."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.save_config({"links": [
         {"match": r"T-(\d+)", "url": "https://tickets/$1"},
-    ]), encoding="utf-8")
+    ]})
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -1190,10 +1185,9 @@ def test_there_is_still_a_cap_on_the_links_in_one_block(ws, page_at):
     """A pattern that matches everything would otherwise build a link per
     word, and every one of them is a DOM node on a page that redraws. The
     number is the page's own and is sent nowhere."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.save_config({"links": [
         {"match": r"T-(\d+)", "url": "https://tickets/$1"},
-    ]), encoding="utf-8")
+    ]})
     _, path = page_at
     with sync_playwright() as play:
         browser, page = open_page(play, path)
@@ -2871,5 +2865,148 @@ def test_an_edit_opens_onto_what_it_changed(page_at):
             assert page.evaluate(
                 "document.querySelector('.tool-result').textContent"
             ).startswith("<tool_use_error>String to replace not found")
+        finally:
+            browser.close()
+
+
+# --- the ticket links, in the settings menu -----------------------------------
+
+
+def link_rows(page):
+    """Each row of the menu's links: its two boxes, what it says, and which
+    box wears the red."""
+    return page.eval_on_selector_all(
+        "#linklist .linkrow", """rows => rows.map((row) => [
+          ...[...row.querySelectorAll('input')].map((box) => box.value),
+          row.querySelector('.linksays').textContent, row.dataset.bad || ''])""")
+
+
+def type_link(page, match, url):
+    """Add a row and fill it in the way a person does: type, then Enter."""
+    page.click("#setpop .linkadd")
+    row = page.locator("#linklist .linkrow").last
+    row.locator(".linkmatch").fill(match)
+    row.locator(".linkmatch").press("Enter")
+    row.locator(".linkurl").fill(url)
+    row.locator(".linkurl").press("Enter")
+
+
+def test_a_ticket_link_is_added_in_the_menu(ws, page_at):
+    """The reader asked for the links to move out of a file they wrote by
+    hand and into the menu. A link typed there is kept in `settings.json`
+    when the box is left, links what is already on the page without a
+    reload, and shows under its row what it made of the first match."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            wait_for_watching(daemon)
+            append_blocks(daemon, ["Fixed OA-73219 today."])
+            page.wait_for_selector(".prose >> text=OA-73219")
+            page.click("#settings")
+            type_link(page, r"OA-(\d+)", "https://tickets.example/OA-$1")
+            kept(ws, "links", [{"match": r"OA-(\d+)",
+                                "url": "https://tickets.example/OA-$1"}])
+            page.wait_for_selector(".prose a.ticket")
+            assert page.get_attribute(".prose a.ticket", "href") \
+                == "https://tickets.example/OA-73219"
+            page.wait_for_function(
+                "document.querySelector('#linklist .linksays a') !== null")
+            assert link_rows(page) == [[
+                r"OA-(\d+)", "https://tickets.example/OA-$1",
+                "OA-73219 → tickets.example/OA-73219", ""]]
+            # Taken out with ×, and the menu stays open while it goes.
+            page.click("#linklist .linkdrop")
+            kept(ws, "links", [])
+            assert page.locator("#setpop").is_visible()
+            page.wait_for_function(
+                "document.querySelectorAll('.prose a.ticket').length === 0")
+        finally:
+            browser.close()
+
+
+def test_a_half_filled_link_is_not_saved_and_says_so(ws, page_at):
+    """Saved when a box is left, so the first box is left before the second
+    is filled. That must not be a link to nowhere, or a red row."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.click("#settings")
+            page.click("#setpop .linkadd")
+            row = page.locator("#linklist .linkrow").last
+            row.locator(".linkmatch").fill(r"OA-(\d+)")
+            row.locator(".linkmatch").press("Enter")
+            page.wait_for_function(
+                "document.querySelector('#linklist .linksays').textContent !== ''")
+            assert link_rows(page) == [[r"OA-(\d+)", "", "fill in both to save it", ""]]
+            kept(ws, "links", [])
+        finally:
+            browser.close()
+
+
+def test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept(ws, page_at):
+    """The daemon's check is the one there is: the shape that backtracks is
+    spotted there, and the page puts the reason under the right row. The
+    good link is kept, and the push of the file that follows does not take
+    the red row away -- a rebuild from the file would, because it is in no
+    file."""
+    daemon, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.click("#settings")
+            type_link(page, r"OK-(\d+)", "https://t.example/$1")
+            kept(ws, "links", [{"match": r"OK-(\d+)", "url": "https://t.example/$1"}])
+            type_link(page, "(a+)+b", "https://t.example/")
+            page.wait_for_selector("#linklist .linkrow.bad")
+            rows = link_rows(page)
+            assert rows[1][:2] == ["(a+)+b", "https://t.example/"], rows
+            assert "quantifier" in rows[1][2] and "not saved" in rows[1][2], rows
+            assert rows[1][3] == "match", rows
+            # A url that is not http is about the other box. Both boxes set
+            # and one change sent, so one save goes and not two in a race.
+            page.evaluate(r"""() => {
+              const row = document.querySelector('#linklist .linkrow:last-child');
+              const [match, url] = row.querySelectorAll('input');
+              match.value = 'NO-(\d+)';
+              url.value = 'ftp://t.example/';
+              url.dispatchEvent(new Event('change'));
+            }""")
+            page.wait_for_function("""() => document.querySelector(
+              '#linklist .linkrow:last-child').dataset.bad === 'url'""")
+            assert "“link to”" in link_rows(page)[1][2]
+            # A push of the file as it is leaves the red row standing.
+            daemon.tell_config(force=True)
+            page.wait_for_function("state.settings.links.length === 1")
+            assert len(link_rows(page)) == 2
+            kept(ws, "links", [{"match": r"OK-(\d+)", "url": "https://t.example/$1"}])
+            # And so does the file changing under it, when this page is
+            # what changed it: the good one taken out, the red one is in no
+            # file, and a rebuild from the file took it away.
+            page.locator("#linklist .linkdrop").first.click()
+            kept(ws, "links", [])
+            page.wait_for_function("state.settings.links.length === 0")
+            rows = link_rows(page)
+            assert [one[0] for one in rows] == [r"NO-(\d+)"], rows
+            assert rows[0][3] == "url", rows
+        finally:
+            browser.close()
+
+
+def test_a_bad_link_in_the_file_is_shown_red_as_written(ws, page_at):
+    """A link written by hand that cannot be used is not dropped from sight:
+    the reader sees it, and why, where they would mend it."""
+    ws.config_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.config_path().write_text(json.dumps({"links": [
+        {"match": "BAD-(", "url": "https://t.example/"}]}), encoding="utf-8")
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = open_page(play, path)
+        try:
+            page.click("#settings")
+            rows = link_rows(page)
+            assert rows[0][0] == "BAD-(" and rows[0][3] == "match", rows
+            assert "“find” is not a regular expression" in rows[0][2], rows
         finally:
             browser.close()

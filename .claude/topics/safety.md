@@ -218,8 +218,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   anything, so a `url` template can put text on the page and nothing else.
   `ticketUrl` tests for `http(s)` a second time, although `link_trouble`
   already refused anything else: the two sides are far apart and only one of
-  them is the one that inserts. `links.json` is the reader's own file, in
-  the state directory — never a per-worktree one, which an agent could write.
+  them is the one that inserts. The links are in the reader's own
+  `settings.json`, in their configuration directory — never a per-worktree
+  file, which an agent could write.
   **A pattern that can match nothing still makes its links** (`nextMatch`).
   `(PROJ-)?\d*` matches nothing at every place that is not a ticket, and
   `exec` gives that empty match first. `linkOne` took it for no match, so
@@ -519,24 +520,47 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     case opens `.GIT/config` as `.git/config`. A git directory outside the
     worktree is `inside`'s to refuse.
     `test_a_link_into_the_git_directory_is_refused`.
-- **`serve` leaves an example `links.json` and never writes over one.**
-  JSON has no comments, so the example is a working entry — and a
-  deliberately inert one, because nobody's work has a ticket called
-  `EXAMPLE-1`. A commented-out entry is not valid JSON and a broken one
-  would be a line in `doctor` saying the file is wrong. It is written with
-  `write_atomic(private=True)`, like everything else there, and a failure to
-  write it never stops `serve`.
-- **A `links.json` that cannot be used is never silent.** "No links" and
+- **Our `settings.json` is written by the page, and by nothing else.**
+  `config_path` puts it in `$XDG_CONFIG_HOME/wostuast/` or
+  `~/.config/wostuast/`, where a person looks; `WOSTUAST_CONFIG` moves it
+  for tests, a seam and never a setting. `serve` writes nothing there: it
+  left an example `links.json` once, and the menu made that pointless.
+  `POST /api/settings` is checked like the verbs -- the token, this machine,
+  this user -- because any site can POST to a loopback port, and it writes
+  a file of the reader's. **One writer at a time** (`config_lock`): a POST
+  runs in its own thread, and two at once each wrote back their own change
+  over the same read, the `POST /name` scar. **Every key is checked before
+  anything is written** (`config_trouble`, the same check `load_config`
+  reads with), so the page cannot write what the file would refuse.
+  **A file that cannot be read is never written over** -- the reader may be
+  halfway through an edit -- **and a key that is not ours stays**, as a
+  hook event keeps its fields. Written whole with
+  `write_atomic(private=True)`: the links say where the reader's tickets
+  live. **Into the page it goes through `page_json`**, ASCII with `<`, `>`
+  and `&` escaped, and replaced after the token: a link is the reader's
+  text, a `</script>` in it ended the script, a lone surrogate answered the
+  page 500, and a link holding the token's mark would have had the token
+  written into it. `test_a_change_is_written_and_keeps_what_it_did_not_touch`,
+  `test_a_file_that_cannot_be_read_is_never_written_over`,
+  `test_the_settings_in_the_page_cannot_end_its_script`,
+  `test_a_setting_needs_the_token`.
+  - **The old `links.json` is no longer read, and nothing moves it.** The
+    reader chose no migration. `doctor` says the file is there and where
+    the links go now, because a file that once made links and now does
+    nothing gives no clue why.
+    `test_doctor_says_the_old_links_file_is_no_longer_read`.
+- **A `settings.json` that cannot be used is never silent.** "No links" and
   "your file is broken" looked identical — nothing on the page either way —
   and the only way to find out was `doctor`, which you had no reason to run.
-  The first thing anybody writes is `\d`, which is not a JSON escape, so the
-  file never parses. `load_links` returns the usable entries *and* what is
-  wrong with the rest; `read_links` is the wrapper for a caller with nowhere
-  to put the trouble. `serve` prints it, `/api/links` carries it, the page
+  The first thing anybody writes by hand is `\d`, which is not a JSON
+  escape, so the file never parses. `load_config` returns the usable
+  settings, every link *as written* with its own `trouble` -- so the menu
+  shows a bad one in red rather than dropping it from sight -- and what is
+  wrong. `serve` prints it, `/api/settings` and the push carry it, the page
   says it in the live slot, `doctor` says it. **The file is never repaired**: guessing at
   a backslash somebody meant is a worse surprise than the message. And the
   page adds its own trouble — a pattern Python compiled and this browser
-  will not is only findable there, and `loadLinks` says both together.
+  will not is only findable there, and `takeLinks` says both together.
   **On the slot it is `state.linkTrouble`, not `state.trouble`**: `said`
   clears the second on any answer that worked, so the first Enter took the
   message away for good, and the daemon's sentence about bad JSON is 150

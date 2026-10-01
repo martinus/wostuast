@@ -327,14 +327,34 @@ def names_path() -> Path:
 
 
 def links_path() -> Path:
-    """The reader's own autolinks: a ticket id in a transcript, turned into a
-    link to wherever their tickets live.
+    """Where the ticket links were kept before `settings.json` took them.
 
-    Yours, on your machine, across every session. It is not a settings file --
-    goal 4 in CLAUDE.md rules those out -- it is a list of two-field entries, and the
-    page works without it. `doctor` says what is wrong with a bad one.
+    Nothing reads it now. The reader chose no migration: the links are typed
+    again in the settings menu. `doctor` says so when the old file is still
+    there, because a file that once worked and now does nothing gives no clue
+    why.
     """
     return state_dir() / "links.json"
+
+
+def config_path() -> Path:
+    """The reader's settings: everything the settings menu sets, and the
+    ticket links.
+
+    In the configuration directory and not the state directory, because a
+    person opens it to read or edit, and `~/.config` is where they look.
+    `$XDG_CONFIG_HOME` moves it, as the XDG rule says. WOSTUAST_CONFIG
+    overrides it, for tests -- a seam, not a setting, like WOSTUAST_STATE.
+
+    The page writes it whole on every change, so a comment or a key order
+    written by hand does not last; JSON has no comments anyway. A key we do
+    not know is kept (`save_config`).
+    """
+    override = os.environ.get("WOSTUAST_CONFIG")
+    if override:
+        return Path(override) / "settings.json"
+    base = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
+    return Path(base) / "wostuast" / "settings.json"
 
 
 def log_path() -> Path:
@@ -3652,6 +3672,12 @@ TOKEN_MARK = "__WOSTUAST_TOKEN__"
 #: session list.
 VERSION_MARK = "__WOSTUAST_VERSION__"
 
+#: Where the reader's settings go into the page, so the first paint already
+#: has their colours. Replaced last, because the links in it are the reader's
+#: own text: replaced first, a link holding the token's mark would have had
+#: the token written into it.
+SETTINGS_MARK = '"__WOSTUAST_SETTINGS__"'
+
 #: How Claude Code answers a call whose dialog was told No, as the call's
 #: result in the transcript. Measured on 2.1.282; the tool_result goes on
 #: "The tool use was rejected (eg. if it was a file edit, …)".
@@ -5329,83 +5355,191 @@ def link_trouble(one: Any) -> str:
     return ""
 
 
-#: The file `serve` leaves behind when there is none, so that finding out how
-#: to write one is opening it rather than reading a README.
-#:
-#: The entry is real and it is deliberately inert: nobody's work has a ticket
-#: called `EXAMPLE-1`, so it matches nothing and links nothing. JSON has no
-#: comments, so an example that explains itself has to be a working entry --
-#: a commented-out one is not valid JSON, and a broken one would be a line in
-#: `doctor` saying the file is wrong.
-EXAMPLE_LINKS = [
-    {"match": "EXAMPLE-(\\d+)",
-     "url": "https://tickets.example.com/browse/EXAMPLE-$1"},
-]
+#: What each setting may be, in the words the menu uses, so the file reads
+#: like the menu. A value outside these is left out and said, and the page
+#: then uses its default -- the same rule as a bad link.
+SETTING_WORDS: dict[str, tuple[Any, ...]] = {
+    "colours": ("auto", "light", "dark"),
+    "tab_width": (2, 4, 8),
+    "long_lines": ("scroll", "wrap"),
+    "diff_columns": ("one", "two"),
+}
+
+#: The most links the file may hold. Each is a pattern run over every block
+#: the page draws, so a list this long is a mistake, not a use.
+LINKS_KEPT = 100
+
+#: The most a link's url may be. A url template longer than this is a
+#: mistake, and the file is written whole on every change.
+LINK_URL_MAX = 2000
 
 
-def write_example_links() -> bool:
-    """Leave an example `links.json` when there is none. True if one was made.
+def config_trouble(key: str, value: Any) -> str:
+    """What is wrong with one setting's value, or empty when nothing is.
 
-    Never over an existing file, whatever is in it -- a file somebody wrote
-    and got wrong is theirs, and `doctor` says what is wrong with it. And
-    never a reason to fail: this is a convenience, and `serve` starts with or
-    without it.
+    One checker for the file and for a POST, so the page cannot write what
+    the file would refuse to read back.
     """
-    path = links_path()
-    try:
-        if path.exists():
-            return False
-        write_atomic(path, json.dumps(EXAMPLE_LINKS, indent=2) + "\n",
-                     private=True)
-        return True
-    except OSError:
-        return False
+    if key in SETTING_WORDS:
+        allowed = SETTING_WORDS[key]
+        if value not in allowed:
+            return f"`{key}` is one of {', '.join(json.dumps(one) for one in allowed)}"
+        return ""
+    if key == "alerts":
+        if (not isinstance(value, dict) or set(value) - {"needs", "done"}
+                or not all(isinstance(one, bool) for one in value.values())):
+            return '`alerts` is {"needs": true or false, "done": true or false}'
+        return ""
+    if key == "links":
+        if not isinstance(value, list):
+            return "`links` is a list of links"
+        if len(value) > LINKS_KEPT:
+            return f"`links` holds at most {LINKS_KEPT} links"
+        return ""
+    return f"`{key}` is not a setting"
 
 
-def load_links() -> tuple[list[dict[str, str]], list[str]]:
-    """The autolinks that are usable, and what is wrong with the rest.
+def load_config() -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    """The usable settings, every link as written, and what is wrong.
 
-    One reader, because "no links" and "your file is broken" are different
-    answers and looked the same: the page showed nothing either way, and the
-    only way to find out was to run `doctor` you had no reason to run. This
-    is the scar git already left here, in a second place.
+    A missing file is not trouble: it is the defaults, and most people never
+    change one. Anything else that stops a setting being used is, and the
+    caller says it out loud -- "no links" and "your file is broken" looked
+    the same once, nothing on the page either way, and the only way to find
+    out was `doctor`, which you had no reason to run.
 
-    A missing file is not trouble -- most people want no autolinks. Anything
-    else that stops an entry being used is, and the caller says it out loud.
+    The links come back *as written*, each with its own `trouble`, so the
+    menu can show a bad one in red rather than drop it from sight; only the
+    ones with no trouble are made into links.
 
     `\\d` is the one people write, and it is not a JSON escape: JSON allows
-    `\\" \\\\ \\/ \\b \\f \\n \\r \\t` and `\\uXXXX` and nothing else, so a regular
-    expression needs its backslash doubled. The file stays plain JSON --
-    repairing it would be guessing, and the next surprise would be worse --
-    so the message has to be the thing that reaches the reader.
+    `\\" \\\\ \\/ \\b \\f \\n \\r \\t` and `\\uXXXX` and nothing else, so a
+    pattern typed by hand needs its backslash doubled. The menu does that
+    for you. The file is never repaired: guessing is a worse surprise than
+    the message.
     """
-    path = links_path()
+    path = config_path()
     if not path.exists():
-        return [], []
+        return {}, [], []
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except OSError as error:
-        return [], [f"cannot read {path}: {error}"]
+        return {}, [], [f"cannot read {path}: {error}"]
     except ValueError as error:
-        return [], [f"{path} is not valid JSON: {error}."
-                    " A backslash in a pattern has to be doubled: `\\\\d`, not"
-                    " `\\d`."]
-    if not isinstance(payload, list):
-        return [], [f"{path} is not a list of links"]
-    good: list[dict[str, str]] = []
+        return {}, [], [f"{path} is not valid JSON: {error}."
+                        " A backslash in a pattern has to be doubled: `\\\\d`,"
+                        " not `\\d`."]
+    if not isinstance(payload, dict):
+        return {}, [], [f"{path} is not an object of settings"]
+    good: dict[str, Any] = {}
+    links: list[dict[str, str]] = []
     trouble: list[str] = []
-    for at, one in enumerate(payload):
-        why = link_trouble(one)
+    for key, value in payload.items():
+        if key not in SETTING_WORDS and key not in ("alerts", "links"):
+            continue                 # kept in the file, and not ours to judge
+        why = config_trouble(key, value)
         if why:
-            trouble.append(f"link {at + 1} in {path}: {why}")
+            trouble.append(f"{path}: {why}")
+        elif key == "links":
+            for at, one in enumerate(value):
+                why = link_trouble(one)
+                if isinstance(one, dict):
+                    links.append({"match": str(one.get("match") or ""),
+                                  "url": str(one.get("url") or ""),
+                                  "trouble": why})
+                if why:
+                    trouble.append(f"link {at + 1} in {path}: {why}")
         else:
-            good.append({"match": one["match"], "url": one["url"]})
-    return good, trouble
+            good[key] = value
+    return good, links, trouble
 
 
-def read_links() -> list[dict[str, str]]:
-    """Only the usable ones, for a caller with nowhere to put the trouble."""
-    return load_links()[0]
+def config_payload() -> dict[str, Any]:
+    """What the page is handed: the settings, the links, the trouble, and
+    where the file is, with the home directory as `~` so it fits the menu."""
+    good, links, trouble = load_config()
+    path = str(config_path())
+    home = str(Path.home())
+    if home not in ("", "/") and path.startswith(home + "/"):
+        path = "~" + path[len(home):]
+    return dict(good, links=links, trouble=trouble, path=path)
+
+
+def page_json(data: Any) -> str:
+    """JSON that may stand inside a `<script>` of the page.
+
+    The links are the reader's text, and a `</script>` in one would end the
+    script there and start reading HTML. `<`, `>` and `&` are written as
+    their `\\u` escapes, which mean the same in JSON and in JavaScript, so
+    nothing in the data can close the element it stands in. **ASCII only**:
+    a `\\ud800` in the file is a lone surrogate once read, and the page is
+    encoded strictly, so one such link answered the page with a 500.
+    """
+    text = json.dumps(data)
+    return (text.replace("<", "\\u003c").replace(">", "\\u003e")
+            .replace("&", "\\u0026"))
+
+
+def config_stamp() -> tuple[int, int] | None:
+    """What changes when the file does, for the daemon's tick: a stat, not a
+    read, because it runs every second."""
+    try:
+        held = config_path().stat()
+    except OSError:
+        return None
+    return held.st_mtime_ns, held.st_size
+
+
+def save_config(change: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    """Write a change into the file. Empty when it was written, else why not;
+    and the links that were left out, by where they stood in the change.
+
+    Every key is checked before anything is written, and one bad key writes
+    nothing. **A link that cannot be used is left out and named, and the
+    rest are kept**: the menu shows the one in red, "not saved", and a
+    mistake in one pattern must not cost the reader the other nine. The
+    check is `link_trouble`, here and only here -- the page has no copy of
+    `risky_pattern` to drift from it.
+
+    **A file that cannot be read is never written over.** It is the reader's
+    file and they may be halfway through an edit; replacing it with a
+    default would take their work. **A key that is not ours stays**, as a
+    hook event keeps its fields: a newer wostuast may have written it.
+    """
+    if not change:
+        return "there is nothing to change", []
+    for key, value in change.items():
+        why = config_trouble(key, value)
+        if why:
+            return why, []
+    refused: list[dict[str, Any]] = []
+    if "links" in change:
+        kept = []
+        for at, one in enumerate(change["links"]):
+            why = link_trouble(one)
+            if not why and set(one) - {"match", "url"}:
+                why = "a link is only `match` and `url`"
+            if not why and len(one["url"]) > LINK_URL_MAX:
+                why = f"`url` is longer than {LINK_URL_MAX} characters"
+            if why:
+                refused.append({"at": at, "trouble": why})
+            else:
+                kept.append({"match": one["match"], "url": one["url"]})
+        change = dict(change, links=kept)
+    path = config_path()
+    held: Any = {}
+    if path.exists():
+        try:
+            held = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            return f"{path} cannot be read, so it is left alone: {error}", []
+        if not isinstance(held, dict):
+            return (f"{path} is not an object of settings, so it is left"
+                    " alone"), []
+    held.update(change)
+    write_atomic(path, json.dumps(held, indent=2, ensure_ascii=False) + "\n",
+                 private=True)
+    return "", refused
 
 
 def read_names() -> dict[str, str]:
@@ -6118,6 +6252,14 @@ class Daemon:
         #: can fetch. `Serving.handle` compares each connection against it.
         self.uid = os.getuid()
         self.version = own_version()
+        #: One writer of `settings.json` at a time. A POST runs in its own
+        #: thread, and two at once read the same file and each wrote back
+        #: its own change, so one was lost -- the `POST /name` scar.
+        self.config_lock = threading.Lock()
+        #: The file as the browsers last heard of it. A change from anywhere
+        #: -- another browser, or a hand in an editor -- goes out on the next
+        #: tick (`tell_config`).
+        self.config_seen = config_stamp()
         self.transcripts: dict[str, Transcript] = {}
         #: Sessions a decline is being pressed into. It waits up to
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
@@ -6291,10 +6433,25 @@ class Daemon:
             moved = self.store.refresh() or moved
         if moved:
             self.hub.send("sessions", self.sessions_payload())
+        self.tell_config()
         for session_id in self.hub.watchers():
             self.read_transcript(session_id)
         self.forget_gone()
         self.files.forget(LISTING_KEPT)
+
+    def tell_config(self, force: bool = False) -> None:
+        """Send the settings to every browser when the file has changed.
+
+        Every open page is one reader's screen, so a change in one tab is a
+        change in all of them, and a file edited by hand reaches the page
+        without a reload. A stat a tick, never a read, until it changes.
+        """
+        with self.config_lock:
+            now = config_stamp()
+            if now == self.config_seen and not force:
+                return
+            self.config_seen = now
+        self.hub.send("settings", config_payload())
 
     def forget_gone(self) -> None:
         """Drop the readers of sessions that are no longer shown.
@@ -6789,7 +6946,9 @@ class Serving:
                                       " Content-Length gives its size"}, 400)
             return
         parts = urlparse(self.path).path.strip("/").split("/")
-        if len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
+        if parts == ["api", "settings"]:
+            self.settings(body)
+        elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
             verb = POST_VERBS.get(parts[3])
             if verb is None:
                 self.reply_json({"error": "no such thing"}, 404)
@@ -6797,6 +6956,31 @@ class Serving:
                 verb(self, parts[2], body)
         else:
             self.reply_json({"error": "no such thing"}, 404)
+
+    def settings(self, body: dict[str, Any]) -> None:
+        """Keep a change the settings menu made, in `settings.json`.
+
+        It writes a file of the reader's and touches no terminal, but it
+        arrives like the verbs and is checked like them: the token, this
+        machine, this user. Every page hears of the change from the push,
+        this one included, and the answer carries it too.
+        """
+        if self.too_big:
+            # `asked()` hands over `{}` for a body it did not read, which
+            # would be a change of nothing that answered "done".
+            self.reply_json({"error": "that change is too large to accept"},
+                            413)
+            return
+        with self.daemon.config_lock:
+            try:
+                why, refused = save_config(body)
+            except OSError as error:
+                why, refused = f"cannot write {config_path()}: {error}", []
+        if why:
+            self.reply_json({"error": why}, 400)
+            return
+        self.daemon.tell_config(force=True)
+        self.reply_json(dict(config_payload(), refused=refused, done=True))
 
     def in_tmux(self, session_id: str) -> Session | None:
         """The session, when it is one the verbs can reach at all."""
@@ -7110,16 +7294,16 @@ class Serving:
         parts = path.strip("/").split("/")
         if path == "/":
             page = (PAGE.replace(TOKEN_MARK, self.daemon.token)
-                    .replace(VERSION_MARK, self.daemon.version))
+                    .replace(VERSION_MARK, self.daemon.version)
+                    .replace(SETTINGS_MARK, page_json(config_payload())))
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
-        elif path == "/api/links":
+        elif path == "/api/settings":
             # The reader's own, not a session's, so it hangs off nothing. It
-            # is read from disk here rather than held, because it changes
-            # when a person edits a file and a reload should be enough.
-            usable, trouble = load_links()
-            self.reply_json({"links": usable, "trouble": trouble})
+            # is read from disk here rather than held, because a person may
+            # edit the file.
+            self.reply_json(config_payload())
         elif path == "/api/events":
             self.stream(query.get("watch", [""])[0])
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -7791,14 +7975,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     report(which_tmux(), "tmux found",
            "tmux not found; jump and send stay hidden", fatal=False)
 
-    # The autolinks, if there are any. A broken one is a note and not a
-    # failure: the transcript reads perfectly well without it, and the point
+    # The settings, if there are any. A broken one is a note and not a
+    # failure: the page reads perfectly well on its defaults, and the point
     # of saying so is that a link doing nothing gives no clue why.
-    if links_path().exists():
-        usable, trouble = load_links()
+    if config_path().exists():
+        _, links, trouble = load_config()
+        usable = sum(1 for one in links if not one["trouble"])
         report(not trouble,
-               f"{len(usable)} autolink(s) in {links_path()}",
+               f"settings in {config_path()}, {usable} ticket link(s)",
                "; ".join(trouble), fatal=False)
+    if links_path().exists():
+        report(False, "",
+               f"{links_path()} is no longer read; add the links in the page's"
+               " settings menu, then delete the file", fatal=False)
     report(install_path().exists(), f"installed at {install_path()}",
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
     behind = install_behind()
@@ -7954,12 +8143,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # system for a free one, and printed `http://127.0.0.1:0/` (#235).
     port = server.server_address[1]
     where = f"http://{BIND_HOST}:{port}/"
-    made = write_example_links()
-    # Said here because the page cannot make you look at it and `doctor` is
+    # Said here because the page says it only in a corner, and `doctor` is
     # something you had no reason to run. A file you wrote and got wrong must
     # never look like a file you never wrote.
-    for why in load_links()[1]:
-        print(f"links: {why}", file=sys.stderr)
+    for why in load_config()[2]:
+        print(f"settings: {why}", file=sys.stderr)
     # The same kind of silence: a page that knows about a field the status
     # line has not been writing shows nothing, and looks as if it never could.
     behind = install_behind()
@@ -7969,8 +8157,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print("it listens on this machine only. To read it from another computer,")
     print(f"  run: ssh -N -L {port}:{BIND_HOST}:{port} {os.environ.get('USER', 'you')}@this-machine")
     print(f"  then open {where} there. Opening a firewall port will not work.")
-    if made:
-        print(f"wrote an example {links_path()}; edit it to link your tickets.")
     print("press ctrl-c to stop.")
 
     def watch() -> None:
@@ -8103,15 +8289,18 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wostuast</title>
 <script>
+// The reader's `settings.json`, written in by the daemon as it serves the
+// page (`page_json`). Still the bare mark when nothing replaced it, so it is
+// read only when it is an object.
+var SETTINGS = "__WOSTUAST_SETTINGS__";
 // Before anything is painted, so the page never flashes the wrong colours.
-// The choice is this browser's alone; the daemon neither knows nor cares.
 (function () {
-  var stored = null;
-  try { stored = localStorage.getItem("wostuast-theme"); } catch (e) {}
+  var held = SETTINGS && typeof SETTINGS === "object" ? SETTINGS.colours : "";
+  var choice = held === "light" || held === "dark" ? held : "system";
   var system = window.matchMedia("(prefers-color-scheme: light)").matches
     ? "light" : "dark";
-  document.documentElement.dataset.theme = stored || system;
-  document.documentElement.dataset.themeChoice = stored || "system";
+  document.documentElement.dataset.theme = choice === "system" ? system : choice;
+  document.documentElement.dataset.themeChoice = choice;
 })();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -8299,11 +8488,17 @@ body {
   align-items: baseline;
   background: var(--raised); border: 1px solid var(--edge-bright); border-radius: 8px;
   box-shadow: 0 6px 20px var(--shadow);
+  /* The links make it tall; it scrolls rather than run off the screen. */
+  max-height: calc(100vh - 70px); overflow-y: auto;
+  /* One proportional face for the whole menu, which the reader asked for: a
+     url in a fixed-width face made the menu as wide as the longest link. */
+  font-family: var(--sans);
 }
 .setpop[hidden] { display: none; }
+.setpop .verb { font-family: var(--sans); font-size: 12px; }
 .setpop .setlabel {
   display: flex; align-items: baseline; gap: 7px;
-  font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+  font-size: 12.5px; color: var(--ink-mute);
 }
 .setpop .setlabel .icon { align-self: center; }
 .setpop .rule { align-self: center; grid-column: 1 / -1; border-top: 1px solid var(--edge); margin: 0 -16px; }
@@ -8360,6 +8555,54 @@ body {
   font-family: var(--sans); font-size: 12px; color: var(--ink-faint);
   max-width: 30ch; line-height: 1.4;
 }
+/* The ticket links: a box a link, as wide as the column and never wider. A
+   long url scrolls inside its own input, so the menu keeps its width. */
+.setpop .linkedit { display: flex; flex-direction: column; gap: 8px; width: 330px; }
+.setpop .linklist { display: flex; flex-direction: column; gap: 8px; }
+.setpop .linklist:empty { display: none; }
+.setpop .linkrow {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr) 22px;
+  gap: 4px 8px; align-items: baseline; padding: 8px;
+  border: 1px solid var(--edge); border-radius: 6px; background: var(--panel);
+}
+.setpop .linkword { font-size: 11.5px; color: var(--ink-faint); }
+.setpop .linkrow input {
+  font-family: var(--sans); font-size: 12.5px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--edge); border-radius: 4px;
+  padding: 3px 6px; min-width: 0; width: 100%; box-sizing: border-box;
+}
+.setpop .linkrow input:focus { outline: none; border-color: var(--needs); }
+.setpop .linkrow[data-bad="match"] .linkmatch,
+.setpop .linkrow[data-bad="url"] .linkurl { border-color: var(--hot); }
+.setpop .linkdrop {
+  grid-column: 3; grid-row: 1; align-self: center; padding: 0; border: none;
+  background: none; color: var(--ink-faint); font-size: 15px; cursor: pointer;
+}
+.setpop .linkdrop:hover { color: var(--hot); }
+.setpop .linksays {
+  grid-column: 2 / 4; font-size: 11.5px; color: var(--ink-faint);
+  line-height: 1.4; overflow-wrap: anywhere;
+}
+.setpop .linksays:empty { display: none; }
+.setpop .linkrow.bad .linksays { color: var(--hot); }
+.setpop .linksays a { color: var(--done); }
+.setpop .linkadd {
+  align-self: flex-start; padding: 3px 10px; border-radius: 5px;
+  border: 1px dashed var(--edge-bright); background: none; color: var(--ink-mute);
+  font-family: var(--sans); font-size: 12px; cursor: pointer;
+}
+.setpop .linkadd:hover { color: var(--needs); border-color: var(--needs); }
+/* Where all of it is kept, across both columns, so a person can open it. */
+.setpop .where {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--ink-faint); max-width: 470px;
+}
+.setpop .where .wherepath { color: var(--ink-soft); overflow-wrap: anywhere; }
+.setpop .wherecopy {
+  display: inline-flex; padding: 2px; border: none; background: none;
+  color: var(--ink-faint); cursor: pointer;
+}
+.setpop .wherecopy:hover { color: var(--needs); }
 .dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%;
   transition: background .2s ease, border-color .2s ease; }
 .dot.needs_you { background: var(--needs); }
@@ -9743,11 +9986,20 @@ const state = {
   // session is followed into its new id once, when the link appears; a
   // reader who then goes back to read the old one is not sent on again.
   cleared: new Set(),
-  // The reader's own autolinks, compiled once. Empty until `/api/links`
-  // answers, and empty for ever on a machine with no `links.json`.
+  // The reader's `settings.json` as this page last heard it: from the page
+  // as it was served, then from every `settings` push. See `takeSettings`.
+  settings: SETTINGS && typeof SETTINGS === "object" ? SETTINGS : {},
+  // The reader's own autolinks, compiled once a change. `linksKey` says
+  // which, for the redraw keys: a count stayed the same when a pattern
+  // changed, and the rows kept their old links.
   links: [],
-  // What is wrong with `links.json`, if anything. It stands in the live slot
-  // behind everything else, because nothing the reader does can mend it.
+  linksKey: "[]",
+  // The links this page last sent, so their own push does not rebuild the
+  // rows in the menu -- which would take a red row with it (`paintLinks`).
+  linksSent: null,
+  linksSaving: 0,       // how many saves of the links are on their way
+  // What is wrong with `settings.json`, if anything. It stands in the live
+  // slot behind everything else.
   linkTrouble: [],
   // The last thing the daemon refused to do, on the one line the page keeps
   // for saying things. It stays there until something replaces it.
@@ -9836,8 +10088,12 @@ function apiUrl(id, what, query) {
 }
 
 async function tell(id, verb, body) {
+  return post(apiUrl(id, verb), body);
+}
+
+async function post(where, body) {
   try {
-    const answer = await fetch(apiUrl(id, verb), {
+    const answer = await fetch(where, {
       method: "POST",
       headers: { "Content-Type": "application/json",
                  "X-Wostuast-Token": TOKEN },
@@ -9917,7 +10173,7 @@ function said(answer) {
 
 // The one line the page keeps for saying things, and the four things that
 // want it: what the stream is doing, something you asked for and did not
-// get, a `links.json` that cannot be used, and a passing word that borrows
+// get, a `settings.json` that cannot be used, and a passing word that borrows
 // the slot over all three.
 //
 // The file's trouble stands last, and in a few words, with the whole of it
@@ -9936,7 +10192,7 @@ function said(answer) {
 function paintLive(borrowed) {
   const stream = state.live === "live" ? "" : state.live;
   const links = state.linkTrouble.length
-    ? "links.json has a problem · wostuast doctor" : "";
+    ? "settings.json has a problem · wostuast doctor" : "";
   const slot = $("live");
   slot.textContent = borrowed || state.trouble || stream || links;
   slot.title = links && slot.textContent === links
@@ -10053,9 +10309,46 @@ function fetchScript(src, hash) {
   });
 }
 
+// --- the reader's settings ---------------------------------------------------
+//
+// Everything the settings menu sets, and the ticket links, are one file of
+// the reader's, `settings.json`, which the daemon reads and writes. It was
+// this browser's `localStorage`, and the reader asked for a file instead:
+// one place, the same in every browser, and one they can read. A choice is
+// made on this page at once and then sent; every page, this one too, then
+// hears of it from the `settings` push and `takeSettings` applies it.
+
+function setting(key) {
+  return state.settings[key];
+}
+
+// Send one change. It is shown already, and the push that follows makes it
+// so on every page. The answer is not applied: two quick changes can be
+// answered out of order, and the older answer would undo the newer one,
+// while the pushes go out in the order the file was written.
+async function keepSetting(change) {
+  state.settings = { ...state.settings, ...change };
+  const answer = await post("/api/settings", change);
+  said(answer);
+  return answer;
+}
+
+// Make the page what the file says. `first` is the page starting: nothing is
+// drawn yet, so nothing is drawn again.
+function takeSettings(body, first) {
+  state.settings = body && typeof body === "object" ? body : {};
+  const colours = setting("colours");
+  showTheme(colours === "light" || colours === "dark" ? colours : "system");
+  applyReading(readingWanted());
+  takeSides(!first);
+  takeLinks(!first);
+  drawBell();
+  paintSettings();
+}
+
 // --- colours ----------------------------------------------------------------
-// Three choices: follow the system, or pin one. The pinned one is remembered in
-// this browser, so it survives a reload and never leaves the machine.
+// Three choices: follow the system, or pin one. Kept in `settings.json`, as
+// "auto", "light" or "dark": the words the menu shows.
 
 const THEME_ORDER = ["system", "light", "dark"];
 
@@ -10067,16 +10360,16 @@ function themeChoice() {
   return document.documentElement.dataset.themeChoice || "system";
 }
 
-function applyTheme(choice) {
+function showTheme(choice) {
   document.documentElement.dataset.themeChoice = choice;
   document.documentElement.dataset.theme = choice === "system" ? systemTheme() : choice;
-  try {
-    if (choice === "system") localStorage.removeItem("wostuast-theme");
-    else localStorage.setItem("wostuast-theme", choice);
-  } catch (error) {
-    // A browser that refuses storage still gets the colours, just not the memory.
-  }
   paintSettings();
+}
+
+// The reader's pick: shown, and kept.
+function applyTheme(choice) {
+  showTheme(choice);
+  keepSetting({ colours: choice === "system" ? "auto" : choice });
 }
 
 function nextTheme() {
@@ -10084,7 +10377,7 @@ function nextTheme() {
 }
 
 window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
-  if (themeChoice() === "system") applyTheme("system");
+  if (themeChoice() === "system") showTheme("system");
   redrawIcon();          // the tab bar changed colour, whatever this page shows
 });
 
@@ -10151,6 +10444,9 @@ const ICONS = {
   palette: "M7 1.8a5.2 5.2 0 1 0 0 10.4c.9 0 1.2-.7.9-1.4-.4-.8.1-1.6 1-1.6h1.2"
     + "a2.1 2.1 0 0 0 2.1-2.1A5.2 5.2 0 0 0 7 1.8zM4.4 6.2h.01M6.2 4.2h.01M8.8 4.4h.01",
   tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
+  // Two links of a chain, for the ticket links.
+  link: "M6 8a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.8.8"
+        + "M8 6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.8-.8",
   scroll: "M1.8 5h6M1.8 9h10.4M9.8 6.6L12.2 9l-2.4 2.4",
   wrap: "M1.8 3.6h10.4M1.8 7h8.2a2 2 0 0 1 0 4H6.6M8.2 9.4L6.6 11l1.6 1.6M1.8 10.6h2.4",
   oneColumn: "M3.4 2.2h7.2v9.6H3.4z",
@@ -10370,7 +10666,7 @@ function fillRow(row, s) {
   // runs on every push, about once a second while an agent works, and a
   // ticket link rebuilt between the press and the release is a click that
   // never happens.
-  const links = state.links.length;
+  const links = state.linksKey;
   const slot = one.children[0];
   if (!slot.querySelector("input")
       && fresh(slot, "text", JSON.stringify([rowName(s), links]))) {
@@ -10509,7 +10805,7 @@ function drawSessions() {
   const past = shown.filter(isGone);
   if (!fresh(box, "drawn",
              JSON.stringify([listed, state.chosen, past.length, state.history,
-                             state.links.length]))) {
+                             state.linksKey]))) {
     return;
   }
   // A row that is still there is kept and filled in again. A dot can only
@@ -11258,34 +11554,17 @@ const waiting = new Set();
 //: opens is not news, and it has no entry here on the first pass.
 const wasDoing = new Map();
 
-const ALERTS_KEY = "wostuast-alerts";
-
 //: The needs-you alert is on the moment alerts are: it is the one thing this
 //: tool exists to tell you. The finished one is a choice.
 const ALERTS_DEFAULT = { needs: true, done: false };
 
-// Storage is not a place to trust blindly -- it survives across versions and
-// anything at all can be in it -- so the shape is checked, like `recallReview`
-// and `recallReading` do. The older single switch is read once, so a reader
-// who had alerts on keeps them.
+// What `settings.json` says, which the daemon has checked the shape of.
 function alertsWanted() {
-  let kept = null;
-  try { kept = localStorage.getItem(ALERTS_KEY); } catch (error) {}
-  if (kept) {
-    try {
-      const one = JSON.parse(kept);
-      if (one && typeof one === "object") {
-        return { needs: one.needs === true, done: one.done === true };
-      }
-    } catch (error) {
-      // Not ours, or half-written. The defaults are better than nothing.
-    }
+  const kept = setting("alerts");
+  if (kept && typeof kept === "object") {
+    return { needs: kept.needs === true, done: kept.done === true };
   }
-  let old = null;
-  try { old = localStorage.getItem("wostuast-notify"); } catch (error) {}
-  if (old === "yes") return { ...ALERTS_DEFAULT };
-  if (old === "no") return { needs: false, done: false };
-  // Nothing stored. If this browser has already allowed alerts then the
+  // Nothing kept. If this browser has already allowed alerts then the
   // reader has said yes to being told things, and the needs-you one is what
   // they were saying yes to -- so it is on, which is the default the issue
   // asks for. Without permission nothing can arrive whatever this says, and
@@ -11297,7 +11576,7 @@ function alertsWanted() {
 }
 
 function rememberAlerts(want) {
-  try { localStorage.setItem(ALERTS_KEY, JSON.stringify(want)); } catch (error) {}
+  keepSetting({ alerts: want });
 }
 
 function alertsCan() {
@@ -11318,7 +11597,8 @@ function drawBell() {
   button.querySelector(".offmark").hidden = on;
   button.dataset.alerts = on ? "on" : "off";
   button.setAttribute("aria-label", "settings, " + word);
-  button.title = "settings: colours, alerts, how code is drawn  \u00b7  " + word;
+  button.title = "settings: colours, alerts, how code is drawn, ticket links"
+    + "  \u00b7  " + word;
   const want = alertsWanted();
   $("alertneeds").checked = want.needs;
   $("alertdone").checked = want.done;
@@ -11356,7 +11636,8 @@ function showSettings(open) {
 // is drawn -- the tab width and long lines (the Files tab and the Review
 // tab, on the root, so nothing is rebuilt: a rebuild would take an open
 // comment box with it), and the diff's columns, through `keepSides`, which
-// refuses while a comment is being written. The alert boxes keep their ids,
+// refuses while a comment is being written. Then the ticket links, and
+// where the file is that holds all of it. The alert boxes keep their ids,
 // so `drawBell` and `setAlert` work as they did under the bell.
 function putSettings() {
   const pop = $("setpop");
@@ -11394,6 +11675,29 @@ function putSettings() {
   label("diff columns", "twoColumns");
   choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
          keepSides);
+  put(pop, "div", "rule");
+  label("ticket links", "link");
+  const links = put(pop, "div", "linkedit");
+  put(links, "div", "linklist").id = "linklist";
+  const add = put(links, "button", "linkadd", "+ add a link");
+  add.type = "button";
+  add.addEventListener("click", () => {
+    putLinkRow($("linklist"), { match: "", url: "", trouble: "" })
+      .querySelector("input").focus();
+  });
+  put(pop, "div", "rule");
+  const where = put(pop, "div", "where");
+  putIcon(where, "file");
+  const words = put(where, "span", null, "saved to ");
+  put(words, "span", "wherepath").id = "settingspath";
+  const copy = put(where, "button", "wherecopy");
+  copy.type = "button";
+  copy.title = "copy the path";
+  copy.setAttribute("aria-label", "copy the path");
+  putIcon(copy, "copy");
+  copy.addEventListener("click", async () => {
+    if (await copyToClipboard(setting("path") || "")) note("path copied");
+  });
   const button = $("settings");
   putIcon(button, "sliders");
   putIcon(put(button, "span", "offmark"), "bellOff");
@@ -11407,6 +11711,161 @@ function paintSettings() {
                 wrapping: String(reading.wrap), sides: state.sides };
   for (const [name, value] of Object.entries(now)) {
     paintChoice(pop.querySelector("." + name), value);
+  }
+  $("settingspath").textContent = setting("path") || "";
+  paintLinks();
+}
+
+// --- the ticket links, in the settings menu ---------------------------------
+//
+// One row a link: what to find, a regular expression, and where it links
+// to, with `$1` for its first group. A row is saved when the reader leaves
+// a box or presses Enter, as every other setting is saved the moment it is
+// picked -- there is no save button. A row that cannot be used is red, says
+// why, and is not saved; the rest are.
+
+// The daemon's words name the file's keys; the menu names its boxes.
+function linkWords(text) {
+  return String(text).replace(/`match`/g, "\u201cfind\u201d")
+    .replace(/`url`/g, "\u201clink to\u201d");
+}
+
+function putLinkRow(list, one) {
+  const row = put(list, "div", "linkrow");
+  put(row, "span", "linkword", "find");
+  const match = put(row, "input", "linkmatch");
+  const drop = put(row, "button", "linkdrop", "\u00d7");
+  put(row, "span", "linkword", "link to");
+  const url = put(row, "input", "linkurl");
+  put(row, "span", "linksays");
+  for (const [box, value, hint, word] of [
+    [match, one.match, "PROJ-(\\d+)", "find: a regular expression"],
+    [url, one.url, "https://tickets.example.com/browse/PROJ-$1",
+     "link to: $1 is the first group"]]) {
+    box.type = "text";
+    box.value = value;
+    box.placeholder = hint;
+    box.spellcheck = false;
+    box.autocomplete = "off";
+    box.setAttribute("aria-label", word);
+    // Leaving the box is the save; Enter leaves it.
+    box.addEventListener("change", saveLinks);
+    box.addEventListener("keydown", (press) => {
+      if (press.key !== "Enter" || composing(press)) return;
+      press.preventDefault();
+      box.blur();
+    });
+  }
+  drop.type = "button";
+  drop.title = "remove this link";
+  drop.setAttribute("aria-label", "remove this link");
+  // Taken out after this click has gone up the page: gone first, the click
+  // came from nowhere, and the listener that shuts the menu on a click
+  // outside it shut it.
+  drop.addEventListener("click", () => {
+    setTimeout(() => { row.remove(); saveLinks(); });
+  });
+  if (one.trouble) sayLink(row, linkWords(one.trouble), true);
+  return row;
+}
+
+// What a row says under its boxes: why it is not saved, or nothing, and
+// then `paintExamples` writes what it links.
+function sayLink(row, text, bad) {
+  row.dataset.said = text ? "yes" : "";
+  row.classList.toggle("bad", Boolean(bad));
+  // The box the trouble is about wears the red.
+  row.dataset.bad = !bad ? "" : /link to/.test(text) ? "url" : "match";
+  row.querySelector(".linksays").textContent = text;
+}
+
+// What only this side can tell: a row half filled in, and a pattern this
+// browser will not compile. Everything else is the daemon's `link_trouble`,
+// the one check there is, so a second copy cannot drift from it.
+function linkProblem(match, url) {
+  if (!match && !url) return { say: "", bad: false, send: false };
+  if (!match || !url) return { say: "fill in both to save it", bad: false, send: false };
+  try {
+    new RegExp(match, "g");
+  } catch (error) {
+    // Chromium says "Invalid regular expression: /BUG-(\d+/g: Unterminated
+    // group", the pattern again and the flags; the reason is the last part.
+    const why = error.message.replace(/^Invalid regular expression: \/.*\/[a-z]*: /, "");
+    return { say: "\u201cfind\u201d is not a regular expression: " + why
+                  + " \u00b7 not saved", bad: true, send: false };
+  }
+  return { say: "", bad: false, send: true };
+}
+
+async function saveLinks() {
+  const sent = [];
+  const rows = [];
+  for (const row of $("linklist").querySelectorAll(".linkrow")) {
+    const [match, url] = row.querySelectorAll("input");
+    const problem = linkProblem(match.value, url.value);
+    sayLink(row, problem.say, problem.bad);
+    if (!problem.send) continue;
+    sent.push({ match: match.value, url: url.value });
+    rows.push(row);
+  }
+  // While it is on its way, a push is the file before or after this
+  // change, and either would rebuild the rows and take a red one with it.
+  state.linksSaving += 1;
+  const answer = await keepSetting({ links: sent });
+  state.linksSaving -= 1;
+  const refused = new Set();
+  for (const one of (answer && answer.refused) || []) {
+    refused.add(one.at);
+    if (rows[one.at]) sayLink(rows[one.at], linkWords(one.trouble) + " \u00b7 not saved", true);
+  }
+  if (answer && !answer.error) {
+    // What the file now holds, which the push will bring: no rebuild then.
+    state.linksSent = JSON.stringify(
+      sent.filter((one, at) => !refused.has(at)).map((one) => [one.match, one.url]));
+  }
+  paintLinks();
+}
+
+// The rows, from the file -- unless the reader is in one of them, or this is
+// the file this page has just written.
+function paintLinks() {
+  const list = $("linklist");
+  if (!list || state.linksSaving) return;
+  const links = Array.isArray(setting("links")) ? setting("links") : [];
+  const key = JSON.stringify(links.map((one) => [one.match, one.url]));
+  if (key === state.linksSent) {
+    list.dataset.drawn = key;
+  } else if (!list.contains(document.activeElement) && fresh(list, "drawn", key)) {
+    list.replaceChildren();
+    for (const one of links) putLinkRow(list, one);
+    state.linksSent = null;
+  }
+  if (!$("setpop").hidden) paintExamples();
+}
+
+// Under each good row, the first thing on this page it links, and where to:
+// what the pattern does, shown on what the reader is reading. Only while the
+// menu is open, because it reads the text of the whole page.
+function paintExamples() {
+  const text = $("rows").textContent + "\n" + $("content").textContent;
+  for (const row of $("linklist").querySelectorAll(".linkrow")) {
+    if (row.dataset.said) continue;
+    const [match, url] = [...row.querySelectorAll("input")].map((box) => box.value);
+    const says = row.querySelector(".linksays");
+    says.replaceChildren();
+    if (!match || !url) continue;
+    let hit = null;
+    try { hit = nextMatch(new RegExp(match, "g"), text, 0); } catch (error) { }
+    const where = hit ? ticketUrl(url, hit) : "";
+    if (!where) {
+      says.textContent = "nothing on this page matches yet";
+      continue;
+    }
+    put(says, "span", null, hit[0] + " \u2192 ");
+    const link = put(says, "a", null, where.replace(/^https?:\/\//i, ""));
+    link.href = where;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
   }
 }
 
@@ -11524,19 +11983,13 @@ function tellAbout(session, title, body) {
 //: one of them a match.
 const LINKS_MAX = 500;
 
-// The reader's own autolinks, from `links.json` by way of the daemon. It has
-// already thrown out an entry that will not compile or whose url is not
-// http(s); this compiles what is left, once, and drops anything that still
-// will not take -- the two regular expression dialects are close but not the
-// same, and a pattern Python accepts may not be one JavaScript does.
-async function loadLinks() {
-  let body = null;
-  try {
-    const answer = await fetch("/api/links");
-    body = await answer.json();
-  } catch (error) {
-    return;                            // the daemon went away; try again later
-  }
+// The reader's own autolinks, from `settings.json` by way of the daemon. It
+// has already marked an entry that will not compile or whose url is not
+// http(s); this compiles what is left, once a change, and drops anything that
+// still will not take -- the two regular expression dialects are close but
+// not the same, and a pattern Python accepts may not be one JavaScript does.
+function takeLinks(redraw) {
+  const body = state.settings;
   const out = [];
   // What the daemon could not use, plus anything this side cannot compile.
   // "No links" and "your file is broken" are different answers, and the page
@@ -11544,6 +11997,7 @@ async function loadLinks() {
   // exactly like a file you never wrote.
   const trouble = [...((body && body.trouble) || [])];
   for (const one of (body && body.links) || []) {
+    if (one.trouble) continue;         // said in `trouble` already
     try {
       out.push({ re: new RegExp(one.match, "g"), url: String(one.url) });
     } catch (error) {
@@ -11552,13 +12006,16 @@ async function loadLinks() {
       trouble.push("this browser cannot use the pattern `" + one.match + "`");
     }
   }
+  const key = JSON.stringify(out.map((one) => [one.re.source, one.url]));
+  const changed = key !== state.linksKey;
   state.links = out;
-  // Said on the live slot, until a reload: see `paintLive`.
+  state.linksKey = key;
+  // Said on the live slot, until the file is mended: see `paintLive`.
   state.linkTrouble = trouble;
   paintLive();
-  // The rows link their tickets too, and nothing else draws them again:
-  // this answer can come after the last push.
-  if (out.length) {
+  // Everything that shows a ticket draws it again, and nothing else would:
+  // a change to the links is not a push of the sessions.
+  if (changed && redraw) {
     draw();
     drawSessions();
   }
@@ -13755,13 +14212,10 @@ function blankFiles() {
 // --- how a file is drawn -----------------------------------------------------
 //
 // Two choices the reader makes about reading, not about a session: how wide a
-// tab is, and whether a long line wraps. They live in this browser, like the
-// theme, because they are about this screen and these eyes. No config file:
-// goal 4 in CLAUDE.md rules one out, and a control you can see beats a
-// setting you cannot.
+// tab is, and whether a long line wraps. In `settings.json`, like the theme,
+// as `tab_width` and `long_lines`.
 
 const TAB_WIDTHS = [2, 4, 8];
-const READING_KEY = "wostuast-reading";
 
 // Both live on the root element, which is then the only copy — the theme's
 // pattern, and for the same reason: the cascade does the work, so neither
@@ -13781,20 +14235,16 @@ function applyReading(next) {
 
 function keepReading(next) {
   applyReading(next);
-  try { localStorage.setItem(READING_KEY, JSON.stringify(next)); }
-  catch (error) { }              // it still applies; it just is not remembered
+  keepSetting({ tab_width: next.tab, long_lines: next.wrap ? "wrap" : "scroll" });
 }
 
-function recallReading() {
-  let held = null;
-  try { held = JSON.parse(localStorage.getItem(READING_KEY) || "null"); }
-  catch (error) { held = null; } // a private window, or something else's key
-  // Storage is not a place to trust blindly, the same rule a review keeps.
-  // Whatever it did not answer for, the default stands — and the default is
-  // applied either way, so the gutter and the label cannot disagree.
-  const shape = held && typeof held === "object" ? held : {};
-  applyReading({ tab: TAB_WIDTHS.includes(shape.tab) ? shape.tab : 4,
-                 wrap: shape.wrap === true });
+// What the file says. Whatever it did not answer for, the default stands --
+// and the default is applied either way, so the gutter and the label cannot
+// disagree.
+function readingWanted() {
+  const tab = setting("tab_width");
+  return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
+           wrap: setting("long_lines") === "wrap" };
 }
 
 // How big a file is, in the units a person reads. Bytes on disk, which is not
@@ -13929,15 +14379,18 @@ let BIG_LINES = 500;
 
 // One column, or the old file beside the new one. It is about this screen
 // and not about a session -- a narrow window wants one column whatever it
-// shows -- so it lives in this browser, like the theme. Unlike the tab width
-// it cannot be a rule in the cascade: a row beside a row is a different row,
-// so a change rebuilds the diff.
-const SIDES_KEY = "wostuast-diff-sides";
-
-function recallSides() {
-  let held = null;
-  try { held = localStorage.getItem(SIDES_KEY); } catch (error) { held = null; }
-  state.sides = held === "split" ? "split" : "unified";
+// shows -- so it is in `settings.json`, like the theme, as `diff_columns`.
+// Unlike the tab width it cannot be a rule in the cascade: a row beside a
+// row is a different row, so a change rebuilds the diff.
+//
+// A change from the file waits while a comment is being written, as the
+// reader's own does (`busyWriting`): a rebuild takes the open box with it.
+function takeSides(redraw) {
+  const want = setting("diff_columns") === "two" ? "split" : "unified";
+  if (state.sides === want) return;
+  if (redraw && writingIn($("content"))) return;
+  state.sides = want;
+  if (redraw) draw();
 }
 
 // Both of these rebuild the diff, and a rebuild under an open comment box
@@ -13952,7 +14405,7 @@ function busyWriting() {
 function keepSides(next) {
   if (state.sides === next || busyWriting()) return;
   state.sides = next;
-  try { localStorage.setItem(SIDES_KEY, next); } catch (error) { }
+  keepSetting({ diff_columns: next === "split" ? "two" : "one" });
   draw();                           // `sides` is in the body's redraw key
 }
 
@@ -16515,6 +16968,11 @@ function resubscribe() {
     paintLive();
   });
 
+  // `settings.json` changed: in this page's menu, another page's, or by hand.
+  stream.addEventListener("settings", (message) => {
+    takeSettings(JSON.parse(message.data));
+  });
+
   stream.addEventListener("transcript", (message) => {
     const body = JSON.parse(message.data);
     if (body.id !== state.chosen) return;
@@ -16804,9 +17262,7 @@ $("find").addEventListener("keydown", (press) => {
   $("find").blur();
   draw();
 });
-applyTheme(themeChoice());
-recallReading();
-recallSides();
+takeSettings(state.settings, true);
 dragWidth($("grip"), "--sidebar-w", 200, 760);
 
 drawSessions();
@@ -16823,9 +17279,6 @@ window.addEventListener("hashchange", goToLink);
 // again as Markdown; when it does not, the text stays, and that is the answer.
 markedReady().then((came) => { if (came) draw(); });
 
-// The reader's own autolinks, asked for once. A machine with no `links.json`
-// gets an empty list and nothing here changes.
-loadLinks();
 </script>
 </body>
 </html>"""
