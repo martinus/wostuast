@@ -802,8 +802,8 @@ def test_a_start_builds_the_hook_once(ws, monkeypatch):
     """It parses the whole program: once to write the hook file, and it was
     once more to compare it."""
     made = []
-    real = ws.hook_source
-    monkeypatch.setattr(ws, "hook_source",
+    real = ws.program_files
+    monkeypatch.setattr(ws, "program_files",
                         lambda source: made.append(1) or real(source))
     assert start(ws, monkeypatch) == 0
     assert len(made) == 1
