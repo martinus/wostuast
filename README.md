@@ -122,10 +122,11 @@ and Review tabs work. No `pip install`, no build step, and no config file to
 write: the page writes your settings file when you change a setting.
 
 **1. Install.** This copies one file to `~/.local/bin/wostuast`, writes the
-small hook it runs on every event to `~/.local/share/wostuast/hook.py`, and adds
-its hooks to `~/.claude/settings.json`. It changes nothing else in that file.
-The hook file is made from the program, so a hook takes about 30 ms, not the
-120 ms it takes to start the whole program.
+small hook it runs on every event to `~/.local/share/wostuast/hook.py` and the
+small status line to `~/.local/share/wostuast/status.py`, and adds its hooks to
+`~/.claude/settings.json`. It changes nothing else in that file. Both small
+files are made from the program, so a hook takes about 30 ms and a status line
+about 45 ms, not the 120 ms it takes to start the whole program.
 
 ```sh
 python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/main/wostuast)" install
@@ -177,7 +178,7 @@ restart your Claude Code sessions.
 <summary><b>Uninstall</b></summary>
 
 ```sh
-wostuast uninstall               # removes our hooks, our status line and the hook file; keeps your history
+wostuast uninstall               # removes our hooks, our status line and their two files; keeps your history
 rm ~/.local/bin/wostuast         # removes the program
 rm -r ~/.local/state/wostuast    # removes the history too, if you want that
 ```
@@ -339,15 +340,16 @@ is depends on your window manager.
 | Command | What it does |
 | --- | --- |
 | `wostuast` | Check the setup, bring the program, the hook file and the hooks up to date when they are behind, and serve the page on `127.0.0.1:7331`. `--port` picks another port (`0` lets the system pick a free one, and it prints the one it got), `--open` opens a browser. This was `wostuast serve`. |
-| `wostuast install` | Copy to `~/.local/bin`, write the hook file to `~/.local/share/wostuast/hook.py`, and register the hooks and the status line. A bare `wostuast` does this too, when something is behind. |
-| `wostuast uninstall` | Remove our hooks, our status line and the hook file. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
+| `wostuast install` | Copy to `~/.local/bin`, write the hook file and the status file to `~/.local/share/wostuast/`, and register the hooks and the status line. A bare `wostuast` does this too, when something is behind. |
+| `wostuast uninstall` | Remove our hooks, our status line, the hook file and the status file. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
 | `wostuast ls` | List the sessions, in the same order as the page. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
 | `wostuast shapes` | List what in your transcripts of the last 7 days the page cannot show: record types it does not read, and Claude Code's own tags it leaves showing. It prints names and counts, never your text, so you can paste the output into a bug report. `--days` reads further back. |
 | `wostuast hook` / `status` | Claude Code calls these. You do not. |
 
-`install` also registers `wostuast status` as your Claude Code status line, but
-only if you do not have one. The status line carries the session's
+`install` also registers `~/.local/share/wostuast/status.py` as your Claude
+Code status line, but only if you do not have one. A status line of ours from
+before, `wostuast status`, is moved to it. The status line carries the session's
 context usage and its spend; hooks carry neither. Without it, wostuast
 still works, but sessions have no context bar and no spend. If you
 keep your own status line, `install` tells you the line to add to it.

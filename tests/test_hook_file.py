@@ -171,3 +171,101 @@ def test_doctor_says_when_the_hook_file_is_gone(ws, tmp_path, monkeypatch, capsy
     assert str(ws.hook_path()) in behind and "install" in behind
     assert ws.cmd_doctor(None) == 1
     assert behind in capsys.readouterr().out
+
+
+# --- the status file (#286) ------------------------------------------------------
+
+
+def written_status(ws, tmp_path):
+    path = tmp_path / "share" / "wostuast" / "status.py"
+    ws.write_program(path, ws.status_source(SOURCE))
+    return path
+
+
+def run_status(path, home, payload, *args):
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
+           "WOSTUAST_STATE": str(home / "state")}
+    return subprocess.run([str(path), *args], input=json.dumps(payload),
+                          capture_output=True, text=True, env=env, timeout=30)
+
+
+def test_the_status_file_defines_every_name_it_uses(ws):
+    """The hook file's test, for the status file: a name left behind is a
+    status line that prints nothing, and says why only in the log."""
+    text = ws.status_source(SOURCE)
+    table = symtable.symtable(text, "status.py", "exec")
+    defined = set(table.get_identifiers())
+    missing = set()
+
+    def walk(scope):
+        for child in scope.get_children():
+            # A class body too: `StatusArgs` reads `then_in` and `sys`
+            # there, and a class scope has no `get_globals`.
+            read = (child.get_globals() if child.get_type() == "function" else
+                    {one.get_name() for one in child.get_symbols()
+                     if one.is_referenced() and not one.is_assigned()})
+            missing.update(name for name in read
+                           if name not in defined and not hasattr(builtins, name))
+            walk(child)
+
+    walk(table)
+    assert not missing
+
+
+def test_the_status_file_keeps_the_session_and_prints_its_line(ws, tmp_path):
+    """What `wostuast status` does: the name and the context kept for the
+    page, one line printed -- or the user's own line, run with the same
+    payload, after `--then`. `Status` came out of the first build with no
+    `@dataclass` above it, and took no arguments."""
+    path = written_status(ws, tmp_path)
+    payload = {"session_id": "s9", "session_name": "warm", "cwd": "/tmp",
+               "model": {"display_name": "Opus 5"},
+               "context_window": {"used_percentage": 41}}
+    done = run_status(path, tmp_path, payload)
+    assert (done.returncode, done.stderr) == (0, "")
+    assert "warm" in done.stdout and "41%" in done.stdout
+    kept = json.loads((tmp_path / "state" / "status" / "s9.json").read_text())
+    assert kept["name"] == "warm" and kept["context_pct"] == 41.0
+    done = run_status(path, tmp_path, payload, "--then", "cat")
+    assert json.loads(done.stdout)["session_id"] == "s9"
+
+
+def test_the_status_file_loads_little(ws, tmp_path):
+    """It runs on every redraw. `dataclasses` it needs, and `ast` comes with
+    it through `inspect`; the rest of what the program imports it must not."""
+    path = written_status(ws, tmp_path)
+    done = subprocess.run(
+        [os.environ.get("PYTHON", "python3"), "-X", "importtime", str(path)],
+        input="{}", capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path),
+             "WOSTUAST_STATE": str(tmp_path / "state")})
+    loaded = {line.rsplit("|", 1)[-1].strip() for line in done.stderr.splitlines()
+              if line.startswith("import time:")}
+    avoidable = {"argparse", "http", "urllib.request", "socket", "shlex",
+                 "sqlite3", "subprocess"}
+    assert loaded and not (loaded & avoidable), sorted(loaded & avoidable)
+
+
+def test_install_points_the_status_line_at_the_status_file(
+        ws, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(ws, "install_path", lambda: tmp_path / "bin" / "wostuast")
+    assert ws.cmd_install(None) == 0
+    status = ws.status_program_path()
+    assert status == tmp_path / "share" / "wostuast" / "status.py"
+    assert os.access(status, os.X_OK)
+    settings = json.loads(ws.settings_path().read_text())
+    assert settings["statusLine"]["command"] == ws.status_command(status)
+    assert ws.install_behind() == ""
+    status.write_text(status.read_text() + "\n# edited\n")
+    behind = ws.install_behind()
+    assert str(status) in behind and "install" in behind
+    status.unlink()
+    behind = ws.install_behind()
+    assert str(status) in behind and "install" in behind
+    assert ws.cmd_install(None) == 0
+    assert status.exists()
+    capsys.readouterr()
+    assert ws.cmd_uninstall(None) == 0
+    assert "statusLine" not in json.loads(ws.settings_path().read_text())
+    assert not status.exists()
+    assert f"removed {status}" in capsys.readouterr().out

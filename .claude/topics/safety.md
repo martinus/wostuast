@@ -648,7 +648,23 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     whose name lacked the thread that `write_atomic`'s carries (#285). A
     start builds the hook once: `bring_up_to_date` hands what it built to
     `install_behind`, which parsed the whole program a second time.
-    `test_a_start_builds_the_hook_once`. So `cmd_hook` and everything it calls are
+    `test_a_start_builds_the_hook_once`.
+  - **The status line runs a file made the same way, `status.py`**
+    (#286): `STATUS_PARTS` between `STATUS_HEAD` and `STATUS_TAIL`, built
+    by `program_files` in the same parse as the hook file. It ran the whole
+    program on every redraw, 127 ms against about 45. **Not in the hook
+    file**: it needs `dataclasses`, whose 8 ms every hook event would have
+    paid. It reads `--then` with `then_in`, not argparse. A status line of
+    ours in the old shape, `wostuast status [--then …]`, is moved to it by
+    `add_status_line`, with the user's line kept; `is_ours`, `then_of`,
+    `remove_status_line`, `hook_files_missing`, `install_behind` and
+    `uninstall` know both shapes. **A part is copied from its first
+    decorator**: `ast` puts a class at its `class` line, and `Status` came
+    out with no `@dataclass` and took no arguments.
+    `test_the_status_file_defines_every_name_it_uses`,
+    `test_the_status_file_keeps_the_session_and_prints_its_line`,
+    `test_an_old_status_line_of_ours_is_moved_to_the_status_file`,
+    `test_install_points_the_status_line_at_the_status_file`. So `cmd_hook` and everything it calls are
     written once, and the tests of `wostuast hook` test the hook. **A part
     left out is a NameError on every event that nobody sees**: the hook
     catches everything and may say nothing. `hook_source` refuses a name

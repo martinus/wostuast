@@ -65,11 +65,33 @@ def test_a_hooks_key_that_is_not_an_object_is_refused(ws):
         ws.add_hooks({"hooks": {"Stop": "nonsense"}}, OURS)
 
 
+STATUS_FILE = "/home/m/.local/share/wostuast/status.py"
+
+
 def test_status_line_is_added_only_when_free(ws):
     settings = {}
-    assert ws.add_status_line(settings, "/bin/wostuast status") == ["added status line"]
-    assert settings["statusLine"] == {"type": "command", "command": "/bin/wostuast status"}
-    assert ws.add_status_line(settings, "/bin/wostuast status") == []
+    assert ws.add_status_line(settings, STATUS_FILE) == ["added status line"]
+    assert settings["statusLine"] == {"type": "command", "command": STATUS_FILE}
+    assert ws.add_status_line(settings, STATUS_FILE) == []
+
+
+def test_an_old_status_line_of_ours_is_moved_to_the_status_file(ws):
+    """`wostuast status` ran the whole program on every redraw (#286). A
+    start moves it to the status file, with the user's own line after
+    `--then` kept, and every other key of the entry as it was; and
+    uninstall reads the user's line back out of the new shape."""
+    old = "/home/m/.local/bin/wostuast status --then 'python3 ~/.claude/line.py'"
+    settings = {"statusLine": {"type": "command", "command": old, "padding": 1}}
+    assert ws.add_status_line(settings, STATUS_FILE) == ["moved status line"]
+    assert settings["statusLine"] == {
+        "type": "command", "padding": 1,
+        "command": STATUS_FILE + " --then 'python3 ~/.claude/line.py'"}
+    assert ws.add_status_line(settings, STATUS_FILE) == []
+    assert ws.remove_status_line(settings) == [
+        "put your own status line back: python3 ~/.claude/line.py"]
+    plain = {"statusLine": {"type": "command", "command": "wostuast status"}}
+    assert ws.add_status_line(plain, STATUS_FILE) == ["moved status line"]
+    assert plain["statusLine"]["command"] == STATUS_FILE
 
 
 def test_an_existing_status_line_is_kept_and_a_way_to_have_both_is_given(ws):
@@ -147,7 +169,8 @@ def test_install_and_uninstall_leave_the_file_as_it_was(ws, tmp_path, monkeypatc
     assert ws.cmd_install(None) == 0
     assert target.exists()
     settings = json.loads(path.read_text())
-    assert settings["statusLine"]["command"] == f"{target} status"
+    assert settings["statusLine"]["command"] == str(
+        tmp_path / "share" / "wostuast" / "status.py")
 
     assert ws.cmd_uninstall(None) == 0
     assert path.read_text() == original
@@ -258,9 +281,9 @@ def test_a_real_entry_in_that_same_key_always_survives(ws):
 def test_install_does_not_wrap_a_line_it_wrote_itself(ws):
     """Run install, paste the suggested line, run install again: it used to
     offer to wrap its own command in itself."""
-    chained = "/home/m/.local/bin/wostuast status --then 'python3 ~/.claude/line.py'"
+    chained = STATUS_FILE + " --then 'python3 ~/.claude/line.py'"
     settings = {"statusLine": {"type": "command", "command": chained}}
-    assert ws.add_status_line(settings, "/home/m/.local/bin/wostuast status") == []
+    assert ws.add_status_line(settings, STATUS_FILE) == []
     assert settings["statusLine"]["command"] == chained
 
 

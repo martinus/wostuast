@@ -402,11 +402,21 @@ def hook_command(target: Path) -> str:
     return shlex.quote(str(target))
 
 
+def status_program_path() -> Path:
+    """The small file the status line runs, beside the hook file
+    (`status_source`). The status line ran the whole program on every
+    redraw, page included: 127 ms, where this takes about a third (#286).
+    Not in the hook file: the status line needs `dataclasses`, and every
+    hook event would have paid its 8 ms."""
+    return hook_path().parent / "status.py"
+
+
 def status_command(target: Path) -> str:
-    """The same, for the status line."""
+    """The command install writes for the status line: the status file,
+    which runs itself, as the hook file does."""
     import shlex
 
-    return f"{shlex.quote(str(target))} status"
+    return shlex.quote(str(target))
 
 
 # --- log: a plain text log, so a broken hook leaves a trace ------------------
@@ -5937,7 +5947,19 @@ def is_ours(command: Any, verb: str) -> bool:
     words = words_of(command)
     if verb == "hook" and is_hook_file(command):
         return True
+    if verb == "status" and is_status_file(command):
+        return True
     return len(words) >= 2 and words[1] == verb and os.path.basename(words[0]) == "wostuast"
+
+
+def is_status_file(command: Any) -> bool:
+    """True when this command runs the status file: `.../wostuast/status.py`,
+    alone or with `--then '<theirs>'` after it."""
+    if not isinstance(command, str):
+        return False
+    words = words_of(command)
+    return (len(words) >= 1 and os.path.basename(words[0]) == "status.py"
+            and os.path.basename(os.path.dirname(words[0])) == "wostuast")
 
 
 def is_hook_file(command: Any) -> bool:
@@ -6047,7 +6069,19 @@ def add_status_line(settings: dict[str, Any], command: str) -> list[str]:
     """Register our status line, but never overwrite one the user already has."""
     current = settings.get("statusLine")
     if isinstance(current, dict) and is_ours(current.get("command"), "status"):
-        return []
+        if is_status_file(current["command"]):
+            return []
+        # `wostuast status`, from before the status file: it runs the whole
+        # program on every redraw. The user's own line after `--then` comes
+        # with it, and every other key of the entry stays.
+        if shell_words(current["command"]) is None:
+            return []
+        import shlex
+
+        theirs = then_of(current["command"])
+        current["command"] = command + (
+            f" --then {shlex.quote(theirs)}" if theirs else "")
+        return ["moved status line"]
     if current:
         yours = current.get("command") if isinstance(current, dict) else ""
         if not isinstance(yours, str) or not yours:
@@ -6077,8 +6111,17 @@ def then_of(command: str) -> str | None:
     words = shell_words(command)
     if words is None:
         return None
+    # The status file takes `--then` straight after its name; the program
+    # took it after the word `status`.
+    return then_in(words[1:] if is_status_file(command) else words[2:])
+
+
+def then_in(words: list[str]) -> str | None:
+    """The value of `--then` among these words, read as argparse reads it:
+    `--then X`, `--then=X`, or a short form (`--th`). The last one wins.
+    The status file reads its own argv with this, without argparse."""
     found = None
-    rest = iter(words[2:])
+    rest = iter(words)
     for word in rest:
         name, equals, value = word.partition("=")
         if len(name) < 3 or not "--then".startswith(name):
@@ -8493,15 +8536,18 @@ def hook_files_missing() -> list[str]:
         for entry in group.get("hooks") or []
         if isinstance(entry, dict) and is_hook_file(entry.get("command"))
     }
+    line = settings.get("statusLine")
+    if isinstance(line, dict) and is_status_file(line.get("command")):
+        named.add(words_of(line["command"])[0])
     return sorted(path for path in named if not os.access(path, os.X_OK))
 
 
-def install_behind(built: str | None = None) -> str:
+def install_behind(built: tuple[str, str] | None = None) -> str:
     """Why the installed copy is not this one, or "" when it is.
 
-    `built` is the hook file this version writes, when the caller has made
-    it already: `hook_source` parses the whole program, and a start made it
-    twice, once to write it and once to compare it.
+    `built` is the hook file and the status file this version writes, when
+    the caller has made them already: `program_files` parses the whole
+    program, and a start made them twice, once to write and once to compare.
 
     `install` copies this file to `install_path()`, and the hooks and the
     status line run that copy -- not the checkout `serve` was started from.
@@ -8527,16 +8573,21 @@ def install_behind(built: str | None = None) -> str:
     # not what this version makes -- an install of an older copy, or a hand
     # that edited it. Only when there is one: before it, the hooks ran the
     # program, and the check below covers that.
+    # The status file the same way, only when there is one.
     try:
-        hook = hook_path().read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        hook = None
-    try:
-        if hook is not None and hook != (
-                built or hook_source(here.read_text(encoding="utf-8"))):
-            return (f"{hook_path()} is not the hook this version writes. The"
-                    f" hooks run it, so what this version records is not"
-                    f" recorded; run `{here} install`")
+        for made, name, who in ((hook_path(), "hook", "hooks"),
+                                (status_program_path(), "status line",
+                                 "status line")):
+            try:
+                held = made.read_text(encoding="utf-8")
+            except (OSError, ValueError):
+                continue
+            built = built or program_files(here.read_text(encoding="utf-8"))
+            if held != built[0 if name == "hook" else 1]:
+                return (f"{made} is not the {name} this version writes. The"
+                        f" {who} run{'s' if who != 'hooks' else ''} it, so what"
+                        f" this version records is not recorded; run"
+                        f" `{here} install`")
     except (OSError, SyntaxError, ValueError):
         return ""
     try:
@@ -8607,9 +8658,69 @@ if __name__ == "__main__":
     sys.exit(cmd_hook(None))
 '''
 
+#: What the status file is made of, as `HOOK_PARTS` is for the hook file:
+#: `cmd_status` and what it calls. Claude Code runs the status line on every
+#: redraw, and the whole program took 127 ms a time (#286).
+STATUS_PARTS = frozenset({
+    "HOOK_TIMEOUT", "LOG_TIMEOUT", "LOG_MAX_BYTES", "state_dir",
+    "private_dir", "open_private", "log_path", "log", "rotate",
+    "still_the_file", "file_key", "write_atomic", "status_path", "Status",
+    "to_float", "opt_float", "status_from_payload", "write_status",
+    "status_line", "give_up_after", "stand_down", "run_status_line",
+    "then_in", "cmd_status", "money", "path_label", "safe_name", "status_dir",
+})
+
+STATUS_HEAD = '''#!/usr/bin/env python3
+"""The wostuast status line: keep the session's name and context, and print
+one line, or run the line the user already had (`--then`).
+
+`wostuast install` wrote this from the definitions of the same names in
+wostuast, so a redraw compiles these and not the whole program. Do not edit
+it: the next install writes it again, and `wostuast doctor` says when it is
+not the one this version would write.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+import sys
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+'''
+
+STATUS_TAIL = '''
+
+
+class StatusArgs:
+    """What `cmd_status` reads of its arguments: `--then`, read without
+    argparse, which costs a redraw more than the rest of this file."""
+
+    then = then_in(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(cmd_status(StatusArgs))
+'''
+
 
 def hook_source(source: str) -> str:
-    """The hook file for this version of the program, given its source.
+    """The hook file for this version of the program, given its source."""
+    return program_files(source)[0]
+
+
+def status_source(source: str) -> str:
+    """The status file for this version of the program, given its source."""
+    return program_files(source)[1]
+
+
+def program_files(source: str) -> tuple[str, str]:
+    """The hook file and the status file for this version of the program,
+    from one parse of its source: a parse is 63 ms, and a start makes both.
 
     Raises ValueError when a part is missing, so `install` stops rather than
     write a hook that would fail on every event -- and fail quietly, because
@@ -8629,12 +8740,22 @@ def hook_source(source: str) -> str:
             name = node.target.id
         else:
             continue
-        if name in HOOK_PARTS:
-            parts[name] = "".join(lines[node.lineno - 1:node.end_lineno])
-    missing = HOOK_PARTS - parts.keys()
-    if missing:
-        raise ValueError(f"the hook needs {', '.join(sorted(missing))}")
-    return HOOK_HEAD + "\n\n".join(parts.values()) + HOOK_TAIL
+        if name in HOOK_PARTS | STATUS_PARTS:
+            # From the first decorator: `ast` puts a class at its `class`
+            # line, and `Status` came out with no `@dataclass` above it.
+            first = min([one.lineno for one in getattr(node, "decorator_list", [])]
+                        + [node.lineno])
+            parts[name] = "".join(lines[first - 1:node.end_lineno])
+    made = []
+    for wanted, head, tail, what in ((HOOK_PARTS, HOOK_HEAD, HOOK_TAIL, "hook"),
+                                     (STATUS_PARTS, STATUS_HEAD, STATUS_TAIL,
+                                      "status line")):
+        missing = wanted - parts.keys()
+        if missing:
+            raise ValueError(f"the {what} needs {', '.join(sorted(missing))}")
+        made.append(head + "\n\n".join(one for name, one in parts.items()
+                                        if name in wanted) + tail)
+    return made[0], made[1]
 
 
 def write_program(target: Path, text: str) -> bool:
@@ -8654,11 +8775,11 @@ def write_program(target: Path, text: str) -> bool:
     return True
 
 
-def bring_up_to_date() -> tuple[list[str], list[str], str, str]:
+def bring_up_to_date() -> tuple[list[str], list[str], str, tuple[str, str] | None]:
     """Write what is behind this version: the program, the hook file, the
-    hooks and the status line. Returns what changed, what to tell the
-    reader, why it could not or "", and the hook file it built, so that
-    `install_behind` does not build it again.
+    status file, the hooks and the status line. Returns what changed, what
+    to tell the reader, why it could not or "", and the two files it built,
+    so that `install_behind` does not build them again.
 
     Nothing that is already right is written, Claude Code's `settings.json`
     least of all: a bare `wostuast` runs this on every start (#275), and a
@@ -8669,32 +8790,33 @@ def bring_up_to_date() -> tuple[list[str], list[str], str, str]:
     target = install_path()
     source = self_source()
     try:
-        hook = hook_source(source)
+        built = program_files(source)
     except (SyntaxError, ValueError) as error:
-        return [], [], f"cannot build the hook: {error}", ""
-    # The program first: the status line runs it.
+        return [], [], f"cannot build the hook: {error}", None
     if write_program(target, source):
         changes.append(f"wrote {target}")
-    if write_program(hook_path(), hook):
-        changes.append(f"wrote {hook_path()}")
+    for made, text in zip((hook_path(), status_program_path()), built):
+        if write_program(made, text):
+            changes.append(f"wrote {made}")
 
     path = settings_path()
     try:
         settings, indent, newline = load_settings(path)
     except (OSError, ValueError) as error:
-        return changes, [], unreadable(path, error), hook
+        return changes, [], unreadable(path, error), built
     before = json.dumps(settings, sort_keys=True)
     try:
         changes += add_hooks(settings, hook_command(hook_path()))
-        said = add_status_line(settings, status_command(target))
+        said = add_status_line(settings, status_command(status_program_path()))
     except ValueError as error:
-        return changes, [], f"{path}: {error}", hook
-    # "added status line" is a change; the rest is advice about theirs.
-    notes = [line for line in said if line != "added status line"]
-    changes += [line for line in said if line == "added status line"]
+        return changes, [], f"{path}: {error}", built
+    # Added or moved is a change; the rest is advice about theirs.
+    done = ("added status line", "moved status line")
+    notes = [line for line in said if line not in done]
+    changes += [line for line in said if line in done]
     if json.dumps(settings, sort_keys=True) != before:
         save_settings(path, settings, indent, newline)
-    return changes, notes, "", hook
+    return changes, notes, "", built
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -8728,9 +8850,13 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     # The hook file is ours alone, written by `install` and run by nothing
     # once the hooks are gone. The program stays: it is what the reader
     # installed, and the message below says how to remove it.
+    for made in (hook_path(), status_program_path()):
+        try:
+            made.unlink()
+            changes.append(f"removed {made}")
+        except OSError:
+            pass
     try:
-        hook_path().unlink()
-        changes.append(f"removed {hook_path()}")
         hook_path().parent.rmdir()
     except OSError:
         pass
@@ -8776,7 +8902,7 @@ def changed_parts(changes: list[str]) -> list[str]:
     hooks = sum(1 for line in changes if line.startswith(("added hook", "moved hook")))
     if hooks:
         parts.append(f"{hooks} hook{'s' if hooks != 1 else ''}")
-    if "added status line" in changes:
+    if "added status line" in changes or "moved status line" in changes:
         parts.append("status line")
     return parts
 
