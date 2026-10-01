@@ -209,6 +209,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     opened a second copy of this page in a new tab, and `goToLink` read
     `#install` as a session. Only `http(s)` is a link now (`LINKABLE`);
     anything else keeps its `a` with no `href`, as before.
+  - **A skill's frontmatter is an agent's text too**: a `SKILL.md` in a
+    worktree is a file any agent there can write. `read_command` reads
+    `FRONT_MAX` bytes and keeps three keys; a name must be
+    `COMMAND_SHAPE`, because a taken name goes into the send box and from
+    there into a terminal; the page sets every part with `put`.
+    `test_a_name_that_is_not_a_command_is_left_out`.
   `test_markdown_keeps_task_boxes_step_numbers_sides_and_picture_words`,
   `test_the_scrub_keeps_only_values_it_has_checked`, which feeds the scrub
   a hostile `start`, `align`, `img onerror` and `javascript:` by hand,

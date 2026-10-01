@@ -422,6 +422,54 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     stops a send, so it takes nothing from the send box's checks.
     `test_the_enter_that_ends_a_composition_sends_nothing`,
     `test_the_enter_that_ends_a_composition_keeps_no_name`.
+- **A `/` at the start of the send box completes from files and
+  transcripts, asked for each time the list opens** (#268). `Commands.of`
+  reads the skills (`skills/<name>/SKILL.md`) and command files
+  (`commands/<name>.md`) under `.claude` in the session's directory and
+  each parent up to `worktree_root` (`project_dirs`, nearest first, both
+  resolved, because git hands back the real path), then the same under
+  `claude_dir()`, then adds what `<command-name>` says was run in any
+  known transcript. Six things in it are the shape on purpose:
+  - **Built-ins come from the transcripts, never a copied list.** `/clear`
+    and `/compact` are in no file, and a list of them goes stale with each
+    Claude Code release. `Commands.used` reads each transcript on from where
+    it stopped (`Tail`), parses only lines holding `<command-name>`, and
+    starts a file's count again when the file is rewritten.
+  - **A mention is not a use.** `command_used` asks `read_user_text`, so a
+    prompt that only talks about `<command-name>` counts nothing, and an
+    `isMeta` record is Claude Code's, not the reader's. A `system`
+    `local_command` record is the other shape a command is written in.
+  - **Not pushed with the row.** A row goes out on every change; the list is
+    kilobytes (the ssh rule above). The page fetches `commands` when the
+    list opens and drops it when it shuts (`closeSlash`), so a skill written
+    a minute ago is in the next list.
+  - **What is not known from a real machine is left out**, not guessed:
+    plugin skills, whose place on disk nobody has read, and a command file
+    in a subdirectory of `commands`, whose name nobody has seen formed
+    (topics/payloads). `glob`, not `rglob`.
+  - **The list's keys come first** (`slashKey`). Tab always takes the
+    chosen row. **Enter takes only a row the reader chose** (`enterTakes`):
+    an arrow pressed (`slash.moved`), or a word that starts the name and is
+    not all of it. Enter that always took turned `/doctor` -- a built-in
+    never run, so not listed -- into `/docs-to-review` by scattered letters,
+    and the next Enter sent the wrong command; and a whole name took two
+    Enters. Escape shuts the list and is remembered (`slash.dismissed`)
+    until the word is gone **or sent**: `sendTyped` empties the box with no
+    input event, and the next `/` opened nothing. A row takes on
+    `mousedown` with `preventDefault`: a click blurs the box first, and the
+    blur shuts the list.
+  - **An answer for a box the reader left opens nothing.** `followSlash`
+    checks the focus after its fetch, as it checks the session: the list
+    opened over the transcript with no box to type into.
+  `test_the_project_and_your_own_commands_are_read`,
+  `test_what_the_transcripts_say_was_run_is_counted`,
+  `test_a_transcript_is_read_on_from_where_it_stopped`,
+  `test_a_slash_offers_the_commands_and_tab_takes_one`,
+  `test_enter_takes_a_command_and_escape_keeps_the_list_shut`,
+  `test_the_list_is_asked_for_each_time_it_opens`,
+  `test_enter_sends_what_was_typed_unless_a_row_was_chosen`,
+  `test_an_answer_for_a_box_that_was_left_opens_nothing`. `tests/stage.py
+  --commands --keys '#say=/'` draws it.
 - **Enter jumps, except on a button a keyboard reached.** The keys handler
   jumped to the pane from wherever the focus was, so a keyboard could press
   nothing on the page. But a click leaves the focus on the button it pressed,

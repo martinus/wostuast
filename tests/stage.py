@@ -2,9 +2,9 @@
 
     python3 tests/stage.py OUT.png [--tab review|files|transcript]
                           [--commit N] [--open PATH] [--review]
-                          [--settings JSON]
+                          [--settings JSON] [--commands]
                           [--click SELECTOR | --type SELECTOR=TEXT
-                           | --eval JS ...] [--light]
+                           | --keys SELECTOR=TEXT | --eval JS ...] [--light]
                           [--width 1366] [--height 768] [--part SELECTOR]
                           [--keep]
 
@@ -24,11 +24,16 @@ Nth commit of the branch, counted from the oldest, as "N / 4" does; 0 is
 all changes. `--open PATH` opens a file on the Files tab. `--review` writes
 a review into the browser first: five comments and a word on the whole.
 `--settings JSON` is the reader's `settings.json` before the daemon
-starts: the colours, the tab width, the ticket links.
+starts: the colours, the tab width, the ticket links. `--commands` gives
+the send box something to complete: the skills and command files of
+`tests/fixtures/commands`, in the repository and in the Claude Code
+directory, and a transcript that ran `/clear` and `/compact`; `--keys '#say=/'` after
+it opens the list.
 
 Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
-Enter, `--eval JS` runs in the page. `.diffhead .readas
+Enter, `--keys SELECTOR=TEXT` types into a box key by key and presses
+nothing after, `--eval JS` runs in the page. `.diffhead .readas
 button[data-value='true']` shows a commit message as text; `--click
 '#settings' --part '#setpop'` is the settings menu. **A mockup is drawn
 here too**: `--eval` builds the proposal inside the real page, with its real
@@ -100,9 +105,19 @@ def make_repo(repo: Path) -> None:
     (repo / "PLAN.md").write_text(PLAN)
 
 
-def serve(home: Path) -> tuple[str, Path]:
+def ran(name: str) -> dict:
+    """A transcript record for a slash command that was run."""
+    from conftest import record
+    return record("you", f"<command-name>/{name}</command-name>"
+                         f"<command-message>{name}</command-message>"
+                         "<command-args></command-args>")
+
+
+def serve(home: Path, commands: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
-    from conftest import record, records
+    import shutil
+
+    from conftest import FIXTURES, record, records
     from conftest import wostuast as ws
 
     repo = home / "proj"
@@ -110,9 +125,16 @@ def serve(home: Path) -> tuple[str, Path]:
     folder = ws.settings_path().parent / "projects" / "-proj"
     folder.mkdir(parents=True)
     transcript = folder / "s1.jsonl"
+    used = [ran("clear"), ran("compact"), ran("clear")] if commands else []
     transcript.write_text(records(
+        *used,
         record("you", "Make the ring refuse a push when it is full."),
         record("claude", "Done, in four commits on `feature`.")))
+    if commands:
+        shutil.copytree(FIXTURES / "commands" / "project" / ".claude",
+                        repo / ".claude")
+        shutil.copytree(FIXTURES / "commands" / "claude",
+                        ws.settings_path().parent, dirs_exist_ok=True)
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
                      "cwd": str(repo), "pane": "%7", "ts": time.time(),
                      "transcript_path": str(transcript)})
@@ -147,8 +169,9 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--open")
     ask.add_argument("--review", action="store_true")
     ask.add_argument("--settings")
+    ask.add_argument("--commands", action="store_true")
     # One list, so the steps run in the order they were written.
-    for flag in ("click", "type", "eval"):
+    for flag in ("click", "type", "keys", "eval"):
         ask.add_argument(f"--{flag}", dest="steps", action="append",
                          default=[], type=lambda value, flag=flag: (flag, value))
     ask.add_argument("--light", action="store_true")
@@ -169,7 +192,7 @@ def main(argv: list[str]) -> int:
         (home / "config" / "settings.json").write_text(
             json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
-    url, _ = serve(home)
+    url, _ = serve(home, said.commands)
 
     from browser import DRAWN, WAIT, open_page, show_tab, sync_playwright
     wait = WAIT or 15000
@@ -213,6 +236,9 @@ def main(argv: list[str]) -> int:
                     selector, _, text = value.partition("=")
                     page.fill(selector, text)
                     page.press(selector, "Enter")
+                elif flag == "keys":
+                    selector, _, text = value.partition("=")
+                    page.type(selector, text)
                 else:
                     page.evaluate(value)
             page.wait_for_function("() => !document.getAnimations().length",

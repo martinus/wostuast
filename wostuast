@@ -6164,6 +6164,209 @@ def tmux_send(pane: str, text: str,
     return runner(["tmux", "send-keys", "-t", pane, "Enter"]) is not None
 
 
+# --- slash commands: what the send box can complete ---------------------------
+
+#: How much of a skill or command file is read: the frontmatter is at the top,
+#: and the body -- a whole skill's instructions -- is never needed.
+FRONT_MAX = 8192
+#: A description is a line in a list, not the skill's documentation.
+ABOUT_MAX = 160
+#: What Claude Code accepts as a command's name, and so all this takes from a
+#: file. A name is drawn with `textContent`, but it is also what the box gets
+#: when a suggestion is taken, and from there it is typed into a terminal.
+COMMAND_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,63}")
+
+
+def claude_dir() -> Path:
+    """Claude Code's own directory: `CLAUDE_CONFIG_DIR`, or `~/.claude`."""
+    return settings_path().parent
+
+
+def front_matter(text: str) -> dict[str, str]:
+    """The `key: value` lines between the first two `---` lines.
+
+    Not YAML: the standard library has no reader for it, and the three keys
+    wanted here are one line each. A folded or literal value (`>` or `|`)
+    takes the indented lines under it, joined with spaces, which is what a
+    long description is written as. Quotes round a value come off.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    found: dict[str, str] = {}
+    key = ""
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if key and line[:1] in (" ", "\t"):
+            found[key] = (found[key] + " " + line.strip()).strip()
+            continue
+        key = ""
+        name, colon, value = line.partition(":")
+        if not colon or not name.strip() or name[:1] in (" ", "\t", "#"):
+            continue
+        value = value.strip()
+        if value in (">", "|", ">-", "|-", ""):
+            key = name.strip()
+            found[key] = ""
+            continue
+        if len(value) > 1 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        found[name.strip()] = value
+    return found
+
+
+@dataclass
+class Command:
+    """One thing the send box can complete. `came` is where it came from:
+    `project`, `yours`, or `used` for one only seen in a transcript."""
+
+    name: str
+    about: str = ""
+    hint: str = ""
+    came: str = ""
+    uses: int = 0
+
+
+def read_command(path: Path, came: str, name: str) -> Command | None:
+    """A skill's `SKILL.md` or a command's `.md`, read as far as its
+    frontmatter. None for a file that cannot be read, a name that is not a
+    command's, and a skill that says it is not one (`user-invocable`)."""
+    try:
+        with open(path, "rb") as handle:
+            text = handle.read(FRONT_MAX).decode("utf-8", "replace")
+    except OSError:
+        return None
+    front = front_matter(text)
+    if front.get("user-invocable", "").lower() == "false":
+        return None
+    name = front.get("name") or name
+    if not COMMAND_SHAPE.fullmatch(name):
+        return None
+    return Command(name=name, about=clip(front.get("description", ""), ABOUT_MAX),
+                   hint=clip(front.get("argument-hint", ""), ABOUT_MAX), came=came)
+
+
+def command_files(base: Path, came: str) -> Iterator[Command]:
+    """The skills and the command files under one `.claude` directory.
+
+    A command file in a subdirectory is left out: how its name is formed is
+    not known from a real machine, and a name guessed wrong is a command
+    that is not there."""
+    try:
+        skills = sorted((base / "skills").iterdir())
+    except OSError:
+        skills = []
+    for folder in skills:
+        if folder.is_dir():
+            found = read_command(folder / "SKILL.md", came, folder.name)
+            if found:
+                yield found
+    try:
+        files = sorted((base / "commands").glob("*.md"))
+    except OSError:
+        files = []
+    for file in files:
+        if file.is_file():
+            found = read_command(file, came, file.stem)
+            if found:
+                yield found
+
+
+def project_dirs(cwd: str, root: str) -> list[Path]:
+    """The session's directory and each parent up to the worktree's top,
+    nearest first. Only the directory itself when it is in no worktree."""
+    if not cwd:
+        return []
+    here = Path(cwd)
+    if not root:
+        return [here]
+    # git hands back the real path, and a session can stand in a link to it
+    # (`/tmp` is `/private/tmp` on a Mac): compared as given, the walk would
+    # never reach the top.
+    here, top = here.resolve(), Path(root).resolve()
+    out = [here]
+    while here != top and here.parent != here:
+        here = here.parent
+        out.append(here)
+    return out if here == top else [Path(cwd)]
+
+
+def command_used(record: dict[str, Any]) -> str:
+    """The name of the command a transcript record says was run, or "".
+
+    The same reading the transcript does (`read_user_text`), so a prompt that
+    only mentions `<command-name>` is not counted as a use of it."""
+    kind = record.get("type")
+    if kind == "system" and record.get("subtype") == "local_command":
+        text = record.get("content")
+    elif kind == "user" and not record.get("isMeta"):
+        message = record.get("message")
+        text = message.get("content") if isinstance(message, dict) else None
+    else:
+        return ""
+    if not isinstance(text, str):
+        return ""
+    what, said = read_user_text(text)
+    if what != "command" or not said.startswith("/"):
+        return ""
+    name = said[1:].split()[0] if said[1:].split() else ""
+    return name if COMMAND_SHAPE.fullmatch(name) else ""
+
+
+class Commands:
+    """What the send box can complete, per session, and how often each was used.
+
+    Built-in commands -- `/clear`, `/compact` -- live inside Claude Code and
+    no file lists them, so they come from the transcripts: every command run
+    is written there as `<command-name>`. A copied list of built-ins would go
+    stale with each release of Claude Code.
+
+    The transcripts are read on from where the last read stopped (`Tail`),
+    so asking again costs only what was written since. Only lines that hold
+    `<command-name>` are parsed. A request thread asks, and two at once
+    would move a tail twice, so one lock.
+    """
+
+    def __init__(self) -> None:
+        self.tails: dict[Path, Tail] = {}
+        self.counts: dict[Path, Counter[str]] = {}
+        import threading       # here, not at the top: the hook never asks
+        self.lock = threading.Lock()
+
+    def used(self, paths: Iterable[Path]) -> Counter[str]:
+        """How often each command was run, over these transcripts."""
+        total: Counter[str] = Counter()
+        with self.lock:
+            for path in paths:
+                tail = self.tails.setdefault(path, Tail(path))
+                lines = tail.read_new()
+                counts = self.counts.setdefault(path, Counter())
+                if tail.restarted:
+                    counts.clear()
+                for record in json_objects(
+                        line for line in lines if b"<command-name>" in line):
+                    name = command_used(record)
+                    if name:
+                        counts[name] += 1
+                total.update(counts)
+        return total
+
+    def of(self, cwd: str, root: str, transcripts: Iterable[Path]) -> list[Command]:
+        """Every command for a session standing in `cwd`: the project's,
+        nearest directory first, then yours, then the ones only used. Most
+        used first; a name defined twice is kept where it is nearest."""
+        found: dict[str, Command] = {}
+        places = [(where / ".claude", "project") for where in project_dirs(cwd, root)]
+        places.append((claude_dir(), "yours"))
+        for base, came in places:
+            for one in command_files(base, came):
+                found.setdefault(one.name, one)
+        for name, uses in self.used(transcripts).items():
+            found.setdefault(name, Command(name=name, came="used")).uses = uses
+        return sorted(found.values(), key=lambda one: (-one.uses, one.name))
+
+
 # --- the daemon: one page, a little JSON, and a stream of changes ------------
 
 
@@ -6257,6 +6460,7 @@ class Daemon:
         self.store = Store()
         self.hub = Hub()
         self.files = Files()
+        self.commands = Commands()
         #: `pick_base`'s ranking of every branch, by worktree, HEAD and the
         #: refs as they stand. Counting walks history, and the Diff tab polls.
         self.ranks: dict[Any, Any] = {}
@@ -7364,6 +7568,24 @@ class Serving:
         self.reply_json({"id": session_id, "run": run, "version": version,
                          "blocks": blocks_json(blocks)})
 
+    def commands(self, session_id: str, query: dict[str, list[str]]) -> None:
+        """What the send box can complete for this session.
+
+        Asked for when the list opens, not pushed with the session: the
+        list is a few kilobytes, and a row goes out on every change.
+        Every session's transcript counts towards what was used, because a
+        command used in one project is as likely in the next.
+        """
+        session = self.known(session_id)
+        if session is None:
+            return
+        seen = [safe_transcript(one.transcript_path)
+                for one in list(self.daemon.store.sessions.values())]
+        found = self.daemon.commands.of(session.cwd, worktree_root(session.cwd),
+                                        [path for path in seen if path])
+        self.reply_json({"id": session_id,
+                         "commands": [asdict(one) for one in found]})
+
     def files(self, session_id: str, query: dict[str, list[str]]) -> None:
         session = self.known(session_id)
         if session is None:
@@ -7513,6 +7735,7 @@ class Serving:
 
 # The verbs a session route can end in.
 GET_VERBS: dict[str, Any] = {
+    "commands": Serving.commands,
     "transcript": Serving.transcript,
     "files": Serving.files,
     "file": Serving.file,
@@ -8860,6 +9083,32 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* `display` here would otherwise beat the browser's own rule for `hidden`,
    and the box would never go away. */
 .sendbar[hidden] { display: none; }
+/* The commands a `/` can complete, over the transcript and above the box,
+   where the eye already is. As wide as the box, so a description has room;
+   it scrolls past a screenful rather than run under the tabs. */
+.slash {
+  position: absolute; left: 24px; right: 24px; bottom: calc(100% - 4px);
+  z-index: 6; max-height: 40vh; overflow-y: auto; padding: 4px 0;
+  background: var(--panel); border: 1px solid var(--edge);
+  border-radius: 6px; box-shadow: 0 -10px 24px var(--shadow);
+}
+.slash[hidden] { display: none; }
+.slash button {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 5px 12px; background: none; border: 0; color: var(--ink-mute);
+  font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.slash button:hover, .slash button.chosen {
+  background: var(--raised); color: var(--ink-bright);
+}
+.slash .name { font-family: var(--mono); color: var(--ink-bright); flex-shrink: 0; }
+.slash .lit { color: var(--needs-warm); font-weight: 600; }
+.slash .hint { font-family: var(--mono); color: var(--ink-faint); flex-shrink: 0; }
+/* The description gives way first: the name is what is being chosen. */
+.slash .about { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); }
+.slash .came { flex-shrink: 0; margin-left: auto; color: var(--ink-faint);
+  font-size: 11.5px; }
 .say {
   flex-grow: 1; padding: 6px 10px; border-radius: 5px;
   border: 1px solid var(--edge); background: var(--bg); color: var(--ink);
@@ -9940,6 +10189,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
                   spellcheck="false"
                   placeholder="type into the terminal  ·  s  ·  shift+enter for a new line"></textarea>
         <button class="verb" type="submit">send</button>
+        <div class="slash" id="slash" role="listbox" hidden></div>
       </form>
       <form class="sendbar reviewbar" id="reviewbar" hidden>
         <div class="saycol">
@@ -17085,11 +17335,161 @@ async function jumpToPane() {
 // reader typed at a terminal they cannot see. An empty box is therefore the
 // send starting, not the send landing: `sending` is what says it is still on
 // its way.
+// --- completing a slash command ---------------------------------------------
+
+// A `/` at the start of the send box opens a list of the commands this
+// session has: its skills and command files, yours, and the commands its
+// transcripts say were run, which is the only place the built-in ones are
+// written (`Commands` in the daemon). The list is asked for each time it
+// opens, so a skill written a minute ago is in it, and then narrowed here as
+// letters are typed. `dismissed` is an Escape: the list stays shut until the
+// word it was for is gone, or sent. `moved` is an arrow key pressed since
+// the list was drawn: the reader chose a row (`slashKey`).
+const slash = { list: null, shown: [], at: 0, asked: 0, dismissed: false,
+                moved: false };
+
+// Where each command comes from, in the words the list shows.
+const CAME = { project: "this project", yours: "yours", used: "used before" };
+
+// The command word being typed: what stands between the `/` and the caret,
+// while the caret is still in the first word. null when there is none.
+function slashWord(box) {
+  const end = box.selectionStart;
+  if (end !== box.selectionEnd || !box.value.startsWith("/")) return null;
+  const word = box.value.slice(1, end);
+  return /\s/.test(word) ? null : word;
+}
+
+function closeSlash() {
+  slash.list = null;
+  slash.shown = [];
+  $("slash").hidden = true;
+}
+
+async function followSlash() {
+  const box = $("say");
+  const word = slashWord(box);
+  if (word === null) {
+    slash.dismissed = false;
+    closeSlash();
+    return;
+  }
+  if (slash.dismissed) return;
+  if (!slash.list) {
+    const id = state.chosen;
+    const asked = ++slash.asked;
+    const answer = id ? await ask(id, "commands") : null;
+    // A later keystroke asked again, or the reader moved on: theirs wins.
+    // A box left while the answer was out is moved on from too, or the list
+    // opened over the transcript with nothing to type into.
+    if (asked !== slash.asked || id !== state.chosen
+        || document.activeElement !== box) return;
+    slash.list = answer && Array.isArray(answer.commands) ? answer.commands : [];
+  }
+  drawSlash(slashWord(box));
+}
+
+// The commands whose name holds the letters typed, best first. With nothing
+// typed yet, the daemon's order: the most used first.
+function drawSlash(word) {
+  const pop = $("slash");
+  if (word === null || !slash.list || slash.dismissed) { closeSlash(); return; }
+  const query = word.toLowerCase();
+  const scored = [];
+  for (const one of slash.list) {
+    const hit = query ? fuzzy(one.name, query) : { score: 0, at: [] };
+    if (hit) scored.push({ one, hit });
+  }
+  // Stable, so equal scores keep the daemon's order.
+  scored.sort((a, b) => b.hit.score - a.hit.score || b.one.uses - a.one.uses);
+  slash.shown = scored.map((each) => each.one);
+  slash.at = 0;
+  slash.moved = false;
+  pop.textContent = "";
+  scored.forEach(({ one, hit }, index) => {
+    const row = put(pop, "button", null);
+    row.type = "button";
+    row.tabIndex = -1;
+    row.setAttribute("role", "option");
+    putName(row, "/" + one.name, hit.at.map((at) => at + 1));
+    if (one.hint) put(row, "span", "hint", one.hint);
+    if (one.about) put(row, "span", "about", one.about);
+    put(row, "span", "came", CAME[one.came] || "");
+    // Pressed, not clicked: a click moves the focus out of the box first.
+    row.addEventListener("mousedown", (press) => {
+      press.preventDefault();
+      takeSlash(one);
+    });
+    row.addEventListener("mousemove", () => markSlash(index));
+  });
+  pop.hidden = !scored.length;
+  markSlash(0);
+}
+
+function markSlash(index) {
+  const rows = $("slash").children;
+  if (!rows.length) return;
+  slash.at = (index + rows.length) % rows.length;
+  for (let i = 0; i < rows.length; i += 1) {
+    rows[i].classList.toggle("chosen", i === slash.at);
+  }
+  rows[slash.at].scrollIntoView({ block: "nearest" });
+}
+
+// The command goes in place of the word, with a space after it for what it
+// is given. What was typed after the word stays.
+function takeSlash(one) {
+  const box = $("say");
+  const rest = box.value.replace(/^\S*/, "");
+  const head = "/" + one.name + (/^\s/.test(rest) ? "" : " ");
+  box.value = head + rest;
+  box.setSelectionRange(head.length, head.length);
+  closeSlash();
+  fitSay();
+  box.focus();
+}
+
+// Whether Enter takes the chosen row rather than send. Tab always takes;
+// Enter only when the reader chose: an arrow pressed, or the word typed so
+// far is the start of the name. A scattered match is a guess -- `/doctor`,
+// never run and so not listed, took `/docs-to-review` and the next Enter
+// sent the wrong command -- and a word that is the whole name is done.
+function enterTakes() {
+  const word = slashWord($("say"));
+  const name = slash.shown[slash.at].name.toLowerCase();
+  const typed = (word || "").toLowerCase();
+  return slash.moved || (name.startsWith(typed) && name !== typed);
+}
+
+// The list's own keys, before the box's. True when the key was the list's.
+function slashKey(press) {
+  if ($("slash").hidden) return false;
+  const enter = press.key === "Enter" && !press.shiftKey && !press.altKey
+    && !press.ctrlKey && !press.metaKey && !composing(press);
+  if (press.key === "ArrowDown" || press.key === "ArrowUp") {
+    markSlash(slash.at + (press.key === "ArrowDown" ? 1 : -1));
+    slash.moved = true;
+  } else if (press.key === "Escape") {
+    slash.dismissed = true;
+    closeSlash();
+  } else if ((press.key === "Tab" && !press.shiftKey) || (enter && enterTakes())) {
+    takeSlash(slash.shown[slash.at]);
+  } else {
+    return false;
+  }
+  press.preventDefault();
+  return true;
+}
+
 async function sendTyped() {
   const box = $("say");
   const text = box.value;
   const id = state.chosen;
   if (!id || !text.trim() || !startSending(id)) return;
+  // The box empties without an input event, and an Escape held for the
+  // word just sent would keep the next `/` from opening anything.
+  slash.dismissed = false;
+  closeSlash();
   // Out of the box the moment it goes, and back in front of whatever was
   // typed since if it did not. Clearing on the answer took the words typed
   // while the send was on its way, which had gone nowhere; and a box still
@@ -17130,8 +17530,10 @@ function fitSay(box = $("say")) {
   box.style.height = (box.scrollHeight + 2) + "px";
 }
 
-$("say").addEventListener("input", () => fitSay());
+$("say").addEventListener("input", () => { fitSay(); followSlash(); });
+$("say").addEventListener("blur", closeSlash);
 $("say").addEventListener("keydown", (press) => {
+  if (slashKey(press)) return;
   if (press.key === "Escape") {
     $("say").blur();
     return;

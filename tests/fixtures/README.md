@@ -268,3 +268,19 @@ that is not a `queued_command`,
 `ai-title`, `pr-link`, `bridge-session`, `file-history-snapshot` and
 `file-history-delta`. A `system` record other than a compact boundary is
 ignored too.
+
+## Skills and command files
+
+`commands/` is the layout `Commands` reads, with invented content: `project/`
+is a repository, and `claude/` is the Claude Code directory
+(`CLAUDE_CONFIG_DIR`). The shape is read off this repository's own
+`.claude/skills/issues/SKILL.md` and the Claude Code documentation on skills
+and slash commands.
+
+| File | What it holds |
+| --- | --- |
+| `.claude/skills/<dir>/SKILL.md` | frontmatter between two `---` lines: `name` (else the folder's name), `description` (one line, or a `>` folded one), `argument-hint`, and `user-invocable: false` for a skill that is not a command |
+| `.claude/commands/<name>.md` | the file name is the command; frontmatter is optional, with the same `description` and `argument-hint` |
+
+Not recorded yet, and so not read: where plugin skills live on disk, and how
+a command file in a subdirectory of `commands` is named.

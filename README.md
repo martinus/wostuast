@@ -196,6 +196,16 @@ with what Claude Code answered. You can send a slash command from the send box
 too. One that opens a menu, such as `/model` alone, opens it in the terminal:
 press <kbd>Enter</kbd> to jump there and pick.
 
+Type `/` at the start of the send box to see the commands that this session
+has. The list shows the skills and command files of the project, from the
+session's directory up to the top of the repository, then yours from
+`~/.claude`, then the commands you used before in any session. The commands you
+use most come first. Type more letters to narrow the list. <kbd>Tab</kbd> puts
+the chosen command in the box, and so does <kbd>Enter</kbd> after an arrow key
+or while what you typed is the start of the name. Otherwise <kbd>Enter</kbd>
+sends what you typed. <kbd>Esc</kbd> closes the list. Plugin skills, and command files in a
+subdirectory of `commands`, are not in the list yet.
+
 Point at a code block in a reply to show a copy button at its top right. It
 copies the block and nothing else.
 

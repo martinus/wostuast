@@ -1429,3 +1429,187 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
             assert pressed(lambda one: one[-1] == "Escape"), seen
         finally:
             browser.close()
+
+
+# --- completing a slash command (#268) ----------------------------------------
+
+
+def skill(base, name, about):
+    """A skill under a `.claude` directory, in the shape `tests/fixtures/commands`
+    records."""
+    folder = base / "skills" / name
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {about}\nargument-hint: [number]\n---\n")
+
+
+def ran(daemon, name):
+    """The session's transcript says `/name` was run."""
+    path = daemon.store.sessions["s1"].transcript_path
+    with open(path, "a") as handle:
+        handle.write(conftest.records(conftest.record(
+            "you", f"<command-name>/{name}</command-name>"
+                   f"<command-message>{name}</command-message>"
+                   "<command-args></command-args>")))
+
+
+SLASH_ROWS = "() => [...document.querySelectorAll('#slash button .name')].map((n) => n.textContent)"
+
+
+def test_a_slash_offers_the_commands_and_tab_takes_one(ws, in_pane, tmp_path):
+    """The list opens on `/` with the most used first, narrows as letters are
+    typed, and Tab puts the command in the box with a space after it, ready
+    for what it is given. Taking one sends nothing."""
+    daemon, base, seen = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    ran(daemon, "clear")
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.click("#say")
+            page.keyboard.type("/")
+            page.wait_for_function("!$('slash').hidden")
+            assert page.evaluate(SLASH_ROWS) == ["/clear", "/review-pr"]
+            page.keyboard.type("rev")
+            page.wait_for_function("document.querySelectorAll('#slash button').length === 1")
+            assert page.text_content("#slash button .hint") == "[number]"
+            assert page.text_content("#slash button .came") == "this project"
+            page.keyboard.press("Tab")
+            assert page.input_value("#say") == "/review-pr "
+            assert page.evaluate("$('slash').hidden")
+            assert page.evaluate("document.activeElement.id") == "say"
+            assert not any("send-keys" in one for one in seen)
+            page.keyboard.type("12")
+            page.keyboard.press("Enter")
+            typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "/review-pr 12"]
+            wait_until(page, lambda: typed in seen)
+        finally:
+            browser.close()
+
+
+def test_enter_takes_a_command_and_escape_keeps_the_list_shut(ws, in_pane, tmp_path):
+    """Enter on an open list takes the row, it does not send. Escape shuts the
+    list and leaves the box focused, and the list stays shut while the same
+    word is typed on; a new word opens it again. The arrows move the row."""
+    daemon, base, seen = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    ran(daemon, "clear")
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.click("#say")
+            page.keyboard.type("/")
+            page.wait_for_function("document.querySelectorAll('#slash button').length === 2")
+            page.keyboard.press("ArrowDown")
+            assert page.text_content("#slash button.chosen .name") == "/review-pr"
+            page.keyboard.press("Enter")
+            assert page.input_value("#say") == "/review-pr "
+            assert not any("send-keys" in one for one in seen)
+
+            page.fill("#say", "")
+            page.keyboard.type("/")
+            page.wait_for_function("!$('slash').hidden")
+            page.keyboard.press("Escape")
+            assert page.evaluate("$('slash').hidden")
+            assert page.evaluate("document.activeElement.id") == "say"
+            page.keyboard.type("c")
+            page.wait_for_timeout(300)          # proving the list did *not* open
+            assert page.evaluate("$('slash').hidden")
+
+            page.keyboard.press("Backspace")
+            page.keyboard.press("Backspace")
+            page.keyboard.type("/c")
+            page.wait_for_function("!$('slash').hidden")
+            assert page.evaluate(SLASH_ROWS) == ["/clear"]
+        finally:
+            browser.close()
+
+
+def test_enter_sends_what_was_typed_unless_a_row_was_chosen(ws, in_pane, tmp_path):
+    """Enter takes a row only when the reader chose it: an arrow, or a word
+    that starts the name. A scattered match is a guess, and a whole name is
+    done: both go to the terminal as typed, with one Enter. And an Escape
+    does not outlive the word it shut the list on: after a send, `/` opens
+    the list again."""
+    daemon, base, seen = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    ran(daemon, "clear")
+
+    def sent(text):
+        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", text]
+        wait_until(page, lambda: typed in seen)
+        page.wait_for_function("sending.size === 0")
+
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.click("#say")
+            page.keyboard.type("/rp")                 # review-pr, scattered
+            page.wait_for_function("!$('slash').hidden")
+            page.keyboard.press("Enter")
+            sent("/rp")
+            page.keyboard.type("/rp")                 # the same, but chosen
+            page.wait_for_function("!$('slash').hidden")
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            assert page.input_value("#say") == "/review-pr "
+            page.fill("#say", "")
+            page.keyboard.type("/clear")              # the whole name
+            page.wait_for_function("!$('slash').hidden")
+            page.keyboard.press("Enter")
+            sent("/clear")
+
+            page.keyboard.type("/")
+            page.wait_for_function("!$('slash').hidden")
+            page.keyboard.press("Escape")
+            page.keyboard.type("x")
+            page.keyboard.press("Enter")
+            sent("/x")
+            page.keyboard.type("/")
+            page.wait_for_function("!$('slash').hidden")
+        finally:
+            browser.close()
+
+
+def test_an_answer_for_a_box_that_was_left_opens_nothing(ws, in_pane, tmp_path):
+    """The list is asked for when `/` is typed. A reader who leaves the box
+    before the answer comes has moved on, and the list must not open over
+    the transcript with nothing to type into."""
+    daemon, base, seen = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    held = []
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.route("**/commands", lambda route: held.append(route))
+            page.click("#say")
+            page.keyboard.type("/")
+            wait_until(page, lambda: held)
+            page.evaluate("$('say').blur()")
+            with page.expect_response("**/commands"):
+                held[0].continue_()
+            page.wait_for_timeout(300)          # proving the list did *not* open
+            assert page.evaluate("$('slash').hidden")
+        finally:
+            browser.close()
+
+
+def test_the_list_is_asked_for_each_time_it_opens(ws, in_pane, tmp_path):
+    """A skill written while the page is open is in the next list: the
+    commands are not kept from one opening to the next."""
+    daemon, base, seen = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.click("#say")
+            page.keyboard.type("/")
+            page.wait_for_function("document.querySelectorAll('#slash button').length === 1")
+            page.keyboard.press("Backspace")
+            page.wait_for_function("$('slash').hidden")
+            skill(ws.claude_dir(), "notes", "Write today's notes")
+            page.keyboard.type("/")
+            page.wait_for_function("document.querySelectorAll('#slash button').length === 2")
+            assert page.evaluate(SLASH_ROWS) == ["/notes", "/review-pr"]
+        finally:
+            browser.close()
