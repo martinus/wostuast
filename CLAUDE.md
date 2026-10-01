@@ -376,11 +376,17 @@ killed it, twice in one session. Find the number in one call -- a loop over
 `/proc/*/cmdline` that prints the ones whose command line starts with what
 you ran -- and `kill` it in the next.
 
-Throwaway home, never your own:
+Throwaway home, never your own, and a new one each time:
 
 ```
-export HOME=/tmp/try WOSTUAST_STATE=/tmp/try/state CLAUDE_CONFIG_DIR=/tmp/try/claude
+T=$(mktemp -d) && export HOME=$T WOSTUAST_STATE=$T/state CLAUDE_CONFIG_DIR=$T/claude WOSTUAST_CONFIG=$T/config
 ```
+
+**Never `rm -rf $HOME` to empty it, and never chain anything before a
+removal.** The safety check refuses an `rm` of a home, and a refused
+command runs none of its parts: an edit chained in front of it did not
+happen, and the next tests ran the old code and passed. A new `mktemp -d`
+needs no removal.
 
 `WOSTUAST_STATE` and `CLAUDE_CONFIG_DIR` are test seams, not user settings. Do
 not document them as settings.
@@ -439,7 +445,9 @@ link to its description on its own. An update of the description with the
 same text does not add it again, so write the description, create the pull
 request, then update it with that text, and read it back to check. **A
 comment on an issue gets the footer too**, and the same cure works:
-update the comment with its own text, and read it back.
+update the comment with its own text, and read it back. **An issue's own
+body gets none**: #271, created with `issue_write`, read back clean, so
+it needs no second call.
 
 ## Rules, each one a bug that already happened
 

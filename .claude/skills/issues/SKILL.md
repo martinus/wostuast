@@ -129,6 +129,13 @@ Judgement, not ceremony. A two-line fix needs neither.
 
 Fix what they find before the PR goes up. Say which you ran.
 
+**Review before the gate, and before you ask for a picture's yes, never
+beside them.** A finding changes code, and the runs under load start
+again: twice in one session the gate was green, `/code-review` found a
+real bug, and the gate ran a second time. Once a finding changed what Enter
+does in a list the reader had already said yes to on the picture, so the
+yes was for something else.
+
 ### 7. The changed files under load, then push, then watch CI
 
 `CLAUDE.md`, **How to work here**, "Before the push", is the list: the test
