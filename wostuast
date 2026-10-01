@@ -5951,8 +5951,25 @@ def load_settings(path: Path) -> tuple[dict[str, Any], int | str, bool]:
         return {}, 2, True
     data = json.loads(text)
     if not isinstance(data, dict):
-        raise ValueError(f"{path} does not hold a JSON object")
+        raise ValueError("it holds no JSON object")
     return data, detect_indent(text), text.endswith("\n")
+
+
+def unreadable(path: Path, error: Exception) -> str:
+    """Why Claude Code's settings file cannot be used, in a line.
+
+    The path as a person writes it, and for broken JSON only where: the
+    parser's own words ("Expecting property name enclosed in double quotes:
+    line 1 column 2 (char 1)") ran past the edge of the terminal and said
+    the place twice (#275).
+    """
+    if isinstance(error, json.JSONDecodeError):
+        why = f"not valid JSON at line {error.lineno}, column {error.colno}"
+    elif isinstance(error, OSError):
+        why = error.strerror or str(error)
+    else:
+        why = str(error)
+    return f"cannot read {tilde(path)}: {why}"
 
 
 def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: bool) -> None:
@@ -8238,7 +8255,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     try:
         settings, _, _ = load_settings(path)
     except (OSError, ValueError) as error:
-        report(False, "", f"cannot read {path}: {error}")
+        report(False, "", unreadable(path, error))
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
     missing = [
         event
@@ -8509,7 +8526,7 @@ def bring_up_to_date() -> tuple[list[str], list[str], str]:
     try:
         settings, indent, newline = load_settings(path)
     except (OSError, ValueError) as error:
-        return changes, [], f"cannot read {path}: {error}"
+        return changes, [], unreadable(path, error)
     before = json.dumps(settings, sort_keys=True)
     try:
         changes += add_hooks(settings, hook_command(hook_path()))
@@ -8546,7 +8563,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     try:
         settings, indent, newline = load_settings(path)
     except (OSError, ValueError) as error:
-        print(f"cannot read {path}: {error}", file=sys.stderr)
+        print(unreadable(path, error), file=sys.stderr)
         return 1
     changes = remove_hooks(settings)
     changes += remove_status_line(settings)
