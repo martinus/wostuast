@@ -186,6 +186,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
 | `README.md` | What a user reads. Keep in step with the commands. |
+| `ARCHITECTURE.md` | What a person reads to learn how the program works and why, with diagrams. It has no authority: where it and these rules or the tests disagree, they are right, and it is fixed in the same pull request. A change to what it draws -- a route, a state, a verb, a file on disk, a hook event -- updates it too. |
 | `.claude/topics/*.md` | The rules, one file a subject: safety, state, sidebar, tab-state, worktree-tabs, review, daemon-and-page, testing, decisions, landing, payloads. **Where to look** routes to them. |
 | `.claude/skills/issues/SKILL.md` | How to work the issue list: the owner's issues only, group, reproduce, ask, prove, review, merge on green, read the list again, then reflect on the session and land what is clear. Invoked as `/issues`, and by "do the issues". |
 | `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, four sharded browser jobs, and an aggregator named `browser` that the branch rule requires. No job names a test file, and none may — naming one broke the browser job the moment a file was renamed, and the shards split on a hash of the test id for that reason. |

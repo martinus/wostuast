@@ -115,6 +115,9 @@ flowchart LR
 3. When you act on the page, the daemon types into the agent's tmux pane.
    Nothing else writes to a terminal.
 
+For the whole story — the hook, the daemon, the page, and why each one is
+built the way it is — read [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Install
 
 **You need:** Python 3.10 or newer, Claude Code, and tmux. git makes the Files
