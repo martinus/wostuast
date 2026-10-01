@@ -11710,10 +11710,10 @@ function putSettings() {
   }
   put(checks, "span", "alertnote").id = "alertnote";
   put(pop, "div", "rule");
-  label("tab width", "tabWidth");
+  label("tab", "tabWidth");
   choice("tabwidth", TAB_WIDTHS.map((width) => [width, String(width)]),
          (tab) => keepReading({ ...readingNow(), tab }));
-  label("long lines", "wrap");
+  label("lines", "wrap");
   choice("wrapping", [[false, "scroll", "scroll"], [true, "wrap", "wrap"]],
          (wrap) => keepReading({ ...readingNow(), wrap }));
   label("diff", "twoColumns");

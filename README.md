@@ -278,8 +278,8 @@ the settings:
 
 - **colours**: auto, light or dark. Each button shows the colours it gives.
 - **alerts**: see above.
-- **tab width**: 2, 4 or 8, for the Files and the Review tabs.
-- **long lines**: scroll or wrap, for the Files tab and the one-column diff.
+- **tab**: the tab width, 2, 4 or 8, for the Files and the Review tabs.
+- **lines**: long lines scroll or wrap, for the Files tab and the one-column diff.
   A very long file is drawn a part at a time and cannot wrap; it says so.
 - **diff**: one column, or two side by side. Two columns always wrap.
 - **links**: your ticket links. See [Ticket links](#ticket-links).
