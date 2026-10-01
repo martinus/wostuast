@@ -219,6 +219,24 @@ def state_dir() -> Path:
     return Path(base) / "wostuast"
 
 
+def state_dir_trouble() -> str:
+    """Why the state directory cannot be written, or "" when it can.
+
+    It makes the directory private on the way, the one way every command
+    does. `doctor` made it with `mkdir` alone once, so on a new machine it
+    stood at the umask, 0755, holding every prompt, until a hook ran.
+    """
+    directory = state_dir()
+    private_dir(directory)
+    probe = directory / ".probe"
+    try:
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as error:
+        return str(error)
+    return ""
+
+
 def private_dir(path: Path) -> None:
     """Make the directory, and keep it to this user alone.
 
@@ -5475,11 +5493,7 @@ def config_payload() -> dict[str, Any]:
     """What the page is handed: the settings, the links, the trouble, and
     where the file is, with the home directory as `~` so it fits the menu."""
     good, links, trouble = load_config()
-    path = str(config_path())
-    home = str(Path.home())
-    if home not in ("", "/") and path.startswith(home + "/"):
-        path = "~" + path[len(home):]
-    return dict(good, links=links, trouble=trouble, path=path)
+    return dict(good, links=links, trouble=trouble, path=tilde(config_path()))
 
 
 def page_json(data: Any) -> str:
@@ -8207,14 +8221,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
            f"python {sys.version.split()[0]} is older than 3.10")
 
     directory = state_dir()
-    trouble = ""
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-        probe = directory / ".probe"
-        probe.write_text("", encoding="utf-8")
-        probe.unlink()
-    except OSError as error:
-        trouble = str(error)
+    trouble = state_dir_trouble()
     report(not trouble, f"state directory {directory}",
            f"cannot write {directory}: {trouble}")
 
@@ -8314,8 +8321,12 @@ def hook_files_missing() -> list[str]:
     return sorted(path for path in named if not os.access(path, os.X_OK))
 
 
-def install_behind() -> str:
+def install_behind(built: str | None = None) -> str:
     """Why the installed copy is not this one, or "" when it is.
+
+    `built` is the hook file this version writes, when the caller has made
+    it already: `hook_source` parses the whole program, and a start made it
+    twice, once to write it and once to compare it.
 
     `install` copies this file to `install_path()`, and the hooks and the
     status line run that copy -- not the checkout `serve` was started from.
@@ -8346,7 +8357,8 @@ def install_behind() -> str:
     except (OSError, ValueError):
         hook = None
     try:
-        if hook is not None and hook != hook_source(here.read_text(encoding="utf-8")):
+        if hook is not None and hook != (
+                built or hook_source(here.read_text(encoding="utf-8"))):
             return (f"{hook_path()} is not the hook this version writes. The"
                     f" hooks run it, so what this version records is not"
                     f" recorded; run `{here} install`")
@@ -8458,29 +8470,20 @@ def write_program(target: Path, text: str) -> bool:
     rename, which is atomic; a hook that is already running keeps the old
     file open and finishes normally.
     """
-    target.parent.mkdir(parents=True, exist_ok=True)
     try:
         if target.read_text(encoding="utf-8") == text:
             return False
     except (OSError, ValueError):
         pass
-    spare = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-    try:
-        spare.write_text(text, encoding="utf-8")
-        spare.chmod(0o755)
-        spare.replace(target)
-    finally:
-        try:
-            spare.unlink()
-        except OSError:
-            pass
+    write_atomic(target, text, mode=0o755)
     return True
 
 
-def bring_up_to_date() -> tuple[list[str], list[str], str]:
+def bring_up_to_date() -> tuple[list[str], list[str], str, str]:
     """Write what is behind this version: the program, the hook file, the
     hooks and the status line. Returns what changed, what to tell the
-    reader, and why it could not, or "".
+    reader, why it could not or "", and the hook file it built, so that
+    `install_behind` does not build it again.
 
     Nothing that is already right is written, Claude Code's `settings.json`
     least of all: a bare `wostuast` runs this on every start (#275), and a
@@ -8493,7 +8496,7 @@ def bring_up_to_date() -> tuple[list[str], list[str], str]:
     try:
         hook = hook_source(source)
     except (SyntaxError, ValueError) as error:
-        return [], [], f"cannot build the hook: {error}"
+        return [], [], f"cannot build the hook: {error}", ""
     # The program first: the status line runs it.
     if write_program(target, source):
         changes.append(f"wrote {target}")
@@ -8504,25 +8507,25 @@ def bring_up_to_date() -> tuple[list[str], list[str], str]:
     try:
         settings, indent, newline = load_settings(path)
     except (OSError, ValueError) as error:
-        return changes, [], unreadable(path, error)
+        return changes, [], unreadable(path, error), hook
     before = json.dumps(settings, sort_keys=True)
     try:
         changes += add_hooks(settings, hook_command(hook_path()))
         said = add_status_line(settings, status_command(target))
     except ValueError as error:
-        return changes, [], f"{path}: {error}"
+        return changes, [], f"{path}: {error}", hook
     # "added status line" is a change; the rest is advice about theirs.
     notes = [line for line in said if line != "added status line"]
     changes += [line for line in said if line == "added status line"]
     if json.dumps(settings, sort_keys=True) != before:
         save_settings(path, settings, indent, newline)
-    return changes, notes, ""
+    return changes, notes, "", hook
 
 
 def cmd_install(args: argparse.Namespace) -> int:
     """Copy wostuast to ~/.local/bin and register the hooks and the status line."""
     target = install_path()
-    changes, notes, trouble = bring_up_to_date()
+    changes, notes, trouble, _ = bring_up_to_date()
     if trouble:
         print(trouble, file=sys.stderr)
         return 1
@@ -8583,7 +8586,10 @@ def mark(kind: str, text: str, color: bool) -> str:
 
 def tilde(path: Path | str) -> str:
     """A path as a person writes it: under the home, with `~`."""
-    text, home = str(path), str(Path.home())
+    text, home = str(path), str(Path.home()).rstrip("/")
+    # A home of "/" or "" would make every path "~something".
+    if not home:
+        return text
     return "~" + text[len(home):] if text == home or text.startswith(home + "/") else text
 
 
@@ -8624,17 +8630,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(mark("warn", "tmux not found: jump and send stay hidden", color))
 
     directory = state_dir()
-    try:
-        private_dir(directory)
-        probe = directory / ".probe"
-        probe.write_text("", encoding="utf-8")
-        probe.unlink()
-    except OSError as error:
-        print(mark("fail", f"cannot write {tilde(directory)}: {error}", color),
+    trouble = state_dir_trouble()
+    if trouble:
+        print(mark("fail", f"cannot write {tilde(directory)}: {trouble}", color),
               file=sys.stderr)
         return 1
 
-    changes, notes, trouble = bring_up_to_date()
+    changes, notes, trouble, built = bring_up_to_date()
     if trouble:
         print(mark("fail", trouble, color), file=sys.stderr)
         return 1
@@ -8651,7 +8653,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # and got wrong must never look like a file you never wrote.
     for why in load_config()[2]:
         print(mark("warn", f"settings: {why}", color))
-    behind = install_behind()
+    behind = install_behind(built)
     if behind:
         print(mark("warn", behind, color))
     if not events_path().exists():
