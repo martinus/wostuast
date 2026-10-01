@@ -12,9 +12,8 @@ import pytest
 import conftest
 from browser import (
     skip_without_browser,
-    sync_playwright,
+    opened,
     DRAWN,
-    open_page,
     show_tab,
     wait_for_map,
 )
@@ -24,37 +23,29 @@ pytestmark = skip_without_browser
 def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
     """A number key picks the tab in that place in `TAB_KEYS`, so a key past
     the last one changes nothing. There are five; there is no `6`."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            # Both counts have to be of the same transcript. Taking the first
-            # before it had arrived made the second one larger, and the key
-            # got the blame for a block the stream had delivered.
-            wait_for_map(page)
-            turns = page.locator(".turn").count()
-            page.keyboard.press("6")
-            page.wait_for_timeout(200)
-            assert page.locator(".tab[data-tab='transcript']").get_attribute(
-                "aria-selected") == "true"
-            assert page.locator(".turn").count() == turns
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        # Both counts have to be of the same transcript. Taking the first
+        # before it had arrived made the second one larger, and the key
+        # got the blame for a block the stream had delivered.
+        wait_for_map(page)
+        turns = page.locator(".turn").count()
+        page.keyboard.press("6")
+        page.wait_for_timeout(200)
+        assert page.locator(".tab[data-tab='transcript']").get_attribute(
+            "aria-selected") == "true"
+        assert page.locator(".turn").count() == turns
 
 
 def test_a_number_key_picks_a_tab_that_is_built(page_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.keyboard.press("2")
-            page.wait_for_timeout(500)
-            assert page.locator(".tab[data-tab='files']").get_attribute(
-                "aria-selected") == "true"
-            assert page.locator(".filelist").count() == 1
-            page.keyboard.press("1")
-            page.wait_for_timeout(500)
-            assert page.locator(".turn").count() >= 2
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.keyboard.press("2")
+        page.wait_for_timeout(500)
+        assert page.locator(".tab[data-tab='files']").get_attribute(
+            "aria-selected") == "true"
+        assert page.locator(".filelist").count() == 1
+        page.keyboard.press("1")
+        page.wait_for_timeout(500)
+        assert page.locator(".turn").count() >= 2
 
 
 def test_the_find_box_sits_above_the_list_it_narrows(repo_page):
@@ -65,96 +56,72 @@ def test_the_find_box_sits_above_the_list_it_narrows(repo_page):
     And each says what it is for: a tab used to offer "find a file" for a
     list it did not have, from a ternary that named three tabs and gave the
     rest whatever its last arm said. `finds` in `TABS` is one entry a tab."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            hints = []
-            for name in ("transcript", "files", "diff"):
-                show_tab(page, name)
-                assert page.eval_on_selector(
-                    "#find", "el => el.parentElement.className") == "findslot", name
-                assert page.eval_on_selector(
-                    "#find", "el => el.closest('.side') !== null"), name
-                hints.append(page.eval_on_selector("#find", "el => el.placeholder"))
-            assert len(set(hints)) == 3, hints
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        hints = []
+        for name in ("transcript", "files", "diff"):
+            show_tab(page, name)
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.className") == "findslot", name
+            assert page.eval_on_selector(
+                "#find", "el => el.closest('.side') !== null"), name
+            hints.append(page.eval_on_selector("#find", "el => el.placeholder"))
+        assert len(set(hints)) == 3, hints
 
 
 def test_the_find_box_keeps_focus_while_you_type(repo_page):
     """It is moved only when its parent is wrong. Re-homing it on every draw
     would detach it mid-keystroke and drop the caret."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click("#find")
-            page.keyboard.type("note", delay=60)
-            page.wait_for_timeout(400)
-            assert page.evaluate("document.activeElement.id") == "find"
-            assert page.input_value("#find") == "note"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click("#find")
+        page.keyboard.type("note", delay=60)
+        page.wait_for_timeout(400)
+        assert page.evaluate("document.activeElement.id") == "find"
+        assert page.input_value("#find") == "note"
 
 
 def test_the_diff_tab_gets_the_box_too(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "diff")
-            assert page.eval_on_selector(
-                "#find", "el => el.parentElement.className") == "findslot"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        assert page.eval_on_selector(
+            "#find", "el => el.parentElement.className") == "findslot"
 
 
 def test_a_tab_comes_back_after_visiting_another(repo_page):
     """The content box says which tab built it, and `split` rebuilds when that
     is another tab. A tab that emptied the box without saying so left the next
     draw believing its columns were still there."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            for name in ("files", "diff"):
-                show_tab(page, name)
-                assert page.locator(f".filelist.{name} button").count() > 0
-                show_tab(page, "transcript")
-                assert page.locator(f".filelist.{name}").count() == 0
-                show_tab(page, name)
-                assert page.locator(f".filelist.{name} button").count() > 0, name
-                assert page.eval_on_selector(
-                    "#find", "el => el.parentElement.className") == "findslot"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        for name in ("files", "diff"):
+            show_tab(page, name)
+            assert page.locator(f".filelist.{name} button").count() > 0
+            show_tab(page, "transcript")
+            assert page.locator(f".filelist.{name}").count() == 0
+            show_tab(page, name)
+            assert page.locator(f".filelist.{name} button").count() > 0, name
+            assert page.eval_on_selector(
+                "#find", "el => el.parentElement.className") == "findslot"
 
 
 def test_every_tab_is_built(page_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            for name in ("transcript", "files", "diff"):
-                assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        for name in ("transcript", "files", "diff"):
+            assert not page.locator(f".tab[data-tab='{name}']").is_disabled()
 
 
 def test_every_tab_has_a_number_key_and_it_is_the_one_it_is_drawn_under(page_at):
     """The keys used to be spelled out one `case` each and stopped at four,
     so the fifth tab shipped with no key. Take an entry off the end of
     `TAB_KEYS` and the tab it names stops answering."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            names = page.evaluate("TAB_KEYS")
-            drawn = page.eval_on_selector_all(
-                ".tab", "els => els.map((one) => one.dataset.tab)")
-            assert names == drawn, (names, drawn)
-            for at, name in enumerate(names):
-                page.keyboard.press(str(at + 1))
-                page.wait_for_function(
-                    "(name) => $('content').dataset.tab === name", arg=name)
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        names = page.evaluate("TAB_KEYS")
+        drawn = page.eval_on_selector_all(
+            ".tab", "els => els.map((one) => one.dataset.tab)")
+        assert names == drawn, (names, drawn)
+        for at, name in enumerate(names):
+            page.keyboard.press(str(at + 1))
+            page.wait_for_function(
+                "(name) => $('content').dataset.tab === name", arg=name)
 
 
 # --- moving between tabs ----------------------------------------------------
@@ -168,50 +135,42 @@ def test_every_way_from_one_tab_to_another_works(repo_page):
     was removed, and this test is what it left behind.
     """
     names = list(DRAWN)
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            blew_up = []
-            page.on("pageerror", lambda error: blew_up.append(str(error)))
-            for one in names:
-                for other in names:
-                    if one == other:
-                        continue
-                    show_tab(page, one)
-                    show_tab(page, other)
-                    assert page.locator(DRAWN[other]).count() > 0, \
-                        f"{one} to {other} drew nothing"
-                    assert not blew_up, blew_up
-            # and the find box is still there, still working. On the Files
-            # tab that means the list of places opens under it; the tree
-            # behind it is not what answers.
-            show_tab(page, "files")
-            page.fill("#find", "code")
-            page.wait_for_selector(".goto button")
-            assert page.eval_on_selector_all(
-                ".goto button", "els => els.map(e => e.title)") == ["code.py"]
-            assert not blew_up, blew_up
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        for one in names:
+            for other in names:
+                if one == other:
+                    continue
+                show_tab(page, one)
+                show_tab(page, other)
+                assert page.locator(DRAWN[other]).count() > 0, \
+                    f"{one} to {other} drew nothing"
+                assert not blew_up, blew_up
+        # and the find box is still there, still working. On the Files
+        # tab that means the list of places opens under it; the tree
+        # behind it is not what answers.
+        show_tab(page, "files")
+        page.fill("#find", "code")
+        page.wait_for_selector(".goto button")
+        assert page.eval_on_selector_all(
+            ".goto button", "els => els.map(e => e.title)") == ["code.py"]
+        assert not blew_up, blew_up
 
 
 def test_switching_tabs_faster_than_they_load_still_lands(repo_page):
     """Each tab asks the daemon and draws when the answer comes. Clicking
     through them faster than that must still leave the last one drawn."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            blew_up = []
-            page.on("pageerror", lambda error: blew_up.append(str(error)))
-            for name in ["files", "diff", "transcript", "files", "transcript",
-                         "diff", "transcript", "diff", "files", "files"]:
-                page.click(f".tab[data-tab='{name}']")
-                page.wait_for_timeout(110)      # quicker than a human, on purpose
-            page.wait_for_selector(DRAWN["files"], timeout=15000)
-            assert page.evaluate("$('content').dataset.tab") == "files"
-            assert not blew_up, blew_up
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        for name in ["files", "diff", "transcript", "files", "transcript",
+                     "diff", "transcript", "diff", "files", "files"]:
+            page.click(f".tab[data-tab='{name}']")
+            page.wait_for_timeout(110)      # quicker than a human, on purpose
+        page.wait_for_selector(DRAWN["files"], timeout=15000)
+        assert page.evaluate("$('content').dataset.tab") == "files"
+        assert not blew_up, blew_up
 
 
 def test_a_transcript_push_during_a_tab_switch_stays_out_of_the_other_tab(
@@ -221,28 +180,24 @@ def test_a_transcript_push_during_a_tab_switch_stays_out_of_the_other_tab(
     `state.tab` — so a turn was appended as a fourth column of the Files tab.
 
     `draw()` already asks the box which tab owns it. This does too."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filebody")
-            before = page.evaluate(
-                """() => [...document.getElementById('content').children]
-                           .map((node) => node.className)""")
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filebody")
+        before = page.evaluate(
+            """() => [...document.getElementById('content').children]
+                       .map((node) => node.className)""")
 
-            # The exact pair an arriving transcript performs, in the window
-            # where the tab has been picked and its body has not been drawn.
-            page.evaluate("""() => {
-              state.tab = 'transcript';
-              patchTranscript([state.turns.blocks.length]);
-              state.tab = 'files';
-            }""")
-            after = page.evaluate(
-                """() => [...document.getElementById('content').children]
-                           .map((node) => node.className)""")
-            assert after == before
-        finally:
-            browser.close()
+        # The exact pair an arriving transcript performs, in the window
+        # where the tab has been picked and its body has not been drawn.
+        page.evaluate("""() => {
+          state.tab = 'transcript';
+          patchTranscript([state.turns.blocks.length]);
+          state.tab = 'files';
+        }""")
+        after = page.evaluate(
+            """() => [...document.getElementById('content').children]
+                       .map((node) => node.className)""")
+        assert after == before
 
 
 # --- how full the window is ---------------------------------------------------
@@ -252,19 +207,15 @@ def test_the_model_stands_left_of_the_context_bar(page_at):
     """The percentage is a percentage of this model's window, and `/model`
     changes it mid-session, so the name stands beside the bar it fills."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_selector("#ctxslot .model")
-            seen = page.evaluate("""() => {
-              const box = (sel) => document.querySelector(sel)
-                .getBoundingClientRect();
-              return {text: document.querySelector('#ctxslot .model').textContent,
-                      left: box('#ctxslot .model').right <= box('#ctxslot .ctx').left};
-            }""")
-            assert seen == {"text": "Opus 5", "left": True}, seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_selector("#ctxslot .model")
+        seen = page.evaluate("""() => {
+          const box = (sel) => document.querySelector(sel)
+            .getBoundingClientRect();
+          return {text: document.querySelector('#ctxslot .model').textContent,
+                  left: box('#ctxslot .model').right <= box('#ctxslot .ctx').left};
+        }""")
+        assert seen == {"text": "Opus 5", "left": True}, seen
 
 
 def test_the_context_bar_stands_at_the_end_of_the_tab_row(page_at):
@@ -272,28 +223,24 @@ def test_the_context_bar_stands_at_the_end_of_the_tab_row(page_at):
     up, so it is on every tab — which is the whole of what #101 asked for
     that wostuast can actually know."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_selector("#ctxslot .ctx")
-            for tab in ("transcript", "files", "diff"):
-                show_tab(page, tab)
-                seen = page.evaluate("""() => {
-                  const slot = document.getElementById('ctxslot');
-                  const bar = slot.querySelector('.bar .fill');
-                  const live = document.getElementById('live')
-                    .getBoundingClientRect();
-                  return {text: slot.innerText, hidden: slot.hidden,
-                          fill: bar && bar.style.width,
-                          leftOfLive: slot.getBoundingClientRect().right
-                                      <= live.left + 1};
-                }""")
-                assert seen["hidden"] is False, tab
-                assert "41% ctx" in seen["text"], (tab, seen)
-                assert seen["fill"] == "41%", (tab, seen)
-                assert seen["leftOfLive"], (tab, seen)
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_selector("#ctxslot .ctx")
+        for tab in ("transcript", "files", "diff"):
+            show_tab(page, tab)
+            seen = page.evaluate("""() => {
+              const slot = document.getElementById('ctxslot');
+              const bar = slot.querySelector('.bar .fill');
+              const live = document.getElementById('live')
+                .getBoundingClientRect();
+              return {text: slot.innerText, hidden: slot.hidden,
+                      fill: bar && bar.style.width,
+                      leftOfLive: slot.getBoundingClientRect().right
+                                  <= live.left + 1};
+            }""")
+            assert seen["hidden"] is False, tab
+            assert "41% ctx" in seen["text"], (tab, seen)
+            assert seen["fill"] == "41%", (tab, seen)
+            assert seen["leftOfLive"], (tab, seen)
 
 
 def test_a_session_whose_status_line_is_quiet_has_no_context_bar(ws, served):
@@ -304,36 +251,28 @@ def test_a_session_whose_status_line_is_quiet_has_no_context_bar(ws, served):
     ws.append_event(conftest.event(
         "SessionStart", pane="%7", pid=1, ts=time.time()))
     daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 1")
-            assert page.evaluate("state.sessions[0].context_pct") is None
-            assert page.is_hidden("#ctxslot")
-            assert page.evaluate(
-                "document.getElementById('ctxslot').innerText") == ""
-        finally:
-            browser.close()
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 1")
+        assert page.evaluate("state.sessions[0].context_pct") is None
+        assert page.is_hidden("#ctxslot")
+        assert page.evaluate(
+            "document.getElementById('ctxslot').innerText") == ""
 
 
 def test_the_context_bar_does_not_touch_the_live_slot(page_at):
     """`paintLive` is the one writer of that slot and three things already
     want it. A fourth would be the race that rule was written after."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_selector("#ctxslot .ctx")
-            page.wait_for_function(
-                "state.live === 'live' && document.getElementById('live').textContent === ''")
-            page.evaluate("said({error: 'no pane for this session'})")
-            page.wait_for_function(
-                """() => document.getElementById('live').innerText
-                          .includes('no pane')""")
-            # The failure is in the slot, and the bar is still beside it.
-            assert "41% ctx" in page.locator("#ctxslot").inner_text()
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_selector("#ctxslot .ctx")
+        page.wait_for_function(
+            "state.live === 'live' && document.getElementById('live').textContent === ''")
+        page.evaluate("said({error: 'no pane for this session'})")
+        page.wait_for_function(
+            """() => document.getElementById('live').innerText
+                      .includes('no pane')""")
+        # The failure is in the slot, and the bar is still beside it.
+        assert "41% ctx" in page.locator("#ctxslot").inner_text()
 
 
 def test_the_strip_carries_what_this_session_has_spent(page_at):
@@ -342,26 +281,22 @@ def test_the_strip_carries_what_this_session_has_spent(page_at):
     #101 down to one line on the strength of it — see
     `tests/fixtures/README.md`."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_selector("#ctxslot .spent")
-            for tab in ("transcript", "files", "diff"):
-                show_tab(page, tab)
-                seen = page.evaluate("""() => {
-                  const slot = document.getElementById('ctxslot');
-                  const spent = slot.querySelector('.spent');
-                  return {text: slot.innerText.replace(/\\s+/g, ' '),
-                          caveat: spent && spent.title};
-                }""")
-                assert "41% ctx" in seen["text"], (tab, seen)
-                assert "$1.83" in seen["text"], (tab, seen)
-                # An estimate at list price. Said on the number, because it is
-                # read once and the strip has no width for a sentence.
-                assert "estimate" in seen["caveat"], (tab, seen)
-                assert "/clear" in seen["caveat"], (tab, seen)
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_selector("#ctxslot .spent")
+        for tab in ("transcript", "files", "diff"):
+            show_tab(page, tab)
+            seen = page.evaluate("""() => {
+              const slot = document.getElementById('ctxslot');
+              const spent = slot.querySelector('.spent');
+              return {text: slot.innerText.replace(/\\s+/g, ' '),
+                      caveat: spent && spent.title};
+            }""")
+            assert "41% ctx" in seen["text"], (tab, seen)
+            assert "$1.83" in seen["text"], (tab, seen)
+            # An estimate at list price. Said on the number, because it is
+            # read once and the strip has no width for a sentence.
+            assert "estimate" in seen["caveat"], (tab, seen)
+            assert "/clear" in seen["caveat"], (tab, seen)
 
 
 def test_a_session_that_was_told_no_cost_shows_none(ws, served):
@@ -373,15 +308,11 @@ def test_a_session_that_was_told_no_cost_shows_none(ws, served):
         "SessionStart", pane="%7", pid=1, ts=time.time()))
     ws.write_status("s1", ws.Status(ts=1.0, name="A session", context_pct=12.0))
     daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 1")
-            assert page.evaluate("state.sessions[0].cost_usd") is None
-            page.wait_for_selector("#ctxslot .ctx")      # context still shows
-            assert page.locator("#ctxslot .spent").count() == 0
-        finally:
-            browser.close()
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 1")
+        assert page.evaluate("state.sessions[0].cost_usd") is None
+        page.wait_for_selector("#ctxslot .ctx")      # context still shows
+        assert page.locator("#ctxslot .spent").count() == 0
 
 
 def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
@@ -392,22 +323,18 @@ def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
     Tab keeps it, because that is where a keyboard reader is."""
     ringed = """() => [...document.querySelectorAll('.tab')]
       .filter((one) => one.matches(':focus-visible')).map((one) => one.dataset.tab)"""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.click(".tab[data-tab='diff']")
-            page.keyboard.press("1")
-            page.wait_for_function("state.tab === 'transcript'")
-            assert page.evaluate(ringed) == []
+    with opened(page_at) as page:
+        page.click(".tab[data-tab='diff']")
+        page.keyboard.press("1")
+        page.wait_for_function("state.tab === 'transcript'")
+        assert page.evaluate(ringed) == []
 
-            for _ in range(60):             # to a tab, by keyboard
-                page.keyboard.press("Tab")
-                if page.evaluate("document.activeElement.classList.contains('tab')"):
-                    break
-            reached = page.evaluate("document.activeElement.dataset.tab")
-            assert reached, "Tab never reached a tab"
-            page.keyboard.press("2")
-            page.wait_for_function("state.tab === 'files'")
-            assert page.evaluate(ringed) == [reached]
-        finally:
-            browser.close()
+        for _ in range(60):             # to a tab, by keyboard
+            page.keyboard.press("Tab")
+            if page.evaluate("document.activeElement.classList.contains('tab')"):
+                break
+        reached = page.evaluate("document.activeElement.dataset.tab")
+        assert reached, "Tab never reached a tab"
+        page.keyboard.press("2")
+        page.wait_for_function("state.tab === 'files'")
+        assert page.evaluate(ringed) == [reached]

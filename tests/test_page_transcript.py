@@ -14,8 +14,8 @@ import conftest
 from browser import (
     kept,
     skip_without_browser,
-    sync_playwright,
-    open_page,
+    opened,
+    own_context,
     show_tab,
     wait_for_map,
     wait_for_watching,
@@ -30,42 +30,34 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_the_page_draws_the_session(page_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            assert page.locator(".row").count() == 1
-            # Until the reader names it, a session is called by where it
-            # stands. What Claude Code called it is not on the row: `/rename`
-            # never reaches it, and it went stale beside the branch.
-            place = page.locator(".row .name").inner_text()
-            assert place and "A session" not in page.locator(".row").inner_text()
-            assert page.title() == "1 ready \u00b7 wostuast"
-            assert page.locator(".turn").count() >= 2
-            # The model stands on the strip, beside the window it fills.
-            page.wait_for_selector("#ctxslot .model")
-            assert "Opus 5" in page.locator("#ctxslot").inner_text()
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        assert page.locator(".row").count() == 1
+        # Until the reader names it, a session is called by where it
+        # stands. What Claude Code called it is not on the row: `/rename`
+        # never reaches it, and it went stale beside the branch.
+        place = page.locator(".row .name").inner_text()
+        assert place and "A session" not in page.locator(".row").inner_text()
+        assert page.title() == "1 ready \u00b7 wostuast"
+        assert page.locator(".turn").count() >= 2
+        # The model stands on the strip, beside the window it fills.
+        page.wait_for_selector("#ctxslot .model")
+        assert "Opus 5" in page.locator("#ctxslot").inner_text()
 
 
 def test_hostile_markdown_cannot_run(page_at):
     """An agent that reads a nasty file must not be able to act on this page.
     The page shares an origin with the tmux verbs, so this is the whole game."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            # Without this the transcript may not have arrived, and a page
-            # that drew nothing passes every assertion below vacuously.
-            wait_for_map(page)
-            assert page.evaluate("window.PWNED ?? null") is None
-            assert page.locator(".prose img").count() == 0
-            assert page.locator(".prose script").count() == 0
-            hrefs = page.eval_on_selector_all(
-                ".prose a", "els => els.map(e => e.getAttribute('href'))")
-            assert all(h is None or h.startswith(("http", "#")) for h in hrefs)
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        # Without this the transcript may not have arrived, and a page
+        # that drew nothing passes every assertion below vacuously.
+        wait_for_map(page)
+        assert page.evaluate("window.PWNED ?? null") is None
+        assert page.locator(".prose img").count() == 0
+        assert page.locator(".prose script").count() == 0
+        hrefs = page.eval_on_selector_all(
+            ".prose a", "els => els.map(e => e.getAttribute('href'))")
+        assert all(h is None or h.startswith(("http", "#")) for h in hrefs)
 
 
 #: What an agent writes in a plan, and what the scrub took the meaning out
@@ -96,44 +88,40 @@ def test_markdown_keeps_task_boxes_step_numbers_sides_and_picture_words(page_at)
     steps read 1, 1, and a picture left "See  and". A `#` link opened a
     second copy of the page and read `install` as a session."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("!!window.marked")
-            seen = page.evaluate("""(text) => {
-              const box = document.createElement('div');
-              document.body.appendChild(box);
-              const node = markdown(box, text);
-              const side = (cell) => getComputedStyle(cell).textAlign;
-              const out = {
-                items: [...node.querySelectorAll('ul li')]
-                  .map((one) => one.textContent.trim()),
-                starts: [...node.querySelectorAll('ol')]
-                  .map((one) => one.getAttribute('start')),
-                sides: [...node.querySelectorAll('th, td')].map(side),
-                boxes: node.querySelectorAll('input, img').length,
-                links: node.querySelectorAll('a').length,
-                last: node.lastElementChild.textContent,
-                bullets: [...node.querySelectorAll('ul li')]
-                  .map((one) => getComputedStyle(one).listStyleType),
-                plain: getComputedStyle(markdown(box, '- a point')
-                  .querySelector('li')).listStyleType,
-              };
-              box.remove();
-              return out;
-            }""", PLAN_MARKDOWN)
-            # The box stands where the bullet stood; a plain item keeps it.
-            assert seen["bullets"] == ["none", "none"], seen
-            assert seen["plain"] == "disc", seen
-            assert seen["items"] == ["\u2611 read the issue",
-                                     "\u2610 fix the scrub"], seen
-            assert seen["starts"] == [None, "2"], seen
-            assert seen["sides"] == ["left", "right", "left", "right"], seen
-            assert seen["boxes"] == 0, seen
-            assert seen["links"] == 0, seen
-            assert seen["last"] == "See the diagram and the install notes.", seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("!!window.marked")
+        seen = page.evaluate("""(text) => {
+          const box = document.createElement('div');
+          document.body.appendChild(box);
+          const node = markdown(box, text);
+          const side = (cell) => getComputedStyle(cell).textAlign;
+          const out = {
+            items: [...node.querySelectorAll('ul li')]
+              .map((one) => one.textContent.trim()),
+            starts: [...node.querySelectorAll('ol')]
+              .map((one) => one.getAttribute('start')),
+            sides: [...node.querySelectorAll('th, td')].map(side),
+            boxes: node.querySelectorAll('input, img').length,
+            links: node.querySelectorAll('a').length,
+            last: node.lastElementChild.textContent,
+            bullets: [...node.querySelectorAll('ul li')]
+              .map((one) => getComputedStyle(one).listStyleType),
+            plain: getComputedStyle(markdown(box, '- a point')
+              .querySelector('li')).listStyleType,
+          };
+          box.remove();
+          return out;
+        }""", PLAN_MARKDOWN)
+        # The box stands where the bullet stood; a plain item keeps it.
+        assert seen["bullets"] == ["none", "none"], seen
+        assert seen["plain"] == "disc", seen
+        assert seen["items"] == ["\u2611 read the issue",
+                                 "\u2610 fix the scrub"], seen
+        assert seen["starts"] == [None, "2"], seen
+        assert seen["sides"] == ["left", "right", "left", "right"], seen
+        assert seen["boxes"] == 0, seen
+        assert seen["links"] == 0, seen
+        assert seen["last"] == "See the diagram and the install notes.", seen
 
 
 def test_the_scrub_keeps_only_values_it_has_checked(page_at):
@@ -159,91 +147,75 @@ def test_the_scrub_keeps_only_values_it_has_checked(page_at):
         '<a href="#s1" onclick="window.PWNED=8">anchor</a>'
         '<a href="https://example.org/">away</a></p>'
     )
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            seen = page.evaluate("""(hostile) => {
-              const holder = document.createElement('template');
-              holder.innerHTML = hostile;
-              scrub(holder.content);
-              const node = document.createElement('div');
-              node.className = 'prose';
-              node.replaceChildren(holder.content);
-              safeLinks(node);
-              document.body.appendChild(node);
-              const kept = [];
-              for (const one of node.querySelectorAll('*')) {
-                for (const name of one.getAttributeNames()) {
-                  kept.push([one.tagName, name, one.getAttribute(name)]);
-                }
-              }
-              const out = {kept, text: node.textContent,
-                           elements: node.querySelectorAll('img, input').length};
-              node.remove();
-              return out;
-            }""", hostile)
-            assert page.evaluate("window.PWNED ?? null") is None
-            assert seen["elements"] == 0, seen
-            assert sorted(seen["kept"]) == sorted([
-                ["OL", "start", "7"],
-                ["TH", "align", "center"],
-                ["TD", "align", "left"],
-                ["A", "href", "https://example.org/"],
-                ["A", "target", "_blank"],
-                ["A", "rel", "noopener noreferrer"],
-            ]), seen["kept"]
-            assert "a picture\u2611" in seen["text"], seen["text"]
-            assert "jsjs2anchoraway" in seen["text"], seen["text"]
-        finally:
-            browser.close()
+    with opened(path) as page:
+        seen = page.evaluate("""(hostile) => {
+          const holder = document.createElement('template');
+          holder.innerHTML = hostile;
+          scrub(holder.content);
+          const node = document.createElement('div');
+          node.className = 'prose';
+          node.replaceChildren(holder.content);
+          safeLinks(node);
+          document.body.appendChild(node);
+          const kept = [];
+          for (const one of node.querySelectorAll('*')) {
+            for (const name of one.getAttributeNames()) {
+              kept.push([one.tagName, name, one.getAttribute(name)]);
+            }
+          }
+          const out = {kept, text: node.textContent,
+                       elements: node.querySelectorAll('img, input').length};
+          node.remove();
+          return out;
+        }""", hostile)
+        assert page.evaluate("window.PWNED ?? null") is None
+        assert seen["elements"] == 0, seen
+        assert sorted(seen["kept"]) == sorted([
+            ["OL", "start", "7"],
+            ["TH", "align", "center"],
+            ["TD", "align", "left"],
+            ["A", "href", "https://example.org/"],
+            ["A", "target", "_blank"],
+            ["A", "rel", "noopener noreferrer"],
+        ]), seen["kept"]
+        assert "a picture\u2611" in seen["text"], seen["text"]
+        assert "jsjs2anchoraway" in seen["text"], seen["text"]
 
 
 def test_a_link_to_a_block_is_digits_and_nothing_else(page_at):
     """`Number("")` is 0, so `#s1/` was read as a link to the first block,
     and `Number` also takes " 3", "1e2" and "0x10"."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            seen = page.evaluate("""() => {
-              const read = (hash) => {
-                history.replaceState(null, '', hash);
-                return placeInHash();
-              };
-              const out = ['#s1/', '#s1/%203', '#s1/1e2', '#s1/0x10', '#s1/4',
-                           '#s1'].map(read);
-              history.replaceState(null, '', '#s1');
-              return out;
-            }""")
-            assert seen == [None, None, None, None, {"id": "s1", "seq": 4},
-                            {"id": "s1", "seq": None}], seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        seen = page.evaluate("""() => {
+          const read = (hash) => {
+            history.replaceState(null, '', hash);
+            return placeInHash();
+          };
+          const out = ['#s1/', '#s1/%203', '#s1/1e2', '#s1/0x10', '#s1/4',
+                       '#s1'].map(read);
+          history.replaceState(null, '', '#s1');
+          return out;
+        }""")
+        assert seen == [None, None, None, None, {"id": "s1", "seq": 4},
+                        {"id": "s1", "seq": None}], seen
 
 
 def test_raw_html_is_shown_rather_than_swallowed(page_at):
     """The reader should see what the agent saw, as text."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            shown = page.locator(".prose").last.inner_text()
-            assert "onerror" in shown
-            assert "window.PWNED=2" in shown
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        shown = page.locator(".prose").last.inner_text()
+        assert "onerror" in shown
+        assert "window.PWNED=2" in shown
 
 
 def test_a_code_fence_keeps_its_angle_bracket(page_at):
     """Escaping the Markdown source instead of the output turned `>` into
     `&gt;` inside fences. This is that regression."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            fence = page.locator(".prose pre").last.inner_text()
-            assert "len(hits) > 1" in fence
-            assert "&gt;" not in fence
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        fence = page.locator(".prose pre").last.inner_text()
+        assert "len(hits) > 1" in fence
+        assert "&gt;" not in fence
 
 
 def test_a_code_block_copies_itself_from_a_button_that_shows_on_hover(page_at):
@@ -252,36 +224,32 @@ def test_a_code_block_copies_itself_from_a_button_that_shows_on_hover(page_at):
     it. A button at the block's top right copies the block and nothing
     else. It stands outside the block's scroll, so a long line does not
     carry it away, and it shows only while the pointer is on the block."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.evaluate("""() => { window.__copied = [];
-              copyToClipboard = async (text) => {
-                window.__copied.push(text); return true; }; }""")
-            box = page.locator(".prose .codebox").last
-            shown = """() => getComputedStyle([...document.querySelectorAll(
-              '.prose .codebox')].pop().querySelector('.copycode')).opacity"""
-            assert page.evaluate(shown) == "0"
-            box.locator("pre").hover()
-            page.wait_for_function(f"({shown})() === '1'")
-            assert page.evaluate("""() => [...document.querySelectorAll(
-              '.prose .copycode')].every((one) => !one.closest('pre'))""")
-            # The tick shows for 1.4 s. A loaded runner spent longer than
-            # that on the steps between the click and a wait for it, so the
-            # page writes down that it came, and the test reads that.
-            box.locator(".copycode").evaluate("""(button) => {
-              window.__done = false;
-              new MutationObserver(() => {
-                if (button.classList.contains('done')) window.__done = true;
-              }).observe(button, {attributes: true}); }""")
-            box.locator(".copycode").click()
-            page.wait_for_function("window.__copied.length === 1")
-            code = box.locator("pre").evaluate("(pre) => pre.textContent")
-            assert page.evaluate("window.__copied[0]") == code
-            assert "len(hits) > 1" in code
-            page.wait_for_function("window.__done")
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.evaluate("""() => { window.__copied = [];
+          copyToClipboard = async (text) => {
+            window.__copied.push(text); return true; }; }""")
+        box = page.locator(".prose .codebox").last
+        shown = """() => getComputedStyle([...document.querySelectorAll(
+          '.prose .codebox')].pop().querySelector('.copycode')).opacity"""
+        assert page.evaluate(shown) == "0"
+        box.locator("pre").hover()
+        page.wait_for_function(f"({shown})() === '1'")
+        assert page.evaluate("""() => [...document.querySelectorAll(
+          '.prose .copycode')].every((one) => !one.closest('pre'))""")
+        # The tick shows for 1.4 s. A loaded runner spent longer than
+        # that on the steps between the click and a wait for it, so the
+        # page writes down that it came, and the test reads that.
+        box.locator(".copycode").evaluate("""(button) => {
+          window.__done = false;
+          new MutationObserver(() => {
+            if (button.classList.contains('done')) window.__done = true;
+          }).observe(button, {attributes: true}); }""")
+        box.locator(".copycode").click()
+        page.wait_for_function("window.__copied.length === 1")
+        code = box.locator("pre").evaluate("(pre) => pre.textContent")
+        assert page.evaluate("window.__copied[0]") == code
+        assert "len(hits) > 1" in code
+        page.wait_for_function("window.__done")
 
 
 def test_only_a_block_that_has_just_arrived_slides_in(page_at):
@@ -289,47 +257,39 @@ def test_only_a_block_that_has_just_arrived_slides_in(page_at):
     every block on every rebuild would make the tab shiver each time an agent
     ran a tool, so the slide is for a block nobody has seen before."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            assert page.locator(".fresh").count() == 0, "the history slid in too"
-            blocks, run, _ = daemon.read_transcript("s1")
-            one = dict(blocks[-1].__dict__)
-            one.update(seq=len(blocks), kind="text", text="and one more thing")
-            daemon.hub.send("transcript",
-                            {"id": "s1", "run": run, "blocks": [one]},
-                            session_id="s1")
-            # In one question, so that a redraw cannot land between asking
-            # whether it is there and asking how many there are.
-            page.wait_for_function(
-                "document.querySelectorAll('.fresh').length === 1")
-            moving = ("() => getComputedStyle(document.querySelector('.turn'))"
-                      ".animationName")
-            assert page.evaluate(moving) == "none", "the whole history animates"
-            # Drawing it again is not arriving again.
-            page.evaluate("draw()")
-            assert page.locator(".fresh").count() == 0
-        finally:
-            browser.close()
+    with opened(path) as page:
+        assert page.locator(".fresh").count() == 0, "the history slid in too"
+        blocks, run, _ = daemon.read_transcript("s1")
+        one = dict(blocks[-1].__dict__)
+        one.update(seq=len(blocks), kind="text", text="and one more thing")
+        daemon.hub.send("transcript",
+                        {"id": "s1", "run": run, "blocks": [one]},
+                        session_id="s1")
+        # In one question, so that a redraw cannot land between asking
+        # whether it is there and asking how many there are.
+        page.wait_for_function(
+            "document.querySelectorAll('.fresh').length === 1")
+        moving = ("() => getComputedStyle(document.querySelector('.turn'))"
+                  ".animationName")
+        assert page.evaluate(moving) == "none", "the whole history animates"
+        # Drawing it again is not arriving again.
+        page.evaluate("draw()")
+        assert page.locator(".fresh").count() == 0
 
 
 def test_expanding_a_tool_result_leaves_the_rest_alone(page_at):
     """It used to redraw the whole tab, which re-parsed every Markdown block
     and threw the reader to the bottom of the transcript."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            page.evaluate("document.querySelector('.content').scrollTop = 0")
-            page.evaluate("window.__first = document.querySelector('.turn')")
-            before = page.evaluate("document.querySelector('.content').scrollTop")
-            page.locator(".tool").first.click()
-            page.wait_for_timeout(250)
-            assert page.locator(".tool-result").count() == 1
-            assert page.evaluate("document.querySelector('.content').scrollTop") == before
-            assert page.evaluate("window.__first.isConnected"), "everything was redrawn"
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        page.evaluate("document.querySelector('.content').scrollTop = 0")
+        page.evaluate("window.__first = document.querySelector('.turn')")
+        before = page.evaluate("document.querySelector('.content').scrollTop")
+        page.locator(".tool").first.click()
+        page.wait_for_timeout(250)
+        assert page.locator(".tool-result").count() == 1
+        assert page.evaluate("document.querySelector('.content').scrollTop") == before
+        assert page.evaluate("window.__first.isConnected"), "everything was redrawn"
 
 
 def test_the_session_the_page_picks_for_you_is_watched(page_at, ws):
@@ -337,29 +297,25 @@ def test_the_session_the_page_picks_for_you_is_watched(page_at, ws):
     subscribing, so the stream stayed on watch="" and the transcript of the
     one session actually on screen never updated."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            # `open_page` returns on the first draw, which is the tab's frame:
-            # the transcript is still in flight. Counting straight away read
-            # nought turns on a loaded CI runner, and then the push delivered
-            # the whole transcript at once -- `assert 3 == (0 + 1)`.
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            before = page.locator(".turn").count()
-            assert page.locator(".row.chosen").count() == 1
+    with opened(path) as page:
+        # `open_page` returns on the first draw, which is the tab's frame:
+        # the transcript is still in flight. Counting straight away read
+        # nought turns on a loaded CI runner, and then the push delivered
+        # the whole transcript at once -- `assert 3 == (0 + 1)`.
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        before = page.locator(".turn").count()
+        assert page.locator(".row.chosen").count() == 1
 
-            write_records(daemon, conftest.record(
-                "claude", "A brand new line.", ts="2026-09-18T14:09:00.000Z"))
-            daemon.tick()
-            # For what the push carries, not for a length of time: a fixed
-            # wait on a loaded runner is a wait that runs out.
-            page.wait_for_function(
-                "n => document.querySelectorAll('.turn').length === n",
-                arg=before + 1)
-            assert "A brand new line." in page.locator(".content").inner_text()
-        finally:
-            browser.close()
+        write_records(daemon, conftest.record(
+            "claude", "A brand new line.", ts="2026-09-18T14:09:00.000Z"))
+        daemon.tick()
+        # For what the push carries, not for a length of time: a fixed
+        # wait on a loaded runner is a wait that runs out.
+        page.wait_for_function(
+            "n => document.querySelectorAll('.turn').length === n",
+            arg=before + 1)
+        assert "A brand new line." in page.locator(".content").inner_text()
 
 
 def test_the_same_blocks_arriving_twice_are_not_shown_twice(page_at):
@@ -367,21 +323,17 @@ def test_the_same_blocks_arriving_twice_are_not_shown_twice(page_at):
     first fetch and the first push can carry the same block. Each block knows
     its place, so it lands in the same slot either way."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            before = page.locator(".turn").count()
-            assert before > 1
-            blocks, run, _ = daemon.read_transcript("s1")
-            daemon.hub.send("transcript",
-                            {"id": "s1", "run": run,
-                             "blocks": [dict(b.__dict__) for b in blocks]},
-                            session_id="s1")
-            page.wait_for_timeout(800)
-            assert page.locator(".turn").count() == before
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        before = page.locator(".turn").count()
+        assert before > 1
+        blocks, run, _ = daemon.read_transcript("s1")
+        daemon.hub.send("transcript",
+                        {"id": "s1", "run": run,
+                         "blocks": [dict(b.__dict__) for b in blocks]},
+                        session_id="s1")
+        page.wait_for_timeout(800)
+        assert page.locator(".turn").count() == before
 
 
 def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_at):
@@ -394,27 +346,23 @@ def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_a
     holds instead of merging into it.
     """
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            assert page.locator(".turn").count() > 1
-            held = daemon_transcript(daemon)
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        assert page.locator(".turn").count() > 1
+        held = daemon_transcript(daemon)
 
-            spare = held.parent / "rewritten.jsonl"
-            spare.write_text(conftest.records(conftest.record(
-                "claude", "The only line now.", ts="2026-09-18T15:00:00.000Z")))
-            spare.replace(held)          # a new inode, as a rewrite makes
+        spare = held.parent / "rewritten.jsonl"
+        spare.write_text(conftest.records(conftest.record(
+            "claude", "The only line now.", ts="2026-09-18T15:00:00.000Z")))
+        spare.replace(held)          # a new inode, as a rewrite makes
 
-            daemon.tick()
-            page.wait_for_function(
-                "document.querySelectorAll('.turn').length === 1")
-            shown = page.locator(".content").inner_text()
-            assert "The only line now." in shown
-            assert "Do the thing." not in shown, "the old reading is still here"
-        finally:
-            browser.close()
+        daemon.tick()
+        page.wait_for_function(
+            "document.querySelectorAll('.turn').length === 1")
+        shown = page.locator(".content").inner_text()
+        assert "The only line now." in shown
+        assert "Do the thing." not in shown, "the old reading is still here"
 
 
 def test_typing_narrows_the_list_and_leaves_the_transcript_whole(page_at):
@@ -422,125 +370,97 @@ def test_typing_narrows_the_list_and_leaves_the_transcript_whole(page_at):
     turns out of the transcript took the conversation around a hit away with
     them, which is the thing you were reading it for. The hits are still
     marked where they stand."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            everything = page.locator(".turn").count()
-            rows = page.locator(".filelist.transcript button").count()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        everything = page.locator(".turn").count()
+        rows = page.locator(".filelist.transcript button").count()
 
-            page.locator("#find").fill("pytest")
-            page.wait_for_function(
-                "document.querySelectorAll('mark').length > 0")
-            assert page.locator(".turn").count() == everything
-            assert page.locator(".filelist.transcript button").count() < rows
-            assert "pytest" in page.locator("mark").first.inner_text().lower()
-            assert " of " in page.locator(".listnote").inner_text()
+        page.locator("#find").fill("pytest")
+        page.wait_for_function(
+            "document.querySelectorAll('mark').length > 0")
+        assert page.locator(".turn").count() == everything
+        assert page.locator(".filelist.transcript button").count() < rows
+        assert "pytest" in page.locator("mark").first.inner_text().lower()
+        assert " of " in page.locator(".listnote").inner_text()
 
-            page.locator("#find").fill("")
-            page.wait_for_function(
-                "document.querySelectorAll('mark').length === 0")
-            assert page.locator(".turn").count() == everything
-            assert page.locator(".filelist.transcript button").count() == rows
-        finally:
-            browser.close()
+        page.locator("#find").fill("")
+        page.wait_for_function(
+            "document.querySelectorAll('mark').length === 0")
+        assert page.locator(".turn").count() == everything
+        assert page.locator(".filelist.transcript button").count() == rows
 
 
 def test_a_search_that_matches_nothing_says_so(page_at):
     """In the list, which is what the box narrows. The transcript stays as it
     was: it is not what the question was about."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            turns = page.locator(".turn").count()
-            page.locator("#find").fill("zzzznotherezzzz")
-            page.wait_for_selector(".filelist.transcript .nohits")
-            assert "Nothing here matches" in \
-                page.locator(".filelist.transcript").inner_text()
-            assert page.locator(".filelist.transcript button").count() == 0
-            assert page.locator(".turn").count() == turns
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        turns = page.locator(".turn").count()
+        page.locator("#find").fill("zzzznotherezzzz")
+        page.wait_for_selector(".filelist.transcript .nohits")
+        assert "Nothing here matches" in \
+            page.locator(".filelist.transcript").inner_text()
+        assert page.locator(".filelist.transcript button").count() == 0
+        assert page.locator(".turn").count() == turns
 
 
 def test_searching_never_re_parses_what_an_agent_wrote(page_at):
     """Highlighting walks text nodes. A search that looks like markup must not
     become markup."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            page.locator("#find").fill("<img")
-            page.wait_for_timeout(250)
-            assert page.evaluate("window.PWNED ?? null") is None
-            assert page.locator(".prose img").count() == 0
-            assert page.locator("mark").count() >= 1
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        page.locator("#find").fill("<img")
+        page.wait_for_timeout(250)
+        assert page.evaluate("window.PWNED ?? null") is None
+        assert page.locator(".prose img").count() == 0
+        assert page.locator("mark").count() >= 1
 
 
 def test_a_regex_in_the_search_box_is_taken_literally(page_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.locator("#find").fill("len(hits)")
-            page.wait_for_timeout(250)
-            assert page.locator("mark").count() >= 1
-            assert "len(hits)" in page.locator("mark").first.inner_text()
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.locator("#find").fill("len(hits)")
+        page.wait_for_timeout(250)
+        assert page.locator("mark").count() >= 1
+        assert "len(hits)" in page.locator("mark").first.inner_text()
 
 
 def test_keys_do_not_fire_while_typing_in_the_search_box(page_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            # The find box moves house when the transcript arrives and
-            # `split` claims it, and a box that moves loses the focus on it:
-            # the "j" then landed on the page as a key. Waiting for the map is
-            # waiting for that move to have happened.
-            wait_for_map(page)
-            page.locator("#find").focus()
-            page.keyboard.type("j")
-            page.wait_for_timeout(150)
-            assert page.locator("#find").input_value() == "j"
-            assert page.evaluate("document.getElementById('help').open") is False
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        # The find box moves house when the transcript arrives and
+        # `split` claims it, and a box that moves loses the focus on it:
+        # the "j" then landed on the page as a key. Waiting for the map is
+        # waiting for that move to have happened.
+        wait_for_map(page)
+        page.locator("#find").focus()
+        page.keyboard.type("j")
+        page.wait_for_timeout(150)
+        assert page.locator("#find").input_value() == "j"
+        assert page.evaluate("document.getElementById('help').open") is False
 
 
 def test_without_marked_the_transcript_is_still_readable(page_at):
     """Markdown is written to be read as plain text, so a fetch that never
     arrives costs the rendering and nothing else. The tab is never blank."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at, with_marked=False)
-        try:
-            page.wait_for_timeout(700)
-            assert page.evaluate("!!window.marked") is False
-            said = page.locator(".prose").first.inner_text()
-            assert said                       # there is text, not an empty box
-            assert page.locator(".prose h1, .prose h2, .prose ul").count() == 0
-            assert page.locator(".nohits").count() == 0
-        finally:
-            browser.close()
+    with opened(page_at, with_marked=False) as page:
+        page.wait_for_timeout(700)
+        assert page.evaluate("!!window.marked") is False
+        said = page.locator(".prose").first.inner_text()
+        assert said                       # there is text, not an empty box
+        assert page.locator(".prose h1, .prose h2, .prose ul").count() == 0
+        assert page.locator(".nohits").count() == 0
 
 
 def test_marked_is_pinned_too(page_at):
     """Both fetched scripts carry the hash of their bytes. The page is served
     the real marked here, so this checks the pin as the browser does."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.wait_for_timeout(700)
-            assert page.evaluate("!!window.marked") is True
-            tag = page.locator("script[src*='marked']")
-            assert tag.count() == 1
-            assert tag.get_attribute("src").startswith("https://")
-            assert tag.get_attribute("integrity").startswith("sha384-")
-            assert tag.get_attribute("crossorigin") == "anonymous"
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.wait_for_timeout(700)
+        assert page.evaluate("!!window.marked") is True
+        tag = page.locator("script[src*='marked']")
+        assert tag.count() == 1
+        assert tag.get_attribute("src").startswith("https://")
+        assert tag.get_attribute("integrity").startswith("sha384-")
+        assert tag.get_attribute("crossorigin") == "anonymous"
 
 
 def append_blocks(daemon, texts):
@@ -557,44 +477,36 @@ def test_a_search_keeps_its_place_while_the_agent_works(page_at):
     you were back at the top. Nothing is filtered out of the transcript any
     more, so a push appends — but the place still has to survive it."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_watching(daemon)
-            append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
-            page.wait_for_function(
-                "document.querySelectorAll('.turn').length > 50")
-            page.fill("#find", "pytest")
-            page.wait_for_function("document.querySelectorAll('mark').length > 0")
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
+        page.wait_for_function(
+            "document.querySelectorAll('.turn').length > 50")
+        page.fill("#find", "pytest")
+        page.wait_for_function("document.querySelectorAll('mark').length > 0")
 
-            page.evaluate("document.querySelector('.turnbody').scrollTop = 600")
-            was = page.evaluate("document.querySelector('.turnbody').scrollTop")
-            assert was > 0, "the transcript is too short to scroll"
+        page.evaluate("document.querySelector('.turnbody').scrollTop = 600")
+        was = page.evaluate("document.querySelector('.turnbody').scrollTop")
+        assert was > 0, "the transcript is too short to scroll"
 
-            append_blocks(daemon, ["pytest run 60"])
-            page.wait_for_function(
-                "document.querySelectorAll('.turn').length > 60")
-            assert page.evaluate(
-                "document.querySelector('.turnbody').scrollTop") == was
-        finally:
-            browser.close()
+        append_blocks(daemon, ["pytest run 60"])
+        page.wait_for_function(
+            "document.querySelectorAll('.turn').length > 60")
+        assert page.evaluate(
+            "document.querySelector('.turnbody').scrollTop") == was
 
 
 def test_expanding_a_tool_result_keeps_the_search_highlighted(page_at):
     """`redrawBlock` rebuilt the node but never marked it again, so the one
     block you clicked stopped being highlighted while every other match kept
     its `<mark>`."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.fill("#find", "pytest")
-            page.wait_for_function("document.querySelectorAll('mark').length > 0")
-            before = page.locator("mark").count()
-            page.click(".tool")
-            page.wait_for_selector(".tool-result")
-            assert page.locator("mark").count() >= before
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.fill("#find", "pytest")
+        page.wait_for_function("document.querySelectorAll('mark').length > 0")
+        before = page.locator("mark").count()
+        page.click(".tool")
+        page.wait_for_selector(".tool-result")
+        assert page.locator("mark").count() >= before
 
 
 def test_a_working_stream_says_nothing_and_a_lost_one_says_so(page_at):
@@ -602,79 +514,67 @@ def test_a_working_stream_says_nothing_and_a_lost_one_says_so(page_at):
     moving, so the word told nobody anything -- and a word that is always
     there is a word nobody reads, so "reconnecting" in the same place went
     unseen too. A working stream is silent; a lost one speaks."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.wait_for_function("state.live === 'live'")
-            assert page.locator("#live").inner_text() == ""
-            # What the page does when the stream drops, read in the same
-            # evaluate that causes it: a push cannot land in between.
-            said = page.evaluate("""() => { state.stream.onerror();
-                return document.getElementById('live').textContent; }""")
-            assert said == "reconnecting"
-            # And with words in the find box too: both painters skipped the
-            # slot then, so a drop said nothing and a reconnect left
-            # "reconnecting" standing over a working page.
-            said = page.evaluate("""() => { state.find = 'x';
-                document.getElementById('live').textContent = '';
-                state.stream.onerror();
-                return document.getElementById('live').textContent; }""")
-            assert said == "reconnecting"
-            # And the reconnect, for real: a new stream's first `sessions`
-            # clears the word with the find box still holding text.
-            page.evaluate("""() => { state.stream.close(); state.stream = null;
-                state.streamUrl = ''; resubscribe(); }""")
-            page.wait_for_function(
-                "state.live === 'live' && state.find === 'x'"
-                " && document.getElementById('live').textContent === ''")
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.wait_for_function("state.live === 'live'")
+        assert page.locator("#live").inner_text() == ""
+        # What the page does when the stream drops, read in the same
+        # evaluate that causes it: a push cannot land in between.
+        said = page.evaluate("""() => { state.stream.onerror();
+            return document.getElementById('live').textContent; }""")
+        assert said == "reconnecting"
+        # And with words in the find box too: both painters skipped the
+        # slot then, so a drop said nothing and a reconnect left
+        # "reconnecting" standing over a working page.
+        said = page.evaluate("""() => { state.find = 'x';
+            document.getElementById('live').textContent = '';
+            state.stream.onerror();
+            return document.getElementById('live').textContent; }""")
+        assert said == "reconnecting"
+        # And the reconnect, for real: a new stream's first `sessions`
+        # clears the word with the find box still holding text.
+        page.evaluate("""() => { state.stream.close(); state.stream = null;
+            state.streamUrl = ''; resubscribe(); }""")
+        page.wait_for_function(
+            "state.live === 'live' && state.find === 'x'"
+            " && document.getElementById('live').textContent === ''")
 
 
 def test_our_own_word_in_the_live_slot_gives_the_slot_back(page_at):
     """The slot says whether the stream is live. A passing word borrows it
     for four seconds and has to give it back — it used to assign itself
     back, so the word never returned."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.wait_for_function(
-                "state.live === 'live' && document.getElementById('live').textContent === ''")
-            # Written and read back inside one `evaluate`, because there is
-            # no gap inside one: the stream repaints this slot on every push,
-            # and it really is allowed to take the word back — `paintLive` is
-            # one painter and the stream is one of the three things that want
-            # it. A second question from Python can land after that repaint,
-            # so asking twice tests the machine's load, not the page.
-            said = page.evaluate(
-                """() => { note('review sent');
-                           return document.getElementById('live').textContent; }""")
-            assert said == "review sent"
-            page.wait_for_function(
-                "state.live === 'live' && document.getElementById('live').textContent === ''",
-                timeout=15000)
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.wait_for_function(
+            "state.live === 'live' && document.getElementById('live').textContent === ''")
+        # Written and read back inside one `evaluate`, because there is
+        # no gap inside one: the stream repaints this slot on every push,
+        # and it really is allowed to take the word back — `paintLive` is
+        # one painter and the stream is one of the three things that want
+        # it. A second question from Python can land after that repaint,
+        # so asking twice tests the machine's load, not the page.
+        said = page.evaluate(
+            """() => { note('review sent');
+                       return document.getElementById('live').textContent; }""")
+        assert said == "review sent"
+        page.wait_for_function(
+            "state.live === 'live' && document.getElementById('live').textContent === ''",
+            timeout=15000)
 
 
 def test_a_failure_in_the_live_slot_stays_there(page_at):
     """It is not news that goes stale: it is a thing you asked for and did
     not get. Fading it left a strip reading "live" over a page where the
     thing you tried had not happened, and nothing said why."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.wait_for_function(
-                "state.live === 'live' && document.getElementById('live').textContent === ''")
-            page.evaluate("said({error: 'no pane for this session'})")
-            assert "no pane" in page.locator("#live").inner_text()
-            page.wait_for_timeout(4500)     # proving it did NOT go away
-            assert "no pane" in page.locator("#live").inner_text()
-            # The next thing that works gives the slot back.
-            page.evaluate("said({done: true})")
-            assert page.locator("#live").inner_text() == ""
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        page.wait_for_function(
+            "state.live === 'live' && document.getElementById('live').textContent === ''")
+        page.evaluate("said({error: 'no pane for this session'})")
+        assert "no pane" in page.locator("#live").inner_text()
+        page.wait_for_timeout(4500)     # proving it did NOT go away
+        assert "no pane" in page.locator("#live").inner_text()
+        # The next thing that works gives the slot back.
+        page.evaluate("said({done: true})")
+        assert page.locator("#live").inner_text() == ""
 
 
 def test_a_push_from_the_daemon_does_not_wipe_a_failure(ws, page_at):
@@ -683,23 +583,19 @@ def test_a_push_from_the_daemon_does_not_wipe_a_failure(ws, page_at):
     was gone before the reader looked up — the thing they most needed to
     read was the thing that lasted least. CI caught this one."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                "state.live === 'live' && document.getElementById('live').textContent === ''")
-            page.evaluate("said({error: 'no pane for this session'})")
-            assert "no pane" in page.locator("#live").inner_text()
+    with opened(path) as page:
+        page.wait_for_function(
+            "state.live === 'live' && document.getElementById('live').textContent === ''")
+        page.evaluate("said({error: 'no pane for this session'})")
+        assert "no pane" in page.locator("#live").inner_text()
 
-            # A push, which is what the daemon does whenever anything moves.
-            daemon.hub.send("sessions", daemon.sessions_payload())
-            page.wait_for_timeout(500)
-            assert "no pane" in page.locator("#live").inner_text()
-            # And the stream's own word is not lost either: it is underneath.
-            page.evaluate("said({done: true})")
-            assert page.locator("#live").inner_text() == ""
-        finally:
-            browser.close()
+        # A push, which is what the daemon does whenever anything moves.
+        daemon.hub.send("sessions", daemon.sessions_payload())
+        page.wait_for_timeout(500)
+        assert "no pane" in page.locator("#live").inner_text()
+        # And the stream's own word is not lost either: it is underneath.
+        page.evaluate("said({done: true})")
+        assert page.locator("#live").inner_text() == ""
 
 
 # --- copying a reply, linking to one, and saying which day it was ------------
@@ -712,56 +608,48 @@ def test_a_reply_older_than_today_says_which_day_it_was(page_at):
     Both halves are driven from the block's own timestamp, so the test says
     the same thing whatever day it is run on. Make `dayOf` return the date
     always and the first count stops being nought."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            seen = page.evaluate("""() => {
-              const was = state.skew;
-              const ts = state.turns.blocks.find((one) => one && one.ts).ts;
-              const at = (when) => {
-                state.skew = when - Date.now() / 1000;
-                drawTranscript($('content'));
-                return [...document.querySelectorAll('.who .day')]
-                         .map((one) => one.textContent);
-              };
-              const sameDay = at(ts + 600);
-              const threeDaysOn = at(ts + 3 * 86400);
-              state.skew = was;
-              return {sameDay, threeDaysOn};
-            }""")
-            assert seen["sameDay"] == []
-            assert seen["threeDaysOn"], seen
-            # The block's own day, not today's.
-            assert all(one == "18 Sep" for one in seen["threeDaysOn"]), seen
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        seen = page.evaluate("""() => {
+          const was = state.skew;
+          const ts = state.turns.blocks.find((one) => one && one.ts).ts;
+          const at = (when) => {
+            state.skew = when - Date.now() / 1000;
+            drawTranscript($('content'));
+            return [...document.querySelectorAll('.who .day')]
+                     .map((one) => one.textContent);
+          };
+          const sameDay = at(ts + 600);
+          const threeDaysOn = at(ts + 3 * 86400);
+          state.skew = was;
+          return {sameDay, threeDaysOn};
+        }""")
+        assert seen["sameDay"] == []
+        assert seen["threeDaysOn"], seen
+        # The block's own day, not today's.
+        assert all(one == "18 Sep" for one in seen["threeDaysOn"]), seen
 
 
 def test_a_reply_can_be_copied_as_the_markdown_it_was_written_in(page_at):
     """The page shows a reply drawn. What goes into a bug report or the next
     prompt is its source, which is why this copies `block.text` and not what
     is on screen. Copy the node's text instead and the fences go missing."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        browser.grant_permissions(["clipboard-read", "clipboard-write"])
-        try:
-            # The button is on hover, like the `+` on a diff line.
-            page.locator(".turn.mine .copy").first.click(force=True)
-            page.wait_for_selector(".turn.mine .copy:text-is('copied')")
-            assert page.evaluate(
-                "navigator.clipboard.readText()") == "Do the thing."
+    with opened(page_at) as page:
+        page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+        # The button is on hover, like the `+` on a diff line.
+        page.locator(".turn.mine .copy").first.click(force=True)
+        page.wait_for_selector(".turn.mine .copy:text-is('copied')")
+        assert page.evaluate(
+            "navigator.clipboard.readText()") == "Do the thing."
 
-            # And the agent's answer, which is Markdown with a fence in it.
-            page.locator(".turn:not(.mine) .copy").first.click(force=True)
-            page.wait_for_function(
-                """() => navigator.clipboard.readText()
-                           .then((text) => text.includes('```python'))""")
-            got = page.evaluate("navigator.clipboard.readText()")
-            assert "<img src=x" in got, got      # the source, not the scrub
-            assert "if len(hits) > 1:" in got, got
-        finally:
-            browser.close()
+        # And the agent's answer, which is Markdown with a fence in it.
+        page.locator(".turn:not(.mine) .copy").first.click(force=True)
+        page.wait_for_function(
+            """() => navigator.clipboard.readText()
+                       .then((text) => text.includes('```python'))""")
+        got = page.evaluate("navigator.clipboard.readText()")
+        assert "<img src=x" in got, got      # the source, not the scrub
+        assert "if len(hits) > 1:" in got, got
 
 
 def test_a_reply_is_a_link_you_can_open_in_another_tab(page_at):
@@ -771,39 +659,31 @@ def test_a_reply_is_a_link_you_can_open_in_another_tab(page_at):
 
     Take `landOnBlock` out of `drawTranscript` and the page opens at the foot
     of the transcript with nothing marked."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            links = page.eval_on_selector_all(
-                ".turn .self", "els => els.map((one) => one.getAttribute('href'))")
-            assert links and all(one.startswith("#s1/") for one in links), links
-            # The second turn: what Claude said.
-            wanted = links[1]
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        links = page.eval_on_selector_all(
+            ".turn .self", "els => els.map((one) => one.getAttribute('href'))")
+        assert links and all(one.startswith("#s1/") for one in links), links
+        # The second turn: what Claude said.
+        wanted = links[1]
 
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at[1] + wanted)
-        try:
-            # Landing is what clears the ask, so this is the durable half of
-            # it. The mark is on a two-and-a-half second timer and a busy
-            # machine can outlive one between two calls, so it is asked for
-            # in a single round trip below.
-            page.wait_for_function("state.turns.goTo === null")
-            assert page.evaluate(
-                "state.turns.blocks[Number(location.hash.split('/').pop())].kind"
-            ) == "text"
+    with opened(page_at[1] + wanted) as page:
+        # Landing is what clears the ask, so this is the durable half of
+        # it. The mark is on a two-and-a-half second timer and a busy
+        # machine can outlive one between two calls, so it is asked for
+        # in a single round trip below.
+        page.wait_for_function("state.turns.goTo === null")
+        assert page.evaluate(
+            "state.turns.blocks[Number(location.hash.split('/').pop())].kind"
+        ) == "text"
 
-            marked = page.evaluate("""(wanted) => {
-              state.turns.goTo = Number(wanted.split('/').pop());
-              drawTranscript($('content'));
-              const one = document.querySelector('.turn.linked');
-              return one && one.querySelector('.self').getAttribute('href');
-            }""", wanted)
-            assert marked == wanted
-        finally:
-            browser.close()
+        marked = page.evaluate("""(wanted) => {
+          state.turns.goTo = Number(wanted.split('/').pop());
+          drawTranscript($('content'));
+          const one = document.querySelector('.turn.linked');
+          return one && one.querySelector('.self').getAttribute('href');
+        }""", wanted)
+        assert marked == wanted
 
 
 def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
@@ -811,21 +691,17 @@ def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
     session resumed from another directory counts from nought again. So a
     link is a pointer, not a promise, and the whole of its failure is that
     nothing moves."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at[1] + "#s1/900")
-        try:
-            blew_up = []
-            page.on("pageerror", lambda error: blew_up.append(str(error)))
-            page.wait_for_selector(".turn")
-            # There is no block 900, so the draw must fall through to its
-            # usual landing rather than reaching into an empty slot.
-            page.evaluate("drawTranscript($('content'))")
-            page.wait_for_timeout(300)      # proving something did not happen
-            assert not blew_up, blew_up
-            assert page.locator(".turn.linked").count() == 0
-            assert page.evaluate("state.turns.goTo") == 900
-        finally:
-            browser.close()
+    with opened(page_at[1] + "#s1/900") as page:
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.wait_for_selector(".turn")
+        # There is no block 900, so the draw must fall through to its
+        # usual landing rather than reaching into an empty slot.
+        page.evaluate("drawTranscript($('content'))")
+        page.wait_for_timeout(300)      # proving something did not happen
+        assert not blew_up, blew_up
+        assert page.locator(".turn.linked").count() == 0
+        assert page.evaluate("state.turns.goTo") == 900
 
 
 # --- the map of the conversation ---------------------------------------------
@@ -835,20 +711,16 @@ def test_the_transcript_has_a_list_of_rounds_beside_it(page_at):
     Tool calls are left out: there are hundreds of them in a real session —
     233 in one that was measured — and they are already in the transcript.
     Put `kind === "tool"` into `rounds` and the count goes up."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page, 2)
-            seen = page.eval_on_selector_all(
-                ".filelist.transcript button",
-                """els => els.map((one) => [one.className.includes('dir'),
-                                            one.querySelector('.name').textContent])""")
-            assert seen == [[True, "Do the thing."],
-                            [False, "Read from a README:"]], seen
-            # The tool call in this fixture is in the transcript and not here.
-            assert page.locator(".turn.toolrow").count() == 1
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page, 2)
+        seen = page.eval_on_selector_all(
+            ".filelist.transcript button",
+            """els => els.map((one) => [one.className.includes('dir'),
+                                        one.querySelector('.name').textContent])""")
+        assert seen == [[True, "Do the thing."],
+                        [False, "Read from a README:"]], seen
+        # The tool call in this fixture is in the transcript and not here.
+        assert page.locator(".turn.toolrow").count() == 1
 
 
 def append_rounds(daemon, many):
@@ -870,83 +742,75 @@ def test_a_row_goes_to_its_place_in_the_transcript(page_at):
     as well, or clicking a row already on screen answers with nothing —
     which is how the same thing read as broken on the Files tab."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            # The first fetch, then the stream, then the rounds. Without the
-            # first wait the fetch and the push interleave, and the page can
-            # end up having drawn the transcript it asked for over the one it
-            # was sent.
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            append_rounds(daemon, 12)
-            page.wait_for_function(
-                "document.querySelectorAll('.filelist.transcript button').length > 20")
-            page.wait_for_function(
-                """() => { const one = document.querySelector('.turnbody');
-                           return one.scrollHeight > one.clientHeight + 400; }""")
-            # The transcript opens at its foot, so an early round is off screen.
-            page.click(".filelist.transcript button >> nth=0")
-            page.wait_for_selector(".turn.linked")
-            seen = page.evaluate("""() => {
-              const pane = document.querySelector('.turnbody');
-              const one = pane.querySelector('.turn.linked');
-              const box = one.getBoundingClientRect();
-              const on = pane.getBoundingClientRect();
-              return {top: box.top - on.top, height: on.height,
-                      at: state.turns.at,
-                      marked: document.querySelectorAll(
-                        '.filelist.transcript button.chosen').length};
-            }""")
-            assert 0 <= seen["top"] < seen["height"], seen
-            assert seen["at"] == 0, seen
-            assert seen["marked"] == 1, seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        # The first fetch, then the stream, then the rounds. Without the
+        # first wait the fetch and the push interleave, and the page can
+        # end up having drawn the transcript it asked for over the one it
+        # was sent.
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        append_rounds(daemon, 12)
+        page.wait_for_function(
+            "document.querySelectorAll('.filelist.transcript button').length > 20")
+        page.wait_for_function(
+            """() => { const one = document.querySelector('.turnbody');
+                       return one.scrollHeight > one.clientHeight + 400; }""")
+        # The transcript opens at its foot, so an early round is off screen.
+        page.click(".filelist.transcript button >> nth=0")
+        page.wait_for_selector(".turn.linked")
+        seen = page.evaluate("""() => {
+          const pane = document.querySelector('.turnbody');
+          const one = pane.querySelector('.turn.linked');
+          const box = one.getBoundingClientRect();
+          const on = pane.getBoundingClientRect();
+          return {top: box.top - on.top, height: on.height,
+                  at: state.turns.at,
+                  marked: document.querySelectorAll(
+                    '.filelist.transcript button.chosen').length};
+        }""")
+        assert 0 <= seen["top"] < seen["height"], seen
+        assert seen["at"] == 0, seen
+        assert seen["marked"] == 1, seen
 
 
 def test_a_reply_row_says_enough_of_it_to_know_what_it_was(page_at):
     """The first line with anything on it, with Markdown's own marks taken
     off the front — a reply that opens with a heading would otherwise spend
     its first characters saying so."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)          # the map has to exist to be measured
-            seen = page.evaluate("""() => ({
-              said: [
-                glimpse("## A heading\\n\\nand then some"),
-                glimpse("\\n\\n- a bullet first"),
-                glimpse("**bold to start** and on"),
-                glimpse("`code` first"),
-                glimpse("x".repeat(80)),
-                glimpse(""),
-                glimpse("y".repeat(400)),
-              ],
-              cap: GLIMPSE,
-              clips: getComputedStyle(
-                document.querySelector('.filelist.transcript .name')).textOverflow,
-            })""")
-            said = seen["said"]
-            assert said[:4] == ["A heading", "a bullet first",
-                                "bold to start and on", "code first"]
-            # A line the column has room for is handed over whole: the column
-            # is what clips, with an ellipsis, at whatever width it has been
-            # dragged to. 44 characters was narrower than the column at its
-            # default width, so every row ended in a "…" the column had room
-            # for and the number did not.
-            assert said[4] == "x" * 80
-            assert said[5] == ""
-            assert seen["clips"] == "ellipsis", seen["clips"]
-            # And a reply of several kilobytes is still bounded, because every
-            # round puts one of these in the DOM. Measured: at the widest the
-            # column can be dragged the name box is 639 px, which holds 49 of
-            # the widest glyphs and 176 of the narrowest — so the cap has to
-            # clear 176 or it becomes the clip again.
-            assert seen["cap"] > 176, seen["cap"]
-            assert len(said[6]) == seen["cap"] and said[6].endswith("…")
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)          # the map has to exist to be measured
+        seen = page.evaluate("""() => ({
+          said: [
+            glimpse("## A heading\\n\\nand then some"),
+            glimpse("\\n\\n- a bullet first"),
+            glimpse("**bold to start** and on"),
+            glimpse("`code` first"),
+            glimpse("x".repeat(80)),
+            glimpse(""),
+            glimpse("y".repeat(400)),
+          ],
+          cap: GLIMPSE,
+          clips: getComputedStyle(
+            document.querySelector('.filelist.transcript .name')).textOverflow,
+        })""")
+        said = seen["said"]
+        assert said[:4] == ["A heading", "a bullet first",
+                            "bold to start and on", "code first"]
+        # A line the column has room for is handed over whole: the column
+        # is what clips, with an ellipsis, at whatever width it has been
+        # dragged to. 44 characters was narrower than the column at its
+        # default width, so every row ended in a "…" the column had room
+        # for and the number did not.
+        assert said[4] == "x" * 80
+        assert said[5] == ""
+        assert seen["clips"] == "ellipsis", seen["clips"]
+        # And a reply of several kilobytes is still bounded, because every
+        # round puts one of these in the DOM. Measured: at the widest the
+        # column can be dragged the name box is 639 px, which holds 49 of
+        # the widest glyphs and 176 of the narrowest — so the cap has to
+        # clear 176 or it becomes the clip again.
+        assert seen["cap"] > 176, seen["cap"]
+        assert len(said[6]) == seen["cap"] and said[6].endswith("…")
 
 
 # --- the reader's own autolinks ----------------------------------------------
@@ -962,28 +826,24 @@ def test_a_ticket_id_becomes_a_link(ws, page_at, tmp_path):
         "Fixed OA-73219 and QSP-52811.\n\n"
         "Not in code: `git log OA-11111` or\n\n```\nOA-22222\n```\n",
     ])
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.links.length === 1")
-            page.wait_for_selector(".prose a.ticket")
-            seen = page.eval_on_selector_all(
-                ".prose a.ticket",
-                "els => els.map((one) => [one.textContent, one.href, one.target])")
-            assert seen == [
-                ["OA-73219", "https://tickets/browse/OA-73219", "_blank"],
-                ["QSP-52811", "https://tickets/browse/QSP-52811", "_blank"],
-            ], seen
-            # A ticket id inside code is part of the command, not a link.
-            assert page.locator("code a.ticket, pre a.ticket").count() == 0
-            # The page holds this fixture's own fences too, so it is asked
-            # for all of them rather than for the first.
-            code = page.eval_on_selector_all(
-                ".prose code, .prose pre", "els => els.map((o) => o.textContent)")
-            assert any("OA-11111" in one for one in code), code
-            assert any("OA-22222" in one for one in code), code
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.links.length === 1")
+        page.wait_for_selector(".prose a.ticket")
+        seen = page.eval_on_selector_all(
+            ".prose a.ticket",
+            "els => els.map((one) => [one.textContent, one.href, one.target])")
+        assert seen == [
+            ["OA-73219", "https://tickets/browse/OA-73219", "_blank"],
+            ["QSP-52811", "https://tickets/browse/QSP-52811", "_blank"],
+        ], seen
+        # A ticket id inside code is part of the command, not a link.
+        assert page.locator("code a.ticket, pre a.ticket").count() == 0
+        # The page holds this fixture's own fences too, so it is asked
+        # for all of them rather than for the first.
+        code = page.eval_on_selector_all(
+            ".prose code, .prose pre", "els => els.map((o) => o.textContent)")
+        assert any("OA-11111" in one for one in code), code
+        assert any("OA-22222" in one for one in code), code
 
 
 def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
@@ -993,22 +853,18 @@ def test_a_ticket_id_in_your_own_prompt_is_a_link_too(ws, page_at):
         {"match": r"OA-(\d+)", "url": "https://tickets/browse/OA-$1"},
     ]})
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.links.length === 1")
-            made = page.evaluate("""() => {
-              const box = document.createElement('div');
-              box.textContent = 'please look at OA-4242 today';
-              linkTickets(box);
-              const one = box.querySelector('a.ticket');
-              return one && [one.textContent, one.getAttribute('href'),
-                             box.textContent];
-            }""")
-            assert made == ["OA-4242", "https://tickets/browse/OA-4242",
-                            "please look at OA-4242 today"]
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.links.length === 1")
+        made = page.evaluate("""() => {
+          const box = document.createElement('div');
+          box.textContent = 'please look at OA-4242 today';
+          linkTickets(box);
+          const one = box.querySelector('a.ticket');
+          return one && [one.textContent, one.getAttribute('href'),
+                         box.textContent];
+        }""")
+        assert made == ["OA-4242", "https://tickets/browse/OA-4242",
+                        "please look at OA-4242 today"]
 
 
 def test_a_settings_file_the_daemon_cannot_use_says_so(ws, page_at):
@@ -1020,20 +876,16 @@ def test_a_settings_file_the_daemon_cannot_use_says_so(ws, page_at):
     ws.config_path().parent.mkdir(parents=True, exist_ok=True)
     ws.config_path().write_text("not json at all", encoding="utf-8")
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.linkTrouble.length > 0")
-            # Written and read in one go, so no push can repaint between.
-            slot = page.evaluate("""() => {
-              state.live = "live";
-              said({ done: true });
-              return [$("live").textContent, $("live").title];
-            }""")
-            assert "settings.json" in slot[0], slot
-            assert "not valid JSON" in slot[1], slot
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.linkTrouble.length > 0")
+        # Written and read in one go, so no push can repaint between.
+        slot = page.evaluate("""() => {
+          state.live = "live";
+          said({ done: true });
+          return [$("live").textContent, $("live").title];
+        }""")
+        assert "settings.json" in slot[0], slot
+        assert "not valid JSON" in slot[1], slot
 
 
 def test_a_settings_file_that_works_says_nothing(ws, page_at):
@@ -1042,13 +894,9 @@ def test_a_settings_file_that_works_says_nothing(ws, page_at):
         {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
     ]})
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.links.length === 1")
-            assert page.evaluate("state.linkTrouble") == []
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.links.length === 1")
+        assert page.evaluate("state.linkTrouble") == []
 
 
 def test_a_pattern_this_browser_cannot_use_says_so_too(ws, page_at):
@@ -1056,24 +904,20 @@ def test_a_pattern_this_browser_cannot_use_says_so_too(ws, page_at):
     are close and not the same, so this one is only findable here, and it is
     the same silence if the page keeps it to itself."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            # The settings are taken and the page asked in one go, with no
-            # push in between: the word has to arrive because `takeLinks`
-            # said it, not because something else happened to.
-            said = page.evaluate("""() => {
-              // What the daemon pushes, with a pattern Python compiles and
-              // this browser does not: `(?P<x>)` is Python's alone.
-              takeSettings({
-                links: [{match: '(?P<id>OA-1)', url: 'https://tickets/',
-                         trouble: ''}],
-                trouble: []});
-              return state.linkTrouble.join(" ");
-            }""")
-            assert "(?P<id>OA-1)" in said, said
-        finally:
-            browser.close()
+    with opened(path) as page:
+        # The settings are taken and the page asked in one go, with no
+        # push in between: the word has to arrive because `takeLinks`
+        # said it, not because something else happened to.
+        said = page.evaluate("""() => {
+          // What the daemon pushes, with a pattern Python compiles and
+          // this browser does not: `(?P<x>)` is Python's alone.
+          takeSettings({
+            links: [{match: '(?P<id>OA-1)', url: 'https://tickets/',
+                     trouble: ''}],
+            trouble: []});
+          return state.linkTrouble.join(" ");
+        }""")
+        assert "(?P<id>OA-1)" in said, said
 
 
 def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
@@ -1084,26 +928,22 @@ def test_a_pattern_can_never_put_an_element_on_the_page(ws, page_at):
         {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
     ]})
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.links.length === 1")
-            seen = page.evaluate("""() => {
-              // A template the daemon would have refused, forced in here.
-              state.links = [{re: /OA-(\\d+)/g, url: 'javascript:alert($1)'},
-                             {re: /QSP-(\\d+)/g,
-                              url: '"><img src=x onerror=alert(1)>$1'}];
-              const box = document.createElement('div');
-              box.textContent = 'OA-1 and QSP-2';
-              linkTickets(box);
-              return {links: box.querySelectorAll('a').length,
-                      images: box.querySelectorAll('img').length,
-                      text: box.textContent};
-            }""")
-            assert seen == {"links": 0, "images": 0, "text": "OA-1 and QSP-2"}
-            assert page.evaluate("window.PWNED ?? null") is None
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.links.length === 1")
+        seen = page.evaluate("""() => {
+          // A template the daemon would have refused, forced in here.
+          state.links = [{re: /OA-(\\d+)/g, url: 'javascript:alert($1)'},
+                         {re: /QSP-(\\d+)/g,
+                          url: '"><img src=x onerror=alert(1)>$1'}];
+          const box = document.createElement('div');
+          box.textContent = 'OA-1 and QSP-2';
+          linkTickets(box);
+          return {links: box.querySelectorAll('a').length,
+                  images: box.querySelectorAll('img').length,
+                  text: box.textContent};
+        }""")
+        assert seen == {"links": 0, "images": 0, "text": "OA-1 and QSP-2"}
+        assert page.evaluate("window.PWNED ?? null") is None
 
 
 def test_a_pattern_that_can_match_nothing_still_makes_its_links(ws, page_at):
@@ -1114,38 +954,34 @@ def test_a_pattern_that_can_match_nothing_still_makes_its_links(ws, page_at):
         {"match": r"OA-(\d+)", "url": "https://tickets/$1"},
     ]})
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.links.length === 1")
-            seen = page.evaluate("""() => {
-              const made = (links, text) => {
-                state.links = links;
-                const box = document.createElement('div');
-                box.textContent = text;
-                linkTickets(box);
-                return [[...box.querySelectorAll('a')].map((a) => a.textContent),
-                        box.textContent];
-              };
-              return [
-                made([{re: /(PROJ-)?\\d*/g, url: 'https://t/$0'}],
-                     'see PROJ-12 and PROJ-34'),
-                // Beside a pattern that cannot match nothing, the earliest
-                // match still wins.
-                made([{re: /x*/g, url: 'https://t/x'},
-                      {re: /OA-\\d+/g, url: 'https://t/$0'}],
-                     'OA-1 then xx then OA-2'),
-                // One that only ever matches nothing makes nothing, and ends.
-                made([{re: /\\b/g, url: 'https://t/b'}], 'a b c'),
-              ];
-            }""")
-            assert seen == [
-                [["PROJ-12", "PROJ-34"], "see PROJ-12 and PROJ-34"],
-                [["OA-1", "xx", "OA-2"], "OA-1 then xx then OA-2"],
-                [[], "a b c"],
-            ], seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.links.length === 1")
+        seen = page.evaluate("""() => {
+          const made = (links, text) => {
+            state.links = links;
+            const box = document.createElement('div');
+            box.textContent = text;
+            linkTickets(box);
+            return [[...box.querySelectorAll('a')].map((a) => a.textContent),
+                    box.textContent];
+          };
+          return [
+            made([{re: /(PROJ-)?\\d*/g, url: 'https://t/$0'}],
+                 'see PROJ-12 and PROJ-34'),
+            // Beside a pattern that cannot match nothing, the earliest
+            // match still wins.
+            made([{re: /x*/g, url: 'https://t/x'},
+                  {re: /OA-\\d+/g, url: 'https://t/$0'}],
+                 'OA-1 then xx then OA-2'),
+            // One that only ever matches nothing makes nothing, and ends.
+            made([{re: /\\b/g, url: 'https://t/b'}], 'a b c'),
+          ];
+        }""")
+        assert seen == [
+            [["PROJ-12", "PROJ-34"], "see PROJ-12 and PROJ-34"],
+            [["OA-1", "xx", "OA-2"], "OA-1 then xx then OA-2"],
+            [[], "a b c"],
+        ], seen
 
 
 def test_a_block_of_many_ticket_ids_is_linked_all_the_way_down(ws, page_at):
@@ -1155,20 +991,16 @@ def test_a_block_of_many_ticket_ids_is_linked_all_the_way_down(ws, page_at):
         {"match": r"T-(\d+)", "url": "https://tickets/$1"},
     ]})
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.links.length === 1")
-            made = page.evaluate("""() => {
-              const box = document.createElement('div');
-              box.textContent = Array.from({length: 400},
-                                           (x, n) => 'T-' + n).join(' ');
-              linkTickets(box);
-              return box.querySelectorAll('a.ticket').length;
-            }""")
-            assert made == 400, made
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.links.length === 1")
+        made = page.evaluate("""() => {
+          const box = document.createElement('div');
+          box.textContent = Array.from({length: 400},
+                                       (x, n) => 'T-' + n).join(' ');
+          linkTickets(box);
+          return box.querySelectorAll('a.ticket').length;
+        }""")
+        assert made == 400, made
 
 
 def test_there_is_still_a_cap_on_the_links_in_one_block(ws, page_at):
@@ -1179,27 +1011,23 @@ def test_there_is_still_a_cap_on_the_links_in_one_block(ws, page_at):
         {"match": r"T-(\d+)", "url": "https://tickets/$1"},
     ]})
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.links.length === 1")
-            seen = page.evaluate("""() => {
-              const box = document.createElement('div');
-              box.textContent = Array.from({length: 5000},
-                                           (x, n) => 'T-' + n).join(' ');
-              const at = performance.now();
-              linkTickets(box);
-              return [box.querySelectorAll('a.ticket').length,
-                      performance.now() - at];
-            }""")
-            made, took = seen
-            assert made == 500, made
-            # Ten times the old cap, on the worst text there is: every word a
-            # match. Measured so that raising the number again is a number
-            # somebody has looked at, not a guess.
-            assert took < 500, f"{took:.0f} ms to build {made} links"
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.links.length === 1")
+        seen = page.evaluate("""() => {
+          const box = document.createElement('div');
+          box.textContent = Array.from({length: 5000},
+                                       (x, n) => 'T-' + n).join(' ');
+          const at = performance.now();
+          linkTickets(box);
+          return [box.querySelectorAll('a.ticket').length,
+                  performance.now() - at];
+        }""")
+        made, took = seen
+        assert made == 500, made
+        # Ten times the old cap, on the worst text there is: every word a
+        # match. Measured so that raising the number again is a number
+        # somebody has looked at, not a guess.
+        assert took < 500, f"{took:.0f} ms to build {made} links"
 
 
 def test_a_row_of_the_map_is_one_line(page_at):
@@ -1207,24 +1035,20 @@ def test_a_row_of_the_map_is_one_line(page_at):
     line of counts under its name. A row that is one line has to say so — the
     icon sat above the text otherwise, which is what it did when this list
     first shipped. Take the `display: flex` off and the two stack again."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            seen = page.evaluate("""() => [...document.querySelectorAll(
-              '.filelist.transcript button')].map((one) => {
-                const icon = one.querySelector('.icon').getBoundingClientRect();
-                const name = one.querySelector('.name').getBoundingClientRect();
-                return {sameLine: Math.abs(icon.top - name.top) < 8,
-                        after: name.left > icon.right,
-                        tall: one.getBoundingClientRect().height};
-              })""")
-            assert seen, "the list drew nothing"
-            for one in seen:
-                assert one["sameLine"] and one["after"], one
-                assert one["tall"] < 40, one
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        seen = page.evaluate("""() => [...document.querySelectorAll(
+          '.filelist.transcript button')].map((one) => {
+            const icon = one.querySelector('.icon').getBoundingClientRect();
+            const name = one.querySelector('.name').getBoundingClientRect();
+            return {sameLine: Math.abs(icon.top - name.top) < 8,
+                    after: name.left > icon.right,
+                    tall: one.getBoundingClientRect().height};
+          })""")
+        assert seen, "the list drew nothing"
+        for one in seen:
+            assert one["sameLine"] and one["after"], one
+            assert one["tall"] < 40, one
 
 
 def test_a_message_sent_to_a_busy_agent_reads_as_what_you_typed(ws, page_at):
@@ -1248,28 +1072,24 @@ def test_a_message_sent_to_a_busy_agent_reads_as_what_you_typed(ws, page_at):
         "</system-reminder>",
         ts="2026-09-18T14:21:00.000Z"))
     daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn.mine')]
-                     .some((one) => one.innerText.includes('the corpus'))""")
-            seen = page.evaluate("""() => ({
-              mine: [...document.querySelectorAll('.turn.mine')]
-                      .map((one) => one.innerText),
-              rows: [...document.querySelectorAll('.filelist.transcript button')]
-                      .map((one) => one.title),
-            })""")
-            said = [one for one in seen["mine"] if "corpus" in one][0]
-            assert "while you were working" not in said, said
-            assert "system-reminder" not in said, said
-            assert "mid-turn" not in said, said
-            assert "so many files" in said and "keep the corpus" in said
-            # The map names the round by what was typed, not by the wrapper.
-            assert not [one for one in seen["rows"]
-                        if "while you were working" in one], seen["rows"]
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn.mine')]
+                 .some((one) => one.innerText.includes('the corpus'))""")
+        seen = page.evaluate("""() => ({
+          mine: [...document.querySelectorAll('.turn.mine')]
+                  .map((one) => one.innerText),
+          rows: [...document.querySelectorAll('.filelist.transcript button')]
+                  .map((one) => one.title),
+        })""")
+        said = [one for one in seen["mine"] if "corpus" in one][0]
+        assert "while you were working" not in said, said
+        assert "system-reminder" not in said, said
+        assert "mid-turn" not in said, said
+        assert "so many files" in said and "keep the corpus" in said
+        # The map names the round by what was typed, not by the wrapper.
+        assert not [one for one in seen["rows"]
+                    if "while you were working" in one], seen["rows"]
 
 
 def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
@@ -1286,30 +1106,26 @@ def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
             "<local-command-stdout>(no content)</local-command-stdout>",
         )])
     daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_selector(".turn.aside")
-            seen = page.evaluate("""() => ({
-              notes: [...document.querySelectorAll('.turn.aside')]
-                       .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
-              mine: [...document.querySelectorAll('.turn.mine')]
-                      .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
-              rows: [...document.querySelectorAll('.filelist.transcript button')]
-                      .map((one) => one.title),
-            })""")
-            # The harness speaking is a note, not a prompt.
-            assert any("The sweep is done" in one for one in seen["notes"]), seen
-            assert not any("task-notification" in one for one in seen["notes"]), seen
-            assert not any("sweep" in one for one in seen["mine"]), seen
-            # The command is one line, and its output is nowhere.
-            assert any("/reload-plugins" == one for one in seen["rows"]), seen
-            assert not any("no content" in one for one in seen["rows"]), seen
-            assert not any("command-message" in one for one in seen["rows"]), seen
-            # And a note is not a round and not a reply.
-            assert not any("sweep" in one for one in seen["rows"]), seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_selector(".turn.aside")
+        seen = page.evaluate("""() => ({
+          notes: [...document.querySelectorAll('.turn.aside')]
+                   .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
+          mine: [...document.querySelectorAll('.turn.mine')]
+                  .map((one) => one.innerText.replace(/\\s+/g, ' ').trim()),
+          rows: [...document.querySelectorAll('.filelist.transcript button')]
+                  .map((one) => one.title),
+        })""")
+        # The harness speaking is a note, not a prompt.
+        assert any("The sweep is done" in one for one in seen["notes"]), seen
+        assert not any("task-notification" in one for one in seen["notes"]), seen
+        assert not any("sweep" in one for one in seen["mine"]), seen
+        # The command is one line, and its output is nowhere.
+        assert any("/reload-plugins" == one for one in seen["rows"]), seen
+        assert not any("no content" in one for one in seen["rows"]), seen
+        assert not any("command-message" in one for one in seen["rows"]), seen
+        # And a note is not a round and not a reply.
+        assert not any("sweep" in one for one in seen["rows"]), seen
 
 
 # --- the way back to the end -------------------------------------------------
@@ -1319,28 +1135,24 @@ def test_the_way_back_to_the_end_is_offered_only_when_it_would_do_something(page
     is right — but once that stopped, nothing said how to start again, and on
     a long transcript the scrollbar is a sliver."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            append_rounds(daemon, 12)
-            page.wait_for_function(
-                """() => { const one = document.querySelector('.turnbody');
-                           return one.scrollHeight > one.clientHeight + 400; }""")
-            # It opens at the foot, so there is nowhere to go.
-            page.wait_for_selector(".tofoot", state="hidden")
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        append_rounds(daemon, 12)
+        page.wait_for_function(
+            """() => { const one = document.querySelector('.turnbody');
+                       return one.scrollHeight > one.clientHeight + 400; }""")
+        # It opens at the foot, so there is nowhere to go.
+        page.wait_for_selector(".tofoot", state="hidden")
 
-            page.eval_on_selector(".turnbody", "el => el.scrollTop = 0")
-            page.wait_for_selector(".tofoot", state="visible")
-            page.click(".tofoot")
-            page.wait_for_selector(".tofoot", state="hidden")
-            assert page.evaluate(
-                """() => { const one = document.querySelector('.turnbody');
-                    return one.scrollHeight - one.scrollTop - one.clientHeight; }"""
-            ) < 80
-        finally:
-            browser.close()
+        page.eval_on_selector(".turnbody", "el => el.scrollTop = 0")
+        page.wait_for_selector(".tofoot", state="visible")
+        page.click(".tofoot")
+        page.wait_for_selector(".tofoot", state="hidden")
+        assert page.evaluate(
+            """() => { const one = document.querySelector('.turnbody');
+                return one.scrollHeight - one.scrollTop - one.clientHeight; }"""
+        ) < 80
 
 
 # --- folding a round on the map ----------------------------------------------
@@ -1349,28 +1161,24 @@ def test_a_round_folds_shut_from_its_chevron_and_the_rest_of_the_row_still_goes(
     """The row has two jobs. Folding on any click would mean you could not
     read a round without closing it."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page, 2)
-            count = "document.querySelectorAll('.filelist.transcript button').length"
-            rows = "() => " + count
-            before = page.evaluate(rows)
-            assert before >= 2, before
+    with opened(path) as page:
+        wait_for_map(page, 2)
+        count = "document.querySelectorAll('.filelist.transcript button').length"
+        rows = "() => " + count
+        before = page.evaluate(rows)
+        assert before >= 2, before
 
-            page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
-            page.wait_for_function("n => " + count + " < n", arg=before)
-            folded = page.evaluate(rows)
+        page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
+        page.wait_for_function("n => " + count + " < n", arg=before)
+        folded = page.evaluate(rows)
 
-            # The name still goes to that place, and does not unfold it.
-            page.click(".filelist.transcript button.dir >> nth=0 >> .name")
-            page.wait_for_selector(".turn.linked")
-            assert page.evaluate(rows) == folded
+        # The name still goes to that place, and does not unfold it.
+        page.click(".filelist.transcript button.dir >> nth=0 >> .name")
+        page.wait_for_selector(".turn.linked")
+        assert page.evaluate(rows) == folded
 
-            page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
-            page.wait_for_function("n => " + count + " === n", arg=before)
-        finally:
-            browser.close()
+        page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
+        page.wait_for_function("n => " + count + " === n", arg=before)
 
 
 # --- what the agent was thinking ---------------------------------------------
@@ -1389,32 +1197,28 @@ def test_a_one_line_message_sits_in_the_middle_of_its_block(page_at):
     write_records(daemon, conftest.record(
         "you", "do the issues", ts="2026-09-18T14:20:00.000Z"))
     daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn.mine .bubble')]
-                          .some((b) => b.textContent.includes('do the issues'))""")
-            seen = page.evaluate("""() => {
-              const box = [...document.querySelectorAll('.turn.mine .bubble')]
-                .find((b) => b.textContent.includes('do the issues'));
-              const range = document.createRange();
-              range.selectNodeContents(box);
-              const text = range.getBoundingClientRect();
-              const bubble = box.getBoundingClientRect();
-              return {above: text.top - bubble.top,
-                      below: bubble.bottom - text.bottom,
-                      who: box.parentElement.querySelector('.who')
-                              .getBoundingClientRect().height,
-                      bubble: bubble.height};
-            }""")
-            # Within a pixel: the glyph box is not the line box, and no amount
-            # of padding makes those two the same number.
-            assert abs(seen["above"] - seen["below"]) <= 2, seen
-            # And it is the column beside it that used to decide the height.
-            assert seen["bubble"] < seen["who"], seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn.mine .bubble')]
+                      .some((b) => b.textContent.includes('do the issues'))""")
+        seen = page.evaluate("""() => {
+          const box = [...document.querySelectorAll('.turn.mine .bubble')]
+            .find((b) => b.textContent.includes('do the issues'));
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          const text = range.getBoundingClientRect();
+          const bubble = box.getBoundingClientRect();
+          return {above: text.top - bubble.top,
+                  below: bubble.bottom - text.bottom,
+                  who: box.parentElement.querySelector('.who')
+                          .getBoundingClientRect().height,
+                  bubble: bubble.height};
+        }""")
+        # Within a pixel: the glyph box is not the line box, and no amount
+        # of padding makes those two the same number.
+        assert abs(seen["above"] - seen["below"]) <= 2, seen
+        # And it is the column beside it that used to decide the height.
+        assert seen["bubble"] < seen["who"], seen
 
 
 def test_a_group_of_tool_calls_belongs_to_the_words_above_it(page_at):
@@ -1431,22 +1235,18 @@ def test_a_group_of_tool_calls_belongs_to_the_words_above_it(page_at):
         conftest.record("claude", "Now I know what is there.",
                         ts="2026-09-18T14:20:03.000Z"))
     daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turnbody .turn')]
-                    .some((t) => t.innerText.includes('Now I know'))""")
-            seen = page.evaluate("""() => {
-              const all = [...document.querySelectorAll('.turnbody .turn')];
-              const at = all.findIndex((t) => t.innerText.includes('ls dir0'));
-              const box = (n) => all[n].getBoundingClientRect();
-              return {above: box(at).top - box(at - 1).bottom,
-                      below: box(at + 3).top - box(at + 2).bottom};
-            }""")
-            assert seen["above"] < seen["below"], seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turnbody .turn')]
+                .some((t) => t.innerText.includes('Now I know'))""")
+        seen = page.evaluate("""() => {
+          const all = [...document.querySelectorAll('.turnbody .turn')];
+          const at = all.findIndex((t) => t.innerText.includes('ls dir0'));
+          const box = (n) => all[n].getBoundingClientRect();
+          return {above: box(at).top - box(at - 1).bottom,
+                  below: box(at + 3).top - box(at + 2).bottom};
+        }""")
+        assert seen["above"] < seen["below"], seen
 
 
 def test_a_thought_between_two_tool_calls_leaves_no_trace(page_at):
@@ -1468,30 +1268,26 @@ def test_a_thought_between_two_tool_calls_leaves_no_trace(page_at):
     made.append(said("claude", "Now I know what is there."))
     write_records(daemon, *made)
     daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turnbody .turn')]
-                    .some((t) => t.innerText.includes('Now I know'))""")
-            gaps = """() => {
-              const shown = [...document.querySelectorAll('.turnbody .turn')]
-                .filter((t) => t.getClientRects().length)
-                .map((t) => t.getBoundingClientRect());
-              return shown.slice(1).map((box, n) => box.top - shown[n].bottom);
-            }"""
-            assert page.locator(".turnbody .thinking").count() == 0
-            assert "Now dir" not in page.inner_text(".turnbody")
-            seen = page.evaluate(gaps)
-            assert min(seen) >= 0, seen
-            # The words, the three calls, the reply: the group sits under
-            # the words that said what it would do, and apart from the reply
-            # below it -- the same gaps as with no thought between them.
-            above, *between, below = seen[-4:]
-            assert above < below, seen
-            assert max(between) < below, seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turnbody .turn')]
+                .some((t) => t.innerText.includes('Now I know'))""")
+        gaps = """() => {
+          const shown = [...document.querySelectorAll('.turnbody .turn')]
+            .filter((t) => t.getClientRects().length)
+            .map((t) => t.getBoundingClientRect());
+          return shown.slice(1).map((box, n) => box.top - shown[n].bottom);
+        }"""
+        assert page.locator(".turnbody .thinking").count() == 0
+        assert "Now dir" not in page.inner_text(".turnbody")
+        seen = page.evaluate(gaps)
+        assert min(seen) >= 0, seen
+        # The words, the three calls, the reply: the group sits under
+        # the words that said what it would do, and apart from the reply
+        # below it -- the same gaps as with no thought between them.
+        above, *between, below = seen[-4:]
+        assert above < below, seen
+        assert max(between) < below, seen
 
 
 def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
@@ -1518,72 +1314,68 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
             """(words) => [...document.querySelectorAll('.turnbody .turn')]
                 .some((t) => t.innerText.includes(words))""", arg=words)
 
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.set_viewport_size({"width": 1500, "height": 900})
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            write_records(daemon, said("claude", "Now the tests for the split:"))
-            tick_until("the split")
-            made = []
-            for n in range(3):
-                made.append(said("think", f"Now dir{n}."))
-                made.append(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
-            made.append(said("claude", "They all pass."))
-            old = "2026-09-18T14:30:00.000Z"
-            made.append(said("claude", "One more look.", ts=old))
-            made.append(said("tool", "ls again", ts=old, tool_id="t9"))
-            made.append(said("claude", "Done.", ts=old))
-            write_records(daemon, *made)
-            tick_until("Done.")
-            # A block that has just arrived slides in, and while it moves it
-            # is a stacking context of its own: nothing inside it can stand
-            # over a later block, and it is 4 px from where it will rest.
-            page.wait_for_function("() => !document.getAnimations().length")
-            seen = """() => {
-              const shown = [...document.querySelectorAll('.turnbody .turn')]
-                .filter((t) => t.getClientRects().length);
-              const box = (one) => one.getBoundingClientRect();
-              const at = shown.findIndex((t) => t.innerText.includes('the split'));
-              const words = shown[at];
-              const calls = shown.slice(at + 1).filter(
-                (t) => t.classList.contains('toolrow')).slice(0, 3);
-              const reply = shown.find((t) => t.innerText.includes('all pass'));
-              // What each name column shows, top to bottom, and where the
-              // next one starts. The copy button is part of it, because a
-              // hover shows it.
-              const columns = shown.map((t) => t.querySelector('.who'))
-                .filter((who) => who.children.length);
-              const clash = columns.slice(1).map((who, n) =>
-                box(who.firstElementChild).top
-                  - box(columns[n].lastElementChild).bottom);
-              const copy = words.querySelector('.copy');
-              const c = box(copy);
-              // Over the whole button, not its middle: the middle can fall
-              // in the gap between two calls, and then nothing covers it.
-              const hit = [0.2, 0.5, 0.8].every((y) => [0.2, 0.5, 0.8].every(
-                (x) => copy.contains(document.elementFromPoint(
-                  c.left + c.width * x, c.top + c.height * y))));
-              // Thoughts shown, the block above the first call is a thought.
-              const over = shown[shown.indexOf(calls[0]) - 1];
-              return {
-                above: box(calls[0]).top - box(over.lastElementChild).bottom,
-                below: box(reply).top - box(calls[2]).bottom,
-                clash, copyHit: hit,
-              };
-            }"""
-            hidden = page.evaluate(seen)
-            assert hidden["above"] <= 8, hidden
-            assert hidden["below"] >= 20, hidden
-            assert min(hidden["clash"]) >= 0, hidden
-            assert hidden["copyHit"], hidden
-            page.evaluate("document.body.classList.add('show-thinking')")
-            shown = page.evaluate(seen)
-            assert shown["above"] <= 8, shown
-            assert min(shown["clash"]) >= 0, shown
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.set_viewport_size({"width": 1500, "height": 900})
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        write_records(daemon, said("claude", "Now the tests for the split:"))
+        tick_until("the split")
+        made = []
+        for n in range(3):
+            made.append(said("think", f"Now dir{n}."))
+            made.append(said("tool", f"ls dir{n}", tool_id=f"t{n}"))
+        made.append(said("claude", "They all pass."))
+        old = "2026-09-18T14:30:00.000Z"
+        made.append(said("claude", "One more look.", ts=old))
+        made.append(said("tool", "ls again", ts=old, tool_id="t9"))
+        made.append(said("claude", "Done.", ts=old))
+        write_records(daemon, *made)
+        tick_until("Done.")
+        # A block that has just arrived slides in, and while it moves it
+        # is a stacking context of its own: nothing inside it can stand
+        # over a later block, and it is 4 px from where it will rest.
+        page.wait_for_function("() => !document.getAnimations().length")
+        seen = """() => {
+          const shown = [...document.querySelectorAll('.turnbody .turn')]
+            .filter((t) => t.getClientRects().length);
+          const box = (one) => one.getBoundingClientRect();
+          const at = shown.findIndex((t) => t.innerText.includes('the split'));
+          const words = shown[at];
+          const calls = shown.slice(at + 1).filter(
+            (t) => t.classList.contains('toolrow')).slice(0, 3);
+          const reply = shown.find((t) => t.innerText.includes('all pass'));
+          // What each name column shows, top to bottom, and where the
+          // next one starts. The copy button is part of it, because a
+          // hover shows it.
+          const columns = shown.map((t) => t.querySelector('.who'))
+            .filter((who) => who.children.length);
+          const clash = columns.slice(1).map((who, n) =>
+            box(who.firstElementChild).top
+              - box(columns[n].lastElementChild).bottom);
+          const copy = words.querySelector('.copy');
+          const c = box(copy);
+          // Over the whole button, not its middle: the middle can fall
+          // in the gap between two calls, and then nothing covers it.
+          const hit = [0.2, 0.5, 0.8].every((y) => [0.2, 0.5, 0.8].every(
+            (x) => copy.contains(document.elementFromPoint(
+              c.left + c.width * x, c.top + c.height * y))));
+          // Thoughts shown, the block above the first call is a thought.
+          const over = shown[shown.indexOf(calls[0]) - 1];
+          return {
+            above: box(calls[0]).top - box(over.lastElementChild).bottom,
+            below: box(reply).top - box(calls[2]).bottom,
+            clash, copyHit: hit,
+          };
+        }"""
+        hidden = page.evaluate(seen)
+        assert hidden["above"] <= 8, hidden
+        assert hidden["below"] >= 20, hidden
+        assert min(hidden["clash"]) >= 0, hidden
+        assert hidden["copyHit"], hidden
+        page.evaluate("document.body.classList.add('show-thinking')")
+        shown = page.evaluate(seen)
+        assert shown["above"] <= 8, shown
+        assert min(shown["clash"]) >= 0, shown
 
 
 
@@ -1593,31 +1385,27 @@ def test_the_map_is_set_like_the_transcript_and_a_prompt_is_round(page_at):
     size and line height. It had the lists' condensed face at 13 px and a row
     every 29 px, and read as a different page. And a prompt's bubble is
     rounded at all four corners -- it was square on the left, by the rail."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            seen = page.evaluate("""() => {
-              const style = (sel) => getComputedStyle(document.querySelector(sel));
-              const text = style('.turnbody .prose'), row = style(
-                '.filelist.transcript button');
-              const rows = [...document.querySelectorAll(
-                '.filelist.transcript button')].map((b) => b.getBoundingClientRect());
-              const bubble = style('.turn.mine .bubble');
-              return {
-                text: [text.fontFamily, text.fontSize, text.lineHeight],
-                row: [row.fontFamily, row.fontSize, row.lineHeight],
-                pitch: rows[1].top - rows[0].top,
-                line: parseFloat(text.lineHeight),
-                corners: [bubble.borderTopLeftRadius, bubble.borderBottomLeftRadius,
-                          bubble.borderTopRightRadius, bubble.borderBottomRightRadius],
-              };
-            }""")
-            assert seen["row"] == seen["text"], seen
-            assert seen["pitch"] <= seen["line"] + 4, seen
-            assert "0px" not in seen["corners"], seen
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        seen = page.evaluate("""() => {
+          const style = (sel) => getComputedStyle(document.querySelector(sel));
+          const text = style('.turnbody .prose'), row = style(
+            '.filelist.transcript button');
+          const rows = [...document.querySelectorAll(
+            '.filelist.transcript button')].map((b) => b.getBoundingClientRect());
+          const bubble = style('.turn.mine .bubble');
+          return {
+            text: [text.fontFamily, text.fontSize, text.lineHeight],
+            row: [row.fontFamily, row.fontSize, row.lineHeight],
+            pitch: rows[1].top - rows[0].top,
+            line: parseFloat(text.lineHeight),
+            corners: [bubble.borderTopLeftRadius, bubble.borderBottomLeftRadius,
+                      bubble.borderTopRightRadius, bubble.borderBottomRightRadius],
+          };
+        }""")
+        assert seen["row"] == seen["text"], seen
+        assert seen["pitch"] <= seen["line"] + 4, seen
+        assert "0px" not in seen["corners"], seen
 
 
 def test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant(page_at):
@@ -1637,58 +1425,50 @@ def test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant(page_at
                   conftest.record("you", "An old prompt.", ts=old),
                   conftest.record("claude", "An old reply.", ts=old))
     daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turnbody .turn')]
-                    .some((t) => t.innerText.includes('An old reply'))""")
-            page.wait_for_function("() => !document.getAnimations().length")
-            seen = page.evaluate("""() => {
-              const box = (one) => one.getBoundingClientRect();
-              const turn = (words) => [...document.querySelectorAll(
-                '.turnbody .turn')].find((t) => t.innerText.includes(words));
-              const gap = (a, b) => box(turn(b)).top
-                - box(turn(a).lastElementChild).bottom;
-              const who = (words) => box(turn(words).querySelector('.who'));
-              const stamp = turn('Give me').querySelector('.stamp');
-              return {
-                afterPrompt: gap('Give me', 'Run this one'),
-                beforePrompt: gap('Run this one', 'And then'),
-                afterOldPrompt: gap('An old prompt', 'An old reply'),
-                // The rule over a prompt is its ::before, 14 px above it.
-                toRule: box(turn('And then')).top - 14 - who('Run this one').bottom,
-                // One line, with the button in it, not a second line under.
-                copyOnTimeLine: !!stamp.querySelector('.copy')
-                                && box(stamp).height < 20,
-              };
-            }""")
-            assert seen["afterPrompt"] <= 23, seen
-            assert seen["beforePrompt"] <= 30, seen
-            assert seen["afterOldPrompt"] <= 23, seen
-            assert seen["toRule"] >= 1, seen
-            assert seen["copyOnTimeLine"], seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turnbody .turn')]
+                .some((t) => t.innerText.includes('An old reply'))""")
+        page.wait_for_function("() => !document.getAnimations().length")
+        seen = page.evaluate("""() => {
+          const box = (one) => one.getBoundingClientRect();
+          const turn = (words) => [...document.querySelectorAll(
+            '.turnbody .turn')].find((t) => t.innerText.includes(words));
+          const gap = (a, b) => box(turn(b)).top
+            - box(turn(a).lastElementChild).bottom;
+          const who = (words) => box(turn(words).querySelector('.who'));
+          const stamp = turn('Give me').querySelector('.stamp');
+          return {
+            afterPrompt: gap('Give me', 'Run this one'),
+            beforePrompt: gap('Run this one', 'And then'),
+            afterOldPrompt: gap('An old prompt', 'An old reply'),
+            // The rule over a prompt is its ::before, 14 px above it.
+            toRule: box(turn('And then')).top - 14 - who('Run this one').bottom,
+            // One line, with the button in it, not a second line under.
+            copyOnTimeLine: !!stamp.querySelector('.copy')
+                            && box(stamp).height < 20,
+          };
+        }""")
+        assert seen["afterPrompt"] <= 23, seen
+        assert seen["beforePrompt"] <= 30, seen
+        assert seen["afterOldPrompt"] <= 23, seen
+        assert seen["toRule"] >= 1, seen
+        assert seen["copyOnTimeLine"], seen
 
 
 def test_the_send_box_starts_where_the_transcript_does(page_at):
     """It stood under the map beside the transcript as well, which is a column
     you never type into."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            seen = page.evaluate("""() => {
-              const box = (sel) =>
-                document.querySelector(sel).getBoundingClientRect();
-              return {bar: box('#sendbar').left, pane: box('.turnbody').left,
-                      side: box('.side').right};
-            }""")
-            assert abs(seen["bar"] - seen["pane"]) <= 1, seen
-            assert seen["bar"] > seen["side"], seen
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        seen = page.evaluate("""() => {
+          const box = (sel) =>
+            document.querySelector(sel).getBoundingClientRect();
+          return {bar: box('#sendbar').left, pane: box('.turnbody').left,
+                  side: box('.side').right};
+        }""")
+        assert abs(seen["bar"] - seen["pane"]) <= 1, seen
+        assert seen["bar"] > seen["side"], seen
 
 
 def test_a_rewritten_transcript_forgets_what_was_chosen_by_seq(page_at):
@@ -1697,25 +1477,21 @@ def test_a_rewritten_transcript_forgets_what_was_chosen_by_seq(page_at):
     tool results, the folded rounds and the marked row all point at different
     blocks. Three things keyed the same way, forgotten in one place."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            seen = page.evaluate("""() => {
-              state.turns.run = 4;
-              state.turns.open = new Set([2]);
-              state.turns.shut = new Set([0]);
-              state.turns.at = 2;
-              const same = (run) => {
-                forgetPlaces();     // what a run change calls
-                return [state.turns.open.size, state.turns.shut.size,
-                        state.turns.at];
-              };
-              return same();
-            }""")
-            assert seen == [0, 0, None], seen
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        seen = page.evaluate("""() => {
+          state.turns.run = 4;
+          state.turns.open = new Set([2]);
+          state.turns.shut = new Set([0]);
+          state.turns.at = 2;
+          const same = (run) => {
+            forgetPlaces();     // what a run change calls
+            return [state.turns.open.size, state.turns.shut.size,
+                    state.turns.at];
+          };
+          return same();
+        }""")
+        assert seen == [0, 0, None], seen
 
 
 def test_a_reading_that_has_not_changed_forgets_nothing(page_at):
@@ -1725,57 +1501,49 @@ def test_a_reading_that_has_not_changed_forgets_nothing(page_at):
     page had just been opened on. And a session coming back keeps its place,
     which is why `run` is one of the things `savePlace` writes down."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            seen = page.evaluate("""async () => {
-              const out = {};
-              // A first load, with a link pending from the address bar.
-              state.turns.run = -1;
-              state.turns.goTo = 2;
-              state.turns.open = new Set([1]);
-              await loadTranscript();
-              out.first = [state.turns.open.size, state.turns.run];
+    with opened(path) as page:
+        wait_for_map(page)
+        seen = page.evaluate("""async () => {
+          const out = {};
+          // A first load, with a link pending from the address bar.
+          state.turns.run = -1;
+          state.turns.goTo = 2;
+          state.turns.open = new Set([1]);
+          await loadTranscript();
+          out.first = [state.turns.open.size, state.turns.run];
 
-              // The same reading again: nothing has been rewritten.
-              state.turns.open = new Set([1]);
-              state.turns.shut = new Set([0]);
-              await loadTranscript();
-              out.again = [state.turns.open.size, state.turns.shut.size];
+          // The same reading again: nothing has been rewritten.
+          state.turns.open = new Set([1]);
+          state.turns.shut = new Set([0]);
+          await loadTranscript();
+          out.again = [state.turns.open.size, state.turns.shut.size];
 
-              // A reading that really did change.
-              state.turns.run = 99;
-              await loadTranscript();
-              out.rewritten = [state.turns.open.size, state.turns.shut.size,
-                               state.turns.at];
-              return out;
-            }""")
-            # The link survived the first load, whatever `run` came back.
-            assert seen["first"][0] == 1, seen
-            assert seen["again"] == [1, 1], seen
-            assert seen["rewritten"] == [0, 0, None], seen
-        finally:
-            browser.close()
+          // A reading that really did change.
+          state.turns.run = 99;
+          await loadTranscript();
+          out.rewritten = [state.turns.open.size, state.turns.shut.size,
+                           state.turns.at];
+          return out;
+        }""")
+        # The link survived the first load, whatever `run` came back.
+        assert seen["first"][0] == 1, seen
+        assert seen["again"] == [1, 1], seen
+        assert seen["rewritten"] == [0, 0, None], seen
 
 
 def test_a_round_on_the_map_says_whether_it_is_folded(page_at):
     """A second target on a row is not something a reader can be expected to
     find, and `.icon` is decoration everywhere else in this list."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page, 2)
-            row = ".filelist.transcript button.dir >> nth=0"
-            assert page.locator(row).get_attribute("aria-expanded") == "true"
-            assert "fold" in page.locator(row + " >> .fold").get_attribute("title")
-            page.click(row + " >> .fold")
-            page.wait_for_function(
-                """() => document.querySelector('.filelist.transcript button.dir')
-                          .getAttribute('aria-expanded') === 'false'""")
-            assert "open" in page.locator(row + " >> .fold").get_attribute("title")
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page, 2)
+        row = ".filelist.transcript button.dir >> nth=0"
+        assert page.locator(row).get_attribute("aria-expanded") == "true"
+        assert "fold" in page.locator(row + " >> .fold").get_attribute("title")
+        page.click(row + " >> .fold")
+        page.wait_for_function(
+            """() => document.querySelector('.filelist.transcript button.dir')
+                      .getAttribute('aria-expanded') === 'false'""")
+        assert "open" in page.locator(row + " >> .fold").get_attribute("title")
 
 
 def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
@@ -1784,31 +1552,27 @@ def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
     right and forgetting the reader's place is not — it threw away a link
     the page had opened on whenever the two arrived in that order."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            # Exactly the state a push-before-fetch lands on: nothing held,
-            # and a place the address bar has already asked for.
-            page.evaluate("""() => {
-              state.turns.run = -1;
-              state.turns.at = 2;
-              state.turns.open = new Set([1]);
-            }""")
-            write_records(daemon, conftest.record(
-                "claude", "Pushed.", ts="2026-09-18T14:30:00.000Z"))
-            daemon.tick()
-            page.wait_for_function(
-                "() => state.turns.run !== -1")
-            # At its own `seq`, not packed at nought: a push carries only the
-            # blocks that changed.
-            assert page.evaluate(
-                "state.turns.blocks.findIndex(b => b && b.text === 'Pushed.')") > 0
-            assert page.evaluate("state.turns.at") == 2
-            assert page.evaluate("state.turns.open.size") == 1
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        # Exactly the state a push-before-fetch lands on: nothing held,
+        # and a place the address bar has already asked for.
+        page.evaluate("""() => {
+          state.turns.run = -1;
+          state.turns.at = 2;
+          state.turns.open = new Set([1]);
+        }""")
+        write_records(daemon, conftest.record(
+            "claude", "Pushed.", ts="2026-09-18T14:30:00.000Z"))
+        daemon.tick()
+        page.wait_for_function(
+            "() => state.turns.run !== -1")
+        # At its own `seq`, not packed at nought: a push carries only the
+        # blocks that changed.
+        assert page.evaluate(
+            "state.turns.blocks.findIndex(b => b && b.text === 'Pushed.')") > 0
+        assert page.evaluate("state.turns.at") == 2
+        assert page.evaluate("state.turns.open.size") == 1
 
 
 # --- the fetch and the stream race ---------------------------------------------
@@ -1840,28 +1604,24 @@ def test_a_block_pushed_while_the_transcript_is_fetched_is_kept(page_at):
     place wholesale: the block was gone, the next one landed after a hole,
     and a text block is never pushed twice."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            show_tab(page, "files")
-            held = hold_next_transcript(page)
-            page.click('.tab[data-tab="transcript"]')
-            route = wait_for_request(page, held)
-            answer = route.fetch()                   # the snapshot, taken now
-            count = page.evaluate("state.turns.blocks.length")
-            append_blocks(daemon, ["Pushed while the answer was on its way."])
-            page.wait_for_function(f"state.turns.blocks.length > {count}")
-            route.fulfill(response=answer)
-            page.unroute(TRANSCRIPT)
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn')].some(
-                     one => one.innerText.includes('on its way'))""")
-            assert page.evaluate(
-                "state.turns.blocks.every(Boolean)"), "a hole in the blocks"
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        show_tab(page, "files")
+        held = hold_next_transcript(page)
+        page.click('.tab[data-tab="transcript"]')
+        route = wait_for_request(page, held)
+        answer = route.fetch()                   # the snapshot, taken now
+        count = page.evaluate("state.turns.blocks.length")
+        append_blocks(daemon, ["Pushed while the answer was on its way."])
+        page.wait_for_function(f"state.turns.blocks.length > {count}")
+        route.fulfill(response=answer)
+        page.unroute(TRANSCRIPT)
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn')].some(
+                 one => one.innerText.includes('on its way'))""")
+        assert page.evaluate(
+            "state.turns.blocks.every(Boolean)"), "a hole in the blocks"
 
 
 def test_a_transcript_fetch_that_fails_keeps_what_is_held(page_at):
@@ -1870,43 +1630,39 @@ def test_a_transcript_fetch_that_fails_keeps_what_is_held(page_at):
     no more -- the tab polls nothing. The next push, carrying only the block
     that changed, was then put at index 0 as though it were the whole."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            before = page.evaluate("document.querySelectorAll('.turn').length")
-            page.evaluate("state.turns.open = new Set([1])")
-            show_tab(page, "files")
-            page.route(TRANSCRIPT, lambda route: route.abort())
-            page.click('.tab[data-tab="transcript"]')
-            page.wait_for_timeout(300)             # the failed answer is in
-            page.unroute(TRANSCRIPT)
-            assert page.evaluate(
-                "document.querySelectorAll('.turn').length") == before
-            assert page.evaluate("state.turns.open.size") == 1
-            # It asks again by itself: the tab polls nothing.
-            page.wait_for_function("state.turns.failed === false")
-            # With nothing held, it says it could not read it -- not that
-            # there is nothing.
-            said = page.evaluate("""() => {
-              const blocks = state.turns.blocks;
-              state.turns.blocks = []; state.turns.failed = true; draw();
-              const text = document.querySelector('.turnbody').innerText;
-              state.turns.blocks = blocks; state.turns.failed = false; draw();
-              return text;
-            }""")
-            assert "could not be read" in said, said
-            # And a push lands at its own place.
-            count = page.evaluate("state.turns.blocks.length")
-            append_blocks(daemon, ["After the failure."])
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn')].some(
-                     one => one.innerText.includes('After the failure.'))""")
-            assert page.evaluate(
-                f"state.turns.blocks[{count}].text") == "After the failure."
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        before = page.evaluate("document.querySelectorAll('.turn').length")
+        page.evaluate("state.turns.open = new Set([1])")
+        show_tab(page, "files")
+        page.route(TRANSCRIPT, lambda route: route.abort())
+        page.click('.tab[data-tab="transcript"]')
+        page.wait_for_timeout(300)             # the failed answer is in
+        page.unroute(TRANSCRIPT)
+        assert page.evaluate(
+            "document.querySelectorAll('.turn').length") == before
+        assert page.evaluate("state.turns.open.size") == 1
+        # It asks again by itself: the tab polls nothing.
+        page.wait_for_function("state.turns.failed === false")
+        # With nothing held, it says it could not read it -- not that
+        # there is nothing.
+        said = page.evaluate("""() => {
+          const blocks = state.turns.blocks;
+          state.turns.blocks = []; state.turns.failed = true; draw();
+          const text = document.querySelector('.turnbody').innerText;
+          state.turns.blocks = blocks; state.turns.failed = false; draw();
+          return text;
+        }""")
+        assert "could not be read" in said, said
+        # And a push lands at its own place.
+        count = page.evaluate("state.turns.blocks.length")
+        append_blocks(daemon, ["After the failure."])
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn')].some(
+                 one => one.innerText.includes('After the failure.'))""")
+        assert page.evaluate(
+            f"state.turns.blocks[{count}].text") == "After the failure."
 
 
 def test_a_block_read_while_no_stream_was_open_is_fetched(page_at):
@@ -1915,38 +1671,34 @@ def test_a_block_read_while_no_stream_was_open_is_fetched(page_at):
     stream now opens by saying how long the transcript is, and the page
     fetches what it is missing."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            page.evaluate("""() => { state.stream.close(); state.stream = null;
-                                     state.streamUrl = ''; }""")
-            append_blocks(daemon, ["Said while nobody listened."])
-            page.evaluate("resubscribe()")
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn')].some(
-                     one => one.innerText.includes('nobody listened'))""")
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        page.evaluate("""() => { state.stream.close(); state.stream = null;
+                                 state.streamUrl = ''; }""")
+        append_blocks(daemon, ["Said while nobody listened."])
+        page.evaluate("resubscribe()")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn')].some(
+                 one => one.innerText.includes('nobody listened'))""")
 
-            # And when the stream says so while a fetch is on its way, the
-            # fetch's older snapshot is not the last word.
-            show_tab(page, "files")
-            held = hold_next_transcript(page)
-            page.click('.tab[data-tab="transcript"]')
-            route = wait_for_request(page, held)
-            answer = route.fetch()                   # the snapshot, taken now
-            page.evaluate("""() => { state.stream.close(); state.stream = null;
-                                     state.streamUrl = ''; }""")
-            append_blocks(daemon, ["Said while the fetch was out."])
-            page.evaluate("resubscribe()")
-            page.wait_for_function("state.turns.told !== null")
-            route.fulfill(response=answer)
-            page.unroute(TRANSCRIPT)
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn')].some(
-                     one => one.innerText.includes('the fetch was out'))""")
-        finally:
-            browser.close()
+        # And when the stream says so while a fetch is on its way, the
+        # fetch's older snapshot is not the last word.
+        show_tab(page, "files")
+        held = hold_next_transcript(page)
+        page.click('.tab[data-tab="transcript"]')
+        route = wait_for_request(page, held)
+        answer = route.fetch()                   # the snapshot, taken now
+        page.evaluate("""() => { state.stream.close(); state.stream = null;
+                                 state.streamUrl = ''; }""")
+        append_blocks(daemon, ["Said while the fetch was out."])
+        page.evaluate("resubscribe()")
+        page.wait_for_function("state.turns.told !== null")
+        route.fulfill(response=answer)
+        page.unroute(TRANSCRIPT)
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn')].some(
+                 one => one.innerText.includes('the fetch was out'))""")
 
 
 def test_a_push_the_stream_could_not_keep_is_fetched_after_it_closes(page_at):
@@ -1957,31 +1709,27 @@ def test_a_push_the_stream_could_not_keep_is_fetched_after_it_closes(page_at):
     import queue
 
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            client = next(one for one in daemon.hub.clients
-                          if one.watching == "s1")
-            keep = client.queue.put_nowait
-            refused = []
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        client = next(one for one in daemon.hub.clients
+                      if one.watching == "s1")
+        keep = client.queue.put_nowait
+        refused = []
 
-            def full_once(message):
-                if not refused:            # the queue is full, this once
-                    refused.append(message)
-                    raise queue.Full
-                keep(message)
+        def full_once(message):
+            if not refused:            # the queue is full, this once
+                refused.append(message)
+                raise queue.Full
+            keep(message)
 
-            client.queue.put_nowait = full_once
-            append_blocks(daemon, ["Lost in the queue."])
-            assert refused and client.lost
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn')].some(
-                     one => one.innerText.includes('Lost in the queue'))""")
-            assert client not in daemon.hub.clients
-        finally:
-            browser.close()
+        client.queue.put_nowait = full_once
+        append_blocks(daemon, ["Lost in the queue."])
+        assert refused and client.lost
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn')].some(
+                 one => one.innerText.includes('Lost in the queue'))""")
+        assert client not in daemon.hub.clients
 
 
 def test_a_scroll_left_over_from_another_transcript_is_not_its_place(pair_at):
@@ -1990,27 +1738,23 @@ def test_a_scroll_left_over_from_another_transcript_is_not_its_place(pair_at):
     the browser fires itself when the send box goes away and the pane grows.
     The `.filescroll` scar, without its guard."""
     daemon, path = pair_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("document.querySelectorAll('.row').length === 2")
-            page.evaluate("choose('s1')")
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            append_blocks(daemon, [f"line {n}" for n in range(60)])
-            page.wait_for_function(
-                "document.querySelectorAll('.turn').length > 50")
-            down = page.evaluate("""() => {
-              choose('s2');
-              const pane = document.querySelector('.turnbody');
-              pane.scrollTop = 40;
-              pane.dispatchEvent(new Event('scroll'));
-              return [pane.scrollTop, state.turns.down];
-            }""")
-            assert down[0] == 40, "the pane did not scroll, so this proves nothing"
-            assert down[1] in (None, 0), down
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("document.querySelectorAll('.row').length === 2")
+        page.evaluate("choose('s1')")
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        append_blocks(daemon, [f"line {n}" for n in range(60)])
+        page.wait_for_function(
+            "document.querySelectorAll('.turn').length > 50")
+        down = page.evaluate("""() => {
+          choose('s2');
+          const pane = document.querySelector('.turnbody');
+          pane.scrollTop = 40;
+          pane.dispatchEvent(new Event('scroll'));
+          return [pane.scrollTop, state.turns.down];
+        }""")
+        assert down[0] == 40, "the pane did not scroll, so this proves nothing"
+        assert down[1] in (None, 0), down
 
 
 def test_the_top_of_the_transcript_is_a_place_too(page_at):
@@ -2018,24 +1762,20 @@ def test_the_top_of_the_transcript_is_a_place_too(page_at):
     draw reads the first as "go to the foot". A reader at the top was thrown
     to the foot on every key typed in the find box."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_watching(daemon)
-            append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
-            page.wait_for_function(
-                "document.querySelectorAll('.turn').length > 50")
-            page.evaluate("""() => {
-              const pane = document.querySelector('.turnbody');
-              pane.scrollTop = 0;
-              pane.dispatchEvent(new Event('scroll'));
-            }""")
-            page.fill("#find", "pytest")
-            page.wait_for_function("document.querySelectorAll('mark').length > 0")
-            assert page.evaluate(
-                "document.querySelector('.turnbody').scrollTop") == 0
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        append_blocks(daemon, [f"pytest run {n}" for n in range(60)])
+        page.wait_for_function(
+            "document.querySelectorAll('.turn').length > 50")
+        page.evaluate("""() => {
+          const pane = document.querySelector('.turnbody');
+          pane.scrollTop = 0;
+          pane.dispatchEvent(new Event('scroll'));
+        }""")
+        page.fill("#find", "pytest")
+        page.wait_for_function("document.querySelectorAll('mark').length > 0")
+        assert page.evaluate(
+            "document.querySelector('.turnbody').scrollTop") == 0
 
 
 def has_text(text):
@@ -2048,27 +1788,23 @@ def test_a_tool_result_read_while_no_stream_was_open_is_fetched(page_at):
     blocks does not move, and a stream that opened on a count saw nothing
     missing. It opens on `version`, which moves with every change read."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            write_records(daemon, conftest.record("tool", "make", tool_id="t9"))
-            daemon.tick()
-            page.wait_for_function(
-                "state.turns.blocks.some(b => b && b.tool_use_id === 't9')")
-            page.evaluate("""() => { state.stream.close(); state.stream = null;
-                                     state.streamUrl = ''; }""")
-            write_records(daemon, conftest.record("result", "BUILD DONE",
-                                                  tool_id="t9"))
-            daemon.read_transcript("s1")          # read, and sent to nobody
-            page.evaluate("resubscribe()")
-            page.wait_for_function(
-                """() => state.turns.blocks.some(
-                     b => b && b.tool_use_id === 't9'
-                          && (b.result || '').includes('BUILD DONE'))""")
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        write_records(daemon, conftest.record("tool", "make", tool_id="t9"))
+        daemon.tick()
+        page.wait_for_function(
+            "state.turns.blocks.some(b => b && b.tool_use_id === 't9')")
+        page.evaluate("""() => { state.stream.close(); state.stream = null;
+                                 state.streamUrl = ''; }""")
+        write_records(daemon, conftest.record("result", "BUILD DONE",
+                                              tool_id="t9"))
+        daemon.read_transcript("s1")          # read, and sent to nobody
+        page.evaluate("resubscribe()")
+        page.wait_for_function(
+            """() => state.turns.blocks.some(
+                 b => b && b.tool_use_id === 't9'
+                      && (b.result || '').includes('BUILD DONE'))""")
 
 
 def test_a_fetch_older_than_a_pushed_reading_is_asked_again(page_at):
@@ -2077,32 +1813,28 @@ def test_a_fetch_older_than_a_pushed_reading_is_asked_again(page_at):
     reader's places for it."""
     import os
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            show_tab(page, "files")
-            held = hold_next_transcript(page)
-            page.click('.tab[data-tab="transcript"]')
-            route = wait_for_request(page, held)
-            answer = route.fetch()               # the old reading
-            where = daemon_transcript(daemon)
-            spare = str(where) + ".new"
-            with open(spare, "w") as handle:
-                handle.write(conftest.records(
-                    conftest.record("claude", "A WHOLLY NEW READING")))
-            os.replace(spare, where)             # a new inode: a new run
-            daemon.tick()
-            page.wait_for_function(has_text("A WHOLLY NEW READING"))
-            run = page.evaluate("state.turns.run")
-            route.fulfill(response=answer)
-            page.wait_for_function(
-                f"""() => state.turns.early === null && state.turns.run === {run}
-                     && document.querySelector('.turnbody').innerText
-                          .includes('WHOLLY NEW')""")
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        show_tab(page, "files")
+        held = hold_next_transcript(page)
+        page.click('.tab[data-tab="transcript"]')
+        route = wait_for_request(page, held)
+        answer = route.fetch()               # the old reading
+        where = daemon_transcript(daemon)
+        spare = str(where) + ".new"
+        with open(spare, "w") as handle:
+            handle.write(conftest.records(
+                conftest.record("claude", "A WHOLLY NEW READING")))
+        os.replace(spare, where)             # a new inode: a new run
+        daemon.tick()
+        page.wait_for_function(has_text("A WHOLLY NEW READING"))
+        run = page.evaluate("state.turns.run")
+        route.fulfill(response=answer)
+        page.wait_for_function(
+            f"""() => state.turns.early === null && state.turns.run === {run}
+                 && document.querySelector('.turnbody').innerText
+                      .includes('WHOLLY NEW')""")
 
 
 def test_only_the_newest_transcript_fetch_lands(page_at):
@@ -2111,32 +1843,28 @@ def test_only_the_newest_transcript_fetch_lands(page_at):
     older snapshot back without it -- and a text block is never pushed
     twice."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            show_tab(page, "files")
-            held = hold_next_transcript(page, 2)
-            page.click('.tab[data-tab="transcript"]')
-            first = wait_for_request(page, held)
-            older = first.fetch()
-            page.click('.tab[data-tab="files"]')
-            page.click('.tab[data-tab="transcript"]')
-            wait_until(page, lambda: len(held) > 1)
-            second = held[1]
-            newer = second.fetch()
-            write_records(daemon, conftest.record("claude", "PUSHED BETWEEN"))
-            daemon.tick()
-            page.wait_for_function(has_text("PUSHED BETWEEN"))
-            second.fulfill(response=newer)
-            page.wait_for_function("state.turns.early === null")
-            first.fulfill(response=older)
-            page.unroute(TRANSCRIPT)
-            page.wait_for_timeout(500)           # proving it did not go
-            assert page.evaluate(has_text("PUSHED BETWEEN"))
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        show_tab(page, "files")
+        held = hold_next_transcript(page, 2)
+        page.click('.tab[data-tab="transcript"]')
+        first = wait_for_request(page, held)
+        older = first.fetch()
+        page.click('.tab[data-tab="files"]')
+        page.click('.tab[data-tab="transcript"]')
+        wait_until(page, lambda: len(held) > 1)
+        second = held[1]
+        newer = second.fetch()
+        write_records(daemon, conftest.record("claude", "PUSHED BETWEEN"))
+        daemon.tick()
+        page.wait_for_function(has_text("PUSHED BETWEEN"))
+        second.fulfill(response=newer)
+        page.wait_for_function("state.turns.early === null")
+        first.fulfill(response=older)
+        page.unroute(TRANSCRIPT)
+        page.wait_for_timeout(500)           # proving it did not go
+        assert page.evaluate(has_text("PUSHED BETWEEN"))
 
 
 def test_failing_fetches_keep_one_retry_not_one_each(page_at):
@@ -2144,22 +1872,18 @@ def test_failing_fetches_keep_one_retry_not_one_each(page_at):
     own, and they never stopped: four switches, four loops, and when the
     daemon came back each asked for the whole transcript at once."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            asked = []
-            page.route(TRANSCRIPT,
-                       lambda route: (asked.append(1), route.abort()))
-            for _ in range(4):
-                page.click('.tab[data-tab="files"]')
-                page.click('.tab[data-tab="transcript"]')
-                page.wait_for_timeout(100)
-            before = len(asked)
-            page.wait_for_timeout(4500)          # proving it did not happen
-            assert len(asked) - before <= 3, len(asked) - before
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        asked = []
+        page.route(TRANSCRIPT,
+                   lambda route: (asked.append(1), route.abort()))
+        for _ in range(4):
+            page.click('.tab[data-tab="files"]')
+            page.click('.tab[data-tab="transcript"]')
+            page.wait_for_timeout(100)
+        before = len(asked)
+        page.wait_for_timeout(4500)          # proving it did not happen
+        assert len(asked) - before <= 3, len(asked) - before
 
 
 def asks_for_transcript(page):
@@ -2176,25 +1900,21 @@ def test_coming_back_to_the_transcript_fetches_only_what_moved(page_at):
     while the pushes had kept the page up to date on the other tab. The
     page now names what it holds, and the daemon answers `same`."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            show_tab(page, "files")
-            append_blocks(daemon, ["Pushed while the Files tab was up."])
-            page.wait_for_function(has_text("Pushed while the Files tab was up."))
-            asked = asks_for_transcript(page)
-            with page.expect_response(TRANSCRIPT) as came:
-                page.click('.tab[data-tab="transcript"]')
-            assert came.value.json().get("same") is True, came.value.url
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turn')].some(
-                     one => one.innerText.includes('Files tab was up'))""")
-            assert page.evaluate("state.turns.blocks.every(Boolean)")
-            assert len(asked) == 1 and "have=" in asked[0], asked
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        show_tab(page, "files")
+        append_blocks(daemon, ["Pushed while the Files tab was up."])
+        page.wait_for_function(has_text("Pushed while the Files tab was up."))
+        asked = asks_for_transcript(page)
+        with page.expect_response(TRANSCRIPT) as came:
+            page.click('.tab[data-tab="transcript"]')
+        assert came.value.json().get("same") is True, came.value.url
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turn')].some(
+                 one => one.innerText.includes('Files tab was up'))""")
+        assert page.evaluate("state.turns.blocks.every(Boolean)")
+        assert len(asked) == 1 and "have=" in asked[0], asked
 
 
 def test_the_last_tabs_poll_does_not_fetch_the_transcript_again(page_at):
@@ -2203,28 +1923,24 @@ def test_the_last_tabs_poll_does_not_fetch_the_transcript_again(page_at):
     transcript was still on its way, and fetched the whole of it a second
     time: two downloads of 856 KB for one click."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            show_tab(page, "files")
-            held = hold_next_transcript(page, 5)
-            # In one task, so the Files tab's timer is surely set when the
-            # click lands, and fires while the transcript is on its way.
-            page.evaluate("""() => {
-              TABS.files.poll = 200;
-              repoll();
-              document.querySelector('.tab[data-tab="transcript"]').click();
-            }""")
-            wait_for_request(page, held)
-            page.wait_for_timeout(700)          # proving it did not happen
-            count = len(held)
-            for route in held:
-                route.continue_()
-            page.unroute(TRANSCRIPT)
-            assert count == 1, f"{count} transcript fetches for one click"
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        show_tab(page, "files")
+        held = hold_next_transcript(page, 5)
+        # In one task, so the Files tab's timer is surely set when the
+        # click lands, and fires while the transcript is on its way.
+        page.evaluate("""() => {
+          TABS.files.poll = 200;
+          repoll();
+          document.querySelector('.tab[data-tab="transcript"]').click();
+        }""")
+        wait_for_request(page, held)
+        page.wait_for_timeout(700)          # proving it did not happen
+        count = len(held)
+        for route in held:
+            route.continue_()
+        page.unroute(TRANSCRIPT)
+        assert count == 1, f"{count} transcript fetches for one click"
 
 
 def test_a_load_that_ends_after_the_switch_sets_no_timer(page_at):
@@ -2232,31 +1948,27 @@ def test_a_load_that_ends_after_the_switch_sets_no_timer(page_at):
     way out, and armed the next tab's timer: the Review tab's poll then
     fired while its own first fetch was still on its way, and asked twice."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            show_tab(page, "files")
-            files, diffs = [], []
-            page.route(re.compile(r"/files(\?.*)?$"),
-                       lambda route: files.append(route))
-            page.route(re.compile(r"/diff(\?.*)?$"),
-                       lambda route: diffs.append(route))
-            page.evaluate("() => { TABS.diff.poll = 100; load(); }")
-            wait_until(page, lambda: files)
-            assert files, "the Files tab never asked"
-            page.click('.tab[data-tab="diff"]')
-            wait_until(page, lambda: diffs)
-            files[0].continue_()                 # the Files load ends now
-            page.wait_for_timeout(600)           # proving it did not happen
-            count = len(diffs)
-            for route in files[1:] + diffs:
-                route.continue_()
-            page.unroute(re.compile(r"/files(\?.*)?$"))
-            page.unroute(re.compile(r"/diff(\?.*)?$"))
-            assert count == 1, f"{count} diff fetches for one click"
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        show_tab(page, "files")
+        files, diffs = [], []
+        page.route(re.compile(r"/files(\?.*)?$"),
+                   lambda route: files.append(route))
+        page.route(re.compile(r"/diff(\?.*)?$"),
+                   lambda route: diffs.append(route))
+        page.evaluate("() => { TABS.diff.poll = 100; load(); }")
+        wait_until(page, lambda: files)
+        assert files, "the Files tab never asked"
+        page.click('.tab[data-tab="diff"]')
+        wait_until(page, lambda: diffs)
+        files[0].continue_()                 # the Files load ends now
+        page.wait_for_timeout(600)           # proving it did not happen
+        count = len(diffs)
+        for route in files[1:] + diffs:
+            route.continue_()
+        page.unroute(re.compile(r"/files(\?.*)?$"))
+        page.unroute(re.compile(r"/diff(\?.*)?$"))
+        assert count == 1, f"{count} diff fetches for one click"
 
 
 def test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole(pair_at):
@@ -2265,29 +1977,25 @@ def test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole(pair_at):
     as what is held they came back `same`, and the tab showed the pieces:
     only a fetch that answered whole may say what the page holds."""
     daemon, path = pair_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                "document.querySelectorAll('.row').length === 2")
-            page.evaluate("choose('s1')")
-            wait_for_map(page)
-            count = page.evaluate("state.turns.blocks.length")
-            assert count > 0
-            show_tab(page, "files")
-            renew_stream(page, "choose('s2'); choose('s1')")
-            page.wait_for_function(
-                "state.chosen === 's1' && state.tab === 'files'")
-            append_blocks(daemon, ["A piece, pushed alone."])
-            page.wait_for_function(has_text("A piece, pushed alone."))
-            asked = asks_for_transcript(page)
-            page.click('.tab[data-tab="transcript"]')
-            page.wait_for_function(
-                f"state.turns.landed && state.turns.blocks.length === {count + 1}"
-                " && state.turns.blocks.every(Boolean)")
-            assert "have=" not in asked[-1], asked
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function(
+            "document.querySelectorAll('.row').length === 2")
+        page.evaluate("choose('s1')")
+        wait_for_map(page)
+        count = page.evaluate("state.turns.blocks.length")
+        assert count > 0
+        show_tab(page, "files")
+        renew_stream(page, "choose('s2'); choose('s1')")
+        page.wait_for_function(
+            "state.chosen === 's1' && state.tab === 'files'")
+        append_blocks(daemon, ["A piece, pushed alone."])
+        page.wait_for_function(has_text("A piece, pushed alone."))
+        asked = asks_for_transcript(page)
+        page.click('.tab[data-tab="transcript"]')
+        page.wait_for_function(
+            f"state.turns.landed && state.turns.blocks.length === {count + 1}"
+            " && state.turns.blocks.every(Boolean)")
+        assert "have=" not in asked[-1], asked
 
 
 def test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole(page_at):
@@ -2295,24 +2003,20 @@ def test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole(page_at):
     tab that waits for the tab -- but a push after it made the version look
     whole, and the blocks sent to nobody meanwhile were never asked for."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            show_tab(page, "files")
-            page.evaluate("""() => { state.stream.close(); state.stream = null;
-                                     state.streamUrl = ''; }""")
-            append_blocks(daemon, ["Said while nobody listened."])
-            renew_stream(page, "resubscribe()")
-            append_blocks(daemon, ["Said once the stream was back."])
-            page.wait_for_function(has_text("Said once the stream was back."))
-            asked = asks_for_transcript(page)
-            page.click('.tab[data-tab="transcript"]')
-            page.wait_for_function(has_text("Said while nobody listened."))
-            assert "have=" not in asked[-1], asked
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        show_tab(page, "files")
+        page.evaluate("""() => { state.stream.close(); state.stream = null;
+                                 state.streamUrl = ''; }""")
+        append_blocks(daemon, ["Said while nobody listened."])
+        renew_stream(page, "resubscribe()")
+        append_blocks(daemon, ["Said once the stream was back."])
+        page.wait_for_function(has_text("Said once the stream was back."))
+        asked = asks_for_transcript(page)
+        page.click('.tab[data-tab="transcript"]')
+        page.wait_for_function(has_text("Said while nobody listened."))
+        assert "have=" not in asked[-1], asked
 
 
 def test_a_failed_fetch_does_not_take_a_sessions_place(page_at, ws,
@@ -2335,33 +2039,29 @@ def test_a_failed_fetch_does_not_take_a_sessions_place(page_at, ws,
                           pane.dispatchEvent(new Event('scroll')); }"""
     showing = """(text) => document.querySelector('.turnbody')
                              .innerText.includes(text)"""
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("document.querySelectorAll('.row').length === 2")
-            page.evaluate("choose('s1')")
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            append_blocks(daemon, [f"s1 line {n}" for n in range(80)])
-            page.wait_for_function(showing, arg="s1 line 79")
-            page.evaluate("choose('s2')")
-            page.wait_for_function(showing, arg="s2 line 79")
-            page.evaluate(scroll, 600)
-            page.wait_for_function("state.turns.down === 600")
-            page.evaluate("choose('s1')")
-            page.wait_for_function(showing, arg="s1 line 79")
-            page.evaluate(scroll, 900)
-            page.route(TRANSCRIPT, lambda route: route.abort())
-            page.evaluate("choose('s2')")
-            page.wait_for_function("state.turns.failed === true")
-            page.wait_for_timeout(300)           # the scroll event is in
-            page.unroute(TRANSCRIPT)
-            assert page.evaluate("state.turns.down") == 600
-            page.wait_for_function("state.turns.failed === false")
-            page.wait_for_function(
-                "document.querySelector('.turnbody').scrollTop === 600")
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("document.querySelectorAll('.row').length === 2")
+        page.evaluate("choose('s1')")
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        append_blocks(daemon, [f"s1 line {n}" for n in range(80)])
+        page.wait_for_function(showing, arg="s1 line 79")
+        page.evaluate("choose('s2')")
+        page.wait_for_function(showing, arg="s2 line 79")
+        page.evaluate(scroll, 600)
+        page.wait_for_function("state.turns.down === 600")
+        page.evaluate("choose('s1')")
+        page.wait_for_function(showing, arg="s1 line 79")
+        page.evaluate(scroll, 900)
+        page.route(TRANSCRIPT, lambda route: route.abort())
+        page.evaluate("choose('s2')")
+        page.wait_for_function("state.turns.failed === true")
+        page.wait_for_timeout(300)           # the scroll event is in
+        page.unroute(TRANSCRIPT)
+        assert page.evaluate("state.turns.down") == 600
+        page.wait_for_function("state.turns.failed === false")
+        page.wait_for_function(
+            "document.querySelector('.turnbody').scrollTop === 600")
 
 
 def test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt(page_at):
@@ -2370,29 +2070,25 @@ def test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt(page_at):
     and the chevron that folds hangs in front, one tree step wide -- so the
     robot stands exactly under the person it answers."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page, 2)
-            got = page.evaluate("""() => {
-              const rows = [...document.querySelectorAll('.filelist.transcript button')];
-              const icon = (row) => row.querySelector('.icon:not(.fold)');
-              const prompt = rows.find((row) => row.classList.contains('dir'));
-              const reply = rows.find((row) => !row.classList.contains('dir'));
-              return {
-                prompt: icon(prompt).querySelector('path').getAttribute('d'),
-                reply: icon(reply).querySelector('path').getAttribute('d'),
-                fold: !!prompt.querySelector('.fold') && !reply.querySelector('.fold'),
-                person: ICONS.person, robot: ICONS.robot,
-                lined: icon(prompt).getBoundingClientRect().left
-                       - icon(reply).getBoundingClientRect().left,
-              };
-            }""")
-            assert got["prompt"] == got["person"] and got["reply"] == got["robot"]
-            assert got["fold"]
-            assert abs(got["lined"]) < 0.5, got["lined"]
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page, 2)
+        got = page.evaluate("""() => {
+          const rows = [...document.querySelectorAll('.filelist.transcript button')];
+          const icon = (row) => row.querySelector('.icon:not(.fold)');
+          const prompt = rows.find((row) => row.classList.contains('dir'));
+          const reply = rows.find((row) => !row.classList.contains('dir'));
+          return {
+            prompt: icon(prompt).querySelector('path').getAttribute('d'),
+            reply: icon(reply).querySelector('path').getAttribute('d'),
+            fold: !!prompt.querySelector('.fold') && !reply.querySelector('.fold'),
+            person: ICONS.person, robot: ICONS.robot,
+            lined: icon(prompt).getBoundingClientRect().left
+                   - icon(reply).getBoundingClientRect().left,
+          };
+        }""")
+        assert got["prompt"] == got["person"] and got["reply"] == got["robot"]
+        assert got["fold"]
+        assert abs(got["lined"]) < 0.5, got["lined"]
 
 
 def test_a_slash_command_is_drawn_with_what_it_answered(page_at):
@@ -2404,37 +2100,33 @@ def test_a_slash_command_is_drawn_with_what_it_answered(page_at):
     daemon, _ = page_at
     fixture = Path(__file__).parent / "fixtures" / "local_command.jsonl"
     lines = fixture.read_text().splitlines()
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            with open(daemon_transcript(daemon), "a") as handle:
-                handle.write("".join(line + "\n" for line in lines))
-            daemon.tick()
-            page.wait_for_function(
-                "document.querySelectorAll('.bubble.shell .output').length === 3")
-            out = page.evaluate("""() => {
-              const bubbles = [...document.querySelectorAll('.bubble.shell')];
-              return {commands: bubbles.map((one) =>
-                        one.querySelector('.command').textContent),
-                      outputs: bubbles.map((one) =>
-                        one.querySelector('.output').textContent),
-                      mine: bubbles.every((one) => one.closest('.turn.mine')),
-                      wrap: getComputedStyle(
-                        bubbles[2].querySelector('.output')).whiteSpace,
-                      map: [...document.querySelectorAll(
-                        '.filelist.transcript button')].map((one) => one.textContent)};
-            }""")
-            assert out["commands"] == ["/model", "/model opus", "/context"]
-            assert out["outputs"][1].startswith("Set model to `Opus 5.5`")
-            assert "Context Usage" in out["outputs"][2]
-            assert "[38;5" not in out["outputs"][2]
-            assert out["mine"] and out["wrap"] == "pre"
-            assert any("/model opus" in one for one in out["map"])
-            assert not any("! /" in one for one in out["map"])
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        with open(daemon_transcript(daemon), "a") as handle:
+            handle.write("".join(line + "\n" for line in lines))
+        daemon.tick()
+        page.wait_for_function(
+            "document.querySelectorAll('.bubble.shell .output').length === 3")
+        out = page.evaluate("""() => {
+          const bubbles = [...document.querySelectorAll('.bubble.shell')];
+          return {commands: bubbles.map((one) =>
+                    one.querySelector('.command').textContent),
+                  outputs: bubbles.map((one) =>
+                    one.querySelector('.output').textContent),
+                  mine: bubbles.every((one) => one.closest('.turn.mine')),
+                  wrap: getComputedStyle(
+                    bubbles[2].querySelector('.output')).whiteSpace,
+                  map: [...document.querySelectorAll(
+                    '.filelist.transcript button')].map((one) => one.textContent)};
+        }""")
+        assert out["commands"] == ["/model", "/model opus", "/context"]
+        assert out["outputs"][1].startswith("Set model to `Opus 5.5`")
+        assert "Context Usage" in out["outputs"][2]
+        assert "[38;5" not in out["outputs"][2]
+        assert out["mine"] and out["wrap"] == "pre"
+        assert any("/model opus" in one for one in out["map"])
+        assert not any("! /" in one for one in out["map"])
 
 
 def test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face(page_at):
@@ -2445,42 +2137,38 @@ def test_a_bang_command_is_drawn_with_its_output_in_the_fixed_face(page_at):
     daemon, _ = page_at
     fixture = Path(__file__).parent / "fixtures" / "bash_mode.jsonl"
     command, printed = fixture.read_text().splitlines()
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            with open(daemon_transcript(daemon), "a") as handle:
-                handle.write(command + "\n")
-            daemon.tick()
-            page.wait_for_selector(".turn.mine .bubble.shell .command")
-            assert page.locator(".bubble.shell .output").count() == 0
-            with open(daemon_transcript(daemon), "a") as handle:
-                handle.write(printed + "\n")
-            daemon.tick()
-            page.wait_for_selector(".bubble.shell .output")
-            out = page.evaluate("""() => {
-              const bubble = document.querySelector('.bubble.shell');
-              const output = bubble.querySelector('.output');
-              const style = getComputedStyle(output);
-              return {command: bubble.querySelector('.command').textContent,
-                      output: output.textContent, font: style.fontFamily,
-                      wrap: style.whiteSpace,
-                      drawn: bubble.querySelectorAll('draft').length,
-                      blocks: document.querySelectorAll('.bubble.shell').length,
-                      map: [...document.querySelectorAll('.filelist.transcript button')]
-                        .map((one) => one.textContent)};
-            }""")
-            assert out["command"] == "! git up"
-            assert "-> origin/OLD-1-remove-a-flag" in out["output"]
-            assert "a & b <draft>" in out["output"] and out["drawn"] == 0
-            assert "Mono" in out["font"] or "mono" in out["font"]
-            assert out["wrap"] == "pre"
-            assert out["blocks"] == 1
-            assert any("! git up" in one for one in out["map"])
-            assert not any("bash-" in one for one in out["map"])
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        with open(daemon_transcript(daemon), "a") as handle:
+            handle.write(command + "\n")
+        daemon.tick()
+        page.wait_for_selector(".turn.mine .bubble.shell .command")
+        assert page.locator(".bubble.shell .output").count() == 0
+        with open(daemon_transcript(daemon), "a") as handle:
+            handle.write(printed + "\n")
+        daemon.tick()
+        page.wait_for_selector(".bubble.shell .output")
+        out = page.evaluate("""() => {
+          const bubble = document.querySelector('.bubble.shell');
+          const output = bubble.querySelector('.output');
+          const style = getComputedStyle(output);
+          return {command: bubble.querySelector('.command').textContent,
+                  output: output.textContent, font: style.fontFamily,
+                  wrap: style.whiteSpace,
+                  drawn: bubble.querySelectorAll('draft').length,
+                  blocks: document.querySelectorAll('.bubble.shell').length,
+                  map: [...document.querySelectorAll('.filelist.transcript button')]
+                    .map((one) => one.textContent)};
+        }""")
+        assert out["command"] == "! git up"
+        assert "-> origin/OLD-1-remove-a-flag" in out["output"]
+        assert "a & b <draft>" in out["output"] and out["drawn"] == 0
+        assert "Mono" in out["font"] or "mono" in out["font"]
+        assert out["wrap"] == "pre"
+        assert out["blocks"] == 1
+        assert any("! git up" in one for one in out["map"])
+        assert not any("bash-" in one for one in out["map"])
 
 
 # --- landing at the foot -----------------------------------------------------
@@ -2514,28 +2202,23 @@ def test_a_first_load_lands_at_the_foot_when_marked_comes_late(page_at):
     beside it always opened at its top. Both land at the foot now, and the
     library is held here until the first draw is done, which is the order a
     slow network gives."""
-    from browser import fresh_context
     from pathlib import Path
     daemon, path = page_at
     append_markdown_rounds(daemon, 30)
     marked = Path(__file__).parent / "fixtures" / "marked.min.js"
-    with sync_playwright() as play:
-        context = fresh_context(play)
+    with own_context() as context:
         held = []
         context.route("**/marked.min.js", lambda route: held.append(route))
-        try:
-            page = context.new_page()
-            page.goto(path, wait_until="domcontentloaded")
-            page.wait_for_function("document.querySelectorAll('.turn').length > 40")
-            assert not page.evaluate("!!window.marked"), "drawn as text first"
-            page.wait_for_function(AT_FOOT, arg=".turnbody")
-            held[0].fulfill(path=str(marked), content_type="application/javascript",
-                            headers={"access-control-allow-origin": "*"})
-            page.wait_for_selector(".turnbody .prose h2")
-            page.wait_for_function(AT_FOOT, arg=".turnbody")
-            page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
-        finally:
-            context.close()
+        page = context.new_page()
+        page.goto(path, wait_until="domcontentloaded")
+        page.wait_for_function("document.querySelectorAll('.turn').length > 40")
+        assert not page.evaluate("!!window.marked"), "drawn as text first"
+        page.wait_for_function(AT_FOOT, arg=".turnbody")
+        held[0].fulfill(path=str(marked), content_type="application/javascript",
+                        headers={"access-control-allow-origin": "*"})
+        page.wait_for_selector(".turnbody .prose h2")
+        page.wait_for_function(AT_FOOT, arg=".turnbody")
+        page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
 
 
 def test_the_map_keeps_its_place_when_a_round_arrives(page_at):
@@ -2543,25 +2226,21 @@ def test_the_map_keeps_its_place_when_a_round_arrives(page_at):
     its top. At its foot it stays at its foot; scrolled up, it stays where
     the reader put it."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            append_rounds(daemon, 30)
-            page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
-            append_rounds(daemon, 1)
-            page.wait_for_function(
-                "document.querySelectorAll('.filelist.transcript button').length > 60")
-            page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
-            page.eval_on_selector(".filelist.transcript", "el => el.scrollTop = 40")
-            append_rounds(daemon, 1)
-            page.wait_for_function(
-                "document.querySelectorAll('.filelist.transcript button').length > 62")
-            assert page.eval_on_selector(".filelist.transcript",
-                                         "el => el.scrollTop") == 40
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        append_rounds(daemon, 30)
+        page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
+        append_rounds(daemon, 1)
+        page.wait_for_function(
+            "document.querySelectorAll('.filelist.transcript button').length > 60")
+        page.wait_for_function(AT_FOOT, arg=".filelist.transcript")
+        page.eval_on_selector(".filelist.transcript", "el => el.scrollTop = 40")
+        append_rounds(daemon, 1)
+        page.wait_for_function(
+            "document.querySelectorAll('.filelist.transcript button').length > 62")
+        assert page.eval_on_selector(".filelist.transcript",
+                                     "el => el.scrollTop") == 40
 
 
 def test_the_way_back_is_an_arrow_in_the_middle(page_at):
@@ -2569,34 +2248,30 @@ def test_the_way_back_is_an_arrow_in_the_middle(page_at):
     and still at its foot. Its word stays for the pointer and a screen
     reader."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            append_rounds(daemon, 12)
-            # The rounds first: scrolled up before they land, the pane is
-            # still at its foot, and follows them down.
-            page.wait_for_function(
-                "[...document.querySelectorAll('.turn')].some("
-                "one => one.innerText.includes('answer 11'))")
-            page.eval_on_selector(".turnbody", "el => el.scrollTop = 0")
-            page.wait_for_selector(".tofoot", state="visible")
-            out = page.evaluate("""() => {
-              const button = document.querySelector('.tofoot');
-              const b = button.getBoundingClientRect();
-              const p = document.querySelector('.turnbody').getBoundingClientRect();
-              return {middle: (b.left + b.right) / 2 - (p.left + p.right) / 2,
-                      foot: p.bottom - b.bottom, text: button.textContent,
-                      icon: !!button.querySelector('svg'),
-                      label: button.getAttribute('aria-label')};
-            }""")
-            assert abs(out["middle"]) < 2, out
-            assert 0 < out["foot"] < 40, out
-            assert out["text"] == "" and out["icon"]
-            assert out["label"] == "go to the latest"
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        append_rounds(daemon, 12)
+        # The rounds first: scrolled up before they land, the pane is
+        # still at its foot, and follows them down.
+        page.wait_for_function(
+            "[...document.querySelectorAll('.turn')].some("
+            "one => one.innerText.includes('answer 11'))")
+        page.eval_on_selector(".turnbody", "el => el.scrollTop = 0")
+        page.wait_for_selector(".tofoot", state="visible")
+        out = page.evaluate("""() => {
+          const button = document.querySelector('.tofoot');
+          const b = button.getBoundingClientRect();
+          const p = document.querySelector('.turnbody').getBoundingClientRect();
+          return {middle: (b.left + b.right) / 2 - (p.left + p.right) / 2,
+                  foot: p.bottom - b.bottom, text: button.textContent,
+                  icon: !!button.querySelector('svg'),
+                  label: button.getAttribute('aria-label')};
+        }""")
+        assert abs(out["middle"]) < 2, out
+        assert 0 < out["foot"] < 40, out
+        assert out["text"] == "" and out["icon"]
+        assert out["label"] == "go to the latest"
 
 
 def test_open_page_returns_once_the_transcript_has_answered(page_at, ws, monkeypatch):
@@ -2612,20 +2287,12 @@ def test_open_page_returns_once_the_transcript_has_answered(page_at, ws, monkeyp
         return real(self, session_id)
 
     monkeypatch.setattr(ws.Daemon, "read_transcript", slow)
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            assert page.evaluate("state.turns.landed")
-            assert page.locator(".turnbody .turn").count() >= 2
-        finally:
-            browser.close()
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at, wait="frame")
-        try:
-            # The opt-out returns at the first draw, before the answer.
-            assert not page.evaluate("state.turns.landed")
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        assert page.evaluate("state.turns.landed")
+        assert page.locator(".turnbody .turn").count() >= 2
+    with opened(page_at, wait="frame") as page:
+        # The opt-out returns at the first draw, before the answer.
+        assert not page.evaluate("state.turns.landed")
 
 
 def test_an_edit_opens_onto_what_it_changed(page_at):
@@ -2639,63 +2306,59 @@ def test_an_edit_opens_onto_what_it_changed(page_at):
     daemon, _ = page_at
     fixture = Path(__file__).parent / "fixtures" / "edits.jsonl"
     lines = fixture.read_text().splitlines()
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            page.evaluate("state.sides = 'split'")
-            wait_for_map(page)
-            wait_for_watching(daemon)
-            with open(daemon_transcript(daemon), "a") as handle:
-                handle.write("".join(line + "\n" for line in lines))
-            daemon.tick()
-            page.wait_for_function(
-                "[...document.querySelectorAll('.tool .name')]"
-                ".filter((n) => /Edit|Write/.test(n.textContent)).length === 4")
-            shut = page.evaluate("""() => [...document.querySelectorAll('.tool')]
-              .filter((t) => /Edit|Write/.test(t.querySelector('.name').textContent))
-              .map((t) => [t.querySelector('.caret').textContent, t.textContent])""")
-            # Shut, an edit says what it touched and how much, not that it
-            # "has been updated successfully".
-            assert [caret for caret, _ in shut] == ["▸"] * 4, shut
-            assert not any("successfully" in text for _, text in shut[:3]), shut
-            assert "+1" in shut[0][1], shut
+    with opened(page_at) as page:
+        page.evaluate("state.sides = 'split'")
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        with open(daemon_transcript(daemon), "a") as handle:
+            handle.write("".join(line + "\n" for line in lines))
+        daemon.tick()
+        page.wait_for_function(
+            "[...document.querySelectorAll('.tool .name')]"
+            ".filter((n) => /Edit|Write/.test(n.textContent)).length === 4")
+        shut = page.evaluate("""() => [...document.querySelectorAll('.tool')]
+          .filter((t) => /Edit|Write/.test(t.querySelector('.name').textContent))
+          .map((t) => [t.querySelector('.caret').textContent, t.textContent])""")
+        # Shut, an edit says what it touched and how much, not that it
+        # "has been updated successfully".
+        assert [caret for caret, _ in shut] == ["▸"] * 4, shut
+        assert not any("successfully" in text for _, text in shut[:3]), shut
+        assert "+1" in shut[0][1], shut
 
-            page.evaluate("""() => [...document.querySelectorAll('.tool')]
-              .filter((t) => /Edit|Write/.test(t.querySelector('.name').textContent))
-              .forEach((t) => t.click())""")
-            page.wait_for_function(
-                "document.querySelectorAll('.tooldiff').length === 3")
-            seen = page.evaluate("""() => [...document.querySelectorAll('.tooldiff')]
-              .map((box) => ({
-                rows: [...box.querySelectorAll('.dline')].map((row) =>
-                  [row.className.replace('dline ', ''),
-                   row.querySelector('.ln').textContent.trim(),
-                   row.querySelector('.dtext').textContent]),
-                pairs: box.querySelectorAll('.dline.pair').length,
-                review: box.querySelectorAll('.addnote').length,
-                more: box.querySelectorAll('.more, .hunk.tail').length,
-              }))""")
-            edit, created, rewritten = seen
-            assert edit["rows"][1] == [
-                "added", "2", '    """The sum of the prices, in cents."""'], edit
-            assert [row[0] for row in created["rows"]] == ["added"] * 3
-            assert rewritten["rows"][2][:2] == ["removed", "7"], rewritten
-            for one in seen:
-                assert one["pairs"] == 0 and one["review"] == 0 and one["more"] == 0
-            # A change cut to `PATCH_SHOWN` lines says how much is left.
-            said = page.evaluate("""() => {
-              const box = document.createElement('div');
-              putToolDiff(box, {target: 'big.py', patch_more: 420, patch: [{
-                header: '@@ -1,1 +1,1 @@', lines: [{kind: 'added', text: 'a'}]}]});
-              return box.querySelector('.toolmore').textContent;
-            }""")
-            assert said.startswith("… 420 more lines"), said
-            # The failed edit opens onto its error, as any tool call does.
-            assert page.evaluate(
-                "document.querySelector('.tool-result').textContent"
-            ).startswith("<tool_use_error>String to replace not found")
-        finally:
-            browser.close()
+        page.evaluate("""() => [...document.querySelectorAll('.tool')]
+          .filter((t) => /Edit|Write/.test(t.querySelector('.name').textContent))
+          .forEach((t) => t.click())""")
+        page.wait_for_function(
+            "document.querySelectorAll('.tooldiff').length === 3")
+        seen = page.evaluate("""() => [...document.querySelectorAll('.tooldiff')]
+          .map((box) => ({
+            rows: [...box.querySelectorAll('.dline')].map((row) =>
+              [row.className.replace('dline ', ''),
+               row.querySelector('.ln').textContent.trim(),
+               row.querySelector('.dtext').textContent]),
+            pairs: box.querySelectorAll('.dline.pair').length,
+            review: box.querySelectorAll('.addnote').length,
+            more: box.querySelectorAll('.more, .hunk.tail').length,
+          }))""")
+        edit, created, rewritten = seen
+        assert edit["rows"][1] == [
+            "added", "2", '    """The sum of the prices, in cents."""'], edit
+        assert [row[0] for row in created["rows"]] == ["added"] * 3
+        assert rewritten["rows"][2][:2] == ["removed", "7"], rewritten
+        for one in seen:
+            assert one["pairs"] == 0 and one["review"] == 0 and one["more"] == 0
+        # A change cut to `PATCH_SHOWN` lines says how much is left.
+        said = page.evaluate("""() => {
+          const box = document.createElement('div');
+          putToolDiff(box, {target: 'big.py', patch_more: 420, patch: [{
+            header: '@@ -1,1 +1,1 @@', lines: [{kind: 'added', text: 'a'}]}]});
+          return box.querySelector('.toolmore').textContent;
+        }""")
+        assert said.startswith("… 420 more lines"), said
+        # The failed edit opens onto its error, as any tool call does.
+        assert page.evaluate(
+            "document.querySelector('.tool-result').textContent"
+        ).startswith("<tool_use_error>String to replace not found")
 
 
 # --- the ticket links, in the settings menu -----------------------------------
@@ -2726,52 +2389,44 @@ def test_a_ticket_link_is_added_in_the_menu(ws, page_at):
     when the box is left, links what is already on the page without a
     reload, and shows under its row what it made of the first match."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_watching(daemon)
-            append_blocks(daemon, ["Fixed OA-73219 today."])
-            page.wait_for_selector(".prose >> text=OA-73219")
-            page.click("#settings")
-            type_link(page, r"OA-(\d+)", "https://tickets.example/OA-$1")
-            kept(ws, "links", [{"match": r"OA-(\d+)",
-                                "url": "https://tickets.example/OA-$1"}])
-            page.wait_for_selector(".prose a.ticket")
-            assert page.get_attribute(".prose a.ticket", "href") \
-                == "https://tickets.example/OA-73219"
-            page.wait_for_function(
-                "document.querySelector('#linklist .linksays a') !== null")
-            assert link_rows(page) == [[
-                r"OA-(\d+)", "https://tickets.example/OA-$1",
-                "OA-73219 → tickets.example/OA-73219", ""]]
-            # Taken out with ×, and the menu stays open while it goes.
-            page.click("#linklist .linkdrop")
-            kept(ws, "links", [])
-            assert page.locator("#setpop").is_visible()
-            page.wait_for_function(
-                "document.querySelectorAll('.prose a.ticket').length === 0")
-        finally:
-            browser.close()
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        append_blocks(daemon, ["Fixed OA-73219 today."])
+        page.wait_for_selector(".prose >> text=OA-73219")
+        page.click("#settings")
+        type_link(page, r"OA-(\d+)", "https://tickets.example/OA-$1")
+        kept(ws, "links", [{"match": r"OA-(\d+)",
+                            "url": "https://tickets.example/OA-$1"}])
+        page.wait_for_selector(".prose a.ticket")
+        assert page.get_attribute(".prose a.ticket", "href") \
+            == "https://tickets.example/OA-73219"
+        page.wait_for_function(
+            "document.querySelector('#linklist .linksays a') !== null")
+        assert link_rows(page) == [[
+            r"OA-(\d+)", "https://tickets.example/OA-$1",
+            "OA-73219 → tickets.example/OA-73219", ""]]
+        # Taken out with ×, and the menu stays open while it goes.
+        page.click("#linklist .linkdrop")
+        kept(ws, "links", [])
+        assert page.locator("#setpop").is_visible()
+        page.wait_for_function(
+            "document.querySelectorAll('.prose a.ticket').length === 0")
 
 
 def test_a_half_filled_link_is_not_saved_and_says_so(ws, page_at):
     """Saved when a box is left, so the first box is left before the second
     is filled. That must not be a link to nowhere, or a red row."""
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.click("#settings")
-            page.click("#setpop .linkadd")
-            row = page.locator("#linklist .linkrow").last
-            row.locator(".linkmatch").fill(r"OA-(\d+)")
-            row.locator(".linkmatch").press("Enter")
-            page.wait_for_function(
-                "document.querySelector('#linklist .linksays').textContent !== ''")
-            assert link_rows(page) == [[r"OA-(\d+)", "", "fill in both to save it", ""]]
-            kept(ws, "links", [])
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.click("#settings")
+        page.click("#setpop .linkadd")
+        row = page.locator("#linklist .linkrow").last
+        row.locator(".linkmatch").fill(r"OA-(\d+)")
+        row.locator(".linkmatch").press("Enter")
+        page.wait_for_function(
+            "document.querySelector('#linklist .linksays').textContent !== ''")
+        assert link_rows(page) == [[r"OA-(\d+)", "", "fill in both to save it", ""]]
+        kept(ws, "links", [])
 
 
 def test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept(ws, page_at):
@@ -2781,46 +2436,42 @@ def test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept(ws, page_at):
     the red row away -- a rebuild from the file would, because it is in no
     file."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.click("#settings")
-            type_link(page, r"OK-(\d+)", "https://t.example/$1")
-            kept(ws, "links", [{"match": r"OK-(\d+)", "url": "https://t.example/$1"}])
-            type_link(page, "(a+)+b", "https://t.example/")
-            page.wait_for_selector("#linklist .linkrow[data-bad='match']")
-            rows = link_rows(page)
-            assert rows[1][:2] == ["(a+)+b", "https://t.example/"], rows
-            assert "quantifier" in rows[1][2] and "not saved" in rows[1][2], rows
-            assert rows[1][3] == "match", rows
-            # A url that is not http is about the other box. Both boxes set
-            # and one change sent, so one save goes and not two in a race.
-            page.evaluate(r"""() => {
-              const row = document.querySelector('#linklist .linkrow:last-child');
-              const [match, url] = row.querySelectorAll('input');
-              match.value = 'NO-(\\d+)';
-              url.value = 'ftp://t.example/';
-              url.dispatchEvent(new Event('change'));
-            }""")
-            page.wait_for_function("""() => document.querySelector(
-              '#linklist .linkrow:last-child').dataset.bad === 'url'""")
-            assert "“link to”" in link_rows(page)[1][2]
-            # A push of the file as it is leaves the red row standing.
-            daemon.tell_config(force=True)
-            page.wait_for_function("state.settings.links.length === 1")
-            assert len(link_rows(page)) == 2
-            kept(ws, "links", [{"match": r"OK-(\d+)", "url": "https://t.example/$1"}])
-            # And so does the file changing under it, when this page is
-            # what changed it: the good one taken out, the red one is in no
-            # file, and a rebuild from the file took it away.
-            page.locator("#linklist .linkdrop").first.click()
-            kept(ws, "links", [])
-            page.wait_for_function("state.settings.links.length === 0")
-            rows = link_rows(page)
-            assert [one[0] for one in rows] == [r"NO-(\d+)"], rows
-            assert rows[0][3] == "url", rows
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.click("#settings")
+        type_link(page, r"OK-(\d+)", "https://t.example/$1")
+        kept(ws, "links", [{"match": r"OK-(\d+)", "url": "https://t.example/$1"}])
+        type_link(page, "(a+)+b", "https://t.example/")
+        page.wait_for_selector("#linklist .linkrow[data-bad='match']")
+        rows = link_rows(page)
+        assert rows[1][:2] == ["(a+)+b", "https://t.example/"], rows
+        assert "quantifier" in rows[1][2] and "not saved" in rows[1][2], rows
+        assert rows[1][3] == "match", rows
+        # A url that is not http is about the other box. Both boxes set
+        # and one change sent, so one save goes and not two in a race.
+        page.evaluate(r"""() => {
+          const row = document.querySelector('#linklist .linkrow:last-child');
+          const [match, url] = row.querySelectorAll('input');
+          match.value = 'NO-(\\d+)';
+          url.value = 'ftp://t.example/';
+          url.dispatchEvent(new Event('change'));
+        }""")
+        page.wait_for_function("""() => document.querySelector(
+          '#linklist .linkrow:last-child').dataset.bad === 'url'""")
+        assert "“link to”" in link_rows(page)[1][2]
+        # A push of the file as it is leaves the red row standing.
+        daemon.tell_config(force=True)
+        page.wait_for_function("state.settings.links.length === 1")
+        assert len(link_rows(page)) == 2
+        kept(ws, "links", [{"match": r"OK-(\d+)", "url": "https://t.example/$1"}])
+        # And so does the file changing under it, when this page is
+        # what changed it: the good one taken out, the red one is in no
+        # file, and a rebuild from the file took it away.
+        page.locator("#linklist .linkdrop").first.click()
+        kept(ws, "links", [])
+        page.wait_for_function("state.settings.links.length === 0")
+        rows = link_rows(page)
+        assert [one[0] for one in rows] == [r"NO-(\d+)"], rows
+        assert rows[0][3] == "url", rows
 
 
 def test_a_bad_link_in_the_file_is_shown_red_as_written(ws, page_at):
@@ -2830,15 +2481,11 @@ def test_a_bad_link_in_the_file_is_shown_red_as_written(ws, page_at):
     ws.config_path().write_text(json.dumps({"links": [
         {"match": "BAD-(", "url": "https://t.example/"}]}), encoding="utf-8")
     _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.click("#settings")
-            rows = link_rows(page)
-            assert rows[0][0] == "BAD-(" and rows[0][3] == "match", rows
-            assert "“find” is not a regular expression" in rows[0][2], rows
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.click("#settings")
+        rows = link_rows(page)
+        assert rows[0][0] == "BAD-(" and rows[0][3] == "match", rows
+        assert "“find” is not a regular expression" in rows[0][2], rows
 
 
 def test_the_rows_are_the_readers_while_the_menu_is_open(ws, page_at):
@@ -2846,17 +2493,13 @@ def test_the_rows_are_the_readers_while_the_menu_is_open(ws, page_at):
     red one, and a rebuild took both. They are the file's again when the
     menu opens."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.click("#settings")
-            page.click("#setpop .linkadd")
-            ws.save_config({"links": [{"match": r"OA-(\d+)", "url": "https://t/$1"}]})
-            daemon.tell_config()
-            page.wait_for_function("(state.settings.links || []).length === 1")
-            assert link_rows(page) == [["", "", "", ""]]
-            page.keyboard.press("Escape")
-            page.click("#settings")
-            assert [one[:2] for one in link_rows(page)] == [[r"OA-(\d+)", "https://t/$1"]]
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.click("#settings")
+        page.click("#setpop .linkadd")
+        ws.save_config({"links": [{"match": r"OA-(\d+)", "url": "https://t/$1"}]})
+        daemon.tell_config()
+        page.wait_for_function("(state.settings.links || []).length === 1")
+        assert link_rows(page) == [["", "", "", ""]]
+        page.keyboard.press("Escape")
+        page.click("#settings")
+        assert [one[:2] for one in link_rows(page)] == [[r"OA-(\d+)", "https://t/$1"]]

@@ -178,7 +178,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | --- | --- |
 | `wostuast` | The whole program: Python, then `PAGE = r"""` and the HTML/CSS/JS. Five figures of lines — `wc -l wostuast` rather than a number here that rots. |
 | `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
-| `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
+| `tests/browser.py` | The shared Chromium, `opened`, `own_context`, `show_tab`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
 | `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `tests/test_shot.py` keeps it working. |
 | `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working. |
 | `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
@@ -252,7 +252,9 @@ never hand-write the dict. `conftest.record(kind, text, ...)` builds a
 transcript record — `you`, `claude`, `think`, `tool`, `result` — and
 `conftest.records(...)` makes them the lines of a file; never hand-write
 those either, because a hand-written one ended in a backslash and an `n`
-rather than a newline and the reader waited on it for ever. `browser.py` has `open_page`, `show_tab`, `open_diff`,
+rather than a newline and the reader waited on it for ever. `browser.py` has `opened` (`with opened(where) as page:`, and
+`tab="diff"`), `own_context` and `load` for a test that needs the context
+before the page, `show_tab`,
 `comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`,
 `spy_on_note`.
 

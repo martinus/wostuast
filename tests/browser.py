@@ -58,11 +58,6 @@ def shared_browser():
                                             args=["--no-sandbox"]))
     return _shared[1]
 
-@contextmanager
-def sync_playwright():
-    """The shared browser, in the shape the tests already ask for it."""
-    yield shared_browser()
-
 MARKED = Path(__file__).resolve().parent / "fixtures" / "marked.min.js"
 
 #: How long any wait may take, in milliseconds, when `WOSTUAST_WAIT` says.
@@ -89,7 +84,7 @@ HOSTILE = (
     "A fence needing a real `>`:\n\n```python\nif len(hits) > 1:\n    raise Ambiguous\n```\n"
 )
 
-def fresh_context(play, scheme="dark", with_marked=True):
+def fresh_context(scheme="dark", with_marked=True):
     """A context of its own, with everything the page fetches answered from
     here, so that no test needs a network.
 
@@ -99,8 +94,8 @@ def fresh_context(play, scheme="dark", with_marked=True):
     page a stand-in instead. The fonts are answered empty: a stylesheet in the
     head holds up the script after it, and no test looks at a typeface.
     """
-    context = play.new_context(viewport={"width": 1440, "height": 900},
-                               color_scheme=scheme)
+    context = shared_browser().new_context(
+        viewport={"width": 1440, "height": 900}, color_scheme=scheme)
     if WAIT:
         context.set_default_timeout(WAIT)
     context.route("**/marked.min.js", lambda route: route.fulfill(
@@ -112,7 +107,18 @@ def fresh_context(play, scheme="dark", with_marked=True):
         status=200, content_type="text/css", body=""))
     return context
 
-def open_page(play, where, scheme="dark", with_marked=True, wait="transcript"):
+@contextmanager
+def own_context(scheme="dark", with_marked=True):
+    """`fresh_context`, closed when the block ends, whatever the block
+    raised. For a test that needs the context before the page: a
+    permission, an init script, a route, or two pages (#283)."""
+    context = fresh_context(scheme, with_marked)
+    try:
+        yield context
+    finally:
+        context.close()
+
+def open_page(where, scheme="dark", with_marked=True, wait="transcript"):
     """A fresh context on the shared browser. What comes back is the context,
     so a test that closes `browser` closes its own and nobody else's.
 
@@ -122,9 +128,15 @@ def open_page(play, where, scheme="dark", with_marked=True, wait="transcript"):
     loaded machine, and three such tests went red in one session, each
     after its own fix. `wait="frame"` returns at the first draw, for a test
     about what the page does before that answer."""
-    url = where[1] if isinstance(where, tuple) else where
-    browser = fresh_context(play, scheme, with_marked)
+    browser = fresh_context(scheme, with_marked)
     page = browser.new_page()
+    load(page, where, with_marked, wait)
+    return browser, page
+
+def load(page, where, with_marked=True, wait="transcript"):
+    """Go to `where` in a page that is already open, and wait as
+    `open_page` does."""
+    url = where[1] if isinstance(where, tuple) else where
     page.goto(url, wait_until="domcontentloaded")
     page.wait_for_selector(".row", timeout=WAIT or 15000)
     # Wait for the first draw rather than for a length of time.
@@ -136,7 +148,6 @@ def open_page(play, where, scheme="dark", with_marked=True, wait="transcript"):
         page.wait_for_function(
             "!state.chosen || state.tab !== 'transcript' || state.turns.landed",
             timeout=WAIT or 15000)
-    return browser, page
 
 def wait_for_map(page, rows=1):
     """Wait for the map beside the transcript to have rows in it.
@@ -356,12 +367,30 @@ def open_code(page, stub, name="code.py"):
 # --- the review: milestone 7 stage 1 -----------------------------------------
 
 
-def open_diff(play, where):
-    """The Diff tab of a real repository, drawn."""
-    browser, page = open_page(play, where)
-    show_tab(page, "diff")
-    page.wait_for_selector(".dline")
-    return browser, page
+@contextmanager
+def opened(where, scheme="dark", with_marked=True, wait="transcript", *,
+           tab=None):
+    """A page on the shared browser, in a context of its own, closed when
+    the block ends, whatever the block raised.
+
+    `with opened(where) as page:` says what four lines and a level of
+    indentation said in nearly every page test: `sync_playwright`,
+    `open_page`, `try`, and `finally: browser.close()` (#283). A test that
+    forgot the `close` leaked a context. The arguments after `where` are
+    `open_page`'s. `tab="diff"` opens the Diff tab and waits for its first
+    line. A second page is `page.context.new_page()`;
+    a test that needs the context before the page uses `own_context` and
+    `load`."""
+    browser, page = open_page(where, scheme, with_marked, wait)
+    try:
+        if tab == "diff":
+            show_tab(page, "diff")
+            page.wait_for_selector(".dline")
+        elif tab is not None:
+            raise ValueError(f"opened() knows no tab {tab!r}")
+        yield page
+    finally:
+        browser.close()
 
 # --- the review: milestone 7 stage 2 -----------------------------------------
 
