@@ -76,7 +76,7 @@ bullets beside it are the same part's other scars.
 | `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety: our `settings.json`, written from the page; topics/sidebar for the menu |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
-| `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite | topics/decisions |
+| `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite, the Agent SDK, stream-json, channels, an `http` hook, a hook decision, OpenTelemetry | topics/decisions |
 | `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked`, `state.answered`, `forgetAnswered` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
