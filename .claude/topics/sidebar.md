@@ -119,7 +119,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     diff's columns and the ticket links, with the path of the file that
     keeps them at its foot (`#settingspath`, and a button that copies it).
     It was a bell, a colours button, a menu on the Review bar and two links
-    over every file, and the reader chose one menu from pictures. **It is
+    over every file, and the reader chose one menu from pictures. **The
+    labels are short** -- "diff", "links", not "diff columns", "ticket
+    links" -- because the reader asked for the room. **It is
     one proportional face, `--sans`, labels and buttons too**: the reader
     asked, because a url in the fixed face made the menu as wide as the
     longest link. **A choice is shown at once, then kept** (`keepSetting`,

@@ -9629,7 +9629,7 @@ body:not(.show-thinking) .thinking { display: none; }
 .dlines {
   padding: 5px 0; overflow-x: auto; color: var(--code-ink);
   font-family: var(--mono); font-size: 12.5px; line-height: 21px;
-  /* How wide a tab is drawn. The reader picks it; see `recallReading`. */
+  /* How wide a tab is drawn. The reader picks it; see `readingWanted`. */
   tab-size: var(--tab-w, 4);
 }
 /* A windowed file's rows are a grid the scrollbar is read against, so the row
@@ -10045,7 +10045,7 @@ const state = {
   // by `moreKey`, and the whole files fetched to show them. See `withMore`.
   diffMore: new Map(),
   diffWhole: new Map(),
-  sides: "unified",     // one column or two; see `recallSides`
+  sides: "unified",     // one column or two; see `takeSides`
   diffOpen: new Map(),  // diff files the reader opened or shut by hand
   // The files a comment is on that the diff does not show, read for their
   // lines: path to the daemon's answer, or `asking` while it is out.
@@ -11672,11 +11672,11 @@ function putSettings() {
   label("long lines", "wrap");
   choice("wrapping", [[false, "scroll", "scroll"], [true, "wrap", "wrap"]],
          (wrap) => keepReading({ ...readingNow(), wrap }));
-  label("diff columns", "twoColumns");
+  label("diff", "twoColumns");
   choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
          keepSides);
   put(pop, "div", "rule");
-  label("ticket links", "link");
+  label("links", "link");
   const links = put(pop, "div", "linkedit");
   put(links, "div", "linklist").id = "linklist";
   const add = put(links, "button", "linkadd", "+ add a link");

@@ -281,8 +281,8 @@ the settings:
 - **tab width**: 2, 4 or 8, for the Files and the Review tabs.
 - **long lines**: scroll or wrap, for the Files tab and the one-column diff.
   A very long file is drawn a part at a time and cannot wrap; it says so.
-- **diff columns**: one, or two side by side. Two columns always wrap.
-- **ticket links**: see [Ticket links](#ticket-links).
+- **diff**: one column, or two side by side. Two columns always wrap.
+- **links**: your ticket links. See [Ticket links](#ticket-links).
 
 A change applies at once. The page writes it to
 `~/.config/wostuast/settings.json` (or `$XDG_CONFIG_HOME/wostuast/`), and
@@ -350,7 +350,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 ### Ticket links
 
 If your work has ticket ids in it, they can become links. Open the settings
-menu, go to **ticket links**, and click **+ add a link**. Each link has two
+menu, go to **links**, and click **+ add a link**. Each link has two
 fields:
 
 - **find** is a regular expression, for example `(OA|QSP)-(\d+)`.
