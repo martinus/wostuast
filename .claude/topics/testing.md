@@ -109,6 +109,16 @@ event, so nothing pushed after it is lost.
   A test about what happens while nobody listens leaves the wait out on
   purpose, and says so.
 
+**A page test opens its page with `with opened(where) as page:`, never by
+hand.** 383 of 410 tests wrote out `sync_playwright`, `open_page`, `try` and
+`finally: browser.close()`, a level deeper than the body needed, and one
+that forgot the `close` leaked a context (#283). `opened` closes it
+whatever the block raised; `tab="diff"` opens the Review tab and waits for
+its first line. A second page is `page.context.new_page()`. A test that
+needs the context before the page -- a permission, an init script, a
+held route -- takes `with own_context() as context:`, then
+`context.new_page()` and `load(page, where)`.
+
 **`open_page` returns once the transcript has answered; `show_tab` is not
 the tab's content arriving.** `open_page` waits for `state.turns.landed` --
 an answer with blocks, with none, or a failure -- because three tests in one

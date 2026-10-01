@@ -12,8 +12,7 @@ import pytest
 import conftest
 from browser import (
     skip_without_browser,
-    sync_playwright,
-    open_page,
+    opened,
     show_tab,
     base_of,
     wait_for_map,
@@ -28,20 +27,16 @@ def test_jump_puts_the_cursor_in_the_pane(in_pane):
     """The button is an icon at the end of the tab row, outside every tab,
     and a click asks the daemon to jump -- the Enter key's verb."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            assert page.locator("#jump").is_visible()
-            assert not [one for one in seen if "select-window" in one], seen
-            page.click("#jump")
-            deadline = time.time() + 15
-            while (["tmux", "select-pane", "-t", "%7"] not in seen
-                   and time.time() < deadline):
-                time.sleep(0.05)
-            assert ["tmux", "select-window", "-t", "%7"] in seen
-            assert ["tmux", "select-pane", "-t", "%7"] in seen
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        assert page.locator("#jump").is_visible()
+        assert not [one for one in seen if "select-window" in one], seen
+        page.click("#jump")
+        deadline = time.time() + 15
+        while (["tmux", "select-pane", "-t", "%7"] not in seen
+               and time.time() < deadline):
+            time.sleep(0.05)
+        assert ["tmux", "select-window", "-t", "%7"] in seen
+        assert ["tmux", "select-pane", "-t", "%7"] in seen
 
 
 
@@ -51,37 +46,33 @@ def test_a_jump_says_it_went_and_a_failed_one_does_not(ws, in_pane, monkeypatch)
     that did nothing. The button ticks and the slot names the session. A
     jump tmux refused shows its error and no tick."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.click("#jump")
-            page.wait_for_selector("#jump.done")
-            assert page.get_attribute("#jump", "title") == "jumped"
-            assert page.locator("#jump .icon").count() == 1
-            name = page.evaluate("rowName(current())")
-            assert page.inner_text("#live") == "jumped to " + name
-            # And back to itself, with nothing piled up from the press.
-            page.wait_for_selector("#jump:not(.done)")
-            assert page.get_attribute("#jump", "title").startswith("jump to")
-            assert page.locator("#jump .icon").count() == 1
+    with opened((None, base)) as page:
+        page.click("#jump")
+        page.wait_for_selector("#jump.done")
+        assert page.get_attribute("#jump", "title") == "jumped"
+        assert page.locator("#jump .icon").count() == 1
+        name = page.evaluate("rowName(current())")
+        assert page.inner_text("#live") == "jumped to " + name
+        # And back to itself, with nothing piled up from the press.
+        page.wait_for_selector("#jump:not(.done)")
+        assert page.get_attribute("#jump", "title").startswith("jump to")
+        assert page.locator("#jump .icon").count() == 1
 
-            # tmux refuses: the error stands, and nothing ticks -- not even
-            # for a moment, which a look after the error would miss.
-            monkeypatch.setattr(ws, "run", lambda args, **rest: None)
-            page.evaluate("""() => {
-              window.ticked = false;
-              new MutationObserver(() => {
-                if (document.getElementById('jump').classList.contains('done')) {
-                  window.ticked = true;
-                }
-              }).observe(document.getElementById('jump'), { attributes: true });
-            }""")
-            page.keyboard.press("Enter")
-            page.wait_for_function(
-                "document.getElementById('live').textContent.includes('tmux')")
-            assert page.evaluate("window.ticked") is False
-        finally:
-            browser.close()
+        # tmux refuses: the error stands, and nothing ticks -- not even
+        # for a moment, which a look after the error would miss.
+        monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+        page.evaluate("""() => {
+          window.ticked = false;
+          new MutationObserver(() => {
+            if (document.getElementById('jump').classList.contains('done')) {
+              window.ticked = true;
+            }
+          }).observe(document.getElementById('jump'), { attributes: true });
+        }""")
+        page.keyboard.press("Enter")
+        page.wait_for_function(
+            "document.getElementById('live').textContent.includes('tmux')")
+        assert page.evaluate("window.ticked") is False
 
 # --- a question the agent is stopped on --------------------------------------
 
@@ -120,35 +111,31 @@ def test_an_open_question_stands_at_the_foot_of_the_transcript(ws, in_pane):
     the last thing in the conversation."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .askopt")
-            seen_text = page.eval_on_selector_all(
-                "#asking .askhead", "els => els.map((one) => one.textContent)")
-            assert seen_text == ["Plan approval", "On every PR"]
-            options = page.eval_on_selector_all(
-                "#asking .askone:nth-child(1) .askopt",
-                """els => els.map((one) => [
-                     one.querySelector('.asknum').textContent,
-                     one.querySelector('.asklabel').textContent])""")
-            assert options == [["1", "Approve"], ["2", "Changes needed"],
-                               ["3", "Abandon"]]
-            # Under the transcript and over the send box, on the screen and
-            # not only in the markup: answering is sending, so the two belong
-            # together and the question is the thing you read last.
-            where = page.evaluate("""() => {
-              const box = (id) =>
-                document.getElementById(id).getBoundingClientRect();
-              const pane = document.querySelector('.turnbody')
-                .getBoundingClientRect();
-              return [pane.bottom, box('asking').top,
-                      box('asking').bottom, box('sendbar').top];
-            }""")
-            assert where[0] <= where[1] + 1, where
-            assert where[2] <= where[3] + 1, where
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .askopt")
+        seen_text = page.eval_on_selector_all(
+            "#asking .askhead", "els => els.map((one) => one.textContent)")
+        assert seen_text == ["Plan approval", "On every PR"]
+        options = page.eval_on_selector_all(
+            "#asking .askone:nth-child(1) .askopt",
+            """els => els.map((one) => [
+                 one.querySelector('.asknum').textContent,
+                 one.querySelector('.asklabel').textContent])""")
+        assert options == [["1", "Approve"], ["2", "Changes needed"],
+                           ["3", "Abandon"]]
+        # Under the transcript and over the send box, on the screen and
+        # not only in the markup: answering is sending, so the two belong
+        # together and the question is the thing you read last.
+        where = page.evaluate("""() => {
+          const box = (id) =>
+            document.getElementById(id).getBoundingClientRect();
+          const pane = document.querySelector('.turnbody')
+            .getBoundingClientRect();
+          return [pane.bottom, box('asking').top,
+                  box('asking').bottom, box('sendbar').top];
+        }""")
+        assert where[0] <= where[1] + 1, where
+        assert where[2] <= where[3] + 1, where
 
 
 def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
@@ -158,54 +145,50 @@ def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
     under the map was empty space you could not drag."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .askopt")
-            wait_for_map(page)
-            where = page.evaluate("""() => {
-              const box = (one) => one.getBoundingClientRect();
-              const content = document.getElementById('content');
-              return {grip: box(content.querySelector(':scope > .grip')),
-                      side: box(content.querySelector(':scope > .side')),
-                      pane: box(content.querySelector('.turnbody')),
-                      asking: box(document.getElementById('asking')),
-                      send: box(document.getElementById('sendbar'))};
-            }""")
-            grip, side, send = where["grip"], where["side"], where["send"]
-            assert abs(grip["bottom"] - send["bottom"]) <= 1, where
-            assert abs(side["bottom"] - send["bottom"]) <= 1, where
-            # And neither bar runs under the map or over the transcript.
-            assert send["left"] >= grip["right"] - 1, where
-            assert where["asking"]["left"] >= grip["right"] - 1, where
-            assert where["pane"]["bottom"] <= where["asking"]["top"] + 1, where
-            # The box runs down under both bars now, and the way back to the
-            # foot of the transcript is measured from the pane, not the box:
-            # from the box it would stand behind the send box.
-            foot = page.evaluate("""() => {
-              const button = document.querySelector('.tofoot');
-              button.hidden = false;
-              const at = button.getBoundingClientRect();
-              button.hidden = true;
-              return at;
-            }""")
-            assert where["pane"]["top"] < foot["top"], (foot, where)
-            assert foot["bottom"] <= where["pane"]["bottom"], (foot, where)
-            # The grip still drags, and it drags from the part that is new.
-            before = side["width"]
-            page.mouse.move(grip["left"] + 2, send["top"] + 5)
-            page.mouse.down()
-            page.mouse.move(grip["left"] + 62, send["top"] + 5, steps=4)
-            page.mouse.up()
-            after = page.evaluate("""() => document.querySelector(
-                '#content > .side').getBoundingClientRect().width""")
-            assert abs(after - before - 60) <= 2, (before, after)
-            left = page.evaluate(
-                "() => document.getElementById('sendbar')"
-                ".getBoundingClientRect().left")
-            assert abs(left - send["left"] - 60) <= 2, (send, left)
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .askopt")
+        wait_for_map(page)
+        where = page.evaluate("""() => {
+          const box = (one) => one.getBoundingClientRect();
+          const content = document.getElementById('content');
+          return {grip: box(content.querySelector(':scope > .grip')),
+                  side: box(content.querySelector(':scope > .side')),
+                  pane: box(content.querySelector('.turnbody')),
+                  asking: box(document.getElementById('asking')),
+                  send: box(document.getElementById('sendbar'))};
+        }""")
+        grip, side, send = where["grip"], where["side"], where["send"]
+        assert abs(grip["bottom"] - send["bottom"]) <= 1, where
+        assert abs(side["bottom"] - send["bottom"]) <= 1, where
+        # And neither bar runs under the map or over the transcript.
+        assert send["left"] >= grip["right"] - 1, where
+        assert where["asking"]["left"] >= grip["right"] - 1, where
+        assert where["pane"]["bottom"] <= where["asking"]["top"] + 1, where
+        # The box runs down under both bars now, and the way back to the
+        # foot of the transcript is measured from the pane, not the box:
+        # from the box it would stand behind the send box.
+        foot = page.evaluate("""() => {
+          const button = document.querySelector('.tofoot');
+          button.hidden = false;
+          const at = button.getBoundingClientRect();
+          button.hidden = true;
+          return at;
+        }""")
+        assert where["pane"]["top"] < foot["top"], (foot, where)
+        assert foot["bottom"] <= where["pane"]["bottom"], (foot, where)
+        # The grip still drags, and it drags from the part that is new.
+        before = side["width"]
+        page.mouse.move(grip["left"] + 2, send["top"] + 5)
+        page.mouse.down()
+        page.mouse.move(grip["left"] + 62, send["top"] + 5, steps=4)
+        page.mouse.up()
+        after = page.evaluate("""() => document.querySelector(
+            '#content > .side').getBoundingClientRect().width""")
+        assert abs(after - before - 60) <= 2, (before, after)
+        left = page.evaluate(
+            "() => document.getElementById('sendbar')"
+            ".getBoundingClientRect().left")
+        assert abs(left - send["left"] - 60) <= 2, (send, left)
 
 
 def test_a_question_belongs_to_the_transcript_and_no_other_tab(ws, in_pane):
@@ -214,19 +197,15 @@ def test_a_question_belongs_to_the_transcript_and_no_other_tab(ws, in_pane):
     the answer to "what is it asking", and that is asked here."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .askopt")
-            for tab in ("files", "diff"):
-                show_tab(page, tab)
-                assert page.locator("#asking .askopt").count() == 0, tab
-                assert page.locator("#asking:not([hidden])").count() == 0, tab
-            show_tab(page, "transcript")
-            page.wait_for_selector("#asking:not([hidden]) .askopt")
-            assert page.locator("#asking .askopt").count() == 5
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .askopt")
+        for tab in ("files", "diff"):
+            show_tab(page, tab)
+            assert page.locator("#asking .askopt").count() == 0, tab
+            assert page.locator("#asking:not([hidden])").count() == 0, tab
+        show_tab(page, "transcript")
+        page.wait_for_selector("#asking:not([hidden]) .askopt")
+        assert page.locator("#asking .askopt").count() == 5
 
 
 def option(question, at):
@@ -239,25 +218,21 @@ def test_picking_types_nothing_and_can_be_changed(ws, in_pane):
     take back, on a page you may have opened on a phone in a pocket."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            page.click(option(1, 2))
-            page.wait_for_timeout(300)
-            assert page.locator(option(1, 2)).evaluate(
-                "one => one.classList.contains('chosen')")
-            # Nothing has reached the terminal, and the reader can change
-            # their mind as often as they like.
-            assert not [one for one in seen if "send-keys" in one]
-            page.click(option(1, 3))
-            assert not page.locator(option(1, 2)).evaluate(
-                "one => one.classList.contains('chosen')")
-            assert page.locator(option(1, 3)).evaluate(
-                "one => one.classList.contains('chosen')")
-            assert not [one for one in seen if "send-keys" in one]
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 2))
+        page.wait_for_timeout(300)
+        assert page.locator(option(1, 2)).evaluate(
+            "one => one.classList.contains('chosen')")
+        # Nothing has reached the terminal, and the reader can change
+        # their mind as often as they like.
+        assert not [one for one in seen if "send-keys" in one]
+        page.click(option(1, 3))
+        assert not page.locator(option(1, 2)).evaluate(
+            "one => one.classList.contains('chosen')")
+        assert page.locator(option(1, 3)).evaluate(
+            "one => one.classList.contains('chosen')")
+        assert not [one for one in seen if "send-keys" in one]
 
 
 def test_submit_waits_until_every_question_is_answered(ws, in_pane):
@@ -265,22 +240,18 @@ def test_submit_waits_until_every_question_is_answered(ws, in_pane):
     would press a number at a question the reader never looked at."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .asksend .verb")
-            assert page.locator("#asking .asksend .verb").is_disabled()
-            assert page.inner_text("#asking .asksays") == "pick an answer to each"
-            page.click(option(1, 2))
-            assert page.locator("#asking .asksend .verb").is_disabled()
-            page.click(option(2, 1))
-            assert not page.locator("#asking .asksend .verb").is_disabled()
-            # And it says what it will do before it is pressed. These are
-            # keystrokes into a live terminal.
-            assert page.inner_text("#asking .asksays") == \
-                "presses 2, then 1, then Enter"
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .asksend .verb")
+        assert page.locator("#asking .asksend .verb").is_disabled()
+        assert page.inner_text("#asking .asksays") == "pick an answer to each"
+        page.click(option(1, 2))
+        assert page.locator("#asking .asksend .verb").is_disabled()
+        page.click(option(2, 1))
+        assert not page.locator("#asking .asksend .verb").is_disabled()
+        # And it says what it will do before it is pressed. These are
+        # keystrokes into a live terminal.
+        assert page.inner_text("#asking .asksays") == \
+            "presses 2, then 1, then Enter"
 
 
 def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
@@ -290,20 +261,16 @@ def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
     that cannot be trusted with the other half."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            page.click(option(1, 3))
-            show_tab(page, "diff")
-            assert page.locator("#asking .askopt").count() == 0
-            show_tab(page, "transcript")
-            page.wait_for_selector("#asking .askopt")
-            assert page.locator(option(1, 3)).evaluate(
-                "one => one.classList.contains('chosen')")
-            assert page.inner_text("#asking .asksays") == "pick an answer to each"
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 3))
+        show_tab(page, "diff")
+        assert page.locator("#asking .askopt").count() == 0
+        show_tab(page, "transcript")
+        page.wait_for_selector("#asking .askopt")
+        assert page.locator(option(1, 3)).evaluate(
+            "one => one.classList.contains('chosen')")
+        assert page.inner_text("#asking .asksays") == "pick an answer to each"
 
 
 def pressed(seen):
@@ -319,26 +286,22 @@ def test_submit_presses_the_numbers_in_the_order_they_were_asked(ws, in_pane):
     answers"."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            page.click(option(1, 3))
-            page.click(option(2, 2))
-            page.click("#asking .asksend .verb")
-            page.wait_for_function(
-                "() => document.querySelector('#asking .asksend .verb').disabled")
-            deadline = time.time() + 15       # as the others: a loaded runner
-            while len(pressed(seen)) < 3 and time.time() < deadline:
-                time.sleep(0.05)
-            assert pressed(seen) == ["3", "2", "Enter"], seen
-            # A digit goes as the character, never as a key name.
-            assert ["tmux", "send-keys", "-t", "%7", "-l", "--", "3"] in seen
-            # No paste markers: a chooser reads keys, and a paste is not one.
-            assert not [one for one in seen
-                        if any("200~" in str(part) for part in one)]
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 3))
+        page.click(option(2, 2))
+        page.click("#asking .asksend .verb")
+        page.wait_for_function(
+            "() => document.querySelector('#asking .asksend .verb').disabled")
+        deadline = time.time() + 15       # as the others: a loaded runner
+        while len(pressed(seen)) < 3 and time.time() < deadline:
+            time.sleep(0.05)
+        assert pressed(seen) == ["3", "2", "Enter"], seen
+        # A digit goes as the character, never as a key name.
+        assert ["tmux", "send-keys", "-t", "%7", "-l", "--", "3"] in seen
+        # No paste markers: a chooser reads keys, and a paste is not one.
+        assert not [one for one in seen
+                    if any("200~" in str(part) for part in one)]
 
 
 #: One question that takes more than one answer, as the reader met it.
@@ -369,27 +332,23 @@ def test_a_question_that_takes_many_answers_takes_many_and_submits(ws, in_pane):
     "Submit answers"."""
     daemon, base, seen = in_pane
     asking_many(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            page.click(option(1, 3))
-            page.click(option(1, 2))
-            page.click(option(1, 4))
-            page.click(option(1, 4))            # and untick one again
-            chosen = page.eval_on_selector_all(
-                "#asking .askopt", "els => els.map(e => e.getAttribute('aria-pressed'))")
-            assert chosen == ["false", "true", "true", "false"], chosen
-            assert page.inner_text("#asking .asksays") == \
-                "presses 2 3 Tab, then Enter"
-            assert "finish it in the terminal" not in page.inner_text("#asking")
-            page.click("#asking .asksend .verb")
-            deadline = time.time() + 15       # as the others: a loaded runner
-            while len(pressed(seen)) < 4 and time.time() < deadline:
-                time.sleep(0.05)
-            assert pressed(seen) == ["2", "3", "Tab", "Enter"], seen
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 3))
+        page.click(option(1, 2))
+        page.click(option(1, 4))
+        page.click(option(1, 4))            # and untick one again
+        chosen = page.eval_on_selector_all(
+            "#asking .askopt", "els => els.map(e => e.getAttribute('aria-pressed'))")
+        assert chosen == ["false", "true", "true", "false"], chosen
+        assert page.inner_text("#asking .asksays") == \
+            "presses 2 3 Tab, then Enter"
+        assert "finish it in the terminal" not in page.inner_text("#asking")
+        page.click("#asking .asksend .verb")
+        deadline = time.time() + 15       # as the others: a loaded runner
+        while len(pressed(seen)) < 4 and time.time() < deadline:
+            time.sleep(0.05)
+        assert pressed(seen) == ["2", "3", "Tab", "Enter"], seen
 
 
 SKETCH = "if (ok) {\n    parse();   // the indentation is the point\n}"
@@ -421,52 +380,48 @@ def test_the_preview_stands_beside_the_options_and_follows_the_pick(
     show. It is text, never markup, because an agent wrote it."""
     daemon, base, seen = in_pane
     asking_many(ws, daemon, BESIDE)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.set_viewport_size({"width": 1600, "height": 1000})
-            page.wait_for_selector("#asking .askpreview")
+    with opened((None, base)) as page:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        page.wait_for_selector("#asking .askpreview")
 
-            def shown():
-                return page.evaluate("""() => {
-                  const pane = document.querySelector('#asking .askpreview');
-                  const body = pane.querySelector('.askprevbody');
-                  return [pane.querySelector('.askprevhead').textContent,
-                          body.textContent, body.classList.contains('none')];
-                }""")
-
-            # Before a pick, the first: where the dialog's cursor starts.
-            assert shown() == ["preview of 1. Narrow it", SKETCH, False]
-            page.click(option(1, 2))
-            assert shown() == [
-                "preview of 2. Keep it",
-                "(preview cannot be shown in full \u2014 compare the option "
-                "labels and descriptions instead)", True]
-            page.click(option(1, 3))
-            assert shown() == ["preview of 3. Drop it",
-                               "No preview available", True]
-            page.click(option(1, 4))
-            assert shown()[1] == "int x = 1;"
-            page.click(option(1, 5))
-            assert shown()[1] == BESIDE["questions"][0]["options"][4]["preview"]
-            assert page.evaluate(
-                "() => !document.querySelector('#asking img') && !window.hit")
-            # Beside the options, not under them, where it stood below the
-            # bar's fold.
-            side = page.evaluate("""() => {
-              const opts = document.querySelector('#asking .askbeside .askopts')
-                .getBoundingClientRect();
-              const pane = document.querySelector('#asking .askpreview')
-                .getBoundingClientRect();
-              return pane.left >= opts.right && pane.top < opts.bottom;
+        def shown():
+            return page.evaluate("""() => {
+              const pane = document.querySelector('#asking .askpreview');
+              const body = pane.querySelector('.askprevbody');
+              return [pane.querySelector('.askprevhead').textContent,
+                      body.textContent, body.classList.contains('none')];
             }""")
-            assert side
-            # A multiple-choice question never stands beside a box.
-            assert page.locator("#asking .askpreview").count() == 1
-            assert page.locator(
-                "#asking .askone:nth-child(2) .askpreview").count() == 0
-        finally:
-            browser.close()
+
+        # Before a pick, the first: where the dialog's cursor starts.
+        assert shown() == ["preview of 1. Narrow it", SKETCH, False]
+        page.click(option(1, 2))
+        assert shown() == [
+            "preview of 2. Keep it",
+            "(preview cannot be shown in full \u2014 compare the option "
+            "labels and descriptions instead)", True]
+        page.click(option(1, 3))
+        assert shown() == ["preview of 3. Drop it",
+                           "No preview available", True]
+        page.click(option(1, 4))
+        assert shown()[1] == "int x = 1;"
+        page.click(option(1, 5))
+        assert shown()[1] == BESIDE["questions"][0]["options"][4]["preview"]
+        assert page.evaluate(
+            "() => !document.querySelector('#asking img') && !window.hit")
+        # Beside the options, not under them, where it stood below the
+        # bar's fold.
+        side = page.evaluate("""() => {
+          const opts = document.querySelector('#asking .askbeside .askopts')
+            .getBoundingClientRect();
+          const pane = document.querySelector('#asking .askpreview')
+            .getBoundingClientRect();
+          return pane.left >= opts.right && pane.top < opts.bottom;
+        }""")
+        assert side
+        # A multiple-choice question never stands beside a box.
+        assert page.locator("#asking .askpreview").count() == 1
+        assert page.locator(
+            "#asking .askone:nth-child(2) .askpreview").count() == 0
 
 
 def test_the_page_says_the_keys_the_daemon_presses(ws, in_pane):
@@ -494,20 +449,16 @@ def test_the_page_says_the_keys_the_daemon_presses(ws, in_pane):
         ({"questions": [*beside["questions"], *mixed["questions"]]},
          [[1], [2], [1, 2], [2]]),
     ]
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            for asked, picks in cases:
-                ask = ws.read_ask({"tool_name": "AskUserQuestion",
-                                   "tool_input": asked, "tool_use_id": "x"})
-                keys, why = ws.ask_keys(ask, picks)
-                assert not why, why
-                shown = page.evaluate(
-                    "([ask, picks]) => askKeys(ask, picks.map("
-                    "(one) => one.map((n) => n - 1))).flat()", [ask, picks])
-                assert shown == keys, (asked, picks, shown, keys)
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        for asked, picks in cases:
+            ask = ws.read_ask({"tool_name": "AskUserQuestion",
+                               "tool_input": asked, "tool_use_id": "x"})
+            keys, why = ws.ask_keys(ask, picks)
+            assert not why, why
+            shown = page.evaluate(
+                "([ask, picks]) => askKeys(ask, picks.map("
+                "(one) => one.map((n) => n - 1))).flat()", [ask, picks])
+            assert shown == keys, (asked, picks, shown, keys)
 
 
 def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
@@ -515,39 +466,35 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
     keystroke left standing, and the reader would never know."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            page.click(option(1, 1))
-            page.click(option(2, 1))
-            page.click("#asking .asksend .verb")
-            page.wait_for_timeout(600)
-            assert page.locator("#asking .askopt").count() == 5
-            # And what the reader picked stays picked. The rows arrive about
-            # once a second while an agent works, and a bar rebuilt under the
-            # reader would clear the marks and hand back a live submit for a
-            # question already answered.
-            assert page.locator(option(1, 1)).evaluate(
-                "one => one.classList.contains('chosen')")
-            assert page.locator("#asking .asksend .verb").is_disabled()
-            daemon.hub.send("sessions", daemon.sessions_payload())
-            page.wait_for_timeout(400)
-            assert page.locator(option(1, 1)).evaluate(
-                "one => one.classList.contains('chosen')")
-            assert page.locator("#asking .asksend .verb").is_disabled()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 1))
+        page.click(option(2, 1))
+        page.click("#asking .asksend .verb")
+        page.wait_for_timeout(600)
+        assert page.locator("#asking .askopt").count() == 5
+        # And what the reader picked stays picked. The rows arrive about
+        # once a second while an agent works, and a bar rebuilt under the
+        # reader would clear the marks and hand back a live submit for a
+        # question already answered.
+        assert page.locator(option(1, 1)).evaluate(
+            "one => one.classList.contains('chosen')")
+        assert page.locator("#asking .asksend .verb").is_disabled()
+        daemon.hub.send("sessions", daemon.sessions_payload())
+        page.wait_for_timeout(400)
+        assert page.locator(option(1, 1)).evaluate(
+            "one => one.classList.contains('chosen')")
+        assert page.locator("#asking .asksend .verb").is_disabled()
 
-            ws.append_event({"session_id": "s1", "hook_event_name": "PostToolUse",
-                             "tool_name": "AskUserQuestion", "tool_input": ASKED,
-                             "tool_use_id": "toolu_q1", "ts": time.time()})
-            daemon.tick()            # fold it, and tell the page
-            # `hidden` is an attribute, not a thing that can be waited for by
-            # being visible: an element that is hidden never is.
-            page.wait_for_function(
-                "document.getElementById('asking').hidden === true",
-                timeout=15000)
-        finally:
-            browser.close()
+        ws.append_event({"session_id": "s1", "hook_event_name": "PostToolUse",
+                         "tool_name": "AskUserQuestion", "tool_input": ASKED,
+                         "tool_use_id": "toolu_q1", "ts": time.time()})
+        daemon.tick()            # fold it, and tell the page
+        # `hidden` is an attribute, not a thing that can be waited for by
+        # being visible: an element that is hidden never is.
+        page.wait_for_function(
+            "document.getElementById('asking').hidden === true",
+            timeout=15000)
 
 
 SUBMIT = "#asking .asksend .verb"
@@ -561,32 +508,28 @@ def test_submit_stays_off_while_its_keys_go_in_and_after(ws, in_pane):
     would land on whatever the agent does next."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            page.click(option(1, 3))
-            page.click(option(2, 2))
-            held = hold(page, "**/answer")
-            page.click(SUBMIT)
-            wait_until(page, lambda: held)
-            page.click(option(1, 1))
-            assert page.locator(SUBMIT).is_disabled()
-            show_tab(page, "diff")
-            show_tab(page, "transcript")
-            page.wait_for_selector("#asking .askopt")
-            assert page.locator(SUBMIT).is_disabled()
-            held[0].continue_()
-            wait_until(page, lambda: len(pressed(seen)) >= 3)
-            page.wait_for_function(
-                "document.querySelector('#asking .asksays').textContent"
-                ".startsWith('pressed')")
-            page.click(option(1, 2))
-            assert page.locator(SUBMIT).is_disabled()
-            page.wait_for_timeout(500)        # proving nothing more went in
-            assert pressed(seen) == ["3", "2", "Enter"], seen
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 3))
+        page.click(option(2, 2))
+        held = hold(page, "**/answer")
+        page.click(SUBMIT)
+        wait_until(page, lambda: held)
+        page.click(option(1, 1))
+        assert page.locator(SUBMIT).is_disabled()
+        show_tab(page, "diff")
+        show_tab(page, "transcript")
+        page.wait_for_selector("#asking .askopt")
+        assert page.locator(SUBMIT).is_disabled()
+        held[0].continue_()
+        wait_until(page, lambda: len(pressed(seen)) >= 3)
+        page.wait_for_function(
+            "document.querySelector('#asking .asksays').textContent"
+            ".startsWith('pressed')")
+        page.click(option(1, 2))
+        assert page.locator(SUBMIT).is_disabled()
+        page.wait_for_timeout(500)        # proving nothing more went in
+        assert pressed(seen) == ["3", "2", "Enter"], seen
 
 
 def test_an_answered_question_stays_answered_after_a_look_at_another(
@@ -608,41 +551,37 @@ def test_an_answered_question_stays_answered_after_a_look_at_another(
             tool_name="AskUserQuestion", tool_input=ASKED,
             **({"tool_use_id": "toolu_q2"} if name == "PreToolUse" else {})))
     daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_function("state.sessions.length === 2")
-            page.evaluate("choose('s1')")
+    with opened((None, base)) as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        page.wait_for_function(
+            "document.getElementById('asking').dataset.ask"
+            " === 's1\\ntoolu_q1'")
+        page.click(option(1, 3))
+        page.click(option(2, 2))
+        page.click(SUBMIT)
+        wait_until(page, lambda: len(pressed(seen)) >= 3)
+        page.wait_for_function(
+            "document.querySelector('#asking .asksays').textContent"
+            ".startsWith('pressed')")
+        for sid, ask in (("s2", "toolu_q2"), ("s1", "toolu_q1")):
+            page.evaluate(f"choose('{sid}')")
             page.wait_for_function(
                 "document.getElementById('asking').dataset.ask"
-                " === 's1\\ntoolu_q1'")
-            page.click(option(1, 3))
-            page.click(option(2, 2))
-            page.click(SUBMIT)
-            wait_until(page, lambda: len(pressed(seen)) >= 3)
-            page.wait_for_function(
-                "document.querySelector('#asking .asksays').textContent"
-                ".startsWith('pressed')")
-            for sid, ask in (("s2", "toolu_q2"), ("s1", "toolu_q1")):
-                page.evaluate(f"choose('{sid}')")
-                page.wait_for_function(
-                    "document.getElementById('asking').dataset.ask"
-                    f" === '{sid}\\n{ask}'")
-            page.click(option(1, 1))
-            page.click(option(2, 1))
-            assert page.locator(SUBMIT).is_disabled()
-            assert page.inner_text("#asking .asksays").startswith("pressed")
+                f" === '{sid}\\n{ask}'")
+        page.click(option(1, 1))
+        page.click(option(2, 1))
+        assert page.locator(SUBMIT).is_disabled()
+        assert page.inner_text("#asking .asksays").startswith("pressed")
 
-            ws.append_event(conftest.event(
-                "PostToolUse", cwd=cwd, pane="%7", pid=1, ts=time.time(),
-                tool_name="AskUserQuestion", tool_input=ASKED,
-                tool_use_id="toolu_q1"))
-            daemon.tick()
-            page.wait_for_function("!state.answered.has('toolu_q1')")
-            page.wait_for_timeout(300)        # proving nothing more went in
-            assert pressed(seen) == ["3", "2", "Enter"], seen
-        finally:
-            browser.close()
+        ws.append_event(conftest.event(
+            "PostToolUse", cwd=cwd, pane="%7", pid=1, ts=time.time(),
+            tool_name="AskUserQuestion", tool_input=ASKED,
+            tool_use_id="toolu_q1"))
+        daemon.tick()
+        page.wait_for_function("!state.answered.has('toolu_q1')")
+        page.wait_for_timeout(300)        # proving nothing more went in
+        assert pressed(seen) == ["3", "2", "Enter"], seen
 
 
 def test_submit_waits_for_a_message_on_its_way_and_comes_back(ws, in_pane):
@@ -652,27 +591,23 @@ def test_submit_waits_for_a_message_on_its_way_and_comes_back(ws, in_pane):
     agent waiting on a question sends no events."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            page.click(option(1, 1))
-            page.click(option(2, 1))
-            assert not page.locator(SUBMIT).is_disabled()
-            held = hold(page, "**/send")
-            page.fill("#say", "one more thing")
-            page.press("#say", "Enter")
-            wait_until(page, lambda: held)
-            assert page.locator(SUBMIT).is_disabled()
-            assert page.inner_text("#asking .asksays") == \
-                "waiting for what is on its way to this session"
-            held[0].continue_()
-            page.wait_for_function(
-                f"!document.querySelector('{SUBMIT}').disabled")
-            assert page.inner_text("#asking .asksays") == \
-                "presses 1, then 1, then Enter"
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 1))
+        page.click(option(2, 1))
+        assert not page.locator(SUBMIT).is_disabled()
+        held = hold(page, "**/send")
+        page.fill("#say", "one more thing")
+        page.press("#say", "Enter")
+        wait_until(page, lambda: held)
+        assert page.locator(SUBMIT).is_disabled()
+        assert page.inner_text("#asking .asksays") == \
+            "waiting for what is on its way to this session"
+        held[0].continue_()
+        page.wait_for_function(
+            f"!document.querySelector('{SUBMIT}').disabled")
+        assert page.inner_text("#asking .asksays") == \
+            "presses 1, then 1, then Enter"
 
 
 def test_a_question_with_no_id_does_not_stop_the_page(ws, in_pane):
@@ -686,54 +621,42 @@ def test_a_question_with_no_id_does_not_stop_the_page(ws, in_pane):
                      "tool_name": "AskUserQuestion", "tool_input": ASKED,
                      "ts": time.time()})
     daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking .askopt")
-            # Drawn once, and nothing pushed since: the agent is waiting.
-            assert page.locator("#jump").is_visible()
-            assert page.locator("#sendbar").is_visible()
-            blew_up = []
-            page.on("pageerror", lambda error: blew_up.append(str(error)))
-            page.click(option(1, 2))
-            page.wait_for_timeout(300)      # proving nothing threw
-            assert not blew_up, blew_up
-            assert page.locator(option(1, 2)).evaluate(
-                "one => one.classList.contains('chosen')")
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        # Drawn once, and nothing pushed since: the agent is waiting.
+        assert page.locator("#jump").is_visible()
+        assert page.locator("#sendbar").is_visible()
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.click(option(1, 2))
+        page.wait_for_timeout(300)      # proving nothing threw
+        assert not blew_up, blew_up
+        assert page.locator(option(1, 2)).evaluate(
+            "one => one.classList.contains('chosen')")
 
 
 def test_a_session_with_no_question_shows_no_bar(ws, in_pane):
     """It is not the header bar that was taken away. It stands for one thing
     only, and it costs nothing the rest of the time."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            assert page.locator("#asking:not([hidden])").count() == 0
-            assert page.locator("#asking .askopt").count() == 0
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        assert page.locator("#asking:not([hidden])").count() == 0
+        assert page.locator("#asking .askopt").count() == 0
 
 
 def test_the_send_box_types_into_the_terminal(in_pane):
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.fill("#say", "run the tests")
-            page.press("#say", "Enter")
-            # The keys reaching the pane and the send's lock let go, not a
-            # number of seconds: a loaded runner takes longer than any.
-            typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "run the tests"]
-            wait_until(page, lambda: typed in seen)
-            page.wait_for_function("sending.size === 0")
-            assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
-            # empty, and not put back: the daemon said it went in
-            assert page.input_value("#say") == ""
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.fill("#say", "run the tests")
+        page.press("#say", "Enter")
+        # The keys reaching the pane and the send's lock let go, not a
+        # number of seconds: a loaded runner takes longer than any.
+        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "run the tests"]
+        wait_until(page, lambda: typed in seen)
+        page.wait_for_function("sending.size === 0")
+        assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+        # empty, and not put back: the daemon said it went in
+        assert page.input_value("#say") == ""
 
 
 #: An Enter that ends an IME composition, in Chromium's shape
@@ -751,27 +674,23 @@ def test_the_enter_that_ends_a_composition_sends_nothing(in_pane):
     method's. Taken as the reader's, it sent half a message into the
     terminal."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.fill("#say", "\u65e5\u672c")
-            for how in ("composing", "safari"):
-                page.evaluate(COMPOSED_ENTER, ["#say", how])
-            # The box empties the moment a send starts, in the same call as
-            # the Enter, so a box still full is the sure sign nothing went.
-            assert page.input_value("#say") == "\u65e5\u672c"
-            page.wait_for_timeout(500)          # proving nothing was sent
-            assert not any("send-keys" in one for one in seen), seen
-            page.press("#say", "Enter")
-            # Not the box emptying: that is the send starting, not landing.
-            # The keys reaching the pane, and the send's lock let go, are.
-            typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "\u65e5\u672c"]
-            wait_until(page, lambda: typed in seen)
-            page.wait_for_function("sending.size === 0")
-            assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
-            assert page.input_value("#say") == ""
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.fill("#say", "\u65e5\u672c")
+        for how in ("composing", "safari"):
+            page.evaluate(COMPOSED_ENTER, ["#say", how])
+        # The box empties the moment a send starts, in the same call as
+        # the Enter, so a box still full is the sure sign nothing went.
+        assert page.input_value("#say") == "\u65e5\u672c"
+        page.wait_for_timeout(500)          # proving nothing was sent
+        assert not any("send-keys" in one for one in seen), seen
+        page.press("#say", "Enter")
+        # Not the box emptying: that is the send starting, not landing.
+        # The keys reaching the pane, and the send's lock let go, are.
+        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "\u65e5\u672c"]
+        wait_until(page, lambda: typed in seen)
+        page.wait_for_function("sending.size === 0")
+        assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+        assert page.input_value("#say") == ""
 
 
 def test_a_restarted_daemon_says_so_and_keeps_saying_it(ws, in_pane):
@@ -784,56 +703,48 @@ def test_a_restarted_daemon_says_so_and_keeps_saying_it(ws, in_pane):
     then read "live" again, over a page where nothing worked.
     """
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.fill("#say", "before the restart")
-            page.press("#say", "Enter")
-            # The box empties as the text goes, so an empty box is not the
-            # answer. The keys reaching the pane, and the send's lock let
-            # go, are.
-            deadline = time.time() + 15
-            while not any("-l" in one for one in seen) and time.time() < deadline:
-                time.sleep(0.05)
-            page.wait_for_function("sending.size === 0")
+    with opened((None, base)) as page:
+        page.fill("#say", "before the restart")
+        page.press("#say", "Enter")
+        # The box empties as the text goes, so an empty box is not the
+        # answer. The keys reaching the pane, and the send's lock let
+        # go, are.
+        deadline = time.time() + 15
+        while not any("-l" in one for one in seen) and time.time() < deadline:
+            time.sleep(0.05)
+        page.wait_for_function("sending.size === 0")
 
-            daemon.token = "the token a restarted serve would make"
+        daemon.token = "the token a restarted serve would make"
 
-            page.fill("#say", "after the restart")
-            page.press("#say", "Enter")
-            # A bar over the whole page, because no strip this small can
-            # carry "nothing you do here will work".
-            page.wait_for_selector("body.outdated .stale")
-            said = page.inner_text(".stale")
-            assert "restarted" in said and "Reload" in said
+        page.fill("#say", "after the restart")
+        page.press("#say", "Enter")
+        # A bar over the whole page, because no strip this small can
+        # carry "nothing you do here will work".
+        page.wait_for_selector("body.outdated .stale")
+        said = page.inner_text(".stale")
+        assert "restarted" in said and "Reload" in said
 
-            # The text is still there: they typed it at a terminal they
-            # cannot see, and it never went in.
-            assert page.input_value("#say") == "after the restart"
-            # And the strip still says why, four seconds on.
-            page.wait_for_timeout(4500)
-            assert "restarted" in page.inner_text("#live")
-        finally:
-            browser.close()
+        # The text is still there: they typed it at a terminal they
+        # cannot see, and it never went in.
+        assert page.input_value("#say") == "after the restart"
+        # And the strip still says why, four seconds on.
+        page.wait_for_timeout(4500)
+        assert "restarted" in page.inner_text("#live")
 
 
 def test_our_own_word_about_what_happened_still_fades(ws, in_pane):
     """"Review sent" is news, and news goes stale. Only a thing you asked
     for and did not get stays."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            said = page.evaluate("""async () => {
-              note("review sent");
-              return document.getElementById('live').textContent;
-            }""")
-            assert said == "review sent"
-            page.wait_for_function(
-                "document.getElementById('live').textContent !== 'review sent'",
-                timeout=8000)
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        said = page.evaluate("""async () => {
+          note("review sent");
+          return document.getElementById('live').textContent;
+        }""")
+        assert said == "review sent"
+        page.wait_for_function(
+            "document.getElementById('live').textContent !== 'review sent'",
+            timeout=8000)
 
 
 def test_the_send_box_keeps_the_text_when_it_did_not_go_in(ws, in_pane,
@@ -841,28 +752,20 @@ def test_the_send_box_keeps_the_text_when_it_did_not_go_in(ws, in_pane,
     """They typed it at a terminal they cannot see. Losing it is not on."""
     daemon, base, seen = in_pane
     monkeypatch.setattr(ws, "run", lambda args, **rest: None)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.fill("#say", "please work")
-            page.press("#say", "Enter")
-            page.wait_for_timeout(500)
-            assert page.input_value("#say") == "please work"
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.fill("#say", "please work")
+        page.press("#say", "Enter")
+        page.wait_for_timeout(500)
+        assert page.input_value("#say") == "please work"
 
 
 def test_the_verbs_are_not_there_without_a_pane(no_pane):
     """Nothing to jump to, nothing to type into. Jump is absent, not
     disabled: a button that cannot work is not offered."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, no_pane[1]))
-        try:
-            page.wait_for_function("state.sessions.length === 1")
-            assert page.locator("#sendbar").is_hidden()
-            assert page.locator("#jump").is_hidden()
-        finally:
-            browser.close()
+    with opened((None, no_pane[1])) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        assert page.locator("#sendbar").is_hidden()
+        assert page.locator("#jump").is_hidden()
 
 
 def test_a_question_can_be_read_without_tmux_but_not_answered(ws, no_pane):
@@ -880,31 +783,23 @@ def test_a_question_can_be_read_without_tmux_but_not_answered(ws, no_pane):
                                    "options": [{"label": "Left", "description": "a"},
                                                {"label": "Right", "description": "b"}]}]}))
     daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden])")
-            assert "Which way?" in page.locator("#asking").inner_text()
-            page.click("#asking .askopt >> nth=0")     # a complete answer
-            page.wait_for_function(
-                """() => document.querySelector('#asking .askopt.chosen') !== null""")
-            assert page.locator("#asking .asksend .verb").is_disabled()
-            assert "not in tmux" in page.locator(".asksays").inner_text()
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden])")
+        assert "Which way?" in page.locator("#asking").inner_text()
+        page.click("#asking .askopt >> nth=0")     # a complete answer
+        page.wait_for_function(
+            """() => document.querySelector('#asking .askopt.chosen') !== null""")
+        assert page.locator("#asking .asksend .verb").is_disabled()
+        assert "not in tmux" in page.locator(".asksays").inner_text()
 
 
 def test_the_send_box_belongs_to_the_transcript(in_pane):
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            assert page.locator("#sendbar").is_visible()
-            show_tab(page, "files")
-            assert page.locator("#sendbar").is_hidden()
-            show_tab(page, "transcript")
-            assert page.locator("#sendbar").is_visible()
-        finally:
-            browser.close()
+    with opened((None, base_of(in_pane))) as page:
+        assert page.locator("#sendbar").is_visible()
+        show_tab(page, "files")
+        assert page.locator("#sendbar").is_hidden()
+        show_tab(page, "transcript")
+        assert page.locator("#sendbar").is_visible()
 
 
 # --- the send box -----------------------------------------------------------
@@ -914,23 +809,19 @@ def test_shift_and_enter_writes_a_second_line(in_pane):
     """Enter sends, which is what every chat box does. A prompt with a plan in
     it needs a way to write the second line."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.click("#say")
-            page.keyboard.type("first line")
-            page.keyboard.press("Shift+Enter")
-            page.keyboard.type("second line")
-            page.wait_for_timeout(300)
-            assert page.input_value("#say") == "first line\nsecond line"
-            assert seen == [], "shift and enter sent it"
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("first line")
+        page.keyboard.press("Shift+Enter")
+        page.keyboard.type("second line")
+        page.wait_for_timeout(300)
+        assert page.input_value("#say") == "first line\nsecond line"
+        assert seen == [], "shift and enter sent it"
 
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(500)
-            assert seen[0][-1] == ("\x1b[200~first line\nsecond line\x1b[201~")
-            assert page.input_value("#say") == ""
-        finally:
-            browser.close()
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(500)
+        assert seen[0][-1] == ("\x1b[200~first line\nsecond line\x1b[201~")
+        assert page.input_value("#say") == ""
 
 
 def test_enter_twice_sends_once_and_keeps_what_came_after(in_pane):
@@ -938,34 +829,30 @@ def test_enter_twice_sends_once_and_keeps_what_came_after(in_pane):
     pane twice, and the answer then cleared whatever had been typed since,
     which had gone nowhere."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            stub_send(page, delay=3000)
-            page.click("#say")
-            page.keyboard.type("run the tests")
-            page.keyboard.press("Enter")
-            page.keyboard.press("Enter")
-            # New words and a third Enter while the first send is on its way:
-            # two sends at once can interleave their text and Enter commands
-            # into one prompt, so this one waits in the box.
-            page.keyboard.type(" and then")
-            page.keyboard.press("Enter")
-            page.wait_for_function(
-                "document.getElementById('say').value === ' and then'")
+    with opened((None, base)) as page:
+        stub_send(page, delay=3000)
+        page.click("#say")
+        page.keyboard.type("run the tests")
+        page.keyboard.press("Enter")
+        page.keyboard.press("Enter")
+        # New words and a third Enter while the first send is on its way:
+        # two sends at once can interleave their text and Enter commands
+        # into one prompt, so this one waits in the box.
+        page.keyboard.type(" and then")
+        page.keyboard.press("Enter")
+        page.wait_for_function(
+            "document.getElementById('say').value === ' and then'")
 
-            def typed():
-                return [one for one in seen if "-l" in one]
+        def typed():
+            return [one for one in seen if "-l" in one]
 
-            # Wait for the send to land, then long enough for a second one.
-            deadline = time.time() + 15
-            while not typed() and time.time() < deadline:
-                time.sleep(0.05)
-            page.wait_for_timeout(600)
-            assert typed() == [["tmux", "send-keys", "-t", "%7", "-l", "--",
-                                "run the tests"]], seen
-        finally:
-            browser.close()
+        # Wait for the send to land, then long enough for a second one.
+        deadline = time.time() + 15
+        while not typed() and time.time() < deadline:
+            time.sleep(0.05)
+        page.wait_for_timeout(600)
+        assert typed() == [["tmux", "send-keys", "-t", "%7", "-l", "--",
+                            "run the tests"]], seen
 
 
 def test_a_refused_send_comes_back_in_front_of_what_was_typed_since(
@@ -974,18 +861,14 @@ def test_a_refused_send_comes_back_in_front_of_what_was_typed_since(
     back, and what was typed while it was on its way stays after it."""
     daemon, base, seen = in_pane
     monkeypatch.setattr(ws, "run", lambda args, **rest: None)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            stub_send(page, delay=400)
-            page.click("#say")
-            page.keyboard.type("please work")
-            page.keyboard.press("Enter")
-            page.keyboard.type(" and more")
-            page.wait_for_function("document.getElementById('say').value"
-                                   " === 'please work and more'")
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        stub_send(page, delay=400)
+        page.click("#say")
+        page.keyboard.type("please work")
+        page.keyboard.press("Enter")
+        page.keyboard.type(" and more")
+        page.wait_for_function("document.getElementById('say').value"
+                               " === 'please work and more'")
 
 
 def test_enter_on_a_button_reached_by_keyboard_presses_it(in_pane):
@@ -993,71 +876,59 @@ def test_enter_on_a_button_reached_by_keyboard_presses_it(in_pane):
     could press nothing on the page. After a click it still jumps: the click
     leaves the focus on the button, and Enter then is the jump key."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.focus(".tab[data-tab='diff']")
-            page.keyboard.press("Shift+Tab")
-            page.keyboard.press("Tab")
-            assert page.evaluate(
-                "document.activeElement.matches('.tab[data-tab=diff]')")
-            page.keyboard.press("Enter")
-            page.wait_for_function("state.tab === 'diff'")
-            page.wait_for_timeout(300)
-            assert not [one for one in seen if "select-window" in one], seen
+    with opened((None, base)) as page:
+        page.focus(".tab[data-tab='diff']")
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        assert page.evaluate(
+            "document.activeElement.matches('.tab[data-tab=diff]')")
+        page.keyboard.press("Enter")
+        page.wait_for_function("state.tab === 'diff'")
+        page.wait_for_timeout(300)
+        assert not [one for one in seen if "select-window" in one], seen
 
-            # A click leaves the focus on the tab it pressed, but not
-            # `:focus-visible`: Enter there is still the jump key.
-            page.click(".tab[data-tab='files']")
-            assert page.evaluate("document.activeElement.matches('.tab')")
-            page.keyboard.press("Enter")
-            deadline = time.time() + 15
-            while (["tmux", "select-window", "-t", "%7"] not in seen
-                   and time.time() < deadline):
-                time.sleep(0.05)
-            assert ["tmux", "select-window", "-t", "%7"] in seen
-        finally:
-            browser.close()
+        # A click leaves the focus on the tab it pressed, but not
+        # `:focus-visible`: Enter there is still the jump key.
+        page.click(".tab[data-tab='files']")
+        assert page.evaluate("document.activeElement.matches('.tab')")
+        page.keyboard.press("Enter")
+        deadline = time.time() + 15
+        while (["tmux", "select-window", "-t", "%7"] not in seen
+               and time.time() < deadline):
+            time.sleep(0.05)
+        assert ["tmux", "select-window", "-t", "%7"] in seen
 
 
 def test_the_box_grows_with_what_is_in_it_and_shrinks_back(in_pane):
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            one = page.eval_on_selector("#say", "el => el.clientHeight")
-            page.click("#say")
-            for _ in range(4):
-                page.keyboard.type("a line")
-                page.keyboard.press("Shift+Enter")
-            page.wait_for_timeout(300)
-            many = page.eval_on_selector("#say", "el => el.clientHeight")
-            assert many > one + 30, (one, many)
-            # it does not grow for ever
-            assert many < page.evaluate("window.innerHeight") / 2 + 40
+    with opened((None, base)) as page:
+        one = page.eval_on_selector("#say", "el => el.clientHeight")
+        page.click("#say")
+        for _ in range(4):
+            page.keyboard.type("a line")
+            page.keyboard.press("Shift+Enter")
+        page.wait_for_timeout(300)
+        many = page.eval_on_selector("#say", "el => el.clientHeight")
+        assert many > one + 30, (one, many)
+        # it does not grow for ever
+        assert many < page.evaluate("window.innerHeight") / 2 + 40
 
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(500)
-            assert page.eval_on_selector("#say", "el => el.clientHeight") == one
-        finally:
-            browser.close()
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(500)
+        assert page.eval_on_selector("#say", "el => el.clientHeight") == one
 
 
 def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
     """A prompt whose start you cannot see is worse than two lines."""
     daemon, base, seen = in_pane
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            one = page.eval_on_selector("#say", "el => el.clientHeight")
-            page.fill("#say", "word " * 120)      # `fill` fires `input` itself
-            page.wait_for_timeout(300)
-            assert page.eval_on_selector("#say", "el => el.clientHeight") > one
-            assert page.eval_on_selector(
-                "#say", "el => el.scrollWidth <= el.clientWidth + 1"
-            ), "it ran off the side instead of wrapping"
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        one = page.eval_on_selector("#say", "el => el.clientHeight")
+        page.fill("#say", "word " * 120)      # `fill` fires `input` itself
+        page.wait_for_timeout(300)
+        assert page.eval_on_selector("#say", "el => el.clientHeight") > one
+        assert page.eval_on_selector(
+            "#say", "el => el.scrollWidth <= el.clientWidth + 1"
+        ), "it ran off the side instead of wrapping"
 
 
 # --- naming a session from the page -------------------------------------------
@@ -1067,53 +938,41 @@ def test_a_session_can_be_renamed_from_the_page(in_pane):
     """`/rename` in the terminal does not reach here: the name Claude Code
     hands the status line is the one the session started with. A name set here
     is ours and wins."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            page.dblclick(".row .name")
-            page.fill("input.rowname", "the parser")
-            page.press("input.rowname", "Enter")
-            # The row is where a name is read: there is no second place that
-            # says it any more. A name given here leads the row.
-            page.wait_for_function(
-                "document.querySelector('.row .name').textContent"
-                ".includes('the parser')")
-        finally:
-            browser.close()
+    with opened((None, base_of(in_pane))) as page:
+        page.dblclick(".row .name")
+        page.fill("input.rowname", "the parser")
+        page.press("input.rowname", "Enter")
+        # The row is where a name is read: there is no second place that
+        # says it any more. A name given here leads the row.
+        page.wait_for_function(
+            "document.querySelector('.row .name').textContent"
+            ".includes('the parser')")
 
 
 def test_escape_leaves_the_name_as_it_was(in_pane):
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            was = page.locator(".row .name").inner_text()
-            page.dblclick(".row .name")
-            page.fill("input.rowname", "not this")
-            page.press("input.rowname", "Escape")
-            page.wait_for_timeout(300)      # proving it did not go
-            assert page.locator(".row .name").inner_text() == was
-        finally:
-            browser.close()
+    with opened((None, base_of(in_pane))) as page:
+        was = page.locator(".row .name").inner_text()
+        page.dblclick(".row .name")
+        page.fill("input.rowname", "not this")
+        page.press("input.rowname", "Escape")
+        page.wait_for_timeout(300)      # proving it did not go
+        assert page.locator(".row .name").inner_text() == was
 
 
 def test_an_empty_name_gives_the_session_its_place_back(in_pane):
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base_of(in_pane)))
-        try:
-            page.dblclick(".row .name")
-            page.fill("input.rowname", "for a moment")
-            page.press("input.rowname", "Enter")
-            page.wait_for_function(
-                "document.querySelector('.row .name').textContent"
-                ".includes('for a moment')")
-            page.dblclick(".row .name")
-            page.fill("input.rowname", "")
-            page.press("input.rowname", "Enter")
-            page.wait_for_function(
-                "!document.querySelector('.row .name').textContent"
-                ".includes('for a moment')")
-        finally:
-            browser.close()
+    with opened((None, base_of(in_pane))) as page:
+        page.dblclick(".row .name")
+        page.fill("input.rowname", "for a moment")
+        page.press("input.rowname", "Enter")
+        page.wait_for_function(
+            "document.querySelector('.row .name').textContent"
+            ".includes('for a moment')")
+        page.dblclick(".row .name")
+        page.fill("input.rowname", "")
+        page.press("input.rowname", "Enter")
+        page.wait_for_function(
+            "!document.querySelector('.row .name').textContent"
+            ".includes('for a moment')")
 
 
 # --- a permission request: read whole, declined from here, never approved ----
@@ -1160,36 +1019,32 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
 
     monkeypatch.setattr(ws, "run", runner)
     now_permission(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .permfield")
-            assert page.locator("#asking .askwhat").inner_text() == "May it use Bash?"
-            fields = page.eval_on_selector_all(
-                "#asking .permfield", """els => els.map((one) => [
-                  one.querySelector('.askprevhead').textContent,
-                  one.querySelector('.askprevbody').textContent])""")
-            assert fields == [["command", BUILD], ["description", "Build and test"]]
-            buttons = page.eval_on_selector_all(
-                "#asking button", "els => els.map((one) => one.textContent)")
-            assert buttons == ["open the terminal", "no"], buttons
-            page.fill("#asking .permwhy", "Use the ninja build instead")
-            # What the page says, kept: the slot is repainted on every push.
-            page.evaluate("""() => { window.words = []; const was = note;
-              note = (word) => { window.words.push(word); was(word); }; }""")
-            page.click("#asking .permno")
-            page.wait_for_function(
-                "window.words.includes('declined, and your reason was typed')")
-            deadline = time.time() + 15
-            while not any("-l" in one for one in seen) and time.time() < deadline:
-                time.sleep(0.05)
-            keys = [one[-1] for one in seen if one[:2] == ["tmux", "send-keys"]]
-            assert keys[0] == "Escape", keys
-            assert "Use the ninja build instead" in keys, keys
-            daemon.tick()
-            page.wait_for_selector("#asking", state="hidden")
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .permfield")
+        assert page.locator("#asking .askwhat").inner_text() == "May it use Bash?"
+        fields = page.eval_on_selector_all(
+            "#asking .permfield", """els => els.map((one) => [
+              one.querySelector('.askprevhead').textContent,
+              one.querySelector('.askprevbody').textContent])""")
+        assert fields == [["command", BUILD], ["description", "Build and test"]]
+        buttons = page.eval_on_selector_all(
+            "#asking button", "els => els.map((one) => one.textContent)")
+        assert buttons == ["open the terminal", "no"], buttons
+        page.fill("#asking .permwhy", "Use the ninja build instead")
+        # What the page says, kept: the slot is repainted on every push.
+        page.evaluate("""() => { window.words = []; const was = note;
+          note = (word) => { window.words.push(word); was(word); }; }""")
+        page.click("#asking .permno")
+        page.wait_for_function(
+            "window.words.includes('declined, and your reason was typed')")
+        deadline = time.time() + 15
+        while not any("-l" in one for one in seen) and time.time() < deadline:
+            time.sleep(0.05)
+        keys = [one[-1] for one in seen if one[:2] == ["tmux", "send-keys"]]
+        assert keys[0] == "Escape", keys
+        assert "Use the ninja build instead" in keys, keys
+        daemon.tick()
+        page.wait_for_selector("#asking", state="hidden")
 
 
 def test_a_dialog_with_no_call_of_its_own_takes_no_reason(ws, in_pane):
@@ -1197,35 +1052,27 @@ def test_a_dialog_with_no_call_of_its_own_takes_no_reason(ws, in_pane):
     that took one and then dropped it would be worse than none."""
     daemon, base, seen = in_pane
     now_permission(ws, daemon, calls=("toolu_b1", "toolu_b2"))
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .permfield")
-            assert page.locator("#asking .permwhy").is_disabled()
-            assert not page.locator("#asking .permno").is_disabled()
-            says = page.locator("#asking .asksays").inner_text()
-            assert "cannot be typed" in says
-            # A Yes in the terminal fires no hook: the warning holds here too.
-            assert "Escape stops the agent" in says
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .permfield")
+        assert page.locator("#asking .permwhy").is_disabled()
+        assert not page.locator("#asking .permno").is_disabled()
+        says = page.locator("#asking .asksays").inner_text()
+        assert "cannot be typed" in says
+        # A Yes in the terminal fires no hook: the warning holds here too.
+        assert "Escape stops the agent" in says
 
 
 def test_a_permission_can_be_read_without_tmux_but_not_declined(ws, no_pane):
     daemon, base = no_pane
     now_permission(ws, daemon, pane="")
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .permfield")
-            assert page.locator("#asking .permno").is_disabled()
-            assert "not in tmux" in page.locator("#asking .asksays").inner_text()
-            # Nothing to open: absent, like jump everywhere else.
-            buttons = page.eval_on_selector_all(
-                "#asking button", "els => els.map((one) => one.textContent)")
-            assert buttons == ["no"], buttons
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .permfield")
+        assert page.locator("#asking .permno").is_disabled()
+        assert "not in tmux" in page.locator("#asking .asksays").inner_text()
+        # Nothing to open: absent, like jump everywhere else.
+        buttons = page.eval_on_selector_all(
+            "#asking button", "els => els.map((one) => one.textContent)")
+        assert buttons == ["no"], buttons
 
 
 def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
@@ -1233,17 +1080,13 @@ def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
     question bar's scar is half an answer lost that way."""
     daemon, base, seen = in_pane
     now_permission(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .permwhy")
-            page.fill("#asking .permwhy", "Use the ninja build")
-            show_tab(page, "diff")
-            show_tab(page, "transcript")
-            page.wait_for_selector("#asking:not([hidden]) .permwhy")
-            assert page.input_value("#asking .permwhy") == "Use the ninja build"
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .permwhy")
+        page.fill("#asking .permwhy", "Use the ninja build")
+        show_tab(page, "diff")
+        show_tab(page, "transcript")
+        page.wait_for_selector("#asking:not([hidden]) .permwhy")
+        assert page.input_value("#asking .permwhy") == "Use the ninja build"
 
 
 def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
@@ -1253,30 +1096,26 @@ def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
     nothing; now it is off, says why, and comes back when the send lands."""
     daemon, base, seen = in_pane
     now_permission(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .permno")
-            page.evaluate("startSending(state.chosen)")
-            assert page.locator("#asking .permno").is_disabled()
-            assert page.inner_text("#asking .permsend .asksays") == \
-                "waiting for what is on its way to this session"
-            page.click("#asking .permno", force=True)
-            page.wait_for_timeout(500)        # proving nothing was pressed
-            assert not [one for one in seen if one[-1] == "Escape"], seen
-            page.evaluate("doneSending(state.chosen)")
-            assert not page.locator("#asking .permno").is_disabled()
-            assert page.inner_text("#asking .permsend .asksays") \
-                .startswith("presses Escape")
-            # Its own No is on its way too, and does not wait for itself.
-            held = hold(page, "**/decline")
-            page.click("#asking .permno")
-            wait_until(page, lambda: held)
-            assert page.locator("#asking .permno").is_disabled()
-            assert page.inner_text("#asking .permsend .asksays") \
-                .startswith("presses Escape")
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .permno")
+        page.evaluate("startSending(state.chosen)")
+        assert page.locator("#asking .permno").is_disabled()
+        assert page.inner_text("#asking .permsend .asksays") == \
+            "waiting for what is on its way to this session"
+        page.click("#asking .permno", force=True)
+        page.wait_for_timeout(500)        # proving nothing was pressed
+        assert not [one for one in seen if one[-1] == "Escape"], seen
+        page.evaluate("doneSending(state.chosen)")
+        assert not page.locator("#asking .permno").is_disabled()
+        assert page.inner_text("#asking .permsend .asksays") \
+            .startswith("presses Escape")
+        # Its own No is on its way too, and does not wait for itself.
+        held = hold(page, "**/decline")
+        page.click("#asking .permno")
+        wait_until(page, lambda: held)
+        assert page.locator("#asking .permno").is_disabled()
+        assert page.inner_text("#asking .permsend .asksays") \
+            .startswith("presses Escape")
 
 
 def test_the_send_box_is_away_while_a_permission_dialog_is_up(ws, in_pane):
@@ -1286,22 +1125,18 @@ def test_the_send_box_is_away_while_a_permission_dialog_is_up(ws, in_pane):
     when the dialog closes."""
     daemon, base, seen = in_pane
     now_permission(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .permfield")
-            assert page.locator("#sendbar").is_hidden()
-            assert "send box is back when this dialog closes" in \
-                page.locator("#asking .askone").inner_text()
-            # A Yes in the terminal: the call runs and reports back.
-            ws.append_event(conftest.event(
-                "PostToolUse", tool_name="Bash", tool_use_id="toolu_b1",
-                tool_input={"command": BUILD}, pane="%7",
-                cwd=daemon.store.sessions["s1"].cwd, ts=time.time()))
-            daemon.tick()
-            page.wait_for_selector("#sendbar:not([hidden])", timeout=15000)
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .permfield")
+        assert page.locator("#sendbar").is_hidden()
+        assert "send box is back when this dialog closes" in \
+            page.locator("#asking .askone").inner_text()
+        # A Yes in the terminal: the call runs and reports back.
+        ws.append_event(conftest.event(
+            "PostToolUse", tool_name="Bash", tool_use_id="toolu_b1",
+            tool_input={"command": BUILD}, pane="%7",
+            cwd=daemon.store.sessions["s1"].cwd, ts=time.time()))
+        daemon.tick()
+        page.wait_for_selector("#sendbar:not([hidden])", timeout=15000)
 
 
 def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
@@ -1309,19 +1144,15 @@ def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
     button is off while the dialog is up, and says why where it stands."""
     daemon, base, seen = in_pane
     now_permission(ws, daemon)
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            show_tab(page, "diff")
-            page.evaluate("""([one]) => { state.review.comments.push(one);
-              keepReview(); }""",
-              [{"anchor": "code.py\n1", "quoted": "x", "note": "later"}])
-            page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
-            assert page.locator("#sendreview").is_disabled()
-            assert "permission dialog" in page.get_attribute(
-                "#sendreview", "title")
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        show_tab(page, "diff")
+        page.evaluate("""([one]) => { state.review.comments.push(one);
+          keepReview(); }""",
+          [{"anchor": "code.py\n1", "quoted": "x", "note": "later"}])
+        page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
+        assert page.locator("#sendreview").is_disabled()
+        assert "permission dialog" in page.get_attribute(
+            "#sendreview", "title")
 
 
 def test_the_review_is_not_offered_to_a_session_that_is_over(ws, in_pane):
@@ -1334,19 +1165,15 @@ def test_the_review_is_not_offered_to_a_session_that_is_over(ws, in_pane):
                                    pane="%7", pid=1, cwd=cwd, ts=time.time()))
     daemon.store.refresh()
     assert daemon.store.sessions["s1"].state == "ended"
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.evaluate("choose('s1')")
-            show_tab(page, "diff")
-            page.evaluate("""([one]) => { state.review.comments.push(one);
-              keepReview(); }""",
-              [{"anchor": "code.py\n1", "quoted": "x", "note": "too late"}])
-            page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
-            assert page.locator("#sendreview").is_disabled()
-            assert "over" in page.get_attribute("#sendreview", "title")
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.evaluate("choose('s1')")
+        show_tab(page, "diff")
+        page.evaluate("""([one]) => { state.review.comments.push(one);
+          keepReview(); }""",
+          [{"anchor": "code.py\n1", "quoted": "x", "note": "too late"}])
+        page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
+        assert page.locator("#sendreview").is_disabled()
+        assert "over" in page.get_attribute("#sendreview", "title")
 
 
 def test_a_question_is_not_answered_into_a_permission_dialog(ws, in_pane):
@@ -1370,19 +1197,15 @@ def test_a_question_is_not_answered_into_a_permission_dialog(ws, in_pane):
     daemon.store.refresh()
     held = daemon.store.sessions["s1"]
     assert held.asking and held.dialog
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#asking:not([hidden]) .askopt")
-            page.click(option(1, 1))
-            page.click(option(2, 1))
-            page.wait_for_function(
-                "document.querySelectorAll('#asking .askopt.chosen').length === 2")
-            assert page.locator(SUBMIT).is_disabled()
-            assert "permission dialog" in page.locator(
-                "#asking .asksays").inner_text()
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .askopt")
+        page.click(option(1, 1))
+        page.click(option(2, 1))
+        page.wait_for_function(
+            "document.querySelectorAll('#asking .askopt.chosen').length === 2")
+        assert page.locator(SUBMIT).is_disabled()
+        assert "permission dialog" in page.locator(
+            "#asking .asksays").inner_text()
     assert seen == []
 
 
@@ -1400,23 +1223,19 @@ def test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole(ws, in_pan
     now_permission(ws, daemon)
     rows = """() => { const box = document.querySelector('#asking .permwhy');
       return [box.clientHeight, box.scrollHeight]; }"""
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.set_viewport_size({"width": 1100, "height": 700})
-            page.wait_for_selector("#asking:not([hidden]) .permwhy")
-            page.evaluate("""() => { const box = document.querySelector('#asking .permwhy');
-              box.value = box.placeholder; }""")
-            shown, needed = page.evaluate(rows)
-            assert needed <= shown, "the placeholder wraps onto a hidden row"
+    with opened((None, base)) as page:
+        page.set_viewport_size({"width": 1100, "height": 700})
+        page.wait_for_selector("#asking:not([hidden]) .permwhy")
+        page.evaluate("""() => { const box = document.querySelector('#asking .permwhy');
+          box.value = box.placeholder; }""")
+        shown, needed = page.evaluate(rows)
+        assert needed <= shown, "the placeholder wraps onto a hidden row"
 
-            page.fill("#asking .permwhy", "do not delete the folder; move it to "
-                      "the archive and tell me what is in it first")
-            shown, needed = page.evaluate(rows)
-            assert shown > 40, "a long reason did not grow the box"
-            assert needed <= shown, "a long reason wraps onto a hidden row"
-        finally:
-            browser.close()
+        page.fill("#asking .permwhy", "do not delete the folder; move it to "
+                  "the archive and tell me what is in it first")
+        shown, needed = page.evaluate(rows)
+        assert shown > 40, "a long reason did not grow the box"
+        assert needed <= shown, "a long reason wraps onto a hidden row"
 
 
 def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
@@ -1441,28 +1260,24 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
             time.sleep(0.05)
         return any(check(one) for one in seen)
 
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.wait_for_selector("#sendbar:not([hidden])")
-            assert max(page.evaluate(level, "#say")) < 1
-            page.click("#say")
-            page.keyboard.type("hello there")
-            page.keyboard.press("Control+Enter")
-            assert pressed(lambda one: "hello there" in one), seen
+    with opened((None, base)) as page:
+        page.wait_for_selector("#sendbar:not([hidden])")
+        assert max(page.evaluate(level, "#say")) < 1
+        page.click("#say")
+        page.keyboard.type("hello there")
+        page.keyboard.press("Control+Enter")
+        assert pressed(lambda one: "hello there" in one), seen
 
-            # The dialog after the send: while it is up there is no send
-            # box. `now_permission` folds the events itself, so no tick
-            # after it has anything new to push; this pushes the rows.
-            now_permission(ws, daemon)
-            daemon.hub.send("sessions", daemon.sessions_payload())
-            page.wait_for_selector("#asking:not([hidden]) .permwhy")
-            assert max(page.evaluate(level, "#asking .permwhy")) < 1
-            page.fill("#asking .permwhy", "no thanks")
-            page.press("#asking .permwhy", "Control+Enter")
-            assert pressed(lambda one: one[-1] == "Escape"), seen
-        finally:
-            browser.close()
+        # The dialog after the send: while it is up there is no send
+        # box. `now_permission` folds the events itself, so no tick
+        # after it has anything new to push; this pushes the rows.
+        now_permission(ws, daemon)
+        daemon.hub.send("sessions", daemon.sessions_payload())
+        page.wait_for_selector("#asking:not([hidden]) .permwhy")
+        assert max(page.evaluate(level, "#asking .permwhy")) < 1
+        page.fill("#asking .permwhy", "no thanks")
+        page.press("#asking .permwhy", "Control+Enter")
+        assert pressed(lambda one: one[-1] == "Escape"), seen
 
 
 # --- completing a slash command (#268) ----------------------------------------
@@ -1497,28 +1312,24 @@ def test_a_slash_offers_the_commands_and_tab_takes_one(ws, in_pane, tmp_path):
     daemon, base, seen = in_pane
     skill(tmp_path / ".claude", "review-pr", "Review a pull request")
     ran(daemon, "clear")
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.click("#say")
-            page.keyboard.type("/")
-            page.wait_for_function("!$('slash').hidden")
-            assert page.evaluate(SLASH_ROWS) == ["/clear", "/review-pr"]
-            page.keyboard.type("rev")
-            page.wait_for_function("document.querySelectorAll('#slash button').length === 1")
-            assert page.text_content("#slash button .hint") == "[number]"
-            assert page.text_content("#slash button .came") == "this project"
-            page.keyboard.press("Tab")
-            assert page.input_value("#say") == "/review-pr "
-            assert page.evaluate("$('slash').hidden")
-            assert page.evaluate("document.activeElement.id") == "say"
-            assert not any("send-keys" in one for one in seen)
-            page.keyboard.type("12")
-            page.keyboard.press("Enter")
-            typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "/review-pr 12"]
-            wait_until(page, lambda: typed in seen)
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("/")
+        page.wait_for_function("!$('slash').hidden")
+        assert page.evaluate(SLASH_ROWS) == ["/clear", "/review-pr"]
+        page.keyboard.type("rev")
+        page.wait_for_function("document.querySelectorAll('#slash button').length === 1")
+        assert page.text_content("#slash button .hint") == "[number]"
+        assert page.text_content("#slash button .came") == "this project"
+        page.keyboard.press("Tab")
+        assert page.input_value("#say") == "/review-pr "
+        assert page.evaluate("$('slash').hidden")
+        assert page.evaluate("document.activeElement.id") == "say"
+        assert not any("send-keys" in one for one in seen)
+        page.keyboard.type("12")
+        page.keyboard.press("Enter")
+        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "/review-pr 12"]
+        wait_until(page, lambda: typed in seen)
 
 
 def test_enter_takes_a_command_and_escape_keeps_the_list_shut(ws, in_pane, tmp_path):
@@ -1528,35 +1339,31 @@ def test_enter_takes_a_command_and_escape_keeps_the_list_shut(ws, in_pane, tmp_p
     daemon, base, seen = in_pane
     skill(tmp_path / ".claude", "review-pr", "Review a pull request")
     ran(daemon, "clear")
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.click("#say")
-            page.keyboard.type("/")
-            page.wait_for_function("document.querySelectorAll('#slash button').length === 2")
-            page.keyboard.press("ArrowDown")
-            assert page.text_content("#slash button.chosen .name") == "/review-pr"
-            page.keyboard.press("Enter")
-            assert page.input_value("#say") == "/review-pr "
-            assert not any("send-keys" in one for one in seen)
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("/")
+        page.wait_for_function("document.querySelectorAll('#slash button').length === 2")
+        page.keyboard.press("ArrowDown")
+        assert page.text_content("#slash button.chosen .name") == "/review-pr"
+        page.keyboard.press("Enter")
+        assert page.input_value("#say") == "/review-pr "
+        assert not any("send-keys" in one for one in seen)
 
-            page.fill("#say", "")
-            page.keyboard.type("/")
-            page.wait_for_function("!$('slash').hidden")
-            page.keyboard.press("Escape")
-            assert page.evaluate("$('slash').hidden")
-            assert page.evaluate("document.activeElement.id") == "say"
-            page.keyboard.type("c")
-            page.wait_for_timeout(300)          # proving the list did *not* open
-            assert page.evaluate("$('slash').hidden")
+        page.fill("#say", "")
+        page.keyboard.type("/")
+        page.wait_for_function("!$('slash').hidden")
+        page.keyboard.press("Escape")
+        assert page.evaluate("$('slash').hidden")
+        assert page.evaluate("document.activeElement.id") == "say"
+        page.keyboard.type("c")
+        page.wait_for_timeout(300)          # proving the list did *not* open
+        assert page.evaluate("$('slash').hidden")
 
-            page.keyboard.press("Backspace")
-            page.keyboard.press("Backspace")
-            page.keyboard.type("/c")
-            page.wait_for_function("!$('slash').hidden")
-            assert page.evaluate(SLASH_ROWS) == ["/clear"]
-        finally:
-            browser.close()
+        page.keyboard.press("Backspace")
+        page.keyboard.press("Backspace")
+        page.keyboard.type("/c")
+        page.wait_for_function("!$('slash').hidden")
+        assert page.evaluate(SLASH_ROWS) == ["/clear"]
 
 
 def test_enter_sends_what_was_typed_unless_a_row_was_chosen(ws, in_pane, tmp_path):
@@ -1574,35 +1381,31 @@ def test_enter_sends_what_was_typed_unless_a_row_was_chosen(ws, in_pane, tmp_pat
         wait_until(page, lambda: typed in seen)
         page.wait_for_function("sending.size === 0")
 
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.click("#say")
-            page.keyboard.type("/rp")                 # review-pr, scattered
-            page.wait_for_function("!$('slash').hidden")
-            page.keyboard.press("Enter")
-            sent("/rp")
-            page.keyboard.type("/rp")                 # the same, but chosen
-            page.wait_for_function("!$('slash').hidden")
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
-            assert page.input_value("#say") == "/review-pr "
-            page.fill("#say", "")
-            page.keyboard.type("/clear")              # the whole name
-            page.wait_for_function("!$('slash').hidden")
-            page.keyboard.press("Enter")
-            sent("/clear")
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("/rp")                 # review-pr, scattered
+        page.wait_for_function("!$('slash').hidden")
+        page.keyboard.press("Enter")
+        sent("/rp")
+        page.keyboard.type("/rp")                 # the same, but chosen
+        page.wait_for_function("!$('slash').hidden")
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        assert page.input_value("#say") == "/review-pr "
+        page.fill("#say", "")
+        page.keyboard.type("/clear")              # the whole name
+        page.wait_for_function("!$('slash').hidden")
+        page.keyboard.press("Enter")
+        sent("/clear")
 
-            page.keyboard.type("/")
-            page.wait_for_function("!$('slash').hidden")
-            page.keyboard.press("Escape")
-            page.keyboard.type("x")
-            page.keyboard.press("Enter")
-            sent("/x")
-            page.keyboard.type("/")
-            page.wait_for_function("!$('slash').hidden")
-        finally:
-            browser.close()
+        page.keyboard.type("/")
+        page.wait_for_function("!$('slash').hidden")
+        page.keyboard.press("Escape")
+        page.keyboard.type("x")
+        page.keyboard.press("Enter")
+        sent("/x")
+        page.keyboard.type("/")
+        page.wait_for_function("!$('slash').hidden")
 
 
 def test_an_answer_for_a_box_that_was_left_opens_nothing(ws, in_pane, tmp_path):
@@ -1612,20 +1415,16 @@ def test_an_answer_for_a_box_that_was_left_opens_nothing(ws, in_pane, tmp_path):
     daemon, base, seen = in_pane
     skill(tmp_path / ".claude", "review-pr", "Review a pull request")
     held = []
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.route("**/commands", lambda route: held.append(route))
-            page.click("#say")
-            page.keyboard.type("/")
-            wait_until(page, lambda: held)
-            page.evaluate("$('say').blur()")
-            with page.expect_response("**/commands"):
-                held[0].continue_()
-            page.wait_for_timeout(300)          # proving the list did *not* open
-            assert page.evaluate("$('slash').hidden")
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.route("**/commands", lambda route: held.append(route))
+        page.click("#say")
+        page.keyboard.type("/")
+        wait_until(page, lambda: held)
+        page.evaluate("$('say').blur()")
+        with page.expect_response("**/commands"):
+            held[0].continue_()
+        page.wait_for_timeout(300)          # proving the list did *not* open
+        assert page.evaluate("$('slash').hidden")
 
 
 def test_the_list_is_asked_for_each_time_it_opens(ws, in_pane, tmp_path):
@@ -1633,17 +1432,13 @@ def test_the_list_is_asked_for_each_time_it_opens(ws, in_pane, tmp_path):
     commands are not kept from one opening to the next."""
     daemon, base, seen = in_pane
     skill(tmp_path / ".claude", "review-pr", "Review a pull request")
-    with sync_playwright() as play:
-        browser, page = open_page(play, (None, base))
-        try:
-            page.click("#say")
-            page.keyboard.type("/")
-            page.wait_for_function("document.querySelectorAll('#slash button').length === 1")
-            page.keyboard.press("Backspace")
-            page.wait_for_function("$('slash').hidden")
-            skill(ws.claude_dir(), "notes", "Write today's notes")
-            page.keyboard.type("/")
-            page.wait_for_function("document.querySelectorAll('#slash button').length === 2")
-            assert page.evaluate(SLASH_ROWS) == ["/notes", "/review-pr"]
-        finally:
-            browser.close()
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("/")
+        page.wait_for_function("document.querySelectorAll('#slash button').length === 1")
+        page.keyboard.press("Backspace")
+        page.wait_for_function("$('slash').hidden")
+        skill(ws.claude_dir(), "notes", "Write today's notes")
+        page.keyboard.type("/")
+        page.wait_for_function("document.querySelectorAll('#slash button').length === 2")
+        assert page.evaluate(SLASH_ROWS) == ["/notes", "/review-pr"]

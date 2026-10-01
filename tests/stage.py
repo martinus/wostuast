@@ -201,67 +201,62 @@ def main(argv: list[str]) -> int:
     sys.path.insert(0, str(HERE))
     url, _ = serve(home, said.commands)
 
-    from browser import DRAWN, WAIT, open_page, show_tab, sync_playwright
+    from browser import DRAWN, WAIT, opened, show_tab
     wait = WAIT or 15000
-    with sync_playwright() as play:
-        context, page = open_page(play, url,
-                                  scheme="light" if said.light else "dark")
-        try:
-            page.set_viewport_size({"width": said.width, "height": said.height})
-            if said.review:
-                page.evaluate("(r) => localStorage.setItem('wostuast-review-s1', r)",
-                              review())
-                page.reload()
-                page.wait_for_function("!!window.marked && state.chosen === 's1'",
-                                       timeout=wait)
-            tab = TABS[said.tab]
-            if tab != "transcript":
-                show_tab(page, tab)
-            page.wait_for_selector(DRAWN[tab], timeout=wait)
-            if tab == "diff":
-                page.wait_for_function("(state.diff || {}).commits?.length === 4",
-                                       timeout=wait)
-                if said.commit:
-                    sha = page.evaluate("(n) => state.diff.commits[4 - n].sha",
-                                        said.commit)
-                    page.evaluate("(s) => pickDiff(s)", sha)
-                    page.wait_for_function(
-                        "(s) => state.diff && state.diff.of === s", arg=sha,
-                        timeout=wait)
-                page.wait_for_selector(".diffscroll .dfile", timeout=wait)
-            if said.open:
-                page.wait_for_function("(p) => state.files.known.has(p)",
-                                       arg=said.open, timeout=wait)
-                page.evaluate("(p) => goTo(p)", said.open)
-                page.wait_for_function(
-                    "(p) => state.files.read && state.files.path === p",
-                    arg=said.open, timeout=wait)
-            for flag, value in said.steps:
-                if flag == "click":
-                    page.click(value)
-                elif flag == "type":
-                    selector, _, text = value.partition("=")
-                    page.fill(selector, text)
-                    page.press(selector, "Enter")
-                elif flag == "keys":
-                    selector, _, text = value.partition("=")
-                    page.type(selector, text)
-                else:
-                    page.evaluate(value)
-            page.wait_for_function("() => !document.getAnimations().length",
+    with opened(url, scheme="light" if said.light else "dark") as page:
+        page.set_viewport_size({"width": said.width, "height": said.height})
+        if said.review:
+            page.evaluate("(r) => localStorage.setItem('wostuast-review-s1', r)",
+                          review())
+            page.reload()
+            page.wait_for_function("!!window.marked && state.chosen === 's1'",
                                    timeout=wait)
-            page.wait_for_timeout(200)     # a frame for what a click redrew
-            page.locator(said.part).first.screenshot(path=said.out)
-            print(said.out)
-            if said.keep:
-                print(url.split("#")[0], flush=True)
-                try:
-                    while True:
-                        time.sleep(3600)
-                except KeyboardInterrupt:
-                    pass
-        finally:
-            context.close()
+        tab = TABS[said.tab]
+        if tab != "transcript":
+            show_tab(page, tab)
+        page.wait_for_selector(DRAWN[tab], timeout=wait)
+        if tab == "diff":
+            page.wait_for_function("(state.diff || {}).commits?.length === 4",
+                                   timeout=wait)
+            if said.commit:
+                sha = page.evaluate("(n) => state.diff.commits[4 - n].sha",
+                                    said.commit)
+                page.evaluate("(s) => pickDiff(s)", sha)
+                page.wait_for_function(
+                    "(s) => state.diff && state.diff.of === s", arg=sha,
+                    timeout=wait)
+            page.wait_for_selector(".diffscroll .dfile", timeout=wait)
+        if said.open:
+            page.wait_for_function("(p) => state.files.known.has(p)",
+                                   arg=said.open, timeout=wait)
+            page.evaluate("(p) => goTo(p)", said.open)
+            page.wait_for_function(
+                "(p) => state.files.read && state.files.path === p",
+                arg=said.open, timeout=wait)
+        for flag, value in said.steps:
+            if flag == "click":
+                page.click(value)
+            elif flag == "type":
+                selector, _, text = value.partition("=")
+                page.fill(selector, text)
+                page.press(selector, "Enter")
+            elif flag == "keys":
+                selector, _, text = value.partition("=")
+                page.type(selector, text)
+            else:
+                page.evaluate(value)
+        page.wait_for_function("() => !document.getAnimations().length",
+                               timeout=wait)
+        page.wait_for_timeout(200)     # a frame for what a click redrew
+        page.locator(said.part).first.screenshot(path=said.out)
+        print(said.out)
+        if said.keep:
+            print(url.split("#")[0], flush=True)
+            try:
+                while True:
+                    time.sleep(3600)
+            except KeyboardInterrupt:
+                pass
     return 0
 
 

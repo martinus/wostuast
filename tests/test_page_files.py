@@ -16,8 +16,7 @@ from browser import (
     open_file,
     code_text,
     skip_without_browser,
-    sync_playwright,
-    open_page,
+    opened,
     show_tab,
     numbers,
     open_code,
@@ -27,17 +26,13 @@ from browser import (
 pytestmark = skip_without_browser
 
 def test_the_files_tab_lists_every_file(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            names = page.eval_on_selector_all(
-                ".filelist button .name", "els => els.map(e => e.textContent)")
-            assert names[0] == "README.md"          # pinned
-            assert set(names) == {"README.md", "NOTES.md", "code.py"}
-            assert "The readme" in page.locator(".filebody .prose").inner_text()
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        names = page.eval_on_selector_all(
+            ".filelist button .name", "els => els.map(e => e.textContent)")
+        assert names[0] == "README.md"          # pinned
+        assert set(names) == {"README.md", "NOTES.md", "code.py"}
+        assert "The readme" in page.locator(".filebody .prose").inner_text()
 
 
 def test_a_generated_directory_is_in_the_tree_and_its_build_root_is_not(
@@ -52,35 +47,31 @@ def test_a_generated_directory_is_in_the_tree_and_its_build_root_is_not(
     (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
     for index in range(20):
         (repo / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button:has-text('.oa-implement')")
-            page.click(".filelist button:has-text('.oa-implement')")
-            page.wait_for_selector(".filelist button:has-text('_build_root_c2')")
-            # The folder says why it is empty, where it stands.
-            assert page.locator(
-                ".filelist button:has-text('_build_root_c2') .toobig"
-            ).inner_text() == "not listed"
-            # And it promises nothing the page cannot do: no name in it can
-            # be found or kept open, so "opening one still works" was false.
-            title = page.locator(
-                ".filelist button:has-text('_build_root_c2')").get_attribute("title")
-            assert "still works" not in title, title
-            # And it does not open onto nothing.
-            page.click(".filelist button:has-text('_build_root_c2')")
-            assert page.locator(".filelist button:has-text('o1.o')").count() == 0
-            # The plan beside it is a file like any other.
-            page.click(".filelist button:has-text('PLAN.md')")
-            # For the text, not only for the name: the pane draws as soon
-            # as the path moves and the file itself arrives a fetch later.
-            page.wait_for_function(
-                """() => { const one = document.querySelector('.filebody .prose');
-                           return one && one.innerText.includes('the plan'); }""")
-            assert "the plan" in page.locator(".filebody .prose").inner_text()
-        finally:
-            browser.close()
+    with opened(path) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button:has-text('.oa-implement')")
+        page.click(".filelist button:has-text('.oa-implement')")
+        page.wait_for_selector(".filelist button:has-text('_build_root_c2')")
+        # The folder says why it is empty, where it stands.
+        assert page.locator(
+            ".filelist button:has-text('_build_root_c2') .toobig"
+        ).inner_text() == "not listed"
+        # And it promises nothing the page cannot do: no name in it can
+        # be found or kept open, so "opening one still works" was false.
+        title = page.locator(
+            ".filelist button:has-text('_build_root_c2')").get_attribute("title")
+        assert "still works" not in title, title
+        # And it does not open onto nothing.
+        page.click(".filelist button:has-text('_build_root_c2')")
+        assert page.locator(".filelist button:has-text('o1.o')").count() == 0
+        # The plan beside it is a file like any other.
+        page.click(".filelist button:has-text('PLAN.md')")
+        # For the text, not only for the name: the pane draws as soon
+        # as the path moves and the file itself arrives a fetch later.
+        page.wait_for_function(
+            """() => { const one = document.querySelector('.filebody .prose');
+                       return one && one.innerText.includes('the plan'); }""")
+        assert "the plan" in page.locator(".filebody .prose").inner_text()
 
 
 def test_a_build_root_that_appears_later_turns_up_on_its_own(ws, repo_page,
@@ -93,26 +84,22 @@ def test_a_build_root_that_appears_later_turns_up_on_its_own(ws, repo_page,
     (repo / ".gitignore").write_text(".oa-implement/\n")
     (repo / ".oa-implement").mkdir()
     (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button:has-text('.oa-implement')")
-            page.click(".filelist button:has-text('.oa-implement')")
-            page.wait_for_selector(".filelist button:has-text('PLAN.md')")
-            held = page.evaluate("state.files.tag")
+    with opened(path) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button:has-text('.oa-implement')")
+        page.click(".filelist button:has-text('.oa-implement')")
+        page.wait_for_selector(".filelist button:has-text('PLAN.md')")
+        held = page.evaluate("state.files.tag")
 
-            (repo / ".oa-implement" / "_build_root_c2").mkdir()
-            for index in range(20):
-                (repo / ".oa-implement" / "_build_root_c2"
-                 / f"o{index}.o").write_text("x")
+        (repo / ".oa-implement" / "_build_root_c2").mkdir()
+        for index in range(20):
+            (repo / ".oa-implement" / "_build_root_c2"
+             / f"o{index}.o").write_text("x")
 
-            page.wait_for_selector(".filelist button:has-text('_build_root_c2')",
-                                   timeout=15000)
-            # And it really was not the names that brought it: they never moved.
-            assert page.evaluate("state.files.tag") == held
-        finally:
-            browser.close()
+        page.wait_for_selector(".filelist button:has-text('_build_root_c2')",
+                               timeout=15000)
+        # And it really was not the names that brought it: they never moved.
+        assert page.evaluate("state.files.tag") == held
 
 
 def test_a_file_in_a_generated_directory_is_found_by_name(ws, repo_page,
@@ -127,22 +114,18 @@ def test_a_file_in_a_generated_directory_is_found_by_name(ws, repo_page,
     (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
     for index in range(20):
         (repo / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button:has-text('.oa-implement')")
-            page.locator("#find").fill("oaPLAN")
-            page.wait_for_selector(".goto button")
-            found = page.eval_on_selector_all(
-                ".goto button", "els => els.map((one) => one.title)")
-            assert ".oa-implement/PLAN.md" in found, found
-            # Not one file from the build root, because not one was sent.
-            # The folder itself is a place, like every other directory: going
-            # to it shows where it sits, which is the answer it has.
-            assert not [one for one in found if one.endswith(".o")], found
-        finally:
-            browser.close()
+    with opened(path) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button:has-text('.oa-implement')")
+        page.locator("#find").fill("oaPLAN")
+        page.wait_for_selector(".goto button")
+        found = page.eval_on_selector_all(
+            ".goto button", "els => els.map((one) => one.title)")
+        assert ".oa-implement/PLAN.md" in found, found
+        # Not one file from the build root, because not one was sent.
+        # The folder itself is a place, like every other directory: going
+        # to it shows where it sits, which is the answer it has.
+        assert not [one for one in found if one.endswith(".o")], found
 
 
 def test_a_document_is_read_as_markdown_or_text_from_the_right_of_its_path(repo_page):
@@ -152,157 +135,121 @@ def test_a_document_is_read_as_markdown_or_text_from_the_right_of_its_path(repo_
     that names what is read. It was a link after the path."""
     repo, path = repo_page
     (repo / "PLAN.md").write_text("# The plan\n\nFirst **this**.\n")
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('PLAN.md')")
-            page.wait_for_selector(".filebody .prose h1")
-            pressed = """() => [...document.querySelectorAll(
-              '.filebody .where .readas button')].map((b) => b.getAttribute('aria-pressed'))"""
-            assert page.evaluate(pressed) == ["true", "false"]
-            got = page.evaluate("""() => {
-              const where = document.querySelector('.filebody .where');
-              const box = where.getBoundingClientRect();
-              const choice = where.querySelector('.readas').getBoundingClientRect();
-              const path = where.querySelector('.crumbs').getBoundingClientRect();
-              return [box.right - choice.right,
-                      path.bottom > choice.top && path.top < choice.bottom];
-            }""")
-            assert got[0] < 40 and got[1], got
-            page.click(".filebody .where .readas button[data-value='true']")
-            page.wait_for_selector(".filebody .code .dline")
-            assert page.evaluate(pressed) == ["false", "true"]
-            page.click(".filebody .where .readas button[data-value='false']")
-            page.wait_for_selector(".filebody .prose h1")
-        finally:
-            browser.close()
+    with opened(path) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('PLAN.md')")
+        page.wait_for_selector(".filebody .prose h1")
+        pressed = """() => [...document.querySelectorAll(
+          '.filebody .where .readas button')].map((b) => b.getAttribute('aria-pressed'))"""
+        assert page.evaluate(pressed) == ["true", "false"]
+        got = page.evaluate("""() => {
+          const where = document.querySelector('.filebody .where');
+          const box = where.getBoundingClientRect();
+          const choice = where.querySelector('.readas').getBoundingClientRect();
+          const path = where.querySelector('.crumbs').getBoundingClientRect();
+          return [box.right - choice.right,
+                  path.bottom > choice.top && path.top < choice.bottom];
+        }""")
+        assert got[0] < 40 and got[1], got
+        page.click(".filebody .where .readas button[data-value='true']")
+        page.wait_for_selector(".filebody .code .dline")
+        assert page.evaluate(pressed) == ["false", "true"]
+        page.click(".filebody .where .readas button[data-value='false']")
+        page.wait_for_selector(".filebody .prose h1")
 
 
 def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('code.py')")
-            page.wait_for_timeout(700)
-            assert page.locator(".filebody .prose").count() == 0
-            assert "print(1)" in code_text(page)
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('code.py')")
+        page.wait_for_timeout(700)
+        assert page.locator(".filebody .prose").count() == 0
+        assert "print(1)" in code_text(page)
 
 
 def test_a_changed_file_is_marked(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            touched = page.eval_on_selector_all(
-                ".filelist button.touched .name", "els => els.map(e => e.textContent)")
-            assert sorted(touched) == ["NOTES.md", "README.md"]
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        touched = page.eval_on_selector_all(
+            ".filelist button.touched .name", "els => els.map(e => e.textContent)")
+        assert sorted(touched) == ["NOTES.md", "README.md"]
 
 
 def test_typing_finds_a_file_by_scattered_letters(repo_page):
     """A file picker, not a filter: `nsmd` has to find NOTES.md the way it does
     in an editor. The letters must turn up in that order, but not together,
     and the ones that matched are picked out."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "nsmd")
-            page.wait_for_selector(".goto button")
-            names = page.eval_on_selector_all(
-                ".goto button .name", "els => els.map(e => e.textContent)")
-            assert names == ["NOTES.md"]
-            lit = page.eval_on_selector_all(
-                ".goto .lit", "els => els.map(e => e.textContent).join('')")
-            assert lit.lower() == "nsmd"
-            # The letters have to be in order; these are the same four, not.
-            page.fill("#find", "dmsn")
-            page.wait_for_selector(".goto .nohits")
-            assert page.locator(".goto button").count() == 0
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "nsmd")
+        page.wait_for_selector(".goto button")
+        names = page.eval_on_selector_all(
+            ".goto button .name", "els => els.map(e => e.textContent)")
+        assert names == ["NOTES.md"]
+        lit = page.eval_on_selector_all(
+            ".goto .lit", "els => els.map(e => e.textContent).join('')")
+        assert lit.lower() == "nsmd"
+        # The letters have to be in order; these are the same four, not.
+        page.fill("#find", "dmsn")
+        page.wait_for_selector(".goto .nohits")
+        assert page.locator(".goto button").count() == 0
 
 
 def test_the_best_match_comes_first(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "py")
-            page.wait_for_selector(".goto button")
-            names = page.eval_on_selector_all(
-                ".goto button .name", "els => els.map(e => e.textContent)")
-            assert names[0] == "code.py"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "py")
+        page.wait_for_selector(".goto button")
+        names = page.eval_on_selector_all(
+            ".goto button .name", "els => els.map(e => e.textContent)")
+        assert names[0] == "code.py"
 
 
 def test_a_name_that_matches_nothing_says_so(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "zzqq")
-            page.wait_for_selector(".goto .nohits")
-            assert page.locator(".goto button").count() == 0
-            # And the tree is untouched behind it.
-            assert page.locator(".filelist button").count() > 0
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "zzqq")
+        page.wait_for_selector(".goto .nohits")
+        assert page.locator(".goto button").count() == 0
+        # And the tree is untouched behind it.
+        assert page.locator(".filelist button").count() > 0
 
 
 def test_another_file_is_shown_when_it_is_picked(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('NOTES.md')")
-            page.wait_for_timeout(700)
-            assert "Notes" in page.locator(".filebody .prose").inner_text()
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('NOTES.md')")
+        page.wait_for_timeout(700)
+        assert "Notes" in page.locator(".filebody .prose").inner_text()
 
 
 def test_a_hostile_file_cannot_run_either(repo_page):
     """The Files tab renders a file the agent may never have looked at, so the
     scrub matters here at least as much as in the transcript."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('NOTES.md')")
-            page.wait_for_timeout(700)
-            assert page.evaluate("window.PWNED ?? null") is None
-            assert page.locator(".filebody img").count() == 0
-            assert page.locator(".filebody script").count() == 0
-            assert "onerror" in page.locator(".filebody .prose").inner_text()
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('NOTES.md')")
+        page.wait_for_timeout(700)
+        assert page.evaluate("window.PWNED ?? null") is None
+        assert page.locator(".filebody img").count() == 0
+        assert page.locator(".filebody script").count() == 0
+        assert "onerror" in page.locator(".filebody .prose").inner_text()
 
 
 def test_an_edited_file_is_read_again_without_losing_the_place(repo_page):
     root, _ = repo_page
     long_file = "# The readme\n\n" + "\n\n".join(f"line {n}" for n in range(400))
     (root / "README.md").write_text(long_file)
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.eval_on_selector(".filescroll", "el => el.scrollTop = 900")
-            (root / "README.md").write_text(long_file + "\n\nand one more\n")
-            # Wait for the new line to arrive, not for a poll to have passed.
-            page.wait_for_function(
-                "document.querySelector('.filebody .prose').innerText"
-                ".includes('and one more')", timeout=15000)
-            where = page.eval_on_selector(".filescroll", "el => el.scrollTop")
-            assert where > 500, "the reader was thrown back to the top"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.eval_on_selector(".filescroll", "el => el.scrollTop = 900")
+        (root / "README.md").write_text(long_file + "\n\nand one more\n")
+        # Wait for the new line to arrive, not for a poll to have passed.
+        page.wait_for_function(
+            "document.querySelector('.filebody .prose').innerText"
+            ".includes('and one more')", timeout=15000)
+        where = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+        assert where > 500, "the reader was thrown back to the top"
 
 
 def test_touching_another_file_leaves_the_open_one_alone(repo_page):
@@ -310,21 +257,17 @@ def test_touching_another_file_leaves_the_open_one_alone(repo_page):
     that an agent saving any Markdown re-rendered the file you were reading,
     every two seconds, and threw away where you were in it."""
     root, _ = repo_page
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            # `show_tab` waits for the tab's frame; the document inside it is
-            # one fetch further on, and `.prose` is null until it lands.
-            page.wait_for_selector(".filebody .prose")
-            page.evaluate(
-                "window.__doc = document.querySelector('.filebody .prose')")
-            (root / "NOTES.md").write_text("# Notes\n\ntouched again\n")
-            page.wait_for_timeout(3000)       # two polls
-            assert page.evaluate("window.__doc.isConnected"), \
-                "the open document was rebuilt for another file's change"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        # `show_tab` waits for the tab's frame; the document inside it is
+        # one fetch further on, and `.prose` is null until it lands.
+        page.wait_for_selector(".filebody .prose")
+        page.evaluate(
+            "window.__doc = document.querySelector('.filebody .prose')")
+        (root / "NOTES.md").write_text("# Notes\n\ntouched again\n")
+        page.wait_for_timeout(3000)       # two polls
+        assert page.evaluate("window.__doc.isConnected"), \
+            "the open document was rebuilt for another file's change"
 
 
 def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
@@ -339,95 +282,71 @@ def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
     (root / "CLAUDE.md").write_text("# claude\n")
     git(root, "add", "CLAUDE.md")
     git(root, "commit", "-qm", "claude")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button")
-            where = ".filelist button.touched:has-text('CLAUDE.md')"
-            assert page.locator(where).count() == 0
-            assert page.eval_on_selector_all(
-                ".filelist button .name",
-                "els => els.map(e => e.textContent)")[0] == "CLAUDE.md"
-            (root / "CLAUDE.md").write_text("# claude\n\nedited\n")
-            # Wait for the dot, not for long enough that it must have come.
-            page.wait_for_selector(where, timeout=15000)
-            names = page.eval_on_selector_all(
-                ".filelist button .name", "els => els.map(e => e.textContent)")
-            assert names[0] == "CLAUDE.md", "it should not have moved"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button")
+        where = ".filelist button.touched:has-text('CLAUDE.md')"
+        assert page.locator(where).count() == 0
+        assert page.eval_on_selector_all(
+            ".filelist button .name",
+            "els => els.map(e => e.textContent)")[0] == "CLAUDE.md"
+        (root / "CLAUDE.md").write_text("# claude\n\nedited\n")
+        # Wait for the dot, not for long enough that it must have come.
+        page.wait_for_selector(where, timeout=15000)
+        names = page.eval_on_selector_all(
+            ".filelist button .name", "els => els.map(e => e.textContent)")
+        assert names[0] == "CLAUDE.md", "it should not have moved"
 
 
 def test_a_worktree_without_markdown_says_so(page_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            show_tab(page, "files")
-            assert "no file that git knows about" in \
-                page.locator(".filebody").inner_text()
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        show_tab(page, "files")
+        assert "no file that git knows about" in \
+            page.locator(".filebody").inner_text()
 
 
 def test_git_failing_does_not_read_as_an_empty_worktree(repo_page):
     """"No files" and "git did not answer" look the same and mean opposite
     things. A two second timeout over fifty thousand files drew the first."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.evaluate("state.files.names = []; state.files.path = null;"
-                          " state.files.failed = true; draw()")
-            page.wait_for_timeout(200)
-            said = page.locator(".filebody .empty").inner_text()
-            assert "git did not answer" in said
-            assert "holds no file" not in said
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.evaluate("state.files.names = []; state.files.path = null;"
+                      " state.files.failed = true; draw()")
+        page.wait_for_timeout(200)
+        said = page.locator(".filebody .empty").inner_text()
+        assert "git did not answer" in said
+        assert "holds no file" not in said
 
 
 def test_a_directory_that_is_not_a_repository_says_so(page_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, page_at)
-        try:
-            show_tab(page, "diff")
-            assert "no branch to compare" in page.locator(".diffbody").inner_text()
-            assert page.locator("#diffcount").is_hidden()
-        finally:
-            browser.close()
+    with opened(page_at) as page:
+        show_tab(page, "diff")
+        assert "no branch to compare" in page.locator(".diffbody").inner_text()
+        assert page.locator("#diffcount").is_hidden()
 
 
 def test_typing_finds_a_file_past_the_first_five_thousand(big_page):
     """The listing stopped at 5000 names sorted by name, so everything under
     `native/` was cut before the matcher saw it. In a 52,799 file repository
     `libcorrelation` found 16 files and missed more than a thousand."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "libcorrelation")
-            page.wait_for_selector(".goto button")
-            # The directory it names is a place to go in its own right, and so
-            # is the one file under it.
-            found = page.eval_on_selector_all(
-                ".goto button", "els => els.map(e => e.title)")
-            assert "native/shared/libcorrelation/src/Action.h" in found
-            assert "native/shared/libcorrelation" in found
-        finally:
-            browser.close()
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "libcorrelation")
+        page.wait_for_selector(".goto button")
+        # The directory it names is a place to go in its own right, and so
+        # is the one file under it.
+        found = page.eval_on_selector_all(
+            ".goto button", "els => els.map(e => e.title)")
+        assert "native/shared/libcorrelation/src/Action.h" in found
+        assert "native/shared/libcorrelation" in found
 
 
 def test_code_is_painted(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
-            assert page.locator(".filebody .code .hljs-keyword").inner_text() == "print"
-            # The stub paints the first line; the rest of the file follows it.
-            assert code_text(page) == "print(1)\nprint(2)"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
+        assert page.locator(".filebody .code .hljs-keyword").inner_text() == "print"
+        # The stub paints the first line; the rest of the file follows it.
+        assert code_text(page) == "print(1)\nprint(2)"
 
 
 @pytest.mark.parametrize("body, rows", [
@@ -444,162 +363,130 @@ def test_a_file_with_a_carriage_return_is_painted(repo_page, body, rows):
     out, `x = 1\ry = 2` read `x = 1y = 2` once it was coloured."""
     root, _ = repo_page
     (root / "code.py").write_bytes(body)
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
-            page.wait_for_selector(".filebody .code .hljs-keyword")
-            assert page.locator(".filebody .code .dline").count() == 2
-            assert code_text(page) == rows
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_code(page, "'<span class=\"hljs-keyword\">print</span>(1)'")
+        page.wait_for_selector(".filebody .code .hljs-keyword")
+        assert page.locator(".filebody .code .dline").count() == 2
+        assert code_text(page) == rows
 
 
 def test_the_page_does_not_trust_the_highlighter_either(repo_page):
     """Its output goes through the same inert template the Markdown does. A
     span dressed as our own chrome, an attribute, and an element that is not a
     span all come out as text."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
-                            " + '<img src=x onerror=\"window.pwned=1\">'"
-                            " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
-            body = page.locator(".filebody .code")
-            assert page.evaluate("window.pwned") is None
-            assert body.locator("img").count() == 0
-            assert body.locator(".row").count() == 0
-            assert body.locator("[onclick]").count() == 0
-            assert body.locator("#n").count() == 0
-            # the text survives, only the dressing is gone
-            assert body.locator(".hljs-string").inner_text() == "b"
-            assert code_text(page) == "ab\nprint(2)"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_code(page, "'<span class=\"row\" onclick=\"x()\">a</span>'"
+                        " + '<img src=x onerror=\"window.pwned=1\">'"
+                        " + '<span class=\"hljs-string\" id=\"n\">b</span>'")
+        body = page.locator(".filebody .code")
+        assert page.evaluate("window.pwned") is None
+        assert body.locator("img").count() == 0
+        assert body.locator(".row").count() == 0
+        assert body.locator("[onclick]").count() == 0
+        assert body.locator("#n").count() == 0
+        # the text survives, only the dressing is gone
+        assert body.locator(".hljs-string").inner_text() == "b"
+        assert code_text(page) == "ab\nprint(2)"
 
 
 def test_a_sublanguage_class_survives(repo_page):
     """hljs writes `hljs-title function_` as one span with two classes."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
-            assert page.locator(".filebody .code .hljs-title.function_").count() == 1
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_code(page, "'<span class=\"hljs-title function_\">go</span>'")
+        assert page.locator(".filebody .code .hljs-title.function_").count() == 1
 
 
 def test_no_highlighter_still_shows_the_file(repo_page):
     """Offline, blocked, or bytes that do not match the hash: the code is
     still code, just unpainted."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.evaluate("hljsAsked = Promise.resolve(null);")
-            page.click(".filelist button:has-text('code.py')")
-            # Wait for the text, not for a time: 400 ms was too short on a
-            # loaded machine, one run in 36 at `-n 12`, before this change
-            # as after it.
-            page.wait_for_function(
-                "document.querySelectorAll('.filebody .code .dline .dtext')"
-                ".length === 2")
-            assert code_text(page).strip() == (
-                "print(1)\nprint(2)")
-            page.wait_for_timeout(400)          # proving no paint comes
-            assert page.locator(".filebody .code .dtext span").count() == 0
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.evaluate("hljsAsked = Promise.resolve(null);")
+        page.click(".filelist button:has-text('code.py')")
+        # Wait for the text, not for a time: 400 ms was too short on a
+        # loaded machine, one run in 36 at `-n 12`, before this change
+        # as after it.
+        page.wait_for_function(
+            "document.querySelectorAll('.filebody .code .dline .dtext')"
+            ".length === 2")
+        assert code_text(page).strip() == (
+            "print(1)\nprint(2)")
+        page.wait_for_timeout(400)          # proving no paint comes
+        assert page.locator(".filebody .code .dtext span").count() == 0
 
 
 def test_the_highlighter_is_pinned_and_asked_for_late(repo_page):
     """Any script on this page can POST to /send, which types into a terminal,
     so a script from someone else's server carries the hash of its bytes. And
     a session that only reads transcripts reaches the network never."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            asked = "document.querySelectorAll('script[src*=highlight]').length"
-            assert page.evaluate(asked) == 0      # the transcript asks for nothing
-            show_tab(page, "files")
-            assert page.evaluate(asked) == 0      # nor does a Markdown file
-            page.click(".filelist button:has-text('code.py')")
-            page.wait_for_timeout(400)
-            tag = page.locator("script[src*='highlight']")
-            assert tag.count() == 1
-            assert tag.get_attribute("src").startswith("https://")
-            assert tag.get_attribute("integrity").startswith("sha384-")
-            assert tag.get_attribute("crossorigin") == "anonymous"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        asked = "document.querySelectorAll('script[src*=highlight]').length"
+        assert page.evaluate(asked) == 0      # the transcript asks for nothing
+        show_tab(page, "files")
+        assert page.evaluate(asked) == 0      # nor does a Markdown file
+        page.click(".filelist button:has-text('code.py')")
+        page.wait_for_timeout(400)
+        tag = page.locator("script[src*='highlight']")
+        assert tag.count() == 1
+        assert tag.get_attribute("src").startswith("https://")
+        assert tag.get_attribute("integrity").startswith("sha384-")
+        assert tag.get_attribute("crossorigin") == "anonymous"
 
 
 def test_a_file_that_is_not_markdown_has_no_box(repo_page):
     """A shell script is the whole page here, not a quotation inside a
     document that does not exist."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('code.py')")
-            page.wait_for_timeout(400)
-            look = page.eval_on_selector(".filebody .code", """el => {
-              const seen = getComputedStyle(el);
-              return [seen.borderTopWidth, seen.backgroundColor];
-            }""")
-            assert look[0] == "0px"
-            assert look[1] in ("rgba(0, 0, 0, 0)", "transparent")
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('code.py')")
+        page.wait_for_timeout(400)
+        look = page.eval_on_selector(".filebody .code", """el => {
+          const seen = getComputedStyle(el);
+          return [seen.borderTopWidth, seen.backgroundColor];
+        }""")
+        assert look[0] == "0px"
+        assert look[1] in ("rgba(0, 0, 0, 0)", "transparent")
 
 
 def test_only_the_rows_on_screen_are_built(big_page):
     """Every row is one height, so two spacers can stand in for the rest. Ten
     thousand matches then cost the same as ten."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            # 5201 files, and a screenful of rows. `show_tab` waits for the
-            # tab's frame; the count under the list arrives with the listing,
-            # one fetch later.
-            page.wait_for_function(
-                """() => { const one = document.querySelector('.listnote');
-                           return one && one.innerText.includes('5201'); }""")
-            assert "5201" in page.locator(".listnote").inner_text()
-            built = page.locator(".filelist button").count()
-            assert 0 < built <= 120, built
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        # 5201 files, and a screenful of rows. `show_tab` waits for the
+        # tab's frame; the count under the list arrives with the listing,
+        # one fetch later.
+        page.wait_for_function(
+            """() => { const one = document.querySelector('.listnote');
+                       return one && one.innerText.includes('5201'); }""")
+        assert "5201" in page.locator(".listnote").inner_text()
+        built = page.locator(".filelist button").count()
+        assert 0 < built <= 120, built
 
-            # The scrollbar still runs the whole length of the list.
-            reach = page.eval_on_selector(".filelist", "el => el.scrollHeight")
-            assert reach > 5000 * 20, reach
+        # The scrollbar still runs the whole length of the list.
+        reach = page.eval_on_selector(".filelist", "el => el.scrollHeight")
+        assert reach > 5000 * 20, reach
 
-            first = page.eval_on_selector(
-                ".filelist button", "el => el.title")
-            page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
-            page.wait_for_timeout(250)
-            moved = page.eval_on_selector(".filelist button", "el => el.title")
-            assert moved != first, "the window did not follow the scrollbar"
-            assert page.locator(".filelist button").count() <= 120
-        finally:
-            browser.close()
+        first = page.eval_on_selector(
+            ".filelist button", "el => el.title")
+        page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
+        page.wait_for_timeout(250)
+        moved = page.eval_on_selector(".filelist button", "el => el.title")
+        assert moved != first, "the window did not follow the scrollbar"
+        assert page.locator(".filelist button").count() <= 120
 
 
 def test_a_name_is_still_found_after_scrolling(big_page):
     """The window is where you are in the list, not what the list holds."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
-            page.wait_for_timeout(250)
-            page.fill("#find", "libcorrelation")
-            page.wait_for_selector(".goto button")
-            found = page.eval_on_selector_all(
-                ".goto button", "els => els.map(e => e.title)")
-            assert "native/shared/libcorrelation/src/Action.h" in found
-        finally:
-            browser.close()
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
+        page.wait_for_timeout(250)
+        page.fill("#find", "libcorrelation")
+        page.wait_for_selector(".goto button")
+        found = page.eval_on_selector_all(
+            ".goto button", "els => els.map(e => e.title)")
+        assert "native/shared/libcorrelation/src/Action.h" in found
 
 
 def test_the_reader_sees_the_named_files_then_what_changed(repo_page):
@@ -612,38 +499,30 @@ def test_the_reader_sees_the_named_files_then_what_changed(repo_page):
     # change. `code.py` is committed and untouched, and that is the quiet one.
     (root / "a-first-by-name.txt").write_text("new\n")
     os.utime(root / "a-first-by-name.txt", (2_000_000_000, 2_000_000_000))
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button.touched")
-            names = page.eval_on_selector_all(
-                ".filelist button", "els => els.map(e => e.title)")
-            assert names[0] == "README.md"              # pinned
-            assert names[1] == "a-first-by-name.txt"    # the newest change
-            assert names[2] == "NOTES.md"               # the older change
-            assert names[3] == "code.py"                # quiet, so last
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button.touched")
+        names = page.eval_on_selector_all(
+            ".filelist button", "els => els.map(e => e.title)")
+        assert names[0] == "README.md"              # pinned
+        assert names[1] == "a-first-by-name.txt"    # the newest change
+        assert names[2] == "NOTES.md"               # the older change
+        assert names[3] == "code.py"                # quiet, so last
 
 
 def test_the_newest_change_leads_the_ones_that_changed(repo_page):
     root, _ = repo_page
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button.touched")
-            (root / "code.py").write_text("print(3)\n")
-            os.utime(root / "code.py", (2_000_000_000, 2_000_000_000))
-            page.wait_for_selector(
-                ".filelist button.touched:has-text('code.py')", timeout=15000)
-            names = page.eval_on_selector_all(
-                ".filelist button", "els => els.map(e => e.title)")
-            assert names[0] == "README.md"           # pinned, so it still wins
-            assert names[1] == "code.py", names[:4]  # the newest change
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button.touched")
+        (root / "code.py").write_text("print(3)\n")
+        os.utime(root / "code.py", (2_000_000_000, 2_000_000_000))
+        page.wait_for_selector(
+            ".filelist button.touched:has-text('code.py')", timeout=15000)
+        names = page.eval_on_selector_all(
+            ".filelist button", "els => els.map(e => e.title)")
+        assert names[0] == "README.md"           # pinned, so it still wins
+        assert names[1] == "code.py", names[:4]  # the newest change
 
 
 # --- the tree ---------------------------------------------------------------
@@ -651,28 +530,24 @@ def test_the_newest_change_leads_the_ones_that_changed(repo_page):
 
 def test_the_list_is_a_tree_that_opens_and_closes(big_page):
     """A closed repository costs its top level and no more."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            shut = page.locator(".filelist button.dir:has-text('native')")
-            assert shut.count() == 1
-            # 5201 files, and only a window of rows exists.
-            assert page.locator(".filelist button").count() <= 100
-            # Nothing inside the closed directory has been built at all.
-            assert page.locator(".filelist button[title^='native/']").count() == 0
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        shut = page.locator(".filelist button.dir:has-text('native')")
+        assert shut.count() == 1
+        # 5201 files, and only a window of rows exists.
+        assert page.locator(".filelist button").count() <= 100
+        # Nothing inside the closed directory has been built at all.
+        assert page.locator(".filelist button[title^='native/']").count() == 0
 
-            page.click(".filelist button.dir:has-text('native')")
-            page.wait_for_selector(".filelist button.dir.open")
-            names = page.eval_on_selector_all(
-                ".filelist button", "els => els.map(e => e.textContent)")
-            assert "shared" in " ".join(names), names
+        page.click(".filelist button.dir:has-text('native')")
+        page.wait_for_selector(".filelist button.dir.open")
+        names = page.eval_on_selector_all(
+            ".filelist button", "els => els.map(e => e.textContent)")
+        assert "shared" in " ".join(names), names
 
-            page.click(".filelist button.dir.open")
-            page.wait_for_timeout(200)
-            assert page.locator(".filelist button.dir.open").count() == 0
-        finally:
-            browser.close()
+        page.click(".filelist button.dir.open")
+        page.wait_for_timeout(200)
+        assert page.locator(".filelist button.dir.open").count() == 0
 
 
 def test_a_directory_holding_a_change_opens_itself(repo_page):
@@ -686,40 +561,32 @@ def test_a_directory_holding_a_change_opens_itself(repo_page):
     (root / "src").mkdir()
     (root / "src" / "touched.txt").write_text("the agent wrote this\n")
 
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button.dir.open")
-            opened = page.eval_on_selector_all(
-                ".filelist button.dir.open", "els => els.map(e => e.title)")
-            assert opened == ["src"], opened
-            # and the file inside it is on screen, marked
-            assert page.locator(
-                ".filelist button.touched:has-text('touched.txt')").count() == 1
-            # the directory that holds nothing new stays shut, but says so
-            shut = page.locator(".filelist button.dir:has-text('deep')")
-            assert "open" not in (shut.get_attribute("class") or "")
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button.dir.open")
+        open_dirs = page.eval_on_selector_all(
+            ".filelist button.dir.open", "els => els.map(e => e.title)")
+        assert open_dirs == ["src"], open_dirs
+        # and the file inside it is on screen, marked
+        assert page.locator(
+            ".filelist button.touched:has-text('touched.txt')").count() == 1
+        # the directory that holds nothing new stays shut, but says so
+        shut = page.locator(".filelist button.dir:has-text('deep')")
+        assert "open" not in (shut.get_attribute("class") or "")
 
 
 def test_a_closed_directory_still_says_a_change_is_inside(repo_page):
     root, _ = repo_page
     (root / "src").mkdir()
     (root / "src" / "touched.txt").write_text("the agent wrote this\n")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button.dir.open")
-            page.click(".filelist button.dir.open")          # close it by hand
-            page.wait_for_timeout(250)
-            shut = page.locator(".filelist button.dir:has-text('src')")
-            assert "touched" in (shut.get_attribute("class") or "")
-            assert "open" not in (shut.get_attribute("class") or "")
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button.dir.open")
+        page.click(".filelist button.dir.open")          # close it by hand
+        page.wait_for_timeout(250)
+        shut = page.locator(".filelist button.dir:has-text('src')")
+        assert "touched" in (shut.get_attribute("class") or "")
+        assert "open" not in (shut.get_attribute("class") or "")
 
 
 def test_closing_a_directory_by_hand_beats_opening_it_for_you(repo_page):
@@ -727,20 +594,16 @@ def test_closing_a_directory_by_hand_beats_opening_it_for_you(repo_page):
     root, _ = repo_page
     (root / "src").mkdir()
     (root / "src" / "touched.txt").write_text("one\n")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button.dir.open")
-            page.click(".filelist button.dir.open")
-            page.wait_for_timeout(250)
-            # another change lands in the same directory
-            (root / "src" / "second.txt").write_text("two\n")
-            page.wait_for_timeout(3000)       # two polls
-            assert page.locator(".filelist button.dir.open").count() == 0, \
-                "it re-opened a directory the reader had closed"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button.dir.open")
+        page.click(".filelist button.dir.open")
+        page.wait_for_timeout(250)
+        # another change lands in the same directory
+        (root / "src" / "second.txt").write_text("two\n")
+        page.wait_for_timeout(3000)       # two polls
+        assert page.locator(".filelist button.dir.open").count() == 0, \
+            "it re-opened a directory the reader had closed"
 
 
 def test_typing_leaves_the_tree_exactly_where_it_was(big_page):
@@ -748,48 +611,40 @@ def test_typing_leaves_the_tree_exactly_where_it_was(big_page):
     where a file sits is half of what you know about it, and the tree is the
     answer to that question — hiding it was hiding the answer as a way of
     asking for it. The list of places opens under the box instead."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button.dir")
-            # Open one by hand first, so that a tree which collapsed under a
-            # query would visibly differ from one that did not.
-            page.locator(".filelist button.dir").first.click()
-            page.wait_for_selector(".filelist button.dir.open")
-            before = page.eval_on_selector_all(
-                ".filelist button", "els => els.map(e => e.title)")
-            assert len(before) > 1
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button.dir")
+        # Open one by hand first, so that a tree which collapsed under a
+        # query would visibly differ from one that did not.
+        page.locator(".filelist button.dir").first.click()
+        page.wait_for_selector(".filelist button.dir.open")
+        before = page.eval_on_selector_all(
+            ".filelist button", "els => els.map(e => e.title)")
+        assert len(before) > 1
 
-            page.fill("#find", "Action")
-            page.wait_for_selector(".goto button")
-            after = page.eval_on_selector_all(
-                ".filelist button", "els => els.map(e => e.title)")
-            assert after == before, "the tree moved"
-            assert page.locator(".filelist button.dir.open").count() == 1
-        finally:
-            browser.close()
+        page.fill("#find", "Action")
+        page.wait_for_selector(".goto button")
+        after = page.eval_on_selector_all(
+            ".filelist button", "els => els.map(e => e.title)")
+        assert after == before, "the tree moved"
+        assert page.locator(".filelist button.dir.open").count() == 1
 
 
 def test_a_directory_is_a_place_to_go_too(big_page):
     """"All folders and files with it in the name", so a directory is in the
     list and picking one opens the tree down to it."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "libcorrelation")
-            page.wait_for_selector(".goto button")
-            page.locator(
-                ".goto button[title='native/shared/libcorrelation']").click()
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.filelist button.dir.open')]
-                     .some((e) => e.title === 'native/shared/libcorrelation')""")
-            # And the box closed itself on the way.
-            assert page.locator(".goto").count() == 0
-            assert page.input_value("#find") == ""
-        finally:
-            browser.close()
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "libcorrelation")
+        page.wait_for_selector(".goto button")
+        page.locator(
+            ".goto button[title='native/shared/libcorrelation']").click()
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.filelist button.dir.open')]
+                 .some((e) => e.title === 'native/shared/libcorrelation')""")
+        # And the box closed itself on the way.
+        assert page.locator(".goto").count() == 0
+        assert page.input_value("#find") == ""
 
 
 #: Where the tree's last drawn row ends, and where the list's view does.
@@ -808,63 +663,51 @@ def test_a_tall_file_tree_is_drawn_to_its_foot(big_page):
     under the last row, before a scroll and after one. And a window made
     taller fires no scroll, so the rows it uncovers are drawn on the
     resize."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist.files button")
-            page.set_viewport_size({"width": 1600, "height": 2600})
-            page.wait_for_function(
-                f"(() => {{ const at = ({TREE_FOOT})(); return at.rows >= at.view; }})()")
-            page.evaluate("document.querySelector('.filelist.files').scrollTop = 40000")
-            page.wait_for_function(
-                "parseInt(document.querySelector('.filelist.files').dataset.window) > 1000")
-            at = page.evaluate(TREE_FOOT)
-            assert at["rows"] >= at["view"], at
-        finally:
-            browser.close()
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist.files button")
+        page.set_viewport_size({"width": 1600, "height": 2600})
+        page.wait_for_function(
+            f"(() => {{ const at = ({TREE_FOOT})(); return at.rows >= at.view; }})()")
+        page.evaluate("document.querySelector('.filelist.files').scrollTop = 40000")
+        page.wait_for_function(
+            "parseInt(document.querySelector('.filelist.files').dataset.window) > 1000")
+        at = page.evaluate(TREE_FOOT)
+        assert at["rows"] >= at["view"], at
 
 
 def test_picking_a_file_opens_it_and_shows_where_it_sits(big_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, big_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "Action.h")
-            page.wait_for_selector(".goto button")
-            page.locator(".goto button").first.click()
-            page.wait_for_function(
-                "document.querySelector('.filebody .where').textContent"
-                ".includes('Action.h')")
-            # Open in the pane, and reachable in the tree behind it.
-            assert page.locator(
-                ".filelist button.chosen[title$='Action.h']").count() == 1
-        finally:
-            browser.close()
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "Action.h")
+        page.wait_for_selector(".goto button")
+        page.locator(".goto button").first.click()
+        page.wait_for_function(
+            "document.querySelector('.filebody .where').textContent"
+            ".includes('Action.h')")
+        # Open in the pane, and reachable in the tree behind it.
+        assert page.locator(
+            ".filelist button.chosen[title$='Action.h']").count() == 1
 
 
 def test_the_arrows_and_enter_walk_the_list(repo_page):
     """Search on typing, picked without the mouse."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click("#find")
-            # Two names match, so there is somewhere for the arrow to go.
-            page.fill("#find", "md")
-            page.wait_for_function(
-                "document.querySelectorAll('.goto button').length > 1")
-            first = page.eval_on_selector(".goto button", "el => el.title")
-            page.press("#find", "ArrowDown")
-            second = page.eval_on_selector(
-                ".goto button.chosen", "el => el.title")
-            assert second != first, "the arrow did not move"
-            page.press("#find", "Enter")
-            page.wait_for_function(
-                "(want) => document.querySelector('.filebody .where')"
-                ".textContent.includes(want.split('/').pop())", arg=second)
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click("#find")
+        # Two names match, so there is somewhere for the arrow to go.
+        page.fill("#find", "md")
+        page.wait_for_function(
+            "document.querySelectorAll('.goto button').length > 1")
+        first = page.eval_on_selector(".goto button", "el => el.title")
+        page.press("#find", "ArrowDown")
+        second = page.eval_on_selector(
+            ".goto button.chosen", "el => el.title")
+        assert second != first, "the arrow did not move"
+        page.press("#find", "Enter")
+        page.wait_for_function(
+            "(want) => document.querySelector('.filebody .where')"
+            ".textContent.includes(want.split('/').pop())", arg=second)
 
 
 def test_a_part_of_the_path_opens_the_tree_to_it(repo_page):
@@ -877,34 +720,30 @@ def test_a_part_of_the_path_opens_the_tree_to_it(repo_page):
     (deep / "SAMPLING.md").write_text("# sampling\n")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "deep")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "SAMPLING")
-            page.wait_for_selector(".goto button")
-            page.locator(".goto button[title$='SAMPLING.md']").click()
-            page.wait_for_function(
-                "document.querySelector('.filebody .where').textContent"
-                ".includes('SAMPLING.md')")
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "SAMPLING")
+        page.wait_for_selector(".goto button")
+        page.locator(".goto button[title$='SAMPLING.md']").click()
+        page.wait_for_function(
+            "document.querySelector('.filebody .where').textContent"
+            ".includes('SAMPLING.md')")
 
-            # Every part of it is its own way in.
-            parts = page.eval_on_selector_all(
-                ".filebody .crumb", "els => els.map((e) => e.textContent)")
-            assert parts == ["native", "shared", "libcorrelation", "doc",
-                             "SAMPLING.md"]
+        # Every part of it is its own way in.
+        parts = page.eval_on_selector_all(
+            ".filebody .crumb", "els => els.map((e) => e.textContent)")
+        assert parts == ["native", "shared", "libcorrelation", "doc",
+                         "SAMPLING.md"]
 
-            page.click(".filebody .crumb:has-text('libcorrelation')")
-            page.wait_for_function(
-                "[...document.querySelectorAll('.filelist button .name')]"
-                ".some((e) => e.textContent === 'libcorrelation')")
-            # And the filter is gone, because it was hiding the rest of the tree.
-            assert page.input_value("#find") == ""
-            shown = page.eval_on_selector_all(
-                ".filelist button .name", "els => els.map((e) => e.textContent)")
-            assert "doc" in shown, shown
-        finally:
-            browser.close()
+        page.click(".filebody .crumb:has-text('libcorrelation')")
+        page.wait_for_function(
+            "[...document.querySelectorAll('.filelist button .name')]"
+            ".some((e) => e.textContent === 'libcorrelation')")
+        # And the filter is gone, because it was hiding the rest of the tree.
+        assert page.input_value("#find") == ""
+        shown = page.eval_on_selector_all(
+            ".filelist button .name", "els => els.map((e) => e.textContent)")
+        assert "doc" in shown, shown
 
 
 def test_the_whole_path_is_still_one_string_to_copy(repo_page):
@@ -917,20 +756,16 @@ def test_the_whole_path_is_still_one_string_to_copy(repo_page):
     (deep / "c.py").write_text("print(1)\n")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "deep")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "a/b/c.py")
-            page.wait_for_selector(".goto button")
-            page.locator(".goto button[title='a/b/c.py']").click()
-            page.wait_for_function(
-                "document.querySelector('.filebody .crumbs')"
-                ".textContent === 'a/b/c.py'")
-            assert page.eval_on_selector(
-                ".filebody .crumbs", "el => el.innerText") == "a/b/c.py"
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "a/b/c.py")
+        page.wait_for_selector(".goto button")
+        page.locator(".goto button[title='a/b/c.py']").click()
+        page.wait_for_function(
+            "document.querySelector('.filebody .crumbs')"
+            ".textContent === 'a/b/c.py'")
+        assert page.eval_on_selector(
+            ".filebody .crumbs", "el => el.innerText") == "a/b/c.py"
 
 
 # --- how a file is drawn: the header, and the reader's two choices -----------
@@ -943,20 +778,16 @@ def test_a_file_of_a_few_thousand_lines_is_drawn_whole_and_coloured(long_page):
     root, _ = long_page
     root.joinpath("mid.py").write_text(
         "".join(f"value_{n} = {n}\n" for n in range(2426)))
-    with sync_playwright() as play:
-        browser, page = open_page(play, long_page)
-        try:
-            open_code(page, "'<span class=\"hljs-keyword\">value_0</span>'",
-                      "mid.py")
-            assert page.locator(".code.windowed").count() == 0
-            assert page.locator(".filebody .note").count() == 0
-            page.wait_for_function(
-                "document.querySelectorAll('.filebody .code .dline').length === 2426")
-            # Drawn whole *and painted*, which is the half the old threshold
-            # took away.
-            page.wait_for_selector(".filebody .code .hljs-keyword")
-        finally:
-            browser.close()
+    with opened(long_page) as page:
+        open_code(page, "'<span class=\"hljs-keyword\">value_0</span>'",
+                  "mid.py")
+        assert page.locator(".code.windowed").count() == 0
+        assert page.locator(".filebody .note").count() == 0
+        page.wait_for_function(
+            "document.querySelectorAll('.filebody .code .dline').length === 2426")
+        # Drawn whole *and painted*, which is the half the old threshold
+        # took away.
+        page.wait_for_selector(".filebody .code .hljs-keyword")
 
 
 def test_a_bundle_on_one_line_is_not_coloured_and_says_so(repo_page):
@@ -975,77 +806,65 @@ def test_a_bundle_on_one_line_is_not_coloured_and_says_so(repo_page):
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "a bundle and a long file")
     stub = "'<span class=\"hljs-keyword\">x</span>'"
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            assert page.evaluate("PAINT_MAX") < len(bundle)
-            assert page.evaluate("PAINT_MAX") < root.joinpath("long.py").stat().st_size
-            open_code(page, stub, "long.py")
-            page.wait_for_selector(".filebody .code .hljs-keyword")
-            assert page.locator(".filebody .note").count() == 0
+    with opened(repo_page) as page:
+        assert page.evaluate("PAINT_MAX") < len(bundle)
+        assert page.evaluate("PAINT_MAX") < root.joinpath("long.py").stat().st_size
+        open_code(page, stub, "long.py")
+        page.wait_for_selector(".filebody .code .hljs-keyword")
+        assert page.locator(".filebody .note").count() == 0
 
-            page.click(".filelist button:has-text('app.min.js')")
-            page.wait_for_selector(".filebody .note")
-            assert page.locator(".filebody .note").inner_text().startswith(
-                "Lines of more than 1,000 characters are too slow to colour.")
-            assert page.locator(".filebody .code .dline").count() == 1
-            # Whatever the paint would do, it has done once the highlighter
-            # is in and a task has passed.
-            painted = page.evaluate("""async () => {
-              await hljsReady();
-              await new Promise((go) => setTimeout(go));
-              return document.querySelectorAll('.filebody .code .hljs-keyword').length;
-            }""")
-            assert painted == 0
-            assert code_text(page) == bundle
-            # Every painter asks `paintedLines`: the Diff tab, a slice.
-            refused = page.evaluate("""async (text) => {
-              const lib = await hljsReady();
-              return paintedLines(lib, 'javascript', text, 1);
-            }""", bundle)
-            assert refused is None
-        finally:
-            browser.close()
+        page.click(".filelist button:has-text('app.min.js')")
+        page.wait_for_selector(".filebody .note")
+        assert page.locator(".filebody .note").inner_text().startswith(
+            "Lines of more than 1,000 characters are too slow to colour.")
+        assert page.locator(".filebody .code .dline").count() == 1
+        # Whatever the paint would do, it has done once the highlighter
+        # is in and a task has passed.
+        painted = page.evaluate("""async () => {
+          await hljsReady();
+          await new Promise((go) => setTimeout(go));
+          return document.querySelectorAll('.filebody .code .hljs-keyword').length;
+        }""")
+        assert painted == 0
+        assert code_text(page) == bundle
+        # Every painter asks `paintedLines`: the Diff tab, a slice.
+        refused = page.evaluate("""async (text) => {
+          const lib = await hljsReady();
+          return paintedLines(lib, 'javascript', text, 1);
+        }""", bundle)
+        assert refused is None
 
 
 def test_the_header_says_what_the_file_is(repo_page):
     """Type, size and when it last changed — all of it already in hand: the
     type the page worked out to paint it, the rest from the one stat the
     daemon does anyway."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_file(page, "code.py")
-            about = page.locator(".filebody .where .whatis").inner_text()
-            # What the page worked out in order to paint it, which is the
-            # highlighter's name for the language and not a prettier one.
-            assert "py" in about
-            assert " B" in about or "KB" in about
-            # `21 Sep 07:20`, so a day and a month and a clock.
-            assert re.search(r"\d+ [A-Z][a-z]{2} \d\d:\d\d", about), about
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_file(page, "code.py")
+        about = page.locator(".filebody .where .whatis").inner_text()
+        # What the page worked out in order to paint it, which is the
+        # highlighter's name for the language and not a prettier one.
+        assert "py" in about
+        assert " B" in about or "KB" in about
+        # `21 Sep 07:20`, so a day and a month and a clock.
+        assert re.search(r"\d+ [A-Z][a-z]{2} \d\d:\d\d", about), about
 
 
 def test_a_file_nobody_touched_is_not_sent_again(repo_page):
     """Every two seconds the open file came whole, up to 512 KB, and was
     thrown away unless its mtime had moved (#292). The poll sends back the
     `stamp` of the version shown, and is answered `same`."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_file(page, "code.py")
-            page.wait_for_function("state.files.stamp !== ''")
-            stamp = page.evaluate("state.files.stamp")
-            with page.expect_response(
-                    lambda answer: "/file?" in answer.url
-                    and "have=" in answer.url, timeout=15000) as came:
-                page.evaluate("() => { load(); }")
-            assert came.value.json() == {"id": "s1", "path": "code.py",
-                                         "same": True, "stamp": stamp}
-            assert "print(1)" in code_text(page)
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_file(page, "code.py")
+        page.wait_for_function("state.files.stamp !== ''")
+        stamp = page.evaluate("state.files.stamp")
+        with page.expect_response(
+                lambda answer: "/file?" in answer.url
+                and "have=" in answer.url, timeout=15000) as came:
+            page.evaluate("() => { load(); }")
+        assert came.value.json() == {"id": "s1", "path": "code.py",
+                                     "same": True, "stamp": stamp}
+        assert "print(1)" in code_text(page)
 
 
 def test_the_scrollbar_starts_under_the_header_not_beside_it(long_page):
@@ -1057,35 +876,31 @@ def test_the_scrollbar_starts_under_the_header_not_beside_it(long_page):
 
     It is outside the scroller now. Put the header back inside `.filescroll`
     and the first measurement stops being nought."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, long_page)
-        try:
-            open_file(page, "long.py")
-            seen = page.evaluate("""() => {
-              const pane = document.querySelector('.filebody');
-              const view = pane.querySelector('.filescroll');
-              const head = pane.querySelector('.where');
-              return {inside: view.contains(head),
-                      gap: view.getBoundingClientRect().top
-                           - head.getBoundingClientRect().bottom,
-                      tall: view.scrollHeight > view.clientHeight};
-            }""")
-            assert seen["inside"] is False, seen
-            assert -1 <= seen["gap"] <= 1, seen
-            assert seen["tall"] is True, "nothing to scroll, nothing to prove"
+    with opened(long_page) as page:
+        open_file(page, "long.py")
+        seen = page.evaluate("""() => {
+          const pane = document.querySelector('.filebody');
+          const view = pane.querySelector('.filescroll');
+          const head = pane.querySelector('.where');
+          return {inside: view.contains(head),
+                  gap: view.getBoundingClientRect().top
+                       - head.getBoundingClientRect().bottom,
+                  tall: view.scrollHeight > view.clientHeight};
+        }""")
+        assert seen["inside"] is False, seen
+        assert -1 <= seen["gap"] <= 1, seen
+        assert seen["tall"] is True, "nothing to scroll, nothing to prove"
 
-            # And the header does not move when the file does.
-            before = page.eval_on_selector(
-                ".filebody > .where", "el => el.getBoundingClientRect().top")
-            page.evaluate("() => { document.querySelector('.filescroll')"
-                          ".scrollTop = 4000; }")
-            page.wait_for_function(
-                "document.querySelector('.filescroll').scrollTop > 1000")
-            after = page.eval_on_selector(
-                ".filebody > .where", "el => el.getBoundingClientRect().top")
-            assert abs(after - before) < 1, (before, after)
-        finally:
-            browser.close()
+        # And the header does not move when the file does.
+        before = page.eval_on_selector(
+            ".filebody > .where", "el => el.getBoundingClientRect().top")
+        page.evaluate("() => { document.querySelector('.filescroll')"
+                      ".scrollTop = 4000; }")
+        page.wait_for_function(
+            "document.querySelector('.filescroll').scrollTop > 1000")
+        after = page.eval_on_selector(
+            ".filebody > .where", "el => el.getBoundingClientRect().top")
+        assert abs(after - before) < 1, (before, after)
 
 
 def test_the_long_line_scrollbar_is_at_the_bottom_of_the_screen(repo_page):
@@ -1094,22 +909,18 @@ def test_the_long_line_scrollbar_is_at_the_bottom_of_the_screen(repo_page):
     repo, _ = repo_page
     repo.joinpath("wide.py").write_text(
         "".join(f"value_{n} = '{'x' * 400}'\n" for n in range(400)))
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_file(page, "wide.py")
-            seen = page.evaluate("""() => {
-              const pane = document.querySelector('.filescroll');
-              const rows = pane.querySelector('.dlines');
-              return {pane: pane.scrollWidth > pane.clientWidth,
-                      rows: getComputedStyle(rows).overflowX};
-            }""")
-            assert seen["pane"] is True, "the pane does not scroll sideways"
-            # `visible` is a box with no scrollbar of its own, which is the
-            # point: one bar, at the bottom of the screen.
-            assert seen["rows"] == "visible", seen
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_file(page, "wide.py")
+        seen = page.evaluate("""() => {
+          const pane = document.querySelector('.filescroll');
+          const rows = pane.querySelector('.dlines');
+          return {pane: pane.scrollWidth > pane.clientWidth,
+                  rows: getComputedStyle(rows).overflowX};
+        }""")
+        assert seen["pane"] is True, "the pane does not scroll sideways"
+        # `visible` is a box with no scrollbar of its own, which is the
+        # point: one bar, at the bottom of the screen.
+        assert seen["rows"] == "visible", seen
 
 
 def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(repo_page):
@@ -1119,59 +930,47 @@ def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(repo_page):
     repo.joinpath("tabs.py").write_text("def a():\n\treturn 1\n")
     wrapped = ("getComputedStyle(document.querySelector('.filebody .dline'))"
                ".whiteSpace")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_file(page, "tabs.py")
-            assert page.evaluate(
-                "getComputedStyle(document.querySelector('.dlines')).tabSize") == "4"
-            assert page.evaluate(wrapped) == "pre"
+    with opened(repo_page) as page:
+        open_file(page, "tabs.py")
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('.dlines')).tabSize") == "4"
+        assert page.evaluate(wrapped) == "pre"
 
-            settings(page, "tabwidth", "8")
-            page.wait_for_function(
-                "getComputedStyle(document.querySelector('.dlines')).tabSize === '8'")
-            settings(page, "wrapping", "true")
-            page.wait_for_function(f"{wrapped} === 'pre-wrap'")
+        settings(page, "tabwidth", "8")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.dlines')).tabSize === '8'")
+        settings(page, "wrapping", "true")
+        page.wait_for_function(f"{wrapped} === 'pre-wrap'")
 
-            page.reload(wait_until="domcontentloaded")
-            page.wait_for_selector(".row")
-            open_file(page, "tabs.py")
-            page.wait_for_function(f"{wrapped} === 'pre-wrap'")
-            assert page.evaluate(
-                "getComputedStyle(document.querySelector('.dlines')).tabSize") == "8"
-        finally:
-            browser.close()
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_selector(".row")
+        open_file(page, "tabs.py")
+        page.wait_for_function(f"{wrapped} === 'pre-wrap'")
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('.dlines')).tabSize") == "8"
 
 
 def test_a_windowed_file_says_it_cannot_wrap(long_page):
     """A windowed file's rows are a grid the scrollbar is read against, and a
     wrapped row is not one row tall. A control that quietly did nothing would
     be worse than one that says why."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, long_page)
-        try:
-            open_file(page, "long.py")
-            page.wait_for_selector(".code.windowed")
-            assert page.locator(".filebody .nowrap").is_hidden()
-            settings(page, "wrapping", "true")
-            page.wait_for_selector(".filebody .nowrap:text('too long to wrap')")
-        finally:
-            browser.close()
+    with opened(long_page) as page:
+        open_file(page, "long.py")
+        page.wait_for_selector(".code.windowed")
+        assert page.locator(".filebody .nowrap").is_hidden()
+        settings(page, "wrapping", "true")
+        page.wait_for_selector(".filebody .nowrap:text('too long to wrap')")
 
 
 def test_every_row_says_whether_it_is_a_file_or_a_folder(repo_page):
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.wait_for_selector(".filelist button")
-            seen = page.eval_on_selector_all(
-                ".filelist button",
-                """els => els.map((b) => [b.classList.contains('dir'),
-                                          b.querySelectorAll('svg.icon').length])""")
-            assert seen and all(many == 1 for _, many in seen)
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist button")
+        seen = page.eval_on_selector_all(
+            ".filelist button",
+            """els => els.map((b) => [b.classList.contains('dir'),
+                                      b.querySelectorAll('svg.icon').length])""")
+        assert seen and all(many == 1 for _, many in seen)
 
 
 def test_changing_how_a_file_is_drawn_keeps_a_comment_being_written(repo_page):
@@ -1184,22 +983,18 @@ def test_changing_how_a_file_is_drawn_keeps_a_comment_being_written(repo_page):
     Neither control rebuilds anything now: both are read from the root by the
     cascade.
     """
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_file(page, "code.py")
-            page.locator(".filebody .dline .addnote").first.click(force=True)
-            page.wait_for_selector(".commentbox textarea")
-            page.fill(".commentbox textarea", "half a thought")
+    with opened(repo_page) as page:
+        open_file(page, "code.py")
+        page.locator(".filebody .dline .addnote").first.click(force=True)
+        page.wait_for_selector(".commentbox textarea")
+        page.fill(".commentbox textarea", "half a thought")
 
-            settings(page, "tabwidth", "8")
-            settings(page, "wrapping", "true")
-            page.wait_for_function(
-                "getComputedStyle(document.querySelector('.filebody .dline'))"
-                ".whiteSpace === 'pre-wrap'")
-            assert page.input_value(".commentbox textarea") == "half a thought"
-        finally:
-            browser.close()
+        settings(page, "tabwidth", "8")
+        settings(page, "wrapping", "true")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.filebody .dline'))"
+            ".whiteSpace === 'pre-wrap'")
+        assert page.input_value(".commentbox textarea") == "half a thought"
 
 
 def test_the_small_helpers_say_what_they_promise(repo_page):
@@ -1207,22 +1002,18 @@ def test_the_small_helpers_say_what_they_promise(repo_page):
     said so in a line of its own, and a new one that forgot would have sent
     the send bar's text (#298). And a count is "1 file", never "1 files":
     nine places spelled that each for themselves, two with `> 1`."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            assert page.evaluate("""() => {
-              const form = document.createElement("form");
-              document.body.appendChild(form);
-              const made = put(form, "button", "x", "x").type;
-              form.remove();
-              return made;
-            }""") == "button"
-            assert page.evaluate(
-                "[counted(1, 'file', 'files'), counted(2, 'file', 'files'),"
-                " counted(0, 'reply', 'replies')]") == [
-                    "1 file", "2 files", "0 replies"]
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        assert page.evaluate("""() => {
+          const form = document.createElement("form");
+          document.body.appendChild(form);
+          const made = put(form, "button", "x", "x").type;
+          form.remove();
+          return made;
+        }""") == "button"
+        assert page.evaluate(
+            "[counted(1, 'file', 'files'), counted(2, 'file', 'files'),"
+            " counted(0, 'reply', 'replies')]") == [
+                "1 file", "2 files", "0 replies"]
 
 
 def test_a_windowed_file_does_not_wrap_even_if_it_is_told_to(long_page):
@@ -1230,37 +1021,29 @@ def test_a_windowed_file_does_not_wrap_even_if_it_is_told_to(long_page):
     windowed file's rows are a grid the scrollbar is read against, and a
     wrapped row is not one row tall — so turning wrap on while a windowed file
     is open must change nothing about its rows."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, long_page)
-        try:
-            open_file(page, "long.py")
-            page.wait_for_selector(".code.windowed")
-            page.evaluate("""() => { keepSetting({long_lines: "wrap"});
-                                     applyReading(readingWanted()); }""")
-            assert page.evaluate("document.documentElement.dataset.wrap") == "yes"
-            assert page.evaluate(
-                "getComputedStyle(document.querySelector('.filebody .dline'))"
-                ".whiteSpace") == "pre"
-        finally:
-            browser.close()
+    with opened(long_page) as page:
+        open_file(page, "long.py")
+        page.wait_for_selector(".code.windowed")
+        page.evaluate("""() => { keepSetting({long_lines: "wrap"});
+                                 applyReading(readingWanted()); }""")
+        assert page.evaluate("document.documentElement.dataset.wrap") == "yes"
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('.filebody .dline'))"
+            ".whiteSpace") == "pre"
 
 
 def test_the_same_query_twice_opens_the_list_again(repo_page):
     """The list is only rebuilt when what it is showing changes. Closing it
     has to forget that too, or typing the same thing again matches the key
     and draws nothing."""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "code")
-            page.wait_for_selector(".goto button")
-            page.fill("#find", "")
-            page.wait_for_function("document.querySelectorAll('.goto').length === 0")
-            page.fill("#find", "code")
-            page.wait_for_selector(".goto button")
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "code")
+        page.wait_for_selector(".goto button")
+        page.fill("#find", "")
+        page.wait_for_function("document.querySelectorAll('.goto').length === 0")
+        page.fill("#find", "code")
+        page.wait_for_selector(".goto button")
 
 
 # --- the tree's shape, and where a click lands -------------------------------
@@ -1275,33 +1058,29 @@ def test_a_folder_has_no_triangle_and_its_own_colour(repo_page):
     (root / "deep" / "inner.py").write_text("x = 1\n")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "deep")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click(".filelist button.dir:has(.name:text-is('deep'))")
-            page.wait_for_selector(".filelist button:has(.name:text-is('inner.py'))")
-            assert page.locator(".filelist .caret").count() == 0
-            seen = page.evaluate("""() => {
-              const left = (name) => [...document.querySelectorAll('.filelist button')]
-                .find((one) => one.querySelector('.name').textContent === name)
-                .querySelector('.name').getBoundingClientRect().left;
-              const icon = (name) => getComputedStyle(
-                [...document.querySelectorAll('.filelist button')]
-                  .find((one) => one.querySelector('.name').textContent === name)
-                  .querySelector('.icon')).color;
-              return {dir: left('deep'), inside: left('inner.py'),
-                      top: left('README.md'),
-                      dirInk: icon('deep'), fileInk: icon('README.md')};
-            }""")
-            # A folder's name starts where a file's does at the same depth.
-            assert abs(seen["dir"] - seen["top"]) < 1, seen
-            # And what it holds is a step further in, visibly.
-            assert seen["inside"] > seen["dir"] + 8, seen
-            # The folder carries a colour of its own.
-            assert seen["dirInk"] != seen["fileInk"], seen
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button.dir:has(.name:text-is('deep'))")
+        page.wait_for_selector(".filelist button:has(.name:text-is('inner.py'))")
+        assert page.locator(".filelist .caret").count() == 0
+        seen = page.evaluate("""() => {
+          const left = (name) => [...document.querySelectorAll('.filelist button')]
+            .find((one) => one.querySelector('.name').textContent === name)
+            .querySelector('.name').getBoundingClientRect().left;
+          const icon = (name) => getComputedStyle(
+            [...document.querySelectorAll('.filelist button')]
+              .find((one) => one.querySelector('.name').textContent === name)
+              .querySelector('.icon')).color;
+          return {dir: left('deep'), inside: left('inner.py'),
+                  top: left('README.md'),
+                  dirInk: icon('deep'), fileInk: icon('README.md')};
+        }""")
+        # A folder's name starts where a file's does at the same depth.
+        assert abs(seen["dir"] - seen["top"]) < 1, seen
+        # And what it holds is a step further in, visibly.
+        assert seen["inside"] > seen["dir"] + 8, seen
+        # The folder carries a colour of its own.
+        assert seen["dirInk"] != seen["fileInk"], seen
 
 
 def test_an_open_folder_is_drawn_open(repo_page):
@@ -1312,22 +1091,18 @@ def test_an_open_folder_is_drawn_open(repo_page):
     (root / "deep" / "inner.py").write_text("x = 1\n")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "deep")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            # `show_tab` waits for the tab's frame; the tree under it arrives
-            # one fetch later, and the icon is inside the tree.
-            page.wait_for_selector(".filelist button.dir path")
-            shut = page.eval_on_selector(
-                ".filelist button.dir path", "el => el.getAttribute('d')")
-            page.click(".filelist button.dir:has(.name:text-is('deep'))")
-            page.wait_for_selector(".filelist button.dir.open")
-            wide = page.eval_on_selector(
-                ".filelist button.dir path", "el => el.getAttribute('d')")
-            assert shut and wide and shut != wide
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        # `show_tab` waits for the tab's frame; the tree under it arrives
+        # one fetch later, and the icon is inside the tree.
+        page.wait_for_selector(".filelist button.dir path")
+        shut = page.eval_on_selector(
+            ".filelist button.dir path", "el => el.getAttribute('d')")
+        page.click(".filelist button.dir:has(.name:text-is('deep'))")
+        page.wait_for_selector(".filelist button.dir.open")
+        wide = page.eval_on_selector(
+            ".filelist button.dir path", "el => el.getAttribute('d')")
+        assert shut and wide and shut != wide
 
 
 def test_a_part_of_a_path_already_on_screen_still_answers(repo_page):
@@ -1343,33 +1118,29 @@ def test_a_part_of_a_path_already_on_screen_still_answers(repo_page):
     (deep / "SAMPLING.md").write_text("# sampling\n")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "deep")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            # Walk in by hand, so every folder is already open and in view.
-            for part in ("native", "doc"):
-                page.click(f".filelist button.dir:has(.name:text-is('{part}'))")
-                page.wait_for_selector(
-                    f".filelist button.dir.open:has(.name:text-is('{part}'))")
-            page.click(".filelist button:has(.name:text-is('SAMPLING.md'))")
-            page.wait_for_function(
-                "document.querySelector('.filebody .where')"
-                ".textContent.includes('SAMPLING.md')")
-            assert page.eval_on_selector(
-                ".filelist button.chosen", "el => el.title").endswith(
-                    "SAMPLING.md")
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        # Walk in by hand, so every folder is already open and in view.
+        for part in ("native", "doc"):
+            page.click(f".filelist button.dir:has(.name:text-is('{part}'))")
+            page.wait_for_selector(
+                f".filelist button.dir.open:has(.name:text-is('{part}'))")
+        page.click(".filelist button:has(.name:text-is('SAMPLING.md'))")
+        page.wait_for_function(
+            "document.querySelector('.filebody .where')"
+            ".textContent.includes('SAMPLING.md')")
+        assert page.eval_on_selector(
+            ".filelist button.chosen", "el => el.title").endswith(
+                "SAMPLING.md")
 
-            page.click(".filebody .crumb:has-text('native')")
-            page.wait_for_function(
-                """() => {
-                     const one = document.querySelector('.filelist button.chosen');
-                     return one && one.title === 'native';
-                   }""")
-            # The file is still the one being read; only the mark moved.
-            assert page.evaluate("state.files.path").endswith("SAMPLING.md")
-        finally:
-            browser.close()
+        page.click(".filebody .crumb:has-text('native')")
+        page.wait_for_function(
+            """() => {
+                 const one = document.querySelector('.filelist button.chosen');
+                 return one && one.title === 'native';
+               }""")
+        # The file is still the one being read; only the mark moved.
+        assert page.evaluate("state.files.path").endswith("SAMPLING.md")
 
 
 def test_go_to_marks_the_letters_it_matched_in_any_script(repo_page):
@@ -1387,21 +1158,17 @@ def test_go_to_marks_the_letters_it_matched_in_any_script(repo_page):
     lit = """(title) => [...document.querySelectorAll('.goto button')]
       .filter((row) => row.title === title)
       .map((row) => [...row.querySelectorAll('b.lit')].map((b) => b.textContent))[0]"""
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            for query, title, want in (
-                    ("notes", "docs/\u0130stanbul-notes.md", list("notes")),
-                    ("stan", "docs/\u0130stanbul-notes.md", list("stan")),
-                    ("\U0001f389p", "\U0001f389party.txt", ["\U0001f389", "p"])):
-                page.fill("#find", query)
-                page.wait_for_function(
-                    "(t) => [...document.querySelectorAll('.goto button')]"
-                    ".some((row) => row.title === t)", arg=title)
-                assert page.evaluate(lit, title) == want, query
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        for query, title, want in (
+                ("notes", "docs/\u0130stanbul-notes.md", list("notes")),
+                ("stan", "docs/\u0130stanbul-notes.md", list("stan")),
+                ("\U0001f389p", "\U0001f389party.txt", ["\U0001f389", "p"])):
+            page.fill("#find", query)
+            page.wait_for_function(
+                "(t) => [...document.querySelectorAll('.goto button')]"
+                ".some((row) => row.title === t)", arg=title)
+            assert page.evaluate(lit, title) == want, query
 
 
 def test_a_dotfile_in_the_go_to_list_keeps_its_dot_at_the_front(repo_page):
@@ -1415,33 +1182,29 @@ def test_a_dotfile_in_the_go_to_list_keeps_its_dot_at_the_front(repo_page):
     (root / ".gitignore").write_text("*.pyc\n")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "ignore")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "gitignor")     # no dot, so the dot is not lit
-            page.wait_for_selector(".goto button[title='.gitignore']")
-            seen = page.evaluate("""() => {
-              const name = document.querySelector(
-                ".goto button[title='.gitignore'] .name");
-              const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT);
-              const texts = [];
-              while (walker.nextNode()) texts.push(walker.currentNode);
-              const edge = (node, from) => {
-                const range = document.createRange();
-                range.setStart(node, from);
-                range.setEnd(node, from + 1);
-                return range.getBoundingClientRect().left;
-              };
-              const last = texts[texts.length - 1];
-              return {text: name.textContent,
-                      dot: edge(texts[0], 0),
-                      end: edge(last, last.nodeValue.length - 1)};
-            }""")
-            assert seen["text"] == ".gitignore", seen
-            assert seen["dot"] < seen["end"], seen
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "gitignor")     # no dot, so the dot is not lit
+        page.wait_for_selector(".goto button[title='.gitignore']")
+        seen = page.evaluate("""() => {
+          const name = document.querySelector(
+            ".goto button[title='.gitignore'] .name");
+          const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT);
+          const texts = [];
+          while (walker.nextNode()) texts.push(walker.currentNode);
+          const edge = (node, from) => {
+            const range = document.createRange();
+            range.setStart(node, from);
+            range.setEnd(node, from + 1);
+            return range.getBoundingClientRect().left;
+          };
+          const last = texts[texts.length - 1];
+          return {text: name.textContent,
+                  dot: edge(texts[0], 0),
+                  end: edge(last, last.nodeValue.length - 1)};
+        }""")
+        assert seen["text"] == ".gitignore", seen
+        assert seen["dot"] < seen["end"], seen
 
 
 def test_another_file_opens_at_its_top(repo_page):
@@ -1462,27 +1225,23 @@ def test_another_file_opens_at_its_top(repo_page):
             "".join(f"{name[:-3]}_{n} = {n}\n" for n in range(600)))
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "two long files")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            open_file(page, "first.py")
-            page.evaluate("""() => { const view =
-              document.querySelector('.filescroll');
-              view.scrollTop = view.scrollHeight; }""")
-            page.wait_for_function(
-                "document.querySelector('.filescroll').scrollTop > 1000")
-            open_file(page, "second.py")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('second.py')""")
-            page.wait_for_function(
-                "document.querySelector('.filescroll').scrollTop === 0",
-                timeout=5000)
-            # And it really could have kept a place: this file scrolls too.
-            assert page.eval_on_selector(
-                ".filescroll", "el => el.scrollHeight > el.clientHeight + 1000")
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        open_file(page, "first.py")
+        page.evaluate("""() => { const view =
+          document.querySelector('.filescroll');
+          view.scrollTop = view.scrollHeight; }""")
+        page.wait_for_function(
+            "document.querySelector('.filescroll').scrollTop > 1000")
+        open_file(page, "second.py")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('second.py')""")
+        page.wait_for_function(
+            "document.querySelector('.filescroll').scrollTop === 0",
+            timeout=5000)
+        # And it really could have kept a place: this file scrolls too.
+        assert page.eval_on_selector(
+            ".filescroll", "el => el.scrollHeight > el.clientHeight + 1000")
 
 
 def test_a_picture_is_shown_rather_than_named(repo_page):
@@ -1494,27 +1253,23 @@ def test_a_picture_is_shown_rather_than_named(repo_page):
     (root / "blob.bin").write_bytes(b"\0\0\0not a picture\0")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "a picture and a blob")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            # Not `open_file`: it waits for rows, and a picture has none.
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('logo.png')")
-            page.wait_for_selector(".filebody .media img")
-            page.wait_for_function(
-                "document.querySelector('.filebody .media img').naturalWidth > 0")
-            assert page.locator(".filebody .note").count() == 0
+    with opened(repo_page) as page:
+        # Not `open_file`: it waits for rows, and a picture has none.
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('logo.png')")
+        page.wait_for_selector(".filebody .media img")
+        page.wait_for_function(
+            "document.querySelector('.filebody .media img').naturalWidth > 0")
+        assert page.locator(".filebody .note").count() == 0
 
-            # And a binary that is not a picture still says so.
-            page.click(".filelist button:has-text('blob.bin')")
-            page.wait_for_function(
-                """() => {
-                     const note = document.querySelector('.filebody .note');
-                     return note && note.textContent.includes('Binary file');
-                   }""")
-            assert page.locator(".filebody .media").count() == 0
-        finally:
-            browser.close()
+        # And a binary that is not a picture still says so.
+        page.click(".filelist button:has-text('blob.bin')")
+        page.wait_for_function(
+            """() => {
+                 const note = document.querySelector('.filebody .note');
+                 return note && note.textContent.includes('Binary file');
+               }""")
+        assert page.locator(".filebody .media").count() == 0
 
 
 def test_a_picture_too_big_to_show_says_so(ws, repo_page, monkeypatch):
@@ -1526,19 +1281,15 @@ def test_a_picture_too_big_to_show_says_so(ws, repo_page, monkeypatch):
     (root / "logo.png").write_bytes(conftest.tiny_png())
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "a picture")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('logo.png')")
-            page.wait_for_function(
-                """() => {
-                     const note = document.querySelector('.filebody .note');
-                     return note && note.textContent.includes('too big');
-                   }""")
-            assert page.locator(".filebody .media").count() == 0
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('logo.png')")
+        page.wait_for_function(
+            """() => {
+                 const note = document.querySelector('.filebody .note');
+                 return note && note.textContent.includes('too big');
+               }""")
+        assert page.locator(".filebody .media").count() == 0
 
 
 # --- what a session remembers between visits ---------------------------------
@@ -1551,49 +1302,45 @@ def test_a_session_comes_back_to_where_it_was_left(two_repos):
 
     Drop `usePlace` from `choose` and every one of these comes back blank."""
     repo, _, base = two_repos
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 2")
-            page.evaluate("choose('s1')")
-            show_tab(page, "files")
-            page.click(".filelist button.dir:has(.name:text-is('deep'))")
-            page.click(".filelist button:has(.name:text-is('inner.py'))")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('inner.py')""")
-            page.evaluate("""() => { const view =
-              document.querySelector('.filescroll');
-              view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
-            page.wait_for_function(
-                "document.querySelector('.filescroll').scrollTop > 100")
-            # The place the page wrote down, not the scroller's: the scroll
-            # event writes it a frame later, and a switch before it saved the
-            # top -- red under load.
-            page.wait_for_function("state.files.down > 100")
-            was = page.evaluate("state.files.down")
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        show_tab(page, "files")
+        page.click(".filelist button.dir:has(.name:text-is('deep'))")
+        page.click(".filelist button:has(.name:text-is('inner.py'))")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('inner.py')""")
+        page.evaluate("""() => { const view =
+          document.querySelector('.filescroll');
+          view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
+        page.wait_for_function(
+            "document.querySelector('.filescroll').scrollTop > 100")
+        # The place the page wrote down, not the scroller's: the scroll
+        # event writes it a frame later, and a switch before it saved the
+        # top -- red under load.
+        page.wait_for_function("state.files.down > 100")
+        was = page.evaluate("state.files.down")
 
-            # Away, and back. The other session is put on the Files tab
-            # by hand: which tab it lands on is one of the things a session
-            # remembers, and the page may have chosen it once already.
-            page.evaluate("choose('s2')")
-            show_tab(page, "files")
-            page.wait_for_function("state.files.path === 'OTHER.md'")
-            assert page.evaluate("state.files.dirs.size") == 0
-            page.evaluate("choose('s1')")
+        # Away, and back. The other session is put on the Files tab
+        # by hand: which tab it lands on is one of the things a session
+        # remembers, and the page may have chosen it once already.
+        page.evaluate("choose('s2')")
+        show_tab(page, "files")
+        page.wait_for_function("state.files.path === 'OTHER.md'")
+        assert page.evaluate("state.files.dirs.size") == 0
+        page.evaluate("choose('s1')")
 
-            page.wait_for_function("state.tab === 'files'")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('inner.py')""")
-            page.wait_for_function(
-                "(was) => Math.abs(document.querySelector('.filescroll')"
-                ".scrollTop - was) < 30", arg=was)
-            assert page.evaluate("[...state.files.dirs]") == [["deep", True]]
-            # The caches are not kept: this listing came back from the daemon.
-            assert page.evaluate("state.files.names.length") > 0
-        finally:
-            browser.close()
+        page.wait_for_function("state.tab === 'files'")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('inner.py')""")
+        page.wait_for_function(
+            "(was) => Math.abs(document.querySelector('.filescroll')"
+            ".scrollTop - was) < 30", arg=was)
+        assert page.evaluate("[...state.files.dirs]") == [["deep", True]]
+        # The caches are not kept: this listing came back from the daemon.
+        assert page.evaluate("state.files.names.length") > 0
 
 
 def test_a_session_comes_back_to_the_tab_it_was_left_on(two_repos):
@@ -1601,24 +1348,20 @@ def test_a_session_comes_back_to_the_tab_it_was_left_on(two_repos):
     it, which is also what marks the strip and loads the tab — set
     `state.tab` by hand instead and the strip points at the wrong one."""
     _, _, base = two_repos
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 2")
-            page.evaluate("choose('s1')")
-            show_tab(page, "diff")
-            page.evaluate("choose('s2')")
-            show_tab(page, "files")
-            page.evaluate("choose('s1')")
-            # The box, not `state.tab`: `showTab` sets the name and then
-            # awaits the load, and until that comes back the box still holds
-            # the tab before it.
-            page.wait_for_function("$('content').dataset.tab === 'diff'")
-            assert page.eval_on_selector(
-                ".tab[data-tab='diff']",
-                "el => el.getAttribute('aria-selected')") == "true"
-        finally:
-            browser.close()
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        show_tab(page, "diff")
+        page.evaluate("choose('s2')")
+        show_tab(page, "files")
+        page.evaluate("choose('s1')")
+        # The box, not `state.tab`: `showTab` sets the name and then
+        # awaits the load, and until that comes back the box still holds
+        # the tab before it.
+        page.wait_for_function("$('content').dataset.tab === 'diff'")
+        assert page.eval_on_selector(
+            ".tab[data-tab='diff']",
+            "el => el.getAttribute('aria-selected')") == "true"
 
 
 def test_a_place_in_a_file_survives_leaving_the_files_tab(two_repos):
@@ -1627,45 +1370,41 @@ def test_a_place_in_a_file_survives_leaving_the_files_tab(two_repos):
     writes the place down on the way out. Take that line out and the file
     comes back at its top."""
     _, _, base = two_repos
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 2")
-            page.evaluate("choose('s1')")
-            show_tab(page, "files")
-            page.click(".filelist button.dir:has(.name:text-is('deep'))")
-            page.click(".filelist button:has(.name:text-is('inner.py'))")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('inner.py')""")
-            page.evaluate("""() => { const view =
-              document.querySelector('.filescroll');
-              view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
-            page.wait_for_function(
-                "document.querySelector('.filescroll').scrollTop > 100")
-            was = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        show_tab(page, "files")
+        page.click(".filelist button.dir:has(.name:text-is('deep'))")
+        page.click(".filelist button:has(.name:text-is('inner.py'))")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('inner.py')""")
+        page.evaluate("""() => { const view =
+          document.querySelector('.filescroll');
+          view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
+        page.wait_for_function(
+            "document.querySelector('.filescroll').scrollTop > 100")
+        was = page.eval_on_selector(".filescroll", "el => el.scrollTop")
 
-            # Leave by another tab, then leave the session, then come back.
-            show_tab(page, "diff")
-            assert page.locator(".filescroll").count() == 0
-            page.evaluate("choose('s2')")
-            # Wherever s2 was left, it is not where this test is looking;
-            # the Diff tab is the one it can wait on without an open file.
-            show_tab(page, "diff")
-            page.wait_for_function(
-                "state.chosen === 's2' && state.diff !== null")
-            page.evaluate("choose('s1')")
-            page.wait_for_function(
-                "state.chosen === 's1' && $('content').dataset.tab === 'diff'")
-            show_tab(page, "files")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('inner.py')""")
-            page.wait_for_function(
-                "(was) => Math.abs(document.querySelector('.filescroll')"
-                ".scrollTop - was) < 30", arg=was)
-        finally:
-            browser.close()
+        # Leave by another tab, then leave the session, then come back.
+        show_tab(page, "diff")
+        assert page.locator(".filescroll").count() == 0
+        page.evaluate("choose('s2')")
+        # Wherever s2 was left, it is not where this test is looking;
+        # the Diff tab is the one it can wait on without an open file.
+        show_tab(page, "diff")
+        page.wait_for_function(
+            "state.chosen === 's2' && state.diff !== null")
+        page.evaluate("choose('s1')")
+        page.wait_for_function(
+            "state.chosen === 's1' && $('content').dataset.tab === 'diff'")
+        show_tab(page, "files")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('inner.py')""")
+        page.wait_for_function(
+            "(was) => Math.abs(document.querySelector('.filescroll')"
+            ".scrollTop - was) < 30", arg=was)
 
 
 def test_coming_back_does_not_bring_the_last_session_place_with_it(two_repos):
@@ -1678,56 +1417,52 @@ def test_coming_back_does_not_bring_the_last_session_place_with_it(two_repos):
     `document.querySelector('.filescroll')` write back into `showTab` and
     this goes red."""
     _, _, base = two_repos
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 2")
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 2")
 
-            # s2: read a long file half way down, then leave by another tab.
-            page.evaluate("choose('s2')")
-            show_tab(page, "files")
-            page.click(".filelist button:has-text('other.py')")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('other.py')""")
-            page.evaluate("""() => { const view =
-              document.querySelector('.filescroll');
-              view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
-            page.wait_for_function(
-                "document.querySelector('.filescroll').scrollTop > 100")
-            two = page.eval_on_selector(".filescroll", "el => el.scrollTop")
-            show_tab(page, "diff")
+        # s2: read a long file half way down, then leave by another tab.
+        page.evaluate("choose('s2')")
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('other.py')")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('other.py')""")
+        page.evaluate("""() => { const view =
+          document.querySelector('.filescroll');
+          view.scrollTop = Math.floor(view.scrollHeight / 2); }""")
+        page.wait_for_function(
+            "document.querySelector('.filescroll').scrollTop > 100")
+        two = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+        show_tab(page, "diff")
 
-            # s1: a different long file, read to a different place, and left
-            # from the Files tab — which is what put a pane on the page for
-            # `showTab` to read while coming back to s2.
-            page.evaluate("choose('s1')")
-            show_tab(page, "files")
-            page.click(".filelist button.dir:has(.name:text-is('deep'))")
-            page.click(".filelist button:has(.name:text-is('inner.py'))")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('inner.py')""")
-            page.evaluate("""() => { const view =
-              document.querySelector('.filescroll');
-              view.scrollTop = view.scrollHeight; }""")
-            page.wait_for_function(
-                "document.querySelector('.filescroll').scrollTop > 1000")
-            one = page.eval_on_selector(".filescroll", "el => el.scrollTop")
-            assert abs(one - two) > 100, (one, two)
+        # s1: a different long file, read to a different place, and left
+        # from the Files tab — which is what put a pane on the page for
+        # `showTab` to read while coming back to s2.
+        page.evaluate("choose('s1')")
+        show_tab(page, "files")
+        page.click(".filelist button.dir:has(.name:text-is('deep'))")
+        page.click(".filelist button:has(.name:text-is('inner.py'))")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('inner.py')""")
+        page.evaluate("""() => { const view =
+          document.querySelector('.filescroll');
+          view.scrollTop = view.scrollHeight; }""")
+        page.wait_for_function(
+            "document.querySelector('.filescroll').scrollTop > 1000")
+        one = page.eval_on_selector(".filescroll", "el => el.scrollTop")
+        assert abs(one - two) > 100, (one, two)
 
-            page.evaluate("choose('s2')")
-            page.wait_for_function("$('content').dataset.tab === 'diff'")
-            assert page.evaluate("state.files.down") == two
-            show_tab(page, "files")
-            page.wait_for_function(
-                """() => document.querySelector('.filebody .where')
-                           .textContent.includes('other.py')""")
-            page.wait_for_function(
-                "(two) => Math.abs(document.querySelector('.filescroll')"
-                ".scrollTop - two) < 30", arg=two)
-        finally:
-            browser.close()
+        page.evaluate("choose('s2')")
+        page.wait_for_function("$('content').dataset.tab === 'diff'")
+        assert page.evaluate("state.files.down") == two
+        show_tab(page, "files")
+        page.wait_for_function(
+            """() => document.querySelector('.filebody .where')
+                       .textContent.includes('other.py')""")
+        page.wait_for_function(
+            "(two) => Math.abs(document.querySelector('.filescroll')"
+            ".scrollTop - two) < 30", arg=two)
 
 
 def test_what_a_session_keeps_is_what_comes_back(two_repos):
@@ -1739,60 +1474,56 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
 
     Take a line out of `usePlace` and the two lists stop agreeing."""
     _, _, base = two_repos
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 2")
-            seen = page.evaluate("""() => {
-              state.tab = 'diff';
-              Object.assign(state.files, {path: 'a/b.py', at: 'a',
-                                          asText: true, down: 321});
-              state.files.dirs = new Map([['a', true]]);
-              state.turns.open = new Set([7]);
-              state.turns.shut = new Set([3]);
-              state.turns.at = 12;
-              state.turns.down = 654;
-              state.turns.run = 3;
-              state.diffs.open = new Map([['z.py', true]]);
-              state.diffs.of = 'abc123';
-              state.diffs.shut = new Set(['committed src']);
-              state.diffs.more = new Map([['x', [[4, 30]]]]);
-              state.diffs.loose = 'loose.txt';
-              const flat = (one) =>
-                (one instanceof Map || one instanceof Set)
-                  ? JSON.stringify([...one]) : JSON.stringify(one);
-              const read = () => PLACE_FIELDS.map(([bag, field]) => flat(state[bag][field]));
-              const before = read();
-              savePlace('probe');
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 2")
+        seen = page.evaluate("""() => {
+          state.tab = 'diff';
+          Object.assign(state.files, {path: 'a/b.py', at: 'a',
+                                      asText: true, down: 321});
+          state.files.dirs = new Map([['a', true]]);
+          state.turns.open = new Set([7]);
+          state.turns.shut = new Set([3]);
+          state.turns.at = 12;
+          state.turns.down = 654;
+          state.turns.run = 3;
+          state.diffs.open = new Map([['z.py', true]]);
+          state.diffs.of = 'abc123';
+          state.diffs.shut = new Set(['committed src']);
+          state.diffs.more = new Map([['x', [[4, 30]]]]);
+          state.diffs.loose = 'loose.txt';
+          const flat = (one) =>
+            (one instanceof Map || one instanceof Set)
+              ? JSON.stringify([...one]) : JSON.stringify(one);
+          const read = () => PLACE_FIELDS.map(([bag, field]) => flat(state[bag][field]));
+          const before = read();
+          savePlace('probe');
 
-              // Blanked the way `choose` blanks it. The tab goes too: it
-              // is `choose` that puts that one back, through `showTab`.
-              state.tab = 'transcript';
-              state.turns = blankTurns();
-              state.files = blankFiles();
-              state.diffs = blankDiff();
-              const blank = read();
-              usePlace('probe');
-              return {before, blank, after: read(),
-                      tab: state.visits.get('probe').tab,
-                      names: PLACE_FIELDS.map(([bag, field]) => bag + "." + field)};
-            }""")
-            assert seen["tab"] == "diff", seen
-            assert seen["after"] == seen["before"], seen
-            # Every field was set away from its blank above, so one that
-            # did not come back would show here and not hide behind it.
-            moved = [name for name, was, now in zip(seen["names"], seen["blank"],
-                                                    seen["before"]) if was == now]
-            assert moved == [], moved
-            # And what is kept, by name: a row left out of the table would be
-            # neither saved nor put back, and agree with itself.
-            assert seen["names"] == [
-                "turns.at", "turns.down", "turns.run", "turns.open", "turns.shut",
-                "files.path", "files.at", "files.asText", "files.down",
-                "files.dirs", "diffs.open", "diffs.of", "diffs.shut",
-                "diffs.more", "diffs.loose"], seen["names"]
-        finally:
-            browser.close()
+          // Blanked the way `choose` blanks it. The tab goes too: it
+          // is `choose` that puts that one back, through `showTab`.
+          state.tab = 'transcript';
+          state.turns = blankTurns();
+          state.files = blankFiles();
+          state.diffs = blankDiff();
+          const blank = read();
+          usePlace('probe');
+          return {before, blank, after: read(),
+                  tab: state.visits.get('probe').tab,
+                  names: PLACE_FIELDS.map(([bag, field]) => bag + "." + field)};
+        }""")
+        assert seen["tab"] == "diff", seen
+        assert seen["after"] == seen["before"], seen
+        # Every field was set away from its blank above, so one that
+        # did not come back would show here and not hide behind it.
+        moved = [name for name, was, now in zip(seen["names"], seen["blank"],
+                                                seen["before"]) if was == now]
+        assert moved == [], moved
+        # And what is kept, by name: a row left out of the table would be
+        # neither saved nor put back, and agree with itself.
+        assert seen["names"] == [
+            "turns.at", "turns.down", "turns.run", "turns.open", "turns.shut",
+            "files.path", "files.at", "files.asText", "files.down",
+            "files.dirs", "diffs.open", "diffs.of", "diffs.shut",
+            "diffs.more", "diffs.loose"], seen["names"]
 
 
 def test_the_go_to_list_is_wider_than_the_box_it_hangs_under(repo_page):
@@ -1805,25 +1536,21 @@ def test_the_go_to_list_is_wider_than_the_box_it_hangs_under(repo_page):
     (deep / "SAMPLING.md").write_text("# sampling\n")
     conftest.git_in(root, "add", "-A")
     conftest.git_in(root, "commit", "-qm", "deep")
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
-            show_tab(page, "files")
-            page.fill("#find", "SAMPLING")
-            page.wait_for_selector(".goto button")
-            seen = page.evaluate("""() => {
-              const list = document.querySelector('.goto');
-              const box = document.querySelector('#find');
-              const name = document.querySelector('.goto button .name');
-              return {list: list.getBoundingClientRect().width,
-                      box: box.getBoundingClientRect().width,
-                      clipped: name.scrollWidth > name.clientWidth + 1};
-            }""")
-            assert seen["list"] > seen["box"] + 100, seen
-            # And the whole path really fits, which is the point of the width.
-            assert seen["clipped"] is False, seen
-        finally:
-            browser.close()
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.fill("#find", "SAMPLING")
+        page.wait_for_selector(".goto button")
+        seen = page.evaluate("""() => {
+          const list = document.querySelector('.goto');
+          const box = document.querySelector('#find');
+          const name = document.querySelector('.goto button .name');
+          return {list: list.getBoundingClientRect().width,
+                  box: box.getBoundingClientRect().width,
+                  clipped: name.scrollWidth > name.clientWidth + 1};
+        }""")
+        assert seen["list"] > seen["box"] + 100, seen
+        # And the whole path really fits, which is the point of the width.
+        assert seen["clipped"] is False, seen
 
 
 def test_a_scroll_left_over_from_another_session_is_not_its_place(two_repos):
@@ -1835,25 +1562,21 @@ def test_a_scroll_left_over_from_another_session_is_not_its_place(two_repos):
     Drive that ordering exactly, rather than waiting for a loaded machine to
     produce it: the event is dispatched on the stale node after the switch."""
     _, _, base = two_repos
-    with sync_playwright() as play:
-        browser, page = open_page(play, base + "/")
-        try:
-            page.wait_for_function("state.sessions.length === 2")
-            page.evaluate("choose('s1')")
-            show_tab(page, "files")
-            page.wait_for_selector(".filescroll")
-            seen = page.evaluate("""() => {
-              const view = document.querySelector('.filescroll');
-              view.scrollTop = 400;
-              // The node s1 was reading, kept exactly as the page keeps it.
-              choose('s2');
-              state.files.down = 77;          // what `usePlace` put back
-              view.dispatchEvent(new Event('scroll'));
-              return state.files.down;
-            }""")
-            assert seen == 77, seen
-        finally:
-            browser.close()
+    with opened(base + "/") as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        show_tab(page, "files")
+        page.wait_for_selector(".filescroll")
+        seen = page.evaluate("""() => {
+          const view = document.querySelector('.filescroll');
+          view.scrollTop = 400;
+          // The node s1 was reading, kept exactly as the page keeps it.
+          choose('s2');
+          state.files.down = 77;          // what `usePlace` put back
+          view.dispatchEvent(new Event('scroll'));
+          return state.files.down;
+        }""")
+        assert seen == 77, seen
 
 
 def test_a_listing_git_failed_on_keeps_the_open_file(ws, repo_page, monkeypatch):
@@ -1862,31 +1585,27 @@ def test_a_listing_git_failed_on_keeps_the_open_file(ws, repo_page, monkeypatch)
     closed, its place went, and a comment half written on it went with the
     rebuild. When git answered again the first file of the tree opened."""
     repo, path = repo_page
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            open_file(page, "code.py")
-            page.evaluate("state.files.down = 7")
-            real = ws.git_names
-            monkeypatch.setattr(ws, "git_names", lambda *a, **k: None)
-            # The daemon keeps a listing for `LIST_FRESH` and reads behind it.
-            page.wait_for_function("state.files.failed === true", timeout=20000)
-            assert page.evaluate("[state.files.path, state.files.down]") == [
-                "code.py", 7]
-            assert page.evaluate("state.files.known.has('code.py')")
-            # A session chosen again holds its open file and no names yet --
-            # `usePlace` puts back the choice, never the listing. A first
-            # listing that failed must not close it either.
-            page.evaluate("""() => { state.files.names = [];
-                                     state.files.known = new Set();
-                                     state.files.tag = ''; }""")
-            page.wait_for_function("state.files.tag !== ''", timeout=20000)
-            assert page.evaluate("state.files.path") == "code.py"
-            monkeypatch.setattr(ws, "git_names", real)
-            page.wait_for_function("state.files.failed === false", timeout=20000)
-            assert page.evaluate("state.files.path") == "code.py"
-        finally:
-            browser.close()
+    with opened(path) as page:
+        open_file(page, "code.py")
+        page.evaluate("state.files.down = 7")
+        real = ws.git_names
+        monkeypatch.setattr(ws, "git_names", lambda *a, **k: None)
+        # The daemon keeps a listing for `LIST_FRESH` and reads behind it.
+        page.wait_for_function("state.files.failed === true", timeout=20000)
+        assert page.evaluate("[state.files.path, state.files.down]") == [
+            "code.py", 7]
+        assert page.evaluate("state.files.known.has('code.py')")
+        # A session chosen again holds its open file and no names yet --
+        # `usePlace` puts back the choice, never the listing. A first
+        # listing that failed must not close it either.
+        page.evaluate("""() => { state.files.names = [];
+                                 state.files.known = new Set();
+                                 state.files.tag = ''; }""")
+        page.wait_for_function("state.files.tag !== ''", timeout=20000)
+        assert page.evaluate("state.files.path") == "code.py"
+        monkeypatch.setattr(ws, "git_names", real)
+        page.wait_for_function("state.files.failed === false", timeout=20000)
+        assert page.evaluate("state.files.path") == "code.py"
 
 
 def test_a_file_read_git_failed_on_is_not_drawn_as_its_text(ws, repo_page,
@@ -1895,21 +1614,17 @@ def test_a_file_read_git_failed_on_is_not_drawn_as_its_text(ws, repo_page,
     worktree", and the page drew the sentence as line 1 of the file, with a
     `+` beside it that would anchor a comment to the real line 1."""
     repo, path = repo_page
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            open_file(page, "code.py")
-            asked = []
-            page.on("request", lambda one: asked.append(one.url)
-                    if "/file?" in one.url else None)
-            monkeypatch.setattr(ws, "is_listed", lambda *a, **k: False)
-            wait_until(page, lambda: len(asked) >= 2)   # two answers, so one refused
-            page.wait_for_timeout(300)
-            shown = page.locator(".filebody .code").inner_text()
-            assert "not in this worktree" not in shown, shown
-            assert "print(1)" in shown, shown
-        finally:
-            browser.close()
+    with opened(path) as page:
+        open_file(page, "code.py")
+        asked = []
+        page.on("request", lambda one: asked.append(one.url)
+                if "/file?" in one.url else None)
+        monkeypatch.setattr(ws, "is_listed", lambda *a, **k: False)
+        wait_until(page, lambda: len(asked) >= 2)   # two answers, so one refused
+        page.wait_for_timeout(300)
+        shown = page.locator(".filebody .code").inner_text()
+        assert "not in this worktree" not in shown, shown
+        assert "print(1)" in shown, shown
 
 
 
@@ -1921,63 +1636,55 @@ def test_a_first_read_that_failed_says_so_and_is_not_the_file(ws, repo_page,
     under the name just picked. Both now say why, and the text comes once
     the read works."""
     repo, path = repo_page
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            open_file(page, "code.py")
-            body = ".filebody .filescroll"
-            # A refused read: what a timed-out `is_listed` answers too.
-            refusing = [True]
-            listed = ws.is_listed
-            monkeypatch.setattr(ws, "is_listed", lambda *a, **k:
-                                not refusing[0] and listed(*a, **k))
-            page.click(".filelist button:has-text('README.md')")
-            page.wait_for_function(
-                f"(document.querySelector('{body}') || {{}}).textContent"
-                " === 'Could not read README.md: that file is not in this"
-                " worktree. It is asked for again in a few seconds.'")
-            assert page.locator(".filebody .crumbs").inner_text() == "README.md"
-            refusing[0] = False
-            page.wait_for_selector(f"{body} h1:has-text('The readme')")
-            # A fetch that failed: the file before must not stand in its place.
-            # Held first, with a push's redraw landing while it is out, so the
-            # pane says "reading…" before the failure has to replace it.
-            # One handler: `unroute` would answer a held request itself.
-            held = []
-            page.route("**/file?*", lambda route: route.abort() if held
-                       else held.append(route))
-            page.click(".filelist button:has-text('code.py')")
-            wait_until(page, lambda: held)
-            page.evaluate("draw()")
-            assert page.locator(body).inner_text() == "reading…"
-            held[0].abort()
-            page.wait_for_function(
-                f"(document.querySelector('{body}') || {{}}).textContent"
-                " === 'Could not read code.py: the daemon did not answer."
-                " It is asked for again in a few seconds.'")
-            assert "The readme" not in page.locator(".filebody").inner_text()
-            page.unroute("**/file?*")
-            page.wait_for_selector(f"{body} .dline:has-text('print(2)')")
-        finally:
-            browser.close()
+    with opened(path) as page:
+        open_file(page, "code.py")
+        body = ".filebody .filescroll"
+        # A refused read: what a timed-out `is_listed` answers too.
+        refusing = [True]
+        listed = ws.is_listed
+        monkeypatch.setattr(ws, "is_listed", lambda *a, **k:
+                            not refusing[0] and listed(*a, **k))
+        page.click(".filelist button:has-text('README.md')")
+        page.wait_for_function(
+            f"(document.querySelector('{body}') || {{}}).textContent"
+            " === 'Could not read README.md: that file is not in this"
+            " worktree. It is asked for again in a few seconds.'")
+        assert page.locator(".filebody .crumbs").inner_text() == "README.md"
+        refusing[0] = False
+        page.wait_for_selector(f"{body} h1:has-text('The readme')")
+        # A fetch that failed: the file before must not stand in its place.
+        # Held first, with a push's redraw landing while it is out, so the
+        # pane says "reading…" before the failure has to replace it.
+        # One handler: `unroute` would answer a held request itself.
+        held = []
+        page.route("**/file?*", lambda route: route.abort() if held
+                   else held.append(route))
+        page.click(".filelist button:has-text('code.py')")
+        wait_until(page, lambda: held)
+        page.evaluate("draw()")
+        assert page.locator(body).inner_text() == "reading…"
+        held[0].abort()
+        page.wait_for_function(
+            f"(document.querySelector('{body}') || {{}}).textContent"
+            " === 'Could not read code.py: the daemon did not answer."
+            " It is asked for again in a few seconds.'")
+        assert "The readme" not in page.locator(".filebody").inner_text()
+        page.unroute("**/file?*")
+        page.wait_for_selector(f"{body} .dline:has-text('print(2)')")
 
 def test_a_tall_comment_in_a_windowed_file_is_a_line_not_rows(page_at):
     """`lineAt` counted the pixels of a comment's box as rows, so a reader
     scrolled into a comment taller than eight rows got a window that started
     past what was on screen: nothing at all was drawn there."""
     daemon, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            got = page.evaluate("""() => {
-              const tall = [[100, 1138]];
-              const into = 101 * CODE_H + 500;      // half way down the box
-              return [lineAt(tall, into), lineAt(tall, 101 * CODE_H + 1138 + 2),
-                      lineAt(tall, 50 * CODE_H + 3)];
-            }""")
-            assert got == [100, 101, 50], got
-        finally:
-            browser.close()
+    with opened(path) as page:
+        got = page.evaluate("""() => {
+          const tall = [[100, 1138]];
+          const into = 101 * CODE_H + 500;      // half way down the box
+          return [lineAt(tall, into), lineAt(tall, 101 * CODE_H + 1138 + 2),
+                  lineAt(tall, 50 * CODE_H + 3)];
+        }""")
+        assert got == [100, 101, 50], got
 
 
 def test_two_sessions_on_one_file_each_get_their_own_scroller(repo_page, served,
@@ -1991,21 +1698,17 @@ def test_two_sessions_on_one_file_each_get_their_own_scroller(repo_page, served,
     ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(repo),
                                    ts=time.time()))
     daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function("state.sessions.length === 2")
-            page.evaluate("choose('s1')")
-            open_file(page, "code.py")
-            rebuilt = page.evaluate("""() => {
-              const before = document.querySelector('.filescroll');
-              state.chosen = 's2';
-              draw();
-              return document.querySelector('.filescroll') !== before;
-            }""")
-            assert rebuilt
-        finally:
-            browser.close()
+    with opened(path) as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        open_file(page, "code.py")
+        rebuilt = page.evaluate("""() => {
+          const before = document.querySelector('.filescroll');
+          state.chosen = 's2';
+          draw();
+          return document.querySelector('.filescroll') !== before;
+        }""")
+        assert rebuilt
 
 
 def test_another_session_in_the_worktree_does_not_fetch_its_names_again(
@@ -2018,25 +1721,21 @@ def test_another_session_in_the_worktree_does_not_fetch_its_names_again(
     ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(repo),
                                    ts=time.time(), pane="%8", pid=2))
     served[0].store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, repo_page)
-        try:
+    with opened(repo_page) as page:
+        page.wait_for_function(
+            "document.querySelectorAll('.row').length === 2")
+        page.evaluate("choose('s1')")
+        show_tab(page, "files")
+        page.wait_for_function("state.files.tag !== ''")
+        names = page.evaluate("state.files.names.length")
+        assert names > 0
+        for other in ("s2", "s1"):
+            with page.expect_response(re.compile(r"/files\?")) as came:
+                # A session puts back the tab it was left on.
+                page.evaluate(f"choose('{other}'); showTab('files')")
+            assert "have=&" not in came.value.url + "&", came.value.url
+            assert "names" not in came.value.json(), other
             page.wait_for_function(
-                "document.querySelectorAll('.row').length === 2")
-            page.evaluate("choose('s1')")
-            show_tab(page, "files")
-            page.wait_for_function("state.files.tag !== ''")
-            names = page.evaluate("state.files.names.length")
-            assert names > 0
-            for other in ("s2", "s1"):
-                with page.expect_response(re.compile(r"/files\?")) as came:
-                    # A session puts back the tab it was left on.
-                    page.evaluate(f"choose('{other}'); showTab('files')")
-                assert "have=&" not in came.value.url + "&", came.value.url
-                assert "names" not in came.value.json(), other
-                page.wait_for_function(
-                    f"state.chosen === '{other}'"
-                    f" && state.files.names.length === {names}")
-                page.wait_for_selector(".filelist button .name")
-        finally:
-            browser.close()
+                f"state.chosen === '{other}'"
+                f" && state.files.names.length === {names}")
+            page.wait_for_selector(".filelist button .name")

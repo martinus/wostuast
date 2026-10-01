@@ -146,30 +146,25 @@ def main(argv: list[str]) -> int:
         lines = records(*parse(case.read_text()))
     url = serve(lines, home)
 
-    from browser import open_page, sync_playwright, wait_for_map
-    with sync_playwright() as play:
-        context, page = open_page(play, url,
-                                  scheme="light" if said.light else "dark")
-        try:
-            page.set_viewport_size({"width": said.width,
-                                    "height": said.height})
-            wait_for_map(page)
-            page.wait_for_function("() => !document.getAnimations().length")
-            if said.hover:
-                # On the words themselves: a code block's copy shows only
-                # while the pointer is on the block, and the middle of the
-                # turn may be text beside it.
-                page.locator(".turnbody .turn", has_text=said.hover) \
-                    .get_by_text(said.hover).first.hover()
-            page.locator(said.part).first.screenshot(path=said.out)
-            if said.measure:
-                print(f"{'box':>4} {'shows':>5} {'gap':>4}  block")
-                for one in page.evaluate(MEASURE):
-                    gap = "" if one["gap"] is None else one["gap"]
-                    print(f"{one['box']:>4} {one['shows']:>5} {gap:>4}  "
-                          f"{one['what']}")
-        finally:
-            context.close()
+    from browser import opened, wait_for_map
+    with opened(url, scheme="light" if said.light else "dark") as page:
+        page.set_viewport_size({"width": said.width,
+                                "height": said.height})
+        wait_for_map(page)
+        page.wait_for_function("() => !document.getAnimations().length")
+        if said.hover:
+            # On the words themselves: a code block's copy shows only
+            # while the pointer is on the block, and the middle of the
+            # turn may be text beside it.
+            page.locator(".turnbody .turn", has_text=said.hover) \
+                .get_by_text(said.hover).first.hover()
+        page.locator(said.part).first.screenshot(path=said.out)
+        if said.measure:
+            print(f"{'box':>4} {'shows':>5} {'gap':>4}  block")
+            for one in page.evaluate(MEASURE):
+                gap = "" if one["gap"] is None else one["gap"]
+                print(f"{one['box']:>4} {one['shows']:>5} {gap:>4}  "
+                      f"{one['what']}")
     print(said.out)
     return 0
 
