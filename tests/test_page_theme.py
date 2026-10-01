@@ -201,7 +201,7 @@ def test_no_state_on_the_body_can_make_the_page_vanish(page_at):
     puts on `body`, the page is still there. Every class it sets is named
     here, and a new one belongs in this list.
     """
-    states = ["offline", "outdated", "show-thinking", "dragging"]
+    states = ["offline", "outdated", "dragging"]
     with sync_playwright() as play:
         browser, page = open_page(play, page_at)
         try:

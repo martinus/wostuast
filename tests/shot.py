@@ -1,7 +1,7 @@
 """Draw a transcript on the page, save a picture of it, and say what it measured.
 
     python3 tests/shot.py CASE OUT.png [--width 1500] [--height 900]
-                         [--thinking] [--light] [--hover WORDS] [--measure]
+                         [--light] [--hover WORDS] [--measure]
                          [--part SELECTOR]
 
 This is the first thing to run on a report about how the page looks: build
@@ -124,7 +124,6 @@ def main(argv: list[str]) -> int:
     ask.add_argument("out")
     ask.add_argument("--width", type=int, default=1500)
     ask.add_argument("--height", type=int, default=900)
-    ask.add_argument("--thinking", action="store_true")
     ask.add_argument("--light", action="store_true")
     ask.add_argument("--hover")
     ask.add_argument("--measure", action="store_true")
@@ -154,8 +153,6 @@ def main(argv: list[str]) -> int:
             page.set_viewport_size({"width": said.width,
                                     "height": said.height})
             wait_for_map(page)
-            if said.thinking:
-                page.evaluate("document.body.classList.add('show-thinking')")
             page.wait_for_function("() => !document.getAnimations().length")
             if said.hover:
                 # On the words themselves: a code block's copy shows only

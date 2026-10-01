@@ -86,8 +86,8 @@ bullets beside it are the same part's other scars.
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear`, `Session.pane`, `Session.pid` | topics/state |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
-| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `move`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
-| `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `toggleThinking`, `putCodeCopies` | topics/daemon-and-page: the transcript's shape |
+| `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
+| `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `putCodeCopies` | topics/daemon-and-page: the transcript's shape |
 | `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | topics/tab-state |
 | `git_facts_many`, `git_facts_or_failed`, `worktree_files`, `walk_ignored`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of` and `base`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext`, `putMessage`, `putReadAs`, `stepat` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
@@ -223,6 +223,7 @@ This list exists because each entry was re-implemented once already.
 | the reader's ticket links in some text | `linkTickets(root)` — after any scrub |
 | "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
+| a button that did its job says so for a moment | `flashOutcome(button, icon, title, done, saying)` — a tick in the working colour, then back |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
 | a binary file the browser can show | `putMedia(parent, path, found)` — `found.shown` is the daemon's answer |

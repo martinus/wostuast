@@ -119,7 +119,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the tab it was on goes away, and the guards ask the DOM (`writingIn`) rather
   than the flag: a box open on another tab froze a tab that had nothing on
   screen to close. **Nor may it go before its box**: `showTab` cleared it
-  for the tab already on screen too -- a click on its label, `r`, `3` --
+  for the tab already on screen too -- a click on its label, or `3` --
   and the box stood with no flag, so the guards let the next poll or pick
   rebuild the diff and take what was typed. It is cleared only when the
   tab changes.
@@ -147,6 +147,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   name is changed on the row; the rest went. `drawHeader` is the send box,
   the review's send bar, the question bar, the context strip and jump, and
   nothing else.
+  - **A jump that went says so** (`jumpToPane`, `flashOutcome`): the
+    button ticks in the working colour for a moment and the live slot says
+    "jumped to" and the row's name. The jump happens in another window,
+    often on another screen, and a press that worked looked like a key that
+    did nothing; the reader asked for a sign. A refused jump shows tmux's
+    error and never ticks, not even for a moment.
+    `test_a_jump_says_it_went_and_a_failed_one_does_not`. `JUMP_TITLE` is
+    defined above the start-up line that reads it: a `const` read earlier
+    stops the whole page.
 - **Every tab has a loader, and a tab switch goes through it**, not through
   `draw`. A tab that fetched nothing once said `load: null` and `load()`
   drew for it, because an empty loader left the page showing the tab
