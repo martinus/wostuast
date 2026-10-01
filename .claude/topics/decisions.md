@@ -69,7 +69,12 @@ it. The reason is the part to weigh before undoing one.
   p95; `python3 -c pass` 13 ms; `sh -c 'cat >> file'` 4 ms. 58 ms of it is
   `compile()` of the 17,206-line file: a script run directly gets no
   bytecode cache, and the same code imported with a `.pyc` took 65 ms.
-  #271 is that fix. **A decision hook is not adopted either**: an `allow`
+  **#271 fixed it with a file of the hook's own functions**: 33 ms median
+  against 131, 45 ms p95 (`hook_source`, topics/safety). Of the 33, 13 is
+  the interpreter, about 12 is `json`, `pathlib` and `re`, and 3 is
+  compiling the file. A shell hook would be 4 ms, but it needs `jq` for
+  the JSON and `flock` for the lock, and macOS has neither `flock` nor
+  `/proc` for the agent's pid; the owner chose the file. **A decision hook is not adopted either**: an `allow`
   from `PreToolUse` or `PermissionRequest` is the approve button the
   non-goals forbid, though a `deny` bound to the hook's own call would be
   an id for a No. What the terminal shows while a `PermissionRequest` hook

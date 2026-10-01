@@ -612,6 +612,29 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   number, so the payload plainly carried it. `install_behind` compares the
   bytes; `serve` prints it on the way up and `doctor` counts it as a
   problem. `test_doctor_and_serve_say_when_the_installed_copy_is_another_version`.
+  - **The hooks run a file made from the program, never a copy kept by
+    hand** (#271). `hook_source` takes the definitions named in
+    `HOOK_PARTS` out of the program's source with `ast`, between
+    `HOOK_HEAD` and `HOOK_TAIL`, and `install` writes it to `hook_path`
+    with `write_program` -- beside and renamed, as the program is, because
+    a hook may be reading it. So `cmd_hook` and everything it calls are
+    written once, and the tests of `wostuast hook` test the hook. **A part
+    left out is a NameError on every event that nobody sees**: the hook
+    catches everything and may say nothing. `hook_source` refuses a name
+    it cannot find, and `test_the_hook_file_defines_every_name_it_uses`
+    checks every global each function reads with `symtable`. A new helper
+    on the hook's path goes into `HOOK_PARTS`, or that test goes red.
+    `install_behind` says when the file is not what this version writes,
+    and when a file the settings name is not there or cannot run
+    (`hook_files_missing`): `is_ours` knows the command by its shape, so
+    the hooks still looked registered while every event was lost;
+    `add_hooks` moves an old `wostuast hook` entry to the file where it
+    stands, and only that way round (`is_hook_file`).
+    `test_the_hook_file_records_an_event_and_says_nothing`,
+    `test_the_hook_file_loads_little`,
+    `test_an_old_install_is_moved_to_the_hook_file_in_place`,
+    `test_doctor_says_when_the_hook_file_is_not_this_versions`,
+    `test_doctor_says_when_the_hook_file_is_gone`.
 - **`settings.json` is the user's file, not ours.** `install` touches our hooks
   and nothing else: its permissions are kept (a fresh temporary takes the
   umask, so 0600 came back 0644, on a file that can hold API keys), and the

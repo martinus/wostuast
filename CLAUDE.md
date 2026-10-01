@@ -73,6 +73,7 @@ bullets beside it are the same part's other scars.
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
 | `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
+| `hook_source`, `HOOK_PARTS`, `HOOK_HEAD`, `hook_path`, `hook_command`, `is_hook_file`, `write_program`, `install_behind`, `hook_files_missing` | topics/safety: the hooks run the installed copy, and the hook file is made from it |
 | `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety: our `settings.json`, written from the page; topics/sidebar for the menu |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
@@ -132,7 +133,10 @@ building anything. A goal that bends is rewritten here in the same PR.
    *record* events, no config file needed to run, a one-line install and a
    one-line uninstall. Our `settings.json` is the one optional file: the
    settings menu writes it, nobody has to, and **Shape** says what it took
-   to earn that.
+   to earn that. The hook file `install` writes (`hook_path`) is not a
+   second source: `hook_source` copies it out of the one file, and
+   `uninstall` takes it away. It earned its place by time: 33 ms an event
+   against 131 for the whole program (#271).
 5. Look good enough that a screenshot would sell it. None ships: see
    `README.md`, "No screenshots".
 

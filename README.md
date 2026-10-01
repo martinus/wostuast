@@ -121,8 +121,12 @@ flowchart LR
 and Review tabs work. No `pip install`, no build step, and no config file to
 write: the page writes your settings file when you change a setting.
 
-**1. Install.** This copies one file to `~/.local/bin/wostuast` and adds its
-hooks to `~/.claude/settings.json`. It changes nothing else in that file.
+**1. Install.** This copies one file to `~/.local/bin/wostuast`, writes the
+small hook it runs on every event to `~/.local/share/wostuast/hook.py`, and adds
+its hooks to `~/.claude/settings.json`. It changes nothing else in that file.
+The hook file is made from the program, so a hook takes about 30 ms, not the
+120 ms it takes to start the whole program. Run `install` again after an
+update: it writes both files again, and `doctor` says when they are old.
 
 ```sh
 python3 -c "$(curl -fsLS https://raw.githubusercontent.com/martinus/wostuast/main/wostuast)" install
@@ -163,7 +167,7 @@ wostuast serve --open
 <summary><b>Uninstall</b></summary>
 
 ```sh
-wostuast uninstall               # removes our hooks and our status line; keeps your history
+wostuast uninstall               # removes our hooks, our status line and the hook file; keeps your history
 rm ~/.local/bin/wostuast         # removes the program
 rm -r ~/.local/state/wostuast    # removes the history too, if you want that
 ```
@@ -324,8 +328,8 @@ is depends on your window manager.
 
 | Command | What it does |
 | --- | --- |
-| `wostuast install` | Copy to `~/.local/bin`, and register the hooks and the status line. |
-| `wostuast uninstall` | Remove our hooks and our status line. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
+| `wostuast install` | Copy to `~/.local/bin`, write the hook file to `~/.local/share/wostuast/hook.py`, and register the hooks and the status line. |
+| `wostuast uninstall` | Remove our hooks, our status line and the hook file. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
 | `wostuast ls` | List the sessions, in the same order as the page. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
 | `wostuast shapes` | List what in your transcripts of the last 7 days the page cannot show: record types it does not read, and Claude Code's own tags it leaves showing. It prints names and counts, never your text, so you can paste the output into a bug report. `--days` reads further back. |
@@ -347,6 +351,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | Path | What it holds |
 | --- | --- |
 | `~/.local/bin/wostuast` | The program. One file. |
+| `~/.local/share/wostuast/hook.py` | The hook. `install` makes it from the program; do not edit it. |
 | `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |

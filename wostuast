@@ -372,11 +372,23 @@ def install_path() -> Path:
     return Path.home() / ".local" / "bin" / "wostuast"
 
 
+def hook_path() -> Path:
+    """The small file the hooks run, which `install` writes (`hook_source`).
+
+    In `share` beside the program's `bin`, not in `bin`: it is no command
+    for a person to type. From `install_path`, so a test that moves the
+    program moves this too, and nothing lands in a real home.
+    """
+    return install_path().parent.parent / "share" / "wostuast" / "hook.py"
+
+
 def hook_command(target: Path) -> str:
-    """The command install writes, doctor looks for, and uninstall removes."""
+    """The command install writes for the hooks: the hook file, which runs
+    itself (`#!/usr/bin/env python3`). doctor and uninstall find it by
+    shape (`is_ours`), and the older `wostuast hook` too."""
     import shlex
 
-    return f"{shlex.quote(str(target))} hook"
+    return shlex.quote(str(target))
 
 
 def status_command(target: Path) -> str:
@@ -5745,12 +5757,24 @@ def is_ours(command: Any, verb: str) -> bool:
     `~/.local/bin/wostuast status` and `wostuast status --then '...'` are all
     ours. Anything after the verb is ours too, which is what stops `install`
     offering to wrap a line it wrote itself: run twice, it used to suggest
-    `wostuast status --then 'wostuast status --then ...'`.
+    `wostuast status --then 'wostuast status --then ...'`. For `hook`, the
+    hook file `install` writes (`hook_path`) is ours as well, alone.
     """
     if not isinstance(command, str):
         return False
     words = words_of(command)
+    if verb == "hook" and is_hook_file(command):
+        return True
     return len(words) >= 2 and words[1] == verb and os.path.basename(words[0]) == "wostuast"
+
+
+def is_hook_file(command: Any) -> bool:
+    """True when this command is the hook file: `.../wostuast/hook.py`, alone."""
+    if not isinstance(command, str):
+        return False
+    words = words_of(command)
+    return (len(words) == 1 and os.path.basename(words[0]) == "hook.py"
+            and os.path.basename(os.path.dirname(words[0])) == "wostuast")
 
 
 def has_verb(group: Any, verb: str) -> bool:
@@ -5773,6 +5797,17 @@ def add_hooks(settings: dict[str, Any], command: str) -> list[str]:
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ValueError(f"settings.json has a '{event}' key that is not a list")
+        # An install from before the hook file ran the whole program on
+        # every event (#271). Its entries become the hook file, in place, so
+        # the user's order of hooks stays as it was. Only that way round: a
+        # checkout registered on purpose is not moved to another checkout.
+        if is_hook_file(command):
+            for group in groups:
+                for entry in (group.get("hooks") or []) if isinstance(group, dict) else []:
+                    if (isinstance(entry, dict) and is_ours(entry.get("command"), "hook")
+                            and not is_hook_file(entry.get("command"))):
+                        entry["command"] = command
+                        changes.append(f"moved hook {event} to {command}")
         if any(has_verb(group, "hook") for group in groups):
             continue
         group: dict[str, Any] = {"hooks": [hook_entry(command)]}
@@ -8267,6 +8302,23 @@ def own_version() -> str:
     return f"{day} \u00b7 {hashlib.sha256(data).hexdigest()[:7]}"
 
 
+def hook_files_missing() -> list[str]:
+    """The hook files Claude Code's settings run that cannot be run."""
+    try:
+        settings, _, _ = load_settings(settings_path())
+    except (OSError, ValueError):
+        return []
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    named = {
+        words_of(entry["command"])[0]
+        for groups in hooks.values() if isinstance(groups, list)
+        for group in groups if isinstance(group, dict)
+        for entry in group.get("hooks") or []
+        if isinstance(entry, dict) and is_hook_file(entry.get("command"))
+    }
+    return sorted(path for path in named if not os.access(path, os.X_OK))
+
+
 def install_behind() -> str:
     """Why the installed copy is not this one, or "" when it is.
 
@@ -8280,8 +8332,33 @@ def install_behind() -> str:
     """
     here = Path(__file__).resolve() if "__file__" in globals() else None
     target = install_path()
+    if here is None:
+        return ""
+    # A hook file the settings name and the disk does not hold is every
+    # event lost, and the hooks still look registered: `is_ours` knows the
+    # command by its shape. Before the file, the command was the program,
+    # and "installed at" caught it.
+    gone = hook_files_missing()
+    if gone:
+        return (f"the hooks run {', '.join(gone)}, which is not there or"
+                f" cannot run, so nothing is recorded; run `{here} install`")
+    # The hook file is made from the program, so it is behind when it is
+    # not what this version makes -- an install of an older copy, or a hand
+    # that edited it. Only when there is one: before it, the hooks ran the
+    # program, and the check below covers that.
     try:
-        if here is None or here == target.resolve():
+        hook = hook_path().read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        hook = None
+    try:
+        if hook is not None and hook != hook_source(here.read_text(encoding="utf-8")):
+            return (f"{hook_path()} is not the hook this version writes. The"
+                    f" hooks run it, so what this version records is not"
+                    f" recorded; run `{here} install`")
+    except (OSError, SyntaxError, ValueError):
+        return ""
+    try:
+        if here == target.resolve():
             return ""
         if target.read_bytes() == here.read_bytes():
             return ""
@@ -8303,32 +8380,123 @@ def self_source() -> str:
         return response.read().decode("utf-8")
 
 
+#: What the hook file is made of: the definitions on the hook's path, by
+#: name. `hook_source` copies their source out of this file, so the code that
+#: runs on every tool call is written once, here, and the tests that run
+#: `cmd_hook` run it. Python compiled all of this file -- the page too -- for
+#: every event: 119 ms a hook, against 23 for the parts alone (#271).
+HOOK_PARTS = frozenset({
+    "HOOK_TIMEOUT", "LOG_TIMEOUT", "EVENTS_MAX_BYTES", "LOG_MAX_BYTES",
+    "ARCHIVE_NAME", "AGENT_NAMES", "state_dir", "private_dir", "open_private",
+    "events_path", "archived_events_paths", "file_key", "archive_number",
+    "log_path", "log", "rotate", "still_the_file", "append_event",
+    "archive_log", "to_int", "process_name", "process_args", "parent_pid",
+    "looks_like_claude", "agent_pid", "give_up_after", "stand_down",
+    "read_stdin_json", "cmd_hook",
+})
+
+HOOK_HEAD = '''#!/usr/bin/env python3
+"""The wostuast hook: one line in the event log for each Claude Code event.
+
+`wostuast install` wrote this from the definitions of the same names in
+wostuast, so a hook compiles these and not the whole program. Do not edit
+it: the next install writes it again, and `wostuast doctor` says when it is
+not the one this version would write.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+# No `typing`: `Any` is read only in annotations, which the line above keeps
+# from being evaluated, and the import cost 3 ms of every event.
+
+'''
+
+HOOK_TAIL = '''
+
+if __name__ == "__main__":
+    sys.exit(cmd_hook(None))
+'''
+
+
+def hook_source(source: str) -> str:
+    """The hook file for this version of the program, given its source.
+
+    Raises ValueError when a part is missing, so `install` stops rather than
+    write a hook that would fail on every event -- and fail quietly, because
+    a hook may say nothing (topics/safety, the first two bullets).
+    """
+    import ast
+
+    lines = source.splitlines(keepends=True)
+    parts: dict[str, str] = {}
+    for node in ast.parse(source).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            name = node.name
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name = node.target.id
+        else:
+            continue
+        if name in HOOK_PARTS:
+            parts[name] = "".join(lines[node.lineno - 1:node.end_lineno])
+    missing = HOOK_PARTS - parts.keys()
+    if missing:
+        raise ValueError(f"the hook needs {', '.join(sorted(missing))}")
+    return HOOK_HEAD + "\n\n".join(parts.values()) + HOOK_TAIL
+
+
+def write_program(target: Path, text: str) -> bool:
+    """Write a file the hooks run, whole or not at all. True when it changed.
+
+    It is registered on every event of every running session. Writing it in
+    place would let a hook read half a file and die. Write beside it and
+    rename, which is atomic; a hook that is already running keeps the old
+    file open and finishes normally.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if target.read_text(encoding="utf-8") == text:
+            return False
+    except (OSError, ValueError):
+        pass
+    spare = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    try:
+        spare.write_text(text, encoding="utf-8")
+        spare.chmod(0o755)
+        spare.replace(target)
+    finally:
+        try:
+            spare.unlink()
+        except OSError:
+            pass
+    return True
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     """Copy wostuast to ~/.local/bin and register the hooks and the status line."""
     changes: list[str] = []
     target = install_path()
     source = self_source()
-    target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        current = target.read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        current = ""
-    if current != source:
-        # This file is registered as a hook on nine events in every running
-        # session. Writing it in place would let a hook read half a file and
-        # die. Write beside it and rename, which is atomic; a hook that is
-        # already running keeps the old file open and finishes normally.
-        spare = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-        try:
-            spare.write_text(source, encoding="utf-8")
-            spare.chmod(0o755)
-            spare.replace(target)
-        finally:
-            try:
-                spare.unlink()
-            except OSError:
-                pass
+        hook = hook_source(source)
+    except (SyntaxError, ValueError) as error:
+        print(f"cannot build the hook: {error}", file=sys.stderr)
+        return 1
+    # The program first: the status line runs it.
+    if write_program(target, source):
         changes.append(f"wrote {target}")
+    if write_program(hook_path(), hook):
+        changes.append(f"wrote {hook_path()}")
 
     path = settings_path()
     try:
@@ -8337,7 +8505,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         print(f"cannot read {path}: {error}", file=sys.stderr)
         return 1
     try:
-        changes += add_hooks(settings, hook_command(target))
+        changes += add_hooks(settings, hook_command(hook_path()))
         changes += add_status_line(settings, status_command(target))
     except ValueError as error:
         print(f"{path}: {error}", file=sys.stderr)
@@ -8365,6 +8533,15 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     changes += remove_status_line(settings)
     if changes:
         save_settings(path, settings, indent, newline)
+    # The hook file is ours alone, written by `install` and run by nothing
+    # once the hooks are gone. The program stays: it is what the reader
+    # installed, and the message below says how to remove it.
+    try:
+        hook_path().unlink()
+        changes.append(f"removed {hook_path()}")
+        hook_path().parent.rmdir()
+    except OSError:
+        pass
     for line in changes or ["nothing to change"]:
         print(line)
     print(f"the event log stays in {state_dir()}")
