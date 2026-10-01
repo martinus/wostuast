@@ -81,6 +81,18 @@ it. The reason is the part to weigh before undoing one.
   fallback so the page reads offline. No emoji anywhere. Icons are inline
   stroke SVG in `ICONS`. Amber (`--needs`) is the colour of "needs you", and
   the light theme is the same variables on a light ground.
+- **State reaches the page by one channel: the push.** An answer to a POST
+  says only what the push cannot -- whether it worked, and what was
+  refused. Two channels carry the same state on two connections, and they
+  land in either order: a settings answer landed before an older push and
+  was undone by it, and three guards and a numbering of the pushes were
+  built before the second channel was taken out (`keepSetting`,
+  `tell_config`; topics/sidebar has the scar).
+- **What the reader is typing is the reader's until they close it.** A push
+  never rebuilds a box, a row or a list that the reader is editing; it is
+  drawn from the state again when it opens (`putLinkRows` from
+  `showSettings`, the rename box in `fillRow`). Guarding each way a push can
+  land misses the next way; owning the box does not.
 - **A review is written on the page and sent as one message.** The
   alternative is what this tool replaced: read here, switch to the terminal,
   retype from memory. One message reaches the agent as one thought rather

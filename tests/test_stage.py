@@ -64,3 +64,22 @@ def test_it_draws_a_file_on_the_files_tab(tmp_path):
         capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@skip_without_browser
+def test_it_draws_the_settings_menu_from_a_file_and_steps(tmp_path):
+    """The settings menu, from a `settings.json` made for it, with a link
+    typed in and something drawn by `--eval`: the three things a session
+    wrote a script of its own for, three times, and lost with the scratchpad."""
+    out = tmp_path / "out.png"
+    links = '{"links": [{"match": "OA-(\\\\d+)", "url": "https://t.example/$1"}]}'
+    done = subprocess.run(
+        [sys.executable, str(HERE / "stage.py"), str(out), "--tab", "transcript",
+         "--settings", links, "--click", "#settings",
+         "--click", "#setpop .linkadd",
+         "--type", "#linklist .linkrow:last-child .linkmatch=BUG-(",
+         "--eval", "document.querySelector('#setpop').dataset.staged = 'yes'",
+         "--part", "#setpop[data-staged='yes'] #linklist .linkrow:first-child"],
+        capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

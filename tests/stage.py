@@ -1,8 +1,10 @@
-"""Draw the Files or the Review tab over a repository made for it, and save a picture.
+"""Draw any part of the page in a state made for it, and save a picture.
 
     python3 tests/stage.py OUT.png [--tab review|files|transcript]
                           [--commit N] [--open PATH] [--review]
-                          [--click SELECTOR ...] [--light]
+                          [--settings JSON]
+                          [--click SELECTOR | --type SELECTOR=TEXT
+                           | --eval JS ...] [--light]
                           [--width 1366] [--height 768] [--part SELECTOR]
                           [--keep]
 
@@ -21,10 +23,18 @@ committed. One session stands in it, with a short transcript.
 Nth commit of the branch, counted from the oldest, as "N / 4" does; 0 is
 all changes. `--open PATH` opens a file on the Files tab. `--review` writes
 a review into the browser first: five comments and a word on the whole.
-`--click` clicks a selector once the tab is drawn, in order, for a toggle
-or a menu: `.diffhead .readas button[data-value='true']` shows a commit
-message as text. `--part` is what the picture is of; the whole window by
-default. The window is a notebook's, 1366 x 768, unless it says otherwise.
+`--settings JSON` is the reader's `settings.json` before the daemon
+starts: the colours, the tab width, the ticket links.
+
+Then the steps, once the tab is drawn, in the order they are given:
+`--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
+Enter, `--eval JS` runs in the page. `.diffhead .readas
+button[data-value='true']` shows a commit message as text; `--click
+'#settings' --part '#setpop'` is the settings menu. **A mockup is drawn
+here too**: `--eval` builds the proposal inside the real page, with its real
+CSS, where a copy of the CSS in a file of its own drifts from the page.
+`--part` is what the picture is of; the whole window by default. The window
+is a notebook's, 1366 x 768, unless it says otherwise.
 
 `--keep` keeps the daemon up after the picture and prints its address, for
 a script of your own against the same page; Ctrl-C ends it.
@@ -136,7 +146,11 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--commit", type=int, default=0)
     ask.add_argument("--open")
     ask.add_argument("--review", action="store_true")
-    ask.add_argument("--click", action="append", default=[])
+    ask.add_argument("--settings")
+    # One list, so the steps run in the order they were written.
+    for flag in ("click", "type", "eval"):
+        ask.add_argument(f"--{flag}", dest="steps", action="append",
+                         default=[], type=lambda value, flag=flag: (flag, value))
     ask.add_argument("--light", action="store_true")
     ask.add_argument("--width", type=int, default=1366)
     ask.add_argument("--height", type=int, default=768)
@@ -150,6 +164,10 @@ def main(argv: list[str]) -> int:
     os.environ["WOSTUAST_STATE"] = str(home / "state")
     os.environ["WOSTUAST_CONFIG"] = str(home / "config")
     os.environ["CLAUDE_CONFIG_DIR"] = str(home / "claude")
+    if said.settings:
+        (home / "config").mkdir(parents=True)
+        (home / "config" / "settings.json").write_text(
+            json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
     url, _ = serve(home)
 
@@ -188,8 +206,15 @@ def main(argv: list[str]) -> int:
                 page.wait_for_function(
                     "(p) => state.files.read && state.files.path === p",
                     arg=said.open, timeout=wait)
-            for selector in said.click:
-                page.click(selector)
+            for flag, value in said.steps:
+                if flag == "click":
+                    page.click(value)
+                elif flag == "type":
+                    selector, _, text = value.partition("=")
+                    page.fill(selector, text)
+                    page.press(selector, "Enter")
+                else:
+                    page.evaluate(value)
             page.wait_for_function("() => !document.getAnimations().length",
                                    timeout=wait)
             page.wait_for_timeout(200)     # a frame for what a click redrew

@@ -136,6 +136,9 @@ wrong one costs a round trip, not a thought. Owner `martinus` and repo
 `wostuast` go in separate fields — `martinus/wostuast` as the repo asked
 for `martinus/martinus/wostuast`.
 
+0. **Load the tools in one call**: `ToolSearch` with `select:mcp__github__create_pull_request,mcp__github__update_pull_request,mcp__github__pull_request_read,mcp__github__merge_pull_request,mcp__github__actions_list,mcp__github__get_job_logs,mcp__github__list_issues,mcp__github__issue_write`
+   and `max_results` 8. `subscribe_pr_activity`, `send_later` and
+   `delete_trigger` are loaded already.
 1. **Push**: `git push -u origin <branch>`.
 2. **Create**: `create_pull_request` with head `<branch>`, base `main`, and
    the body. The server adds a footer and a session link to it.
