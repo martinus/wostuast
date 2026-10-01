@@ -105,12 +105,13 @@ def test_doctor_is_happy_after_install(ws, tmp_path, monkeypatch, capsys):
     assert code == 0
 
 
-def test_doctor_and_serve_say_when_the_installed_copy_is_another_version(
+def test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version(
         ws, tmp_path, monkeypatch, capsys):
     """The hooks and the status line run the installed copy, not the checkout
-    `serve` runs from. A reader who pulled and restarted `serve` had a page
+    `serve` ran from. A reader who pulled and restarted `serve` had a page
     that could show the session's spend and a status line, run by the copy
-    from the day before, that never wrote it down -- and nothing said why."""
+    from the day before, that never wrote it down -- and nothing said why.
+    `doctor` says so; a start writes this version in and says that (#275)."""
     target = tmp_path / "bin" / "wostuast"
     monkeypatch.setattr(ws, "install_path", lambda: target)
     assert ws.install_behind() == ""            # nothing installed, nothing to say
@@ -126,8 +127,8 @@ def test_doctor_and_serve_say_when_the_installed_copy_is_another_version(
     assert behind in out
     assert code == 1
 
-    # `serve` says it on the way up, where the reader is looking. The server
-    # stops at once, the way ctrl-c stops it.
+    # A start mends it on the way up, and says so where the reader is
+    # looking. The server stops at once, the way ctrl-c stops it.
     class Stops:
         server_address = ("127.0.0.1", 7331)
 
@@ -142,7 +143,10 @@ def test_doctor_and_serve_say_when_the_installed_copy_is_another_version(
 
     monkeypatch.setattr(ws, "make_server", lambda daemon, port: Stops())
     assert ws.cmd_serve(type("Args", (), {"port": 0, "open": False})()) == 0
-    assert behind in capsys.readouterr().err
+    out = capsys.readouterr().out
+    assert f"\u21bb updated {target}" in out
+    assert "restart your Claude Code sessions" in out
+    assert ws.install_behind() == ""
 
 
 def test_the_table_pads_every_column_but_the_last(ws):
@@ -189,7 +193,7 @@ def test_serve_refuses_a_port_that_is_not_one_without_a_traceback(
     monkeypatch.setattr(ws, "make_server",
                         lambda daemon, port: started.append(port))
     with pytest.raises(SystemExit) as stopped:
-        ws.main(["serve", "--port", port])
+        ws.main(["--port", port])
     assert stopped.value.code == 2
     err = capsys.readouterr().err
     assert "--port" in err and "Traceback" not in err
@@ -218,7 +222,7 @@ def test_serve_says_the_port_it_got_when_asked_for_any(ws, capsys,
 
     monkeypatch.setattr(ws, "make_server", make)
     monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
-    assert ws.main(["serve", "--port", "0"]) == 0
+    assert ws.main(["--port", "0"]) == 0
     out = capsys.readouterr().out
     port = got[0]
     assert port != 0
@@ -246,8 +250,31 @@ def test_hook_and_status_skip_the_argument_parser(ws, monkeypatch):
 
 
 def test_every_other_command_still_goes_through_the_parser(ws, capsys):
-    assert ws.main([]) == 0
+    with pytest.raises(SystemExit) as done:
+        ws.main(["--help"])
+    assert done.value.code == 0
     assert "usage: wostuast" in capsys.readouterr().out
+
+
+def test_no_command_is_the_start(ws, monkeypatch):
+    """A bare `wostuast` checks, brings the hooks up to date and serves
+    (#275); it printed the help before, and the help is `--help`."""
+    started = []
+    monkeypatch.setattr(ws, "cmd_serve", lambda args: started.append(
+        (args.port, args.open)) or 0)
+    assert ws.main([]) == 0
+    assert ws.main(["--port", "0", "--open"]) == 0
+    assert started == [(ws.DEFAULT_PORT, False), (0, True)]
+
+
+def test_serve_is_gone_and_says_what_took_its_place(ws, capsys, monkeypatch):
+    """argparse alone would say "invalid choice" and list every command but
+    the answer. Nothing is started."""
+    monkeypatch.setattr(ws, "cmd_serve", lambda args: pytest.fail("started"))
+    assert ws.main(["serve", "--open"]) == 2
+    said = capsys.readouterr().err
+    assert "`wostuast serve` is now just `wostuast`" in said
+    assert "--port and --open" in said
 
 
 def test_a_notebook_edit_shows_its_path(ws):
@@ -524,7 +551,7 @@ def test_serve_says_what_is_wrong_with_the_settings_file(ws, capsys, monkeypatch
     monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
     monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
     assert ws.cmd_serve(argparse.Namespace(port=0, open=False)) == 0
-    assert "settings:" in capsys.readouterr().err
+    assert "settings:" in capsys.readouterr().out
 
 
 def test_serve_says_nothing_about_a_settings_file_it_can_use(ws, capsys,
@@ -548,7 +575,7 @@ def test_serve_says_nothing_about_a_settings_file_it_can_use(ws, capsys,
     monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
     monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
     ws.cmd_serve(argparse.Namespace(port=0, open=False))
-    assert "settings:" not in capsys.readouterr().err
+    assert "settings:" not in capsys.readouterr().out
 
 
 def test_serve_writes_no_file_of_its_own(ws, monkeypatch):
@@ -703,3 +730,101 @@ def test_shapes_says_so_when_it_knows_everything(ws, transcript_file, capsys):
                               conftest.record("claude", "hi")])
     ws.main(["shapes"])
     assert "Nothing the page does not know." in capsys.readouterr().out
+
+
+# --- the start: a bare `wostuast` (#275) ---------------------------------------
+
+
+class StopsAtOnce:
+    """A server that stops the way ctrl-c stops it, before it serves."""
+
+    server_address = ("127.0.0.1", 7331)
+
+    def serve_forever(self):
+        raise KeyboardInterrupt
+
+    def shutdown(self):
+        pass
+
+    def server_close(self):
+        pass
+
+
+def start(ws, monkeypatch, made=None):
+    """Run the start against a server that stops at once."""
+    def make(daemon, port):
+        if made is not None:
+            made.append(port)
+        return StopsAtOnce()
+
+    monkeypatch.setattr(ws, "make_server", make)
+    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
+    code = ws.cmd_serve(argparse.Namespace(port=0, open=False))
+    # The first read prints its line from a thread of its own, and would
+    # print it into the next test's output.
+    for worker in threading.enumerate():
+        if worker.name == "wostuast-refresh":
+            worker.join(10)
+    return code
+
+
+def test_a_start_brings_everything_up_to_date_and_says_so_in_a_line(
+        ws, monkeypatch, capsys):
+    assert start(ws, monkeypatch) == 0
+    out = capsys.readouterr().out
+    updated = [line for line in out.splitlines() if "↻ updated" in line]
+    assert len(updated) == 1
+    for part in (str(ws.install_path()), str(ws.hook_path()),
+                 f"{len(ws.HOOK_EVENTS)} hooks", "status line"):
+        assert part in updated[0]
+    assert "restart your Claude Code sessions" in out
+    settings = json.loads(ws.settings_path().read_text())
+    assert all(event in settings["hooks"] for event in ws.HOOK_EVENTS)
+
+
+def test_a_start_with_nothing_behind_writes_nothing(ws, monkeypatch, capsys):
+    """Claude Code's `settings.json` is the user's file: a start that has
+    nothing to fix leaves it alone, its time included."""
+    start(ws, monkeypatch)
+    files = [ws.settings_path(), ws.install_path(), ws.hook_path()]
+    before = [(path.read_bytes(), path.stat().st_mtime_ns) for path in files]
+    capsys.readouterr()
+    assert start(ws, monkeypatch) == 0
+    assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in files] == before
+    out = capsys.readouterr().out
+    assert "↻" not in out
+    assert f"✓ {len(ws.HOOK_EVENTS)} hooks → " in out
+
+
+def test_a_start_stops_on_a_settings_file_it_cannot_read(ws, monkeypatch, capsys):
+    """Red, on stderr, and nothing served: the hooks cannot be checked."""
+    ws.settings_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.settings_path().write_text("{not json")
+    made = []
+    assert start(ws, monkeypatch, made) == 1
+    assert made == []
+    assert "✗ cannot read" in capsys.readouterr().err
+    assert ws.settings_path().read_text() == "{not json"
+
+
+def test_a_start_says_when_the_status_line_is_your_own(ws, monkeypatch, capsys):
+    ws.settings_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.settings_path().write_text(json.dumps(
+        {"statusLine": {"type": "command", "command": "mine.sh"}}))
+    start(ws, monkeypatch)
+    out = capsys.readouterr().out
+    assert "your own status line runs" in out
+    assert json.loads(ws.settings_path().read_text())["statusLine"]["command"] == "mine.sh"
+
+
+def test_the_start_is_coloured_only_on_a_terminal(ws, monkeypatch, capsys):
+    """Green for what is right, yellow for what changed; plain text where
+    nobody sees colour (`use_color`: a pipe, or NO_COLOR)."""
+    monkeypatch.setattr(ws, "use_color", lambda: True)
+    start(ws, monkeypatch)
+    out = capsys.readouterr().out
+    assert "\033[33m↻\033[0m updated" in out
+    assert "\033[32m✓\033[0m python" in out
+    monkeypatch.setattr(ws, "use_color", lambda: False)
+    start(ws, monkeypatch)
+    assert "\033[" not in capsys.readouterr().out

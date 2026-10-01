@@ -682,7 +682,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   and `.stale`. `test_no_state_on_the_body_can_make_the_page_vanish` names
   every state the page sets and asserts the page is still there under each,
   and under all of them at once — a new state belongs in that list.
-- **A restarted `serve` leaves every open page dead, and only the page can
+- **A restarted daemon leaves every open page dead, and only the page can
   say so.** The token is made fresh in `Daemon.__init__` and printed into
   the page, so a restart leaves every browser holding one this daemon has
   never heard of. The stream is a GET and reconnects, so the sidebar goes on
@@ -748,7 +748,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     fades.** "Review sent" goes stale in four seconds. "That did not come from
     this page" is about something you asked for and did not get, and fading it
     left a strip reading "live" over a page where nothing worked — which is
-    exactly how a restarted `serve` went unexplained. **So a send that worked
+    exactly how a restarted daemon went unexplained. **So a send that worked
     calls `said` before its `note`**: the note only borrowed the slot, and when
     it faded the refusal before it came back over a review that had gone
     through. `test_a_review_that_goes_through_clears_an_earlier_refusal`.

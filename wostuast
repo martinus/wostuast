@@ -8482,16 +8482,23 @@ def write_program(target: Path, text: str) -> bool:
     return True
 
 
-def cmd_install(args: argparse.Namespace) -> int:
-    """Copy wostuast to ~/.local/bin and register the hooks and the status line."""
+def bring_up_to_date() -> tuple[list[str], list[str], str]:
+    """Write what is behind this version: the program, the hook file, the
+    hooks and the status line. Returns what changed, what to tell the
+    reader, and why it could not, or "".
+
+    Nothing that is already right is written, Claude Code's `settings.json`
+    least of all: a bare `wostuast` runs this on every start (#275), and a
+    start with nothing to fix must leave the user's file alone, its time
+    included. `install` and the start share it, so they cannot drift.
+    """
     changes: list[str] = []
     target = install_path()
     source = self_source()
     try:
         hook = hook_source(source)
     except (SyntaxError, ValueError) as error:
-        print(f"cannot build the hook: {error}", file=sys.stderr)
-        return 1
+        return [], [], f"cannot build the hook: {error}"
     # The program first: the status line runs it.
     if write_program(target, source):
         changes.append(f"wrote {target}")
@@ -8502,17 +8509,29 @@ def cmd_install(args: argparse.Namespace) -> int:
     try:
         settings, indent, newline = load_settings(path)
     except (OSError, ValueError) as error:
-        print(f"cannot read {path}: {error}", file=sys.stderr)
-        return 1
+        return changes, [], f"cannot read {path}: {error}"
+    before = json.dumps(settings, sort_keys=True)
     try:
         changes += add_hooks(settings, hook_command(hook_path()))
-        changes += add_status_line(settings, status_command(target))
+        said = add_status_line(settings, status_command(target))
     except ValueError as error:
-        print(f"{path}: {error}", file=sys.stderr)
-        return 1
-    save_settings(path, settings, indent, newline)
+        return changes, [], f"{path}: {error}"
+    # "added status line" is a change; the rest is advice about theirs.
+    notes = [line for line in said if line != "added status line"]
+    changes += [line for line in said if line == "added status line"]
+    if json.dumps(settings, sort_keys=True) != before:
+        save_settings(path, settings, indent, newline)
+    return changes, notes, ""
 
-    for line in changes or ["nothing to change"]:
+
+def cmd_install(args: argparse.Namespace) -> int:
+    """Copy wostuast to ~/.local/bin and register the hooks and the status line."""
+    target = install_path()
+    changes, notes, trouble = bring_up_to_date()
+    if trouble:
+        print(trouble, file=sys.stderr)
+        return 1
+    for line in (changes or ["nothing to change"]) + notes:
         print(line)
     if str(target.parent) not in os.environ.get("PATH", "").split(os.pathsep):
         print(f"note: {target.parent} is not on your PATH")
@@ -8550,41 +8569,123 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+#: How each line of the start begins, and its colour: green for what is
+#: right, yellow for what changed or is worth a look, grey for a passing
+#: word, red for what stops it. The issue asked for a start where "one
+#: immediately sees what is important" (#275).
+MARKS = {"ok": ("✓", "\033[32m"), "changed": ("↻", "\033[33m"),
+         "note": ("·", "\033[90m"), "warn": ("!", "\033[33m"),
+         "fail": ("✗", "\033[31m"), "go": ("▶", "\033[1m")}
+
+
+def mark(kind: str, text: str, color: bool) -> str:
+    """One line of the start: two spaces, its mark, and the text."""
+    sign, ink = MARKS[kind]
+    if not color:
+        return f"  {sign} {text}"
+    return f"  {ink}{sign}{RESET} {text}"
+
+
+def tilde(path: Path | str) -> str:
+    """A path as a person writes it: under the home, with `~`."""
+    text, home = str(path), str(Path.home())
+    return "~" + text[len(home):] if text == home or text.startswith(home + "/") else text
+
+
+def changed_parts(changes: list[str]) -> list[str]:
+    """What `bring_up_to_date` changed, in a few words: a file by its path,
+    and the hooks counted, not named one by one -- twelve lines of "added
+    hook" said less than "12 hooks"."""
+    parts = [tilde(line[len("wrote "):]) for line in changes if line.startswith("wrote ")]
+    hooks = sum(1 for line in changes if line.startswith(("added hook", "moved hook")))
+    if hooks:
+        parts.append(f"{hooks} hook{'s' if hooks != 1 else ''}")
+    if "added status line" in changes:
+        parts.append("status line")
+    return parts
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
-    """Start the daemon and serve the page on 127.0.0.1."""
+    """Check the setup, bring the hooks up to date, and serve the page.
+
+    One command for all of it (#275): `serve`, `install` and `doctor` were
+    three things to remember, and a hook left behind by an update recorded
+    nothing while every check that would have said so went unrun. What is
+    right gets one green line, what changed a yellow one, what stops it a
+    red one; `doctor` is still there for the long form.
+    """
+    import shutil
     import threading
+
+    color = use_color()
+    head = "wostuast"
+    print(f"\033[1m{head}\033[0m · {own_version()}" if color
+          else f"{head} · {own_version()}")
+
+    tools = [f"python {sys.version.split()[0]}"]
+    tools += [name for name in ("tmux", "git") if shutil.which(name)]
+    print(mark("ok", " · ".join(tools), color))
+    if not which_tmux():
+        print(mark("warn", "tmux not found: jump and send stay hidden", color))
+
+    directory = state_dir()
+    try:
+        private_dir(directory)
+        probe = directory / ".probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as error:
+        print(mark("fail", f"cannot write {tilde(directory)}: {error}", color),
+              file=sys.stderr)
+        return 1
+
+    changes, notes, trouble = bring_up_to_date()
+    if trouble:
+        print(mark("fail", trouble, color), file=sys.stderr)
+        return 1
+    if changes:
+        print(mark("changed", "updated " + " \u00b7 ".join(changed_parts(changes)), color))
+        print("    restart your Claude Code sessions to use them")
+    else:
+        print(mark("ok", f"{len(HOOK_EVENTS)} hooks → {tilde(hook_path())}", color))
+    if notes:
+        print(mark("warn", "your own status line runs, so sessions have no name"
+                   " and no context; `wostuast install` says how to have both",
+                   color))
+    # Said here because the page says it only in a corner. A file you wrote
+    # and got wrong must never look like a file you never wrote.
+    for why in load_config()[2]:
+        print(mark("warn", f"settings: {why}", color))
+    behind = install_behind()
+    if behind:
+        print(mark("warn", behind, color))
+    if not events_path().exists():
+        print(mark("note", "no events yet: start a Claude Code session", color))
 
     port = args.port
     daemon = Daemon()
     try:
         server = make_server(daemon, port)
     except OSError as error:
-        print(f"cannot listen on {BIND_HOST}:{port}: {error}", file=sys.stderr)
-        print("another wostuast may already be running.", file=sys.stderr)
+        print(mark("fail", f"cannot listen on {BIND_HOST}:{port}: {error}", color),
+              file=sys.stderr)
+        print("    another wostuast may already be running.", file=sys.stderr)
         return 1
 
     # The port the socket has, not the one asked for: `--port 0` asks the
     # system for a free one, and printed `http://127.0.0.1:0/` (#235).
     port = server.server_address[1]
     where = f"http://{BIND_HOST}:{port}/"
-    # Said here because the page says it only in a corner, and `doctor` is
-    # something you had no reason to run. A file you wrote and got wrong must
-    # never look like a file you never wrote.
-    for why in load_config()[2]:
-        print(f"settings: {why}", file=sys.stderr)
-    # The same kind of silence: a page that knows about a field the status
-    # line has not been writing shows nothing, and looks as if it never could.
-    behind = install_behind()
-    if behind:
-        print(f"install: {behind}", file=sys.stderr)
-    print(f"wostuast is watching at {where}")
-    print("it listens on this machine only. To read it from another computer,")
-    print(f"  run: ssh -N -L {port}:{BIND_HOST}:{port} {os.environ.get('USER', 'you')}@this-machine")
-    print(f"  then open {where} there. Opening a firewall port will not work.")
-    print("press ctrl-c to stop.")
+    print()
+    print(mark("go", f"\033[1m{where}\033[0m      ctrl-c stops" if color
+               else f"{where}      ctrl-c stops", color))
+    # It listens on this machine only, on purpose; this is the way in from
+    # another one, and a firewall port is not.
+    print(f"    another computer: ssh -N -L {port}:{BIND_HOST}:{port}"
+          f" {os.environ.get('USER', 'you')}@this-machine", flush=True)
 
     def watch() -> None:
-        print(daemon.catch_up(), flush=True)
+        print(mark("note", daemon.catch_up(), color), flush=True)
         daemon.run()
 
     # The first pass folds the whole log and runs git for every worktree, which
@@ -8644,10 +8745,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="wostuast",
-        description="See what your coding agents are doing.",
+        description="See what your coding agents are doing. With no command:"
+                    " check the setup, bring the hooks up to date, and serve"
+                    " the page.",
     )
     parser.add_argument("--version", action="version", version=f"wostuast {VERSION}")
-    subparsers = parser.add_subparsers(dest="command")
+    # No command is the start: check, bring the hooks up to date, serve
+    # (#275). So the two options of serving are the program's own.
+    parser.add_argument("--port", type=port_number, default=DEFAULT_PORT,
+                        help=f"the port to listen on (default {DEFAULT_PORT};"
+                             " 0 picks a free one)")
+    parser.add_argument("--open", action="store_true",
+                        help="open the page in a browser")
+    subparsers = parser.add_subparsers(dest="command", metavar="command")
 
     commands = [
         ("install", cmd_install, "copy to ~/.local/bin and register the hooks"),
@@ -8658,7 +8768,6 @@ def build_parser() -> argparse.ArgumentParser:
         ("doctor", cmd_doctor, "check the setup"),
         ("shapes", cmd_shapes,
          "list what in your transcripts the page cannot show; names and counts only"),
-        ("serve", cmd_serve, "start the daemon and serve the page"),
     ]
     for name, handler, help_text in commands:
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
@@ -8669,12 +8778,6 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "shapes":
             sub.add_argument("--days", type=float, default=SHAPES_DAYS,
                              help=f"how far back to read (default {SHAPES_DAYS})")
-        if name == "serve":
-            sub.add_argument("--port", type=port_number, default=DEFAULT_PORT,
-                             help=f"the port to listen on (default {DEFAULT_PORT};"
-                                  " 0 picks a free one)")
-            sub.add_argument("--open", action="store_true",
-                             help="open the page in a browser")
     return parser
 
 
@@ -8688,12 +8791,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if len(words) == 1 and words[0] in FAST_PATH:
         return FAST_PATH[words[0]](None)
 
+    if words[:1] == ["serve"]:
+        # Gone in #275, and said so by name: argparse alone would answer
+        # "invalid choice" and list commands, none of which is the answer.
+        print("`wostuast serve` is now just `wostuast`: it checks the setup,"
+              " brings the hooks up to date and serves the page."
+              " --port and --open work as before.", file=sys.stderr)
+        return 2
     parser = build_parser()
     args = parser.parse_args(words)
     handler = getattr(args, "handler", None)
     if handler is None:
-        parser.print_help()
-        return 0
+        return cmd_serve(args)
     return handler(args)
 
 

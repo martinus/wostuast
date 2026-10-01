@@ -38,6 +38,10 @@ def ws(tmp_path, monkeypatch):
     monkeypatch.setenv("WOSTUAST_CONFIG", str(tmp_path / "config"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("NO_COLOR", "1")
+    # A bare start writes the program, the hook file and the hooks (#275),
+    # and every test that serves starts that way: never into a real home.
+    monkeypatch.setattr(wostuast, "install_path",
+                        lambda: tmp_path / "bin" / "wostuast")
     return wostuast
 
 
