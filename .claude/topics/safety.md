@@ -495,7 +495,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   of keystrokes into a terminal that does not exist. **Reading is not
   acting**: the question bar stays where it is. It is the press that is
   refused. Grep `whyNotTyped`. **`#jump` wears `.theme`, which sets `display`**,
-  so `.theme[hidden]` puts the browser's rule back: the `.sendbar` scar.
+  and the one `[hidden]` rule (`daemon-and-page.md`) is what hides it.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters, keeping tab and newline. "Below a space" includes the C1 block
   above `\x7f` — NEL and CSI are controls, and U+2028 is a line break that

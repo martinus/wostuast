@@ -1479,6 +1479,17 @@ def test_every_colour_outside_the_palette_is_named(ws):
     assert not loose, f"write these as a variable in the palette: {loose}"
 
 
+def test_hidden_is_one_rule(ws):
+    """`[hidden] { display: none !important; }` once, and no `X[hidden]` of
+    a control's own. Twelve of those were each added after a control that
+    sets `display` would not go away -- the `.sendbar` scar, four bullets
+    of the rules files over (#296)."""
+    css = stylesheet(ws.PAGE)
+    hiding = re.findall(r"([^{}\n]*\[hidden\])\s*\{", css)
+    assert [one.strip() for one in hiding] == ["[hidden]"], hiding
+    assert "[hidden] { display: none !important; }" in css
+
+
 def test_the_palette_check_would_notice(ws):
     """The test above passes trivially if `stylesheet` cuts too much."""
     css = stylesheet(ws.PAGE)

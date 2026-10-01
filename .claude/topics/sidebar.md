@@ -205,8 +205,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     runs in three. `test_a_ticket_in_a_rows_name_or_branch_is_a_link`.
   - **The git line is one line.** Everything on it keeps its width but the
     branch, which gives way with an ellipsis: "✓ clean" shrank with it and
-    broke over two lines. A line that sets `display: flex` needs its own
-    `[hidden]` rule, the `.sendbar` scar again.
+    broke over two lines. It sets `display: flex`, and the one `[hidden]`
+    rule hides it all the same (`daemon-and-page.md`).
   - **A name is changed where it stands** (`renameRow`), by a double-click
     or `e`. The row is filled again on every push, so `fillRow` leaves a
     name with a box in it alone; and a row that moves loses the focus, so
