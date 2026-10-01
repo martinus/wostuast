@@ -223,6 +223,7 @@ This list exists because each entry was re-implemented once already.
 | the reader's ticket links in some text | `linkTickets(root)` — after any scrub |
 | "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
+| a button that did its job says so for a moment | `flashOutcome(button, icon, title, done, saying)` — a tick in the working colour, then back |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
 | a binary file the browser can show | `putMedia(parent, path, found)` — `found.shown` is the daemon's answer |

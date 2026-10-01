@@ -9145,6 +9145,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .codebox:hover .copycode, .copycode:focus-visible { opacity: 1; }
 .copycode:hover { color: var(--needs); border-color: var(--edge-bright); }
 .copycode.done { color: var(--working); opacity: 1; }
+/* Jump that went: the tick, in the working colour, ring and all. */
+.theme.done, .theme.done:hover { color: var(--working); border-color: var(--working); }
 .copycode .icon {
   width: 14px; height: 14px; fill: none; stroke: currentColor;
   stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round;
@@ -9940,7 +9942,6 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <div class="ctxslot" id="ctxslot" hidden></div>
         <div class="live" id="live"></div>
         <button type="button" class="theme" id="jump" hidden
-                title="jump to its tmux pane  ⏎"
                 aria-label="jump to its tmux pane"></button>
         <div class="setslot">
           <button type="button" class="theme" id="settings"
@@ -12711,18 +12712,29 @@ function putCodeCopies(node) {
     putIcon(copy, "copy");
     copy.addEventListener("click", async () => {
       const done = await copyToClipboard(pre.textContent);
-      copy.replaceChildren();
-      putIcon(copy, done ? "check" : "copy");
-      copy.title = done ? "copied" : "the browser would not copy it";
-      copy.classList.toggle("done", done);
-      setTimeout(() => {
-        copy.replaceChildren();
-        putIcon(copy, "copy");
-        copy.title = "copy this block";
-        copy.classList.remove("done");
-      }, 1400);
+      flashOutcome(copy, "copy", "copy this block", done,
+                   done ? "copied" : "the browser would not copy it");
     });
   }
+}
+
+// A button that did its job says so for a moment: a tick in the working
+// colour, then its own icon and words again. One helper, so "it went" looks
+// the same on every button that has nothing else to show for it -- a copy,
+// and a jump, whose result is in another window. A press while it shows
+// starts the moment again rather than ending it early.
+function flashOutcome(button, icon, title, done, saying) {
+  button.replaceChildren();
+  putIcon(button, done ? "check" : icon);
+  button.title = saying;
+  button.classList.toggle("done", done);
+  clearTimeout(button.flashing);
+  button.flashing = setTimeout(() => {
+    button.replaceChildren();
+    putIcon(button, icon);
+    button.title = title;
+    button.classList.remove("done");
+  }, 1400);
 }
 
 // The Markdown an agent wrote, as it wrote it. The page shows it drawn; this
@@ -17139,7 +17151,11 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 putSettings();
+// Defined before the first line that reads it: a `const` read earlier is an
+// error that stops the page.
+const JUMP_TITLE = "jump to its tmux pane  ⏎";
 putIcon($("jump"), "terminal");
+$("jump").title = JUMP_TITLE;
 $("jump").addEventListener("click", jumpToPane);
 $("settings").addEventListener("click", (press) => {
   press.stopPropagation();            // or the listener below shuts it again
@@ -17163,9 +17179,18 @@ document.addEventListener("click", (press) => {
   }
 });
 
+// The jump happens in another window, often on another screen, so the page
+// says it went: the button ticks and the slot names the session. It said
+// nothing at all, and a jump that worked looked like a key that did nothing.
 async function jumpToPane() {
   if (!state.chosen) return;
-  said(await tell(state.chosen, "jump"));
+  const session = current();
+  const answer = await tell(state.chosen, "jump");
+  said(answer);
+  if (answer && !answer.error) {
+    flashOutcome($("jump"), "terminal", JUMP_TITLE, true, "jumped");
+    note("jumped to " + (session ? rowName(session) : "its pane"));
+  }
 }
 
 // The box is cleared the moment the text goes, and a refusal puts the text

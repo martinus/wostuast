@@ -41,6 +41,45 @@ def test_jump_puts_the_cursor_in_the_pane(in_pane):
             browser.close()
 
 
+
+def test_a_jump_says_it_went_and_a_failed_one_does_not(ws, in_pane, monkeypatch):
+    """The jump happens in another window, often on another screen, and the
+    page said nothing when it worked: a press that went looked like a key
+    that did nothing. The button ticks and the slot names the session. A
+    jump tmux refused shows its error and no tick."""
+    daemon, base, seen = in_pane
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.click("#jump")
+            page.wait_for_selector("#jump.done")
+            assert page.get_attribute("#jump", "title") == "jumped"
+            assert page.locator("#jump .icon").count() == 1
+            name = page.evaluate("rowName(current())")
+            assert page.inner_text("#live") == "jumped to " + name
+            # And back to itself, with nothing piled up from the press.
+            page.wait_for_selector("#jump:not(.done)")
+            assert page.get_attribute("#jump", "title").startswith("jump to")
+            assert page.locator("#jump .icon").count() == 1
+
+            # tmux refuses: the error stands, and nothing ticks -- not even
+            # for a moment, which a look after the error would miss.
+            monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+            page.evaluate("""() => {
+              window.ticked = false;
+              new MutationObserver(() => {
+                if (document.getElementById('jump').classList.contains('done')) {
+                  window.ticked = true;
+                }
+              }).observe(document.getElementById('jump'), { attributes: true });
+            }""")
+            page.keyboard.press("Enter")
+            page.wait_for_function(
+                "document.getElementById('live').textContent.includes('tmux')")
+            assert page.evaluate("window.ticked") is False
+        finally:
+            browser.close()
+
 # --- a question the agent is stopped on --------------------------------------
 
 #: Two questions in one call, the shape a real `AskUserQuestion` sends.
