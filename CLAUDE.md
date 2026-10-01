@@ -261,7 +261,7 @@ paint it, the settings menu and `putReadAs` use it), `.link` (small text
 button),
 `.acts` (what you can do to a comment,
 at its right edge), `.find`/`.findslot`,
-`.empty`, `.nohits`, `.note`, `.dot`, `.comment`. **Every colour is a variable**
+`.empty`, `.nohits`, `.note`, `.comment`. **Every colour is a variable**
 and a `:root` block is the only place a colour may be a number —
 `test_every_colour_outside_the_palette_is_named` fails the build otherwise.
 Derive a tint or a ring with `color-mix`, never by copying an rgb triple.

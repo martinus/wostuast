@@ -324,7 +324,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   come from; `.tofoot` makes it a round button in the middle of the pane's
   foot with `ICONS.down` in it, the words in `title` and `aria-label` --
   the reader asked for the arrow alone. It sets `display` to centre the
-  arrow, so it carries a `[hidden]` rule, the `.sendbar` shape again.
+  arrow; the one `[hidden]` rule hides it all the same (below).
   `test_the_way_back_is_an_arrow_in_the_middle`.
 - **`showToFoot` is handed both nodes, and this is not a nicety.** It runs on
   every scroll event — dozens of times in one gesture — and on every pushed
@@ -692,8 +692,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   "find a file" for a list it did not have. One entry per tab, like `draw`,
   `load` and `poll`, and `TAB_KEYS` is `Object.keys(TABS)`, so a new tab is
   that one entry. Every tab is split and has a list, so there is no longer
-  a tab that hides the box; one that needs to must bring back a
-  `.findhome[hidden]` rule, the `.sendbar` scar.
+  a tab that hides the box.
+- **`hidden` hides, whatever else an element sets: one rule,
+  `[hidden] { display: none !important; }`** (#296). A rule that sets
+  `display` beats the browser's own rule for the attribute, so the send
+  box never went away -- the `.sendbar` scar -- and twelve controls each
+  carried an `X[hidden]` of their own after it: `#jump` (`.theme`), the
+  row's lines, the arrow to the foot, the find box, the settings menu.
+  One forgotten is a control that will not go. Never write another;
+  `test_hidden_is_one_rule` fails on one.
 - **A class the page puts on `body` is never the class an element wears.**
   `stream.onerror` did `classList.add("lost")`, and the rule hiding the bar
   until it was wanted was `.lost { display: none }` — which `body` then

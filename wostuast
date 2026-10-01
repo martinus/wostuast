@@ -9161,7 +9161,6 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --light-bg: #f6f5f1; --light-ink: #2f3138;
   --dark-bg: #14151a; --dark-ink: #d6d8e0;
   --done-soft: rgba(91,155,213,.16);
-  --add-bg: rgba(107,191,138,.14); --add-ink: #9fe0b8;
   --cut-bg: rgba(217,119,87,.14); --cut-ink: #f0a08a;
   /* A diff's rows, and the words that changed inside them. Stronger than the
      tints above, which sit behind a count or a bar: here the colour is the
@@ -9237,7 +9236,6 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --done: #2a6ea8; --gone: #8b8e96;
   --needs-soft: rgba(168,108,16,.22); --working-soft: rgba(47,127,82,.14);
   --done-soft: rgba(42,110,168,.13);
-  --add-bg: rgba(47,127,82,.12); --add-ink: #1e5c39;
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
   --add-line: #dcf2e1; --add-word: #a8dcb5;
   --cut-line: #fbe4e1; --cut-word: #f1b4ad;
@@ -9264,6 +9262,12 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
 :root { --grip-w: 5px; }
 
 * { box-sizing: border-box; }
+/* `hidden` hides, whatever else the element sets. A rule that sets
+   `display` beats the browser's own rule for the attribute, and twelve
+   controls each needed an `X[hidden]` of their own: one forgotten was a
+   control that would not go away (the `.sendbar` scar, four times over).
+   `test_hidden_is_one_rule` keeps it the only one. */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
@@ -9291,9 +9295,7 @@ body {
   stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round;
 }
 .theme:hover { color: var(--ink-bright); border-color: var(--ink-faint); }
-/* `display` above beats the browser's own rule for `hidden`: the `.sendbar`
-   scar. Jump is absent for a session with no pane, not disabled. */
-.theme[hidden] { display: none; }
+/* Jump is absent for a session with no pane, not disabled. */
 /* Everything about this screen, in this browser, in one menu at the end of
    the tab row: colours, alerts, and how code is drawn. It was a bell, a
    colours button, a menu on the Review bar and two links over every file;
@@ -9309,7 +9311,6 @@ body {
   align-items: center; justify-content: center;
 }
 .setslot .offmark .icon { width: 10px; height: 10px; stroke-width: 1.4; color: var(--ink-faint); }
-.setslot .offmark[hidden] { display: none; }
 .setpop {
   position: absolute; right: 0; top: calc(100% + 8px); z-index: 30;
   display: grid; grid-template-columns: max-content max-content;
@@ -9326,7 +9327,6 @@ body {
      url in a fixed-width face made the menu as wide as the longest link. */
   font-family: var(--sans);
 }
-.setpop[hidden] { display: none; }
 .setpop .verb { font-family: var(--sans); font-size: 12px; }
 .setpop .setlabel {
   display: flex; align-items: baseline; gap: 7px;
@@ -9430,12 +9430,6 @@ body {
   color: var(--ink-faint); cursor: pointer;
 }
 .setpop .wherecopy:hover { color: var(--needs); }
-.dot { display: inline-flex; width: 8px; height: 8px; border-radius: 50%;
-  transition: background .2s ease, border-color .2s ease; }
-.dot.needs_you { background: var(--needs); }
-.dot.working { background: var(--working); }
-.dot.done { background: var(--done); }
-.dot.ended, .dot.dead { border: 1px solid var(--edge-bright); }
 
 /* body */
 /* What the chosen row meets beside the list: the column every tab has (the
@@ -9572,9 +9566,7 @@ body.dragging { cursor: col-resize; user-select: none; }
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
   min-width: 0; white-space: nowrap;
 }
-/* `display: flex` beats the browser's own rule for the attribute. A session
-   outside a repository has no branch, and its line goes. */
-.row .line2[hidden] { display: none; }
+/* A session outside a repository has no branch, and its line goes. */
 .row .line2 .gitstate { display: flex; gap: 10px; margin-left: auto; }
 /* What the agent is doing or asks, cut short with an ellipsis. The age is on
    the name's line, where the name gives way to it and it never does. */
@@ -9582,7 +9574,6 @@ body.dragging { cursor: col-resize; user-select: none; }
   display: flex; gap: 6px; font-size: 12px; color: var(--ink-mute);
   min-width: 0; white-space: nowrap;
 }
-.row .line3[hidden] { display: none; }
 .row .said { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; font-size: 12px; }
 .dirty { color: var(--needs); }
@@ -9664,9 +9655,6 @@ body.dragging { cursor: col-resize; user-select: none; }
   flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
 }
-/* `display` here would otherwise beat the browser's own rule for `hidden`,
-   and the box would never go away. */
-.sendbar[hidden] { display: none; }
 /* The commands a `/` can complete, over the transcript and above the box,
    where the eye already is. As wide as the box, so a description has room;
    it scrolls past a screenful rather than run under the tabs. */
@@ -9676,7 +9664,6 @@ body.dragging { cursor: col-resize; user-select: none; }
   background: var(--panel); border: 1px solid var(--edge);
   border-radius: 6px; box-shadow: 0 -10px 24px var(--shadow);
 }
-.slash[hidden] { display: none; }
 .slash button {
   display: flex; align-items: baseline; gap: 10px; width: 100%;
   padding: 5px 12px; background: none; border: 0; color: var(--ink-mute);
@@ -9754,7 +9741,6 @@ body.dragging { cursor: col-resize; user-select: none; }
    where it is in view on every tab. */
 .ctxslot { margin-left: 12px; display: inline-flex; align-items: center;
   gap: 10px; }
-.ctxslot[hidden] { display: none; }
 /* An estimate, so it does not wear a state colour: the four this page spends
    are about what an agent is doing, and this is about what it has cost. */
 .spent { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
@@ -10241,8 +10227,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* Over the transcript, at its foot, and only while it would do something.
    It is a `.verb`, which already gives it the height, the padding, the
    border, the raised background, the type and the hover -- so what is left
-   here is only what makes it float. It sets `display` now, to put its
-   arrow in the middle, so it carries the `[hidden]` rule `.sendbar` does. */
+   here is only what makes it float. */
 /* A grid item in the pane's own cell, over the pane, at its foot. Not
    `position: absolute` against the box: the box runs down under the
    question bar and the send box, so its foot is behind them. An absolute
@@ -10255,7 +10240,6 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   display: inline-flex; align-items: center; justify-content: center;
   box-shadow: 0 2px 8px var(--shadow);
 }
-.tofoot[hidden] { display: none; }
 .tofoot .icon {
   width: 16px; height: 16px; fill: none; stroke: currentColor;
   stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
@@ -10329,7 +10313,6 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   font-size: 13px; cursor: pointer;
 }
 .baseword { color: var(--ink-faint); font-family: var(--mono); font-size: 12px; }
-.baseword[hidden] { display: none; }
 .pickof:focus, .pickbase:focus { outline: none; border-color: var(--needs); }
 /* What the branch's work is measured against: a name, short, and read
    whole -- so it does not shrink, and the commit picker, whose subject can
@@ -10339,7 +10322,6 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   flex-shrink: 0; font-family: var(--mono); font-size: 12px;
   color: var(--ink-mute); font-variant-numeric: tabular-nums;
 }
-.diffbar .stepat[hidden] { display: none; }
 
 /* The small label look: the path above a file. */
 .filebody .where {
@@ -10407,7 +10389,6 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .diffhead.commit > :is(.about, .message) { grid-column: 1 / -1; }
 .diffhead .readas { grid-column: 4; grid-row: 1; margin-left: 12px; }
-.readas[hidden] { display: none; }
 /* On the Files tab it is the last thing on the path's line. */
 .filebody .where .readas { margin-left: auto; }
 .diffhead .sha {
@@ -11499,7 +11480,7 @@ function newRow(id) {
 // worktree (`agent/richpalm`) -- never the title Claude Code writes from the
 // first prompt, which `/rename` does not reach and which went stale beside
 // the branch.
-// Not the state: the dot's colour and the group the row stands in say it
+// Not the state: the row's edge, its tint and the group it stands in say it
 // already, and a word at the top and "waiting for input" at the foot said it
 // a third and a fourth time. The word stays in the history, where "ended"
 // and "killed" share one group and one grey.
@@ -11754,7 +11735,7 @@ let gripRow = null;
 
 // Only the ages change by themselves. Rebuilding the rows to advance them
 // would restart the needs-you pulse every second, so it never finished a
-// cycle, and would throw away the dot's colour transition as well.
+// cycle.
 function tickAges() {
   for (const [node, since] of ages) node.textContent = ago(since);
 }
