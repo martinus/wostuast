@@ -674,6 +674,62 @@ def test_a_diff_the_page_holds_is_not_sent_again(repo_session):
     assert moved["sections"][1]["files"][0]["path"] == "README.md"
 
 
+def test_a_branch_that_did_not_move_is_not_diffed_again(ws, repo_session,
+                                                         monkeypatch):
+    """The poll ran the log and `git diff <base>...HEAD` every five seconds,
+    and parsed it, for an answer that moves only when the base or HEAD
+    does: about 300 ms of each poll on a large branch (#291). It is kept
+    under both shas, and asked again when either moves."""
+    from conftest import git_in
+
+    root, base = repo_session
+    git_in(root, "checkout", "-qb", "work")
+    (root / "new.txt").write_text("one\n")
+    git_in(root, "add", ".")
+    git_in(root, "commit", "-qm", "work")
+    asked = []
+    real_diff, real_log = ws.git_diff, ws.branch_commits
+    monkeypatch.setattr(ws, "git_diff", lambda root, args, runner=ws.run: (
+        asked.append(" ".join(args)) or real_diff(root, args, runner)))
+    monkeypatch.setattr(ws, "branch_commits", lambda *a, **k: (
+        asked.append("log") or real_log(*a, **k)))
+
+    def branch_asks():
+        return [one for one in asked if "...HEAD" in one or one == "log"]
+
+    _, first = get(f"{base}/api/session/s1/diff")
+    assert [one["path"] for one in first["sections"][0]["files"]] == ["new.txt"]
+    assert len(branch_asks()) == 2
+    _, again = get(f"{base}/api/session/s1/diff")
+    assert len(branch_asks()) == 2, asked            # nothing asked again
+    assert again["sections"] == first["sections"]
+    assert again["tag"] == first["tag"]
+    (root / "two.txt").write_text("two\n")
+    git_in(root, "add", ".")
+    git_in(root, "commit", "-qm", "more")
+    _, moved = get(f"{base}/api/session/s1/diff")
+    assert len(branch_asks()) == 4
+    assert [one["path"] for one in moved["sections"][0]["files"]] == [
+        "new.txt", "two.txt"]
+
+
+def test_a_file_that_did_not_move_is_not_sent_again(repo_session):
+    """The Files tab asked for the open file every two seconds and was sent
+    all of it, up to 512 KB, to throw away (#292). It sends the `stamp` of
+    the version it shows, and one that stands is answered `same`."""
+    root, base = repo_session
+    _, first = get(f"{base}/api/session/s1/file?path=README.md")
+    stamp = first["stamp"]
+    assert stamp and first["text"].startswith("# readme")
+    _, again = get(f"{base}/api/session/s1/file?path=README.md&have={stamp}")
+    assert again == {"id": "s1", "path": "README.md", "same": True,
+                     "stamp": stamp}
+    (root / "README.md").write_text("# readme\n\nmoved on\n")
+    _, moved = get(f"{base}/api/session/s1/file?path=README.md&have={stamp}")
+    assert "same" not in moved or moved["same"] is False
+    assert "moved on" in moved["text"] and moved["stamp"] != stamp
+
+
 def test_a_session_that_is_gone_is_a_404_on_every_new_route(served):
     _, base = served
     for verb in ("files", "file", "diff"):

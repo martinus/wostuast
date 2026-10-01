@@ -3833,6 +3833,11 @@ class FileText:
     # What `file` made of it, when the name and the first line said nothing.
     # The page decides what to do with it; see `languageOf`.
     language: str = ""
+    #: The version of the file this is: its mtime in nanoseconds and its
+    #: size. The page sends it back, and a file still the same is answered
+    #: `same` before it is read (#292).
+    stamp: str = ""
+    same: bool = False
 
 
 def walk_ignored(root: str, top: str,
@@ -4107,8 +4112,23 @@ def wire_json(data: Any) -> str:
     answers, the pushes and the stream's opening, which had three (#289).
     Not ASCII: a transcript in another script would be six bytes a letter on
     the stream, which is not compressed. So what writes it to the socket
-    goes through `wire_bytes`."""
-    return json.dumps(data, ensure_ascii=False, default=str)
+    goes through `wire_bytes`.
+
+    A dataclass goes out as its fields, read where they stand: `asdict`
+    copied every one of the thousands of lines of a large diff before it
+    was written, 343 ms of a 715 ms poll (#291).
+    """
+    return json.dumps(data, ensure_ascii=False, default=plain)
+
+
+def plain(value: Any) -> Any:
+    """What `json.dumps` writes for a value it does not know: a dataclass's
+    fields, and anything else as text."""
+    import dataclasses
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return vars(value)
+    return str(value)
 
 
 def wire_bytes(text: str) -> bytes:
@@ -4123,11 +4143,11 @@ def wire_bytes(text: str) -> bytes:
     return text.encode("utf-8", "replace")
 
 
-def answer_tag(answer: dict[str, Any]) -> str:
-    """A short name for one answer, as `reply_json` would write it."""
+def answer_tag(text: str) -> str:
+    """A short name for one answer, given it as `wire_json` wrote it."""
     import hashlib
 
-    return hashlib.sha1(wire_bytes(wire_json(answer))).hexdigest()[:16]
+    return hashlib.sha1(wire_bytes(text)).hexdigest()[:16]
 
 
 def listing_tag(names: str) -> str:
@@ -4481,12 +4501,18 @@ def read_worktree_bytes(
 
 def read_worktree_file(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run,
-    held: "Files | None" = None,
+    held: "Files | None" = None, have: str = "",
 ) -> FileText | None:
     """One file's content, or None.
 
     `held` also remembers what `file` made of a name that gives nothing away;
     the checks on the name itself are `worktree_target`'s.
+
+    `have` is the `stamp` of the version the page shows. When the file still
+    has it, the answer is `same` and nothing is read: the Files tab asks
+    every two seconds, and sent up to 512 KB each time for a file nobody had
+    touched -- a third of an ssh link. **Only after `worktree_target`**,
+    which asks `is_listed` every time and never remembers it.
     """
     target = worktree_target(cwd, wanted, runner, held)
     if target is None:
@@ -4495,7 +4521,11 @@ def read_worktree_file(
         if not target.is_file():
             return None
         info = target.stat()
-        found = FileText(mtime=info.st_mtime, size=info.st_size)
+        stamp = f"{info.st_mtime_ns}.{info.st_size}"
+        if have and have == stamp:
+            return FileText(mtime=info.st_mtime, size=info.st_size,
+                            stamp=stamp, same=True)
+        found = FileText(mtime=info.st_mtime, size=info.st_size, stamp=stamp)
         found.shown = shown_as(wanted)
         if found.shown:
             # A picture, a video or a sound. Its text is not text, and the
@@ -4898,6 +4928,8 @@ class BaseChoice:
     failed: bool = False      # git did not answer; "no base" would lie
     detected: str = ""        # the base with nothing picked
     offered: list[str] = field(default_factory=list)
+    head: str = ""            # HEAD's sha, "" when git did not say
+    tip: str = ""             # the base's own sha, from the same listing
 
 
 def pick_base(cwd: str, runner: Callable[..., str | None] = run,
@@ -4940,11 +4972,13 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
         choice.failed = True
         return choice
     refs: dict[str, str] = {}
+    shas: dict[str, str] = {}
     for line in listing.splitlines():
         full, _, rest = line.partition("\t")
-        name = rest.partition("\t")[0]
+        name, _, sha = rest.partition("\t")
         if name and not full.endswith("/HEAD"):
             refs[name] = full
+            shas[name] = sha.strip()
     head = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
                     "refs/remotes/origin/HEAD"]) or "").strip()
     head = head if head in refs else ""
@@ -5020,6 +5054,7 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
     # name reached the argv of `git diff` as an option, and git wrote the
     # diff into a file of that name. A full name starts with `refs/`.
     choice.ref = refs.get(choice.name, "")
+    choice.head, choice.tip = at, shas.get(choice.name, "")
     return choice
 
 
@@ -5179,7 +5214,9 @@ def empty_tree(root: str, runner: Callable[..., str | None] = run) -> str:
 
 def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
                   of: str = "", base: str = "",
-                  ranks: dict[Any, Any] | None = None) -> DiffReport:
+                  ranks: dict[Any, Any] | None = None,
+                  held: dict[Any, Any] | None = None,
+                  root: str | None = None) -> DiffReport:
     """What this worktree has changed, in two parts, or one commit of it.
 
     Committed: `git diff <base>...HEAD`, the branch's own work. The three dots
@@ -5191,9 +5228,17 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     `of` narrows it: "uncommitted" is the second part alone, and a sha is that
     one commit against its first parent. A sha is used only when it is one
     `branch_commits` listed -- it came from the page, and the page is input.
+
+    **What the branch committed is kept in `held`**, the daemon's, under the
+    base's sha and HEAD's: the tab asks every five seconds, and on a branch
+    of 2,500 files the log, `git diff <base>...HEAD` and its parse cost
+    about 300 ms of every poll for an answer that moves only when one of
+    the two does (#291). Only an answer git gave whole is kept, as `ranks`
+    keeps only a count git gave. `root` is the worktree's top when the
+    caller knows it already (`Files.root_of`).
     """
     report = DiffReport()
-    root = worktree_root(cwd, runner)
+    root = root or worktree_root(cwd, runner)
     if not root:
         # Not a repository, or git did not answer. Unasked, a timeout read
         # as "nothing changed".
@@ -5209,11 +5254,15 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         return git_diff(root, [*args, f"-U{DIFF_CONTEXT}", "--"], runner)
 
     def section(name: str, title: str, about: str, *args: str,
-                answer: tuple[str | None, bool] | None = None) -> list[DiffFile]:
-        text, cut = answer or ask(*args)
-        report.cut = report.cut or cut
-        report.failed = report.failed or text is None
-        files = parse_diff(text or "")
+                answer: tuple[str | None, bool] | None = None,
+                parsed: list[DiffFile] | None = None) -> list[DiffFile]:
+        if parsed is None:
+            text, cut = answer or ask(*args)
+            report.cut = report.cut or cut
+            report.failed = report.failed or text is None
+            files = parse_diff(text or "")
+        else:
+            files = parsed
         report.sections.append(
             DiffSection(name=name, title=title, about=about, files=files,
                         at_commit=name != "uncommitted"))
@@ -5222,7 +5271,18 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     choice = pick_base(root, runner, base, ranks)
     report.base, lost = choice.name, choice.failed
     report.base_auto, report.bases = choice.detected, choice.offered
-    commits, report.recent = branch_commits(root, choice.ref, runner)
+    key = ((root, choice.ref, choice.tip, choice.head)
+           if held is not None and choice.ref and choice.tip and choice.head
+           and not lost else None)
+    kept = held.get(key) if held is not None and key else None
+    if kept is not None:
+        commits, report.recent = kept["commits"], kept["recent"]
+    else:
+        commits, report.recent = branch_commits(root, choice.ref, runner)
+        if key and held is not None and commits is not None:
+            if len(held) > 64:
+                held.clear()
+            held[key] = kept = {"commits": commits, "recent": report.recent}
     # A repository with no commit yet has no HEAD, so the log fails: git
     # answering "there is none", not failing to answer. Asked only on the
     # failure path, so a repository with commits never pays for it.
@@ -5268,16 +5328,28 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     if of == "uncommitted":
         report.of = of
     elif choice.ref and not unborn:
-        answer = ask(choice.ref + "...HEAD")
-        # No commit in common is git's answer, and the half is left out: the
-        # page says why. Anything else that failed is still a failure.
-        if answer[0] is None and no_common_commit(root, choice.ref, runner):
-            report.unrelated = True
+        about = (f"every commit this branch has that {report.base} has not"
+                 f" \u2014 and nothing that landed on {report.base} since")
+        if kept is not None and "committed" in kept:
+            files, cut, report.unrelated = kept["committed"]
+            report.cut = report.cut or cut
+            if not report.unrelated:
+                section("committed", "committed on this branch", about,
+                        parsed=files)
         else:
-            section("committed", "committed on this branch",
-                    f"every commit this branch has that {report.base} has not"
-                    f" \u2014 and nothing that landed on {report.base} since",
-                    answer=answer)
+            answer = ask(choice.ref + "...HEAD")
+            # No commit in common is git's answer, and the half is left out:
+            # the page says why. Anything else that failed is still a failure.
+            files = []
+            if answer[0] is None and no_common_commit(root, choice.ref, runner):
+                report.unrelated = True
+            else:
+                files = section("committed", "committed on this branch", about,
+                                answer=answer)
+            if kept is not None and key and held is not None and (
+                    report.unrelated or answer[0] is not None):
+                held[key] = dict(kept, committed=(files, answer[1],
+                                                  report.unrelated))
     # With no commit, against the empty tree: the staged files are in the
     # index, so they are not untracked, and `HEAD` is not there to diff to.
     section("uncommitted", "not committed yet",
@@ -6607,6 +6679,10 @@ class Daemon:
         #: `pick_base`'s ranking of every branch, by worktree, HEAD and the
         #: refs as they stand. Counting walks history, and the Diff tab polls.
         self.ranks: dict[Any, Any] = {}
+        #: What a branch committed, under its base's sha and HEAD's
+        #: (`worktree_diff`): the Review tab's poll asked git for it again
+        #: every five seconds.
+        self.diffs: dict[Any, Any] = {}
         # Any site can send this daemon a POST; only a page that has read this
         # token can send one that acts. It is made here and printed into the
         # page, and it lives as long as the daemon does.
@@ -7719,12 +7795,17 @@ class Serving:
              query: dict[str, str]) -> None:
         wanted = query.get("path", "")
         found = read_worktree_file(session.cwd, wanted,
-                                   held=self.daemon.files)
+                                   held=self.daemon.files,
+                                   have=query.get("have", ""))
         if found is None:
             self.reply_json({"id": session_id, "path": wanted,
                              "missing": "that file is not in this worktree"}, 404)
             return
-        self.reply_json(dict(asdict(found), id=session_id, path=wanted))
+        if found.same:
+            self.reply_json({"id": session_id, "path": wanted, "same": True,
+                             "stamp": found.stamp})
+            return
+        self.reply_json(dict(vars(found), id=session_id, path=wanted))
 
     def raw(self, session_id: str, session: Session,
             query: dict[str, str]) -> None:
@@ -7756,20 +7837,25 @@ class Serving:
         of = query.get("of", "")
         # The base the reader picked, used only if git lists that name.
         base = query.get("base", "")
-        found = dict(asdict(worktree_diff(session.cwd, of=of, base=base,
-                                          ranks=self.daemon.ranks)),
-                     id=session_id)
+        report = worktree_diff(session.cwd, of=of, base=base,
+                               ranks=self.daemon.ranks, held=self.daemon.diffs,
+                               root=self.daemon.files.root_of(session.cwd, run))
         # The tab asks every five seconds, and the answer is the whole diff:
         # on a slow link the one transfer that never stopped. The page sends
         # back the tag of the answer it holds, and one that still stands is
         # answered with no diff. A hash of the answer itself, so everything
         # the page draws from it is in the tag -- a field left out of a tag
         # built by hand would change on the screen of nobody.
-        tag = answer_tag(found)
+        # Written once: the tag is a hash of these bytes, and the answer is
+        # these bytes with the tag set in before the closing brace. Built as a
+        # dict and written twice, it cost two passes over the whole diff.
+        text = wire_json(dict(vars(report), id=session_id))
+        tag = answer_tag(text)
         if query.get("have", "") == tag:
             self.reply_json({"id": session_id, "tag": tag, "same": True})
             return
-        self.reply_json(dict(found, tag=tag))
+        self.reply(200, wire_bytes(text[:-1] + f', "tag": "{tag}"}}'),
+                   "application/json; charset=utf-8")
 
     def whole(self, session_id: str, session: Session,
               query: dict[str, str]) -> None:
@@ -10636,8 +10722,7 @@ const state = {
   review: null,         // set below, because it is built in one place
   writing: null,        // the anchor of the comment box that is open, if any
   pruned: false,        // whether the stored reviews have been swept once
-  diffRaw: "",          // the last answer, as it arrived, to compare against
-  diffTag: "",          // its tag, sent back so an answer that stands is short
+  diffTag: "",          // the tag of the answer held, sent back so one that stands is short
   // Every worktree's file names, by its top: a session in the same worktree,
   // or the same session again, asks with the tag held and is answered
   // without them. See `keepListing`.
@@ -14706,6 +14791,7 @@ function blankFiles() {
     oversize: false,
     lang: "",           // what `file` made of it, when the name said nothing
     mtime: 0,           // which version of that text is loaded
+    stamp: "",          // the daemon's name for that version, sent back (#292)
     size: 0,            // its bytes on disk, which the decoded text does not say
     // Whether any answer for this file has landed. Not `mtime`, which a
     // file can really have as nought. Until one lands the pane says it is
@@ -14877,6 +14963,7 @@ function forgetFile(path) {
   state.files.lang = "";
   state.files.mtime = 0;
   state.files.size = 0;
+  state.files.stamp = "";
   state.files.read = false;
   state.files.trouble = "";
 }
@@ -14965,7 +15052,7 @@ function keepBase(name) {
   // the old hunks is dropped by `withMore` when they change.
   state.diffOf = "";
   state.diffGone = false;
-  state.diffRaw = "";
+  state.diffTag = "";
   loadDiff();
 }
 
@@ -14980,7 +15067,7 @@ function pickDiff(of) {
   state.diffOf = of;
   state.diffGone = false;
   state.loose = null;               // a commit has no untracked files
-  state.diffRaw = "";
+  state.diffTag = "";
   loadDiff();
 }
 
@@ -15530,13 +15617,30 @@ async function chooseUntracked(path) {
 // the name did nothing, so the failure stayed on screen as the content.
 // Now the text stays unread, the block says so, and the next poll asks
 // again; a file that really went leaves `untracked` and is let go.
+// The `file` route's answer, read one way: `{file}` for the file, or for a
+// `same` when `have` -- the `stamp` of the version shown -- still stands, and
+// `{why}` for anything else. A `missing` answer, which a timed-out
+// `is_listed` gives too, is not the file's text: three readers each decided
+// that for themselves, and each took it for the text once (#292).
+async function askFile(id, path, have) {
+  const body = await ask(id, "file", "?path=" + encodeURIComponent(path)
+                         + (have ? "&have=" + encodeURIComponent(have) : ""));
+  if (!body) return { why: "the daemon did not answer" };
+  if (body.missing || body.error) return { why: body.missing || body.error };
+  if (!body.same && body.text === undefined && !body.binary) {
+    return { why: "the daemon did not send the file" };
+  }
+  return { file: body };
+}
+
 async function readLoose(path) {
   const want = state.chosen;
   state.looseAsking = path;
-  const body = await ask(want, "file", "?path=" + encodeURIComponent(path));
+  const got = await askFile(want, path);
   if (state.chosen !== want || state.loose !== path) return;
   state.looseAsking = null;
-  if (!body || (body.text === undefined && !body.binary)) {
+  const body = got.file;
+  if (!body) {
     state.looseTrouble = "This file could not be read. It is asked for again.";
   } else {
     state.looseTrouble = "";
@@ -16704,14 +16808,13 @@ async function readElsewhere(paths) {
   const id = state.chosen;
   const files = state.reviewFiles;
   for (const path of paths) files.set(path, { asking: true });
-  const answers = await Promise.all(paths.map(
-    (path) => ask(id, "file", "?path=" + encodeURIComponent(path))));
+  const answers = await Promise.all(paths.map((path) => askFile(id, path)));
   let came = false;
   // A 404 is JSON too: `missing`, which a timed-out `is_listed` also
   // says. Kept, it stood as a file with no lines until another session.
   paths.forEach((path, at) => {
-    const got = answers[at];
-    if (got && !got.missing && !got.error) { files.set(path, got); came = true; }
+    const got = answers[at].file;
+    if (got) { files.set(path, got); came = true; }
     else files.delete(path);
   });
   const holder = document.querySelector(".diffscroll > .offdiff");
@@ -17117,7 +17220,7 @@ function choose(id) {
   state.reviewFiles = new Map();
   state.writing = null;
   drawReviewCount();
-  state.diffRaw = "";
+  state.diffTag = "";
   state.diffAt += 1;
   drawDiffCount();          // the last session's counts are not this one's
   const back = usePlace(id);
@@ -17346,7 +17449,10 @@ async function loadFiles() {
     // under the second one's name, so the tab showed one file's content
     // labelled as another. The session is not the only thing that can move.
     const wanted = state.files.path;
-    const body = await ask(want, "file", "?path=" + encodeURIComponent(wanted));
+    // The version shown goes back, so a file nobody touched is answered
+    // `same` and not sent again: up to 512 KB every two seconds (#292).
+    const got = await askFile(want, wanted,
+                              state.files.read ? state.files.stamp : "");
     if (state.chosen !== want || state.files.path !== wanted) return;
     // Only a file whose mtime moved is drawn again, so the tab keeps your
     // place in a file the agent has not touched.
@@ -17360,9 +17466,9 @@ async function loadFiles() {
     // a file with nothing in it, for as long as the refusal lasted; and a
     // fetch that failed drew nothing, so the file before stood under the
     // name just picked.
-    state.files.trouble = !body ? "the daemon did not answer"
-                        : body.missing ? body.missing : "";
-    if (body && !body.missing
+    const body = got.file;
+    state.files.trouble = got.why || "";
+    if (body && !body.same
         && (!state.files.read || body.mtime !== state.files.mtime)) {
       state.files.read = true;
       state.files.text = body.text || "";
@@ -17372,6 +17478,7 @@ async function loadFiles() {
       state.files.lang = body.language || "";
       state.files.mtime = body.mtime || 0;
       state.files.size = body.size || 0;
+      state.files.stamp = body.stamp || "";
     }
   }
   draw();
@@ -17379,28 +17486,25 @@ async function loadFiles() {
 
 async function loadDiff() {
   const want = state.chosen;
-  // The text as it arrived is the comparison. Serialising the parsed answer
-  // again to get a key copied the whole diff twice on every poll.
   const of = state.diffOf;
   const base = recallBase();
   const query = new URLSearchParams();
   if (of) query.set("of", of);
   if (base) query.set("base", base);
   // The tag of the answer held. Only while one is: every place that drops
-  // the answer empties `diffRaw`, so none of them can send a tag for a diff
-  // the page no longer has.
-  if (state.diffRaw && state.diffTag) query.set("have", state.diffTag);
+  // the answer empties `diffTag`, so none of them can send a tag for a diff
+  // the page no longer has. The tag is the one comparison: the whole text
+  // was kept beside it to compare as well, megabytes for a large diff (#291).
+  if (state.diffTag) query.set("have", state.diffTag);
   const raw = await ask(want, "diff",
                         query.toString() ? "?" + query.toString() : "", true);
   if (raw === null || state.chosen !== want || state.diffOf !== of
       || recallBase() !== base) return;
   let body = null;
-  if (raw !== state.diffRaw) {
-    try { body = JSON.parse(raw); } catch (error) { return; }
-  }
+  try { body = JSON.parse(raw); } catch (error) { return; }
   // The diff held still stands: nothing to take in and nothing new to draw,
   // but an untracked file not yet read is still asked for below.
-  const stands = body && body.same && state.diffRaw && body.tag === state.diffTag;
+  const stands = body && body.same && !!state.diffTag && body.tag === state.diffTag;
   if (body && !stands) {
     // A session that has gone answers with an error, not a report. Drawing
     // that as if it were one is how the tab used to go blank and stay blank.
@@ -17414,7 +17518,6 @@ async function loadDiff() {
       state.diffOf = "";
       state.diffGone = true;
     }
-    state.diffRaw = raw;
     state.diffTag = body.tag || "";
     state.diff = body;
     forgetChanged(body);

@@ -1521,8 +1521,8 @@ def test_a_file_no_diff_shows_is_read_once_not_on_every_diff(long_page):
             assert len(asked) == 1, asked
             for _ in range(3):
                 # A diff that changed, as a save by the agent brings one.
-                page.evaluate("() => { state.diffRaw = ''; loadDiff(); }")
-                page.wait_for_function("state.diffRaw !== ''")
+                page.evaluate("() => { state.diffTag = ''; loadDiff(); }")
+                page.wait_for_function("state.diffTag !== ''")
                 assert page.locator(f"{card} .dline").count() == 4
             assert len(asked) == 1, asked
         finally:
@@ -1554,7 +1554,7 @@ def test_a_file_that_could_not_be_read_is_asked_for_again(long_page):
             page.wait_for_selector(f"{card} .comment .quoted")
             page.wait_for_function("!state.reviewFiles.has('long.py')")
             assert page.locator(f"{card} .dline").count() == 0
-            page.evaluate("() => { state.diffRaw = ''; loadDiff(); }")
+            page.evaluate("() => { state.diffTag = ''; loadDiff(); }")
             page.wait_for_selector(f"{card} .dline")
             assert len(asked) == 2, asked
         finally:
@@ -1773,7 +1773,7 @@ def test_a_file_elsewhere_that_was_said_to_be_missing_is_asked_for_again(
             page.wait_for_selector(f"{card} .comment .quoted")
             page.wait_for_function("!state.reviewFiles.get('long.py')?.asking")
             assert not page.evaluate("!!state.reviewFiles.get('long.py')")
-            page.evaluate("() => { state.diffRaw = ''; loadDiff(); }")
+            page.evaluate("() => { state.diffTag = ''; loadDiff(); }")
             page.wait_for_selector(f"{card} .dline")
             assert len(asked) == 2, asked
         finally:
