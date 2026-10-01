@@ -146,7 +146,8 @@ def serve(home: Path, commands: bool = False) -> tuple[str, Path]:
                      "transcript_path": str(transcript)})
     daemon = ws.Daemon()
     server = ws.make_server(daemon, 0)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.05}, daemon=True).start()
     daemon.store.refresh()
     ticking = lambda: [daemon.tick() or time.sleep(0.5) for _ in iter(int, 1)]
     threading.Thread(target=ticking, daemon=True).start()

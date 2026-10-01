@@ -6,20 +6,13 @@ import pathlib
 import time
 
 import pytest
+from conftest import event as hook_event
 
 
 def event(name, **extra):
-    base = {
-        "session_id": "s1",
-        "hook_event_name": name,
-        "cwd": "/w/repo/dir",
-        "transcript_path": "/t.jsonl",
-        "pane": "%1",
-        "pid": 4242,
-        "ts": extra.pop("ts", 1000.0),
-    }
-    base.update(extra)
-    return base
+    """`conftest.event`, carrying the transcript path every state test assumes."""
+    extra.setdefault("transcript_path", "/t.jsonl")
+    return hook_event(name, **extra)
 
 
 def fold(ws, *events):
@@ -1535,7 +1528,6 @@ def test_a_listing_that_fails_does_not_bring_an_answered_dialog_back(
     amber again, with a No button, over a question that was gone."""
     import errno
 
-    from conftest import event as hook_event
 
     monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 10 ** 9)
     ask = {"tool_name": "Bash", "tool_input": {"command": "rm -rf build"}}

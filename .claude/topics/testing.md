@@ -16,6 +16,17 @@ worse — it stopped being true as the suite grew. The tests that run no browser
 are the other shape, CPU-bound and slightly *slower* at `-n 8` (25.5 s against
 24.5 s), so CI runs the matrix at `-n auto` and the browser shards at `-n 8`.
 
+**A daemon a test serves polls at 0.05 s, not the default half second.**
+`server.shutdown()` waits for `serve_forever`'s loop to look again, and
+every test that serves pays that at its teardown: 451 ms each, measured,
+which was 54 s of `test_serve.py`'s 79 s run alone. `served`, `shot.py`
+and `stage.py` pass `kwargs={"poll_interval": 0.05}`; `page_at` is built
+on `served` so it cannot fall behind. A new fixture that serves is built
+on `served` too, never on a `make_server` of its own. Two socket tests
+that waited five seconds for an answer that never came send
+`Connection: close` (#280); a test that waits for `LIST_FRESH` sets it
+to 0.
+
 **A test that commits in a clone gives the clone an identity.** CI has no
 global git identity, and `git clone` does not carry the `user.email` the
 `repo` fixture sets locally, so a commit there fails with status 128 in CI
