@@ -302,7 +302,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
-| <kbd>s</kbd> | Type into the agent's terminal (Transcript tab, while the box is there) |
+| <kbd>s</kbd> | Jump to the send box, which sends what you write to the chosen agent (Transcript tab, while the box is there) |
 | <kbd>c</kbd> | Colours: auto, light, dark (also in the settings menu) |
 | <kbd>Esc</kbd> | Clear a box, or close the help |
 

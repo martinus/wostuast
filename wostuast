@@ -9963,7 +9963,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 3</dt><dd>transcript, files, review</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
-    <dt>s</dt><dd>type into its terminal</dd>
+    <dt>s</dt><dd>jump to the send box</dd>
     <dt>c</dt><dd>colours: auto, light, dark</dd>
     <dt>?</dt><dd>this list</dd>
     <dt>Esc</dt><dd>close</dd>
