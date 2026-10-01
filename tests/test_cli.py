@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import argparse
 import re
 import threading
@@ -773,3 +774,44 @@ def test_the_start_is_coloured_only_on_a_terminal(ws, monkeypatch, capsys):
     monkeypatch.setattr(ws, "use_color", lambda: False)
     start(ws, monkeypatch)
     assert "\033[" not in capsys.readouterr().out
+
+
+# --- install and start share their helpers (#285) ------------------------------
+
+
+def test_doctor_makes_the_state_directory_private(ws, capsys):
+    """`doctor` made it with `mkdir` alone, so on a new machine it stood at
+    the umask, 0755, holding every prompt, until a hook ran."""
+    old = os.umask(0o022)
+    try:
+        ws.cmd_doctor(argparse.Namespace())
+    finally:
+        os.umask(old)
+    capsys.readouterr()
+    assert ws.state_dir().stat().st_mode & 0o777 == 0o700
+
+
+def test_a_home_of_root_is_not_written_as_a_tilde(ws, monkeypatch):
+    """`config_payload` guarded against it and `tilde` did not; one owns it."""
+    monkeypatch.setattr(ws.Path, "home", classmethod(lambda cls: ws.Path("/")))
+    assert ws.tilde("/etc/wostuast/settings.json") == "/etc/wostuast/settings.json"
+    assert ws.config_payload()["path"] == str(ws.config_path())
+
+
+def test_a_start_builds_the_hook_once(ws, monkeypatch):
+    """It parses the whole program: once to write the hook file, and it was
+    once more to compare it."""
+    made = []
+    real = ws.hook_source
+    monkeypatch.setattr(ws, "hook_source",
+                        lambda source: made.append(1) or real(source))
+    assert start(ws, monkeypatch) == 0
+    assert len(made) == 1
+
+
+def test_the_program_is_written_executable_and_whole(ws, tmp_path):
+    target = tmp_path / "bin" / "wostuast"
+    assert ws.write_program(target, "#!/bin/sh\n") is True
+    assert target.stat().st_mode & 0o777 == 0o755
+    assert ws.write_program(target, "#!/bin/sh\n") is False
+    assert sorted(p.name for p in target.parent.iterdir()) == ["wostuast"]

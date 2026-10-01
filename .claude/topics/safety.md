@@ -603,6 +603,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   leaves a window in which the file already holds a prompt and anyone on the
   machine can read it, and that window does not close if the process dies in
   it. The log holds every prompt and every command an agent ran.
+  **Every command makes that directory through `private_dir`**, and `doctor`
+  and the start ask `state_dir_trouble` whether they can write it. `doctor`
+  had its own probe with a bare `mkdir`, so on a new machine the directory
+  stood at the umask, 0755, until a hook ran (#285).
+  `test_doctor_makes_the_state_directory_private`.
 - **The hooks and the status line run the installed copy, not the checkout,
   and a start mends it when the two differ.** `install` copies this file to
   `install_path()`. A reader who pulled and restarted `serve` had a page
@@ -627,8 +632,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     hand** (#271). `hook_source` takes the definitions named in
     `HOOK_PARTS` out of the program's source with `ast`, between
     `HOOK_HEAD` and `HOOK_TAIL`, and `install` writes it to `hook_path`
-    with `write_program` -- beside and renamed, as the program is, because
-    a hook may be reading it. So `cmd_hook` and everything it calls are
+    with `write_program` -- through `write_atomic`, as the program is,
+    because a hook may be reading it. It had a temp-and-rename of its own,
+    whose name lacked the thread that `write_atomic`'s carries (#285). A
+    start builds the hook once: `bring_up_to_date` hands what it built to
+    `install_behind`, which parsed the whole program a second time.
+    `test_a_start_builds_the_hook_once`. So `cmd_hook` and everything it calls are
     written once, and the tests of `wostuast hook` test the hook. **A part
     left out is a NameError on every event that nobody sees**: the hook
     catches everything and may say nothing. `hook_source` refuses a name
