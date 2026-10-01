@@ -1438,7 +1438,7 @@ def test_a_poll_of_a_diff_that_stands_is_answered_short(repo_page):
         try:
             show_tab(page, "diff")
             page.wait_for_selector(".dline")
-            page.wait_for_function("state.diffRaw !== '' && state.diffTag !== ''")
+            page.wait_for_function("state.diffTag !== ''")
             drawn = page.evaluate("state.diffAt")
             with page.expect_response(re.compile(r"/diff\?")) as came:
                 page.evaluate("() => { load(); }")

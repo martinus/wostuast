@@ -1027,6 +1027,27 @@ def test_the_header_says_what_the_file_is(repo_page):
             browser.close()
 
 
+def test_a_file_nobody_touched_is_not_sent_again(repo_page):
+    """Every two seconds the open file came whole, up to 512 KB, and was
+    thrown away unless its mtime had moved (#292). The poll sends back the
+    `stamp` of the version shown, and is answered `same`."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            open_file(page, "code.py")
+            page.wait_for_function("state.files.stamp !== ''")
+            stamp = page.evaluate("state.files.stamp")
+            with page.expect_response(
+                    lambda answer: "/file?" in answer.url
+                    and "have=" in answer.url, timeout=15000) as came:
+                page.evaluate("() => { load(); }")
+            assert came.value.json() == {"id": "s1", "path": "code.py",
+                                         "same": True, "stamp": stamp}
+            assert "print(1)" in code_text(page)
+        finally:
+            browser.close()
+
+
 def test_the_scrollbar_starts_under_the_header_not_beside_it(long_page):
     """The header carries the path and the two controls, and scrolling away
     from them was scrolling away from the only place that says which file

@@ -572,9 +572,31 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     (`answer_tag`, `state.diffTag`): the whole diff came every five seconds.
     The tag is a hash of the answer itself, so nothing the page draws can be
     left out of it, and a tag sent for another question can never match.
-    It is sent only while `diffRaw` holds an answer -- every place that
-    drops the answer empties that -- and a `same` still reaches the retry of
-    an untracked file's read at the end of `loadDiff`.
+    It is sent only while `diffTag` holds one -- every place that drops
+    the answer empties it -- and a `same` still reaches the retry of an
+    untracked file's read at the end of `loadDiff`. The whole text was kept
+    beside the tag (`diffRaw`) as a second comparison, megabytes for a large
+    diff; the tag is the one now (#291). **And the answer is written once**:
+    `wire_json` writes a dataclass's fields where they stand, the tag is a
+    hash of those bytes, and the tag is set into them before the last
+    brace. `asdict` and two `dumps` were 431 of the 715 ms a poll of a
+    2,500-file branch cost.
+  - **What a branch committed is kept** (`Daemon.diffs`, `worktree_diff`'s
+    `held`), under the base's sha and HEAD's, which `pick_base` reads from
+    the listing it makes anyway (`BaseChoice.head`, `tip`). The log and
+    `git diff <base>...HEAD` ran on every poll for an answer that moves only
+    when one of the two does. Only what git gave whole is kept, as `ranks`
+    keeps only a count git gave; what is not committed is read every time.
+    `test_a_branch_that_did_not_move_is_not_diffed_again`.
+  - **The open file goes back as a `stamp`** (`FileText.stamp`, the mtime in
+    nanoseconds and the size), and a file that still has it is answered
+    `same` before it is read (#292): the Files tab was sent up to 512 KB
+    every two seconds to throw away. Only after `worktree_target`, which asks
+    `is_listed` every time. One reader of that route's answer, `askFile`: a
+    `missing` taken for the text was a bug three times, once in each of
+    `loadFiles`, `readLoose` and `readElsewhere`.
+    `test_a_file_that_did_not_move_is_not_sent_again`,
+    `test_a_file_nobody_touched_is_not_sent_again`.
   - **The file names are kept per worktree, not per session**
     (`keepListing`, `adoptListing`, `state.listings`, by `worktree_path`):
     a session choice blanked them, so every switch -- to another session in
