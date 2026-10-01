@@ -83,3 +83,22 @@ def test_it_draws_the_settings_menu_from_a_file_and_steps(tmp_path):
         capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@skip_without_browser
+def test_it_draws_the_slash_command_list(tmp_path):
+    """`--commands` stages skills and used commands, and `--keys` types into
+    the box without the Enter `--type` adds, which would take a command."""
+    out = tmp_path / "out.png"
+    done = subprocess.run(
+        [sys.executable, str(HERE / "stage.py"), str(out), "--tab", "transcript",
+         "--commands", "--keys", "#say=/re",
+         # The list opens when its fetch answers, after the keys.
+         "--eval", "new Promise((done, failed) => { const until = Date.now() + 15000;"
+                   " const look = () => !$('slash').hidden ? done()"
+                   " : Date.now() > until ? failed(new Error('the list did not open'))"
+                   " : setTimeout(look, 20); look(); })",
+         "--part", "#slash"],
+        capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
