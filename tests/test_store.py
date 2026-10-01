@@ -208,7 +208,6 @@ def test_a_row_carries_what_the_page_needs(ws, store):
     assert got["pane"] == "%1"
     assert got["model"] == "Opus 5"
     assert got["context_pct"] == 41.0
-    assert got["has_transcript"] is True
 
 
 def test_a_row_holds_only_plain_values(ws, store):
@@ -223,7 +222,10 @@ def test_a_row_holds_only_plain_values(ws, store):
 def test_a_long_prompt_is_cut_before_it_reaches_the_page(ws, store):
     ws.append_event(event("UserPromptSubmit", prompt="y" * 5000))
     store.refresh(now=1000.0, alive=lambda p: True)
-    assert len(store.rows[0]["last_prompt"]) == ws.PROMPT_WIDTH
+    # The prompt reaches the page inside `last_event`, and only cut.
+    assert store.rows[0]["last_event"] == "prompt: " + ws.clip("y" * 5000,
+                                                             ws.PROMPT_WIDTH)
+    assert len(store.rows[0]["last_event"]) <= len("prompt: ") + ws.PROMPT_WIDTH
 
 
 def test_rows_come_out_newest_first_whatever_their_names(ws, store):

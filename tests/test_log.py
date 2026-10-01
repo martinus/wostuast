@@ -88,12 +88,12 @@ def test_counting_does_not_parse(ws):
     path = ws.events_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"a": 1}\nnot json at all\n{"b": 2}\n')
-    assert ws.count_events() == 3
+    assert ws.measure_log()[0] == 3
     assert len(list(ws.read_events())) == 2
 
 
 def test_counting_a_missing_log_is_zero(ws):
-    assert ws.count_events() == 0
+    assert ws.measure_log()[0] == 0
 
 
 def test_broken_utf8_is_skipped_not_fatal(ws):
@@ -243,7 +243,7 @@ def test_both_files_are_read_and_counted(ws, monkeypatch):
     monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 500)
     written = fill_until_one_rotation(ws, lambda i: {"session_id": "s1", "n": i,
                                                      "pad": "z" * 40})
-    assert ws.count_events() == written
+    assert ws.measure_log()[0] == written
     assert [e["n"] for e in ws.read_events()] == list(range(written))
 
 
@@ -599,7 +599,7 @@ def test_no_rotation_ever_loses_an_event(ws, monkeypatch):
     for i in range(60):
         ws.append_event({"session_id": "s1", "n": i, "pad": "z" * 40})
     assert [e["n"] for e in ws.read_events()] == list(range(60))
-    assert ws.count_events() == 60
+    assert ws.measure_log()[0] == 60
     assert len(ws.archived_events_paths()) > 2
 
 
@@ -708,7 +708,7 @@ def test_a_log_under_two_names_is_read_once(ws, monkeypatch):
     ws.append_event({"session_id": "s", "n": 4})
     assert len(ws.archived_events_paths()) == 2
     assert [e["n"] for e in ws.read_events()] == [0, 1, 2, 3, 4]
-    assert ws.count_events() == 5
+    assert ws.measure_log()[0] == 5
 
 
 def test_a_rotation_between_the_listing_and_the_live_file_is_read(
