@@ -818,7 +818,7 @@ def test_a_tall_file_tree_is_drawn_to_its_foot(big_page):
                 f"(() => {{ const at = ({TREE_FOOT})(); return at.rows >= at.view; }})()")
             page.evaluate("document.querySelector('.filelist.files').scrollTop = 40000")
             page.wait_for_function(
-                "document.querySelector('.filelist.files').dataset.first > 1000")
+                "parseInt(document.querySelector('.filelist.files').dataset.window) > 1000")
             at = page.evaluate(TREE_FOOT)
             assert at["rows"] >= at["view"], at
         finally:
@@ -1202,6 +1202,29 @@ def test_changing_how_a_file_is_drawn_keeps_a_comment_being_written(repo_page):
             browser.close()
 
 
+def test_the_small_helpers_say_what_they_promise(repo_page):
+    """A button made by `put` never submits the form it stands in: every one
+    said so in a line of its own, and a new one that forgot would have sent
+    the send bar's text (#298). And a count is "1 file", never "1 files":
+    nine places spelled that each for themselves, two with `> 1`."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, repo_page)
+        try:
+            assert page.evaluate("""() => {
+              const form = document.createElement("form");
+              document.body.appendChild(form);
+              const made = put(form, "button", "x", "x").type;
+              form.remove();
+              return made;
+            }""") == "button"
+            assert page.evaluate(
+                "[counted(1, 'file', 'files'), counted(2, 'file', 'files'),"
+                " counted(0, 'reply', 'replies')]") == [
+                    "1 file", "2 files", "0 replies"]
+        finally:
+            browser.close()
+
+
 def test_a_windowed_file_does_not_wrap_even_if_it_is_told_to(long_page):
     """The button being disabled is a courtesy. The rule itself is that a
     windowed file's rows are a grid the scrollbar is read against, and a
@@ -1212,7 +1235,8 @@ def test_a_windowed_file_does_not_wrap_even_if_it_is_told_to(long_page):
         try:
             open_file(page, "long.py")
             page.wait_for_selector(".code.windowed")
-            page.evaluate("""() => { keepReading({tab: 4, wrap: true}); }""")
+            page.evaluate("""() => { keepSetting({long_lines: "wrap"});
+                                     applyReading(readingWanted()); }""")
             assert page.evaluate("document.documentElement.dataset.wrap") == "yes"
             assert page.evaluate(
                 "getComputedStyle(document.querySelector('.filebody .dline'))"

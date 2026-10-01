@@ -6211,6 +6211,13 @@ def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: 
 # --- output helpers ----------------------------------------------------------
 
 
+def counted(n: int, one: str, many: str) -> str:
+    """A count and its noun, "1 file" and "1,204 events": the page's
+    `counted`, in the other language. The start and `doctor` spelled it
+    four times (#298)."""
+    return f"{n:,} {one if n == 1 else many}"
+
+
 def size_label(size: int) -> str:
     """Bytes the way a person reads them. The page's `sizeOf` says the same,
     with a gigabyte added: a log that is never thrown away reaches one."""
@@ -7013,8 +7020,8 @@ class Daemon:
         follower = self.store.follower
         files, size = follower.files_read()
         spent = f"{took * 1000:.0f} ms" if took < 1 else f"{took:.1f} s"
-        return (f"read {follower.events:,} event{'s' if follower.events != 1 else ''}"
-                f" from {files} file{'s' if files != 1 else ''}"
+        return (f"read {counted(follower.events, 'event', 'events')}"
+                f" from {counted(files, 'file', 'files')}"
                 f" ({size_label(size)}) in {spent}")
 
     def run(self) -> None:
@@ -8448,7 +8455,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         count, held, size = measure_log()
         report(events.exists(),
                f"event log {events} with {count} events"
-               f" in {held} file{'s' if held != 1 else ''} ({size_label(size)})",
+               f" in {counted(held, 'file', 'files')} ({size_label(size)})",
                f"no events yet at {events}; run a Claude Code session", fatal=False)
     except OSError as error:
         report(False, "", f"cannot read the event log: {error}", fatal=False)
@@ -8901,7 +8908,7 @@ def changed_parts(changes: list[str]) -> list[str]:
     parts = [tilde(line[len("wrote "):]) for line in changes if line.startswith("wrote ")]
     hooks = sum(1 for line in changes if line.startswith(("added hook", "moved hook")))
     if hooks:
-        parts.append(f"{hooks} hook{'s' if hooks != 1 else ''}")
+        parts.append(counted(hooks, "hook", "hooks"))
     if "added status line" in changes or "moved status line" in changes:
         parts.append("status line")
     return parts
@@ -11026,16 +11033,27 @@ function note(text) {
 // variable rather than onto the element, so a column that is rebuilt keeps it,
 // and into this browser's storage, so a reload does too.
 
+// What this browser keeps for the page: "" when nothing is held, or when
+// storage cannot be read -- a private window refuses it -- and never a throw.
+// Each caller wrote its own `try` before (#298).
+function stored(key) {
+  try { return localStorage.getItem(key) || ""; } catch (error) { return ""; }
+}
+
+// Keep a value, or forget the key for an empty one. A refusal, a private
+// window or the quota, changes nothing the reader can see, so it is dropped.
+function store(key, value) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch (error) { }
+}
+
 function rememberWidth(name, px) {
   const root = document.documentElement;
   if (px) root.style.setProperty(name, px + "px");
   else root.style.removeProperty(name);
-  try {
-    if (px) localStorage.setItem("wostuast" + name, String(px));
-    else localStorage.removeItem("wostuast" + name);
-  } catch (error) {
-    // A private window remembers nothing. The drag still works.
-  }
+  store("wostuast" + name, px ? String(px) : "");   // a private window: the drag still works
 }
 
 function dragWidth(grip, name, least, most) {
@@ -11043,8 +11061,7 @@ function dragWidth(grip, name, least, most) {
   // Each handle brings its own width back, so a third one is one call and
   // not two. The file column's is built when its tab first opens, which is
   // when it is wanted.
-  let saved = "";
-  try { saved = localStorage.getItem("wostuast" + name) || ""; } catch (e) { }
+  const saved = stored("wostuast" + name);
   if (saved) rememberWidth(name, Number(saved));
   let from = 0;
   let was = 0;
@@ -11136,10 +11153,18 @@ function setting(key) {
 // and which links were refused: the settings come by the push alone, one
 // line in the order the file was written. An answer on its own connection
 // landed before an older push, and that push put the page back.
+// One change at a time, each after the last has been answered. Two quick
+// clicks sent two POSTs on two connections, and the first could land after
+// the second: `settings.json` kept the older choice, the push then put it
+// back on the page, and `test_the_two_switches_are_remembered_apart` went
+// red under load.
+let settingsSent = Promise.resolve();
+
 async function keepSetting(change) {
   state.settings = { ...state.settings, ...change };
-  const answer = await post("/api/settings", change);
-  said(answer);
+  const answer = settingsSent.then(() => post("/api/settings", change));
+  settingsSent = answer.catch(() => null);
+  said(await answer);
   return answer;
 }
 
@@ -11162,8 +11187,12 @@ function takeSettings(body, first) {
 
 const THEME_ORDER = ["system", "light", "dark"];
 
+// The browser's own light or dark, asked of one query. The head script asks
+// it once more for itself, because it runs before this one exists.
+const LIGHT = window.matchMedia("(prefers-color-scheme: light)");
+
 function systemTheme() {
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return LIGHT.matches ? "light" : "dark";
 }
 
 function themeChoice() {
@@ -11187,7 +11216,7 @@ function nextTheme() {
   paintSettings();
 }
 
-window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+LIGHT.addEventListener("change", () => {
   if (themeChoice() === "system") showTheme("system");
   redrawIcon();          // the tab bar changed colour, whatever this page shows
 });
@@ -11316,6 +11345,10 @@ function submitOnCtrlEnter(box, button) {
 // Everything below comes from an agent. It is never trusted as HTML.
 function put(parent, tag, cls, text) {
   const node = document.createElement(tag);
+  // Never a submit: the send bar and the review bar are forms, and a button
+  // inside one submits it unless it says otherwise. Every button made here
+  // said so in a line of its own, 25 times (#298).
+  if (tag === "button") node.type = "button";
   if (cls) node.className = cls;
   if (text !== undefined && text !== null) node.textContent = String(text);
   parent.appendChild(node);
@@ -11613,8 +11646,7 @@ function historyBar(many) {
   bar.className = "histhead";
   bar.addEventListener("click", () => {
     state.history = !state.history;
-    try { localStorage.setItem("wostuast-history", state.history ? "open" : "shut"); }
-    catch (error) { }
+    store("wostuast-history", state.history ? "open" : "shut");
     drawSessions();
   });
   return bar;
@@ -11836,7 +11868,6 @@ function drawAsking() {
     const list = put(body, "div", "askopts");
     one.options.forEach((option, at) => {
       const button = put(list, "button", "askopt");
-      button.type = "button";
       // The number it will press, shown. What reaches your terminal should
       // not be a thing you have to trust.
       put(button, "span", "asknum", String(at + 1));
@@ -11869,7 +11900,6 @@ function drawAsking() {
   });
   const foot = put(box, "div", "asksend");
   const send = put(foot, "button", "verb");
-  send.type = "button";
   send.addEventListener("click", () => submitAsk(s.id, ask, box));
   put(foot, "span", "asksays");
   paintPicks(box, ask);
@@ -11914,7 +11944,6 @@ function drawPermission(box, s, permission) {
   // Absent with no pane, like jump everywhere else: there is nothing to open.
   if (s.pane) {
     const open = put(foot, "button", "verb");
-    open.type = "button";
     open.textContent = "open the terminal";
     open.addEventListener("click", jumpToPane);
   }
@@ -11932,7 +11961,6 @@ function drawPermission(box, s, permission) {
     fitSay(why);
   });
   const no = put(foot, "button", "verb permno");
-  no.type = "button";
   no.textContent = "no";
   no.addEventListener("click", () => submitDecline(s.id, permission, box));
   submitOnCtrlEnter(why, no);
@@ -12195,8 +12223,7 @@ function drawContext() {
   }
   const shows = [model, hasContext(s) ? Math.round(s.context_pct) : "", spent]
     .join("\n");
-  if (slot.dataset.shows === shows) return;  // a push a second, rarely moved
-  slot.dataset.shows = shows;
+  if (!fresh(slot, "shows", shows)) return;  // a push a second, rarely moved
   slot.replaceChildren();
   if (model) put(slot, "span", "model", model);
   if (hasContext(s)) putContext(slot, s.context_pct);
@@ -12287,7 +12314,7 @@ function paintIcon(pen, colour) {
 // Which bar the icon stands in. The browser's own light or dark, which is
 // what this media query answers -- the page's theme may be the other one.
 function tabBarIsDark() {
-  return !window.matchMedia("(prefers-color-scheme: light)").matches;
+  return systemTheme() === "dark";
 }
 
 let iconWas = "";
@@ -12330,9 +12357,7 @@ function drawIcon(state_) {
 // for. One switch for both would mean taking the one you want with the one
 // you do not.
 //
-// Both live in this browser, like the theme: they are about this screen, and
-// goal 4 in CLAUDE.md rules out a config file for anything wostuast could
-// work out or that is the same for everybody.
+// Both are in `settings.json`, as `alerts`, set from the settings menu.
 
 const waiting = new Set();
 
@@ -12340,10 +12365,6 @@ const waiting = new Set();
 //: a change rather than a state. A session already finished when the page
 //: opens is not news, and it has no entry here on the first pass.
 const wasDoing = new Map();
-
-//: The needs-you alert is on the moment alerts are: it is the one thing this
-//: tool exists to tell you. The finished one is a choice.
-const ALERTS_DEFAULT = { needs: true, done: false };
 
 // What `settings.json` says, which the daemon has checked the shape of.
 function alertsWanted() {
@@ -12356,37 +12377,28 @@ function alertsWanted() {
   // they were saying yes to -- so it is on, which is the default the issue
   // asks for. Without permission nothing can arrive whatever this says, and
   // a switch that claims to be on while nothing happens is worse than off.
-  if ("Notification" in window && Notification.permission === "granted") {
-    return { ...ALERTS_DEFAULT };
-  }
-  return { needs: false, done: false };
-}
-
-function rememberAlerts(want) {
-  keepSetting({ alerts: want });
+  //
+  // The needs-you alert is on the moment alerts are: it is the one thing this
+  // tool exists to tell you. The finished one is a choice.
+  return { needs: alertsCan(), done: false };
 }
 
 function alertsCan() {
   return "Notification" in window && Notification.permission === "granted";
 }
 
-function anyAlert() {
-  const want = alertsWanted();
-  return want.needs || want.done;
-}
-
 function drawBell() {
   const button = $("settings");
   if (!button) return;
   const can = "Notification" in window;
-  const on = can && alertsCan() && anyAlert();
+  const want = alertsWanted();
+  const on = alertsCan() && (want.needs || want.done);
   const word = !can ? "no alerts" : on ? "alerts on" : "alerts off";
   button.querySelector(".offmark").hidden = on;
   button.dataset.alerts = on ? "on" : "off";
   button.setAttribute("aria-label", "settings, " + word);
   button.title = "settings: colours, alerts, how code is drawn, ticket links"
     + "  \u00b7  " + word;
-  const want = alertsWanted();
   $("alertneeds").checked = want.needs;
   $("alertdone").checked = want.done;
   $("alertnote").textContent = !can
@@ -12406,7 +12418,7 @@ function drawBell() {
 async function setAlert(which, on) {
   const want = alertsWanted();
   want[which] = on;
-  rememberAlerts(want);
+  keepSetting({ alerts: want });
   if (on && "Notification" in window && Notification.permission === "default") {
     await Notification.requestPermission();
   }
@@ -12463,10 +12475,13 @@ function putSettings() {
   put(pop, "div", "rule");
   label("tab", "tabWidth");
   choice("tabwidth", TAB_WIDTHS.map((width) => [width, String(width)]),
-         (tab) => keepReading({ ...readingNow(), tab }));
+         (tab) => { keepSetting({ tab_width: tab }); applyReading(readingWanted()); });
   label("lines", "wrap");
   choice("wrapping", [[false, "scroll", "scroll"], [true, "wrap", "wrap"]],
-         (wrap) => keepReading({ ...readingNow(), wrap }));
+         (wrap) => {
+           keepSetting({ long_lines: wrap ? "wrap" : "scroll" });
+           applyReading(readingWanted());
+         });
   label("diff", "twoColumns");
   choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
          keepSides);
@@ -12475,7 +12490,6 @@ function putSettings() {
   const links = put(pop, "div", "linkedit");
   put(links, "div", "linklist").id = "linklist";
   const add = put(links, "button", "verb quiet linkadd", "+ add a link");
-  add.type = "button";
   add.addEventListener("click", () => {
     putLinkRow($("linklist"), { match: "", url: "", trouble: "" })
       .querySelector("input").focus();
@@ -12486,7 +12500,6 @@ function putSettings() {
   const words = put(where, "span", null, "saved to ");
   put(words, "span", "wherepath").id = "settingspath";
   const copy = put(where, "button", "wherecopy");
-  copy.type = "button";
   copy.title = "copy the path";
   copy.setAttribute("aria-label", "copy the path");
   putIcon(copy, "copy");
@@ -12501,7 +12514,7 @@ function putSettings() {
 function paintSettings() {
   const pop = $("setpop");
   if (!pop || !pop.firstChild) return;
-  const reading = readingNow();
+  const reading = readingWanted();
   const now = { colours: themeChoice(), tabwidth: String(reading.tab),
                 wrapping: String(reading.wrap), sides: state.sides };
   for (const [name, value] of Object.entries(now)) {
@@ -12550,7 +12563,6 @@ function putLinkRow(list, one) {
       box.blur();
     });
   }
-  drop.type = "button";
   drop.title = "remove this link";
   drop.setAttribute("aria-label", "remove this link");
   drop.addEventListener("click", () => {
@@ -12648,7 +12660,6 @@ function putChoice(parent, name, options, pick) {
   group.setAttribute("role", "group");
   for (const [value, word, icon, title] of options) {
     const button = put(group, "button", "verb quiet");
-    button.type = "button";
     button.dataset.value = String(value);
     if (title) button.title = title;
     if (icon) putIcon(button, icon);
@@ -12809,21 +12820,16 @@ function ticketUrl(template, hit) {
 // already where it points.
 function linkTickets(root) {
   if (!state.links.length) return;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const found = [];
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    if (node.parentElement && node.parentElement.closest("code, pre, a")) continue;
-    found.push(node);
-  }
   let made = 0;
-  for (const node of found) {
-    if (made >= LINKS_MAX) return;
-    const pieces = linkOne(node.nodeValue, LINKS_MAX - made);
-    if (!pieces) continue;
+  // Through `overText`, the one walker over text: a second one here was a
+  // second copy of the invariant the page rests on (#297).
+  overText(root, (text) => {
+    if (made >= LINKS_MAX) return null;
+    const pieces = linkOne(text, LINKS_MAX - made);
+    if (!pieces) return null;
     made += pieces.made;
-    node.replaceWith(pieces.holder);
-  }
+    return pieces.holder;
+  }, "code, pre, a");
 }
 
 // One text node, cut into text and links. Null when nothing matched, so the
@@ -12858,8 +12864,7 @@ function linkOne(text, room) {
     if (where) {
       const link = put(holder, "a", "ticket", best.hit[0]);
       link.href = where;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
+      opensAway(link);
       made += 1;
     } else {
       holder.appendChild(document.createTextNode(best.hit[0]));
@@ -13440,7 +13445,6 @@ function putCodeCopies(node) {
     pre.replaceWith(box);
     box.appendChild(pre);
     const copy = put(box, "button", "copycode");
-    copy.type = "button";
     copy.title = "copy this block";
     copy.setAttribute("aria-label", "copy this block");
     putIcon(copy, "copy");
@@ -13456,16 +13460,22 @@ function putCodeCopies(node) {
 // colour, then its own icon and words again. One helper, so "it went" looks
 // the same on every button that has nothing else to show for it -- a copy,
 // and a jump, whose result is in another window. A press while it shows
-// starts the moment again rather than ending it early.
-function flashOutcome(button, icon, title, done, saying) {
-  button.replaceChildren();
-  putIcon(button, done ? "check" : icon);
+// starts the moment again rather than ending it early. A button that is a
+// word passes `words`, what it says when it went and when it did not, and
+// `icon` is then the word it goes back to (`putCopy`, which had a timer of
+// its own that a second press could cut short).
+function flashOutcome(button, icon, title, done, saying, words) {
+  const show = (what) => {
+    button.replaceChildren();
+    if (words) button.textContent = what;
+    else putIcon(button, what);
+  };
+  show(words ? words[done ? 0 : 1] : done ? "check" : icon);
   button.title = saying;
   button.classList.toggle("done", done);
   clearTimeout(button.flashing);
   button.flashing = setTimeout(() => {
-    button.replaceChildren();
-    putIcon(button, icon);
+    show(icon);
     button.title = title;
     button.classList.remove("done");
   }, 1400);
@@ -13476,14 +13486,14 @@ function flashOutcome(button, icon, title, done, saying) {
 function putCopy(parent, block, mine) {
   if (!block.text) return null;
   const copy = put(parent, "button", "copy", "copy");
-  copy.type = "button";
   copy.title = "copy this " + (mine ? "prompt" : "reply") + " as Markdown";
+  const title = copy.title;
   copy.addEventListener("click", async () => {
     const done = await copyToClipboard(block.text);
     // The node may be redrawn out from under this; writing to a node that has
     // left the page is harmless, and there is nothing to put back.
-    copy.textContent = done ? "copied" : "cannot";
-    setTimeout(() => { copy.textContent = "copy"; }, 1400);
+    flashOutcome(copy, "copy", title, done, done ? "copied" : "could not copy",
+                 ["copied", "cannot"]);
   });
   return copy;
 }
@@ -13575,7 +13585,7 @@ function glimpse(text) {
     .replace(/^\*\*(.*?)\*\*/, "$1")
     .replace(/^`(.*?)`/, "$1")
     .trim();
-  return first.length > GLIMPSE ? first.slice(0, GLIMPSE - 1) + "…" : first;
+  return clip(first, GLIMPSE);
 }
 
 // The rounds the find box leaves. A round stays when it matches or when one
@@ -13722,7 +13732,6 @@ function putToFoot(box) {
   // word at the right edge stood over the replies' ends.
   const button = put(box, "button", "verb tofoot");
   putIcon(button, "down");
-  button.type = "button";
   button.title = "go to the latest, and follow it again";
   button.setAttribute("aria-label", "go to the latest");
   button.addEventListener("click", () => {
@@ -13771,8 +13780,7 @@ function drawTranscript(box) {
   // blocks away, the scrollbar falls back to nought, and that scroll would
   // be written as the place of a session whose fetch has not come back.
   pane.dataset.session = state.turns.blocks.length ? state.chosen || "" : "";
-  if (!pane.dataset.watched) {
-    pane.dataset.watched = "1";
+  if (fresh(pane, "watched", "1")) {
     pane.addEventListener("scroll", () => {
       // At the foot is "no place kept", and not a number of pixels. The
       // transcript is drawn twice on a first load -- as text, and again as
@@ -13817,7 +13825,7 @@ function drawTranscript(box) {
 function noteTurns(note, found, replies, all) {
   note.replaceChildren();
   const every = all.reduce((n, one) => n + one.replies.length, 0);
-  const what = (n) => n + (n === 1 ? " reply" : " replies");
+  const what = (n) => counted(n, "reply", "replies");
   put(note, "span", null,
       found.length === all.length && replies === every
         ? found.length + (found.length === 1 ? " round · " : " rounds · ")
@@ -13889,7 +13897,6 @@ function drawTool(parent, block, index) {
   const patch = block.patch && block.patch.length ? block.patch : null;
   const opens = !!(patch || block.result);
   const line = put(parent, "button", "tool" + (block.failed ? " failed" : ""));
-  line.type = "button";
   put(line, "span", "caret", opens ? (open ? "▾" : "▸") : " ");
   put(line, "span", "name", block.tool);
   if (block.target) put(line, "span", "target", block.target);
@@ -13918,8 +13925,8 @@ function putToolDiff(parent, block) {
   fillDiffFile(put(box, "div", "dbody"),
                { path: block.target, hunks: block.patch, tail: 0, atEdit: true });
   if (block.patch_more) {
-    put(box, "div", "toolmore", "… " + block.patch_more + " more line"
-        + (block.patch_more > 1 ? "s" : "") + " · the Diff tab has the whole change");
+    put(box, "div", "toolmore", "… " + counted(block.patch_more, "more line", "more lines")
+        + " · the Diff tab has the whole change");
   }
 }
 
@@ -14285,7 +14292,6 @@ function drawGoTo(slot) {
   }
   found.forEach((hit, at) => {
     const row = put(popup, "button", at === goToAt ? "chosen" : "");
-    row.type = "button";
     row.title = hit.one;
     putIcon(row, state.files.known.has(hit.one) ? "file" : "dir");
     putName(row, hit.one, hit.at);
@@ -14403,10 +14409,7 @@ function fillList(list) {
                          Math.max(0, found.length - 1));
   const many = Math.max(ROWS_SHOWN, Math.ceil(list.clientHeight / ROW_H) + 16);
   const last = Math.min(found.length, first + many);
-  if (list.dataset.first === String(first) &&
-      list.dataset.last === String(last)) return;
-  list.dataset.first = String(first);
-  list.dataset.last = String(last);
+  if (!fresh(list, "window", first + ":" + last)) return;
   list.replaceChildren();
   put(list, "div", "gap").style.height = first * ROW_H + "px";
   for (let at = first; at < last; at += 1) drawRow(list, found[at]);
@@ -14427,7 +14430,6 @@ function putListRow(list, { dir, open, chosen, touched, depth, title, icon }) {
   const button = put(list, "button",
                      (dir ? "dir" : "") + (chosen ? " chosen" : "")
                      + (touched ? " touched" : "") + (open ? " open" : ""));
-  button.type = "button";
   button.title = title;
   button.style.paddingLeft = (14 + depth * 13) + "px";   // the tree's step
   putIcon(button, icon || (dir ? (open ? "dirOpen" : "dir") : "file"));
@@ -14482,9 +14484,6 @@ function drawRow(list, row) {
 // files, never the rows: a tree row can be a directory or a heading.
 function noteList(note, found) {
   note.replaceChildren();
-  // Rows are not files: typing leaves a tree, and a tree has directories in
-  // it. Counting rows made one match in a big repository read "5 of 52799".
-  const hits = found.reduce((n, row) => n + (row.dir ? 0 : 1), 0);
   if (state.files.failed) {
     // git failing and a worktree holding nothing look the same and mean
     // opposite things, so the strip says which one this is.
@@ -14499,7 +14498,13 @@ function noteList(note, found) {
 
 // "1 file" or "N files", in the one place that spells it.
 function countNote(note, many) {
-  put(note, "span", null, many + (many === 1 ? " file" : " files"));
+  put(note, "span", null, counted(many, "file", "files"));
+}
+
+// A count and its noun: "1 reply", "3 replies". One spelling, which nine
+// places wrote out for themselves, two of them with `> 1` (#298).
+function counted(n, one, many) {
+  return n + " " + (n === 1 ? one : many);
 }
 
 // --- a file too long to draw whole ------------------------------------------
@@ -14618,7 +14623,7 @@ function fillCode(pane, at = pane.scrollTop) {
   // typed. A box open on some other file or tab is none of its business. A
   // window that has not been drawn yet is drawn all the same — that is the
   // redraw the box itself asked for, the same trick `holdingText` plays.
-  if (writingIn(code) && code.dataset.first) return;
+  if (writingIn(code) && code.dataset.window) return;
   const all = code.lines;
   const tall = tallLines(code);
   // Where the code starts inside the pane, so that how far the reader has
@@ -14628,10 +14633,7 @@ function fillCode(pane, at = pane.scrollTop) {
     Math.max(0, lineAt(tall, at - from) - 8),
     Math.max(0, all.length - 1));
   const last = Math.min(all.length, first + CODE_SHOWN);
-  if (code.dataset.first === String(first) &&
-      code.dataset.last === String(last)) return;
-  code.dataset.first = String(first);
-  code.dataset.last = String(last);
+  if (!fresh(code, "window", first + ":" + last)) return;
   // The pane is what scrolls sideways now, and the pane is not rebuilt, so
   // how far along the reader stood carries over on its own.
   code.replaceChildren();
@@ -14677,11 +14679,8 @@ function drawFiles(box) {
     // row, and that is the row you meant. A file being touched, or another
     // one being opened, is not a different set and does not move you.
     const asked = state.find + "\n" + state.files.tag;
-    if (list.dataset.asked !== asked) {
-      list.dataset.asked = asked;
-      list.scrollTop = 0;
-    }
-    list.dataset.first = "";
+    if (fresh(list, "asked", asked)) list.scrollTop = 0;
+    list.dataset.window = "";
     fillList(list);
     noteList(note, found);
   }
@@ -14963,25 +14962,14 @@ function blankFiles() {
 
 const TAB_WIDTHS = [2, 4, 8];
 
-// Both live on the root element, which is then the only copy — the theme's
-// pattern, and for the same reason: the cascade does the work, so neither
-// control has to rebuild anything to be obeyed.
-function readingNow() {
-  const root = document.documentElement;
-  const tab = Number(root.style.getPropertyValue("--tab-w"));
-  return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
-           wrap: root.dataset.wrap === "yes" };
-}
-
+// Both live on the root element, the theme's pattern, and for the same
+// reason: the cascade does the work, so neither control has to rebuild
+// anything to be obeyed. What they are is the settings' to say
+// (`readingWanted`); the root was read back as a second copy of it (#299).
 function applyReading(next) {
   const root = document.documentElement;
   root.style.setProperty("--tab-w", String(next.tab));
   root.dataset.wrap = next.wrap ? "yes" : "no";
-}
-
-function keepReading(next) {
-  applyReading(next);
-  keepSetting({ tab_width: next.tab, long_lines: next.wrap ? "wrap" : "scroll" });
 }
 
 // What the file says. Whatever it did not answer for, the default stands --
@@ -15173,10 +15161,7 @@ function baseHome(s) {
 function recallBase() {
   const home = baseHome(current());
   if (!home) return "";
-  try {
-    const held = localStorage.getItem(BASE_KEY + home);
-    return typeof held === "string" ? held : "";
-  } catch (error) { return ""; }
+  return stored(BASE_KEY + home);
 }
 
 function keepBase(name) {
@@ -15185,10 +15170,7 @@ function keepBase(name) {
     draw();                         // puts the picker back to what is shown
     return;
   }
-  try {
-    if (name) localStorage.setItem(BASE_KEY + home, name);
-    else localStorage.removeItem(BASE_KEY + home);
-  } catch (error) { }
+  store(BASE_KEY + home, name);
   // Another base is another list of commits, so a picked one may not be on
   // it. What the reader revealed (`state.diffMore`) stays: it is lines of
   // HEAD and of the disk, which no base moves, and a whole file kept for
@@ -15229,7 +15211,6 @@ function putDiffBar(pane) {
   base.addEventListener("change", () => keepBase(base.value));
   const step = (word, title, by) => {
     const button = put(bar, "button", "verb quiet step", word);
-    button.type = "button";
     button.title = title;
     button.addEventListener("click", () => stepCommit(by));
   };
@@ -15283,8 +15264,8 @@ function fillDiffBar(bar) {
     // How many commits "all changes" holds, which is the branch's own and
     // not the last few on the default branch: those are no part of it.
     const own = report.recent ? 0 : commits.length;
-    option(pick, "", "all changes" + (own ? " (" + own + " commit"
-                                       + (own === 1 ? "" : "s") + ")" : ""));
+    option(pick, "", "all changes"
+           + (own ? " (" + counted(own, "commit", "commits") + ")" : ""));
     option(pick, "uncommitted", "not committed yet");
     if (commits.length) {
       const group = put(pick, "optgroup");
@@ -15363,8 +15344,7 @@ function reflow(text) {
 const MESSAGE_KEY = "wostuast-message-as";
 
 function messageAsText() {
-  try { return localStorage.getItem(MESSAGE_KEY) === "text"; }
-  catch (error) { return false; }
+  return stored(MESSAGE_KEY) === "text";
 }
 
 function putMessage(head, body) {
@@ -15373,8 +15353,7 @@ function putMessage(head, body) {
   // that puts it there, wherever it stands among the head's children.
   const toggle = putReadAs(head, messageAsText(), (asText) => {
     if (asText === messageAsText()) return;
-    try { localStorage.setItem(MESSAGE_KEY, asText ? "text" : "markdown"); }
-    catch (error) { }
+    store(MESSAGE_KEY, asText ? "text" : "markdown");
     fill();
   }, "show the message as it was written");
   const fill = () => {
@@ -15592,8 +15571,7 @@ function drawDiff(box) {
   // And another session's diff is another diff: all changes are "" in every
   // session, so the next one opened where the last was read to.
   const of = state.chosen + "\n" + (report.of || "");
-  const same = scroll.dataset.of === of;
-  scroll.dataset.of = of;
+  const same = !fresh(scroll, "of", of);
   drawDiffList(list, found);
   scroll.replaceChildren();
   // Every block by the key its row in the list carries, in the order they
@@ -15806,7 +15784,6 @@ function statusWord(one) {
 function drawDiffFile(pane, one, atHead = false, section = "") {
   const node = put(pane, "div", "dfile");
   const head = put(node, "button", "name");
-  head.type = "button";
   put(head, "span", "what " + one.status, statusWord(one));
   put(head, "span", "path", one.status === "renamed"
     ? one.old_path + " \u2192 " + one.path : one.path);
@@ -16402,14 +16379,13 @@ function putMore(band, file, from, to, { up, down }) {
   const all = (event) => event.shiftKey ? [from, to === null ? Infinity : to] : null;
   const button = (word, title, range) => {
     const one = put(tools, "button", "grow", word);
-    one.type = "button";
     one.title = title + (count !== null && count > MORE_STEP
       ? " (shift-click for all " + count + ")" : "");
     one.addEventListener("click", (event) =>
       revealLines(file, ...(all(event) || range)));
   };
   if (count !== null && count <= MORE_STEP) {
-    button("↕", "show the " + count + " hidden line" + (count === 1 ? "" : "s"),
+    button("↕", "show the " + counted(count, "hidden line", "hidden lines"),
            [from, to]);
   } else {
     if (down) {
@@ -16422,10 +16398,9 @@ function putMore(band, file, from, to, { up, down }) {
     }
   }
   put(band, "span", "hidden", count === null ? "more of the file below"
-      : count + (count === 1 ? " line hidden" : " lines hidden"));
+      : counted(count, "line hidden", "lines hidden"));
   if (count !== null && count > MORE_STEP) {
     const every = put(band, "button", "link", "show all");
-    every.type = "button";
     every.addEventListener("click", () => revealLines(file, from, to));
   }
 }
@@ -16534,13 +16509,7 @@ const REVIEW_KEY = "wostuast-review-";
 function keepReview() {
   drawReviewCount();          // every change to a review comes through here
   if (!state.chosen) return;
-  try {
-    if (!anyReview()) {
-      localStorage.removeItem(REVIEW_KEY + state.chosen);
-      return;
-    }
-    localStorage.setItem(REVIEW_KEY + state.chosen, JSON.stringify(state.review));
-  } catch (error) { }      // a private window, or the quota; the page goes on
+  store(REVIEW_KEY + state.chosen, anyReview() ? JSON.stringify(state.review) : "");
 }
 
 // Another window of this browser kept, or sent, this session's review. Each
@@ -16565,7 +16534,7 @@ window.addEventListener("storage", (event) => {
 function recallReview(id) {
   state.review = blankReview();
   let held = null;
-  try { held = JSON.parse(localStorage.getItem(REVIEW_KEY + id) || "null"); }
+  try { held = JSON.parse(stored(REVIEW_KEY + id) || "null"); }
   catch (error) { return; }
   if (!held || !Array.isArray(held.comments)) return;
   // What comes back was written by this page, but a browser's storage is not
@@ -16658,14 +16627,12 @@ function putComment(parent, one, full) {
   // Both rebuild the tab, so both wait while a box is open, as a pick
   // does (`busyWriting`): the box took what was typed in it with it.
   const edit = put(acts, "button", "verb quiet", "edit");
-  edit.type = "button";
   edit.addEventListener("click", () => {
     if (busyWriting()) return;
     state.writing = one.anchor;
     redrawCode();
   });
   const drop = put(acts, "button", "verb quiet", "delete");
-  drop.type = "button";
   drop.addEventListener("click", () => {
     if (!busyWriting()) writeComment(one.anchor, one.quoted, "");
   });
@@ -16682,10 +16649,8 @@ function putCommentBox(parent, anchor, quoted) {
   area.rows = 3;
   const row = put(form, "div", "buttons");
   const stop = put(row, "button", "verb quiet", "cancel");
-  stop.type = "button";
   stop.addEventListener("click", () => { state.writing = null; redrawCode(); });
   const save = put(row, "button", "verb", "save");
-  save.type = "button";
   save.addEventListener("click", () => writeComment(anchor, quoted, area.value));
   submitOnCtrlEnter(area, save);
   area.addEventListener("keydown", (press) => {
@@ -16710,7 +16675,6 @@ function putReview(parent, anchor, quoted, full) {
   }
   if (seen) return putComment(parent, seen, full);
   const add = put(parent, "button", "addnote", "+");
-  add.type = "button";
   add.title = "comment here";
   add.addEventListener("click", () => {
     if (busyWriting()) return;      // a box elsewhere: see `putComment`
@@ -16799,7 +16763,6 @@ function putCommentList(list) {
 function putDropReview(parent) {
   let armed = false;
   const drop = put(parent, "button", "link", "delete review");
-  drop.type = "button";
   drop.addEventListener("click", () => {
     if (!armed) {
       armed = true;
@@ -17107,15 +17070,11 @@ async function submitReview() {
   // And only what was sent: `send-keys` takes a moment, and a comment
   // saved in it was cleared with the rest, never sent.
   if (state.chosen !== id) {
-    try {
-      const held = JSON.parse(localStorage.getItem(REVIEW_KEY + id) || "null");
-      const left = held && Array.isArray(held.comments) ? unsent(held, sent) : null;
-      if (left && (left.comments.length || left.overall.trim())) {
-        localStorage.setItem(REVIEW_KEY + id, JSON.stringify(left));
-      } else {
-        localStorage.removeItem(REVIEW_KEY + id);
-      }
-    } catch (error) { }
+    let held = null;
+    try { held = JSON.parse(stored(REVIEW_KEY + id) || "null"); } catch (error) { }
+    const left = held && Array.isArray(held.comments) ? unsent(held, sent) : null;
+    store(REVIEW_KEY + id, left && (left.comments.length || left.overall.trim())
+          ? JSON.stringify(left) : "");
     note("review sent");
     return;
   }
@@ -17147,7 +17106,7 @@ function drawReviewCount() {
   const badge = $("reviewcount");
   const many = state.review.comments.length;
   badge.hidden = !many;
-  badge.textContent = many + (many === 1 ? " comment" : " comments");
+  badge.textContent = counted(many, "comment", "comments");
   drawReviewBar();
 }
 
@@ -18000,7 +17959,6 @@ function drawSlash(word) {
   pop.textContent = "";
   scored.forEach(({ one, hit }, index) => {
     const row = put(pop, "button", null);
-    row.type = "button";
     row.tabIndex = -1;
     row.setAttribute("role", "option");
     putName(row, "/" + one.name, hit.at.map((at) => at + 1));
@@ -18144,8 +18102,7 @@ drawBell();
 // Which way the history was left, in this browser. A folded history is the
 // useful default: a week of finished sessions above the two you are working
 // with is a list you stop reading.
-try { state.history = localStorage.getItem("wostuast-history") === "open"; }
-catch (error) { }
+state.history = stored("wostuast-history") === "open";
 // The opening in the line follows the chosen row: `openGrip`.
 $("rows").addEventListener("scroll", openGrip, { passive: true });
 window.addEventListener("resize", openGrip);

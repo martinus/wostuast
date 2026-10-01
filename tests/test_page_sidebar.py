@@ -11,6 +11,7 @@ import pytest
 
 import conftest
 from browser import (
+    hold,
     kept,
     spy_on_note,
     skip_without_browser,
@@ -1001,6 +1002,38 @@ def test_the_two_switches_are_remembered_apart(page_at, ws):
             page.wait_for_selector("#setpop", state="visible")
             assert not page.is_checked("#alertneeds")
             assert page.is_checked("#alertdone")
+        finally:
+            browser.close()
+
+
+def test_two_quick_changes_reach_the_file_in_the_order_they_were_made(
+        page_at, ws):
+    """Each change was its own POST on its own connection, and the first
+    could land after the second: the file kept the older choice, and the
+    push put it back on the page. `test_the_two_switches_are_remembered_apart`
+    went red that way under load. `keepSetting` sends one at a time now."""
+    _, path = page_at
+    with sync_playwright() as play:
+        browser, page = alerts_page(play, path)
+        try:
+            sent = []
+            page.on("request", lambda one: sent.append(one.post_data)
+                    if one.url.endswith("/api/settings") else None)
+            held = hold(page, "**/api/settings")
+            page.click("#settings")
+            page.click("#alertneeds")      # off, from its default on
+            page.click("#alertdone")       # on
+            wait_until(page, lambda: held)
+            page.wait_for_timeout(300)     # proving the second did not go
+            assert len(sent) == 1, sent
+            # Through Playwright, which lets the route pass the second on:
+            # `kept` polls the file from Python, and nothing routes then.
+            with page.expect_response(
+                    lambda answer: answer.url.endswith("/api/settings")
+                    and '"done":true' in (answer.request.post_data or "")):
+                held[0].continue_()
+            assert len(sent) == 2, sent
+            kept(ws, "alerts", {"needs": False, "done": True})
         finally:
             browser.close()
 
