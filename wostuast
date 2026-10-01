@@ -4102,12 +4102,32 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     return tree
 
 
+def wire_json(data: Any) -> str:
+    """Anything the daemon sends the page, as JSON: one spelling for the
+    answers, the pushes and the stream's opening, which had three (#289).
+    Not ASCII: a transcript in another script would be six bytes a letter on
+    the stream, which is not compressed. So what writes it to the socket
+    goes through `wire_bytes`."""
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def wire_bytes(text: str) -> bytes:
+    """`wire_json`'s text as the bytes that go out. "replace", because a lone
+    surrogate is reachable: Claude Code cuts a string between the halves of
+    an emoji and writes the escape, and `json.loads` makes it a real one. A
+    strict encode refused the whole answer, so one such line took a
+    session's transcript down for good -- and in the open stream it raised a
+    ValueError nothing caught, and `guarded` wrote an HTTP 500 into it.
+    `page_json` is the other road out: it stands inside the page's
+    `<script>`, so it is ASCII and needs no such care."""
+    return text.encode("utf-8", "replace")
+
+
 def answer_tag(answer: dict[str, Any]) -> str:
     """A short name for one answer, as `reply_json` would write it."""
     import hashlib
 
-    body = json.dumps(answer, ensure_ascii=False, default=str)
-    return hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16]
+    return hashlib.sha1(wire_bytes(wire_json(answer))).hexdigest()[:16]
 
 
 def listing_tag(names: str) -> str:
@@ -6561,8 +6581,7 @@ class Hub:
 
     def send(self, kind: str, data: Any, session_id: str = "") -> None:
         """Send to every client, or only to those watching one session."""
-        body = json.dumps(data, ensure_ascii=False, default=str)
-        message = f"event: {kind}\ndata: {body}\n\n"
+        message = f"event: {kind}\ndata: {wire_json(data)}\n\n"
         with self.lock:
             targets = [
                 client
@@ -7086,13 +7105,8 @@ class Serving:
         return False
 
     def reply_json(self, data: Any, code: int = 200) -> None:
-        # "replace", because a lone surrogate is reachable: Claude Code cuts a
-        # string between the halves of an emoji and writes the escape, and
-        # json.loads makes it a real one. A strict encode refused the whole
-        # answer, so one such line took a session's transcript down for good.
-        body = json.dumps(data, ensure_ascii=False, default=str).encode(
-            "utf-8", "replace")
-        self.reply(code, body, "application/json; charset=utf-8")
+        self.reply(code, wire_bytes(wire_json(data)),
+                   "application/json; charset=utf-8")
 
     def ours(self) -> bool:
         """True when this request really is for the loopback address.
@@ -7776,7 +7790,7 @@ class Serving:
         self.end_headers()
         client = self.daemon.hub.add(watching)
         try:
-            first = json.dumps(self.daemon.sessions_payload(), default=str)
+            first = wire_json(self.daemon.sessions_payload())
             # After joining the hub, so a block read after this is pushed to
             # this stream and one read before it is counted here. **Decided
             # before anything is written, and written in one go**: the socket
@@ -7787,11 +7801,11 @@ class Serving:
             held = self.daemon.transcript_held(watching) if watching else None
             opening = ""
             if held is not None:
-                told = json.dumps({"id": watching, "run": held[0],
-                                   "version": held[1], "opening": True})
+                told = wire_json({"id": watching, "run": held[0],
+                                  "version": held[1], "opening": True})
                 opening = f"event: transcript\ndata: {told}\n\n"
             self.wfile.write(
-                (f"event: sessions\ndata: {first}\n\n" + opening).encode("utf-8"))
+                wire_bytes(f"event: sessions\ndata: {first}\n\n" + opening))
             self.wfile.flush()
             while not self.daemon.stopping.is_set():
                 try:
@@ -7803,10 +7817,7 @@ class Serving:
                     # out (`Client.put`). The browser opens a new stream.
                     self.close_connection = True
                     break
-                # "replace", as in `reply_json`: a strict encode raised a
-                # ValueError none of the handlers below catch, and `guarded`
-                # then wrote a whole HTTP 500 into the open stream.
-                self.wfile.write(message.encode("utf-8", "replace"))
+                self.wfile.write(wire_bytes(message))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass

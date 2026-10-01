@@ -2214,3 +2214,17 @@ def test_every_verb_finds_its_session_in_one_place(ws, in_tmux):
                         token=daemon.token)
     assert (status, body["id"]) == (404, "nobody")
     assert seen == []
+
+
+def test_a_lone_surrogate_in_the_sessions_breaks_no_stream(ws, served,
+                                                            monkeypatch):
+    """The stream's opening was written with a strict encode, the one road
+    out that `wire_bytes` did not cover (#289). A name a hook wrote can hold
+    half an emoji, and then the stream never opened."""
+    daemon, base = served
+    real = daemon.sessions_payload
+    monkeypatch.setattr(daemon, "sessions_payload", lambda: dict(
+        real(), note="cut " + chr(0xD83D) + " here"))
+    got = read_events(f"{base}/api/events", 1)
+    assert got[0][0] == "sessions"
+    assert got[0][1]["note"].startswith("cut ")
