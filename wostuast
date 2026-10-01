@@ -10,6 +10,7 @@ Run `wostuast --help` for the commands.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
@@ -1114,6 +1115,14 @@ class Session:
         return path_label(self.home or self.cwd, self.git.repo)
 
     @property
+    def dialog(self) -> dict[str, Any] | None:
+        """The permission dialog on screen: the permission, while the row is
+        amber. One spelling, because the row, the verbs that type and the
+        watch for a No given in the terminal all ask it, and five copies of
+        the test were how the page and the daemon came to disagree (#287)."""
+        return self.permission if self.state == "needs_you" else None
+
+    @property
     def since(self) -> float:
         """The moment a row's age counts from: the wait, or the last event."""
         return self.attention_since if self.state == "needs_you" else self.last_ts
@@ -1796,6 +1805,46 @@ def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
     return False
 
 
+def cannot_type(session: Session, no: bool = False) -> str:
+    """Why nothing may be typed into this session now, or "" when it may.
+
+    The one test `answer`, `decline` and `send` make, after `in_tmux`; the
+    page's `whyNotTyped` makes the same one from the row, so a control is
+    off where this would refuse it. Each verb wrote it out for itself, and
+    a guard added to one was missing from the next (#254, #287).
+
+    A session that is over has moved its pane on to whatever runs there
+    now. A dialog that is up has its cursor on "1. Yes", so the Enter after
+    a message, or an answer's digit, would approve it; `no` is a No, which
+    is meant for that dialog.
+    """
+    if session.state in GONE_STATES:
+        return "this session is over"
+    if not no and session.dialog:
+        return "a permission dialog is open in the terminal: answer it there first"
+    return ""
+
+
+def typed(text: str) -> str:
+    """What `tmux_send` would type of this text: the controls taken out.
+
+    A text with nothing else in it is nothing to send, and the routes ask
+    this rather than what arrived: a paste of controls was refused as "tmux
+    did not answer", although tmux was never asked.
+    """
+    return CONTROL_CHARS.sub("", text)
+
+
+def typing_trouble(text: str, what: str) -> str:
+    """Why this text is too long to type, or "". Bytes, because that is what
+    tmux counts: see `SEND_MAX`."""
+    size = len(text.encode("utf-8", "replace"))
+    if size > SEND_MAX:
+        return (f"{what} is {size} bytes, and the most that can be typed is"
+                f" {SEND_MAX}")
+    return ""
+
+
 def row(session: Session) -> dict[str, Any]:
     """One session as the page wants it: flat, small, and ready to compare.
 
@@ -1838,7 +1887,7 @@ def row(session: Session) -> dict[str, Any]:
         "asking": session.asking,
         # The permission dialog, for the same reason: whole, so the reader
         # can read what they are declining. Only while the row is amber.
-        "permission": session.permission if session.state == "needs_you" else None,
+        "permission": session.dialog,
         "last_event": session.last_event,
         "since": round(session.since, 3),
         "name": session.mine or session.status.name,
@@ -6225,7 +6274,7 @@ def tmux_send(pane: str, text: str,
     typed, and an escape byte is invisible in a preview. Tab and newline stay;
     they are what a pasted message is made of.
     """
-    text = CONTROL_CHARS.sub("", text)
+    text = typed(text)
     if not pane or not text.strip():
         return False
     runner = runner or run
@@ -6592,6 +6641,17 @@ class Daemon:
                 self.declining.add(session_id)
         return ""
 
+    @contextlib.contextmanager
+    def holding(self, session_id: str, no: bool = False) -> Iterator[str]:
+        """`claim` for the length of a `with`: "" when the session is taken,
+        else why not. It gives back only what it took, and always."""
+        busy = self.claim(session_id, no=no)
+        try:
+            yield busy
+        finally:
+            if not busy:
+                self.release(session_id)
+
     def release(self, session_id: str) -> None:
         """Give back what `claim` took. Only its holder may hold `declining`."""
         with self.lock:
@@ -6700,10 +6760,9 @@ class Daemon:
         """
         wrote = False
         for session in list(self.store.sessions.values()):
-            shown = session.permission
+            shown = session.dialog
             call = str((shown or {}).get("call") or "")
-            if (session.state != "needs_you" or not call
-                    or session.session_id in self.declining):
+            if not call or session.session_id in self.declining:
                 continue
             said = self.call_result(session.session_id, call)
             if said is None or not said.lstrip().startswith(REJECTED):
@@ -7248,13 +7307,26 @@ class Serving:
         if parts == ["api", "settings"]:
             self.settings(body)
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-            verb = POST_VERBS.get(parts[3])
-            if verb is None:
+            found = POST_VERBS.get(parts[3])
+            if found is None:
                 self.reply_json({"error": "no such thing"}, 404)
+            elif self.too_big:
+                # `asked()` hands over `{}` for a body it did not read, and
+                # each verb reads `{}` as an answer: `name` as "take the
+                # name away" (#235), `answer` as a question no longer
+                # waiting (#254). Refused here, before any verb sees it.
+                self.refuse(parts[2], 413,
+                            f"that {found[1]} is too large to accept")
             else:
-                verb(self, parts[2], body)
+                self.dispatch(found[0], found[2], parts[2], body)
         else:
             self.reply_json({"error": "no such thing"}, 404)
+
+    def refuse(self, session_id: str, code: int, why: str) -> None:
+        """A verb's refusal. It always says why: `said` clears the live slot
+        for an answer that carries no `error`, and the reader then asked for
+        something, did not get it, and read nothing at all."""
+        self.reply_json({"id": session_id, "error": why}, code)
 
     def settings(self, body: dict[str, Any]) -> None:
         """Keep a change the settings menu made, in `settings.json`.
@@ -7291,15 +7363,12 @@ class Serving:
         if session is None:
             return None
         if not session.pane:
-            self.reply_json({"id": session_id,
-                             "error": "this session is not in tmux"}, 409)
+            self.refuse(session_id, 409, "this session is not in tmux")
             return None
         return session
 
-    def jump(self, session_id: str, body: dict[str, Any]) -> None:
-        session = self.in_tmux(session_id)
-        if session is None:
-            return
+    def jump(self, session_id: str, session: Session,
+             body: dict[str, Any]) -> None:
         # Like `send` below: an answer carrying no `error` clears the live
         # slot, so a jump into a pane tmux has since closed failed with
         # nothing at all on the page.
@@ -7309,21 +7378,13 @@ class Serving:
             return
         self.reply_json({"id": session_id, "done": True})
 
-    def name(self, session_id: str, body: dict[str, Any]) -> None:
+    def name(self, session_id: str, session: Session,
+             body: dict[str, Any]) -> None:
         """Name a session, or take its name away with an empty one.
 
         It writes no terminal, so it needs no pane: a session that has ended
         can still be named, which is the point of naming one at all.
         """
-        session = self.known(session_id)
-        if session is None:
-            return
-        if self.too_big:
-            # `asked()` hands over `{}` for a body it did not read, and an
-            # empty name is "take the name away" (#235).
-            self.reply_json({"id": session_id,
-                             "error": "that name is too large to accept"}, 413)
-            return
         asked = body.get("name")
         given = self.daemon.store.rename(
             session_id, asked if isinstance(asked, str) else "")
@@ -7333,7 +7394,8 @@ class Serving:
         # show it without waiting for that.
         self.reply_json({"id": session_id, "name": given, "done": True})
 
-    def answer(self, session_id: str, body: dict[str, Any]) -> None:
+    def answer(self, session_id: str, session: Session,
+               body: dict[str, Any]) -> None:
         """Answer the question the agent is waiting on, in its own dialog.
 
         The page sends which options were picked, never keys: the keys are
@@ -7342,64 +7404,42 @@ class Serving:
         question that has since been answered, or replaced by another, is
         refused -- its numbers would land on a question nobody read.
         """
-        session = self.in_tmux(session_id)
-        if session is None:
-            return
-        # A body not read is `{}`, which has no `ask`, and "that question is
-        # no longer waiting" said the opposite of what happened (#254).
-        if self.too_big:
-            self.reply_json({"id": session_id,
-                             "error": "that answer is too large to accept"},
-                            413)
-            return
-        # Its pane has moved on: the agent that asked is gone, and the keys
-        # would land in whatever runs there now. `_bury` clears the question
-        # too; this is the half that holds whatever a row still carries.
-        if session.state in GONE_STATES:
-            self.reply_json({"id": session_id,
-                             "error": "this session is over"}, 409)
-            return
-        # A permission dialog is up as well as the question: one batch of
-        # calls can hold both. Its cursor starts on "1. Yes", and the keys
-        # are digits and Enter, so they could say Yes to it. The same test
-        # as `send`'s and the row's (#254).
-        if session.state == "needs_you" and session.permission:
-            self.reply_json({"id": session_id,
-                             "error": "a permission dialog is open in the"
-                                      " terminal: answer it there, or say No,"
-                                      " then answer the question"}, 409)
+        # Over: the agent that asked is gone, and the keys would land in
+        # whatever runs there now (`_bury` clears the question too; this is
+        # the half that holds whatever a row still carries). A dialog up as
+        # well: one batch of calls can hold both, and the keys are digits
+        # and Enter, so they could say Yes to it (#254).
+        why = cannot_type(session)
+        if why:
+            self.refuse(session_id, 409, why)
             return
         ask = session.asking
         # An ask with no id could be matched by anything that sends none.
         if not ask or not ask["id"] or body.get("ask") != ask["id"]:
-            self.reply_json({"id": session_id,
-                             "error": "that question is no longer waiting"}, 409)
+            self.refuse(session_id, 409, "that question is no longer waiting")
             return
         keys, why = ask_keys(ask, body.get("picks"))
         if why:
-            self.reply_json({"id": session_id, "error": why}, 400)
+            self.refuse(session_id, 400, why)
             return
         # A second submit, or a send, while these keys go in one at a time
         # `KEY_GAP` apart, mixed its keys with them in the pane.
-        busy = self.daemon.claim(session_id)
-        if busy:
-            self.reply_json({"id": session_id, "error": busy}, 409)
-            return
-        try:
+        with self.daemon.holding(session_id) as busy:
+            if busy:
+                self.refuse(session_id, 409, busy)
+                return
             landed = tmux_keys(session.pane, keys)
-        finally:
-            self.daemon.release(session_id)
         if landed < len(keys):
             # Some keys may have landed: say so, rather than "nothing went
             # in", which would send the reader back to answer twice.
-            self.reply_json({"id": session_id,
-                             "error": f"tmux took {landed} of {len(keys)} keys;"
-                                      " look at the question in the terminal"},
-                            502)
+            self.refuse(session_id, 502, f"tmux took {landed} of {len(keys)}"
+                                         " keys; look at the question in the"
+                                         " terminal")
             return
         self.reply_json({"id": session_id, "done": True, "keys": keys})
 
-    def decline(self, session_id: str, body: dict[str, Any]) -> None:
+    def decline(self, session_id: str, session: Session,
+                body: dict[str, Any]) -> None:
         """Say No to the permission dialog on screen, and maybe why.
 
         **No is Escape, and nothing else is pressed until the dialog is seen
@@ -7418,33 +7458,22 @@ class Serving:
         so the page cannot prove which one a click answers; a wrong No is
         undone by saying what to do, a wrong Yes is not.
         """
-        session = self.in_tmux(session_id)
-        if session is None:
+        why = cannot_type(session, no=True)
+        if why:
+            self.refuse(session_id, 409, why)
             return
-        if self.too_big:
-            self.reply_json({"id": session_id,
-                             "error": "that reason is too large to accept"}, 413)
-            return
-        if session.state in GONE_STATES:
-            self.reply_json({"id": session_id,
-                             "error": "this session is over"}, 409)
-            return
-        shown = session.permission if session.state == "needs_you" else None
+        shown = session.dialog
         if not shown or body.get("key") != shown["key"]:
-            self.reply_json({"id": session_id,
-                             "error": "that permission request is no longer"
-                                      " waiting"}, 409)
+            self.refuse(session_id, 409,
+                        "that permission request is no longer waiting")
             return
         reason = body.get("reason")
         reason = reason if isinstance(reason, str) else ""
-        if not CONTROL_CHARS.sub("", reason).strip():
+        if not typed(reason).strip():
             reason = ""
-        size = len(reason.encode("utf-8", "replace"))
-        if size > SEND_MAX:
-            self.reply_json({"id": session_id,
-                             "error": f"that reason is {size} bytes, and the"
-                                      f" most that can be typed is {SEND_MAX}"},
-                            400)
+        why = typing_trouble(reason, "that reason")
+        if why:
+            self.refuse(session_id, 400, why)
             return
         call = str(shown.get("call") or "")
         # Answered in the terminal and finished, and the row is amber only
@@ -7455,18 +7484,14 @@ class Serving:
         # press. That is the cost of No from here, and it is a stop, which
         # keeps the work done so far.
         if self.daemon.call_answered(session_id, call):
-            self.reply_json({"id": session_id,
-                             "error": "that request was answered in the"
-                                      " terminal already"}, 409)
+            self.refuse(session_id, 409,
+                        "that request was answered in the terminal already")
             return
-        busy = self.daemon.claim(session_id, no=True)
-        if busy:
-            self.reply_json({"id": session_id, "error": busy}, 409)
-            return
-        try:
+        with self.daemon.holding(session_id, no=True) as busy:
+            if busy:
+                self.refuse(session_id, 409, busy)
+                return
             self.press_decline(session_id, session.pane, shown, call, reason)
-        finally:
-            self.daemon.release(session_id)
 
     def press_decline(self, session_id: str, pane: str, shown: dict[str, Any],
                       call: str, reason: str) -> None:
@@ -7507,55 +7532,28 @@ class Serving:
         self.reply_json({"id": session_id, "done": True, "seen": True,
                          "sent": True})
 
-    def send(self, session_id: str, body: dict[str, Any]) -> None:
-        session = self.in_tmux(session_id)
-        if session is None:
-            return
-        if self.too_big:
-            self.reply_json({"id": session_id,
-                             "error": "that message is too large to accept"},
-                            413)
-            return
+    def send(self, session_id: str, session: Session,
+             body: dict[str, Any]) -> None:
         text = body.get("text")
         text = text if isinstance(text, str) else ""
-        # What `tmux_send` would type, not what arrived: it takes the controls
-        # out, and a paste of nothing else was refused as "tmux did not
-        # answer", although tmux was never asked.
-        if not CONTROL_CHARS.sub("", text).strip():
-            self.reply_json({"id": session_id,
-                             "error": "there is nothing to send"}, 400)
+        why = ("there is nothing to send" if not typed(text).strip()
+               else typing_trouble(text, "that"))
+        if why:
+            self.refuse(session_id, 400, why)
             return
-        # Bytes, because that is what tmux counts. See `SEND_MAX`.
-        size = len(text.encode("utf-8", "replace"))
-        if size > SEND_MAX:
-            self.reply_json({"id": session_id,
-                             "error": f"that is {size} bytes, and the most"
-                                      f" that can be typed is {SEND_MAX}"},
-                            400)
+        # A dialog that is up has its cursor on "1. Yes": the Enter after the
+        # text says Yes, and a text that starts with a digit picks that
+        # option. `decline` waits for proof that the dialog closed before it
+        # types; a send has no such proof, so it waits for the row.
+        why = cannot_type(session)
+        if why:
+            self.refuse(session_id, 409, why)
             return
-        if session.state in GONE_STATES:
-            self.reply_json({"id": session_id,
-                             "error": "this session is over"}, 409)
-            return
-        # A permission dialog is up, and its cursor starts on "1. Yes": the
-        # Enter after the text says Yes, and a text that starts with a digit
-        # picks that option. `decline` waits for proof that the dialog closed
-        # before it types; a send has no such proof, so it waits for the row.
-        # The same test as the row's, so the page and this agree.
-        if session.state == "needs_you" and session.permission:
-            self.reply_json({"id": session_id,
-                             "error": "a permission dialog is open in the"
-                                      " terminal: answer it there, or say No,"
-                                      " then send"}, 409)
-            return
-        busy = self.daemon.claim(session_id)
-        if busy:
-            self.reply_json({"id": session_id, "error": busy}, 409)
-            return
-        try:
+        with self.daemon.holding(session_id) as busy:
+            if busy:
+                self.refuse(session_id, 409, busy)
+                return
             self.press_send(session_id, session.pane, text)
-        finally:
-            self.daemon.release(session_id)
 
     def press_send(self, session_id: str, pane: str, text: str) -> None:
         """`send`'s keys, and the answer that says how they went."""
@@ -7593,7 +7591,9 @@ class Serving:
             return
         url = urlparse(self.path)
         path = url.path
-        query = parse_qs(url.query)
+        # The first of each, once: every verb read `query.get(x, [""])[0]`,
+        # and one wrote itself a helper so as not to.
+        query = {name: values[0] for name, values in parse_qs(url.query).items()}
         parts = path.strip("/").split("/")
         if path == "/":
             marks = {TOKEN_MARK: self.daemon.token,
@@ -7608,13 +7608,13 @@ class Serving:
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
         elif path == "/api/events":
-            self.stream(query.get("watch", [""])[0])
+            self.stream(query.get("watch", ""))
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-            verb = GET_VERBS.get(parts[3])
-            if verb is None:
+            found = GET_VERBS.get(parts[3])
+            if found is None:
                 self.reply_json({"error": "no such thing"}, 404)
             else:
-                verb(self, parts[2], query)
+                self.dispatch(found[0], found[1], parts[2], query)
         else:
             self.reply_json({"error": "no such thing"}, 404)
 
@@ -7622,10 +7622,29 @@ class Serving:
         """The session, or None with a 404 already sent."""
         session = self.daemon.session(session_id)
         if session is None:
-            self.reply_json({"error": "no such session"}, 404)
+            self.refuse(session_id, 404, "no such session")
         return session
 
-    def transcript(self, session_id: str, query: dict[str, list[str]]) -> None:
+    def dispatch(self, verb: Any, needs: str, session_id: str,
+                 given: dict[str, Any]) -> None:
+        """Find the session a verb needs, once, and hand it over.
+
+        `needs` is "known" for any session, "in_tmux" for one with a pane
+        the verb can type into, and "" for a verb that says itself what an
+        unknown session gets (the transcript's `missing`). Every verb began
+        with the same lookup, and the 404 of one carried no `id` while the
+        409 of the other did.
+        """
+        session: Session | None = None
+        if needs:
+            session = self.in_tmux(session_id) if needs == "in_tmux" \
+                else self.known(session_id)
+            if session is None:
+                return
+        verb(self, session_id, session, given)
+
+    def transcript(self, session_id: str, session: Session | None,
+                   query: dict[str, str]) -> None:
         found = self.daemon.read_transcript(session_id)
         if found is None:
             self.reply_json({"id": session_id, "blocks": [],
@@ -7636,14 +7655,15 @@ class Serving:
         # the Transcript tab fetched the whole of it every time, 856 KB for
         # four hundred rounds, while the pushes had kept the page up to date
         # all along. A reading still the same is answered with no blocks.
-        if query.get("have", [""])[0] == f"{run}.{version}":
+        if query.get("have", "") == f"{run}.{version}":
             self.reply_json({"id": session_id, "run": run, "version": version,
                              "same": True})
             return
         self.reply_json({"id": session_id, "run": run, "version": version,
                          "blocks": blocks_json(blocks)})
 
-    def commands(self, session_id: str, query: dict[str, list[str]]) -> None:
+    def commands(self, session_id: str, session: Session,
+                 query: dict[str, str]) -> None:
         """What the send box can complete for this session.
 
         Asked for when the list opens, not pushed with the session: the
@@ -7651,9 +7671,6 @@ class Serving:
         Every session's transcript counts towards what was used, because a
         command used in one project is as likely in the next.
         """
-        session = self.known(session_id)
-        if session is None:
-            return
         seen = [safe_transcript(one.transcript_path)
                 for one in list(self.daemon.store.sessions.values())]
         found = self.daemon.commands.of(session.cwd, worktree_root(session.cwd) or "",
@@ -7661,10 +7678,8 @@ class Serving:
         self.reply_json({"id": session_id,
                          "commands": [asdict(one) for one in found]})
 
-    def files(self, session_id: str, query: dict[str, list[str]]) -> None:
-        session = self.known(session_id)
-        if session is None:
-            return
+    def files(self, session_id: str, session: Session,
+              query: dict[str, str]) -> None:
         held = self.daemon.files.of(session.cwd)
         tree = held.tree
         body = {
@@ -7682,15 +7697,13 @@ class Serving:
         # when a file is added or removed, which is rare; which files have
         # changed moves every few seconds. So a poll costs a few hundred
         # bytes instead of the 1.7 MB that fifty thousand names weigh.
-        if not held.tag or query.get("have", [""])[0] != held.tag:
+        if not held.tag or query.get("have", "") != held.tag:
             body["names"] = held.names
         self.reply_json(body)
 
-    def file(self, session_id: str, query: dict[str, list[str]]) -> None:
-        session = self.known(session_id)
-        if session is None:
-            return
-        wanted = query.get("path", [""])[0]
+    def file(self, session_id: str, session: Session,
+             query: dict[str, str]) -> None:
+        wanted = query.get("path", "")
         found = read_worktree_file(session.cwd, wanted,
                                    held=self.daemon.files)
         if found is None:
@@ -7699,7 +7712,8 @@ class Serving:
             return
         self.reply_json(dict(asdict(found), id=session_id, path=wanted))
 
-    def raw(self, session_id: str, query: dict[str, list[str]]) -> None:
+    def raw(self, session_id: str, session: Session,
+            query: dict[str, str]) -> None:
         """One file of the worktree as its own bytes, for the page to show.
 
         The same checks every read makes, and one this route needs and the
@@ -7708,10 +7722,7 @@ class Serving:
         `text/html` from here would be a page an agent wrote, on the origin
         that holds the token, able to read both.
         """
-        session = self.known(session_id)
-        if session is None:
-            return
-        wanted = query.get("path", [""])[0]
+        wanted = query.get("path", "")
         found = read_worktree_bytes(session.cwd, wanted,
                                     held=self.daemon.files)
         if found is None:
@@ -7724,15 +7735,13 @@ class Serving:
         # every tab switch, which is what the mtime was put there to avoid.
         self.reply(200, raw, kind, cache="private, max-age=300")
 
-    def diff(self, session_id: str, query: dict[str, list[str]]) -> None:
-        session = self.known(session_id)
-        if session is None:
-            return
+    def diff(self, session_id: str, session: Session,
+             query: dict[str, str]) -> None:
         # What to show is the page's to ask and git's to answer: a sha that
         # `branch_commits` did not list is never handed to git.
-        of = query.get("of", [""])[0]
+        of = query.get("of", "")
         # The base the reader picked, used only if git lists that name.
-        base = query.get("base", [""])[0]
+        base = query.get("base", "")
         found = dict(asdict(worktree_diff(session.cwd, of=of, base=base,
                                           ranks=self.daemon.ranks)),
                      id=session_id)
@@ -7743,22 +7752,19 @@ class Serving:
         # the page draws from it is in the tag -- a field left out of a tag
         # built by hand would change on the screen of nobody.
         tag = answer_tag(found)
-        if query.get("have", [""])[0] == tag:
+        if query.get("have", "") == tag:
             self.reply_json({"id": session_id, "tag": tag, "same": True})
             return
         self.reply_json(dict(found, tag=tag))
 
-    def whole(self, session_id: str, query: dict[str, list[str]]) -> None:
+    def whole(self, session_id: str, session: Session,
+              query: dict[str, str]) -> None:
         """One file of the Diff tab with every line of it, for showing the
         lines between two changes. See `whole_file_diff`."""
-        session = self.known(session_id)
-        if session is None:
-            return
-        def arg(name: str) -> str:
-            return query.get(name, [""])[0]
 
-        found = whole_file_diff(session.cwd, arg("section"), arg("path"),
-                                arg("old"), arg("of"), base=arg("base"),
+        found = whole_file_diff(session.cwd, query.get("section", ""),
+                                query.get("path", ""), query.get("old", ""),
+                                query.get("of", ""), base=query.get("base", ""),
                                 ranks=self.daemon.ranks)
         self.reply_json(dict(asdict(found), id=session_id))
 
@@ -7809,14 +7815,15 @@ class Serving:
 
 
 # The verbs a session route can end in.
-GET_VERBS: dict[str, Any] = {
-    "commands": Serving.commands,
-    "transcript": Serving.transcript,
-    "files": Serving.files,
-    "file": Serving.file,
-    "raw": Serving.raw,
-    "diff": Serving.diff,
-    "whole": Serving.whole,
+#: Each with the session it needs (`Serving.dispatch`).
+GET_VERBS: dict[str, tuple[Any, str]] = {
+    "commands": (Serving.commands, "known"),
+    "transcript": (Serving.transcript, ""),
+    "files": (Serving.files, "known"),
+    "file": (Serving.file, "known"),
+    "raw": (Serving.raw, "known"),
+    "diff": (Serving.diff, "known"),
+    "whole": (Serving.whole, "known"),
 }
 
 # Four of these reach a terminal -- jump, send, answer and decline, which is
@@ -7825,12 +7832,16 @@ GET_VERBS: dict[str, Any] = {
 # (CLAUDE.md, **Shape**). `name` is not one: it writes a file of ours and
 # touches no terminal, but it arrives the same way and is checked the same
 # way.
-POST_VERBS: dict[str, Any] = {
-    "jump": Serving.jump,
-    "send": Serving.send,
-    "answer": Serving.answer,
-    "decline": Serving.decline,
-    "name": Serving.name,
+#: Each with what its body is called, for the refusal of a body too large
+#: to read (`route_post`).
+POST_VERBS: dict[str, tuple[Any, str, str]] = {
+    "jump": (Serving.jump, "request", "in_tmux"),
+    "send": (Serving.send, "message", "in_tmux"),
+    "answer": (Serving.answer, "answer", "in_tmux"),
+    "decline": (Serving.decline, "reason", "in_tmux"),
+    # It writes no terminal, so it needs no pane: a session that has ended
+    # can still be named, which is the point of naming one at all.
+    "name": (Serving.name, "name", "known"),
 }
 
 
@@ -11123,6 +11134,22 @@ function isGone(s) {
   return s.state === "ended" || s.state === "dead";
 }
 
+// Why nothing can be typed into this session, or "" when something can: the
+// daemon's own test (`cannot_type`, after `in_tmux`), from the row, so a
+// control is off where the daemon would refuse it. Five controls each built
+// a part of it: the review's send was offered into a session that was over,
+// and an answer into an open dialog, and the daemon refused both (#287).
+// `no` is a No, which is meant for the dialog. What is on its way already
+// (`sending`) is each control's own, because a No's own press is not a wait.
+function whyNotTyped(s, no) {
+  if (!s || !s.pane) return "this session is not in tmux, so nothing can be pressed";
+  if (isGone(s)) return "this session is over";
+  if (!no && s.permission) {
+    return "a permission dialog is open in the terminal: answer it there first";
+  }
+  return "";
+}
+
 // The four groups the list is drawn in, most urgent first, and what each one
 // is called above its rows.
 //
@@ -11681,10 +11708,10 @@ function paintDecline(box, s, permission) {
   const why = box.querySelector(".permwhy");
   const says = box.querySelector(".permsend .asksays");
   if (!no || !why || !says) return;
-  const canType = !!s.pane;
+  const cannot = whyNotTyped(s, true);
   // Without its call nothing can prove the dialog closed, so no reason is
   // typed -- and a box that takes one and then drops it is worse than none.
-  const reasons = canType && !!permission.call;
+  const reasons = !cannot && !!permission.call;
   why.disabled = !reasons;
   // Off while something else is on its way to the session, as submit on a
   // question is: `submitDecline` refuses then, and a No that could be
@@ -11692,12 +11719,11 @@ function paintDecline(box, s, permission) {
   // Its own No is on its way too, and says what it does, not that it waits.
   const mine = no.dataset.busy === "1";
   const busy = sending.has(s.id) && !mine;
-  no.disabled = !canType || mine || busy;
+  no.disabled = !!cannot || mine || busy;
   // Said in both cases: a Yes given in the terminal fires no hook, so the
   // row stays amber while the approved call runs, and Escape then stops it.
   const already = " If you already answered in the terminal, Escape stops the agent.";
-  says.textContent = !canType
-    ? "this session is not in tmux, so nothing can be pressed"
+  says.textContent = cannot ? cannot
     : busy ? "waiting for what is on its way to this session"
     : !reasons
     ? "presses Escape. A reason cannot be typed for this one: send it after."
@@ -11774,7 +11800,7 @@ function paintPicks(box, ask) {
   // said this for as long as it has existed; this bar did not, and
   // offered "presses 1" to a terminal that could never be typed into.
   const s = current();
-  const canType = !!(s && s.pane);
+  const cannot = whyNotTyped(s);
   // Keys go by position, so a question the daemon could not keep whole --
   // an option left out moves every key after it -- is shown and not typed.
   const whole = ask.answerable !== false;
@@ -11787,12 +11813,11 @@ function paintPicks(box, ask) {
   // `state.picked`, which a look at another question builds again.
   const busy = !!s && sending.has(s.id);
   const pressed = state.answered.has(ask.id);
-  send.disabled = !ready || !canType || !whole || busy || pressed;
+  send.disabled = !ready || !!cannot || !whole || busy || pressed;
   send.textContent = "submit";
   // Said before it is pressed, not after. These are keystrokes into a live
   // terminal, and the reader is the one answerable for them.
-  setText(says, !canType
-    ? "this session is not in tmux, so nothing can be pressed"
+  setText(says, cannot ? cannot
     : !whole ? "this question is too large to answer here; answer it in the terminal"
     : pressed ? "pressed. If the question stays, answer it in the terminal"
     : busy ? "waiting for what is on its way to this session"
@@ -11897,8 +11922,7 @@ function drawHeader() {
   // And away while a permission dialog is up: its cursor starts on "1. Yes",
   // so the Enter after a message approves, and a digit picks an option. The
   // dialog's bar says so where the box stood; the daemon refuses it anyway.
-  $("sendbar").hidden = !s || !s.pane || state.tab !== "transcript"
-    || s.state === "ended" || s.state === "dead" || !!s.permission;
+  $("sendbar").hidden = state.tab !== "transcript" || !!whyNotTyped(s);
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
   // layout it has just made dirty. What is in the box cannot change without
@@ -16736,12 +16760,9 @@ function drawReviewBar() {
   const moved = said.value !== text;
   if (moved) said.value = text;
   const s = current();
-  const why = !(s && s.pane)
-    ? "this session is not running in tmux, so there is nowhere to send it"
-    : s.permission
-    ? "a permission dialog is open in the terminal: its Enter would say Yes"
-    : !state.review.comments.length ? "nothing to send yet: comment on a line first"
-    : "";
+  const why = whyNotTyped(s)
+    || (!state.review.comments.length ? "nothing to send yet: comment on a line first"
+    : "");
   const send = $("sendreview");
   send.disabled = !!why;
   send.title = why || "type the whole review into the agent's pane";

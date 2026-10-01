@@ -360,7 +360,7 @@ def test_a_session_without_a_pane_cannot_be_sent_to(no_pane):
               [{"anchor": "code.py\n1", "quoted": "x", "note": "nowhere to go"}])
             page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
             assert page.locator("#sendreview").is_disabled()
-            assert "not running in tmux" in page.get_attribute(
+            assert "not in tmux" in page.get_attribute(
                 "#sendreview", "title")
         finally:
             browser.close()

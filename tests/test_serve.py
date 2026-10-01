@@ -2197,3 +2197,20 @@ def test_a_settings_file_that_cannot_be_written_says_so(ws, served, monkeypatch)
     status, body = post(f"{base}/api/settings", {"colours": "dark"},
                         token=daemon.token)
     assert status == 400 and "read-only" in body["error"], (status, body)
+
+
+def test_every_verb_finds_its_session_in_one_place(ws, in_tmux):
+    """`dispatch` looks the session up for every verb, so the 404 of one
+    carries the `id` the 409 of another always did (#288)."""
+    daemon, base, seen = in_tmux
+    try:
+        urllib.request.urlopen(f"{base}/api/session/nobody/files", timeout=5)
+        raise AssertionError("an unknown session was answered")
+    except urllib.error.HTTPError as refused:
+        assert refused.status == 404
+        assert json.loads(refused.read()) == {"id": "nobody",
+                                              "error": "no such session"}
+    status, body = post(base + "/api/session/nobody/send", {"text": "hi"},
+                        token=daemon.token)
+    assert (status, body["id"]) == (404, "nobody")
+    assert seen == []

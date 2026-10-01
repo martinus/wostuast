@@ -397,7 +397,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   every request on a connection. **Every route that reads `{}` as an answer
   checks it**: `name` did not, and read a 70,000-character paste as "take
   the name away" (#235). `answer` did not either, and said "that question
-  is no longer waiting" about a question that was (#254). The rename box
+  is no longer waiting" about a question that was (#254). **So `route_post`
+  refuses `too_big` itself, before any verb runs**, with the noun each
+  `POST_VERBS` entry carries (#287): a new verb cannot forget it. The rename box
   has `maxLength` at `NAME_MAX` too,
   which `test_a_row_is_renamed_where_it_stands` holds in step. A body not
   read because its end is not known (`unread`) is refused in `route_post`,
@@ -460,8 +462,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **And no send goes into a dialog that is up.** The send box stayed on
     screen under a dialog, and `send` refused only a session that was
     over: "1" went in, then Enter, which is Yes. So `send` refuses while
-    the row shows a dialog (`needs_you` and `Session.permission`, the
-    row's own test) and while a No is on its way. The page hides the send
+    the row shows a dialog (`Session.dialog`: the permission while
+    `needs_you`, the row's own test) and while a No is on its way. The page hides the send
     box in the same state, and the dialog's bar says where it went; the
     review's send is off and says why in its `title`. The daemon's refusal
     is the rule, and the page only saves the reader the round trip.
@@ -469,6 +471,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     hold a question and a command that asks for permission, and the
     answer's keys are digits and Enter. Whether Claude Code shows both at
     once was not measured; the refusal costs nothing when it does not.
+    **One test, `cannot_type`, for `answer`, `decline` and `send`, and its
+    twin `whyNotTyped` on the page for every control that types** (#287):
+    over, then a dialog up (not for a No). Each verb and each control wrote
+    its own, and they drifted: the review's send was offered into a session
+    that was over, and the answer's submit into an open dialog, both of
+    which the daemon refused. The claim is a `with` (`Daemon.holding`), so
+    no verb can leave the session held.
+    `test_the_review_is_not_offered_to_a_session_that_is_over`,
+    `test_a_question_is_not_answered_into_a_permission_dialog`.
     `test_an_answer_never_goes_into_a_permission_dialog`,
     `test_a_send_never_answers_a_permission_dialog`,
     `test_no_send_goes_in_while_a_no_is_on_its_way`,
@@ -483,7 +494,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   enabled **submit** on a question and said `presses 1`, which is a promise
   of keystrokes into a terminal that does not exist. **Reading is not
   acting**: the question bar stays where it is. It is the press that is
-  refused. Grep `canType`. **`#jump` wears `.theme`, which sets `display`**,
+  refused. Grep `whyNotTyped`. **`#jump` wears `.theme`, which sets `display`**,
   so `.theme[hidden]` puts the browser's rule back: the `.sendbar` scar.
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters, keeping tab and newline. "Below a space" includes the C1 block

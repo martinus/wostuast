@@ -1324,6 +1324,68 @@ def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
             browser.close()
 
 
+def test_the_review_is_not_offered_to_a_session_that_is_over(ws, in_pane):
+    """Its button checked the pane and the dialog, not whether the session
+    had ended, so it offered a send the daemon refuses with "this session
+    is over". One test for every control now, `whyNotTyped` (#287)."""
+    daemon, base, seen = in_pane
+    cwd = daemon.store.sessions["s1"].cwd
+    ws.append_event(conftest.event("SessionEnd", reason="prompt_input_exit",
+                                   pane="%7", pid=1, cwd=cwd, ts=time.time()))
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].state == "ended"
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.evaluate("choose('s1')")
+            show_tab(page, "diff")
+            page.evaluate("""([one]) => { state.review.comments.push(one);
+              keepReview(); }""",
+              [{"anchor": "code.py\n1", "quoted": "x", "note": "too late"}])
+            page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
+            assert page.locator("#sendreview").is_disabled()
+            assert "over" in page.get_attribute("#sendreview", "title")
+        finally:
+            browser.close()
+
+
+def test_a_question_is_not_answered_into_a_permission_dialog(ws, in_pane):
+    """One batch of calls can hold a question and a command that asks for
+    permission, and the daemon refuses the answer then (#254). The submit
+    button offered it anyway, and said "presses 1"."""
+    daemon, base, seen = in_pane
+    # One batch: the calls start together, so the question is still open
+    # when the command's dialog comes up.
+    at = time.time()
+    cwd = daemon.store.sessions["s1"].cwd
+    for one in (conftest.event("PreToolUse", tool_name="AskUserQuestion",
+                               tool_input=ASKED, tool_use_id="toolu_q1"),
+                conftest.event("PreToolUse", tool_name="Bash",
+                               tool_input={"command": BUILD},
+                               tool_use_id="toolu_b1"),
+                conftest.event("PermissionRequest", tool_name="Bash",
+                               tool_input={"command": BUILD})):
+        one.update(pane="%7", pid=1, cwd=cwd, ts=at)
+        ws.append_event(one)
+    daemon.store.refresh()
+    held = daemon.store.sessions["s1"]
+    assert held.asking and held.dialog
+    with sync_playwright() as play:
+        browser, page = open_page(play, (None, base))
+        try:
+            page.wait_for_selector("#asking:not([hidden]) .askopt")
+            page.click(option(1, 1))
+            page.click(option(2, 1))
+            page.wait_for_function(
+                "document.querySelectorAll('#asking .askopt.chosen').length === 2")
+            assert page.locator(SUBMIT).is_disabled()
+            assert "permission dialog" in page.locator(
+                "#asking .asksays").inner_text()
+        finally:
+            browser.close()
+    assert seen == []
+
+
 def test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole(ws, in_pane):
     """The reason for a No is a box one row high. Its placeholder was wider
     than the box at 1,100 px, and wrapped onto a second row that did not
