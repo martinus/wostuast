@@ -32,6 +32,48 @@ it. The reason is the part to weigh before undoing one.
   new. `install` never replaces a status line the user already has: it
   prints the line to add instead. Without one, sessions have no name, no
   context and no spend, and everything else works. `cmd_status`.
+- **Hooks, not an SDK, a stream, Remote Control or OpenTelemetry.** Each
+  comes up as "a better way than hooks", and each was weighed (#267):
+  - **The Agent SDK and `claude -p --output-format stream-json
+    --input-format stream-json`** have the richest stream, and answer a
+    permission by callback (`canUseTool`). But wostuast would have to start
+    and own the agent process, which is a non-goal, and the reader works in
+    interactive sessions in tmux, which neither can attach to.
+  - **`--permission-prompt-tool`** works with `claude -p` only, never in an
+    interactive session.
+  - **Remote Control** continues one session from a phone or another
+    browser. It is for a person, and gives a program nothing to read or
+    call.
+  - **OpenTelemetry** is configured by the owner's company, not by the
+    owner, so wostuast cannot point it anywhere. The owner said so on #267.
+  - Still open: channels and hook decisions, the next two bullets.
+- **Channels wait until they leave the research preview.** The owner chose
+  this on #265. A channel is an MCP server the session starts over stdio. It
+  can push text into the session, and with `claude/channel/permission` it
+  gets each tool approval with a `request_id`, and can answer that one
+  request: a No bound to one dialog, which tmux keys cannot give (the
+  non-goal "a dialog carries no id"). Against it: every session must start
+  with `--dangerously-load-development-channels`, which shows a warning
+  dialog, or with an allowlisted plugin; organisations must enable it; text
+  arrives as a `<channel>` tag, not a typed prompt, so slash commands do not
+  work and "send" would change meaning; `AskUserQuestion` is not relayed,
+  so its keys stay; it is a new way into the terminal beyond the four tmux
+  verbs, so topics/safety's ask-first applies; and the relay can also say
+  allow, which the page must never send. Look again when the preview ends;
+  a prototype behind the flag is then the first step.
+- **The hook stays a command that appends to the log.** An `http` hook
+  (#266) would save a process per event, but records nothing while the
+  daemon is down, which breaks the first bullet here and goal 4. What a
+  process costs, measured over 200 runs with a real `PreToolUse` payload on
+  four cores and Python 3.11: `python3 wostuast hook` 119 ms median, 155 ms
+  p95; `python3 -c pass` 13 ms; `sh -c 'cat >> file'` 4 ms. 58 ms of it is
+  `compile()` of the 17,206-line file: a script run directly gets no
+  bytecode cache, and the same code imported with a `.pyc` took 65 ms.
+  #271 is that fix. **A decision hook is not adopted either**: an `allow`
+  from `PreToolUse` or `PermissionRequest` is the approve button the
+  non-goals forbid, though a `deny` bound to the hook's own call would be
+  an id for a No. What the terminal shows while a `PermissionRequest` hook
+  waits is not measured yet; #266 holds the script that measures it.
 
 **Serving**
 
