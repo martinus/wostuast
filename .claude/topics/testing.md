@@ -73,7 +73,16 @@ handed**: `page.evaluate("load()")` with the request held by a route never
 returned, and the test hung past every timeout, because `evaluate` has
 none. Call it without returning it: `"() => { load(); }"`. And one route
 handler that holds the first request and answers the rest, never
-`unroute` with one held — it answers the held one itself. **A mark that
+`unroute` with one held — it answers the held one itself. **That handler
+and the wait for it are `hold(page, pattern)` and `wait_until(page,
+check)` in `tests/browser.py`, never a copy.** Eight loops in four test
+files waited their own way, `for _ in range(300): if held: break`, and
+three of them broke out, asserted nothing, and ran on into `held[0]`: an
+`IndexError` that named no wait; `wait_until` raises when time runs out. The same
+holds for `stub_send(page, answers, delay)` (`/send` answered from a
+list, or with no `answers` slowed and passed on), `write_records`
+(transcript lines built by `conftest.record`) and `comment_on_first_line`
+(#281). **A mark that
 shows for a set time is written down by the page, not waited for**: the
 copy button's tick (`putCodeCopies`, `.copycode.done`) lasts 1.4 s, and
 `test_a_code_block_copies_itself_from_a_button_that_shows_on_hover` spent

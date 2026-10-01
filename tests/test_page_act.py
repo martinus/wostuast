@@ -17,6 +17,9 @@ from browser import (
     show_tab,
     base_of,
     wait_for_map,
+    hold,
+    wait_until,
+    stub_send,
 )
 
 pytestmark = skip_without_browser
@@ -547,25 +550,6 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
             browser.close()
 
 
-def hold(page, pattern):
-    """Hold the first request to `pattern`, let the rest through, and hand
-    back the list the held one lands in. Never `unroute` with one held."""
-    held = []
-    page.route(pattern, lambda route: held.append(route) if not held
-               else route.continue_())
-    return held
-
-
-def wait_until(page, check):
-    """Let the page run until `check()` says yes. `wait_for_function` cannot
-    see a Python list, and a sleep here would starve the route handler."""
-    for _ in range(750):
-        if check():
-            return
-        page.wait_for_timeout(20)
-    raise AssertionError("it never happened")
-
-
 SUBMIT = "#asking .asksend .verb"
 
 
@@ -957,13 +941,7 @@ def test_enter_twice_sends_once_and_keeps_what_came_after(in_pane):
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
         try:
-            page.evaluate("""() => {
-              const real = window.fetch;
-              window.fetch = (url, opts) => String(url).endsWith("/send")
-                ? new Promise((done) => setTimeout(
-                    () => done(real(url, opts)), 3000))
-                : real(url, opts);
-            }""")
+            stub_send(page, delay=3000)
             page.click("#say")
             page.keyboard.type("run the tests")
             page.keyboard.press("Enter")
@@ -999,13 +977,7 @@ def test_a_refused_send_comes_back_in_front_of_what_was_typed_since(
     with sync_playwright() as play:
         browser, page = open_page(play, (None, base))
         try:
-            page.evaluate("""() => {
-              const real = window.fetch;
-              window.fetch = (url, opts) => String(url).endsWith("/send")
-                ? new Promise((done) => setTimeout(
-                    () => done(real(url, opts)), 400))
-                : real(url, opts);
-            }""")
+            stub_send(page, delay=400)
             page.click("#say")
             page.keyboard.type("please work")
             page.keyboard.press("Enter")

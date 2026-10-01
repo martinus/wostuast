@@ -125,9 +125,8 @@ def test_sessions_are_json(ws, served):
 
 def test_a_transcript_is_served(ws, served, transcript_file):
     daemon, base = served
-    path = transcript_file("s1", [{
-        "type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
-        "message": {"role": "user", "content": "hello there"}}])
+    path = transcript_file("s1", [conftest.record(
+        "you", "hello there", ts="2026-09-18T14:00:00.000Z")])
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
     status, body = get(f"{base}/api/session/s1/transcript")
@@ -311,9 +310,8 @@ def test_a_lone_surrogate_in_a_transcript_breaks_nothing(ws, served,
     Build one with `chr`, never with its escape in source."""
     daemon, base = served
     cut = "cut here: " + chr(0xD83D)
-    path = transcript_file("s1", [
-        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
-         "message": {"role": "user", "content": cut}}])
+    path = transcript_file("s1", [conftest.record(
+        "you", cut, ts="2026-09-18T14:02:00.000Z")])
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
     with urllib.request.urlopen(f"{base}/api/session/s1/transcript",
@@ -323,10 +321,8 @@ def test_a_lone_surrogate_in_a_transcript_breaks_nothing(ws, served,
 
     def later():
         with path.open("a") as out:
-            out.write(json.dumps(
-                {"type": "user", "timestamp": "2026-09-18T14:03:00.000Z",
-                 "message": {"role": "user", "content": "again " + chr(0xD83D)}})
-                + "\n")
+            out.write(conftest.records(conftest.record(
+                "you", "again " + chr(0xD83D), ts="2026-09-18T14:03:00.000Z")))
         daemon.tick()
 
     got = read_events(f"{base}/api/events?watch=s1", 2, then=later)
@@ -340,9 +336,8 @@ def test_a_transcript_push_leaves_under_the_lock(ws, served, transcript_file,
     and the page, which patches by index, then never drew the earlier
     block. Pushed under the lock, the order sent is the order read."""
     daemon, base = served
-    path = transcript_file("s1", [
-        {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
-         "message": {"role": "user", "content": "go"}}])
+    path = transcript_file("s1", [conftest.record(
+        "you", "go", ts="2026-09-18T14:02:00.000Z")])
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
     held = []
@@ -389,10 +384,8 @@ def test_a_transcript_change_reaches_only_its_watcher(ws, served, transcript_fil
 
     def later():
         with open(path, "a") as handle:
-            handle.write(json.dumps({
-                "type": "assistant", "timestamp": "2026-09-18T14:00:00.000Z",
-                "message": {"role": "assistant",
-                            "content": [{"type": "text", "text": "a line"}]}}) + "\n")
+            handle.write(conftest.records(conftest.record(
+                "claude", "a line", ts="2026-09-18T14:00:00.000Z")))
         daemon.tick()
 
     got = read_events(f"{base}/api/events?watch=s1", 2, then=later)
@@ -422,7 +415,7 @@ def test_a_stream_decides_its_opening_before_it_says_anything(
 
     def later():
         with open(path, "a") as handle:
-            handle.write(json.dumps(conftest.record("claude", "a line")) + "\n")
+            handle.write(conftest.records(conftest.record("claude", "a line")))
         daemon.tick()
 
     got = read_events(f"{base}/api/events?watch=s1", 2, then=later)
@@ -552,8 +545,8 @@ def test_the_reader_is_only_advanced_in_one_place(ws, served, transcript_file):
     """Two threads calling read_new at once moved the offset twice, which then
     looked like a shrinking file and re-read the whole transcript."""
     daemon, base = served
-    lines = [{"type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
-              "message": {"role": "user", "content": f"line {i}"}} for i in range(50)]
+    lines = [conftest.record("you", f"line {i}", ts="2026-09-18T14:00:00.000Z")
+             for i in range(50)]
     path = transcript_file("s1", lines)
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
@@ -581,9 +574,8 @@ def test_a_transcript_emptied_under_its_name_reaches_the_watchers(
 
     The run is pushed when it moves, whether or not a block came with it."""
     daemon, _ = served
-    path = transcript_file("s1", [
-        {"type": "user", "timestamp": "2026-09-18T14:00:00.000Z",
-         "message": {"role": "user", "content": "the old conversation"}}])
+    path = transcript_file("s1", [conftest.record(
+        "you", "the old conversation", ts="2026-09-18T14:00:00.000Z")])
     ws.append_event(event("SessionStart", transcript_path=str(path)))
     daemon.store.refresh()
     daemon.read_transcript("s1")

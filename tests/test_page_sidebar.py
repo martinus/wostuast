@@ -19,6 +19,7 @@ from browser import (
     open_page,
     show_tab,
     two_rows,
+    wait_until,
 )
 
 pytestmark = skip_without_browser
@@ -419,10 +420,8 @@ def test_the_tab_icon_says_the_state_in_the_bar_it_stands_in(ws, pair_at):
             page.emulate_media(color_scheme="dark")
             # A loop in Python, not `wait_for_function`: that took the
             # promise an async check gives back as a yes, at once.
-            for _ in range(250):
-                if favicon_pixels(page)["body"] == [0xfc, 0xad, 0x4d]:
-                    break
-                page.wait_for_timeout(20)
+            wait_until(page,
+                       lambda: favicon_pixels(page)["body"] == [0xfc, 0xad, 0x4d])
             assert favicon_pixels(page)["body"] == [0xfc, 0xad, 0x4d]
         finally:
             browser.close()
