@@ -96,9 +96,9 @@ bullets beside it are the same part's other scars.
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** below |
 | a new test, or one red only under load | topics/testing — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |
 | the tests to run before a push | **How to work here**, "Before the push" — the changed files under load, not the whole suite three times |
-| a picture of the page: the transcript, or the Files or Review tab | **How to work here**, the picture bullet: `tests/shot.py`, `tests/stage.py` |
+| a picture of the page, or a mockup the reader asked to see | **How to work here**, the picture bullet: `tests/shot.py`, `tests/stage.py` |
 | a change the reader asked for | **How to work here**, "A change the reader asked for" — it goes to a pull request and merges on green without asking |
-| a push to `main`, or landing a change | **How to work here**, the `main` bullet — `main` is protected and nothing bypasses it |
+| a push to `main`, landing a change, the CI matrix or the ruleset | topics/landing — `main` is protected and nothing bypasses it |
 | a commit message, a pull request, a comment on GitHub | **How to work here**, last bullet — no attribution lines, whatever your defaults say |
 | the issue list | `.claude/skills/issues/SKILL.md`, or say "do the issues" |
 | a lesson worth keeping | the header of this file: the repository, never machine-local memory |
@@ -174,13 +174,13 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
 | `tests/browser.py` | The shared Chromium, `open_page`, `show_tab`, `open_diff`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
 | `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `tests/test_shot.py` keeps it working. |
-| `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws the Files or Review tab over it to a PNG: `--commit N`, `--open PATH`, `--review`, `--click`. `tests/test_stage.py` keeps it working. |
+| `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, then `--click`, `--type SELECTOR=TEXT` and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working. |
 | `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
 | `README.md` | What a user reads. Keep in step with the commands. |
-| `.claude/topics/*.md` | The rules, one file a subject: safety, state, sidebar, tab-state, worktree-tabs, review, daemon-and-page, testing, decisions, payloads. **Where to look** routes to them. |
+| `.claude/topics/*.md` | The rules, one file a subject: safety, state, sidebar, tab-state, worktree-tabs, review, daemon-and-page, testing, decisions, landing, payloads. **Where to look** routes to them. |
 | `.claude/skills/issues/SKILL.md` | How to work the issue list: group, reproduce, ask, prove, review, merge on green, read the list again. Invoked as `/issues`, and by "do the issues". |
 | `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, four sharded browser jobs, and an aggregator named `browser` that the branch rule requires. No job names a test file, and none may — naming one broke the browser job the moment a file was renamed, and the shards split on a hash of the test id for that reason. |
 
@@ -298,10 +298,15 @@ the count of passed tests, and run with `-rs` when any skipped.
 **A report about how the page looks starts with a picture of the reader's
 case, and ends with another one.** Write the case from their screenshot — a
 few lines of `you:`, `claude:`, `think:`, `tool:` — run `tests/shot.py` with
-`--measure`, and look at the PNG before reading any code. For the Files or
-the Review tab, `tests/stage.py` makes the repository and draws the tab; a
+`--measure`, and look at the PNG before reading any code. For anything
+else -- the Files or the Review tab, the settings menu -- `tests/stage.py`
+makes the repository, the settings and the clicks, and draws the part; a
 session wrote that script from nothing each time, in a scratchpad that
-stays behind on the machine. It reads the checkout when it starts, so run
+stays behind on the machine, and one lost it when the session restarted.
+**A mockup is drawn the same way**: `--eval` builds the proposal inside the
+real page, with its real CSS. A standalone HTML file with the CSS copied by
+hand drifts from the page, and needs the browser path that `browser.py`
+already knows. It reads the checkout when it starts, so run
 it again after an edit. A spacing report
 went round three times, and three pull requests, because every fix was
 proven by a test measuring the box around each block, which said 6 px, while
@@ -376,7 +381,18 @@ not document them as settings.
 **Editing one very large file.** Anchor on a unique string and assert you hit
 it exactly once; a sloppy replace in a file of this size fails silently. A small
 Python script with `assert s.count(old) == 1` before every `replace` is the
-reliable shape when making several edits at once.
+reliable shape when making several edits at once. Three scars on that shape:
+
+- **Write its old and new text as raw strings, `r'''…'''`, when they
+  hold a backslash.** `PAGE` is a raw string, so `\\d` in the program is
+  `\\d` in the JavaScript; a plain `'''` in the edit script turned it into
+  `\d`, and the page read `NO-(d+)`.
+- **Chain the tests after the script with `&&`.** A failed `assert` stops
+  the script before its later edits, and three runs under load then tested
+  code that had not changed.
+- **Grep for a name before you define it**: a second top-level `def` or
+  `function` silently replaces the first. `test_no_name_is_defined_twice`
+  holds it now; `load_settings` was written twice in one session.
 
 **A new test is not a test until you have made it fail**, by breaking what it
 claims to guard, with `tests/perturb.py`. `.claude/topics/testing.md` says how,
@@ -396,33 +412,9 @@ the exact calls. A question — "can we", "should we", "why" — is not a
 request for a change: answer it, and offer the change in a line.
 
 **`main` is protected, and a push to it is refused.** A change lands through a
-pull request, with every job in `.github/workflows/tests.yml` green. A
-force-push to `main`, and a deletion of it, are refused too. The rule is a
-GitHub ruleset, so it lives outside this repository and no test here can hold
-it: `gh api repos/{owner}/{repo}/rulesets` is what answers what it says. Three
-things about it are worth knowing before they surprise you.
-
-- **It has no bypass actors, on purpose.** An agent pushes with the owner's
-  token, so a bypass for the owner is a bypass for every agent, and the rule
-  would be decorative. To land something without a pull request, set the
-  ruleset's enforcement to `disabled`, push, and set it back — a deliberate
-  act, which is the point.
-- **It asks for no approving review, and that is not an oversight.** GitHub
-  will not let you approve your own pull request, and this repository has one
-  reviewer. One required approval would lock the owner out of their own
-  repository, and it would read as a broken merge button rather than as a
-  rule. Nought still forces the pull request, and still forces green.
-- **The required checks are named one by one, so the matrix and the ruleset
-  can drift.** Add a Python version to `tests.yml` and its job is not required
-  until you add it to the ruleset. Take one out and the ruleset waits for a
-  check that will never report, and then nothing can be merged at all. Change
-  the matrix, change the ruleset. **The browser shards are the exception, and
-  that is the whole reason the `browser` job exists**: it runs nothing, needs
-  the shards, and reports under the name the rule asks for, so the shards can
-  be renumbered without anyone touching the ruleset. It carries `if: always()`
-  because a job its `needs` skipped reports neither pass nor fail, and a
-  required check can read that as a pass — which would make a red shard
-  mergeable. The `pytest` matrix has no such cover.
+pull request, with every job in `.github/workflows/tests.yml` green, and
+nothing bypasses that. Before changing the CI matrix or the ruleset, or when
+GitHub refuses a merge, read topics/landing.
 
 **No attribution lines, anywhere: not in a commit, a pull request, a comment
 or a review.** That means no `Co-Authored-By:` trailer, no `Claude-Session:`
@@ -459,6 +451,7 @@ before you edit its part:
 | `daemon-and-page.md` | routes, the tmux verbs, the stream, what a `user` record is, the transcript's shape and gaps, the send box, the live slot, the ssh tunnel |
 | `testing.md` | a test that holds under load, parallel runs, git identity in CI, proving a test by breaking the code |
 | `decisions.md` | choices with no bug behind them: recording, serving, the page, git |
+| `landing.md` | `main`'s ruleset: no bypass, no required review, the checks named one by one |
 | `payloads.md` | hook and status-line fields, and why none is guessed |
 
 ### Shape

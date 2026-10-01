@@ -542,6 +542,33 @@ def test_the_map_in_claude_md_points_at_real_symbols():
     assert not missing, f"CLAUDE.md routes to symbols that are gone: {missing}"
 
 
+def test_no_name_is_defined_twice():
+    """A second top-level `def` replaces the first without a word, and so
+    does a second `function` in the page. `load_settings` and
+    `save_settings` were written a second time for our own settings file,
+    beside Claude Code's, and `install` would have called the new ones; a
+    grep found it, by luck. Methods are left out: the same name in two
+    classes is two names."""
+    import pathlib
+    import re
+    from collections import Counter
+
+    program = (pathlib.Path(__file__).resolve().parent.parent
+               / "wostuast").read_text(encoding="utf-8")
+    at = program.index('PAGE = r"""')
+    python, page = program[:at], program[at:]
+    names = (re.findall(r"^(?:def|class) (\w+)", python, re.M)
+             + re.findall(r"^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)", python, re.M))
+    script = (re.findall(r"^(?:async )?function (\w+)", page, re.M)
+              + re.findall(r"^(?:const|let|var) (\w+)", page, re.M))
+    # Each language on its own: `ago` and `clip` are in both on purpose, a
+    # twin of the same job on each side of the wire.
+    twice = sorted(name for found in (names, script)
+                   for name, count in Counter(found).items() if count > 1)
+    assert not twice, f"defined more than once: {twice}"
+    assert len(names) > 100 and len(script) > 100, "the patterns stopped matching"
+
+
 def test_every_rules_file_is_routed_to_and_every_route_is_a_file():
     """The rules are one file a subject in `.claude/topics/`, read only when
     `CLAUDE.md` sends an agent there. A file nothing routes to is a subject
