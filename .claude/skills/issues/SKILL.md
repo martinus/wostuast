@@ -210,6 +210,13 @@ for `martinus/martinus/wostuast`.
    the pull request finishes**: in a commit message GitHub does close it on
    the merge. A pull request that does part of an issue says "Does item 2
    of #N", and the issue's body is rewritten to what is left, with why.
+   **A quote counts too.** GitHub finds the keyword and a number anywhere
+   in a body or a commit message, in quotes, in a table, in a story about
+   a mistake. #318's body told the story of a commit message that put the
+   keyword before #301, and quoted that message. The quote was enough: the
+   merge shut #301, which was meant to stay open, and it had to be opened
+   again. Name an issue you do not close by its number alone, never after
+   "close", "fix" or "resolve" in any form.
 8. **Let go**: `delete_trigger` the check-in, `unsubscribe_pr_activity`.
 9. **Back onto main**: `git fetch origin main && git checkout -B <branch>
    origin/main`, then `git push -u origin <branch>`. The merge commit holds
