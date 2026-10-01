@@ -284,7 +284,7 @@ def test_the_listing_gets_its_own_timeout(ws, seeded):
 
     ws.worktree_files(str(seeded), runner=watch)
     assert ws.LIST_TIMEOUT > ws.RUN_TIMEOUT
-    assert seen.count(ws.LIST_TIMEOUT) == 4    # three listings and the status
+    assert seen.count(ws.LIST_TIMEOUT) == 3    # two listings and the status
 
 
 def test_a_pinned_name_deeper_in_the_tree_is_not_pinned(ws, seeded):
@@ -954,6 +954,42 @@ def test_a_root_git_could_not_find_is_not_an_empty_worktree(ws, seeded):
     assert ws.worktree_diff(str(seeded.parent)).failed is False
 
 
+def test_every_door_learns_from_the_root_which_kind_of_nothing_it_is(ws, seeded):
+    """`worktree_root` asks `git_answers` itself (#290): four doors each
+    asked it after an empty root, and one that forgot read a stalled git as
+    a worktree with nothing in it. None is "git did not answer", "" is "not
+    a repository"."""
+    def stalled(args, **rest):
+        return None
+    assert ws.worktree_root(str(seeded), runner=stalled) is None
+    assert ws.worktree_root(str(seeded.parent)) == ""
+    assert ws.worktree_files(str(seeded), runner=stalled).failed is True
+    assert ws.worktree_files(str(seeded.parent)).failed is False
+    assert ws.whole_file_diff(str(seeded), "uncommitted", "a.py", runner=stalled).failed is True
+    assert ws.whole_file_diff(str(seeded.parent), "uncommitted", "a.py").failed is False
+    assert ws.Files().of(str(seeded), runner=stalled).tree.failed is True
+    assert ws.Files().of(str(seeded.parent)).tree.failed is False
+
+
+def test_the_untracked_names_are_the_ones_status_gives(ws, seeded):
+    """The listing takes them from `status`'s `??` records, not from a
+    second walk of the worktree (#293): a new file, one in a new folder,
+    and a nested repository, which is a folder and so not a file."""
+    (seeded / "brand").mkdir()
+    (seeded / "brand" / "new.txt").write_text("n\n")
+    (seeded / "top.txt").write_text("t\n")
+    nested = seeded / "nested"
+    nested.mkdir()
+    git(nested, "init", "-q")
+    (nested / "inner.txt").write_text("i\n")
+    tree = ws.worktree_files(str(seeded))
+    names = {one.path for one in tree.files}
+    assert {"brand/new.txt", "top.txt"} <= names
+    assert not any(name.startswith("nested") for name in names)
+    assert {"brand/new.txt", "top.txt"} <= {one.path for one in tree.files
+                                            if one.changed}
+
+
 def test_a_repository_with_no_commit_yet_shows_what_is_staged(ws, tmp_path):
     """With no HEAD, `git log HEAD` and `git diff HEAD` fail -- which is git
     answering "there is no commit", not failing to answer. The tab said git
@@ -1098,7 +1134,7 @@ def test_one_listing_is_shared_rather_than_read_again(ws, seeded):
     first = files.of(str(seeded), runner=count)
     assert first.tree.files
     listings = len([one for one in asked if "ls-files" in one])
-    assert listings == 3           # tracked, untracked, ignored
+    assert listings == 2           # tracked and ignored; untracked is status's
 
     again = files.of(str(seeded), runner=count)
     assert again is first
@@ -1185,7 +1221,7 @@ def test_two_first_asks_read_git_once(ws, seeded):
     one.join(15)
     two.join(15)
     assert len(got) == 2 and got[0] is got[1]
-    assert len(asked) == 3         # tracked, untracked, ignored: one listing
+    assert len(asked) == 2         # tracked and ignored: one listing
 
 
 def test_the_tag_follows_the_names_and_not_the_changes(ws, seeded):
