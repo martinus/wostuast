@@ -72,7 +72,8 @@ bullets beside it are the same part's other scars.
 | About to touch | Read |
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
-| `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: `settings.json` is the user's file, not ours |
+| `install`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
+| `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety: our `settings.json`, written from the page; topics/sidebar for the menu |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite | topics/decisions |
@@ -128,8 +129,9 @@ building anything. A goal that bends is rewritten here in the same PR.
 3. Show a worktree's changes without opening an editor.
 4. Stay small: one Python file, the standard library, no daemon needed to
    *record* events, no config file needed to run, a one-line install and a
-   one-line uninstall. `links.json` is the one optional file, and **Shape**
-   says what it took to earn that.
+   one-line uninstall. Our `settings.json` is the one optional file: the
+   settings menu writes it, nobody has to, and **Shape** says what it took
+   to earn that.
 5. Look good enough that a screenshot would sell it. None ships: see
    `README.md`, "No screenshots".
 
@@ -448,7 +450,7 @@ before you edit its part:
 
 | File | Holds |
 | --- | --- |
-| `safety.md` | the token, localhost, the uid of who connects, framing, what may reach a terminal, a No, paths out of the log and the page, `links.json`, the `raw` route, the state directory, `settings.json`, surrogates |
+| `safety.md` | the token, localhost, the uid of who connects, framing, what may reach a terminal, a No, paths out of the log and the page, our `settings.json` and its links, the `raw` route, the state directory, Claude Code's `settings.json`, surrogates |
 | `state.md` | amber, questions and their keys, the permission dialog, `/clear`, the log and `Tail`, `seq` and `run`, pids, how the Files tab draws a file |
 | `sidebar.md` | the groups, `settled`, alerts, the tab's title and icon, the settings menu, a row's four lines, the chosen row |
 | `tab-state.md` | what a session keeps, and who writes the places |
@@ -470,12 +472,21 @@ before you edit its part:
 - **Ask first** before adding a dependency, a file outside `wostuast` and
   `tests/`, or a tmux command beyond the three the four verbs run:
   `select-window`, `select-pane` and `send-keys`.
-- **Prefer deleting a feature over adding a config option.** `links.json` is
-  the one exception goal 4 allows, and the test it passed is the test
-  for a second one: if wostuast could work the answer out, it must, and if the
-  answer is the same for everybody, it is not a setting. A choice about *this
-  screen* — theme, tab width, wrap, column widths — goes in `localStorage`
-  and needs no file.
+- **Prefer deleting a feature over adding a config option.** If wostuast
+  could work the answer out, it must, and if the answer is the same for
+  everybody, it is not a setting. **What the settings menu sets is kept in
+  one file, `~/.config/wostuast/settings.json`** (`config_path`): the
+  colours, the alerts, the tab width, long lines, the diff's columns and
+  the ticket links. It was `localStorage` and a hand-written `links.json`,
+  and the reader asked for one file that every browser shares and a person
+  can read. **Every setting in it is a control in the menu**, so nobody
+  has to write the file, and goal 4 still holds; a setting only the file
+  can set is a config option, and the rule above still says no. What is
+  not in the menu stays in `localStorage` and needs no file: the column
+  widths a drag sets, the history's fold, a review's draft. **Two files are
+  called `settings.json`**: ours, and Claude Code's, which `install`
+  touches. topics/safety's "the user's file" bullet is about Claude
+  Code's.
 - **No module-level mutable state.** The daemon owns a `Store` and a `Hub`. One
   thread writes the Store; readers take `rows`, replaced whole, so no lock.
   A *writer* that is not that thread does need one: `POST /name` runs in the

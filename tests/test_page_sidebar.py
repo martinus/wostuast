@@ -11,6 +11,7 @@ import pytest
 
 import conftest
 from browser import (
+    kept,
     skip_without_browser,
     sync_playwright,
     fresh_context,
@@ -1030,7 +1031,7 @@ def test_an_alert_names_the_session_as_its_row_does(ws, page_at):
             browser.close()
 
 
-def test_the_two_switches_are_remembered_apart(page_at):
+def test_the_two_switches_are_remembered_apart(page_at, ws):
     _, path = page_at
     with sync_playwright() as play:
         browser, page = alerts_page(play, path)
@@ -1041,8 +1042,7 @@ def test_the_two_switches_are_remembered_apart(page_at):
             page.wait_for_function(
                 """() => !document.getElementById('alertneeds').checked
                       && document.getElementById('alertdone').checked""")
-            kept = page.evaluate("localStorage.getItem('wostuast-alerts')")
-            assert json.loads(kept) == {"needs": False, "done": True}, kept
+            kept(ws, "alerts", {"needs": False, "done": True})
             page.reload(wait_until="domcontentloaded")
             page.wait_for_selector(".row")
             page.click("#settings")
@@ -1368,25 +1368,21 @@ def test_the_enter_that_ends_a_composition_keeps_no_name(rows_at):
 
 def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
     """A branch is most often named after its ticket, and so is a session
-    reviewing a pull request. `links.json` makes both links, as it does in
-    the transcript. The row is filled again on every push, so a link must
+    reviewing a pull request. The ticket links make both links, as they do
+    in the transcript. The row is filled again on every push, so a link must
     outlive a push that does not change it -- one rebuilt between the press
     and the release is a click that never happens -- and a click on it
     opens the ticket and chooses nothing."""
     daemon, url, places = rows_at
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
-        {"match": r"(OA)-(\d+)", "url": "https://tickets.example/browse/$1-$2"},
-        {"match": r"PR #(\d+)", "url": "https://code.example/pull/$1"},
-    ]), encoding="utf-8")
     daemon.store.rename("named", "review PR #58")
     daemon.store.refresh()
     with sync_playwright() as play:
         context = fresh_context(play)
         context.add_init_script("localStorage.setItem('wostuast-history', 'open')")
-        # The links answer after the last push, so the rows have to be
-        # filled again when they come, and no push will do it. The last push
-        # is the one a stream opens with once a session is chosen.
+        # The links arrive after the last push -- the reader adds one in the
+        # menu -- so the rows have to be filled again when they come, and no
+        # push of the sessions will do it. The last push is the one a stream
+        # opens with once a session is chosen.
         context.add_init_script("""
           const add = EventSource.prototype.addEventListener;
           EventSource.prototype.addEventListener = function (name, fn, ...rest) {
@@ -1398,8 +1394,6 @@ def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
               window.watchedPush = true;
             }, ...rest);
           };""")
-        held = []
-        context.route("**/api/links", lambda route: held.append(route))
         context.route("https://*.example/**", lambda route: route.abort())
         page = context.new_page()
         try:
@@ -1407,8 +1401,12 @@ def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
             page.wait_for_function(
                 "document.querySelectorAll('.row').length === 4")
             page.wait_for_function("window.watchedPush === true")
-            assert held, "the page never asked for its links"
-            held[0].continue_()
+            ws.save_config({"links": [
+                {"match": r"(OA)-(\d+)",
+                 "url": "https://tickets.example/browse/$1-$2"},
+                {"match": r"PR #(\d+)", "url": "https://code.example/pull/$1"},
+            ]})
+            daemon.tell_config()
             named = '.row[data-id="named"]'
             page.wait_for_selector(named + " .branch a.ticket")
             seen = page.eval_on_selector_all(
@@ -1456,6 +1454,18 @@ def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
             page.keyboard.press("Escape")
             page.wait_for_selector(named + " .line1 .name a.ticket")
             assert page.inner_text(named + " .line1 .name") == "review PR #58"
+
+            # A link changed in the menu, as many links as before: the rows
+            # follow it. Keyed on the count, they kept the old address.
+            ws.save_config({"links": [
+                {"match": r"(OA)-(\d+)",
+                 "url": "https://tickets.example/browse/$1-$2"},
+                {"match": r"PR #(\d+)", "url": "https://code.example/pr/$1"},
+            ]})
+            daemon.tell_config()
+            page.wait_for_function(f"""document.querySelector(
+              '{named} .line1 .name a.ticket').href
+              === 'https://code.example/pr/58'""")
         finally:
             context.close()
 

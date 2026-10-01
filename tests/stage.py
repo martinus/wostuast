@@ -148,6 +148,7 @@ def main(argv: list[str]) -> int:
     # state directory or their Claude settings.
     home = Path(tempfile.mkdtemp(prefix="wostuast-stage-"))
     os.environ["WOSTUAST_STATE"] = str(home / "state")
+    os.environ["WOSTUAST_CONFIG"] = str(home / "config")
     os.environ["CLAUDE_CONFIG_DIR"] = str(home / "claude")
     sys.path.insert(0, str(HERE))
     url, _ = serve(home)

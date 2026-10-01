@@ -49,12 +49,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **There are two alerts, and they are not one switch.** An agent that needs
   you cannot go on without you; an agent that has finished is a turn you can
   read. One switch would mean taking the one you want with the one you do
-  not. `alertsWanted()` holds both, in `localStorage` like the theme, and
-  checks the shape of what comes back — storage survives across versions and
-  anything can be in it. The older single key is read once so a reader who
-  had alerts on keeps them. **Needs-you is on the moment alerts are**: it is
-  what this tool exists to say, so a browser that has already granted
-  permission and stored nothing gets it without asking.
+  not. `alertsWanted()` reads both from our `settings.json`, like the
+  theme, whose shape the daemon has checked (`config_trouble`). The
+  browser's permission stays the browser's. **Needs-you is on the moment
+  alerts are**: it is what this tool exists to say, so a browser that has
+  already granted permission, under a file that says nothing, gets it
+  without asking.
 - **"Finished" is a change, not a state.** `done` is where a session sits
   between turns, so a rule reading the state would say it again on every
   push. `wasDoing` holds what each session was doing last pass, and it is
@@ -114,11 +114,53 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `install_behind` compares.
   `test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list`,
   `test_the_page_says_which_copy_is_running`.
-  - **Everything about this screen, in this browser, is one menu**
-    (`putSettings`, `paintSettings`, `#setpop`): the colours, the two
-    alerts, the tab width, long lines and the diff's columns. It was a
-    bell, a colours button, a menu on the Review bar and two links over
-    every file, and the reader chose one menu from pictures. **The colours
+  - **Every setting is one menu** (`putSettings`, `paintSettings`,
+    `#setpop`): the colours, the two alerts, the tab width, long lines, the
+    diff's columns and the ticket links, with the path of the file that
+    keeps them at its foot (`#settingspath`, and a button that copies it).
+    It was a bell, a colours button, a menu on the Review bar and two links
+    over every file, and the reader chose one menu from pictures. **The
+    labels are one word** -- "tab", "lines", "diff", "links", not "tab
+    width", "long lines", "diff columns", "ticket links" -- because the
+    reader asked for the room. **It is
+    one proportional face, `--sans`, labels and buttons too**: the reader
+    asked, because a url in the fixed face made the menu as wide as the
+    longest link. **A choice is shown at once, then kept** (`keepSetting`,
+    `POST /api/settings`), and **made so by the push** (`takeSettings` on
+    the `settings` event). **The POST's answer carries no settings**, only
+    `done` and the `refused` links: the pushes go out in the order the file
+    was written, under `config_lock`, and an answer that carried the
+    settings came on another connection, landed before an older push, and
+    was undone by it. A numbering of the pushes was tried for that and
+    taken out again: one line needs no numbers. Every open page gets the
+    push, the one that made the change too, and a hand edit of the file
+    arrives the same way (`tell_config`). A change of the diff's columns from the file waits
+    while a comment is being written (`takeSides`), as `keepSides` does.
+  - **The ticket links are rows in the menu, saved on leave or Enter**
+    (`putLinkRow`, `saveLinks`, `putLinkRows`): the reader chose that over a
+    save button and over saving each keystroke, which linked half a
+    pattern for a moment. Each row is "find", a regular expression, and
+    "link to"; under it, the first match on the page and where it goes
+    (`paintExamples`, when the menu opens and after a save, never on a
+    push, because it reads the text of the whole page), or why it is not
+    saved, in red, with the box it is about (`sayLink`, `data-bad`, the
+    `field` the daemon names with `trouble_field` -- read from the
+    message's words, the wrong box went red when a pattern held them). **The page checks only what only it can**: a
+    half row, and a pattern this browser will not compile (`linkProblem`).
+    The rest is `link_trouble` in the daemon, once; `save_config` keeps
+    the good links, leaves out the bad and names them by index
+    (`refused`), so one mistake does not cost the other links. **The rows
+    are the file's when the menu opens, and the reader's while it is open**
+    (`putLinkRows`, from `showSettings`): a push never rebuilds them. A
+    rebuild took a red row, a half-filled one and an empty new one, none
+    of which is in any file; three guards each covered one way a push
+    could land (a save on its way, this page's own write, an older push
+    after an answer), the last was red one run in three at `-n 12`, and
+    the guards still missed the empty row.
+    `test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept`.
+    **The outside click is read from the click's path**
+    (`composedPath`), not from where its target is now: × takes its own
+    row out, its target then had no place on the page, and the menu shut. **The colours
     buttons wear the colours they give** (`--light-bg`, `--dark-ink` and
     the rest, in the first `:root`, which the theme blocks read for `--bg`
     and `--ink`), so they read the same in either theme. **Each label
@@ -160,12 +202,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     rebuilt between the press and the release is a click that never
     happens. A click on a link chooses nothing, and a double-click on one
     does not start a rename. `renameRow` forgets the name's key, or the name
-    stays empty after the box goes. `state.links.length` is in
-    `drawSessions`' key, and **`loadLinks` calls `drawSessions` itself**:
-    the links can answer after the last push, the one a stream opens with
-    once a session is chosen, and then nothing drew the rows again. Alone
-    the test passed; under load it was red three runs in three.
-    `test_a_ticket_in_a_rows_name_or_branch_is_a_link`.
+    stays empty after the box goes. **`state.linksKey` is in
+    `drawSessions`' key, not the count**: a pattern changed in the menu
+    left the count where it was, and the rows kept the old links. And
+    **`takeLinks` calls `drawSessions` itself**: the links can change after
+    the last push of the sessions -- the reader adds one -- and then nothing
+    drew the rows again. Alone the test passed; under load it was red three
+    runs in three. `test_a_ticket_in_a_rows_name_or_branch_is_a_link`.
   - **The git line is one line.** Everything on it keeps its width but the
     branch, which gives way with an ellipsis: "✓ clean" shrank with it and
     broke over two lines. A line that sets `display: flex` needs its own

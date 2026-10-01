@@ -70,20 +70,45 @@ def test_the_page_is_served(served):
         assert b"<!doctype html>" in response.read().lower()
 
 
-def test_the_links_route_carries_both_answers(ws, served):
-    """The usable links, and what is wrong with the rest. Both, because the
-    page cannot tell "no links" from "your file is broken" on its own -- and
-    the difference is the whole of the reader's problem."""
+def test_the_page_carries_the_settings_and_the_trouble(ws, served):
+    """The usable settings, every link as written with what is wrong with it
+    and which box that is about, and where the file is. The trouble too,
+    because the page cannot tell "no links" from "your file is broken" on
+    its own -- and the difference is the whole of the reader's problem."""
     _, base = served
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps([
+    ws.config_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.config_path().write_text(json.dumps({"colours": "dark", "links": [
         {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
         {"match": "BAD-(", "url": "https://tickets/"},
-    ]), encoding="utf-8")
-    status, body = get(f"{base}/api/links")
-    assert status == 200
-    assert body["links"] == [{"match": r"OK-(\d+)", "url": "https://tickets/$1"}]
+    ]}), encoding="utf-8")
+    with urllib.request.urlopen(f"{base}/", timeout=5) as response:
+        page = response.read().decode("utf-8")
+    body = json.loads(page.split("var SETTINGS = ", 1)[1].split(";\n", 1)[0])
+    assert body["colours"] == "dark"
+    assert [one["trouble"] == "" for one in body["links"]] == [True, False]
+    assert [one["field"] for one in body["links"]] == ["", "match"]
     assert len(body["trouble"]) == 1 and "link 2" in body["trouble"][0]
+    assert body["path"].endswith("settings.json")
+
+
+def test_the_page_is_served_with_the_settings_in_it(ws, served):
+    """So the first paint has the reader's colours: a fetch after the page
+    has drawn is a flash of the wrong ones."""
+    _, base = served
+    daemon, _ = served
+    ws.save_config({"colours": "light",
+                    "links": [{"match": "</script>(\\d+)", "url": "https://t/$1"},
+                              {"match": "__WOSTUAST_TOKEN__", "url": "https://t/"}]})
+    with urllib.request.urlopen(f"{base}/", timeout=5) as response:
+        page = response.read().decode("utf-8")
+    assert "__WOSTUAST_SETTINGS__" not in page
+    held = page.split("var SETTINGS = ", 1)[1].split(";\n", 1)[0]
+    assert json.loads(held)["colours"] == "light"
+    # The reader's text cannot end the script it stands in, and a mark in
+    # it is not filled in: the marks go in in one pass.
+    assert "</script>(" not in page
+    assert json.loads(held)["links"][1]["match"] == "__WOSTUAST_TOKEN__"
+    assert page.count(daemon.token) == 1
 
 
 def test_sessions_are_json(ws, served):
@@ -1504,8 +1529,8 @@ HIDDEN = b"GET /api/nothing HTTP/1.1\r\nHost: localhost\r\n\r\n"
     (b"POST /api/session/s1/send HTTP/1.1\r\nContent-Length: 0\r\n"
      b"Content-Length: 50\r\n", HIDDEN),
     # A GET's body is never read at all.
-    (b"GET /api/links HTTP/1.1\r\nContent-Length: %d\r\n" % len(HIDDEN), HIDDEN),
-    (b"GET /api/links HTTP/1.1\r\nTransfer-Encoding: chunked\r\n",
+    (b"GET /api/sessions HTTP/1.1\r\nContent-Length: %d\r\n" % len(HIDDEN), HIDDEN),
+    (b"GET /api/sessions HTTP/1.1\r\nTransfer-Encoding: chunked\r\n",
      b"%x\r\n" % len(HIDDEN) + HIDDEN + b"\r\n0\r\n\r\n"),
 ], ids=["chunked", "a-length-that-is-not-a-number", "a-negative-length",
         "two-lengths", "a-get-with-a-body", "a-chunked-get"])
@@ -1525,7 +1550,7 @@ def test_a_body_that_is_not_read_does_not_frame_the_next_request(in_tmux, head,
 
 @pytest.mark.parametrize("head, first", [
     (b"POST /api/session/s1/send HTTP/1.1\r\n", b" 403 "),
-    (b"GET /api/links HTTP/1.1\r\n", b" 200 "),
+    (b"GET /api/sessions HTTP/1.1\r\n", b" 200 "),
 ], ids=["a-post", "a-get"])
 def test_a_length_too_long_to_be_a_number_is_not_read(in_tmux, head, first):
     """`isdigit()` took 5,000 digits and `int()` refused them: Python reads
@@ -2073,3 +2098,104 @@ def test_a_yes_in_the_terminal_is_not_taken_for_a_no(ws, declining):
             "result", "14 passed in 0.31s", tool_id="toolu_p1")))
     daemon.tick()
     assert daemon.store.sessions["s1"].state == "needs_you"
+
+
+# --- the settings, written from the page --------------------------------------
+
+
+def settings_pushed(client):
+    """The `settings` messages a stream client was sent, as data."""
+    out = []
+    while not client.queue.empty():
+        message = client.queue.get_nowait()
+        if message.startswith("event: settings\n"):
+            out.append(json.loads(message.split("data: ", 1)[1]))
+    return out
+
+
+def test_a_setting_needs_the_token(ws, served):
+    """It writes no terminal, but it writes a file of the reader's, and any
+    site can POST to a loopback port. Checked like the verbs."""
+    daemon, base = served
+    status, _ = post(f"{base}/api/settings", {"colours": "dark"})
+    assert status == 403
+    status, _ = post(f"{base}/api/settings", {"colours": "dark"}, token="wrong")
+    assert status == 403
+    assert not ws.config_path().exists()
+
+
+def test_a_setting_is_written_and_every_page_hears_of_it(ws, served):
+    """One reader, many tabs: a change in one is a change in all of them,
+    the one that made it too, and the push is how."""
+    daemon, base = served
+    client = daemon.hub.add()
+    status, body = post(f"{base}/api/settings", {"tab_width": 8},
+                        token=daemon.token)
+    assert status == 200 and body["done"] is True, body
+    assert json.loads(ws.config_path().read_text()) == {"tab_width": 8}
+    assert [one["tab_width"] for one in settings_pushed(client)] == [8]
+    # The settings come by the push alone, one line in order. An answer
+    # that carried them came on another connection, and could land before
+    # an older push and be undone by it.
+    assert set(body) == {"done", "refused"}, body
+    # And the tick that follows does not say it twice.
+    daemon.tell_config()
+    assert settings_pushed(client) == []
+
+
+def test_a_file_changed_by_hand_reaches_the_page(ws, served):
+    """The reader may open the file in an editor. The tick looks at it -- a
+    stat, not a read -- and a change goes out without a reload."""
+    daemon, _ = served
+    client = daemon.hub.add()
+    daemon.tell_config()
+    assert settings_pushed(client) == []
+    ws.config_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.config_path().write_text('{"colours": "dark"}', encoding="utf-8")
+    daemon.tick()
+    assert [one["colours"] for one in settings_pushed(client)] == ["dark"]
+
+
+def test_a_bad_setting_is_refused_and_says_why(ws, served):
+    daemon, base = served
+    status, body = post(f"{base}/api/settings", {"tab_width": 3},
+                        token=daemon.token)
+    assert status == 400 and "tab_width" in body["error"], body
+    assert not ws.config_path().exists()
+
+
+def test_a_refused_link_is_named_in_the_answer(ws, served):
+    """So the menu can put the reason under the right row; the rest are
+    kept."""
+    daemon, base = served
+    status, body = post(f"{base}/api/settings", {"links": [
+        {"match": "(a+)+", "url": "https://t/"},
+        {"match": r"OK-(\d+)", "url": "https://t/$1"}]}, token=daemon.token)
+    assert status == 200, body
+    assert [(one["at"], one["field"]) for one in body["refused"]] == [(0, "match")]
+    held = json.loads(ws.config_path().read_text())
+    assert [one["match"] for one in held["links"]] == [r"OK-(\d+)"]
+
+
+def test_a_setting_too_large_to_read_says_that(ws, served):
+    """`asked()` hands over `{}` for a body it did not read, which is a
+    change of nothing, and must not answer as if it were done."""
+    daemon, base = served
+    status, body = post(f"{base}/api/settings",
+                        {"links": [{"match": "x", "url": "https://t/" + "x" * 70000}]},
+                        token=daemon.token)
+    assert status == 413 and "large" in body["error"], (status, body)
+    assert not ws.config_path().exists()
+
+
+def test_a_settings_file_that_cannot_be_written_says_so(ws, served, monkeypatch):
+    """A read-only home must not answer 500, or "done"."""
+    daemon, base = served
+
+    def refuse(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(ws, "write_atomic", refuse)
+    status, body = post(f"{base}/api/settings", {"colours": "dark"},
+                        token=daemon.token)
+    assert status == 400 and "read-only" in body["error"], (status, body)

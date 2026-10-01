@@ -118,7 +118,8 @@ flowchart LR
 ## Install
 
 **You need:** Python 3.10 or newer, Claude Code, and tmux. git makes the Files
-and Review tabs work. No `pip install`, no build step, no config file.
+and Review tabs work. No `pip install`, no build step, and no config file to
+write: the page writes your settings file when you change a setting.
 
 **1. Install.** This copies one file to `~/.local/bin/wostuast` and adds its
 hooks to `~/.claude/settings.json`. It changes nothing else in that file.
@@ -266,20 +267,28 @@ The **settings** button at the end of the tab row holds two switches for alerts.
 you. The other tells you when an agent has finished. The first is on as soon as
 you allow alerts, because that is what this tool is for. The second is off
 until you turn it on. Both use your browser's own notifications, so the
-browser asks for permission the first time. Your choice stays in that browser.
+browser asks for permission the first time. Your choice goes into your
+settings file. The permission itself stays in each browser.
 While alerts are off, the settings button carries a small crossed-out bell.
 
 ### Settings
 
-The **settings** button (the sliders, at the end of the tab row) holds
-everything about this screen, and your choices stay in this browser:
+The **settings** button (the sliders, at the end of the tab row) holds all
+the settings:
 
 - **colours**: auto, light or dark. Each button shows the colours it gives.
 - **alerts**: see above.
-- **tab width**: 2, 4 or 8, for the Files and the Review tabs.
-- **long lines**: scroll or wrap, for the Files tab and the one-column diff.
+- **tab**: the tab width, 2, 4 or 8, for the Files and the Review tabs.
+- **lines**: long lines scroll or wrap, for the Files tab and the one-column diff.
   A very long file is drawn a part at a time and cannot wrap; it says so.
-- **diff columns**: one, or two side by side. Two columns always wrap.
+- **diff**: one column, or two side by side. Two columns always wrap.
+- **links**: your ticket links. See [Ticket links](#ticket-links).
+
+A change applies at once. The page writes it to
+`~/.config/wostuast/settings.json` (or `$XDG_CONFIG_HOME/wostuast/`), and
+the menu shows that path at the bottom. Every open page gets the change,
+in every browser. You can also edit the file by hand while `serve` runs:
+the page gets the change in about a second.
 
 ## Keys
 
@@ -335,33 +344,49 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
-| `~/.local/state/wostuast/links.json` | Your own ticket links, if you want any. |
+| `~/.config/wostuast/settings.json` | Your settings and your ticket links. The page writes it when you change a setting. |
 | `~/.claude/settings.json` | Where the hooks are registered. |
 
 ### Ticket links
 
-If your work has ticket ids in it, they can become links. `serve` writes an
-example `links.json` the first time it runs, so you only edit it:
+If your work has ticket ids in it, they can become links. Open the settings
+menu, go to **links**, and click **+ add a link**. Each link has two
+fields:
+
+- **find** is a regular expression, for example `(OA|QSP)-(\d+)`.
+- **link to** is where a match links to, for example
+  `https://tickets.example.com/browse/$1-$2`. `$1` to `$9` are the groups of
+  the match, and `$0` is all of it. It must start with `http://` or
+  `https://`.
+
+The page saves a link when you leave a field or press Enter. Under each
+link, the menu shows the first match on the page and where it goes. A link
+that cannot be used is red, says why, and is not saved. Click **×** to
+remove a link.
+
+The links work in the transcript, in commit messages, and in the session
+list: in a session's name, its worktree and its branch.
+
+In the file, the links look like this:
 
 ```json
-[
-  {"match": "(OA|QSP)-(\\d+)", "url": "https://tickets.example.com/browse/$1-$2"}
-]
+{
+  "links": [
+    {"match": "(OA|QSP)-(\\d+)", "url": "https://tickets.example.com/browse/$1-$2"}
+  ]
+}
 ```
 
-`match` is a regular expression. `url` is where a match links to, and `$1` to
-`$9` are the groups of the match. The links work in the transcript, in commit
-messages, and in the session list: in a session's name, its worktree and its
-branch.
-
 > [!CAUTION]
-> **Write every backslash twice.** The file is JSON, so `\d` must be written
-> `\\d`. If the file has a problem, wostuast says so: `serve` prints it, the
-> page shows it at the end of the tab row, and `doctor` reports it. Keep patterns simple, because
-> a browser cannot stop a regular expression once it starts.
+> **In the file, write every backslash twice.** The file is JSON, so `\d`
+> must be written `\\d`. The menu does this for you. If the file has a
+> problem, wostuast says so: `serve` prints it, the page shows it at the end
+> of the tab row, and `doctor` reports it. Keep patterns simple, because a
+> browser cannot stop a regular expression once it starts.
 
-This is the one file you write. The program writes everything else in
-`~/.local/state/wostuast/`.
+An older wostuast read the links from `~/.local/state/wostuast/links.json`.
+That file is no longer read. Add the links again in the menu, then delete
+the file. `doctor` reminds you while the file is there.
 
 ## Safety
 

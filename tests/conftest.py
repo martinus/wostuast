@@ -35,6 +35,7 @@ wostuast = _load_module()
 def ws(tmp_path, monkeypatch):
     """The module, with its state directory pointed at a temporary path."""
     monkeypatch.setenv("WOSTUAST_STATE", str(tmp_path / "state"))
+    monkeypatch.setenv("WOSTUAST_CONFIG", str(tmp_path / "config"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("NO_COLOR", "1")
     return wostuast
@@ -62,6 +63,7 @@ def run_cli(tmp_path):
             "PATH": "/usr/bin:/bin",
             "HOME": str(root),
             "WOSTUAST_STATE": str(root / "state"),
+            "WOSTUAST_CONFIG": str(root / "config"),
             "CLAUDE_CONFIG_DIR": str(root / "claude"),
             "TMUX_PANE": "%3",
             "NO_COLOR": "1",

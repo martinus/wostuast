@@ -12,6 +12,7 @@ import pytest
 
 import conftest
 from browser import (
+    kept,
     settings,
     skip_without_browser,
     sync_playwright,
@@ -735,7 +736,7 @@ def test_a_comment_in_one_commit_anchors_to_the_file_as_it_is(repo_page):
             browser.close()
 
 
-def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page):
+def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page, ws):
     root, _ = repo_page
     (root / "code.py").write_text("print(10)\nprint(2)\n")
     with sync_playwright() as play:
@@ -756,9 +757,8 @@ def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page):
             changed = page.locator(".dline.pair.changed").first
             assert changed.locator(".half.now .addnote").count() == 1
             assert changed.locator(".half.was .addnote").count() == 0
-            assert page.evaluate(
-                "localStorage.getItem('wostuast-diff-sides')") == "split"
-            # It is about this screen, so a reload keeps it.
+            kept(ws, "diff_columns", "two")
+            # It is the reader's, so a reload keeps it.
             page.reload()
             page.wait_for_selector(".row")
             show_tab(page, "diff")
@@ -771,14 +771,12 @@ def test_side_by_side_puts_a_changed_line_beside_what_it_became(repo_page):
             browser.close()
 
 
-def test_a_side_with_no_line_stays_empty_so_the_columns_stay_level(repo_page):
+def test_a_side_with_no_line_stays_empty_so_the_columns_stay_level(repo_page, ws):
     """`second` added a line and removed none, so its left side is a gap."""
+    ws.save_config({"diff_columns": "two"})
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
-            page.evaluate("localStorage.setItem('wostuast-diff-sides', 'split')")
-            page.reload()
-            page.wait_for_selector(".row")
             show_tab(page, "diff")
             page.wait_for_selector(".dline.pair")
             row = page.locator(".diffhead.committed ~ .dfile .dline.pair.added").first
@@ -1351,9 +1349,8 @@ def test_a_commit_message_wraps_at_the_window_and_links_its_tickets(repo_page, w
     links reach the subject and the message, as they reach the transcript."""
     import json
     root, _ = repo_page
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(json.dumps(
-        [{"match": "OA-(\\d+)", "url": "https://tickets.example.com/OA-$1"}]))
+    ws.save_config({"links": [
+        {"match": "OA-(\\d+)", "url": "https://tickets.example.com/OA-$1"}]})
     (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
     conftest.git_in(root, "commit", "-qam", "OA-12: print three", "-m",
                     "Two was not enough, and the reader asked for a third\n"

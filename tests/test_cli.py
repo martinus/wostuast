@@ -141,7 +141,6 @@ def test_doctor_and_serve_say_when_the_installed_copy_is_another_version(
             pass
 
     monkeypatch.setattr(ws, "make_server", lambda daemon, port: Stops())
-    monkeypatch.setattr(ws, "write_example_links", lambda: False)
     assert ws.cmd_serve(type("Args", (), {"port": 0, "open": False})()) == 0
     assert behind in capsys.readouterr().err
 
@@ -291,20 +290,25 @@ def test_ls_does_not_pass_an_escape_sequence_to_the_terminal(ws, capsys):
     assert "\x07" not in out
 
 
-# --- the reader's own autolinks ----------------------------------------------
+# --- the reader's settings, and the ticket links in them --------------------
 
 
-def write_links(ws, text):
-    """The state directory is made on demand everywhere else, so a test that
-    writes straight into it has to make it too."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    ws.links_path().write_text(text, encoding="utf-8")
+def write_config(ws, text):
+    """The configuration directory is made on demand everywhere else, so a
+    test that writes straight into it has to make it too."""
+    ws.config_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.config_path().write_text(text, encoding="utf-8")
+
+
+def usable_links(ws):
+    return [{"match": one["match"], "url": one["url"]}
+            for one in ws.load_config()[1] if not one["trouble"]]
 
 
 def test_only_a_usable_autolink_reaches_the_page(ws, tmp_path):
-    """A broken entry is dropped here and named by `doctor`, rather than
+    """A broken entry is marked here and named by `doctor`, rather than
     becoming a link that quietly does nothing."""
-    write_links(ws, json.dumps([
+    write_config(ws, json.dumps({"links": [
         {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"},
         {"match": "OA-", "url": "javascript:alert(1)"},       # not http
         {"match": "OA-(", "url": "https://tickets/"},          # will not compile
@@ -313,18 +317,66 @@ def test_only_a_usable_autolink_reaches_the_page(ws, tmp_path):
         "not an object",
         {"match": "x" * 300, "url": "https://tickets/"},       # far too long
         {"match": "(a+)+b", "url": "https://tickets/"},         # backtracks
-    ]))
-    assert ws.read_links() == [
+        {"match": "OA-1", "url": "https://t/", "x": 1},        # not a link's key
+    ]}))
+    assert usable_links(ws) == [
         {"match": r"(OA|QSP)-(\d+)", "url": "https://tickets/browse/$1-$2"}]
+    # Every other one is trouble, the one that is not even an object too.
+    # One check for the file and for a POST: a key the POST refuses is
+    # refused here too.
+    assert len(ws.load_config()[2]) == 8
 
 
-def test_no_links_file_is_no_links(ws):
-    assert ws.read_links() == []
+def test_the_menu_is_handed_a_bad_link_as_written(ws):
+    """So it can show it in red and say why, rather than drop it from sight:
+    a link that vanished from the menu was a link the reader had to type
+    again without knowing what had been wrong with it."""
+    write_config(ws, json.dumps({"links": [
+        {"match": "BAD-(", "url": "https://tickets/$1"}]}))
+    links = ws.config_payload()["links"]
+    assert links[0]["match"] == "BAD-("
+    assert "not a regular expression" in links[0]["trouble"]
 
 
-def test_a_links_file_that_is_not_a_list_is_no_links(ws):
-    write_links(ws, '{"match": "OA-", "url": "https://t/"}')
-    assert ws.read_links() == []
+def test_no_settings_file_is_no_settings_and_no_trouble(ws):
+    """Most people never change a setting, and a machine that never had the
+    file must not be told off for it."""
+    assert ws.load_config() == ({}, [], [])
+
+
+def test_a_settings_file_that_is_not_an_object_is_trouble(ws):
+    write_config(ws, '[{"match": "OA-", "url": "https://t/"}]')
+    good, links, trouble = ws.load_config()
+    assert (good, links) == ({}, [])
+    assert "not an object" in trouble[0]
+
+
+def test_a_setting_outside_its_words_is_left_out_and_said(ws):
+    """The page then uses its default."""
+    write_config(ws, json.dumps({
+        "colours": "dark", "tab_width": 5, "long_lines": "wrap",
+        "diff_columns": True, "alerts": {"needs": True, "done": "yes"},
+        "mine": "a key we do not know"}))
+    good, _, trouble = ws.load_config()
+    assert good == {"colours": "dark", "long_lines": "wrap"}
+    said = " ".join(trouble)
+    assert "tab_width" in said and "diff_columns" in said and "alerts" in said
+    assert "mine" not in said          # not ours to judge
+    assert ws.config_trouble("tab_width", True)
+    assert not ws.config_trouble("tab_width", 8)
+
+
+def test_the_file_is_in_the_configuration_directory(ws, monkeypatch, tmp_path):
+    """Where a person looks for it, and where XDG says it goes."""
+    monkeypatch.delenv("WOSTUAST_CONFIG")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert ws.config_path() == tmp_path / "xdg" / "wostuast" / "settings.json"
+    monkeypatch.delenv("XDG_CONFIG_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert ws.config_path() == (tmp_path / "home" / ".config" / "wostuast"
+                                / "settings.json")
+    # And the page is told it with the home as `~`, so it fits the menu.
+    assert ws.config_payload()["path"] == "~/.config/wostuast/settings.json"
 
 
 def test_a_quantifier_inside_a_quantified_group_is_refused(ws):
@@ -340,10 +392,10 @@ def test_a_quantifier_inside_a_quantified_group_is_refused(ws):
 
 
 def test_doctor_names_a_broken_autolink(ws, capsys):
-    write_links(ws, json.dumps([
+    write_config(ws, json.dumps({"links": [
         {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
         {"match": "BAD-(", "url": "https://tickets/"},
-    ]))
+    ]}))
     ws.cmd_doctor(argparse.Namespace())
     said = capsys.readouterr().out
     assert "link 2" in said and "not a regular expression" in said
@@ -351,13 +403,23 @@ def test_doctor_names_a_broken_autolink(ws, capsys):
     assert "note" in said
 
 
-def test_a_links_file_that_will_not_parse_says_what_is_wrong(ws):
+def test_doctor_says_the_old_links_file_is_no_longer_read(ws, capsys):
+    """The reader chose no migration. A file that once made links and now
+    does nothing gives no clue why, so `doctor` says where they go now."""
+    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.links_path().write_text("[]", encoding="utf-8")
+    ws.cmd_doctor(argparse.Namespace())
+    said = capsys.readouterr().out
+    assert "no longer read" in said and "settings menu" in said
+
+
+def test_a_settings_file_that_will_not_parse_says_what_is_wrong(ws):
     """The one people write. `\\d` is not a JSON escape, so the file never
     parses -- and the page showed nothing, which is also what a machine with
-    no links file looks like. Silence was the bug, not the typo."""
-    write_links(ws, '[{"match": "(OA|QSP)-(\\d+)", "url": "https://t/$1-$2"}]')
-    usable, trouble = ws.load_links()
-    assert usable == []
+    no file looks like. Silence was the bug, not the typo."""
+    write_config(ws, '{"links": [{"match": "(OA|QSP)-(\\d+)", "url": "https://t/$1-$2"}]}')
+    good, links, trouble = ws.load_config()
+    assert (good, links) == ({}, [])
     assert len(trouble) == 1
     assert "not valid JSON" in trouble[0]
     # And it says the thing that fixes it, because the error alone
@@ -367,25 +429,85 @@ def test_a_links_file_that_will_not_parse_says_what_is_wrong(ws):
 
 def test_an_entry_that_cannot_be_used_is_trouble_and_the_rest_still_are_links(ws):
     """Dropping a broken entry in silence is the same bug one entry down."""
-    write_links(ws, json.dumps([
+    write_config(ws, json.dumps({"links": [
         {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
         {"match": "BAD-(", "url": "https://tickets/"},
-    ]))
-    usable, trouble = ws.load_links()
-    assert usable == [{"match": r"OK-(\d+)", "url": "https://tickets/$1"}]
+    ]}))
+    assert usable_links(ws) == [{"match": r"OK-(\d+)", "url": "https://tickets/$1"}]
+    trouble = ws.load_config()[2]
     assert len(trouble) == 1 and "link 2" in trouble[0]
 
 
-def test_no_links_file_is_not_trouble(ws):
-    """Most people want no autolinks, and a machine that never had the file
-    must not be told off for it."""
-    assert ws.load_links() == ([], [])
+def test_a_change_is_written_and_keeps_what_it_did_not_touch(ws):
+    """The menu sends one setting at a time, and the file is the reader's: a
+    key a newer wostuast wrote, or a person, stays."""
+    write_config(ws, json.dumps({"colours": "dark", "mine": [1, 2]}))
+    assert ws.save_config({"tab_width": 8}) == ("", [])
+    held = json.loads(ws.config_path().read_text(encoding="utf-8"))
+    assert held == {"colours": "dark", "mine": [1, 2], "tab_width": 8}
+    # Written to be read: indented, one key a line.
+    assert '\n  "tab_width": 8' in ws.config_path().read_text(encoding="utf-8")
 
 
-def test_serve_says_what_is_wrong_with_the_links_file(ws, capsys, monkeypatch):
-    """The page cannot make you look at it and `doctor` is something you had
+def test_a_bad_change_writes_nothing(ws):
+    """One bad key and the whole change is refused, before the file is
+    touched -- the page cannot write what the file would refuse to read."""
+    write_config(ws, json.dumps({"colours": "dark"}))
+    for change in ({"tab_width": 3}, {"colours": "auto", "wrap": "yes"},
+                   {"alerts": {"needs": 1}}, {"links": "PROJ-1"}, {}):
+        why, _ = ws.save_config(change)
+        assert why, change
+    assert json.loads(ws.config_path().read_text()) == {"colours": "dark"}
+
+
+def test_a_link_that_cannot_be_used_is_left_out_and_the_rest_are_kept(ws):
+    """The menu shows the refused one in red; a mistake in one pattern must
+    not cost the reader the others. Where it stood comes back, so the page
+    can put the reason under the right row."""
+    why, refused = ws.save_config({"links": [
+        {"match": r"OK-(\d+)", "url": "https://tickets/$1"},
+        {"match": "(a+)+b", "url": "https://tickets/"},
+        {"match": r"NO-(\d+)", "url": "ftp://tickets/$1"},
+        {"match": r"X-(\d+)", "url": "https://t/$1", "extra": 1},
+    ]})
+    assert why == ""
+    assert [one["at"] for one in refused] == [1, 2, 3]
+    assert "quantifier" in refused[0]["trouble"]
+    assert usable_links(ws) == [{"match": r"OK-(\d+)", "url": "https://tickets/$1"}]
+
+
+def test_a_file_that_cannot_be_read_is_never_written_over(ws):
+    """It is the reader's, and they may be halfway through an edit: a default
+    written over it would take their work."""
+    for held in ('{"links": [{"match": "OA-(\\d+)"', "[1, 2]"):
+        write_config(ws, held)
+        why, _ = ws.save_config({"tab_width": 2})
+        assert "left alone" in why
+        assert ws.config_path().read_text(encoding="utf-8") == held
+
+
+def test_the_settings_file_is_private(ws):
+    """The links name where the reader's tickets live, which is nobody
+    else's business on a shared machine."""
+    ws.save_config({"colours": "light"})
+    assert oct(ws.config_path().stat().st_mode)[-3:] == "600"
+    assert oct(ws.config_path().parent.stat().st_mode)[-3:] == "700"
+
+
+def test_the_settings_in_the_page_cannot_end_its_script(ws):
+    """A link is the reader's text and goes into a `<script>`. Written as it
+    is, `</script>` in one ended the script there."""
+    text = ws.page_json({"links": [{"match": "</script><b>&",
+                                    "url": "\u2028" + chr(0xD800)}]})
+    assert "<" not in text and ">" not in text and "&" not in text
+    assert text.isascii()
+    assert json.loads(text)["links"][0]["match"] == "</script><b>&"
+
+
+def test_serve_says_what_is_wrong_with_the_settings_file(ws, capsys, monkeypatch):
+    """The page says it only in a corner and `doctor` is something you had
     no reason to run, so the restart has to say it."""
-    write_links(ws, "not json at all")
+    write_config(ws, "not json at all")
 
     class Fake:
         server_address = ("127.0.0.1", 7331)
@@ -402,13 +524,14 @@ def test_serve_says_what_is_wrong_with_the_links_file(ws, capsys, monkeypatch):
     monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
     monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
     assert ws.cmd_serve(argparse.Namespace(port=0, open=False)) == 0
-    assert "links:" in capsys.readouterr().err
+    assert "settings:" in capsys.readouterr().err
 
 
-def test_serve_says_nothing_about_a_links_file_it_can_use(ws, capsys,
-                                                          monkeypatch):
+def test_serve_says_nothing_about_a_settings_file_it_can_use(ws, capsys,
+                                                             monkeypatch):
     """A line every start would be noise, and noise is not read."""
-    write_links(ws, json.dumps([{"match": r"OK-(\d+)", "url": "https://t/$1"}]))
+    write_config(ws, json.dumps({"links": [
+        {"match": r"OK-(\d+)", "url": "https://t/$1"}]}))
 
     class Fake:
         server_address = ("127.0.0.1", 7331)
@@ -425,69 +548,37 @@ def test_serve_says_nothing_about_a_links_file_it_can_use(ws, capsys,
     monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
     monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
     ws.cmd_serve(argparse.Namespace(port=0, open=False))
-    assert "links:" not in capsys.readouterr().err
+    assert "settings:" not in capsys.readouterr().err
 
 
-def test_doctor_names_a_links_file_that_will_not_parse(ws, capsys):
-    write_links(ws, "not json at all")
+def test_serve_writes_no_file_of_its_own(ws, monkeypatch):
+    """It left an example `links.json` once. Now the menu writes the file,
+    and only when the reader changes something."""
+    class Fake:
+        server_address = ("127.0.0.1", 7331)
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
+    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
+    ws.cmd_serve(argparse.Namespace(port=0, open=False))
+    assert not ws.config_path().exists()
+    assert not ws.links_path().exists()
+
+
+def test_doctor_names_a_settings_file_that_will_not_parse(ws, capsys):
+    write_config(ws, "not json at all")
     ws.cmd_doctor(argparse.Namespace())
     said = capsys.readouterr().out
     assert "not valid JSON" in said
     assert "note" in said               # still not a reason for the check to fail
-
-
-def test_serve_leaves_an_example_when_there_is_no_links_file(ws):
-    """Finding out how to write one should be opening it, not reading a
-    README. JSON has no comments, so the example has to be a working entry."""
-    assert ws.write_example_links() is True
-    assert ws.links_path().exists()
-    # It is a file `doctor` is happy with and the page can use.
-    assert ws.read_links() == ws.EXAMPLE_LINKS
-    for one in ws.EXAMPLE_LINKS:
-        assert ws.link_trouble(one) == "", one
-
-
-def test_the_example_links_nothing(ws):
-    """Nobody's work has a ticket called `EXAMPLE-1`, so the example matches
-    nothing until it is edited. An example that made real links would be a
-    program doing something nobody asked for."""
-    import re
-    for one in ws.EXAMPLE_LINKS:
-        pattern = re.compile(one["match"])
-        for text in ("Fixed OA-73219 and QSP-52811.",
-                     "see ticket 4242, and PROJ-7",
-                     "an example of what to do"):
-            assert pattern.search(text) is None, (one, text)
-
-
-def test_an_existing_links_file_is_never_written_over(ws):
-    """A file somebody wrote and got wrong is still theirs; `doctor` says
-    what is wrong with it. Drop the `exists` check and this one is lost."""
-    ws.links_path().parent.mkdir(parents=True, exist_ok=True)
-    for held in ('[{"match": "OA-(\\\\d+)", "url": "https://mine/$1"}]',
-                 "not json at all",
-                 ""):
-        ws.links_path().write_text(held, encoding="utf-8")
-        assert ws.write_example_links() is False
-        assert ws.links_path().read_text(encoding="utf-8") == held
-
-
-def test_the_example_is_private_at_creation(ws):
-    """Everything in the state directory is, and this one is written by the
-    same helper for the same reason."""
-    ws.write_example_links()
-    assert oct(ws.links_path().stat().st_mode)[-3:] == "600"
-    assert oct(ws.links_path().parent.stat().st_mode)[-3:] == "700"
-
-
-def test_a_state_directory_that_cannot_be_written_does_not_stop_serve(ws,
-                                                                     monkeypatch):
-    """It is a convenience. `serve` starts with it or without it."""
-    def refuse(*args, **kwargs):
-        raise OSError("read-only file system")
-
-    monkeypatch.setattr(ws, "write_atomic", refuse)
-    assert ws.write_example_links() is False
 
 
 def test_serve_says_how_much_history_it_read_and_how_long_it_took(
