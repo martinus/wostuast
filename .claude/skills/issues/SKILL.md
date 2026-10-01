@@ -102,6 +102,12 @@ colour. A test run under a `-k` that never selected it is a test you have not
 run. `tests/perturb.py` runs each break against only the tests it names and
 prints one line a break; its last line is the count to read.
 
+**An agent that does an issue gets the issue's "Done when" in its prompt,
+and its result is checked against it.** One was asked to convert the page
+tests to a context manager, converted 383 of 410, and reported success: the
+27 it left were the issue's own condition, "no test opens a page by hand",
+and were done by hand after it.
+
 ### 5. Write the scar down in the same commit
 
 | Where | What |
@@ -147,8 +153,15 @@ browser test that only fails on a loaded runner, and a failure message
 wiped by a push a quiet machine never sends.
 
 A red CI on a PR you opened is work now, not news. Re-diagnose and push again
-until it is green. While CI runs, read the next issue and reproduce it —
-reading only, the branch stays as CI saw it.
+until it is green. **While CI runs, build the next pull request in a
+worktree of its own**: `git worktree add --detach ../wt-<x> <head>`, work
+and commit there, and cherry-pick the commit onto `main` after the merge.
+The branch stays as CI saw it, and the main checkout stays clean, which is
+what the stop hook asks for -- it wants every change committed and pushed,
+and a push to the branch would restart CI on the open pull request. One
+session merged fifteen pull requests this way, each built while the one
+before it was in CI. `git worktree remove` each one when its pull request
+is merged.
 
 ### 8. Merge, reset, and read the list again
 
@@ -186,13 +199,17 @@ for `martinus/martinus/wostuast`.
 6. **Merge**: `merge_pull_request` with `merge_method: "merge"`,
    `commit_title: "Merge pull request #<n> from martinus/<branch>"`, and
    `expectedHeadSha` from `git rev-parse HEAD` — all 40 characters; a short
-   sha is refused. A 409 "Head branch was modified" means the head is not
+   sha is refused. Run the command and copy what it prints: a sha written
+   from memory, right in its first seven characters, got the 409 below. A 409 "Head branch was modified" means the head is not
    the one CI checked: read the checks again on the new head, never force.
 7. **Close what it closed**: `list_issues`, and close each issue the pull
    request names with `issue_write` method `update`, `state: "closed"`,
    `state_reason: "completed"`. "Closes #N" in the body that created the
    pull request left the issues open after both merges of one session, so
-   the list is read, never assumed.
+   the list is read, never assumed. **Write `Closes #N` only for an issue
+   the pull request finishes**: in a commit message GitHub does close it on
+   the merge. A pull request that does part of an issue says "Does item 2
+   of #N", and the issue's body is rewritten to what is left, with why.
 8. **Let go**: `delete_trigger` the check-in, `unsubscribe_pr_activity`.
 9. **Back onto main**: `git fetch origin main && git checkout -B <branch>
    origin/main`, then `git push -u origin <branch>`. The merge commit holds

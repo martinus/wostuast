@@ -387,6 +387,10 @@ Throwaway home, never your own, and a new one each time:
 T=$(mktemp -d) && export HOME=$T WOSTUAST_STATE=$T/state CLAUDE_CONFIG_DIR=$T/claude WOSTUAST_CONFIG=$T/config
 ```
 
+**Commit in a shell that did not export it.** git reads its identity from
+`$HOME`, so a `git commit` after the export fails with no name, and a
+chained command after the commit does not run.
+
 **Never `rm -rf $HOME` to empty it, and never chain anything before a
 removal.** The safety check refuses an `rm` of a home, and a refused
 command runs none of its parts: an edit chained in front of it did not
@@ -410,7 +414,10 @@ reliable shape when making several edits at once. Three scars on that shape:
   code that had not changed.
 - **Grep for a name before you define it**: a second top-level `def` or
   `function` silently replaces the first. `test_no_name_is_defined_twice`
-  holds it now; `load_settings` was written twice in one session.
+  holds it now; `load_settings` was written twice in one session. It runs
+  with the tests that drive no browser, so run those first: a browser run
+  spent minutes on a second `KEPT` (the scrub's, and then a new table's)
+  that this test names in seconds.
 
 **A new test is not a test until you have made it fail**, by breaking what it
 claims to guard, with `tests/perturb.py`. `.claude/topics/testing.md` says how,
