@@ -129,20 +129,7 @@ def test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version(
 
     # A start mends it on the way up, and says so where the reader is
     # looking. The server stops at once, the way ctrl-c stops it.
-    class Stops:
-        server_address = ("127.0.0.1", 7331)
-
-        def serve_forever(self):
-            raise KeyboardInterrupt
-
-        def shutdown(self):
-            pass
-
-        def server_close(self):
-            pass
-
-    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Stops())
-    assert ws.cmd_serve(type("Args", (), {"port": 0, "open": False})()) == 0
+    assert start(ws, monkeypatch) == 0
     out = capsys.readouterr().out
     assert f"\u21bb updated {target}" in out
     assert "restart your Claude Code sessions" in out
@@ -536,21 +523,7 @@ def test_serve_says_what_is_wrong_with_the_settings_file(ws, capsys, monkeypatch
     no reason to run, so the restart has to say it."""
     write_config(ws, "not json at all")
 
-    class Fake:
-        server_address = ("127.0.0.1", 7331)
-
-        def serve_forever(self):
-            raise KeyboardInterrupt
-
-        def shutdown(self):
-            pass
-
-        def server_close(self):
-            pass
-
-    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
-    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
-    assert ws.cmd_serve(argparse.Namespace(port=0, open=False)) == 0
+    assert start(ws, monkeypatch) == 0
     assert "settings:" in capsys.readouterr().out
 
 
@@ -560,42 +533,14 @@ def test_serve_says_nothing_about_a_settings_file_it_can_use(ws, capsys,
     write_config(ws, json.dumps({"links": [
         {"match": r"OK-(\d+)", "url": "https://t/$1"}]}))
 
-    class Fake:
-        server_address = ("127.0.0.1", 7331)
-
-        def serve_forever(self):
-            raise KeyboardInterrupt
-
-        def shutdown(self):
-            pass
-
-        def server_close(self):
-            pass
-
-    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
-    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
-    ws.cmd_serve(argparse.Namespace(port=0, open=False))
+    start(ws, monkeypatch)
     assert "settings:" not in capsys.readouterr().out
 
 
 def test_serve_writes_no_file_of_its_own(ws, monkeypatch):
     """It left an example `links.json` once. Now the menu writes the file,
     and only when the reader changes something."""
-    class Fake:
-        server_address = ("127.0.0.1", 7331)
-
-        def serve_forever(self):
-            raise KeyboardInterrupt
-
-        def shutdown(self):
-            pass
-
-        def server_close(self):
-            pass
-
-    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
-    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
-    ws.cmd_serve(argparse.Namespace(port=0, open=False))
+    start(ws, monkeypatch)
     assert not ws.config_path().exists()
     assert not ws.links_path().exists()
 
@@ -620,24 +565,7 @@ def test_serve_says_how_much_history_it_read_and_how_long_it_took(
     size = sum(path.stat().st_size for path in
                ws.archived_events_paths() + [ws.events_path()])
 
-    class Fake:
-        server_address = ("127.0.0.1", 7331)
-
-        def serve_forever(self):
-            raise KeyboardInterrupt
-
-        def shutdown(self):
-            pass
-
-        def server_close(self):
-            pass
-
-    monkeypatch.setattr(ws, "make_server", lambda daemon, port: Fake())
-    monkeypatch.setattr(ws.Daemon, "run", lambda self: None)
-    ws.cmd_serve(argparse.Namespace(port=0, open=False))
-    for worker in threading.enumerate():
-        if worker.name == "wostuast-refresh":
-            worker.join(10)
+    start(ws, monkeypatch)
     said = capsys.readouterr().out
     assert f"read 12 events from {files} files ({ws.size_label(size)}) in " in said
     assert re.search(r"\) in (\d+ ms|\d+\.\d s)$", said, re.M)

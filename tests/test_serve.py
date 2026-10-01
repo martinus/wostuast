@@ -770,13 +770,15 @@ def test_a_listing_that_has_not_moved_sends_no_names(repo_session):
     assert other["names"] == first["names"]
 
 
-def test_a_new_file_moves_the_tag(repo_session):
+def test_a_new_file_moves_the_tag(ws, repo_session, monkeypatch):
     root, base = repo_session
     _, first = get(f"{base}/api/session/s1/files")
     (root / "fresh.txt").write_text("new\n")
-    # The listing is held for a few seconds, so wait for it to be read again.
-    for _ in range(60):
-        time.sleep(0.25)
+    # The listing is held for `LIST_FRESH`, and read again behind the
+    # answer after that; waiting out the real three seconds cost each run.
+    monkeypatch.setattr(ws, "LIST_FRESH", 0.0)
+    for _ in range(300):
+        time.sleep(0.05)
         _, again = get(f"{base}/api/session/s1/files?have={first['tag']}")
         if again["tag"] != first["tag"]:
             break
@@ -1621,6 +1623,9 @@ def test_an_origin_that_will_not_parse_is_refused_quietly(in_tmux):
                b"Host: localhost\r\n"
                b"Origin: http://[::1\r\n"
                b"X-Wostuast-Token: " + daemon.token.encode() + b"\r\n"
+               # Or the socket stays open after the 403, and the read waits
+               # out its whole timeout for a second answer that never comes.
+               b"Connection: close\r\n"
                b"Content-Length: 0\r\n\r\n")
     out = raw_exchange(base, request)
     assert out.startswith(b"HTTP/1."), out[:200]
@@ -1635,6 +1640,7 @@ def test_a_token_header_that_is_not_ascii_is_refused_quietly(in_tmux):
     request = (b"POST /api/session/s1/jump HTTP/1.1\r\n"
                b"Host: localhost\r\n"
                b"X-Wostuast-Token: \xe9\r\n"
+               b"Connection: close\r\n"
                b"Content-Length: 0\r\n\r\n")
     out = raw_exchange(base, request)
     assert out.startswith(b"HTTP/1."), out[:200]

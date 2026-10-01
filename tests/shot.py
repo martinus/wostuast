@@ -97,7 +97,8 @@ def serve(lines: str, home: Path):
                                     cost_usd=1.8342))
     daemon = ws.Daemon()
     server = ws.make_server(daemon, 0)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.05}, daemon=True).start()
     daemon.store.refresh()
     return f"http://127.0.0.1:{server.server_address[1]}/"
 

@@ -181,7 +181,11 @@ def served(ws, stub_git):
     daemon = ws.Daemon()
     server = ws.make_server(daemon, 0)
     port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # Not the default half second: `shutdown` waits for the loop to look
+    # again, and every test that serves pays that at its teardown -- 54 s of
+    # test_serve.py's 79 s, measured, before this.
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.05}, daemon=True).start()
     daemon.store.refresh()
     try:
         yield daemon, f"http://127.0.0.1:{port}"
@@ -253,12 +257,8 @@ def _close_the_browser():
 
 
 @pytest.fixture
-def page_at(ws, tmp_path, monkeypatch, transcript_file):
+def page_at(ws, served, tmp_path, transcript_file):
     """A daemon with one session whose transcript holds hostile Markdown."""
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
-        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
-    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
-
     transcript = transcript_file("s1", [
         {"type": "user", "timestamp": "2026-09-18T14:02:00.000Z",
          "message": {"role": "user", "content": "Do the thing."}},
@@ -274,25 +274,15 @@ def page_at(ws, tmp_path, monkeypatch, transcript_file):
              {"type": "tool_result", "tool_use_id": "t1",
               "content": "14 passed in 0.31s\nall good"}]}},
     ])
-    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": str(tmp_path), "pane": "%7", "pid": 1,
-                     "ts": time.time(), "transcript_path": str(transcript)})
+    ws.append_event(event("SessionStart", cwd=str(tmp_path), pane="%7", pid=1,
+                          ts=time.time(), transcript_path=str(transcript)))
     ws.write_status("s1", ws.Status(
         ts=1.0, name="A session", model="Opus 5", context_pct=41.0,
         # A status line carries the spend, and the strip draws it.
         cost_usd=1.8342))
-
-    daemon = ws.Daemon()
-    server = ws.make_server(daemon, 0)
-    port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    daemon, base = served
     daemon.store.refresh()
-    try:
-        yield daemon, f"http://127.0.0.1:{port}/"
-    finally:
-        daemon.stopping.set()
-        server.shutdown()
-        server.server_close()
+    return daemon, base + "/"
 
 
 @pytest.fixture
@@ -420,15 +410,10 @@ def in_pane(ws, served, tmp_path, monkeypatch, transcript_file):
     The recording lives on the daemon so a test can read what the page asked
     the terminal to do.
     """
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
-        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
-    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
     seen = []
 
     def runner(args, **rest):
         seen.append(list(args))
-        if "capture-pane" in args:
-            return "\x1b[1;32mall good\x1b[0m\nwaiting"
         return ""
 
     monkeypatch.setattr(ws, "run", runner)
@@ -437,23 +422,18 @@ def in_pane(ws, served, tmp_path, monkeypatch, transcript_file):
          "message": {"role": "user", "content": "Do the thing."}},
     ])
     daemon, base = served
-    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": str(tmp_path), "pane": "%7", "pid": 1,
-                     "ts": time.time(), "transcript_path": str(transcript)})
+    ws.append_event(event("SessionStart", cwd=str(tmp_path), pane="%7", pid=1,
+                          ts=time.time(), transcript_path=str(transcript)))
     daemon.store.refresh()
     return daemon, base, seen
 
 
 @pytest.fixture
-def no_pane(ws, served, tmp_path, monkeypatch):
+def no_pane(ws, served, tmp_path):
     """A session that is not running under tmux at all."""
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
-        d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
-    monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
     daemon, base = served
-    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": str(tmp_path), "pane": "", "pid": 1,
-                     "ts": time.time()})
+    ws.append_event(event("SessionStart", cwd=str(tmp_path), pane="", pid=1,
+                          ts=time.time()))
     daemon.store.refresh()
     return daemon, base
 
