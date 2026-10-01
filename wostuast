@@ -2434,7 +2434,7 @@ class Block:
     """One thing the Transcript tab shows, in the order it happened."""
 
     seq: int = -1               # its place in the transcript, and its identity
-    #: prompt, text, thinking, tool, divider, note, shell. A `note` is a
+    #: prompt, text, tool, divider, note, shell. A `note` is a
     #: `user` record the harness wrote -- a task finishing, another session's
     #: message -- so it is shown but never as something the reader typed. A
     #: `shell` is a command the reader ran with `!`: `text` is the command
@@ -3053,10 +3053,12 @@ class Transcript:
             else:
                 block = Block(kind="text", ts=ts, text=text)
         elif kind == "thinking":
-            text = str(piece.get("thinking") or "")
-            if not text.strip():
-                return None
-            block = Block(kind="thinking", ts=ts, text=text)
+            # Never shown. Claude Code keeps the text of most thoughts out of
+            # the transcript -- 4,274 of 4,785 blocks on one machine were a
+            # signature and nothing else -- so a switch to show them showed
+            # nothing most of the time, and read as broken. The reader chose
+            # to drop them, and the key that showed them.
+            return None
         elif kind == "tool_use":
             name = str(piece.get("name") or "")
             tool_input = piece.get("input")
@@ -8967,7 +8969,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* And whatever the column still has past the words -- the time under a
    line of text, a day under a prompt -- may hang 10 px into the gap below.
    10 and no more: the rule over the next prompt is 12 px down, and the next
-   turn's name 25. A call coming next allows more; see `next-tool`. */
+   turn's name 25. A call coming next allows more; see `.turn.toolrow`. */
 .turn:not(.toolrow) > .who { margin-bottom: -10px; }
 /* Copy the source of a reply. It is there when the pointer is on the turn,
    the way the `+` on a diff line is: a button beside every line of a
@@ -9176,24 +9178,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    `state.turns.nodes`, which is the only place a block is ever new and so is
    what the arriving-block animation rests on. Grouping changes both. If the
    numbers here need touching again, measure them in a browser rather than
-   reading them off.
-
-   A hidden thinking block is still the sibling before the next block, and
-   `+` cannot step over it. An agent thinks between two calls, and between
-   saying what it will do and doing it. So with `+` alone a call after a
-   thought was pulled up onto the call above it, and a fix that only looked
-   at the thought put a call 22 px under the words it belonged to. The
-   block that decides is the one before the thought, and only the page can
-   find it: `blockNode` marks each turn `past-tool` or `past-words` by the
-   block before it once thoughts are left out (`pastThought`). `+` still
-   decides while thoughts are shown, because then the thought is that block.
-   A wrapper around each run of calls would not have helped: the thoughts
-   stand between the calls, not inside a run of them. */
+   reading them off. */
 .turn.toolrow { margin-bottom: 5px; }
-body.show-thinking .turn:not(.toolrow) + .turn.toolrow { margin-top: -16px; }
-body.show-thinking .turn.toolrow + .turn:not(.toolrow) { margin-top: 22px; }
-body:not(.show-thinking) .turn.toolrow.past-words { margin-top: -16px; }
-body:not(.show-thinking) .turn.past-tool:not(.toolrow) { margin-top: 22px; }
+.turn:not(.toolrow) + .turn.toolrow { margin-top: -16px; }
+.turn.toolrow + .turn:not(.toolrow) { margin-top: 22px; }
 /* The 6 px above is from box to box, and the box of the words is not the
    words. `.who` holds a name, a time, a day when it was not today and the
    copy button: 55 px on one day and 71 across two when this was written,
@@ -9209,10 +9197,8 @@ body:not(.show-thinking) .turn.past-tool:not(.toolrow) { margin-top: 22px; }
    and no more. That covers one day's column over one line of text, and
    leaves a gap under a column that also carries a day.
    `z-index`, because the calls are later siblings and positioned: without
-   it they cover the copy button, and a click on it goes to them. Thoughts
-   shown, `+` finds the next block; hidden, the page does (`next-tool`). */
-body.show-thinking .turn:not(.toolrow):has(+ .turn.toolrow) > .who,
-body:not(.show-thinking) .turn.next-tool:not(.toolrow) > .who {
+   it they cover the copy button, and a click on it goes to them. */
+.turn:not(.toolrow):has(+ .turn.toolrow) > .who {
   margin-bottom: -36px; position: relative; z-index: 1;
 }
 .tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
@@ -9245,8 +9231,6 @@ body:not(.show-thinking) .turn.next-tool:not(.toolrow) > .who {
 .divider::before, .divider::after {
   content: ""; flex-grow: 1; height: 1px; background: var(--edge);
 }
-.thinking .bubble { background: none; border-style: dashed; color: var(--ink-mute); font-style: italic; }
-body:not(.show-thinking) .thinking { display: none; }
 
 /* files and diff: a list on the left, what it names on the right */
 /* `relative` for the Transcript tab's "latest" button, which is the one
@@ -9974,16 +9958,12 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
 <dialog class="help" id="help">
   <h2>Keys</h2>
   <dl>
-    <dt>j / k</dt><dd>move down and up the list</dd>
-    <dt>n</dt><dd>jump to the next session that needs you</dd>
     <dt>f</dt><dd>filter the session list</dd>
     <dt>e</dt><dd>rename the chosen session</dd>
-    <dt>r</dt><dd>the review: the diff, your comments, and send</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 3</dt><dd>transcript, files, review</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>type into its terminal</dd>
-    <dt>t</dt><dd>show or hide thinking</dd>
     <dt>c</dt><dd>colours: auto, light, dark</dd>
     <dt>?</dt><dd>this list</dd>
     <dt>Esc</dt><dd>close</dd>
@@ -11332,43 +11312,6 @@ async function submitAsk(id, ask, box) {
   if (answer && !answer.error) note("pressed " + (answer.keys || []).join(" "));
 }
 
-// Show or hide what the agent was thinking, and say which.
-//
-// The key worked from the day it shipped and read as broken anyway: most
-// transcripts hold no thinking at all, so pressing it changed nothing on
-// screen and nothing said why. A key that does something invisible is a key
-// that does nothing, as far as anyone pressing it can tell.
-// `t` shows the thoughts or hides them, and must not move the reader. The
-// pane kept its offset in pixels while blocks came and went above it, so the
-// view jumped -- reply 21, then thought 6, then reply 5 on three looks at one
-// place -- and it read as a switch that showed some messages and then others.
-// So the block at the top of the view is put back where it stood, measured
-// against a block that is there either way, and a reader at the foot stays
-// at the foot.
-function toggleThinking() {
-  const pane = state.tab === "transcript" && document.querySelector(".turnbody");
-  let foot = false, held = null, at = 0;
-  if (pane) {
-    foot = nearBottom(pane);
-    const top = pane.getBoundingClientRect().top;
-    held = [...pane.querySelectorAll(".turn:not(.thinking)")]
-      .find((one) => one.getBoundingClientRect().bottom > top);
-    if (held) at = held.getBoundingClientRect().top - top;
-  }
-  const on = document.body.classList.toggle("show-thinking");
-  if (foot) {
-    pane.scrollTop = pane.scrollHeight;
-  } else if (held) {
-    pane.scrollTop += held.getBoundingClientRect().top
-      - pane.getBoundingClientRect().top - at;
-  }
-  const many = state.turns.blocks.filter(
-    (one) => one && one.kind === "thinking").length;
-  note(!many ? "nothing was thought aloud in this transcript"
-             : (on ? "showing " : "hiding ") + many
-               + (many === 1 ? " thought" : " thoughts"));
-}
-
 function drawHeader() {
   // All that is left of a bar that used to stand over every tab saying the
   // branch, the pane, the model and the state — which the chosen row already
@@ -12595,41 +12538,6 @@ function landOnBlock(box) {
 // Rebuilding the lot re-ran marked over the whole history on every update, and
 // restarted the slide-in of every turn each time one line arrived.
 
-// The block before this one, or with `step` 1 the block after it, once
-// thoughts are hidden: "tool", "words", or "" for a divider or nothing at
-// all. The CSS reads it, because `+` sees a hidden thought as the block
-// before (see `.turn.toolrow`). Looking back, a block arriving never changes
-// the answer; looking on, it does, and `patchTranscript` asks again.
-function pastThought(index, step = -1) {
-  const blocks = state.turns.blocks;
-  for (let at = index + step; at >= 0 && at < blocks.length; at += step) {
-    const one = blocks[at];
-    if (!one || one.kind === "thinking") continue;
-    return one.kind === "tool" ? "tool" : one.kind === "divider" ? "" : "words";
-  }
-  return "";
-}
-
-function blockNode(block, index) {
-  const past = pastThought(index);
-  const node = blockTurn(block, index);
-  if (past && node.classList.contains("turn")) node.classList.add("past-" + past);
-  if (pastThought(index, 1) === "tool") node.classList.add("next-tool");
-  return node;
-}
-
-// A block arriving is news for the block before it, thoughts left out:
-// whether a call comes next is what lets its name column run down beside it.
-function markNext(index) {
-  for (let at = index - 1; at >= 0; at -= 1) {
-    const one = state.turns.blocks[at];
-    if (!one || one.kind === "thinking") continue;
-    const node = state.turns.nodes[at];
-    if (node) node.classList.toggle("next-tool", pastThought(at, 1) === "tool");
-    return;
-  }
-}
-
 function blockTurn(block, index) {
   if (block.kind === "divider") {
     const node = document.createElement("div");
@@ -12652,8 +12560,7 @@ function blockTurn(block, index) {
   // Something the harness said, not the reader and not the agent.
   const aside = block.kind === "note";
   const node = document.createElement("div");
-  node.className = "turn" + (mine ? " mine" : "") + (aside ? " aside" : "")
-    + (block.kind === "thinking" ? " thinking" : "");
+  node.className = "turn" + (mine ? " mine" : "") + (aside ? " aside" : "");
   const who = put(node, "div", "who" + (mine || aside ? "" : " claude"));
   // The name is a link to this block, so the address bar holds one after a
   // click and the browser's own "open in a new tab" works on it. Nothing is
@@ -12672,7 +12579,7 @@ function blockTurn(block, index) {
   putCopy(stamp, block, mine);
   if (shell) {
     putShell(node, block);
-  } else if (mine || aside || block.kind === "thinking") {
+  } else if (mine || aside) {
     linkTickets(put(node, "div", "bubble", block.text));
   } else {
     markdown(node, block.text);
@@ -13061,7 +12968,7 @@ function drawTranscript(box) {
     for (let index = 0; index < state.turns.blocks.length; index += 1) {
       const block = state.turns.blocks[index];
       if (!block) continue;
-      const node = blockNode(block, index);
+      const node = blockTurn(block, index);
       state.turns.nodes[index] = node;
       markHits(node, state.find);
       pane.appendChild(node);
@@ -13094,7 +13001,7 @@ function noteTurns(note, found, replies, all) {
 
 // Redraw one block where it stands, without touching anything else.
 function redrawBlock(index) {
-  const node = blockNode(state.turns.blocks[index], index);
+  const node = blockTurn(state.turns.blocks[index], index);
   // Only `drawTranscript` used to mark the hits, so expanding a tool result
   // during a search left that one block unhighlighted while every other
   // match kept its `<mark>`.
@@ -13127,13 +13034,12 @@ function patchTranscript(indexes) {
       // Arriving, rather than being drawn again. This is the only place a
       // block is new: a full redraw builds the whole history, and a history
       // that slid in block by block would be a page having a fit.
-      const node = blockNode(state.turns.blocks[index], index);
+      const node = blockTurn(state.turns.blocks[index], index);
       node.classList.add("fresh");
       markHits(node, state.find);
       state.turns.nodes[index] = node;
       pane.appendChild(node);
     }
-    markNext(index);
   }
   if (!landOnBlock(pane) && stick) pane.scrollTop = pane.scrollHeight;
   // A block arriving makes the transcript taller, so a reader who was at the
@@ -17045,24 +16951,10 @@ function resubscribe() {
 
 // --- keys --------------------------------------------------------------------
 
-function move(step) {
-  const shown = listedSessions();
-  if (!shown.length) return;
-  const at = shown.findIndex((s) => s.id === state.chosen);
-  const next = Math.min(shown.length - 1, Math.max(0, at + step));
-  choose(shown[next].id);
-  const row = document.querySelector(".row.chosen");
-  if (row) row.scrollIntoView({ block: "nearest" });
-}
-
-// Over every session, not only the shown ones: this key is the answer to "who
-// needs me", and a filter left in the box must not hide one of them.
-function nextNeedsYou() {
-  const waiting = state.sessions.filter((s) => s.state === "needs_you");
-  if (!waiting.length) return;
-  const at = waiting.findIndex((s) => s.id === state.chosen);
-  choose(waiting[(at + 1) % waiting.length].id);
-}
+// Few keys, on purpose. `j` `k` walked the list, `n` went to the next
+// session that needs you, `r` opened the review and `t` showed thinking;
+// the reader used none of them, and `3` is the review already. A key nobody
+// presses is a line in `?` that hides the ones they do.
 
 // How the focus got where it is: Tab moves it by keyboard, a pointer by
 // hand. Read by the keys below, to leave Enter to a button a keyboard
@@ -17102,7 +16994,6 @@ document.addEventListener("keydown", (press) => {
       $("find").focus();
       break;
     case "f": $("pick").focus(); break;
-    case "r": showTab("diff"); break;
     case "e": {
       const row = document.querySelector(".row.chosen");
       if (!row) return;
@@ -17115,10 +17006,6 @@ document.addEventListener("keydown", (press) => {
       if ($("sendbar").hidden) return;
       $("say").focus();
       break;
-    case "j": move(1); break;
-    case "k": move(-1); break;
-    case "n": nextNeedsYou(); break;
-    case "t": toggleThinking(); break;
     case "c": nextTheme(); break;
     case "?": help.open ? help.close() : help.showModal(); break;
     default: {

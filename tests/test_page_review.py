@@ -409,12 +409,12 @@ def test_a_session_without_a_pane_cannot_be_sent_to(no_pane):
             browser.close()
 
 
-def test_r_goes_to_the_review(repo_page):
+def test_3_goes_to_the_review(repo_page):
     """The Review tab is the diff, under the name of what it is for now."""
     with sync_playwright() as play:
         browser, page = open_page(play, repo_page)
         try:
-            page.press("body", "r")
+            page.press("body", "3")
             page.wait_for_function("$('content').dataset.tab === 'diff'")
             assert page.inner_text(".tab[data-tab='diff']").startswith("3 Review")
             # Nothing written yet, so there is nothing to send.
@@ -1641,7 +1641,6 @@ def test_a_click_on_the_tab_on_screen_keeps_a_half_written_comment(repo_page):
             page.fill(".commentbox textarea", "HALF WRITTEN NOTE")
             page.click(".tab[data-tab='diff']")
             page.evaluate("document.activeElement.blur()")
-            page.keyboard.press("r")
             page.keyboard.press("3")
             assert page.evaluate("state.tab") == "diff"
             # What a poll with a changed diff, or a pick, does next.

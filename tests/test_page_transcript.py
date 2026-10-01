@@ -1389,60 +1389,8 @@ def test_a_round_folds_shut_from_its_chevron_and_the_rest_of_the_row_still_goes(
 
 # --- what the agent was thinking ---------------------------------------------
 
-def test_showing_thinking_says_what_it_did(page_at):
-    """The key worked from the day it shipped and read as broken anyway: most
-    transcripts hold no thinking at all, so it changed nothing on screen and
-    nothing said why."""
-    daemon, path = page_at
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(json.dumps({
-            "type": "assistant", "timestamp": "2026-09-18T14:20:01.000Z",
-            "message": {"role": "assistant", "content": [
-                {"type": "thinking", "thinking": "Let me weigh this up.",
-                 "signature": "sig"},
-                {"type": "text", "text": "Right."}]}}) + "\n")
-    daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.wait_for_function(
-                "() => document.querySelectorAll('.turn.thinking').length === 1")
-            assert page.locator(".turn.thinking").is_hidden()
-            # Every word the page passes to `note`, kept where the stream
-            # cannot repaint it. Reading `#live` after a keypress is a race —
-            # a push is allowed to take a passing word back — and asserting
-            # on the key rather than on `toggleThinking()` is the only way to
-            # hold that `t` is bound to the thing that speaks.
-            spy_on_note(page)
-
-            page.keyboard.press("t")
-            page.wait_for_selector(".turn.thinking", state="visible")
-            page.keyboard.press("t")
-            page.wait_for_selector(".turn.thinking", state="hidden")
-            assert page.evaluate("window.__said") == [
-                "showing 1 thought", "hiding 1 thought"]
-        finally:
-            browser.close()
 
 
-def test_a_transcript_with_nothing_thought_aloud_says_so(page_at):
-    """Nothing on screen changes, so the slot is the only thing that can say
-    the key was heard."""
-    _, path = page_at
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            wait_for_map(page)
-            assert page.locator(".turn.thinking").count() == 0
-            # Read back inside the call that writes it: the stream repaints
-            # this slot on every push and is allowed to take the word back,
-            # so a separate wait tests the machine's load, not the page.
-            said = page.evaluate(
-                """() => { toggleThinking();
-                           return document.getElementById('live').textContent; }""")
-            assert "nothing was thought aloud" in said, said
-        finally:
-            browser.close()
 
 
 # --- how the transcript is laid out ------------------------------------------
@@ -1524,14 +1472,12 @@ def test_a_group_of_tool_calls_belongs_to_the_words_above_it(page_at):
             browser.close()
 
 
-def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
-    """A thinking block is hidden, but CSS still counts it as the sibling
-    before the next block. So a tool row after one read as "the first call
-    after some words" and was pulled up 16 px, onto the tool row above it:
-    two commands drawn on top of each other. The first fix went the other
-    way: a call after words and a thought lost its pull-up, and stood 22 px
-    under the words it belonged to. An agent thinks between calls, and
-    between saying what it will do and doing it."""
+def test_a_thought_between_two_tool_calls_leaves_no_trace(page_at):
+    """An agent thinks between calls, and between saying what it will do
+    and doing it. A hidden thought was still a sibling to the CSS, and a
+    call after one was drawn on top of the call above it. Thoughts are not
+    drawn at all now: none is on the page, and the group of calls stands
+    under its words exactly as it would with no thought between them."""
     daemon, path = page_at
 
     def said(kind, text, **rest):
@@ -1558,20 +1504,16 @@ def test_hidden_thinking_between_two_tool_calls_does_not_stack_them(page_at):
                 .map((t) => t.getBoundingClientRect());
               return shown.slice(1).map((box, n) => box.top - shown[n].bottom);
             }"""
-            hidden = page.evaluate(gaps)
-            assert min(hidden) >= 0, hidden
+            assert page.locator(".turnbody .thinking").count() == 0
+            assert "Now dir" not in page.inner_text(".turnbody")
+            seen = page.evaluate(gaps)
+            assert min(seen) >= 0, seen
             # The words, the three calls, the reply: the group sits under
             # the words that said what it would do, and apart from the reply
             # below it -- the same gaps as with no thought between them.
-            above, *between, below = hidden[-4:]
-            assert above < below, hidden
-            assert max(between) < below, hidden
-            page.evaluate("document.body.classList.add('show-thinking')")
-            shown = page.evaluate(gaps)
-            assert min(shown) >= 0, shown
-            # Shown, each thought is the words a call belongs to.
-            assert max(shown[-7:-2:2]) < min(shown[-6:-1:2]), shown
-            assert len(shown) > len(hidden), (hidden, shown)
+            above, *between, below = seen[-4:]
+            assert above < below, seen
+            assert max(between) < below, seen
         finally:
             browser.close()
 
@@ -1668,61 +1610,6 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
             browser.close()
 
 
-def test_showing_the_thoughts_keeps_the_reader_where_they_were(page_at):
-    """`t` shows the thoughts or hides them, and nothing else. The pane kept
-    its scroll offset in pixels while blocks appeared or went above it, so
-    the view jumped: at the foot of a transcript you read reply 21, one press
-    later thought 6, and a second press reply 5. It read as a switch that
-    showed some messages and then others. The block at the top of the view
-    stays there, and a reader at the foot stays at the foot."""
-    daemon, path = page_at
-    made = []
-    for n in range(40):
-        made += [conftest.record("claude", f"Reply number {n}."),
-                 conftest.record("think", f"Thought {n}.\nA second line.\n"
-                                          "And a third."),
-                 conftest.record("tool", f"ls {n}", tool_id=f"t{n}")]
-    with open(daemon_transcript(daemon), "a") as handle:
-        handle.write(conftest.records(*made))
-    daemon.tick()
-    with sync_playwright() as play:
-        browser, page = open_page(play, path)
-        try:
-            page.set_viewport_size({"width": 1400, "height": 700})
-            wait_for_map(page, 40)
-            page.wait_for_function(
-                """() => [...document.querySelectorAll('.turnbody .turn')]
-                    .some((t) => t.innerText.includes('Reply number 39'))""")
-            # What the reader sees: the first block, thoughts aside, whose
-            # bottom is inside the pane, and how far from the top it stands.
-            seen = """() => {
-              const pane = document.querySelector('.turnbody');
-              const top = pane.getBoundingClientRect().top;
-              const first = [...pane.querySelectorAll('.turn:not(.thinking)')]
-                .find((t) => t.getBoundingClientRect().bottom > top);
-              return {first: first.innerText.replace(/\\s+/g, ' ').slice(-20),
-                      at: Math.round(first.getBoundingClientRect().top - top),
-                      foot: pane.scrollHeight - pane.scrollTop
-                            - pane.clientHeight < 2};
-            }"""
-            for where in ("the middle", "the foot"):
-                page.evaluate(
-                    "(y) => { const p = document.querySelector('.turnbody');"
-                    " p.scrollTop = y === 'the foot' ? p.scrollHeight"
-                    " : p.scrollHeight / 2; }", where)
-                before = page.evaluate(seen)
-                for press in ("shown", "hidden"):
-                    page.keyboard.press("t")
-                    now = page.evaluate(seen)
-                    if where == "the foot":
-                        assert now["foot"], (where, press, before, now)
-                    else:
-                        assert now["first"] == before["first"], (where, press,
-                                                                 before, now)
-                        assert abs(now["at"] - before["at"]) <= 1, (
-                            where, press, before, now)
-        finally:
-            browser.close()
 
 
 def test_the_map_is_set_like_the_transcript_and_a_prompt_is_round(page_at):

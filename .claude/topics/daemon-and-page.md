@@ -246,18 +246,19 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   read. They are 6 and 22 now. **The numbers in the CSS are not the gaps**:
   the margins collapse against `.turn`'s own 22, so above is 22 + (−16) and
   below is max(5, 22). Change one and measure it; do not read it off.
-- **A hidden thinking block is still a sibling.** `display: none` takes it
-  off the screen and not out of `+`. An agent thinks between two calls, and
-  between saying what it will do and doing it. With `+` alone, a call after
-  a thought was pulled up 16 px onto the call above it. The first fix only
-  looked at the thought, and put a call 22 px under the words it belonged
-  to. The block that decides is the one *before* the thought, and CSS cannot
-  find it: `pastThought` does, and `blockNode` marks each turn `past-tool` or
-  `past-words`. With thinking hidden the CSS reads those classes; with it
-  shown, `+` is right, because the thought is then the block before. A
-  wrapper per run of calls would not help: the thoughts stand between the
-  calls. `test_hidden_thinking_between_two_tool_calls_does_not_stack_them`
-  measures the gaps in both modes, and each of the four rules fails it.
+- **Thinking is never drawn, and the daemon never makes it a block.**
+  Claude Code keeps the text of most thoughts out of the transcript: 4,274
+  of 4,785 thinking blocks on one machine were a signature and nothing
+  else. A `t` that showed them showed nothing most of the time and read as
+  broken, even after it said so in the live slot; the reader chose to drop
+  thoughts and the key. `Transcript` returns no block for a `thinking`
+  piece, so nothing on the page can count, draw or search one. It also
+  ended a CSS workaround: a hidden thought was still a sibling to `+`, and
+  `pastThought`, `markNext` and the `past-tool`, `past-words` and
+  `next-tool` classes stood in for it. With no thoughts the plain `+` and
+  `:has(+ ...)` rules are right again.
+  `test_thinking_is_never_a_block_even_with_text_in_it`,
+  `test_a_thought_between_two_tool_calls_leaves_no_trace`.
 - **Measure a gap from what the reader sees, not from the box.** Three
   rounds of this fix measured turn box to turn box, got 6 px each time, and
   the reader still saw 39. `.who` — a name, a time, the copy button, and a
@@ -265,9 +266,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   one line of text is 22, so the column set the height of every one-line
   turn.
   When a call comes next, the column may run down beside it: the call's own
-  `.who` is empty. `next-tool` says so while thoughts are hidden, and
-  `markNext` sets it again on the block before when a block arrives, because
-  that answer looks forward and a later push changes it. The overhang is
+  `.who` is empty. `:has(+ .turn.toolrow)` says so, and answers again by
+  itself when a block arrives. The overhang is
   capped at 36 px, which is what one call and the gap after it can hold;
   more ran the column into the next turn's name. It carries `z-index`, or the
   calls — later, positioned siblings — cover the copy button. And a block
@@ -435,18 +435,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   shortcut that acts ends by blurring a button the pointer pressed; one
   `focusedByKey` reached keeps its ring.
   `test_a_key_leaves_no_ring_on_a_tab_that_was_clicked`.
-- **`t` says what it did.** The key worked from the day it shipped and read
-  as broken anyway: most transcripts hold no thinking at all, so pressing it
-  changed nothing on screen and nothing said why. A key whose effect can be
-  invisible has to use the live slot; `toggleThinking` counts the blocks and
-  says so, including when there are none.
-- **`t` never moves the reader.** The pane kept its scroll offset in pixels
-  while thoughts came and went above it, so three looks at one place showed
-  reply 21, thought 6 and reply 5 — and the reader took it for a switch that
-  showed some messages and then others. `toggleThinking` notes the first
-  block in view that is not a thought, and where it stood, and puts it back
-  there; a reader at the foot stays at the foot.
-  `test_showing_the_thoughts_keeps_the_reader_where_they_were` does both.
+- **Few keys, and none that the reader never presses.** `j` `k`, `n`, `r`
+  and `t` went: the reader used `1` `2` `3`, and each unused key was a line
+  in `?` that hid the ones in use. `3` is the review already. A key that is
+  added again needs a reader who asked for it.
+  `test_the_keys_nobody_pressed_are_gone`.
 - **A row of a list is one line, and `.filelist button` is a block.** A
   list whose rows are one line says so in the one rule that groups them —
   `.fixed` for the file tree, `.diff` for the Diff tab's tree, `.transcript`

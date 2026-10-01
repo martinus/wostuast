@@ -12,6 +12,7 @@ import pytest
 import conftest
 from browser import (
     kept,
+    spy_on_note,
     skip_without_browser,
     sync_playwright,
     fresh_context,
@@ -581,56 +582,8 @@ def test_the_filter_searches_the_history_too(past_at):
             browser.close()
 
 
-def test_j_and_k_do_not_walk_into_a_folded_history(past_at):
-    with sync_playwright() as play:
-        browser, page = open_page(play, past_at)
-        try:
-            page.wait_for_selector(".histhead")
-            for _ in range(5):
-                page.press("body", "j")
-            assert page.locator(".row.chosen").count() == 1
-            assert page.evaluate("state.chosen") == "s1"
-        finally:
-            browser.close()
 
 
-def test_j_and_k_walk_the_rows_in_the_order_they_are_drawn(ws, served, tmp_path):
-    """The daemon sorts by `settled`, newest first; the list draws that in
-    `BANDS` groups. `move` walked the daemon's order, so with a needs-you
-    row on top and a working one under it, `j` skipped the working row and
-    `k` on the top row went down."""
-    daemon, url = served
-    now = time.time()
-    for sid in ("s1", "s2", "s3"):
-        where = tmp_path / sid
-        where.mkdir()
-        ws.append_event(conftest.event("SessionStart", sid=sid, cwd=str(where),
-                                       pane="%7", pid=1, ts=now))
-    ws.append_event(conftest.event("PermissionRequest", sid="s3",
-                                   cwd=str(tmp_path / "s3"), tool_name="Bash",
-                                   tool_input={"command": "ls"}, ts=now + 1))
-    ws.append_event(conftest.event("UserPromptSubmit", sid="s2",
-                                   cwd=str(tmp_path / "s2"), prompt="go",
-                                   ts=now + 2))
-    daemon.store.refresh()
-    with sync_playwright() as play:
-        browser, page = open_page(play, url + "/")
-        try:
-            page.wait_for_function("document.querySelectorAll('.row').length === 3")
-            drawn = page.evaluate(
-                "[...document.querySelectorAll('#rows .row')].map((r) => r.dataset.id)")
-            assert drawn == ["s3", "s2", "s1"], drawn
-            # The daemon's own order is another, or this proves nothing.
-            assert page.evaluate("state.sessions.map((s) => s.id)") != drawn
-            page.click('.row[data-id="s3"]')
-            page.wait_for_function("state.chosen === 's3'")
-            walked = []
-            for key in ("j", "j", "j", "k", "k", "k"):
-                page.press("body", key)
-                walked.append(page.evaluate("state.chosen"))
-            assert walked == ["s2", "s1", "s1", "s2", "s3", "s3"], walked
-        finally:
-            browser.close()
 
 
 def test_a_drag_on_an_edge_starts_only_by_hand_and_always_stops(page_at):
@@ -1537,5 +1490,31 @@ def test_a_reader_who_goes_back_to_a_cleared_session_stays_there(
             page.wait_for_function("state.chosen === 's1' && state.sessions.length === 2")
             page.wait_for_timeout(300)     # proving nothing moves
             assert page.evaluate("state.chosen") == "s1"
+        finally:
+            browser.close()
+
+
+def test_the_keys_nobody_pressed_are_gone(pair_at):
+    """`j` `k` walked the list, `n` went to the next session that needs
+    you, `r` opened the review and `t` showed thinking. The reader used
+    none of them, and a line in `?` for each hid the keys they do use.
+    Pressed now, they change nothing and say nothing, and `?` lists none
+    of them."""
+    with sync_playwright() as play:
+        browser, page = open_page(play, pair_at)
+        try:
+            two_rows(page)
+            spy_on_note(page)
+            before = page.evaluate("[state.chosen, state.tab]")
+            for key in ("j", "k", "n", "r", "t", "j"):
+                page.press("body", key)
+            assert page.evaluate("[state.chosen, state.tab]") == before
+            assert page.evaluate("window.__said") == []
+            page.press("body", "?")
+            listed = page.eval_on_selector_all(
+                "#help dt", "els => els.map((one) => one.textContent.trim())")
+            assert "s" in listed and "1 – 3" in listed, listed
+            for gone in ("j / k", "n", "r", "t"):
+                assert gone not in listed, listed
         finally:
             browser.close()

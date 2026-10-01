@@ -296,17 +296,13 @@ Press <kbd>?</kbd> on the page to see this list.
 
 | Key | What it does |
 | --- | --- |
-| <kbd>j</kbd> <kbd>k</kbd> | Move down and up the session list |
-| <kbd>n</kbd> | Go to the next session that needs you |
 | <kbd>f</kbd> | Filter the session list |
 | <kbd>e</kbd> | Rename the chosen session (or double-click its name) |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
-| <kbd>r</kbd> | Open the review |
 | <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
-| <kbd>s</kbd> | Type into the agent's terminal |
-| <kbd>t</kbd> | Show or hide the agent's thinking, and say how much there is |
+| <kbd>s</kbd> | Type into the agent's terminal (Transcript tab, while the box is there) |
 | <kbd>c</kbd> | Colours: auto, light, dark (also in the settings menu) |
 | <kbd>Esc</kbd> | Clear a box, or close the help |
 

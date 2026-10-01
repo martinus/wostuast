@@ -17,12 +17,6 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   only moves when a turn begins, ends, or stops on a question. **Inside a
   group the daemon's order stands**, which is by `Session.settled`, newest
   first.
-  - **`j` and `k` walk the rows as they are drawn.** `move` walked the
-    daemon's order, and that differs from the list as soon as a group holds
-    two rows: from a needs-you row on top, `j` jumped over the working row
-    under it, and `k` went down. `listedSessions` puts the groups in order
-    once, with a stable sort, and `drawSessions` and `move` both read it.
-    `test_j_and_k_walk_the_rows_in_the_order_they_are_drawn`.
 - **`settled` is not `since`, and that is the whole point.** `since` is the
   last event, which for a working session moves every few seconds: two busy
   agents would swap places while you read them. `settled` is the moment the
@@ -255,7 +249,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     changes size.
   - **The list's scrollbar shows only while the pointer is on it.** A bar
     stands between the row and the grip, and cut the tab from its content
-    in both themes. The wheel and `j` `k` scroll without it.
+    in both themes. The wheel scrolls without it.
   `test_the_chosen_row_is_a_tab_of_the_content_beside_it`.
 - **A drag on an edge starts only on the main button, and ends every way a
   press can end** (`dragWidth`, for the session list's edge and every split

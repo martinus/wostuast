@@ -28,7 +28,7 @@ def test_the_recorded_transcript_reads_as_expected(parsed):
     # Two dividers: the `summary` record an older Claude Code wrote, and the
     # `compact_boundary` a current one writes. The compact summary that
     # follows the boundary is not among them — see the test below.
-    assert kinds == ["prompt", "thinking", "text", "tool", "tool", "text",
+    assert kinds == ["prompt", "text", "tool", "tool", "text",
                      "divider", "divider"]
 
 
@@ -38,11 +38,14 @@ def test_a_prompt_keeps_its_text(parsed):
     assert "substring search" in got.blocks[0].text
 
 
-def test_thinking_is_its_own_kind_so_the_page_can_hide_it(parsed):
+def test_thinking_is_never_a_block_even_with_text_in_it(parsed):
+    """Claude Code keeps the text of most thoughts out of the transcript, so
+    a switch to show them showed nothing most of the time, and the reader
+    chose to drop them. The fixture's one thought has text, and is still
+    left out, and its words are nowhere in what the page is handed."""
     got = parsed
-    thinking = [b for b in got.blocks if b.kind == "thinking"]
-    assert len(thinking) == 1
-    assert "exact name" in thinking[0].text
+    assert all(b.kind != "thinking" for b in got.blocks)
+    assert not any("exact name" in b.text for b in got.blocks)
 
 
 def test_assistant_text_is_kept_as_markdown(parsed):
@@ -106,9 +109,10 @@ def test_it_follows_without_re_reading(ws, tmp_path):
     transcript = ws.Transcript(str(path))
     first = transcript.read_new()
     # seven blocks, and two of them are touched twice: a tool call is created
-    # and then updated when its result arrives, so nine touches in all
-    assert len(transcript.blocks) == 8
-    assert len(first) == 10
+    # and then updated when its result arrives, so nine touches in all. The
+    # fixture's thought makes no block.
+    assert len(transcript.blocks) == 7
+    assert len(first) == 9
     assert transcript.read_new() == []
 
     with open(path, "a") as handle:
@@ -118,7 +122,7 @@ def test_it_follows_without_re_reading(ws, tmp_path):
         }) + "\n")
     more = transcript.read_new()
     assert [b.text for b in more] == ["More."]
-    assert len(transcript.blocks) == 9
+    assert len(transcript.blocks) == 8
 
 
 def test_a_result_arriving_later_updates_the_same_block(ws, tmp_path):

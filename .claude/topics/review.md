@@ -119,7 +119,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the tab it was on goes away, and the guards ask the DOM (`writingIn`) rather
   than the flag: a box open on another tab froze a tab that had nothing on
   screen to close. **Nor may it go before its box**: `showTab` cleared it
-  for the tab already on screen too -- a click on its label, `r`, `3` --
+  for the tab already on screen too -- a click on its label, or `3` --
   and the box stood with no flag, so the guards let the next poll or pick
   rebuild the diff and take what was typed. It is cleared only when the
   tab changes.
