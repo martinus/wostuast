@@ -41,6 +41,12 @@ CSS, where a copy of the CSS in a file of its own drifts from the page.
 `--part` is what the picture is of; the whole window by default. The window
 is a notebook's, 1366 x 768, unless it says otherwise.
 
+`--eval` waits for a promise it returns. **A step that opens something the
+page fetches -- the slash list after `--keys '#say=/'` -- needs one**: the
+next step runs as soon as the keys are in, before the answer, and found
+the list still shut. `tests/test_stage.py` has the shape: a promise that
+looks every 20 ms and fails after 15 s.
+
 `--keep` keeps the daemon up after the picture and prints its address, for
 a script of your own against the same page; Ctrl-C ends it.
 """

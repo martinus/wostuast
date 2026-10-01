@@ -35,3 +35,12 @@ builds hold not one. A current build writes a `system` record with
 carrying the whole summary — which went into the transcript as a prompt,
 because it is a `user` record. A claim about a payload is worth what the
 sample behind it is worth.
+
+**A measurement that needs a live Claude Code session, or the owner's
+`~/.claude`, is the owner's to take.** A cloud session has no login for a
+nested Claude Code, and listing `~/.claude` or the environment there is
+refused as credential exploration -- and the refusal covers every other
+way to the same answer. Write the probe as a short script into the
+issue, say what its output answers, and leave the issue open for the
+result: #266 holds the shape. Plugin skills (#268) are not read for the
+same reason.
