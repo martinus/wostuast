@@ -90,7 +90,7 @@ bullets beside it are the same part's other scars.
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `putCodeCopies` | topics/daemon-and-page: the transcript's shape |
 | `Commands`, `command_used`, `front_matter`, `read_command`, `project_dirs`, `claude_dir`, `slashWord`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash` | topics/daemon-and-page: completing a `/` in the send box; topics/safety for `COMMAND_SHAPE` |
-| `state.files`, `state.turns`, `savePlace`, `usePlace`, `blank…()` | topics/tab-state |
+| `state.files`, `state.turns`, `state.diffs`, `savePlace`, `usePlace`, `PLACE_FIELDS`, `blank…()`, `diffKey` | topics/tab-state |
 | `git_facts_many`, `git_facts_or_failed`, `worktree_files`, `walk_ignored`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of`, `base` and `held`, `Daemon.diffs`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext`, `putMessage`, `putReadAs`, `stepat` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `inWorktree`, `diffLineAnchor`, `drawReviewBar`, `reviewText`, `unsent` | topics/review |

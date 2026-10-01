@@ -1753,52 +1753,44 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
               state.turns.at = 12;
               state.turns.down = 654;
               state.turns.run = 3;
-              state.diffOpen = new Map([['z.py', true]]);
-              state.diffOf = 'abc123';
-              state.diffShut = new Set(['committed src']);
-              state.diffMore = new Map([['x', [[4, 30]]]]);
-              state.loose = 'loose.txt';
+              state.diffs.open = new Map([['z.py', true]]);
+              state.diffs.of = 'abc123';
+              state.diffs.shut = new Set(['committed src']);
+              state.diffs.more = new Map([['x', [[4, 30]]]]);
+              state.diffs.loose = 'loose.txt';
+              const flat = (one) =>
+                (one instanceof Map || one instanceof Set)
+                  ? JSON.stringify([...one]) : JSON.stringify(one);
+              const read = () => PLACE_FIELDS.map(([bag, field]) => flat(state[bag][field]));
+              const before = read();
               savePlace('probe');
-              const kept = state.visits.get('probe');
 
               // Blanked the way `choose` blanks it. The tab goes too: it
               // is `choose` that puts that one back, through `showTab`.
               state.tab = 'transcript';
               state.turns = blankTurns();
               state.files = blankFiles();
-              state.turns.open = new Set();
-              state.turns.shut = new Set();
-              state.diffOpen = new Map();
-              state.diffOf = '';
-              state.diffShut = new Set();
-              state.diffMore = new Map();
-              state.loose = null;
+              state.diffs = blankDiff();
+              const blank = read();
               usePlace('probe');
-
-              const after = {
-                tab: state.tab, turnAt: state.turns.at,
-                turnDown: state.turns.down, open: state.turns.open,
-                shut: state.turns.shut, turnRun: state.turns.run,
-                path: state.files.path, at: state.files.at,
-                asText: state.files.asText, down: state.files.down,
-                dirs: state.files.dirs,
-                diffOpen: state.diffOpen, loose: state.loose,
-                diffOf: state.diffOf, diffShut: state.diffShut,
-                diffMore: state.diffMore,
-              };
-              const flat = (one) =>
-                (one instanceof Map || one instanceof Set)
-                  ? JSON.stringify([...one]) : JSON.stringify(one);
-              return {
-                kept: Object.keys(kept).sort(),
-                back: Object.keys(kept)
-                        .filter((name) => flat(kept[name]) === flat(after[name]))
-                        .sort(),
-              };
+              return {before, blank, after: read(),
+                      tab: state.visits.get('probe').tab,
+                      names: PLACE_FIELDS.map(([bag, field]) => bag + "." + field)};
             }""")
-            assert "tab" in seen["kept"], seen
-            assert seen["back"] == [one for one in seen["kept"] if one != "tab"], seen
-            assert len(seen["kept"]) >= 14, seen
+            assert seen["tab"] == "diff", seen
+            assert seen["after"] == seen["before"], seen
+            # Every field was set away from its blank above, so one that
+            # did not come back would show here and not hide behind it.
+            moved = [name for name, was, now in zip(seen["names"], seen["blank"],
+                                                    seen["before"]) if was == now]
+            assert moved == [], moved
+            # And what is kept, by name: a row left out of the table would be
+            # neither saved nor put back, and agree with itself.
+            assert seen["names"] == [
+                "turns.at", "turns.down", "turns.run", "turns.open", "turns.shut",
+                "files.path", "files.at", "files.asText", "files.down",
+                "files.dirs", "diffs.open", "diffs.of", "diffs.shut",
+                "diffs.more", "diffs.loose"], seen["names"]
         finally:
             browser.close()
 
