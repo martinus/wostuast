@@ -616,7 +616,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   that is already right. Claude Code's `settings.json` is saved only when
   its parsed content changed, because a start runs every day and the file
   is the user's (the bullet below). A file it cannot read stops the start,
-  in red, before anything is served.
+  in red, before anything is served -- in one line (`unreadable`): the
+  path with `~`, and for broken JSON only its line and column. The
+  parser's own words ran past the edge of the terminal and named the
+  place twice. `test_a_settings_file_that_holds_no_object_is_said_once`.
   `test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version`,
   `test_a_start_with_nothing_behind_writes_nothing`,
   `test_a_start_stops_on_a_settings_file_it_cannot_read`.

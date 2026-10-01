@@ -796,15 +796,32 @@ def test_a_start_with_nothing_behind_writes_nothing(ws, monkeypatch, capsys):
     assert f"✓ {len(ws.HOOK_EVENTS)} hooks → " in out
 
 
-def test_a_start_stops_on_a_settings_file_it_cannot_read(ws, monkeypatch, capsys):
-    """Red, on stderr, and nothing served: the hooks cannot be checked."""
+def test_a_start_stops_on_a_settings_file_it_cannot_read(
+        ws, monkeypatch, capsys, tmp_path):
+    """Red, on stderr, and nothing served: the hooks cannot be checked. One
+    short line: the path as a person writes it, and only where the JSON
+    breaks. The parser's own words ran past the edge of the terminal and
+    named the place twice."""
+    monkeypatch.setenv("HOME", str(tmp_path))
     ws.settings_path().parent.mkdir(parents=True, exist_ok=True)
     ws.settings_path().write_text("{not json")
     made = []
     assert start(ws, monkeypatch, made) == 1
     assert made == []
-    assert "✗ cannot read" in capsys.readouterr().err
+    assert capsys.readouterr().err.splitlines() == [
+        "  ✗ cannot read ~/claude/settings.json: not valid JSON at line 1, column 2"]
     assert ws.settings_path().read_text() == "{not json"
+
+
+def test_a_settings_file_that_holds_no_object_is_said_once(ws, monkeypatch,
+                                                           capsys, tmp_path):
+    """The path is in the line once, not twice."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    ws.settings_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.settings_path().write_text("[1, 2]")
+    assert ws.cmd_install(None) == 1
+    assert capsys.readouterr().err == (
+        "cannot read ~/claude/settings.json: it holds no JSON object\n")
 
 
 def test_a_start_says_when_the_status_line_is_your_own(ws, monkeypatch, capsys):
