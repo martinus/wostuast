@@ -10845,25 +10845,9 @@ const state = {
   // said which tab owned any of them. See `blankFiles`.
   files: null,          // set below, because it is built in one place
   turns: null,          // the Transcript tab's own; see `blankTurns`
-  loose: null,          // an untracked file picked on the Diff tab
-  looseFound: {},       // the whole answer for it, for `putMedia`
-  goTo: false,          // and whether the pane still has to move to it
-  looseText: null,      // null while it is being read
-  looseAsking: null,    // the path a read is out for, so a poll asks once
-  looseTrouble: "",     // why it is not read yet, when a read failed
-  looseBinary: false,
-  diff: null,
-  // What the Diff tab shows: "" for all changes, "uncommitted", or one
-  // commit's sha. A choice, so a session keeps it; see `savePlace`.
-  diffOf: "",
-  diffGone: false,      // the commit picked went away; the tab says so
-  diffShut: new Set(),  // folders in the Diff tab's tree the reader shut
-  // Lines the reader asked to see between the changes, as `[from, to]` runs
-  // by `moreKey`, and the whole files fetched to show them. See `withMore`.
-  diffMore: new Map(),
-  diffWhole: new Map(),
+  diffs: null,          // the Diff tab's own; see `blankDiff`
+  diff: null,           // the daemon's last answer for it
   sides: "unified",     // one column or two; see `takeSides`
-  diffOpen: new Map(),  // diff files the reader opened or shut by hand
   // The files a comment is on that the diff does not show, read for their
   // lines: path to the daemon's answer, or `asking` while it is out.
   reviewFiles: new Map(),
@@ -10872,18 +10856,17 @@ const state = {
   review: null,         // set below, because it is built in one place
   writing: null,        // the anchor of the comment box that is open, if any
   pruned: false,        // whether the stored reviews have been swept once
-  diffTag: "",          // the tag of the answer held, sent back so one that stands is short
   // Every worktree's file names, by its top: a session in the same worktree,
   // or the same session again, asks with the tag held and is answered
   // without them. See `keepListing`.
   listings: new Map(),
-  diffAt: 0,            // bumped when that answer changes, so keys stay short
   poll: 0,
   transcriptRetry: 0,   // the one timer asking again for a transcript that failed
 };
 
 state.files = blankFiles();
 state.turns = blankTurns();
+state.diffs = blankDiff();
 state.review = blankReview();
 
 const $ = (id) => document.getElementById(id);
@@ -14899,6 +14882,32 @@ function blankTurns() {
   };
 }
 
+// Everything the Diff tab holds for one session. A choice here is one the
+// session keeps (`KEPT`); the rest is what the daemon sent, or what a read
+// is doing. The fields were flat on `state`, and `choose` reset them in
+// eighteen lines that a new one had to join (#300).
+function blankDiff() {
+  return {
+    // What the tab shows: "" for all changes, "uncommitted", or one
+    // commit's sha.
+    of: "",
+    gone: false,        // the commit picked went away; the tab says so
+    shut: new Set(),    // folders in the tab's tree the reader shut
+    open: new Map(),    // files the reader opened or shut by hand
+    // Lines the reader asked to see between the changes, as `[from, to]`
+    // runs by `moreKey`, and the whole files fetched to show them. See
+    // `withMore`.
+    more: new Map(),
+    whole: new Map(),
+    tag: "",            // the tag of the answer held, sent back as `have`
+    loose: null,        // an untracked file picked
+    found: null,        // the daemon's answer for it; null while it is read
+    asking: null,       // the path a read is out for, so a poll asks once
+    trouble: "",        // why it is not read yet, when a read failed
+    goTo: false,        // whether the pane still has to move to it
+  };
+}
+
 function blankFiles() {
   return {
     names: [],          // every path in the worktree, in the order sent
@@ -15172,12 +15181,12 @@ function keepBase(name) {
   }
   store(BASE_KEY + home, name);
   // Another base is another list of commits, so a picked one may not be on
-  // it. What the reader revealed (`state.diffMore`) stays: it is lines of
+  // it. What the reader revealed (`state.diffs.more`) stays: it is lines of
   // HEAD and of the disk, which no base moves, and a whole file kept for
   // the old hunks is dropped by `withMore` when they change.
-  state.diffOf = "";
-  state.diffGone = false;
-  state.diffTag = "";
+  state.diffs.of = "";
+  state.diffs.gone = false;
+  state.diffs.tag = "";
   loadDiff();
 }
 
@@ -15185,14 +15194,14 @@ function keepBase(name) {
 // answer is the daemon's, so this asks again rather than cutting up what it
 // has -- one commit is not a slice of the branch's diff.
 function pickDiff(of) {
-  if (state.diffOf === of || busyWriting()) {
+  if (state.diffs.of === of || busyWriting()) {
     draw();                         // puts the picker back to what is shown
     return;
   }
-  state.diffOf = of;
-  state.diffGone = false;
-  state.loose = null;               // a commit has no untracked files
-  state.diffTag = "";
+  state.diffs.of = of;
+  state.diffs.gone = false;
+  state.diffs.loose = null;               // a commit has no untracked files
+  state.diffs.tag = "";
   loadDiff();
 }
 
@@ -15238,7 +15247,7 @@ function commitsOf(report) {
 
 // Where the picked commit stands in the list, newest first; -1 for none.
 function commitAt(commits) {
-  return commits.findIndex((one) => one.sha === state.diffOf);
+  return commits.findIndex((one) => one.sha === state.diffs.of);
 }
 
 function stepCommit(by) {
@@ -15252,7 +15261,7 @@ function fillDiffBar(bar) {
   const report = state.diff || {};
   const commits = commitsOf(report);
   const pick = bar.querySelector(".pickof");
-  const key = state.diffOf + "\n" + (report.recent ? "recent" : "") + "\n"
+  const key = state.diffs.of + "\n" + (report.recent ? "recent" : "") + "\n"
     + commits.map((one) => one.sha + one.subject).join("\n");
   if (fresh(bar, "key", key)) {
     pick.replaceChildren();
@@ -15277,11 +15286,11 @@ function fillDiffBar(bar) {
       }
     }
     // Picked before the list that names it has arrived.
-    if (![...pick.options].some((one) => one.value === state.diffOf)) {
-      option(pick, state.diffOf, state.diffOf.slice(0, 7));
+    if (![...pick.options].some((one) => one.value === state.diffs.of)) {
+      option(pick, state.diffs.of, state.diffs.of.slice(0, 7));
     }
   }
-  pick.value = state.diffOf;
+  pick.value = state.diffs.of;
   // The same guard as the commit picker: a `select` refilled under the hand
   // closes if it is open, and the tab polls.
   const base = bar.querySelector(".pickbase");
@@ -15420,13 +15429,13 @@ function putDiffTree(list, section, found, pathOf, fill) {
       }
       const full = path ? path + "/" + name : name;
       const key = section + "\n" + full;
-      const open = !!state.find || !state.diffShut.has(key);
+      const open = !!state.find || !state.diffs.shut.has(key);
       const row = putListRow(list, { dir: true, open, depth, title: full });
       put(row, "span", "name", name);
       row.setAttribute("aria-expanded", String(open));
       row.addEventListener("click", () => {
-        if (state.diffShut.has(key)) state.diffShut.delete(key);
-        else state.diffShut.add(key);
+        if (state.diffs.shut.has(key)) state.diffs.shut.delete(key);
+        else state.diffs.shut.add(key);
         drawDiffList(list);           // from the last draw's `diffShown`
       });
       if (open) walk(one, full, depth + 1);
@@ -15547,19 +15556,34 @@ function commitShown(report) {
   return commitsOf(report).find((one) => one.sha === report.of) || null;
 }
 
+// Everything the Diff tab's body is drawn from, as one string: it is drawn
+// again when, and only when, one of them moved. A counter bumped by hand at
+// seven places stood for this, and a change that forgot the bump was a
+// change that never drew (#301). The answer is its tag, which is a hash of
+// all of it.
+function diffKey() {
+  const d = state.diffs;
+  const runs = (map, word) => [...map].map(([key, one]) => key + "=" + word(one));
+  return JSON.stringify([
+    state.chosen, d.tag, d.of, d.gone, d.loose, d.trouble,
+    d.found ? d.found.stamp || "read" : "", state.find, state.sides,
+    runs(d.open, String), runs(d.more, (ranges) => ranges.join(";")),
+    runs(d.whole, (held) => held.asking ? "?" : held.file ? "+" : "-"),
+  ]);
+}
+
 function drawDiff(box) {
   const [list, pane, note, foot] = split(box, "diff", "diffbody");
   if (!pane.firstChild) putDiffBar(pane);
   const [bar, scroll] = pane.children;
   fillDiffBar(bar);
   if (holdingText(box)) return;
-  if (!fresh(box, "bodyKey", state.diffAt + "\n" + state.find + "\n"
-             + state.sides)) return;
+  if (!fresh(box, "bodyKey", diffKey())) return;
   const report = state.diff || { sections: [], untracked: [] };
   // A file the agent has since committed is no longer untracked, so the pick
   // goes with it rather than pointing at a section that no longer names it.
-  if (state.loose && !(report.untracked || []).includes(state.loose)) {
-    state.loose = null;
+  if (state.diffs.loose && !(report.untracked || []).includes(state.diffs.loose)) {
+    state.diffs.loose = null;
   }
   const found = diffShown(report);
   // Both places are read before either column is rebuilt, while nothing on
@@ -15578,7 +15602,7 @@ function drawDiff(box) {
   // stand, which is what `markDiffFile` walks.
   scroll.blocks = new Map();
 
-  if (state.diffGone) {
+  if (state.diffs.gone) {
     put(scroll, "div", "note", "The commit you picked is no longer on this"
         + " branch. It was probably amended or rebased away, so this shows"
         + " all changes.");
@@ -15609,9 +15633,9 @@ function drawDiff(box) {
   }
   const loose = found.loose;
   let picked = null;
-  if (state.loose) {
-    picked = drawLooseFile(scroll, state.loose);
-    scroll.blocks.set("untracked\n" + state.loose, picked);
+  if (state.diffs.loose) {
+    picked = drawLooseFile(scroll, state.diffs.loose);
+    scroll.blocks.set("untracked\n" + state.diffs.loose, picked);
   } else if (loose.length) {
     put(scroll, "div", "note", loose.length + " untracked file" +
         (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
@@ -15660,8 +15684,8 @@ function drawDiff(box) {
   // is drawn twice, and the second draw is what the reader ends up looking
   // at. Working that out again here from two other fields was a string of
   // state algebra explaining itself.
-  if (state.goTo && picked) {
-    if (state.looseText !== null) state.goTo = false;
+  if (state.diffs.goTo && picked) {
+    if (state.diffs.found) state.diffs.goTo = false;
     requestAnimationFrame(() => picked.scrollIntoView({ block: "start" }));
   } else if (!same) {
     // Said, not left to the emptying: a pane refilled in the same task keeps
@@ -15685,19 +15709,19 @@ function drawLooseFile(pane, path) {
   put(head, "span", "what", "untracked");
   put(head, "span", "path", path);
   const body = put(node, "div", "dbody");
-  if (state.looseText === null) {
-    put(body, "div", "note", state.looseTrouble || "reading…");
+  if (!state.diffs.found) {
+    put(body, "div", "note", state.diffs.trouble || "reading…");
     return node;
   }
-  if (state.looseBinary) {
+  if (state.diffs.found.binary) {
     // The same answer the Files tab gives, from the same place: a screenshot
     // an agent has just taken is an untracked file, and it read as "nothing
     // to show" on one tab and showed as a picture on the other.
-    putMedia(body, path, state.looseFound);
+    putMedia(body, path, state.diffs.found);
     return node;
   }
-  const lines = state.looseText === "" ? []
-    : state.looseText.replace(/\n$/, "").split("\n");
+  const text = state.diffs.found.text || "";
+  const lines = text === "" ? [] : text.replace(/\n$/, "").split("\n");
   putCounts(head, { added: lines.length, removed: 0 });
   if (!lines.length) {
     put(body, "div", "note", "This file is empty.");
@@ -15719,14 +15743,11 @@ function drawLooseFile(pane, path) {
 }
 
 async function chooseUntracked(path) {
-  if (state.loose === path || busyWriting()) return;
-  state.loose = path;
-  state.looseText = null;
-  state.looseBinary = false;
-  state.looseFound = {};
-  state.looseTrouble = "";
-  state.goTo = true;            // until the block is on screen with the file
-  state.diffAt += 1;            // the body key has to move for the redraw
+  if (state.diffs.loose === path || busyWriting()) return;
+  state.diffs.loose = path;
+  state.diffs.found = null;
+  state.diffs.trouble = "";
+  state.diffs.goTo = true;            // until the block is on screen with the file
   draw();
   await readLoose(path);
 }
@@ -15756,20 +15777,17 @@ async function askFile(id, path, have) {
 
 async function readLoose(path) {
   const want = state.chosen;
-  state.looseAsking = path;
+  state.diffs.asking = path;
   const got = await askFile(want, path);
-  if (state.chosen !== want || state.loose !== path) return;
-  state.looseAsking = null;
+  if (state.chosen !== want || state.diffs.loose !== path) return;
+  state.diffs.asking = null;
   const body = got.file;
   if (!body) {
-    state.looseTrouble = "This file could not be read. It is asked for again.";
+    state.diffs.trouble = "This file could not be read. It is asked for again.";
   } else {
-    state.looseTrouble = "";
-    state.looseText = body.text || "";
-    state.looseBinary = !!body.binary;
-    state.looseFound = body;   // what `putMedia` needs, if it is a picture
+    state.diffs.trouble = "";
+    state.diffs.found = body;   // its text, or what `putMedia` needs for a picture
   }
-  state.diffAt += 1;
   draw();
 }
 
@@ -15812,7 +15830,7 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
   // alone, opening a long file in one half opened it in the other on the
   // next save, and the choice followed the reader to every commit picked.
   const openKey = moreKey(section, one.path);
-  const chose = state.diffOpen.get(openKey);
+  const chose = state.diffs.open.get(openKey);
   let open = chose === undefined ? size <= BIG_LINES : chose;
   const mark = () => { why.textContent = size + " lines" + (open ? "" : ", hidden"); };
   // With whatever the reader asked to see between the changes.
@@ -15821,7 +15839,7 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
   mark();
   head.addEventListener("click", () => {
     open = !open;
-    state.diffOpen.set(openKey, open);
+    state.diffs.open.set(openKey, open);
     if (open) fill(); else body.replaceChildren();
     mark();
   });
@@ -16230,7 +16248,7 @@ const MORE_STEP = 20;
 // What the reader asked to see, and what arrived for it, by what is shown,
 // the half and the file: one commit's line 40 is not another's.
 function moreKey(section, path) {
-  return state.diffOf + "\n" + section + "\n" + path;
+  return state.diffs.of + "\n" + section + "\n" + path;
 }
 
 // A file's hunks as text, to tell whether the whole file that arrived still
@@ -16251,10 +16269,10 @@ function isShown(ranges, line) {
 // hidden below its last change: `tail`, which is null when nobody knows yet.
 function withMore(one, section) {
   const key = moreKey(section, one.path);
-  const more = state.diffMore.get(key);
-  let whole = state.diffWhole.get(key);
+  const more = state.diffs.more.get(key);
+  let whole = state.diffs.whole.get(key);
   if (whole && !whole.asking && whole.sig !== hunkSig(one)) {
-    state.diffWhole.delete(key);
+    state.diffs.whole.delete(key);
     whole = undefined;
   }
   if (!whole && more && more.length) fetchWhole(one, section);  // draws again
@@ -16331,22 +16349,21 @@ const DIFF_CONTEXT = 3;
 async function fetchWhole(one, section) {
   const key = moreKey(section, one.path);
   const held = { sig: hunkSig(one), file: null, asking: true };
-  state.diffWhole.set(key, held);
+  state.diffs.whole.set(key, held);
   const want = state.chosen;
   const body = await ask(want, "whole", "?" + new URLSearchParams({
-    section, path: one.path, old: one.old_path || "", of: state.diffOf,
+    section, path: one.path, old: one.old_path || "", of: state.diffs.of,
     // The base this diff was drawn against, not the pick: with nothing
     // picked the daemon would find one again, and a different answer would
     // be a whole file against another base, drawn between these hunks.
     base: (state.diff && state.diff.base) || "" }));
-  if (state.chosen !== want || state.diffWhole.get(key) !== held) return;
+  if (state.chosen !== want || state.diffs.whole.get(key) !== held) return;
   held.asking = false;
   held.file = body && !body.cut && !body.failed ? body.file : null;
   if (!held.file) {
     note(body && body.cut ? "This file is too long to show whole."
          : "git did not answer, so those lines stay hidden.");
   }
-  state.diffAt += 1;
   draw();
 }
 
@@ -16358,12 +16375,11 @@ function revealLines(file, from, to) {
   // A whole file that failed, or came back cut, is kept so a draw does not
   // ask git again -- but a click is the reader asking. Kept through it,
   // every later click added a range, drew, and showed and said nothing.
-  const whole = state.diffWhole.get(key);
-  if (whole && !whole.asking && !whole.file) state.diffWhole.delete(key);
-  const ranges = state.diffMore.get(key) || [];
+  const whole = state.diffs.whole.get(key);
+  if (whole && !whole.asking && !whole.file) state.diffs.whole.delete(key);
+  const ranges = state.diffs.more.get(key) || [];
   ranges.push([from, to]);
-  state.diffMore.set(key, ranges);
-  state.diffAt += 1;
+  state.diffs.more.set(key, ranges);
   draw();
 }
 
@@ -16797,8 +16813,7 @@ function goToComment(anchor) {
         && (name === path || pathNow(name) === path);
     });
     if (!keys.length) return;
-    for (const key of keys) state.diffOpen.set(state.diffOf + "\n" + key, true);
-    state.diffAt += 1;
+    for (const key of keys) state.diffs.open.set(state.diffs.of + "\n" + key, true);
     draw();
     at = find() || scroll.blocks.get(keys[0]);
     // `drawDiff` puts the reader's place back a frame from now. Scrolled
@@ -16829,11 +16844,11 @@ function diffAnchors(report) {
     }
   }
   // The untracked file picked is drawn whole, once it is read.
-  if (state.loose && typeof state.looseText === "string" && !state.looseBinary) {
-    anchors.add(anchorOf(state.loose, 0));
-    const count = linesOf(state.looseText.replace(/\n$/, "")).length;
+  if (state.diffs.loose && state.diffs.found && !state.diffs.found.binary) {
+    anchors.add(anchorOf(state.diffs.loose, 0));
+    const count = linesOf((state.diffs.found.text || "").replace(/\n$/, "")).length;
     for (let line = 1; line <= count; line += 1) {
-      anchors.add(anchorOf(state.loose, line));
+      anchors.add(anchorOf(state.diffs.loose, line));
     }
   }
   return anchors;
@@ -17195,35 +17210,37 @@ function drawEmpty(box) {
 // what the daemon sent. The listing, the file's text and the diff are fetched
 // again -- by the time you come back they have moved, and they are also the
 // big things, 52,799 names being 1.7 MB of it.
+// What a session keeps, each with how it is copied: as it is, or a Set or a
+// Map of its own, so the place and the page share nothing. One table for
+// `savePlace` and `usePlace`, which named every field twice and were kept
+// in step by a test alone (#300).
+//
+// The Transcript tab's choices and not its blocks: those are a cache the
+// daemon fills again, and `nodes` holds live DOM belonging to a page this
+// session has left. `turns.run` says which reading those `seq`s belong to;
+// without it, coming back to a session looks exactly like its transcript
+// having been rewritten. `files.down` is written down as the reader
+// scrolls, so it is right whichever tab they are on when they leave: asking
+// the DOM here instead meant a second writer, and it wrote the outgoing
+// session's place over the one just restored for the new session.
+const asIs = (value) => value;
+const PLACE_FIELDS = [
+  ["turns", "at", asIs], ["turns", "down", asIs], ["turns", "run", asIs],
+  ["turns", "open", (value) => new Set(value)],
+  ["turns", "shut", (value) => new Set(value)],
+  ["files", "path", asIs], ["files", "at", asIs], ["files", "asText", asIs],
+  ["files", "down", asIs], ["files", "dirs", (value) => new Map(value)],
+  ["diffs", "open", (value) => new Map(value)], ["diffs", "of", asIs],
+  ["diffs", "shut", (value) => new Set(value)],
+  ["diffs", "more", (value) => new Map([...value].map(([key, runs]) => [key, runs.slice()]))],
+  ["diffs", "loose", asIs],
+];
+
 function savePlace(id) {
   if (!id) return;
-  state.visits.set(id, {
-    tab: state.tab,
-    // The Transcript tab's choices and not its blocks: those are a cache the
-    // daemon fills again, and `nodes` holds live DOM belonging to a page this
-    // session has left. Spreading the whole bag kept both.
-    turnAt: state.turns.at,
-    turnDown: state.turns.down,
-    // Which reading those `seq`s belong to. Without it, coming back to a
-    // session looks exactly like its transcript having been rewritten.
-    turnRun: state.turns.run,
-    path: state.files.path,
-    at: state.files.at,
-    asText: state.files.asText,
-    // Written down as the reader scrolls, so this is right whichever tab
-    // they are on when they leave. Asking the DOM here instead meant a
-    // second writer, and it wrote the outgoing session's place over the one
-    // just restored for the new session.
-    down: state.files.down,
-    dirs: new Map(state.files.dirs),
-    open: new Set(state.turns.open),
-    shut: new Set(state.turns.shut),
-    diffOpen: new Map(state.diffOpen),
-    diffOf: state.diffOf,
-    diffShut: new Set(state.diffShut),
-    diffMore: new Map([...state.diffMore].map(([key, runs]) => [key, runs.slice()])),
-    loose: state.loose,
-  });
+  const kept = { tab: state.tab };
+  for (const [bag, field, copy] of PLACE_FIELDS) kept[bag + "." + field] = copy(state[bag][field]);
+  state.visits.set(id, kept);
   // A session that has gone from the list will not be chosen again, so its
   // place is dead weight on a page that is meant to stay open for days.
   const live = new Set(state.sessions.map((one) => one.id));
@@ -17238,21 +17255,7 @@ function savePlace(id) {
 function usePlace(id) {
   const kept = state.visits.get(id);
   if (!kept) return null;
-  state.turns.at = kept.turnAt;
-  state.turns.down = kept.turnDown;
-  state.turns.run = kept.turnRun;
-  state.files.path = kept.path;
-  state.files.at = kept.at;
-  state.files.asText = kept.asText;
-  state.files.dirs = new Map(kept.dirs);
-  state.files.down = kept.down;
-  state.turns.open = new Set(kept.open);
-  state.turns.shut = new Set(kept.shut);
-  state.diffOpen = new Map(kept.diffOpen);
-  state.diffOf = kept.diffOf;
-  state.diffShut = new Set(kept.diffShut);
-  state.diffMore = new Map([...kept.diffMore].map(([key, runs]) => [key, runs.slice()]));
-  state.loose = kept.loose;
+  for (const [bag, field, copy] of PLACE_FIELDS) state[bag][field] = copy(kept[bag + "." + field]);
   return kept;
 }
 
@@ -17304,26 +17307,12 @@ function choose(id) {
   // added to either must not need a line here to be forgotten from.
   state.turns = blankTurns();
   state.files = blankFiles();
-  state.loose = null;
-  state.looseFound = {};
-  state.looseText = null;
-  state.looseAsking = null;
-  state.looseTrouble = "";
-  state.looseBinary = false;
-  state.goTo = false;
+  state.diffs = blankDiff();
   state.diff = null;
-  state.diffOf = "";
-  state.diffGone = false;
-  state.diffShut = new Set();
-  state.diffMore = new Map();
-  state.diffWhole = new Map();
-  state.diffOpen.clear();
   recallReview(id);
   state.reviewFiles = new Map();
   state.writing = null;
   drawReviewCount();
-  state.diffTag = "";
-  state.diffAt += 1;
   drawDiffCount();          // the last session's counts are not this one's
   const back = usePlace(id);
   drawSessions();
@@ -17588,7 +17577,7 @@ async function loadFiles() {
 
 async function loadDiff() {
   const want = state.chosen;
-  const of = state.diffOf;
+  const of = state.diffs.of;
   const base = recallBase();
   const query = new URLSearchParams();
   if (of) query.set("of", of);
@@ -17597,16 +17586,16 @@ async function loadDiff() {
   // the answer empties `diffTag`, so none of them can send a tag for a diff
   // the page no longer has. The tag is the one comparison: the whole text
   // was kept beside it to compare as well, megabytes for a large diff (#291).
-  if (state.diffTag) query.set("have", state.diffTag);
+  if (state.diffs.tag) query.set("have", state.diffs.tag);
   const raw = await ask(want, "diff",
                         query.toString() ? "?" + query.toString() : "", true);
-  if (raw === null || state.chosen !== want || state.diffOf !== of
+  if (raw === null || state.chosen !== want || state.diffs.of !== of
       || recallBase() !== base) return;
   let body = null;
   try { body = JSON.parse(raw); } catch (error) { return; }
   // The diff held still stands: nothing to take in and nothing new to draw,
   // but an untracked file not yet read is still asked for below.
-  const stands = body && body.same && !!state.diffTag && body.tag === state.diffTag;
+  const stands = body && body.same && !!state.diffs.tag && body.tag === state.diffs.tag;
   if (body && !stands) {
     // A session that has gone answers with an error, not a report. Drawing
     // that as if it were one is how the tab used to go blank and stay blank.
@@ -17617,19 +17606,18 @@ async function loadDiff() {
     // The commit picked is not on the branch any more. What came back is
     // everything, so that is what is shown, and the pane says why.
     if (body.gone && body.gone === of && !body.failed) {
-      state.diffOf = "";
-      state.diffGone = true;
+      state.diffs.of = "";
+      state.diffs.gone = true;
     }
-    state.diffTag = body.tag || "";
+    state.diffs.tag = body.tag || "";
     state.diff = body;
     forgetChanged(body);
-    state.diffAt += 1;
   }
   draw();
   // An untracked file picked and not read: coming back to the session puts
   // the pick back and not the text, and a read that failed is tried again.
-  if (state.loose && state.looseText === null && state.looseAsking !== state.loose) {
-    readLoose(state.loose);
+  if (state.diffs.loose && !state.diffs.found && state.diffs.asking !== state.diffs.loose) {
+    readLoose(state.diffs.loose);
   }
 }
 

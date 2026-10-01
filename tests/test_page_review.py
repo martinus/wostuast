@@ -82,7 +82,7 @@ def test_a_comment_survives_the_diff_being_read_again(repo_page):
         browser, page = open_diff(play, repo_page)
         try:
             comment_on_first_line(page, "look again")
-            page.evaluate("state.diffAt += 1; draw()")
+            page.evaluate("state.diffs.tag += '+'; draw()")
             assert page.locator(".comment").count() == 1
             assert "look again" in page.locator(".comment").inner_text()
         finally:
@@ -99,7 +99,7 @@ def test_an_open_box_is_not_swept_away_by_the_poll(repo_page):
             page.locator(".dline .addnote").first.click(force=True)
             page.wait_for_selector(".commentbox textarea")
             page.fill(".commentbox textarea", "half a thought")
-            page.evaluate("state.diffAt += 1; draw()")
+            page.evaluate("state.diffs.tag += '+'; draw()")
             assert page.input_value(".commentbox textarea") == "half a thought"
         finally:
             browser.close()
@@ -1207,7 +1207,7 @@ def test_a_big_diff_file_stays_open_when_the_agent_saves(repo_page):
         try:
             # Two lines is "big" here, so a small file behaves like a long
             # one and the test does not need a file of ten thousand.
-            page.evaluate("BIG_LINES = 2; state.diffAt += 1; draw();")
+            page.evaluate("BIG_LINES = 2; state.diffs.tag += '+'; draw();")
             shown = """() => {
               const node = [...document.querySelectorAll('.dfile')].find(
                 (one) => one.querySelector('.path').textContent === 'README.md');
@@ -1219,7 +1219,7 @@ def test_a_big_diff_file_stays_open_when_the_agent_saves(repo_page):
             page.wait_for_function(f"() => ({shown})() > 0")
             many = page.evaluate(shown)
 
-            page.evaluate("state.diffAt += 1; draw();")   # as a save does
+            page.evaluate("state.diffs.tag += '+'; draw();")   # as a save does
             assert page.evaluate(shown) == many
         finally:
             browser.close()
@@ -1480,7 +1480,7 @@ def test_a_comment_the_diff_holds_is_never_commented_elsewhere(repo_page):
             # Shut by hand, then drawn again as a save does.
             head = f".dfile:has(.path:text-is('{path}')) > .name"
             page.click(head)
-            page.evaluate("state.diffAt += 1; draw();")
+            page.evaluate("state.diffs.tag += '+'; draw();")
             page.wait_for_function(
                 "document.querySelectorAll('.diffscroll .comment').length === 0")
             assert page.evaluate(elsewhere) == 0, "shut"
@@ -1521,8 +1521,8 @@ def test_a_file_no_diff_shows_is_read_once_not_on_every_diff(long_page):
             assert len(asked) == 1, asked
             for _ in range(3):
                 # A diff that changed, as a save by the agent brings one.
-                page.evaluate("() => { state.diffTag = ''; loadDiff(); }")
-                page.wait_for_function("state.diffTag !== ''")
+                page.evaluate("() => { state.diffs.tag = ''; loadDiff(); }")
+                page.wait_for_function("state.diffs.tag !== ''")
                 assert page.locator(f"{card} .dline").count() == 4
             assert len(asked) == 1, asked
         finally:
@@ -1554,7 +1554,8 @@ def test_a_file_that_could_not_be_read_is_asked_for_again(long_page):
             page.wait_for_selector(f"{card} .comment .quoted")
             page.wait_for_function("!state.reviewFiles.has('long.py')")
             assert page.locator(f"{card} .dline").count() == 0
-            page.evaluate("() => { state.diffTag = ''; loadDiff(); }")
+            # A diff that moved, as a save brings one: its tag moves.
+            page.evaluate("() => { state.diffs.tag += '+'; draw(); }")
             page.wait_for_selector(f"{card} .dline")
             assert len(asked) == 2, asked
         finally:
@@ -1601,7 +1602,7 @@ def test_a_click_on_the_tab_on_screen_keeps_a_half_written_comment(repo_page):
             page.keyboard.press("3")
             assert page.evaluate("state.tab") == "diff"
             # What a poll with a changed diff, or a pick, does next.
-            page.evaluate("() => { state.diffAt += 1; draw(); }")
+            page.evaluate("() => { state.diffs.tag += '+'; draw(); }")
             assert page.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE"
             assert page.evaluate("state.writing") is not None
         finally:
@@ -1707,7 +1708,7 @@ def test_a_comment_on_a_file_renamed_since_the_commit_goes_to_the_new_name(
             # Its row goes to it with the old name's file shut: the file
             # is found by the name on disk.
             page.click(".diffhead.committed ~ .dfile > .name")
-            page.evaluate("state.diffAt += 1; draw();")
+            page.evaluate("state.diffs.tag += '+'; draw();")
             page.wait_for_function(
                 "document.querySelectorAll('.diffscroll .comment').length === 0")
             page.click(".filelist.diff button.said")
@@ -1773,7 +1774,8 @@ def test_a_file_elsewhere_that_was_said_to_be_missing_is_asked_for_again(
             page.wait_for_selector(f"{card} .comment .quoted")
             page.wait_for_function("!state.reviewFiles.get('long.py')?.asking")
             assert not page.evaluate("!!state.reviewFiles.get('long.py')")
-            page.evaluate("() => { state.diffTag = ''; loadDiff(); }")
+            # A diff that moved, as a save brings one: its tag moves.
+            page.evaluate("() => { state.diffs.tag += '+'; draw(); }")
             page.wait_for_selector(f"{card} .dline")
             assert len(asked) == 2, asked
         finally:

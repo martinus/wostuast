@@ -137,7 +137,7 @@ def test_a_branch_with_no_commit_in_common_says_so_and_not_that_git_failed(
             empty = page.evaluate("""() => {
               state.diff = {sections: [], untracked: [], base: 'main',
                             unrelated: true};
-              state.diffAt += 1;
+              state.diffs.tag += '+';
               draw();
               const one = document.querySelector('.diffbody .empty');
               return one && one.textContent;
@@ -365,7 +365,7 @@ def test_a_long_file_starts_closed_and_opens_on_click(repo_page):
             page.wait_for_timeout(400)
             # The page owns the cut-off, so the test moves the page's own
             # number rather than pretending the daemon sent a different one.
-            page.evaluate("BIG_LINES = 20; state.diffAt += 1; draw()")
+            page.evaluate("BIG_LINES = 20; state.diffs.tag += '+'; draw()")
             page.wait_for_timeout(200)
             big = page.locator(".dfile:has-text('big.txt')").last
             assert "hidden" in big.locator(".why").inner_text()
@@ -503,7 +503,7 @@ def test_an_empty_diff_is_inset_like_a_heading_of_the_diff(repo_page):
             # everything committed, nothing untracked.
             page.evaluate("""() => {
               state.diff = {sections: [], untracked: [], base: 'origin/main'};
-              state.diffAt += 1;
+              state.diffs.tag += '+';
               draw();
             }""")
             page.wait_for_selector(".diffbody .empty")
@@ -626,7 +626,7 @@ def test_another_commit_is_read_from_its_top(repo_page):
                 "document.querySelector('.diffscroll').scrollHeight > 3000")
             page.evaluate("document.querySelector('.diffscroll').scrollTop = 2000")
             # A poll draws the same commit again, and the place stands.
-            page.evaluate("() => { state.diffAt += 1; draw(); }")
+            page.evaluate("() => { state.diffs.tag += '+'; draw(); }")
             page.wait_for_function(
                 "document.querySelector('.diffscroll').scrollTop === 2000")
             page.click(".diffbar .step >> nth=0")
@@ -705,7 +705,7 @@ def test_a_commit_that_went_away_shows_everything_and_says_so(repo_page):
             show_tab(page, "diff")
             page.wait_for_selector(".dfile")
             page.evaluate("pickDiff('" + "0" * 40 + "')")
-            page.wait_for_function("state.diffGone === true && state.diffOf === ''")
+            page.wait_for_function("state.diffs.gone === true && state.diffs.of === ''")
             page.wait_for_selector(".diffscroll > .note")
             assert "no longer on this branch" in page.locator(
                 ".diffscroll > .note").first.inner_text()
@@ -1170,7 +1170,7 @@ def test_a_whole_file_that_failed_is_asked_for_again_on_a_click(repo_page):
             page.route("**/whole?*", lambda route: route.abort())
             page.locator(LONG + " .hunk").first.locator(".grow").click()
             page.wait_for_function(
-                "[...state.diffWhole.values()].some(w => !w.asking && !w.file)")
+                "[...state.diffs.whole.values()].some(w => !w.asking && !w.file)")
             page.unroute("**/whole?*")
             page.locator(LONG + " .hunk").first.locator(".grow").click()
             page.wait_for_selector(LONG + " .dtext:text-is('line 7')")
@@ -1191,7 +1191,7 @@ def test_a_file_shut_in_one_half_stays_open_in_the_other(repo_page):
             show_tab(page, "diff")
             page.wait_for_selector(loose + " .dline")
             page.locator(committed).first.locator(".name").click()
-            page.evaluate("state.diffAt += 1; draw()")    # the agent saved
+            page.evaluate("state.diffs.tag += '+'; draw()")    # the agent saved
             page.wait_for_selector(loose + " .dline")
             assert page.locator(committed).first.locator(".dline").count() == 0
         finally:
@@ -1438,18 +1438,18 @@ def test_a_poll_of_a_diff_that_stands_is_answered_short(repo_page):
         try:
             show_tab(page, "diff")
             page.wait_for_selector(".dline")
-            page.wait_for_function("state.diffTag !== ''")
-            drawn = page.evaluate("state.diffAt")
+            page.wait_for_function("state.diffs.tag !== ''")
+            drawn = page.evaluate("state.diffs.tag")
             with page.expect_response(re.compile(r"/diff\?")) as came:
                 page.evaluate("() => { load(); }")
             assert "have=" in came.value.url, came.value.url
             assert came.value.json().get("same") is True
-            assert page.evaluate("state.diffAt") == drawn
+            assert page.evaluate("state.diffs.tag") == drawn
             assert page.locator(".dline").count() > 0
 
             (repo / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
             page.evaluate("() => { load(); }")
-            page.wait_for_function(f"state.diffAt > {drawn}")
+            page.wait_for_function("t => state.diffs.tag !== t", arg=drawn)
             page.wait_for_function(
                 "[...document.querySelectorAll('.dline')].some("
                 "l => l.textContent.includes('print(3)'))")
@@ -1576,12 +1576,12 @@ def test_the_settings_say_what_is_chosen_and_change_it_in_place(repo_page):
             pressed = """() => [...document.querySelectorAll(
               '#setpop button[aria-pressed="true"]')].map((b) => b.dataset.value)"""
             assert page.evaluate(pressed) == ["system", "4", "false", "unified"]
-            drawn = page.evaluate("state.diffAt")
+            drawn = page.evaluate("state.diffs.tag")
             settings(page, "tabwidth", "2")
             settings(page, "sides", "split")
             page.wait_for_selector(".dline.pair")
             assert page.evaluate(pressed) == ["system", "2", "false", "split"]
-            assert page.evaluate("state.diffAt") == drawn
+            assert page.evaluate("state.diffs.tag") == drawn
         finally:
             browser.close()
 

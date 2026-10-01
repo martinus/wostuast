@@ -16,11 +16,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `places`** — `state.files.places` is the list of things to go to, and one
   word for two ideas is how one of them gets shadowed.
 - **`usePlace` writes onto a state that has just been blanked**, so every
-  field it sets is one `blankFiles` already has. A session never visited keeps
-  the blank. The two lists are named by hand and
-  `test_what_a_session_keeps_is_what_comes_back` is what stops them drifting:
-  a field saved and not put back is silent, and reads as the feature
-  half-working.
+  field it sets is one the `blank…()` already has. A session never visited
+  keeps the blank. **What is kept is one table, `PLACE_FIELDS`**: bag,
+  field, and how it is copied. `savePlace` and `usePlace` named every field
+  by hand, twice, and only a test kept the two lists together; a field saved
+  and not put back is silent, and reads as the feature half-working (#300).
+  `test_what_a_session_keeps_is_what_comes_back` walks the table and checks
+  that each field was set away from its blank, so a field the table forgot
+  to copy back cannot hide behind the blank. Not `KEPT`, which is the
+  Markdown scrub's.
 - **`state.files.down` has one writer, and it is *this session's*
   scrollbar.** The `.filescroll` listener writes it as the reader moves, so
   `savePlace` reads a field and never asks the DOM. It used to ask, and so did
@@ -50,13 +54,26 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     puts the scroll and the rebuild in one task, where no event can come
     between; `test_another_sessions_scroller_is_not_read_as_this_ones_place`
     holds the session check.
-- **A tab's state lives under its own name**, `state.files` and
-  `state.turns`, each with one `blank…()` that builds an empty one. Choosing a session is then
-  `state.files = blankFiles()` rather than eleven assignments that could
-  forget the twelfth. **A new tab gets the same shape from the start**: the
+- **A tab's state lives under its own name**, `state.files`, `state.turns`
+  and `state.diffs`, each with one `blank…()` that builds an empty one.
+  Choosing a session is then `state.files = blankFiles()` rather than eleven
+  assignments that could forget the twelfth. **A new tab gets the same shape from the start**: the
   flat bag this came out of grew fifteen names in one scope for the Files tab
   alone, and nothing said which tab owned any of them.
 - The shared chrome — `sessions`, `chosen`, `tab`, `find`, `pick`, `history`,
   `skew`, `open`, `stream` — stays flat. It belongs to no tab.
-- The Diff tab's own fields are still flat. They move when something touches
-  them anyway, not as churn of their own.
+- **The Diff tab's are in `state.diffs` too** (`blankDiff`, #300): what it
+  shows (`of`), the folders and files opened or shut, the lines revealed,
+  the tag of the answer held, and the untracked file picked with its read.
+  `choose` reset eighteen flat fields one by one. The untracked file's
+  answer is held once, as `found`: its text and whether it is binary were
+  copies of it, reset beside it in three places. `state.diff`, the
+  daemon's answer, and `state.sides`, a setting, stay where they were.
+- **The Diff tab's body is drawn again when one of its inputs moved**
+  (`diffKey`): the session, the answer's tag, what is shown, the loose
+  file and its read, the find box, the columns, and what was opened,
+  revealed or fetched whole. A counter, `diffAt`, bumped by hand at seven
+  places, stood for that, and a change that forgot the bump never drew
+  (#301). `redrawCode` still clears the key for a redraw that is meant to
+  go under an open comment box -- its save, its cancel. A test that wants
+  "a new answer" moves the tag.
