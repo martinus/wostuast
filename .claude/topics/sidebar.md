@@ -130,6 +130,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     push, the one that made the change too, and a hand edit of the file
     arrives the same way (`tell_config`). A change of the diff's columns from the file waits
     while a comment is being written (`takeSides`), as `keepSides` does.
+    **The changes go one at a time, each after the last was answered**
+    (`settingsSent`): two quick clicks were two POSTs on two connections,
+    the first landed after the second, and the file kept the older choice
+    -- which the push then put back on the page. The two-switches test
+    went red that way under load. The menu reads the tab width and the
+    wrap from the settings (`readingWanted`), never back off the root.
+    `test_two_quick_changes_reach_the_file_in_the_order_they_were_made`.
   - **The ticket links are rows in the menu, saved on leave or Enter**
     (`putLinkRow`, `saveLinks`, `putLinkRows`): the reader chose that over a
     save button and over saving each keystroke, which linked half a

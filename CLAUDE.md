@@ -217,7 +217,7 @@ This list exists because each entry was re-implemented once already.
 | Want | Call |
 | --- | --- |
 | "has this changed since I drew it?" | `fresh(box, which, key)` — do not hand-roll a `dataset` compare |
-| make an element | `put(parent, tag, cls, text)` |
+| make an element | `put(parent, tag, cls, text)` — a button it makes is `type="button"` already |
 | scattered-letter match | `fuzzy(text, query)` → `{score, at}` or null |
 | the items in a list whose path matches the find box | `hits(items, pathOf)` — keeps the caller's order; `pick(names)` is the same sorted best-first |
 | walk a diff's lines with their numbers | `walkHunks(one, onHunk, onLine)` |
@@ -229,7 +229,7 @@ This list exists because each entry was re-implemented once already.
 | the reader's ticket links in some text | `linkTickets(root)` — after any scrub |
 | "15:48", and "21 Sep" when it was not today | `clock(when)`, `dayOf(when)` |
 | text onto the clipboard, with the old way behind it | `copyToClipboard(text)` |
-| a button that did its job says so for a moment | `flashOutcome(button, icon, title, done, saying)` — a tick in the working colour, then back |
+| a button that did its job says so for a moment | `flashOutcome(button, icon, title, done, saying, words)` — a tick in the working colour, then back; `words` for a button that is a word |
 | which sessions are listed | `shownSessions()` (filter only) vs `listedSessions()` (what is on screen) |
 | a file as rows, or a slice of one | `linesOf(text)`, then `asLines(path, lines, from)` |
 | a binary file the browser can show | `putMedia(parent, path, found)` — `found.shown` is the daemon's answer |
@@ -238,6 +238,8 @@ This list exists because each entry was re-implemented once already.
 | Markdown or text, over what is read | `putReadAs(parent, asText, pick, textTitle)` |
 | the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
+| "1 file", "3 replies" | `counted(n, one, many)` — `counted` in Python too |
+| this browser's storage, which may refuse | `stored(key)` → "" when nothing; `store(key, value)` forgets an empty one |
 | a diff's files in the order its tree reads | `treeOrder(found, pathOf)` — folders first at every level |
 | which words of a changed line changed, and marking them | `wordDiff(was, now)` → two lists of runs or null, then `markWords(cell, runs)` |
 
