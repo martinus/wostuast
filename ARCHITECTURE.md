@@ -159,7 +159,7 @@ flowchart LR
     M --> HUB -- "SSE push" --> P
     P -- "GET" --> HTTP
     P -- "POST + token" --> HTTP
-    HTTP -- "send-keys, paste-buffer" --> tmux
+    HTTP -- "paste-buffer" --> tmux
 ```
 
 Notice three things in this picture.
@@ -835,12 +835,17 @@ a terminal. It is small on purpose.
 | --- | --- | --- | --- |
 | **jump** | `jump` | `select-window`, `select-pane` | tmux shows the agent's pane. |
 | **send** | `send` | `load-buffer`, `paste-buffer`, for the text and then for Enter | Your text appears as a prompt. |
-| **answer** | `answer` | `send-keys` (digits, Tab, Enter) | The agent's question is answered. |
-| **no** | `decline` | `send-keys Escape`, then a send | The permission dialog closes with No, and your reason follows. |
+| **answer** | `answer` | each key pasted as its bytes (digits, Tab, Enter) | The agent's question is answered. |
+| **no** | `decline` | Escape pasted as its byte, then a send | The permission dialog closes with No, and your reason follows. |
 
 Only six tmux commands are ever used: `select-window` and `select-pane` to
-jump; `send-keys` for a key, and to leave copy mode; and `load-buffer`,
-`paste-buffer` and `delete-buffer` to type a text. Adding a seventh needs a very good reason.
+jump; `send-keys` to leave copy mode; and `load-buffer`, `paste-buffer`
+and `delete-buffer` to type a text or a key. A key is pasted as its bytes
+too, never pressed with `send-keys`: with `synchronize-panes` on, a key goes
+to every pane of the window, and a paste only to its own. The Escape is
+pasted with `-S`: tmux 3.7 otherwise writes it as the two characters `^[`.
+An older tmux refuses `-S`, and the Escape is pasted again without it.
+Adding a seventh command needs a very good reason.
 
 ### How a text is typed
 
@@ -882,7 +887,7 @@ sequenceDiagram
     participant L as events / transcript
     P->>D: POST decline (key of the dialog, reason)
     D->>D: is this dialog still open? (call_answered)
-    D->>T: send-keys Escape
+    D->>T: Escape, pasted
     loop up to DECLINE_WAIT (3 s)
         D->>L: did the call get its "rejected" result?
     end

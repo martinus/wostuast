@@ -202,17 +202,36 @@ def said(args, rest):
     return [*args, stdin.decode()] if stdin is not None else list(args)
 
 
+#: What a pasted byte is as a key, for `pressed`.
+KEY_NAMES = {"\r": "Enter", "\t": "Tab", "\x1b": "Escape"}
+
+
+def pastes(seen):
+    """Each paste a runner that records saw, in order: what its buffer was
+    loaded with, and whether it went bracketed (`-p`)."""
+    loaded, out = {}, []
+    for one in seen:
+        if one[:2] == ["tmux", "load-buffer"]:
+            loaded[one[3]] = one[-1]
+        elif one[:2] == ["tmux", "paste-buffer"]:
+            out.append((loaded.get(one[one.index("-b") + 1], ""), "-p" in one))
+    return out
+
+
 def typed(seen):
-    """The texts `tmux_send` typed, in order: what each `load-buffer` read,
-    leaving out the carriage return that is its Enter."""
-    return [one[-1] for one in seen
-            if one[:2] == ["tmux", "load-buffer"] and one[-1] != "\r"]
+    """The texts `tmux_send` typed, in order: the bracketed pastes."""
+    return [text for text, bracketed in pastes(seen) if bracketed]
+
+
+def pressed(seen):
+    """The keys pasted as their bytes, in order: Enter, Tab, Escape, a digit."""
+    return [KEY_NAMES.get(text, text) for text, bracketed in pastes(seen)
+            if not bracketed]
 
 
 def entered(seen):
-    """How many times `tmux_send` pressed Enter: a pasted carriage return."""
-    return sum(1 for one in seen
-               if one[:2] == ["tmux", "load-buffer"] and one[-1] == "\r")
+    """How many times Enter was pressed."""
+    return pressed(seen).count("Enter")
 
 
 def into_pane(seen):

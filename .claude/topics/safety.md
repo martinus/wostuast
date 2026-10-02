@@ -34,10 +34,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the Origin check stop another site's *requests*; only `X-Frame-Options:
   DENY` and `frame-ancestors 'none'`, which `reply` sends on every answer,
   stop its *clicks*. `test_the_page_cannot_be_framed`.
-- **One send at a time, per session.** A send to tmux takes long enough to
+- **One send at a time, per session -- and per pane.** A send to tmux takes long enough to
   press twice in, and a double-click on the review's send, or a second Enter
   in the send box, typed the text into the pane twice -- on two HTTP threads
   the text and the Enter of each can even interleave into one prompt.
+  **Two sessions can stand in one pane** -- `claude -p` run from an
+  agent's Bash tool inherits `TMUX_PANE` -- and a lock by session let a
+  send to each go at once: their pastes and Enters made one prompt, 20
+  times of 20 (#331). `claim` takes the pane too (`typing_panes`), and
+  `release` gives it back. `test_two_sessions_in_one_pane_are_typed_into_one_at_a_time`.
   `sending` holds the sessions a send is on its way to, and `submitReview`,
   `sendTyped`, `submitAsk` and `submitDecline` all go through it
   (`startSending`, `doneSending`). **Not "`submitAsk` disables its button",
@@ -463,11 +468,24 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   input and a second press exits Claude Code". A turn can end between deciding
   to stop a session and the key landing, so Ctrl-C is a race whose losing
   side is a session that quit. Escape on an idle prompt does
-  nothing. `tmux_interrupt` is a key name, the shape of the `Enter` press
-  `tmux_send` already makes — not something that could go through `tmux_send`,
-  which strips every byte below a space on purpose. Measured: `send-keys C-c`
-  puts 0x03 into a raw-mode app as a keystroke it reads, not as a signal.
-  `test_interrupt_sends_escape_and_never_ctrl_c` holds it.
+  nothing. `tmux_interrupt` pastes the one byte Escape is
+  (`KEY_BYTES`, through `tmux_paste`, without `-p`), as `tmux_send` pastes
+  its Enter -- not something that could go through `tmux_send`, which strips
+  every byte below a space on purpose. **Pasted, never `send-keys
+  Escape`**: under `synchronize-panes` a key goes to every pane of the
+  window, and the Escape meant for one agent stopped every agent beside it
+  (#331). Measured on 2.1.287: a pasted ESC closes a permission dialog with
+  the same "Interrupted · What should Claude do instead?". **With `-S`
+  where the tmux has it**: tmux 3.7 runs a paste through `vis(3)`, and
+  the Escape arrived as the two characters `^[`, typed into the dialog;
+  tmux 3.4 refuses `-S`, and the paste goes again without it. Found by an
+  agent asked to break the promise, on a tmux 3.7 it built; a digit, Tab,
+  Enter and every byte `tmux_send` lets through pass `vis(3)` unchanged.
+  `test_a_tmux_that_refuses_dash_s_still_gets_one_escape`. Keys and the
+  Escape leave copy mode first, as a send does. Measured:
+  `send-keys C-c` puts 0x03 into a raw-mode app as a keystroke it reads, not
+  as a signal. `test_interrupt_sends_escape_and_never_ctrl_c`,
+  `test_synchronized_panes_get_no_answer_and_no_escape_of_ours`.
 - **A No is Escape, and the reason is typed only once the transcript shows
   the dialog closed.** Measured against 2.1.282 in tmux, with a fake
   Messages API asking: Escape declines every permission dialog, where the

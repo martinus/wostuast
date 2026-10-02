@@ -330,13 +330,11 @@ def test_a_pane_in_copy_mode_still_gets_one_paste(ws, real_pane):
     assert arrived(1) == pasted("two\nlines") + b"\r"
 
 
-def test_synchronized_panes_get_no_enter_of_ours(ws, real_pane, tmp_path):
-    """Under `synchronize-panes` a key goes to every pane of the window and a
-    paste only to its target, so `send-keys Enter` after the paste gave the
-    other panes a bare Enter, which runs whatever is on their prompt."""
+def a_synchronized_pane_beside(ws, pane, tmp_path):
+    """A second raw pane in the window of `pane`, with `synchronize-panes`
+    on: the file it writes what it reads to."""
     import time
 
-    pane, arrived = real_pane
     other, ready = tmp_path / "other", tmp_path / "other-ready"
     assert ws.run(["tmux", "split-window", "-t", pane,
                    f"stty raw -echo && : > '{ready}' && exec cat > '{other}'"]
@@ -347,8 +345,38 @@ def test_synchronized_panes_get_no_enter_of_ours(ws, real_pane, tmp_path):
         time.sleep(0.02)
     assert ws.run(["tmux", "set-option", "-w", "-t", pane,
                    "synchronize-panes", "on"]) is not None
+    return other
+
+
+def test_synchronized_panes_get_no_enter_of_ours(ws, real_pane, tmp_path):
+    """Under `synchronize-panes` a key goes to every pane of the window and a
+    paste only to its target, so `send-keys Enter` after the paste gave the
+    other panes a bare Enter, which runs whatever is on their prompt."""
+    import time
+
+    pane, arrived = real_pane
+    other = a_synchronized_pane_beside(ws, pane, tmp_path)
     assert ws.tmux_send(pane, "only here")
     assert arrived(1) == pasted("only here") + b"\r"
+    time.sleep(0.5)                     # proving nothing reached the other
+    assert other.read_bytes() == b""
+
+
+def test_synchronized_panes_get_no_answer_and_no_escape_of_ours(
+        ws, real_pane, tmp_path, monkeypatch):
+    """The same for the answer keys and the No's Escape (#331): `send-keys`
+    pressed them in every pane of the window, and a digit and an Enter on
+    another agent's prompt can answer or approve something there. They are
+    pasted as their bytes, and reach the target alone, as `send-keys` sent
+    them."""
+    import time
+
+    monkeypatch.setattr(ws, "KEY_GAP", 0)
+    pane, arrived = real_pane
+    other = a_synchronized_pane_beside(ws, pane, tmp_path)
+    assert ws.tmux_interrupt(pane)
+    assert ws.tmux_keys(pane, ["2", "Tab", "Enter"]) == 3
+    assert arrived(1) == b"\x1b2\t\r"
     time.sleep(0.5)                     # proving nothing reached the other
     assert other.read_bytes() == b""
 
@@ -377,9 +405,30 @@ def test_interrupt_sends_escape_and_never_ctrl_c(ws, asked):
     Ctrl-C on an automatic limit is a race whose losing side is a session that
     quit. Escape on an idle prompt does nothing."""
     assert ws.tmux_interrupt("%7", runner=asked) is True
-    assert asked.seen == [["tmux", "send-keys", "-t", "%7", "Escape"]]
-    flat = " ".join(asked.seen[0])
+    assert conftest.pressed(asked.seen) == ["Escape"]
+    flat = " ".join(" ".join(one) for one in asked.seen)
     assert "C-c" not in flat and "\x03" not in flat
+    # Pasted, not pressed: a key goes to every synchronized pane (#331).
+    # The one `send-keys` leaves copy mode, and presses nothing.
+    assert [one for one in asked.seen if one[1] == "send-keys"] == [
+        ["tmux", "send-keys", "-X", "-t", "%7", "cancel"]]
+    # `-S`, or tmux 3.7 runs the paste through vis(3) and types `^[`.
+    assert "-S" in [one for one in asked.seen if one[1] == "paste-buffer"][0]
+
+
+def test_a_tmux_that_refuses_dash_s_still_gets_one_escape(ws):
+    """tmux 3.4 says "unknown flag -S" and pastes nothing; the Escape then
+    goes without it, which is exact there. One Escape, never two."""
+    seen = []
+
+    def runner(args, **rest):
+        seen.append(conftest.said(args, rest))
+        return None if args[1] == "paste-buffer" and "-S" in args else ""
+
+    assert ws.tmux_interrupt("%7", runner=runner) is True
+    tried = [one for one in seen if one[1] == "paste-buffer"]
+    assert ["-S" in one for one in tried] == [True, False]
+    assert [text for text, _ in conftest.pastes(seen)] == ["\x1b", "\x1b"]
 
 
 def test_interrupt_without_a_pane_runs_nothing(ws, asked):
@@ -505,35 +554,33 @@ def test_a_question_that_could_not_be_kept_whole_is_not_answered(ws):
     assert ask_of(ws, one(False), one(True))["answerable"] is True
 
 
-def test_keys_go_one_command_each_and_only_the_answer_keys(ws, monkeypatch):
+def test_keys_go_one_paste_each_and_only_the_answer_keys(ws, asked, monkeypatch):
     """`24` in one read is not two ticks, measured: nothing was ticked and
-    the dialog moved on without them. And nothing but a digit, Tab or Enter
-    is ever pressed through here."""
+    the dialog moved on without them. So one paste a key, unbracketed: a
+    key as its bytes, and never `send-keys`, which under synchronize-panes
+    pressed it in every pane of the window (#331). And nothing but a digit,
+    Tab or Enter is ever pressed through here."""
     monkeypatch.setattr(ws, "KEY_GAP", 0)
-    seen = []
-
-    def runner(args, **rest):
-        seen.append(list(args))
-        return ""
-
-    assert ws.tmux_keys("%3", ["2", "4", "Tab", "Enter"], runner=runner) == 4
-    assert seen == [["tmux", "send-keys", "-t", "%3", "-l", "--", "2"],
-                    ["tmux", "send-keys", "-t", "%3", "-l", "--", "4"],
-                    ["tmux", "send-keys", "-t", "%3", "Tab"],
-                    ["tmux", "send-keys", "-t", "%3", "Enter"]]
-    seen.clear()
+    assert ws.tmux_keys("%3", ["2", "4", "Tab", "Enter"], runner=asked) == 4
+    assert conftest.pastes(asked.seen) == [
+        ("2", False), ("4", False), ("\t", False), ("\r", False)]
+    assert [one for one in asked.seen if one[1] == "send-keys"] == [
+        ["tmux", "send-keys", "-X", "-t", "%3", "cancel"]]
+    asked.seen.clear()
     for bad in (["24"], ["C-c"], ["Escape"], ["-l"], ["2", "x"]):
-        assert ws.tmux_keys("%3", bad, runner=runner) == 0
-    assert seen == []
+        assert ws.tmux_keys("%3", bad, runner=asked) == 0
+    assert asked.seen == []
 
 
 def test_a_key_tmux_refused_stops_the_rest(ws, monkeypatch):
     monkeypatch.setattr(ws, "KEY_GAP", 0)
-    calls = []
+    seen = []
 
     def runner(args, **rest):
-        calls.append(args[-1])
-        return None if len(calls) == 2 else ""
+        seen.append(conftest.said(args, rest))
+        pasted = [one for one in seen if one[1] == "paste-buffer"]
+        return None if args[1] == "paste-buffer" and len(pasted) == 2 else ""
 
     assert ws.tmux_keys("%3", ["1", "2", "Tab", "Enter"], runner=runner) == 1
-    assert calls == ["1", "2"]
+    assert [text for text, _ in conftest.pastes(seen)] == ["1", "2"]
+    assert seen[-1][1] == "delete-buffer"
