@@ -361,6 +361,12 @@ suite. So before a push:
   `browser.py`, `split`, `draw`, `showTab`, `paintLive`, the stream, a CSS
   rule every tab wears, or anything that runs on every push or poll.
 
+**The rules are read by tests too.** `test_the_map_in_claude_md_points_at_real_symbols`
+reads **Where to look**, and failed on a test helper written into it after
+the last run: that table names symbols of `wostuast` only. An edit to
+`CLAUDE.md` or `.claude/topics/` after the gate is an edit the tests read,
+and the tests with no browser run once more before the push.
+
 A red CI after that is still work now, and it costs one push; the old rule
 paid seven minutes on every pull request to save it.
 
@@ -374,7 +380,10 @@ change to code, stop the run (`TaskStop`), edit, and start it again.
 **Run a long thing in the background, and work while it runs.** A loop of
 `until grep …; sleep` holds the turn, does nothing else, and is killed at
 the tool's time limit — eight commands ended that way in that session. `run_in_background` wakes
-you when it ends. Meanwhile write the rule for this file and the pull
+you when it ends. **A `&` inside the command is not that**: nothing wakes
+you, the output lands only where you sent it, and stopping it meant
+finding its shell's number by hand, after an edit had already made its
+counts worthless. Meanwhile write the rule for this file and the pull
 request's text; while CI runs, reproduce the next issue, reading only.
 
 **Stop a process by its number, never by `pkill -f`.** The pattern is in the
