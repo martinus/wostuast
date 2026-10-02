@@ -711,7 +711,7 @@ def alerts_page(where):
         page.add_init_script("""
           window.__told = [];
           window.Notification = function (title, options) {
-            window.__told.push([title, (options || {}).body || ""]);
+            window.__told.push([title, (options || {}).body || "", options || {}]);
           };
           window.Notification.permission = "granted";
           window.Notification.requestPermission = async () => "granted";
@@ -760,6 +760,78 @@ def test_an_agent_that_needs_you_is_said_once(ws, page_at):
         page.wait_for_function(
             "() => state.sessions[0].reason.includes('dist')")
         assert page.evaluate("window.__told.length") == 1
+
+
+def test_an_alert_that_needs_you_says_what_and_where_and_stays(ws, page_at):
+    """It said "Bash rm -rf build needs you" and nothing of where, with no
+    picture, and went away on its own (issue 330). It says the permission
+    or the question, then the folder and the branch, wears the tab's robot,
+    and stays until clicked: it is what this program is for, and one that
+    went while the reader was in another room said nothing to them."""
+    daemon, path = page_at
+    with alerts_page(path) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        ws.append_event(conftest.event(
+            "PermissionRequest", tool_name="Bash",
+            tool_input={"command": "rm -rf build"}, ts=time.time()))
+        daemon.tick()
+        page.wait_for_function("window.__told.length === 1")
+        title, body, options = page.evaluate("window.__told")[0]
+        where = page.evaluate(
+            "state.sessions[0].place + ' · ' + state.sessions[0].branch")
+        assert "needs you" in title
+        assert body.split("\n") == ["permission: Bash rm -rf build", where], body
+        assert options["icon"].startswith("data:image/png;base64,"), options
+        assert options["requireInteraction"] is True
+
+
+def test_a_question_is_said_as_the_question(ws, page_at):
+    """The row says "asks: Way", the question's header; an alert says the
+    question itself."""
+    daemon, path = page_at
+    with alerts_page(path) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        # The two events a real question sends.
+        asked = {"questions": [{"question": "Which way?", "header": "Way",
+                                "options": [{"label": "left"}]}]}
+        now = time.time()
+        ws.append_event(conftest.event(
+            "PreToolUse", tool_name="AskUserQuestion", tool_input=asked,
+            tool_use_id="toolu_q1", ts=now))
+        ws.append_event(conftest.event(
+            "PermissionRequest", tool_name="AskUserQuestion",
+            tool_input=asked, ts=now + 0.1))
+        daemon.tick()
+        page.wait_for_function("window.__told.length === 1")
+        assert page.evaluate("window.__told")[0][1].startswith("Which way?")
+
+
+def test_a_finished_agent_says_what_it_finished_and_goes(ws, page_at):
+    """"ready for you" said nothing of which turn had ended. It says the
+    prompt the agent finished -- cut, its secrets hidden, since an alert can
+    stand on a locked screen -- and goes away on its own: nothing waits."""
+    daemon, path = page_at
+    with alerts_page(path) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        page.click("#settings")
+        page.click("#alertdone")
+        page.wait_for_function("document.getElementById('alertdone').checked")
+        now = time.time()
+        ws.append_event(conftest.event(
+            "UserPromptSubmit", prompt="fix the login test with TOKEN=abc123xyz",
+            ts=now))
+        daemon.tick()
+        page.wait_for_function(
+            "() => state.sessions.some((one) => one.state === 'working')")
+        ws.append_event(conftest.event("Stop", ts=now + 1))
+        daemon.tick()
+        page.wait_for_function("window.__told.length === 1")
+        title, body, options = page.evaluate("window.__told")[0]
+        assert "has finished" in title
+        first = body.split("\n")[0]
+        assert first.startswith("fix the login test"), body
+        assert "abc123xyz" not in body
+        assert options["requireInteraction"] is False
 
 
 def test_a_finished_agent_is_said_only_when_it_was_working(ws, page_at):

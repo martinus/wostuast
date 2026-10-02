@@ -1548,3 +1548,30 @@ def test_a_listing_that_fails_does_not_bring_an_answered_dialog_back(
     session = store.sessions["s1"]
     assert session.state == "done"
     assert session.permission is None
+
+
+def test_the_prompt_an_alert_shows_is_cut_and_hidden(ws):
+    """An alert that says a session finished says what it was asked, and an
+    alert can stand on a locked screen: cut to `PROMPT_SHOWN`, its secrets
+    hidden (issue 330)."""
+    long = "fix it with TOKEN=abc123xyz " + "and more words " * 40
+    session = fold(ws, event("UserPromptSubmit", prompt=long, ts=1000.0))
+    shown = ws.row(session)["prompt"]
+    assert shown.startswith("fix it with TOKEN=***"), shown
+    assert len(shown) <= ws.PROMPT_SHOWN
+
+
+def test_the_shown_prompt_is_worked_out_once_a_prompt(ws, monkeypatch):
+    """`clip_hidden` costs 170 µs on 500 characters, and a row is built for
+    every session on every tick. It runs again only for a new prompt."""
+    session = fold(ws, event("UserPromptSubmit", prompt="first", ts=1000.0))
+    calls = []
+    real = ws.clip_hidden
+    monkeypatch.setattr(ws, "clip_hidden",
+                        lambda text, width: calls.append(text) or real(text, width))
+    ws.row(session)
+    ws.row(session)
+    assert calls == ["first"]
+    session.last_prompt = "second"
+    assert ws.row(session)["prompt"] == "second"
+    assert calls == ["first", "second"]

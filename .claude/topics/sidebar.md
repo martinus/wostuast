@@ -66,6 +66,30 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   A test that only turns the switch on *after* a turn ends proves neither —
   it passes with the recording moved inside the switch. The one that bites
   ticks the box mid-turn.
+- **An alert says what, where, and in the colour of what** (`tellAbout`,
+  issue 330). It said "needs you" and the bare `reason`, with no picture,
+  and went away on its own. Now:
+  - **What**: the question itself, from `asking` (`waitsFor`) -- the
+    `reason` names only its header -- or the `reason` of a permission; for
+    a finished session, the prompt it finished (`shown_prompt`).
+  - **Where**: the folder and the branch, the row's second line.
+  - **The tab's robot** (`iconPicture`, the one drawing `drawIcon` uses),
+    amber for needs-you, grey for finished.
+  - **Needs-you stays until it is clicked or closed**
+    (`requireInteraction`): one that went while the reader was in another
+    room said nothing to them. Finished goes on its own: nothing waits.
+  - **Nothing the agent or the reader wrote goes out whole.** An alert can
+    stand on a locked screen, so the prompt is `clip_hidden` to
+    `PROMPT_SHOWN`, and a permission is the `reason`, hidden already --
+    never the dialog's `fields`. **Once a prompt, not once a row**:
+    `clip_hidden` costs 170 µs on 500 characters, and a row is built for
+    every session on every tick; at the prompt event every prompt of a long
+    log paid it again at start. `Session.prompt_shown` keeps it with the
+    prompt it was made from.
+  `test_an_alert_that_needs_you_says_what_and_where_and_stays`,
+  `test_a_question_is_said_as_the_question`,
+  `test_a_finished_agent_says_what_it_finished_and_goes`,
+  `test_the_shown_prompt_is_worked_out_once_a_prompt`.
 - **The counts are about every session.** `drawCounts` runs *before* the guard
   that asks whether the shown rows changed — behind it, a session the filter
   hides could go amber and reach the title, icon and notification: none of them.
