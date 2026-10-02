@@ -51,6 +51,24 @@ def counts(output: str) -> tuple[int, int]:
     return failed, passed
 
 
+def forget_bytecode(path: Path) -> None:
+    """Delete the bytecode Python cached for `path`.
+
+    Python runs a cached `.pyc` while the source's mtime, in whole seconds,
+    and its size are the ones it was compiled from. A break and the next
+    one, or a break and the file put back, are often written in the same
+    second, and two breaks can change the size by the same count: the run
+    then used the code of the break before. Measured: `SEND_MAX = 12000`,
+    then `POST_MAX = 64 * 1024`, each six bytes shorter, and the second ran
+    with the first's `SEND_MAX` and said GREEN. The file put back can be
+    shadowed the same way, by a break that kept the length, and then every
+    run after this one ran the break.
+    """
+    import importlib.util
+
+    Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
+
+
 def one(entry: dict, env: dict) -> tuple[bool, str]:
     """Apply one break, run its tests, put the file back. (proven, line)."""
     path = Path(entry.get("file", "wostuast"))
@@ -61,12 +79,14 @@ def one(entry: dict, env: dict) -> tuple[bool, str]:
         return False, f"old text is in {path} {found} times, not once"
     try:
         path.write_bytes(text.replace(entry["old"], entry["new"]).encode("utf-8"))
+        forget_bytecode(path)
         ran = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
              *entry["tests"]],
             capture_output=True, text=True, env=env)
     finally:
         path.write_bytes(was)
+        forget_bytecode(path)
     failed, passed = counts(ran.stdout + ran.stderr)
     if failed:
         return True, f"red    {failed} failed, {passed} passed"

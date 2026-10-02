@@ -34,7 +34,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the Origin check stop another site's *requests*; only `X-Frame-Options:
   DENY` and `frame-ancestors 'none'`, which `reply` sends on every answer,
   stop its *clicks*. `test_the_page_cannot_be_framed`.
-- **One send at a time, per session.** `tmux send-keys` takes long enough to
+- **One send at a time, per session.** A send to tmux takes long enough to
   press twice in, and a double-click on the review's send, or a second Enter
   in the send box, typed the text into the pane twice -- on two HTTP threads
   the text and the Enter of each can even interleave into one prompt.
@@ -153,6 +153,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   traceback into the terminal running `wostuast`, from a request nobody had
   authenticated. They refuse a header they cannot read; `guarded()` catches
   the rest, and it wraps the whole of a request.
+- **A POST that may not act is refused before its body is read**
+  (`route_post`: `ours`, then `allowed`, then `asked`). `POST_MAX` is
+  megabytes since a send may be a long log, and any site in the reader's
+  browser can POST to us: read first, it made the daemon read and parse
+  that much for a request it then refused. The body stays in the socket, so
+  the connection closes.
+  `test_a_post_that_may_not_act_is_refused_before_its_body_is_read`.
 - **A body that is not read stays in the socket.** `asked()` refuses one over
   `POST_MAX`, and with keep-alive the rest of it was parsed as the next
   request: the daemon answered a `GET` written inside a refused POST's body,
@@ -358,36 +365,78 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **The page never builds HTML from what a program printed.** A `!`
   command's output and a slash command's answer reach it as text, and
   `putShell` puts them in a `pre` as text: a program can print `<img>`.
-- **What a `send` may be is counted in bytes, and tmux is what sets the
-  number.** Bisected against tmux 3.4: `send-keys -t %0 -l -- <text>` takes
-  16,341 bytes and refuses 16,342 with "command too long"; the same run with
-  `ä`, two bytes in UTF-8, stops at 8,170, and by session name rather than
-  pane id at 16,338 — the target comes out of the same budget. So a cap on
-  `len()` lets three times the bytes through in Japanese and tmux refuses the
-  lot. `SEND_MAX` is that cap and it is bytes; `test_the_cap_on_a_send_is_in_bytes`
-  holds it. A long message is refused, never cut, and never split across two
-  sends: a bracketed paste broken in half leaves the rest arriving as
-  keystrokes, which is the scar below.
-- **A `;` at the end of a send goes as `\;`.** tmux reads an argument that
-  ends in `;` as the end of a command, and it does so before `-l` and `--`
-  count. Measured on tmux 3.4 with a raw `cat` in the pane: "use foo();"
-  arrived as "use foo()", ";" as nothing but the Enter, and "path\;" as
-  "path;". `tmux_send` sends the last `;` as `\;`, and tmux turns that back
-  into one `;`. It is the one escape `tmux_send` makes, because every other
-  escape of ours arrives as characters. A `;` anywhere else is only a `;`,
-  and a text with a newline ends in the paste marker, so it needs nothing.
-  The reason of a No goes through `tmux_send` too.
-  `test_a_semicolon_at_the_end_is_sent_as_tmux_reads_it`, and
-  `test_what_arrives_is_what_was_written`, which reads the bytes out of a
-  real pane (it skips where there is no tmux). Measure again on a real pane
-  before you change this: do not reason it out from tmux's source.
+- **A send goes through a paste buffer of its own, never through
+  `send-keys -l`** (#328). `send-keys` took the text as an argument, and
+  tmux 3.4 refuses a command over 16,341 bytes ("command too long";
+  bisected, and 8,170 for `ä`, two bytes each), so a long log could not be
+  sent at all. `tmux_send` runs `send-keys -X cancel`, then through
+  `tmux_paste` `load-buffer -b <name> -` with the text on stdin and
+  `paste-buffer -p -d -r -b <name> -t <pane>`, then the same for one
+  carriage return, without `-p`. Each part is a scar or a measurement:
+  - **`send-keys -X cancel` first, which leaves copy mode.** A pane scrolled
+    back with the mouse wheel is in copy mode, and there a paste reached
+    the program without the markers and the Enter was eaten by the mode: a
+    real bash ran the first line of two, and the page said done. Found by
+    an agent asked to break the promise. It fails for a pane in no mode,
+    which is the usual answer, and the send goes on.
+  - **`-r`, or every newline is Enter**: without it tmux pastes a newline
+    as a carriage return. Measured in a raw pane.
+  - **`-p`, so every send is one bracketed paste, one line too.** 100 KB on
+    one line with no markers reached Claude Code 2.1.287 in pieces, read as
+    several pastes with the Enter inside the last one: nothing was
+    submitted, and the text sat on the prompt. With `-p` the same line went
+    in five times of five, and logs of 310 KB and 930 KB each byte. `-p`
+    adds the markers only for a program that asked (`ESC [ ? 2004 h`); one
+    that did not cannot read them. **Not markers of our own**: they went
+    on many lines only, and always.
+  - **Enter is a pasted carriage return, not `send-keys Enter`.** Under
+    `synchronize-panes` a key goes to every pane of the window and a paste
+    only to its target -- measured -- so the other panes got a bare Enter,
+    which runs whatever is on their prompt. Without `-p`, or the return is
+    inside a paste and is only a new line.
+  - **A name of its own for each paste**, `wostuast-<pid>-<random>`:
+    buffers belong to the whole tmux server, and a named buffer is never
+    the one a reader's own paste key takes.
+  - **A failed paste deletes its buffer** (`delete-buffer`): tmux 3.4 keeps
+    it, `-d` or not, when the pane is gone -- measured -- and after a
+    failed load too, since one that ran out of time may have filled it.
+    Nothing is pressed then.
+  - **No escape at all.** stdin is not a command line, so a `;` at the end
+    is a `;`. Through `send-keys` tmux read it as the end of a command, even
+    after `-l --`: "use foo();" arrived as "use foo()", and the last `;`
+    went as `\;`. Measure on a real pane before you change any of this; do
+    not reason it out from tmux's source.
+  `test_send_leaves_copy_mode_pastes_the_text_and_then_a_return`,
+  `test_a_paste_that_fails_presses_nothing_and_leaves_no_buffer`, and in a
+  real pane (they skip with no tmux): `test_what_arrives_is_what_was_written`,
+  `test_a_long_text_arrives_whole_as_one_paste`,
+  `test_a_program_that_did_not_ask_sees_no_markers`,
+  `test_a_pane_in_copy_mode_still_gets_one_paste`,
+  `test_synchronized_panes_get_no_enter_of_ours`,
+  `test_no_buffer_is_left_behind`.
+- **What a `send` may be is counted in bytes, and the agent sets the
+  number, not tmux.** `SEND_MAX` is 1 MiB. Measured with Claude Code 2.1.287
+  against a fake Messages API that kept each request: 1.36 MB arrived as
+  the one user turn in 1.2 s, and 5 MB was refused by Claude Code itself,
+  "Context limit reached". A megabyte is some 300,000 tokens, more than
+  most models take. Bytes, because a cap on `len()` lets three times as
+  much through in Japanese; `test_the_cap_on_a_send_is_in_bytes` holds it.
+  **A long message is refused, never cut, and never split across two
+  sends**: a paste broken in half leaves the rest arriving as keystrokes,
+  which is the scar below. `POST_MAX` holds a body of `SEND_MAX` as JSON,
+  six times over, for a log full of colour codes (`\u001b` is six bytes);
+  `test_sending_more_than_fits_is_refused_not_cut` keeps it above
+  `SEND_MAX`. The reason of a No goes through `tmux_send` and this cap too.
+  **The cap counts what is pasted**, `typed(text)`: a log full of colour
+  codes is smaller once they are out, and was refused for bytes that never
+  go. `test_the_cap_counts_what_is_pasted_not_the_controls`.
 - **A verb tmux refused says so, and says only what it knows.** `send` and
   `jump` both used to answer `{"done": false}` with no `error`, and `said`
   clears the slot for an answer that carries none — so the reader asked for
   something, did not get it, and read nothing at all. Every refusal on this
   path carries a message. **`send`'s message does not claim nothing landed**:
-  `tmux_send` runs two commands, the text and then Enter, and a failure on
-  the second leaves the text sitting on the agent's prompt. "Nothing went in"
+  `tmux_send` pastes the text and then presses Enter, and a failure on
+  the Enter leaves the text sitting on the agent's prompt. "Nothing went in"
   would send the reader back to type it again, and it would arrive twice.
 - **An empty body and a body that was refused is not the same answer.**
   `asked()` never reads a body over `POST_MAX`, so the route sees `{}` — and
@@ -509,8 +558,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   and a review quotes lines an agent wrote, so those bytes would end the paste
   and leave the rest arriving as keystrokes — with any newline as Enter. A
   person reading the preview cannot catch this; an escape byte is invisible.
-- **A newline sent to a terminal is Enter.** Text with one is wrapped in the
-  bracketed paste markers. Without them a real shell ran the first line.
+- **A newline sent to a terminal is Enter.** Without the bracketed paste
+  markers a real shell ran the first line. Every send is a paste with
+  `-p`, which brings them; see the paste buffer bullet.
 - **A path out of the event log is input, not fact.** `transcript_path` goes
   through `safe_transcript`. `cwd` is used for git and for labels, never to open
   a file the page asked for.

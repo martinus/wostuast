@@ -57,6 +57,23 @@ def test_a_break_no_test_sees_is_said_and_fails_the_run(tmp_path):
     assert (tmp_path / "mod.py").read_text() == MODULE
 
 
+def test_no_bytecode_of_a_break_is_left_behind(tmp_path):
+    """Python runs a cached `.pyc` while the source's mtime in whole seconds
+    and its size match, and a break that keeps the length keeps the size: a
+    break, or the file put back, written in the same second as the one
+    before ran the code of the one before. `SEND_MAX = 12000` and then
+    `POST_MAX = 64 * 1024`, each six bytes shorter, said GREEN for the
+    second. So no bytecode of a break may be left for the next run."""
+    import importlib.util
+
+    done = run(tmp_path, [{"name": "same length", "file": "mod.py",
+                           "old": "return 1", "new": "return 2",
+                           "tests": ["test_mod.py::test_f"]}])
+    assert "red    1 failed" in done.stdout, done.stdout + done.stderr
+    cached = Path(importlib.util.cache_from_source(str(tmp_path / "mod.py")))
+    assert not cached.exists()
+
+
 def test_only_the_summary_line_is_counted():
     printed = "3 passed in the log of a test\n1 failed, 4 passed in 0.52s\n"
     assert perturb.counts(printed) == (1, 4)

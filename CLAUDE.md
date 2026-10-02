@@ -78,7 +78,7 @@ bullets beside it are the same part's other scars.
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite, the Agent SDK, stream-json, channels, an `http` hook, a hook decision, OpenTelemetry | topics/decisions |
-| `tmux_send`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
+| `tmux_send`, `SEND_MAX`, `POST_MAX`, `typing_trouble`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked`, `state.answered`, `forgetAnswered` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Session.dialog`, `cannot_type`, `whyNotTyped`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
 | the Markdown scrub (`scrub`, `KEPT`, `textFor`, `safeLinks`), `linkTickets`, `linkOne`, `nextMatch`, anything that inserts what an agent wrote | topics/safety: the page never trusts what an agent wrote |
@@ -255,7 +255,11 @@ never hand-write the dict. `conftest.record(kind, text, ...)` builds a
 transcript record — `you`, `claude`, `think`, `tool`, `result` — and
 `conftest.records(...)` makes them the lines of a file; never hand-write
 those either, because a hand-written one ended in a backslash and an `n`
-rather than a newline and the reader waited on it for ever. `browser.py` has `opened` (`with opened(where) as page:`, and
+rather than a newline and the reader waited on it for ever. `conftest.said(args, rest)`
+is what a runner that records keeps of one call, with the text that
+`tmux_send` hands `load-buffer` on stdin; `conftest.typed(seen)` gives those
+texts back, and `conftest.into_pane(seen)` every call that put something
+into a pane. A runner that records `list(args)` alone has lost the text. `browser.py` has `opened` (`with opened(where) as page:`, and
 `tab="diff"`), `own_context` and `load` for a test that needs the context
 before the page, `show_tab`,
 `comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`,
@@ -501,8 +505,10 @@ before you edit its part:
 - **The `__main__` guard stays last**, after `PAGE`. Before it, running as a
   script started the daemon and `PAGE` was never assigned.
 - **Ask first** before adding a dependency, a file outside `wostuast` and
-  `tests/`, or a tmux command beyond the three the four verbs run:
-  `select-window`, `select-pane` and `send-keys`.
+  `tests/`, or a tmux command beyond the six the four verbs run:
+  `select-window`, `select-pane`, `send-keys`, and for a text
+  `load-buffer`, `paste-buffer` and `delete-buffer` (#328, asked and
+  answered).
 - **Prefer deleting a feature over adding a config option.** If wostuast
   could work the answer out, it must, and if the answer is the same for
   everybody, it is not a setting. **What the settings menu sets is kept in

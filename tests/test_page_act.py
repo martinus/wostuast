@@ -226,13 +226,13 @@ def test_picking_types_nothing_and_can_be_changed(ws, in_pane):
             "one => one.classList.contains('chosen')")
         # Nothing has reached the terminal, and the reader can change
         # their mind as often as they like.
-        assert not [one for one in seen if "send-keys" in one]
+        assert not conftest.into_pane(seen)
         page.click(option(1, 3))
         assert not page.locator(option(1, 2)).evaluate(
             "one => one.classList.contains('chosen')")
         assert page.locator(option(1, 3)).evaluate(
             "one => one.classList.contains('chosen')")
-        assert not [one for one in seen if "send-keys" in one]
+        assert not conftest.into_pane(seen)
 
 
 def test_submit_waits_until_every_question_is_answered(ws, in_pane):
@@ -651,10 +651,9 @@ def test_the_send_box_types_into_the_terminal(in_pane):
         page.press("#say", "Enter")
         # The keys reaching the pane and the send's lock let go, not a
         # number of seconds: a loaded runner takes longer than any.
-        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "run the tests"]
-        wait_until(page, lambda: typed in seen)
+        wait_until(page, lambda: "run the tests" in conftest.typed(seen))
         page.wait_for_function("sending.size === 0")
-        assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+        assert conftest.entered(seen) == 1
         # empty, and not put back: the daemon said it went in
         assert page.input_value("#say") == ""
 
@@ -682,14 +681,13 @@ def test_the_enter_that_ends_a_composition_sends_nothing(in_pane):
         # the Enter, so a box still full is the sure sign nothing went.
         assert page.input_value("#say") == "\u65e5\u672c"
         page.wait_for_timeout(500)          # proving nothing was sent
-        assert not any("send-keys" in one for one in seen), seen
+        assert not conftest.into_pane(seen), seen
         page.press("#say", "Enter")
         # Not the box emptying: that is the send starting, not landing.
         # The keys reaching the pane, and the send's lock let go, are.
-        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "\u65e5\u672c"]
-        wait_until(page, lambda: typed in seen)
+        wait_until(page, lambda: "\u65e5\u672c" in conftest.typed(seen))
         page.wait_for_function("sending.size === 0")
-        assert ["tmux", "send-keys", "-t", "%7", "Enter"] in seen
+        assert conftest.entered(seen) == 1
         assert page.input_value("#say") == ""
 
 
@@ -710,7 +708,7 @@ def test_a_restarted_daemon_says_so_and_keeps_saying_it(ws, in_pane):
         # answer. The keys reaching the pane, and the send's lock let
         # go, are.
         deadline = time.time() + 15
-        while not any("-l" in one for one in seen) and time.time() < deadline:
+        while not conftest.typed(seen) and time.time() < deadline:
             time.sleep(0.05)
         page.wait_for_function("sending.size === 0")
 
@@ -819,8 +817,8 @@ def test_shift_and_enter_writes_a_second_line(in_pane):
         assert seen == [], "shift and enter sent it"
 
         page.keyboard.press("Enter")
-        page.wait_for_timeout(500)
-        assert seen[0][-1] == ("\x1b[200~first line\nsecond line\x1b[201~")
+        wait_until(page, lambda: conftest.typed(seen) == [
+            "first line\nsecond line"])
         assert page.input_value("#say") == ""
 
 
@@ -844,15 +842,14 @@ def test_enter_twice_sends_once_and_keeps_what_came_after(in_pane):
             "document.getElementById('say').value === ' and then'")
 
         def typed():
-            return [one for one in seen if "-l" in one]
+            return conftest.typed(seen)
 
         # Wait for the send to land, then long enough for a second one.
         deadline = time.time() + 15
         while not typed() and time.time() < deadline:
             time.sleep(0.05)
         page.wait_for_timeout(600)
-        assert typed() == [["tmux", "send-keys", "-t", "%7", "-l", "--",
-                            "run the tests"]], seen
+        assert typed() == ["run the tests"], seen
 
 
 def test_a_refused_send_comes_back_in_front_of_what_was_typed_since(
@@ -1010,7 +1007,7 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
         handle.write(conftest.records(conftest.record("tool", BUILD, tool_id="toolu_b1")))
 
     def runner(args, **rest):
-        seen.append(list(args))
+        seen.append(conftest.said(args, rest))
         if args[-1] == "Escape":
             with open(path, "a") as handle:
                 handle.write(conftest.records(conftest.record(
@@ -1038,11 +1035,11 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
         page.wait_for_function(
             "window.words.includes('declined, and your reason was typed')")
         deadline = time.time() + 15
-        while not any("-l" in one for one in seen) and time.time() < deadline:
+        while not conftest.typed(seen) and time.time() < deadline:
             time.sleep(0.05)
         keys = [one[-1] for one in seen if one[:2] == ["tmux", "send-keys"]]
         assert keys[0] == "Escape", keys
-        assert "Use the ninja build instead" in keys, keys
+        assert conftest.typed(seen) == ["Use the ninja build instead"], seen
         daemon.tick()
         page.wait_for_selector("#asking", state="hidden")
 
@@ -1325,11 +1322,10 @@ def test_a_slash_offers_the_commands_and_tab_takes_one(ws, in_pane, tmp_path):
         assert page.input_value("#say") == "/review-pr "
         assert page.evaluate("$('slash').hidden")
         assert page.evaluate("document.activeElement.id") == "say"
-        assert not any("send-keys" in one for one in seen)
+        assert not conftest.into_pane(seen)
         page.keyboard.type("12")
         page.keyboard.press("Enter")
-        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", "/review-pr 12"]
-        wait_until(page, lambda: typed in seen)
+        wait_until(page, lambda: "/review-pr 12" in conftest.typed(seen))
 
 
 def test_enter_takes_a_command_and_escape_keeps_the_list_shut(ws, in_pane, tmp_path):
@@ -1347,7 +1343,7 @@ def test_enter_takes_a_command_and_escape_keeps_the_list_shut(ws, in_pane, tmp_p
         assert page.text_content("#slash button.chosen .name") == "/review-pr"
         page.keyboard.press("Enter")
         assert page.input_value("#say") == "/review-pr "
-        assert not any("send-keys" in one for one in seen)
+        assert not conftest.into_pane(seen)
 
         page.fill("#say", "")
         page.keyboard.type("/")
@@ -1377,8 +1373,7 @@ def test_enter_sends_what_was_typed_unless_a_row_was_chosen(ws, in_pane, tmp_pat
     ran(daemon, "clear")
 
     def sent(text):
-        typed = ["tmux", "send-keys", "-t", "%7", "-l", "--", text]
-        wait_until(page, lambda: typed in seen)
+        wait_until(page, lambda: text in conftest.typed(seen))
         page.wait_for_function("sending.size === 0")
 
     with opened((None, base)) as page:

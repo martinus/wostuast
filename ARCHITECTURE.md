@@ -159,7 +159,7 @@ flowchart LR
     M --> HUB -- "SSE push" --> P
     P -- "GET" --> HTTP
     P -- "POST + token" --> HTTP
-    HTTP -- "send-keys" --> tmux
+    HTTP -- "send-keys, paste-buffer" --> tmux
 ```
 
 Notice three things in this picture.
@@ -834,12 +834,38 @@ a terminal. It is small on purpose.
 | Verb | Route | tmux commands | What you see |
 | --- | --- | --- | --- |
 | **jump** | `jump` | `select-window`, `select-pane` | tmux shows the agent's pane. |
-| **send** | `send` | `send-keys -l`, then `Enter` | Your text appears as a prompt. |
+| **send** | `send` | `load-buffer`, `paste-buffer`, for the text and then for Enter | Your text appears as a prompt. |
 | **answer** | `answer` | `send-keys` (digits, Tab, Enter) | The agent's question is answered. |
 | **no** | `decline` | `send-keys Escape`, then a send | The permission dialog closes with No, and your reason follows. |
 
-Only three tmux commands are ever used: `select-window`, `select-pane` and
-`send-keys`. Adding a fourth needs a very good reason.
+Only six tmux commands are ever used: `select-window` and `select-pane` to
+jump; `send-keys` for a key, and to leave copy mode; and `load-buffer`,
+`paste-buffer` and `delete-buffer` to type a text. Adding a seventh needs a very good reason.
+
+### How a text is typed
+
+A text goes in as one paste, not as keys:
+
+1. `send-keys -X cancel` takes the pane out of copy mode, if you left it
+   scrolled back. In copy mode the paste would lose its markers, and the
+   Enter would go to the mode.
+2. `load-buffer` reads the text on stdin into a tmux buffer. The buffer has
+   a name of its own, so no other paste can take it.
+3. `paste-buffer -p -r` writes it into the pane, and deletes the buffer.
+   `-p` puts the paste markers around it when the program asked for them,
+   as Claude Code does. So the agent knows that all of it is one paste, and
+   a newline in it does not submit the prompt. `-r` keeps a newline a
+   newline.
+4. One carriage return, pasted the same way but without the markers, is
+   the Enter. A paste goes only to its pane; a key would go to every pane
+   of a window with `synchronize-panes` on.
+
+If a paste fails, its buffer is deleted and nothing more is typed.
+
+Why not `send-keys` with the text? tmux refuses a command longer than about
+16 KB, and a long log is longer. And Claude Code read a long line that came
+without the paste markers as several pastes, with the Enter inside the last
+one, so the prompt was not submitted.
 
 ### Saying No, safely
 
@@ -889,8 +915,9 @@ why, and you can try again.
 Text from the page goes through `CONTROL_CHARS` before it reaches tmux. That
 strips control characters, line and paragraph separators, and lone surrogates
 — everything that could move the cursor, change the terminal's mode, or hide
-part of a command. A long text is refused above `SEND_MAX`, because tmux
-itself refuses a little more than 16 KB.
+part of a command. A text over `SEND_MAX` (1 MiB) is refused, never cut:
+Claude Code took 1.36 MB as one prompt, and refused 5 MB as too large for
+the context.
 
 ---
 
@@ -921,7 +948,7 @@ flowchart TB
 | Loopback only | other machines | `BIND_HOST = "127.0.0.1"`. Use an ssh tunnel to reach it from elsewhere. |
 | The uid check | other users on the same machine | `another_user` reads `/proc/net/tcp` to find who owns the other end of the socket. |
 | The Host check | DNS rebinding | `ours()` accepts only `localhost`, `127.0.0.1` and `::1`. |
-| Origin + token | other web pages in your browser | Every POST needs a loopback `Origin` and the secret token in a header. The token is written into the page, never into a URL. |
+| Origin + token | other web pages in your browser | Every POST needs a loopback `Origin` and the secret token in a header. The token is written into the page, never into a URL. A POST without them is refused before its body is read. |
 | Framing | smuggled requests | `body_length` refuses anything but a clear `Content-Length`; `POST_MAX` caps the size. |
 | Headers | clickjacking, sniffing | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `nosniff`; no CORS header, ever. |
 | Control characters | escape sequences | `CONTROL_CHARS` and `SEND_MAX`. |

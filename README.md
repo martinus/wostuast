@@ -86,9 +86,10 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 
 > [!NOTE]
 > **wostuast never owns your agents.** tmux does. wostuast reads files, and it
-> sends only a few things to a terminal, always as keys typed into the agent's
+> sends only a few things to a terminal, always through tmux into the agent's
 > own pane: **jump** to the pane, **send** a message, the **answer** to a
 > question the agent asked, and **no** to a permission request. It never approves a permission request.
+> A message goes in as one paste, so it can be long: a log of up to 1 MiB.
 
 ## How it works
 

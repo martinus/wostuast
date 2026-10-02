@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pytest
 
+import conftest
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+#: What tmux puts around a paste, for a program that asked for them.
+PASTE_START = "\x1b[200~"
+PASTE_END = "\x1b[201~"
 
 
 @pytest.fixture
@@ -19,7 +25,7 @@ def asked():
     seen = []
 
     def runner(args, **rest):
-        seen.append(list(args))
+        seen.append(conftest.said(args, rest))
         return ""
 
     runner.seen = seen
@@ -73,20 +79,41 @@ def test_the_focus_command_comes_from_the_environment(ws, asked, monkeypatch):
 # --- send -------------------------------------------------------------------
 
 
-def test_send_types_the_text_and_then_enter(ws, asked):
+def test_send_leaves_copy_mode_pastes_the_text_and_then_a_return(ws, asked):
+    """`send-keys -l` took the text as an argument, and tmux 3.4 refuses a
+    command over 16,341 bytes. `load-buffer -` reads it on stdin instead, and
+    `-r` keeps a newline a newline: without it tmux pastes Enter (#328). The
+    Enter is a pasted return too, which reaches only the target pane."""
     assert ws.tmux_send("%7", "run the tests", runner=asked) is True
-    assert asked.seen == [
-        ["tmux", "send-keys", "-t", "%7", "-l", "--", "run the tests"],
-        ["tmux", "send-keys", "-t", "%7", "Enter"],
-    ]
+    cancel, load, paste, load_enter, paste_enter = asked.seen
+    assert cancel == ["tmux", "send-keys", "-X", "-t", "%7", "cancel"]
+    name, enter = load[3], load_enter[3]
+    assert load == ["tmux", "load-buffer", "-b", name, "-", "run the tests"]
+    assert paste == ["tmux", "paste-buffer", "-p", "-d", "-r", "-b", name,
+                     "-t", "%7"]
+    assert load_enter == ["tmux", "load-buffer", "-b", enter, "-", "\r"]
+    assert paste_enter == ["tmux", "paste-buffer", "-d", "-r", "-b", enter,
+                           "-t", "%7"]
+
+
+def test_each_send_has_a_buffer_of_its_own(ws, asked):
+    """Buffers belong to the whole tmux server: another client, or a second
+    send, must never paste ours, so the name is ours and never used twice."""
+    import os
+
+    ws.tmux_send("%7", "one", runner=asked)
+    ws.tmux_send("%8", "two", runner=asked)
+    names = [one[3] for one in asked.seen if one[1] == "load-buffer"]
+    assert len(set(names)) == 4, names
+    assert all(name.startswith(f"wostuast-{os.getpid()}-") for name in names)
 
 
 def test_send_escapes_nothing_itself(ws, asked):
-    """`-l` sends the text literally, so an escape of our own would arrive as
-    characters. `--` is what stops tmux reading a leading dash as an option."""
-    nasty = '-n $(rm -rf /) "quoted" \\backslash\\ ;semicolon'
+    """stdin is not a command line: nothing in it is an option, a quote or the
+    end of a command, so an escape of our own would arrive as characters."""
+    nasty = '-n $(rm -rf /) "quoted" \\backslash\\ ;semicolon;'
     ws.tmux_send("%7", nasty, runner=asked)
-    assert asked.seen[0] == ["tmux", "send-keys", "-t", "%7", "-l", "--", nasty]
+    assert conftest.typed(asked.seen) == [nasty]
 
 
 def test_send_refuses_empty_text(ws, asked):
@@ -101,97 +128,94 @@ def test_send_without_a_pane_runs_nothing(ws, asked):
     assert asked.seen == []
 
 
-def test_send_does_not_press_enter_when_the_text_did_not_arrive(ws):
-    """Enter on its own would run whatever was already on the line."""
+@pytest.mark.parametrize("fails, ran", [
+    (1, ["send-keys", "load-buffer", "delete-buffer"]),
+    (2, ["send-keys", "load-buffer", "paste-buffer", "delete-buffer"]),
+    (4, ["send-keys", "load-buffer", "paste-buffer", "load-buffer",
+         "paste-buffer", "delete-buffer"]),
+])
+def test_a_paste_that_fails_presses_nothing_and_leaves_no_buffer(ws, fails,
+                                                                 ran):
+    """Enter on its own would run whatever was already on the line. And tmux
+    3.4 keeps a buffer whose paste failed, `-d` or not -- measured, with the
+    pane gone -- so it is deleted; a load that ran out of time may have
+    filled it too. The text's load, its paste, and the Enter's paste fail
+    here in turn, and the cancel fails every time, as it does for a pane in
+    no mode: that does not stop a send."""
     seen = []
 
-    def half(args, **rest):
+    def runner(args, **rest):
         seen.append(list(args))
-        return None if "-l" in args else ""
+        return None if len(seen) - 1 == fails or "cancel" in args else ""
 
-    assert ws.tmux_send("%7", "hello", runner=half) is False
-    assert len(seen) == 1
-
-
-# --- send -------------------------------------------------------------------
-
-
-def test_one_line_is_sent_exactly_as_it_always_was(ws, asked):
-    """A program that does not understand bracketed paste never sees it."""
-    ws.tmux_send("%7", "run the tests", runner=asked)
-    assert asked.seen[0] == ["tmux", "send-keys", "-t", "%7", "-l", "--",
-                             "run the tests"]
+    assert ws.tmux_send("%7", "hello", runner=runner) is False
+    assert [one[1] for one in seen] == ran
+    failed = seen[-2]
+    name = failed[failed.index("-b") + 1]
+    assert seen[-1] == ["tmux", "delete-buffer", "-b", name]
 
 
-def test_more_than_one_line_arrives_as_a_paste(ws, asked):
-    """A newline typed into a terminal is Enter. Measured against a real
-    shell: `echo one\\necho two` ran the first line and left the second on the
-    prompt. The bracketed paste markers say this arrived as a paste."""
-    ws.tmux_send("%7", "first line\nsecond line", runner=asked)
-    assert asked.seen[0] == [
-        "tmux", "send-keys", "-t", "%7", "-l", "--",
-        ws.PASTE_START + "first line\nsecond line" + ws.PASTE_END]
-    assert asked.seen[1] == ["tmux", "send-keys", "-t", "%7", "Enter"]
+def test_the_text_goes_as_it_is_and_tmux_brackets_the_paste(ws, asked):
+    """A newline typed into a terminal is Enter: measured against a real
+    shell, `echo one\\necho two` ran the first line. So the paste is `-p`,
+    which brackets it for a program that asked, and the text goes as it is,
+    one line or many -- our own markers were put on many lines only, and
+    100 KB on one line then arrived in Claude Code as pieces with the Enter
+    inside the last one."""
+    for text in ("run the tests", "first line\nsecond line"):
+        asked.seen.clear()
+        ws.tmux_send("%7", text, runner=asked)
+        assert conftest.typed(asked.seen) == [text]
+        text_paste, enter_paste = [one for one in asked.seen
+                                   if one[1] == "paste-buffer"]
+        assert "-p" in text_paste and "-r" in text_paste
+        assert "-p" not in enter_paste, "a return inside a paste is no Enter"
 
 
-def test_a_carriage_return_counts_as_a_line_too(ws, asked):
-    ws.tmux_send("%7", "first\r\nsecond", runner=asked)
-    assert asked.seen[0][-1].startswith(ws.PASTE_START)
-
-
-def test_a_control_character_cannot_end_the_paste_early(ws):
+def test_a_control_character_cannot_end_the_paste_early(ws, asked):
     """A paste ends at ESC [ 2 0 1 ~. Text carrying those bytes would close it
     and leave the rest arriving as keystrokes, with any newline among them as
     Enter. The review is composed from lines an agent wrote, and an escape
     byte is invisible in a preview, so this is taken out at the verb.
+    `test_what_arrives_is_what_was_written` holds it in a real pane.
     """
-    said = []
-    ws.tmux_send("%1", "look here\n\x1b[201~rm -rf ~\nand here",
-                 runner=lambda cmd: said.append(cmd) or "")
-    body = said[0][-1]
-    assert "\x1b[201~rm" not in body
-    assert body.startswith(ws.PASTE_START) and body.endswith(ws.PASTE_END)
-    assert body.count(ws.PASTE_END) == 1
+    ws.tmux_send("%1", "look here\n\x1b[201~rm -rf ~\nand here", runner=asked)
+    body = conftest.typed(asked.seen)[0]
+    assert "\x1b" not in body
     assert "rm -rf ~" in body           # still shown, just no longer a paste end
 
 
-def test_a_line_of_only_control_characters_is_not_sent(ws):
-    said = []
-    assert ws.tmux_send("%1", "\x1b\x07\x00",
-                        runner=lambda cmd: said.append(cmd) or "") is False
-    assert said == []
+def test_a_line_of_only_control_characters_is_not_sent(ws, asked):
+    assert ws.tmux_send("%1", "\x1b\x07\x00", runner=asked) is False
+    assert asked.seen == []
 
 
-@pytest.mark.parametrize("text, sent", [
-    ("use foo();", "use foo()\\;"),
-    (";", "\\;"),
-    (";;", ";\\;"),
-    ("path\\;", "path\\\\;"),
-    ("a;b", "a;b"),
-])
-def test_a_semicolon_at_the_end_is_sent_as_tmux_reads_it(ws, asked, text, sent):
-    """tmux reads an argument that ends in `;` as the end of a command, even
-    after `-l --`: "use foo();" arrived as "use foo()". The last `;` goes as
-    `\\;`, which tmux turns back into one `;`. On a real tmux, where there
-    is one, `test_what_arrives_is_what_was_written` holds the same."""
+@pytest.mark.parametrize("text", ["use foo();", ";", ";;", "path\\;", "a;b"])
+def test_a_semicolon_at_the_end_needs_no_escape(ws, asked, text):
+    """`send-keys` read an argument that ends in `;` as the end of a command,
+    even after `-l --`: "use foo();" arrived as "use foo()", and the last `;`
+    had to go as `\\;`. stdin is not a command line, so it goes as it is. On a
+    real tmux, where there is one, `test_what_arrives_is_what_was_written`
+    holds the same."""
     assert ws.tmux_send("%7", text, runner=asked) is True
-    assert asked.seen[0] == ["tmux", "send-keys", "-t", "%7", "-l", "--", sent]
+    assert conftest.typed(asked.seen) == [text]
 
 
 def test_a_lone_surrogate_never_reaches_a_terminal(ws, asked):
-    """JSON can carry one, and `subprocess` hands it to tmux with
+    """JSON can carry one, and `subprocess` handed an argument to tmux with
     `surrogateescape`: U+DCC2 U+DC9B left as the bytes c2 9b, which is CSI.
     A high one made the encode fail, and the whole send with it."""
     text = "x" + chr(0xDC9B) + "31m" + chr(0xDCC2) + chr(0xDC9B) + "y" + chr(0xD800)
     assert ws.tmux_send("%7", text, runner=asked) is True
-    assert asked.seen[0][-1] == "x31my"
+    assert conftest.typed(asked.seen) == ["x31my"]
     assert ws.tmux_send("%7", chr(0xDC9B) + chr(0xD800), runner=asked) is False
 
 
-@pytest.fixture
-def real_pane(ws, tmp_path, monkeypatch):
+def a_pane(tmp_path, monkeypatch, asks):
     """A pane of a tmux server of this test's own, running a raw `cat` into a
-    file, so a test reads the bytes that arrived. Skipped with no tmux."""
+    file, so a test reads the bytes that arrived. `asks` is whether the
+    program asked for bracketed paste, as Claude Code does. Skipped with no
+    tmux."""
     import os
     import shutil
     import subprocess
@@ -208,8 +232,10 @@ def real_pane(ws, tmp_path, monkeypatch):
 
     # Raw, or the terminal turns the Enter into a newline on its way to
     # `cat`; and a key sent before `stty` has run is read the cooked way.
+    # `ESC [ ? 2004 h` is how a program asks for the paste markers.
+    ask = "printf '\\033[?2004h' && " if asks else ""
     tmux("-f", "/dev/null", "new-session", "-d",
-         f"stty raw -echo && : > '{ready}' && exec cat > '{out}'")
+         f"stty raw -echo && {ask}: > '{ready}' && exec cat > '{out}'")
     try:
         # `TMUX` names the server a plain `tmux` talks to, so `tmux_send`
         # reaches this one and never the reader's own.
@@ -234,19 +260,108 @@ def real_pane(ws, tmp_path, monkeypatch):
                        timeout=10)
 
 
+@pytest.fixture
+def real_pane(ws, tmp_path, monkeypatch):
+    """A raw pane whose program asked for the paste markers."""
+    yield from a_pane(tmp_path, monkeypatch, asks=True)
+
+
+@pytest.fixture
+def plain_pane(ws, tmp_path, monkeypatch):
+    """A raw pane whose program did not ask for the paste markers."""
+    yield from a_pane(tmp_path, monkeypatch, asks=False)
+
+
+def pasted(text):
+    """What a pane that asked for the markers reads for one send."""
+    return (PASTE_START + text + PASTE_END).encode()
+
+
 def test_what_arrives_is_what_was_written(ws, real_pane):
-    """Measured on tmux 3.4 with the bytes read out of a pane: every text
-    that ends in `;` lost it, "path\\;" arrived as "path;", and a pair of lone
-    surrogates arrived as c2 9b, CSI. What arrives is what was written, or
-    what was written without its controls, and nothing else."""
+    """Measured on tmux 3.4 with the bytes read out of a pane: through
+    `send-keys`, every text that ends in `;` lost it, "path\\;" arrived as
+    "path;", and a pair of lone surrogates arrived as c2 9b, CSI. What
+    arrives is what was written, or what was written without its controls,
+    as one paste, and nothing else -- an end marker in the text included."""
     pane, arrived = real_pane
-    texts = ["use foo();", ";", ";;", "a ;", "path\\;", "a\\\\;", "a;b"]
+    texts = ["use foo();", ";", ";;", "a ;", "path\\;", "a\\\\;", "a;b",
+             "two\nlines"]
     for text in texts:
         assert ws.tmux_send(pane, text)
     bad = "x" + chr(0xDC9B) + "31m" + chr(0xDCC2) + chr(0xDC9B) + "y"
     assert ws.tmux_send(pane, bad)
-    wanted = [one.encode() for one in texts] + [b"x31my"]
+    assert ws.tmux_send(pane, "look\x1b[201~here")
+    wanted = [pasted(one) for one in texts] + [pasted("x31my"),
+                                               pasted("look[201~here")]
     assert arrived(len(wanted)).split(b"\r")[:-1] == wanted
+
+
+def test_a_long_text_arrives_whole_as_one_paste(ws, real_pane):
+    """`send-keys -l` stopped at 16,341 bytes on tmux 3.4, and a long log
+    could not be sent (#328). Through the buffer, a text of `SEND_MAX`
+    bytes -- tabs, `ä`, a `;` at the end -- arrives every byte, between the
+    paste markers, and then the one Enter."""
+    pane, arrived = real_pane
+    line = "\tlog line ä;\n"
+    text = (line * (ws.SEND_MAX // len(line.encode())))[:-1]
+    assert 16341 < len(text.encode()) <= ws.SEND_MAX
+    assert ws.tmux_send(pane, text)
+    assert arrived(1) == pasted(text) + b"\r"
+
+
+def test_a_program_that_did_not_ask_sees_no_markers(ws, plain_pane):
+    """It cannot read them, so they would arrive as characters. A newline
+    still arrives as a newline, not as the carriage return that is Enter:
+    that is `-r`, and without it tmux pastes one -- measured."""
+    pane, arrived = plain_pane
+    assert ws.tmux_send(pane, "one line")
+    assert ws.tmux_send(pane, "two\nlines")
+    assert arrived(2) == b"one line\rtwo\nlines\r"
+
+
+def test_a_pane_in_copy_mode_still_gets_one_paste(ws, real_pane):
+    """A pane scrolled back with the mouse wheel is in copy mode, and there a
+    paste reached the program without the markers and the Enter was eaten
+    by the mode: a real bash ran the first line of two, and the page said
+    done. The send leaves the mode first."""
+    pane, arrived = real_pane
+    assert ws.run(["tmux", "copy-mode", "-t", pane]) is not None
+    assert ws.tmux_send(pane, "two\nlines")
+    assert arrived(1) == pasted("two\nlines") + b"\r"
+
+
+def test_synchronized_panes_get_no_enter_of_ours(ws, real_pane, tmp_path):
+    """Under `synchronize-panes` a key goes to every pane of the window and a
+    paste only to its target, so `send-keys Enter` after the paste gave the
+    other panes a bare Enter, which runs whatever is on their prompt."""
+    import time
+
+    pane, arrived = real_pane
+    other, ready = tmp_path / "other", tmp_path / "other-ready"
+    assert ws.run(["tmux", "split-window", "-t", pane,
+                   f"stty raw -echo && : > '{ready}' && exec cat > '{other}'"]
+                  ) is not None
+    deadline = time.monotonic() + 10
+    while not ready.exists():
+        assert time.monotonic() < deadline, "the other pane never went raw"
+        time.sleep(0.02)
+    assert ws.run(["tmux", "set-option", "-w", "-t", pane,
+                   "synchronize-panes", "on"]) is not None
+    assert ws.tmux_send(pane, "only here")
+    assert arrived(1) == pasted("only here") + b"\r"
+    time.sleep(0.5)                     # proving nothing reached the other
+    assert other.read_bytes() == b""
+
+
+def test_no_buffer_is_left_behind(ws, real_pane):
+    """tmux keeps a buffer whose paste failed, `-d` or not, and buffers
+    belong to the whole server -- the reader's own paste key lists them.
+    Measured with a pane that is gone."""
+    pane, arrived = real_pane
+    assert ws.tmux_send(pane, "kept")
+    assert not ws.tmux_send("%999", "to a pane that is gone")
+    arrived(1)
+    assert ws.run(["tmux", "list-buffers", "-F", "#{buffer_name}"]) == ""
 
 
 # --- interrupt ----------------------------------------------------------------
