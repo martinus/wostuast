@@ -148,6 +148,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   and was never submitted. **One key per tmux command, with `KEY_GAP`
   between**: `24` written at once arrives as one read, which the dialog
   takes as no key at all, measured -- the ticks were lost and it moved on.
+  **Each key a paste of its bytes, never `send-keys`** (`KEY_BYTES`,
+  #331): under `synchronize-panes` a key went to every pane of the window,
+  and a digit and an Enter on another agent's prompt can answer or approve
+  something there. Unbracketed, or the dialog reads text. Measured on
+  2.1.287: a pasted "2" picked the second option, and "1", "3", Tab, Enter
+  the first and third of a multiple choice, as `send-keys` did.
+  `test_keys_go_one_paste_each_and_only_the_answer_keys`.
   **An ask the daemon could not keep whole is not answered** (`answerable`):
   keys go by position, so a question or option left out would move every
   key after it. **A single-choice question with a `preview` on any option

@@ -1890,7 +1890,7 @@ def test_an_answer_presses_the_keys_the_question_takes(ws, in_tmux, monkeypatch)
                         {"ask": "toolu_two", "picks": [[2], [3, 1]]},
                         token=daemon.token)
     assert status == 200 and body["keys"] == ["2", "1", "3", "Tab", "Enter"], body
-    assert [one[-1] for one in seen] == ["2", "1", "3", "Tab", "Enter"]
+    assert conftest.pressed(seen) == ["2", "1", "3", "Tab", "Enter"]
 
 
 def test_an_answer_for_a_question_no_longer_waiting_presses_nothing(
@@ -1959,11 +1959,13 @@ def test_an_answer_tmux_cut_short_says_how_far_it_got(ws, served, monkeypatch):
     """Some keys may have landed. "Nothing went in" would send the reader
     back to answer again, on top of half an answer."""
     monkeypatch.setattr(ws, "KEY_GAP", 0)
-    calls = []
+    pasted = []
 
     def runner(args, **rest):
-        calls.append(args)
-        return None if len(calls) == 3 else ""
+        if args[1] != "paste-buffer":
+            return ""
+        pasted.append(args)
+        return None if len(pasted) == 3 else ""
 
     monkeypatch.setattr(ws, "run", runner)
     daemon, base = served
@@ -1996,7 +1998,7 @@ def declining(ws, served, transcript_file, monkeypatch):
 
     def runner(args, **rest):
         seen.append(conftest.said(args, rest))
-        if args[-1] == "Escape" and closes[0]:
+        if rest.get("stdin") == b"\x1b" and closes[0]:
             with open(path, "a") as handle:
                 handle.write(conftest.records(conftest.record(
                     "result", REJECTED, tool_id="toolu_p1")))
@@ -2028,7 +2030,7 @@ def test_a_decline_is_escape_then_the_reason_once_the_dialog_closed(
                         {"key": key, "reason": "Use the ninja build instead"},
                         token=daemon.token)
     assert status == 200 and body["sent"] and body["seen"], body
-    assert seen[0][-1] == "Escape"
+    assert conftest.pressed(seen)[0] == "Escape"
     assert conftest.typed(seen) == ["Use the ninja build instead"]
     daemon.store.refresh()
     session = daemon.store.sessions["s1"]
@@ -2047,7 +2049,7 @@ def test_a_reason_is_never_typed_into_a_dialog_not_seen_to_close(ws, declining):
                         {"key": key, "reason": "Use port 1234"},
                         token=daemon.token)
     assert status == 200 and not body["seen"] and "not typed" in body["error"]
-    assert [one[-1] for one in seen] == ["Escape"]
+    assert conftest.pressed(seen) == ["Escape"] and not conftest.typed(seen)
     daemon.store.refresh()
     assert daemon.store.sessions["s1"].state == "needs_you"
 
@@ -2060,7 +2062,7 @@ def test_a_request_with_no_call_gets_escape_and_no_reason(ws, declining):
     status, body = post(base + "/api/session/s1/decline",
                         {"key": key, "reason": "no"}, token=daemon.token)
     assert status == 200 and not body["seen"] and "not typed" in body["error"]
-    assert [one[-1] for one in seen] == ["Escape"]
+    assert conftest.pressed(seen) == ["Escape"] and not conftest.typed(seen)
 
 
 def test_a_request_answered_in_the_terminal_is_not_declined(ws, declining):
@@ -2129,6 +2131,23 @@ def test_no_send_goes_in_while_a_no_is_on_its_way(ws, in_tmux):
                         token=daemon.token)
     assert status == 409 and "No is already on its way" in body["error"], body
     assert seen == []
+
+
+def test_two_sessions_in_one_pane_are_typed_into_one_at_a_time(ws, served):
+    """`claude -p` run from an agent's Bash tool inherits `TMUX_PANE`, so two
+    sessions can stand in one pane, and a lock by session let a send to each
+    go at once: their pastes and Enters made one prompt, 20 times of 20
+    (#331). The pane is taken too, and given back with the session."""
+    daemon, _ = served
+    for sid in ("s1", "s2"):
+        ws.append_event(event("SessionStart", sid=sid, pane="%7", pid=1))
+    ws.append_event(event("SessionStart", sid="s3", pane="%8", pid=2))
+    daemon.store.refresh()
+    assert daemon.claim("s1", pane="%7") == ""
+    assert "this pane" in daemon.claim("s2", pane="%7")
+    assert daemon.claim("s3", pane="%8") == "", "another pane is not held"
+    daemon.release("s1")
+    assert daemon.claim("s2", pane="%7") == ""
 
 
 def test_two_sends_at_once_do_not_mix_in_the_pane(ws, served, monkeypatch):

@@ -6433,16 +6433,35 @@ def tmux_interrupt(pane: str,
     key landing, so Ctrl-C is a race whose losing side is a session that
     quit. Escape on an idle prompt does nothing.
 
-    It is a key name rather than literal text, so it is the shape of the
-    `Enter` press `tmux_send` already makes -- not something that could go
-    through `tmux_send`, which strips every byte below a space on purpose.
-    Measured: `send-keys -t <pane> C-c` puts 0x03 into a raw-mode app as a
-    keystroke it reads, not as a signal. Nothing here signals a process.
+    **Pasted, as the one byte Escape is, never pressed with `send-keys`**
+    (#331): under `synchronize-panes` a key goes to every pane of the window
+    and a paste only to its target, so an Escape meant for one agent stopped
+    every agent beside it. Measured on Claude Code 2.1.287: a pasted ESC
+    closes a permission dialog with the same "Interrupted · What should
+    Claude do instead?" as `send-keys Escape`. Without `-p`: inside paste
+    markers it would be text. It does not go through `tmux_send`, which
+    strips every byte below a space on purpose. Measured: `send-keys C-c`
+    puts 0x03 into a raw-mode app as a keystroke it reads, not as a signal.
+    Nothing here signals a process.
+
+    **`-S` where the tmux has it**: tmux 3.7 runs a paste through `vis(3)`
+    unless `-S` says not to, and the Escape arrived as the two characters
+    `^[` -- typed into the dialog, which stayed up. tmux 3.4 refuses `-S`
+    ("unknown flag"), and then the paste goes again without it, which
+    there is exact. Measured on both; a digit, Tab and Enter pass `vis(3)`
+    unchanged, and so does every byte `tmux_send` lets through.
+
+    And out of copy mode first, as `tmux_send` does: the Escape reaches
+    the program there, but the reader looking at the pane went on seeing
+    the old scrolled view, not the dialog closing.
     """
     if not pane:
         return False
     runner = runner or run
-    return runner(["tmux", "send-keys", "-t", pane, "Escape"]) is not None
+    runner(["tmux", "send-keys", "-X", "-t", pane, "cancel"])
+    escape = KEY_BYTES["Escape"]
+    return (tmux_paste(pane, escape, False, runner, ("-S",))
+            or tmux_paste(pane, escape, False, runner))
 
 
 #: Between two keys of an answer. Claude Code reads a key as a key only when
@@ -6455,30 +6474,44 @@ KEY_GAP = 0.15
 #: Everything `tmux_keys` will press: a digit, Tab, Enter.
 ANSWER_KEYS = frozenset([*"123456789", "Tab", "Enter"])
 
+#: The bytes a key is, pasted rather than pressed: a digit is itself. What
+#: `send-keys` sent for each, read out of a raw pane.
+KEY_BYTES = {"Tab": b"\t", "Enter": b"\r", "Escape": b"\x1b"}
+
 
 def tmux_keys(pane: str, keys: Sequence[str],
               runner: Callable[..., str | None] | None = None) -> int:
     """Press keys into a pane one at a time. Returns how many landed.
 
-    Only what `ANSWER_KEYS` names is pressed, and a digit goes with `-l` so
-    it is the character and never a key name. This answers a question in the
+    Only what `ANSWER_KEYS` names is pressed. This answers a question in the
     agent's own dialog (see `ask_keys`); it is not a way to type text, which
     is `tmux_send`, and it never presses anything it was not built from.
+
+    **Each key is a paste of its bytes** (`KEY_BYTES`, `tmux_paste`), one
+    paste a key and `KEY_GAP` apart, without `-p`: under `synchronize-panes`
+    `send-keys` pressed them in every pane of the window, and a digit and an
+    Enter on another agent's prompt can answer or approve something there
+    (#331). Measured on Claude Code 2.1.287: a pasted "2" answered a single
+    choice with its second option, and "1", "3", Tab, Enter a multiple
+    choice with the first and third, as `send-keys` did.
     """
     if not pane or not keys or not all(key in ANSWER_KEYS for key in keys):
         return 0
     runner = runner or run
+    # Out of copy mode first, as `tmux_send` does: the reader looking at
+    # the pane should see the dialog answered, not the old scrolled view.
+    runner(["tmux", "send-keys", "-X", "-t", pane, "cancel"])
     for at, key in enumerate(keys):
         if at:
             time.sleep(KEY_GAP)
-        word = ["-l", "--", key] if key.isdigit() else [key]
-        if runner(["tmux", "send-keys", "-t", pane, *word]) is None:
+        if not tmux_paste(pane, KEY_BYTES.get(key, key.encode()), False, runner):
             return at
     return len(keys)
 
 
 def tmux_paste(pane: str, data: bytes, bracket: bool,
-               runner: Callable[..., str | None]) -> bool:
+               runner: Callable[..., str | None],
+               flags: Sequence[str] = ()) -> bool:
     """Paste bytes into one pane through a buffer of our own. True when they
     went in.
 
@@ -6497,9 +6530,9 @@ def tmux_paste(pane: str, data: bytes, bracket: bool,
     import secrets
 
     name = f"wostuast-{os.getpid()}-{secrets.token_hex(8)}"
-    flags = ["-p"] if bracket else []
+    given = ["-p", *flags] if bracket else list(flags)
     if (runner(["tmux", "load-buffer", "-b", name, "-"], stdin=data) is not None
-            and runner(["tmux", "paste-buffer", *flags, "-d", "-r", "-b", name,
+            and runner(["tmux", "paste-buffer", *given, "-d", "-r", "-b", name,
                         "-t", pane]) is not None):
         return True
     runner(["tmux", "delete-buffer", "-b", name])
@@ -6896,6 +6929,11 @@ class Daemon:
         #: tabs -- or a tab and a script -- ran two HTTP threads at once: the
         #: pane got "first", "second", Enter, Enter, one prompt of both.
         self.typing: set[str] = set()
+        #: The pane each of those holds. Two sessions can stand in one pane --
+        #: `claude -p` run from an agent's Bash tool inherits `TMUX_PANE` --
+        #: and a send to each at once interleaved their pastes and Enters into
+        #: one prompt, 20 times of 20 (#331). So a pane is taken as well.
+        self.typing_panes: dict[str, str] = {}
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.started = time.time()
@@ -6903,13 +6941,17 @@ class Daemon:
     def session(self, session_id: str) -> Session | None:
         return self.store.sessions.get(session_id)
 
-    def claim(self, session_id: str, no: bool = False) -> str:
+    def claim(self, session_id: str, no: bool = False, pane: str = "") -> str:
         """Take a session for one thing typed into it: "" when taken, else why not.
 
         Refused, never queued: the second one was asked for before the first
         landed, and what it would type into is not what its sender saw. `no`
         marks a decline, which `declined_in_terminal` and `send` look for.
         `release` gives the session back, always in a `finally`.
+
+        `pane` is the one the verb will type into, read once by its caller:
+        read here again, a `SessionStart` between the two reads would have
+        the verb type into a pane nobody holds.
         """
         with self.lock:
             if session_id in self.declining:
@@ -6917,16 +6959,23 @@ class Daemon:
             if session_id in self.typing:
                 return ("something is already being typed into this session;"
                         " wait for it to land")
+            if pane and pane in self.typing_panes.values():
+                return ("something is already being typed into this pane, for"
+                        " another session in it; wait for it to land")
             self.typing.add(session_id)
+            if pane:
+                self.typing_panes[session_id] = pane
             if no:
                 self.declining.add(session_id)
         return ""
 
     @contextlib.contextmanager
-    def holding(self, session_id: str, no: bool = False) -> Iterator[str]:
-        """`claim` for the length of a `with`: "" when the session is taken,
-        else why not. It gives back only what it took, and always."""
-        busy = self.claim(session_id, no=no)
+    def holding(self, session_id: str, pane: str,
+                no: bool = False) -> Iterator[str]:
+        """`claim` for the length of a `with`: "" when the session and its
+        pane are taken, else why not. It gives back only what it took, and
+        always."""
+        busy = self.claim(session_id, no=no, pane=pane)
         try:
             yield busy
         finally:
@@ -6937,6 +6986,7 @@ class Daemon:
         """Give back what `claim` took. Only its holder may hold `declining`."""
         with self.lock:
             self.typing.discard(session_id)
+            self.typing_panes.pop(session_id, None)
             self.declining.discard(session_id)
 
     def transcript(self, session_id: str) -> Transcript | None:
@@ -7726,11 +7776,12 @@ class Serving:
             return
         # A second submit, or a send, while these keys go in one at a time
         # `KEY_GAP` apart, mixed its keys with them in the pane.
-        with self.daemon.holding(session_id) as busy:
+        pane = session.pane
+        with self.daemon.holding(session_id, pane) as busy:
             if busy:
                 self.refuse(session_id, 409, busy)
                 return
-            landed = tmux_keys(session.pane, keys)
+            landed = tmux_keys(pane, keys)
         if landed < len(keys):
             # Some keys may have landed: say so, rather than "nothing went
             # in", which would send the reader back to answer twice.
@@ -7789,11 +7840,12 @@ class Serving:
             self.refuse(session_id, 409,
                         "that request was answered in the terminal already")
             return
-        with self.daemon.holding(session_id, no=True) as busy:
+        pane = session.pane
+        with self.daemon.holding(session_id, pane, no=True) as busy:
             if busy:
                 self.refuse(session_id, 409, busy)
                 return
-            self.press_decline(session_id, session.pane, shown, call, reason)
+            self.press_decline(session_id, pane, shown, call, reason)
 
     def press_decline(self, session_id: str, pane: str, shown: dict[str, Any],
                       call: str, reason: str) -> None:
@@ -7851,11 +7903,12 @@ class Serving:
         if why:
             self.refuse(session_id, 409, why)
             return
-        with self.daemon.holding(session_id) as busy:
+        pane = session.pane
+        with self.daemon.holding(session_id, pane) as busy:
             if busy:
                 self.refuse(session_id, 409, busy)
                 return
-            self.press_send(session_id, session.pane, text)
+            self.press_send(session_id, pane, text)
 
     def press_send(self, session_id: str, pane: str, text: str) -> None:
         """`send`'s keys, and the answer that says how they went."""

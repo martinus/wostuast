@@ -275,7 +275,7 @@ def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
 
 def pressed(seen):
     """The keys that reached the pane, in order: a digit, `Tab`, `Enter`."""
-    return [one[-1] for one in seen if one[:2] == ["tmux", "send-keys"]]
+    return conftest.pressed(seen)
 
 
 def test_submit_presses_the_numbers_in_the_order_they_were_asked(ws, in_pane):
@@ -297,11 +297,10 @@ def test_submit_presses_the_numbers_in_the_order_they_were_asked(ws, in_pane):
         while len(pressed(seen)) < 3 and time.time() < deadline:
             time.sleep(0.05)
         assert pressed(seen) == ["3", "2", "Enter"], seen
-        # A digit goes as the character, never as a key name.
-        assert ["tmux", "send-keys", "-t", "%7", "-l", "--", "3"] in seen
-        # No paste markers: a chooser reads keys, and a paste is not one.
-        assert not [one for one in seen
-                    if any("200~" in str(part) for part in one)]
+        # A digit goes as the character, never as a key name, and with no
+        # paste markers: a chooser reads keys, and a bracketed paste is text.
+        assert ("3", False) in conftest.pastes(seen)
+        assert not [one for one in conftest.pastes(seen) if one[1]]
 
 
 #: One question that takes more than one answer, as the reader met it.
@@ -1057,7 +1056,7 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
 
     def runner(args, **rest):
         seen.append(conftest.said(args, rest))
-        if args[-1] == "Escape":
+        if rest.get("stdin") == b"\x1b":
             with open(path, "a") as handle:
                 handle.write(conftest.records(conftest.record(
                     "result", "The user doesn't want to proceed", tool_id="toolu_b1")))
@@ -1086,7 +1085,7 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
         deadline = time.time() + 15
         while not conftest.typed(seen) and time.time() < deadline:
             time.sleep(0.05)
-        keys = [one[-1] for one in seen if one[:2] == ["tmux", "send-keys"]]
+        keys = conftest.pressed(seen)
         assert keys[0] == "Escape", keys
         assert conftest.typed(seen) == ["Use the ninja build instead"], seen
         daemon.tick()
@@ -1150,7 +1149,7 @@ def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
             "waiting for what is on its way to this session"
         page.click("#asking .permno", force=True)
         page.wait_for_timeout(500)        # proving nothing was pressed
-        assert not [one for one in seen if one[-1] == "Escape"], seen
+        assert "Escape" not in conftest.pressed(seen), seen
         page.evaluate("doneSending(state.chosen)")
         assert not page.locator("#asking .permno").is_disabled()
         assert page.inner_text("#asking .permsend .asksays") \
@@ -1302,9 +1301,9 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
 
     def pressed(check):
         deadline = time.time() + 15
-        while not any(check(one) for one in seen) and time.time() < deadline:
+        while not check() and time.time() < deadline:
             time.sleep(0.05)
-        return any(check(one) for one in seen)
+        return check()
 
     with opened((None, base)) as page:
         page.wait_for_selector("#sendbar:not([hidden])")
@@ -1312,7 +1311,7 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
         page.click("#say")
         page.keyboard.type("hello there")
         page.keyboard.press("Control+Enter")
-        assert pressed(lambda one: "hello there" in one), seen
+        assert pressed(lambda: "hello there" in conftest.typed(seen)), seen
 
         # The dialog after the send: while it is up there is no send
         # box. `now_permission` folds the events itself, so no tick
@@ -1323,7 +1322,7 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
         assert max(page.evaluate(level, "#asking .permwhy")) < 1
         page.fill("#asking .permwhy", "no thanks")
         page.press("#asking .permwhy", "Control+Enter")
-        assert pressed(lambda one: one[-1] == "Escape"), seen
+        assert pressed(lambda: "Escape" in conftest.pressed(seen)), seen
 
 
 # --- completing a slash command (#268) ----------------------------------------
