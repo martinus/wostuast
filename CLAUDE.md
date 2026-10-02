@@ -253,7 +253,10 @@ This list exists because each entry was re-implemented once already.
 
 **Test helpers**: `run_installed(["hook"], stdin)` runs the hook file or the
 status file this checkout makes, as Claude Code does. `conftest.event(name, sid=..., **extra)` builds a hook event —
-never hand-write the dict. `conftest.record(kind, text, ...)` builds a
+never hand-write the dict. **To call the program from a scratch script,
+`sys.path.insert(0, "tests")` and `from conftest import wostuast`**: a
+`SourceFileLoader` of its own, without the module in `sys.modules`, failed
+at the first `@dataclass`. `conftest.record(kind, text, ...)` builds a
 transcript record — `you`, `claude`, `think`, `tool`, `result` — and
 `conftest.records(...)` makes them the lines of a file; never hand-write
 those either, because a hand-written one ended in a backslash and an `n`
