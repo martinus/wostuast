@@ -70,6 +70,7 @@ def test_it_draws_the_case_and_measures_from_the_text(tmp_path):
     assert int(words[2]) < int(second[2]), done.stdout
 
 
+@skip_without_browser
 def test_eval_runs_in_the_page_before_the_picture(tmp_path):
     """`--eval` is how a picture shows a state a click makes: a message
     opened, a pane scrolled. It runs before the picture and the measure."""

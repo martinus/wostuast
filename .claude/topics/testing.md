@@ -72,6 +72,16 @@ Keep the breaks list in the scratchpad; it is about one fix.
   or a test that leans on another**: run that break by itself before you
   believe either. `test_no_bytecode_of_a_break_is_left_behind`.
 
+**A test outside `tests/test_page_*` that drives a browser carries
+`@skip_without_browser`** -- one that runs `tests/shot.py` or
+`tests/stage.py` too. CI's pytest jobs have no Playwright, and only the
+browser shards do; locally both are there, so nothing on the desk says it
+is missing. `test_eval_runs_in_the_page_before_the_picture` went red on all
+four Python versions in CI, after three green runs here. To see what that
+job sees, put a `playwright/__init__.py` that raises `ImportError` in a
+folder of the scratchpad and run the suite with that folder on
+`PYTHONPATH`: every browser test must skip, and nothing may fail.
+
 **Playwright.** A hover-only control (`.plus`) needs `click(force=True)`. Wait
 for what the page has drawn, never for a number of seconds; `wait_for_timeout`
 is right only when proving something did **not** happen. Ask one question when a
