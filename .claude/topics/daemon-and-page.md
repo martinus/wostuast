@@ -336,6 +336,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_the_map_and_its_grip_run_down_beside_the_send_box` holds the layout
   and the button; the question and send-box tests in `test_page_act.py` are
   what catch the clicks.
+- **The send box says how much it holds, over the send button, once it is
+  tall enough to leave room there** (`sizeSay`, `SAY_ROOM`, issue 332). A
+  box scrolled to the end of a long log shows its last screenful and
+  nothing of how long it is. "2.4k lines" and "112 KB", `roughly` and
+  `sizeOf`, in the sans face: the reader said no to the fixed face and to
+  "2,400", which took two rows.
+  - **In a column with the button, `.sendside`, not laid over the bar.**
+    Laid over it, a size wider than the button ran over the edge of the
+    box. The column widens instead, and the box gives way a few pixels.
+    `.say + .verb` no longer reaches the button, so `.sendside > .verb`
+    keeps it 32 px and level with the box's last line.
+  - **From `fitSay`**, which every change of the box comes through: a key,
+    a paste, the send that empties it, the refusal that puts it back.
+  `test_a_tall_send_box_says_how_much_it_holds`,
+  `test_the_size_goes_when_the_send_box_empties`.
 - **The way back to the end of the transcript hangs off the content box, and
   `split` builds it.** A new block carries you along only while `nearBottom`,
   which is right, and nothing said how to start following again. `.tofoot`

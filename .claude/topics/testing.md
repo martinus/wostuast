@@ -82,7 +82,11 @@ job sees, put a `playwright/__init__.py` that raises `ImportError` in a
 folder of the scratchpad and run the suite with that folder on
 `PYTHONPATH`: every browser test must skip, and nothing may fail.
 
-**Playwright.** A hover-only control (`.plus`) needs `click(force=True)`. Wait
+**Playwright.** **`fill` with a long text of many lines takes for ever**:
+60 KB of short lines did not end in 60 s, while the page's own input
+handler took 10 ms of it. Put a long text in as a paste does: set `value`
+in `evaluate` and send one `input` event
+(`test_a_tall_send_box_says_how_much_it_holds`). A hover-only control (`.plus`) needs `click(force=True)`. Wait
 for what the page has drawn, never for a number of seconds; `wait_for_timeout`
 is right only when proving something did **not** happen. Ask one question when a
 redraw could land between two: `wait_for_function("...length === 1")`, not
