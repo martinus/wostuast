@@ -34,6 +34,15 @@ and passes on any desk that has one. Run the suite once with
 `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1` when a test commits
 somewhere new.
 
+**A fake of a call that never returns must raise.** `os.execv`,
+`sys.exit` and `os._exit` end the code that calls them; a fake that only
+records its arguments lets that code run on, into what the real call would
+never reach. `test_update.py` faked `execv` in `cmd_install` that way, and
+the install went on to `bring_up_to_date`, which wrote the checkout back
+over the copy just fetched: the test went red on the file, for a reason no
+real run has. The fake raises an exception of the test's own (`Handed`),
+and the test expects it with `pytest.raises`.
+
 **What the suite does not cover.** It drives the happy path thoroughly, in a
 real browser. It says very little about what happens when something *fails*: of
 the eight issues a full-file review filed, three were "a failed git call renders
