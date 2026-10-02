@@ -502,6 +502,30 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once, `fresh()` decides what changed, both reading the DOM. One key
   over the whole tab re-rendered the file you were reading every two seconds.
+  - **And the Diff pane redraws one file at a time.** Past `fresh`,
+    `drawDiff` emptied the pane and built every file again, so a save to
+    any file drew the file being read as plain text and painted it back a
+    file at a time behind `hljsReady` and a timer: the reader saw it lose
+    its colour and word marks and jump. Now the pane is built into a
+    fragment, a file whose `blockSig` is unchanged takes its old block, and
+    `settle` puts the pane right without moving a kept block -- out and
+    back in is the same node, and it lost its sideways scroll. `readerAt`
+    keeps the block at the top of the pane where it stood on the screen,
+    though a file above it grew. **`blockSig` is everything the block is
+    drawn from that `diffKey` does not cover for the whole pane**: the
+    file's own diff, its open, more and whole state, `BIG_LINES` (two
+    tests move it), the half, the session, the columns -- and, for a block
+    of a commit, its file in the diff after it (`laterFile`): a comment
+    there is put where the line is on disk (`inWorktree`), and a kept block
+    anchored one 50 lines off once the agent added lines above it. Comments are not
+    in it: `redrawCode` empties the key, and `again` draws all of it.
+    **A box built apart from the page is not in `document`**: `putReview`
+    looked only there for an open `.commentbox`, and a line in both
+    sections got two; it asks the root it is built under as well.
+    `test_a_save_to_another_file_leaves_the_one_being_read_alone`,
+    `test_a_file_that_grows_above_leaves_the_reader_where_they_were`,
+    `test_one_line_in_both_sections_opens_one_comment_box`,
+    `test_a_committed_line_follows_lines_added_above_it_since`.
 - **`.listnote` is one clipped line.** Anything with height goes in the `sidefoot`
   slot. A button put in the count strip could not be clicked at all.
 - **`drawLooseFile` builds a synthetic file object.** Everything `fillDiffFile`

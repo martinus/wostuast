@@ -726,6 +726,86 @@ def test_the_diff_is_painted_and_keeps_its_word_marks(repo_page):
         assert page.locator(".dline.context .dtext .hljs-keyword").count() > 0
 
 
+def test_a_save_to_another_file_leaves_the_one_being_read_alone(repo_page):
+    """The agent saves a file, the diff comes again, and every file was built
+    again from nothing: as plain text, then painted a file at a time behind
+    the highlighter and a timer. The file being read lost its colour and its
+    word marks and got them back -- the reader saw the text jump. A file
+    whose diff did not change keeps its element, and nothing in it is
+    touched."""
+    root, _ = repo_page
+    (root / "other.py").write_text("first()\n")
+    conftest.git_in(root, "add", "other.py")
+    with opened(repo_page) as page:
+        page.evaluate(PAINT_EVERY_LINE)
+        show_tab(page, "diff")
+        # Painted, so the text is in a span of the highlighter's: `:text-is`
+        # matches that span, not the row's text cell.
+        added = """(text) => [...document.querySelectorAll('.dline.added .dtext')]
+          .some((cell) => cell.textContent === text && cell.querySelector('.hljs-keyword'))"""
+        page.wait_for_function(added, arg="first()")
+        page.wait_for_function(added, arg="print(2)")
+        page.evaluate("""() => {
+          window.codeFile = () => [...document.querySelectorAll('.dfile')].find(
+            (one) => one.querySelector('.path').textContent === 'code.py');
+          window.kept = window.codeFile();
+          window.touched = 0;
+          new MutationObserver((seen) => { window.touched += seen.length; })
+            .observe(window.kept, { childList: true, subtree: true,
+                                    characterData: true });
+          // Taken out and put back is the same node, and not the same
+          // block: it lost its sideways scroll and was laid out again.
+          window.out = [];
+          new MutationObserver((seen) => seen.forEach(
+            (one) => window.out.push(...one.removedNodes)))
+            .observe(window.kept.parentNode, { childList: true });
+        }""")
+        (root / "other.py").write_text("first()\nsecond()\n")
+        page.evaluate("loadDiff()")
+        page.wait_for_function(added, arg="second()")
+        assert page.evaluate("window.codeFile() === window.kept"), \
+            "the file being read was built again"
+        assert page.evaluate("window.touched") == 0
+        assert page.evaluate("window.out.includes(window.kept)") is False
+
+
+def test_a_file_that_grows_above_leaves_the_reader_where_they_were(repo_page):
+    """The reader is in README.md, and the agent adds lines to other.py,
+    which stands above it. The pane kept its number, so README.md slid down
+    under the reader by as many rows as other.py gained. The block on screen
+    stays where it stood."""
+    root, _ = repo_page
+    (root / "other.py").write_text("first()\n")
+    conftest.git_in(root, "add", "other.py")
+    (root / "README.md").write_text(
+        "# The readme\n\nfirst line\n"
+        + "".join(f"added line {n}\n" for n in range(120)))
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        shows = """(text) => [...document.querySelectorAll('.dtext')]
+          .some((cell) => cell.textContent === text)"""
+        page.wait_for_function(shows, arg="added line 119")
+        where = """() => {
+          const scroll = document.querySelector('.diffbody .dfile').parentNode;
+          const readme = [...scroll.querySelectorAll('.dfile')].find(
+            (one) => one.querySelector('.path').textContent === 'README.md');
+          return readme.getBoundingClientRect().top
+            - scroll.getBoundingClientRect().top;
+        }"""
+        page.evaluate(f"""() => {{
+          const scroll = document.querySelector('.diffbody .dfile').parentNode;
+          scroll.scrollTop += ({where})() + 200;
+        }}""")
+        before = page.evaluate(where)
+        assert before < -150, "README.md is not where the reader is"
+        (root / "other.py").write_text(
+            "".join(f"call_{n}()\n" for n in range(30)))
+        page.evaluate("loadDiff()")
+        page.wait_for_function(shows, arg="call_29()")
+        page.wait_for_timeout(100)      # past any frame that sets the place
+        assert abs(page.evaluate(where) - before) <= 1
+
+
 def test_a_diff_of_a_file_with_windows_line_ends_is_painted(repo_page):
     """A CRLF file's diff lines end in CR, and the HTML parser in
     `paintedInto` reads that as one more line break: each side of a hunk

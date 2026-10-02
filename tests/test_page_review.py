@@ -931,6 +931,26 @@ def test_one_line_in_both_sections_opens_one_comment_box(repo_page):
         assert notes == ["this is the note I typed"]
 
 
+def test_a_committed_line_follows_lines_added_above_it_since(repo_page):
+    """A block of the committed half is kept while its own diff stands, but
+    a comment on it is put where the line is on disk, and that is read off
+    the uncommitted diff (`inWorktree`). The agent added lines above it
+    without committing; the kept block anchored the comment as before, on
+    whatever line now stands there."""
+    repo, _ = repo_page
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_function(
+            "document.querySelectorAll('.diffhead.committed').length === 1")
+        code = repo / "code.py"
+        code.write_text("".join(f"# {n}\n" for n in range(50)) + code.read_text())
+        page.evaluate("loadDiff()")
+        page.wait_for_function("""() => [...document.querySelectorAll('.dtext')]
+          .some((cell) => cell.textContent === '# 49')""")
+        assert page.evaluate(CLICK_COMMITTED, "print(2)") == "clicked"
+        page.wait_for_selector(".commentbox textarea")
+        assert page.evaluate("state.writing") == "code.py\n52"
+
+
 def test_sending_a_review_leaves_the_next_session_alone(ws, served, repo_page,
                                                         tmp_path):
     """`tmux send-keys` takes long enough to press `j` in. Everything after the

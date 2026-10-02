@@ -16664,6 +16664,11 @@ function drawDiff(box) {
   const [bar, scroll] = pane.children;
   fillDiffBar(bar);
   if (holdingText(box)) return;
+  // `redrawCode` empties the key to say "all of it again" -- a comment was
+  // written, and its rows have to be drawn with it. Anything else that gets
+  // past `fresh` is a new answer, and a file whose own diff is the same as
+  // before keeps the block it has (`blockSig`).
+  const again = !box.dataset.bodyKey;
   if (!fresh(box, "bodyKey", diffKey())) return;
   const report = state.diff || { sections: [], untracked: [] };
   // A file the agent has since committed is no longer untracked, so the pick
@@ -16683,13 +16688,28 @@ function drawDiff(box) {
   const of = state.chosen + "\n" + (report.of || "");
   const same = !fresh(scroll, "of", of);
   drawDiffList(list, found);
-  scroll.replaceChildren();
+  // The agent saves one file and the answer changes, and every file was
+  // built again from nothing: as plain text, then painted a file at a time
+  // behind the highlighter and a timer. The file being read lost its colour
+  // and its word marks and got them back, and the reader saw it jump. So
+  // the pane is built into `next`, a file that has not changed takes its
+  // old block, and `settle` puts the pane right around the blocks it keeps
+  // -- never moving one, which would drop its sideways scroll.
+  const had = again ? new Map() : scroll.drawn || new Map();
+  // Nothing is kept when all of it is drawn again, and nothing of the old
+  // pane may stand in `document` while the new one is built.
+  if (again) scroll.replaceChildren();
+  const reading = again || !same ? null : readerAt(scroll);
+  const next = document.createDocumentFragment();
+  const order = [];
+  const kept = new Map();
+  scroll.drawn = new Map();
   // Every block by the key its row in the list carries, in the order they
   // stand, which is what `markDiffFile` walks.
   scroll.blocks = new Map();
 
   if (state.diffs.gone) {
-    put(scroll, "div", "note", "The commit you picked is no longer on this"
+    put(next, "div", "note", "The commit you picked is no longer on this"
         + " branch. It was probably amended or rebased away, so this shows"
         + " all changes.");
   }
@@ -16697,7 +16717,7 @@ function drawDiff(box) {
   const one = found.commit;
   for (const { section, files } of found.sections) {
     shown += files.length;
-    const head = put(scroll, "div", "diffhead " + section.name, section.title);
+    const head = put(next, "div", "diffhead " + section.name, section.title);
     if (one) put(head, "span", "sha", one.short);
     if (section.about) {
       put(head, "span", "about", section.about
@@ -16712,18 +16732,28 @@ function drawDiff(box) {
     // comment's line is carried through to where it stands now. The daemon
     // says so, because it is the one that knows what each half is a diff of.
     for (const { one: file } of files) {
-      scroll.blocks.set(section.name + "\n" + file.path,
-                        drawDiffFile(scroll, file, section.at_commit,
-                                     section.name));
+      const key = section.name + "\n" + file.path;
+      const sig = blockSig(section, file);
+      const old = had.get(key);
+      let node;
+      if (old && old.sig === sig) {
+        node = old.node;
+        // A stand-in where it goes, so the order is the one built.
+        kept.set(next.appendChild(document.createComment("")), node);
+      } else {
+        node = drawDiffFile(next, file, section.at_commit, section.name);
+      }
+      scroll.blocks.set(key, node);
+      scroll.drawn.set(key, { node, sig });
     }
   }
   const loose = found.loose;
   let picked = null;
   if (state.diffs.loose) {
-    picked = drawLooseFile(scroll, state.diffs.loose);
+    picked = drawLooseFile(next, state.diffs.loose);
     scroll.blocks.set("untracked\n" + state.diffs.loose, picked);
   } else if (loose.length) {
-    put(scroll, "div", "note", loose.length + " untracked file" +
+    put(next, "div", "note", loose.length + " untracked file" +
         (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
         " diff for a file it does not track, so pick one to read it.");
   }
@@ -16731,7 +16761,7 @@ function drawDiff(box) {
   // was unclear about. When there is no base the committed half is missing
   // altogether, and nothing used to say so -- the tab simply showed less.
   if (state.diff && !report.base && !report.failed && !report.of) {
-    put(scroll, "div", "note", "No default branch to compare against, so this"
+    put(next, "div", "note", "No default branch to compare against, so this"
         + " tab shows only what is not committed. git had no origin/HEAD and"
         + " no main or master.");
   }
@@ -16739,16 +16769,16 @@ function drawDiff(box) {
   // no commit, so there is no committed half. It used to read as git not
   // answering, on every poll, for ever.
   if (state.diff && report.unrelated && !report.of) {
-    put(scroll, "div", "note", "This branch has no commit in common with "
+    put(next, "div", "note", "This branch has no commit in common with "
         + report.base + ", so this tab shows only what is not committed. It"
         + " may be an orphan branch, or a shallow clone that does not reach"
         + " back to where the branch began.");
   }
   if (report.failed) {
-    put(scroll, "div", "note", "git did not answer here, so this may not be the"
+    put(next, "div", "note", "git did not answer here, so this may not be the"
         + " whole diff. It is tried again in a few seconds.");
   } else if (!shown && !loose.length) {
-    const empty = put(scroll, "div", "empty");
+    const empty = put(next, "div", "empty");
     put(empty, "p", null, state.find ? "No changed file matches."
       : report.of === "uncommitted" ? "Nothing is waiting to be committed."
       : report.of ? "This commit changes no file."
@@ -16757,8 +16787,9 @@ function drawDiff(box) {
       : "Nothing has changed, and there is no branch to compare against.");
   }
   if (report.cut) {
-    put(scroll, "div", "note", "This diff is long, so the rest is left out.");
+    put(next, "div", "note", "This diff is long, so the rest is left out.");
   }
+  settle(scroll, [...next.childNodes].map((node) => kept.get(node) || node));
   drawDiffList(list);
   // Picking a file moves the pane to it; anything else leaves the reader
   // where they were. Restoring the old place whatever happened is what made a
@@ -16777,6 +16808,10 @@ function drawDiff(box) {
     // Said, not left to the emptying: a pane refilled in the same task keeps
     // its offset, and the next commit opened 2,000 px down.
     scroll.scrollTop = 0;
+  } else if (reading && reading.node.isConnected) {
+    // The block the reader was in stayed: it stays where it stood on the
+    // screen, though a file above it grew or went.
+    scroll.scrollTop += reading.node.getBoundingClientRect().top - reading.top;
   } else if (place) {
     requestAnimationFrame(() => { scroll.scrollTop = place; });
   }
@@ -16784,6 +16819,50 @@ function drawDiff(box) {
   note.replaceChildren();
   countNote(note, shown + loose.length);
   drawDiffCount();
+}
+
+// What a file's block is drawn from, besides what every block shares: when
+// this is the same as before, the block that stands is the block it would
+// draw. Comments are not in it: writing one goes through `redrawCode`, which
+// draws all of it again. **A block of a commit puts its comments where the
+// line is on disk**, which is read off the diff after it (`laterFile`,
+// `inWorktree`): the agent added lines above a committed one and the kept
+// block anchored a comment to the line that stood there before.
+function blockSig(section, file) {
+  const key = moreKey(section.name, file.path);
+  const whole = state.diffs.whole.get(key);
+  return JSON.stringify([
+    state.chosen, state.diffs.of, state.sides, section.at_commit, file,
+    state.diffs.open.get(key), BIG_LINES, state.diffs.more.get(key) || null,
+    section.at_commit ? laterFile(file.path) : null,
+    whole ? (whole.asking ? "?" : whole.file ? "+" : "-") : "",
+  ]);
+}
+
+// The block at the top of the pane, and where it stands on the screen.
+function readerAt(scroll) {
+  const top = scroll.getBoundingClientRect().top;
+  for (const { node } of (scroll.drawn || new Map()).values()) {
+    const box = node.getBoundingClientRect();
+    if (box.bottom > top) return { node, top: box.top };
+  }
+  return null;
+}
+
+// Make the pane hold `nodes`, in that order, by taking out what is not
+// among them and putting in what is new. A node already in its place is
+// never touched: taking it out and putting it back drops its sideways scroll
+// and lays it out again.
+function settle(pane, nodes) {
+  const wanted = new Set(nodes);
+  for (const child of [...pane.childNodes]) {
+    if (!wanted.has(child)) child.remove();
+  }
+  let at = pane.firstChild;
+  for (const node of nodes) {
+    if (node === at) at = at.nextSibling;
+    else pane.insertBefore(node, at);
+  }
 }
 
 // git has no diff for an untracked file, so it was named and left
@@ -16909,9 +16988,9 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
   }
   const size = one.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
   const why = put(head, "span", "why");
-  // `drawDiff` rebuilds this pane whenever the agent saves anything, so what
-  // the reader opened has to live outside the node, the way the transcript's
-  // expanded tool rows do. `BIG_LINES` only decides a file nobody has touched.
+  // `drawDiff` rebuilds a file whose diff changed, and all of them after a
+  // comment, so what the reader opened has to live outside the node, the way
+  // the transcript's expanded tool rows do. `BIG_LINES` only decides a file nobody has touched.
   // By what is shown, the half and the path, as `moreKey` is: by the path
   // alone, opening a long file in one half opened it in the other on the
   // next save, and the choice followed the reader to every commit picked.
@@ -17772,7 +17851,11 @@ function putReview(parent, anchor, quoted, full) {
   // from the first: keystrokes went to a box off screen, and saving the one
   // the reader could see passed an empty note — which means delete. The
   // comment was lost without a word.
-  if (state.writing === anchor && !document.querySelector(".commentbox")) {
+  // And wherever it is being built: `drawDiff` builds the pane apart from
+  // the page and puts it in after, so the first box is not in `document` yet.
+  const building = parent.getRootNode();
+  if (state.writing === anchor && !document.querySelector(".commentbox")
+      && !(building !== document && building.querySelector(".commentbox"))) {
     return putCommentBox(parent, anchor, quoted);
   }
   if (seen) return putComment(parent, seen, full);
