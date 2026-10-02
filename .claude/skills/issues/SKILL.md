@@ -129,6 +129,12 @@ Judgement, not ceremony. A two-line fix needs neither.
 - **`/code-review`** before opening a PR that touches the token, the tmux
   verbs, the scrub, a file read, or the hook — anything on the safety list in
   `CLAUDE.md` — or one whose diff runs past a few hundred lines.
+- **An agent asked to break a promise** before a PR whose point is one --
+  "names and counts only", "never typed into a terminal unseen": give it
+  the promise and the diff, and ask for the input that breaks it. The
+  report's own privacy test passed, and such an agent then found six ways
+  the reader's text still got through, each with the input that showed it.
+  A test of examples finds what its author thought of.
 - **`/simplify`** after a pass that added a lot of code, or that wrote a
   third spelling of something the codebase already had a word for. It has
   twice found real defects in code that was already merged.
