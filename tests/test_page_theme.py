@@ -271,6 +271,19 @@ def test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list(page_at):
         assert out["settings"] and out["words"] == ""
 
 
+def test_the_name_links_to_the_project(page_at):
+    """The reader asked for the name at the top of the list to lead to the
+    project (#333). In a tab of its own, so the page that watches the agents
+    stays open, and with no opener, so the project's page cannot reach back
+    into this one, which holds the token."""
+    with opened(page_at) as page:
+        brand = page.locator(".sidebar-head a.brand")
+        assert brand.text_content() == "wostuast"
+        assert brand.get_attribute("href") == "https://github.com/martinus/wostuast"
+        assert brand.get_attribute("target") == "_blank"
+        assert set(brand.get_attribute("rel").split()) >= {"noopener", "noreferrer"}
+
+
 def test_every_settings_label_stands_level_with_what_it_names(page_at):
     """A label is read along the line it stands on. With a padding to line
     it up with a button, "alerts" stood 5 px under its first checkbox, and

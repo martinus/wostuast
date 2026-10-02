@@ -9818,7 +9818,11 @@ body {
    tab row beside it, so the two rules under them are one line. There was a
    bar across the whole page for these and the counts; the reader asked for
    the room back. */
-.brand { font-weight: 600; color: var(--needs); letter-spacing: .04em; }
+.brand { font-weight: 600; color: var(--needs); letter-spacing: .04em;
+  text-decoration: none; }
+/* The name is a link to the project (issue 333), in a tab of its own. It reads
+   as the name it always was until the pointer is on it. */
+.brand:hover { text-decoration: underline; }
 .version { color: var(--ink-faint); font-size: 11px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
 /* Jump and the settings, as icons at the end of the tab row. */
@@ -11254,7 +11258,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     nothing it sends will go in. Reload it.</div>
   <div class="body">
     <div class="sidebar">
-      <div class="sidebar-head"><span class="brand">wostuast</span><span
+      <div class="sidebar-head"><a class="brand" href="https://github.com/martinus/wostuast"
+        target="_blank" rel="noopener noreferrer" title="wostuast on GitHub">wostuast</a><span
         class="version" title="the day this copy was written, and the start of its SHA-256"
         >__WOSTUAST_VERSION__</span></div>
       <div class="findslot">
@@ -13421,7 +13426,9 @@ const LINKABLE = /^https?:/i;
 const AWAY = /^https?:\/\//i;
 
 // A link that leaves this page leaves it in a new tab, and takes nothing of
-// this one with it. Both places that build one come through here.
+// this one with it. Both places that build one come through here. The name
+// at the top of the list is the one link written in the HTML (#333), and it
+// carries the same two attributes: `test_the_name_links_to_the_project`.
 function opensAway(link) {
   link.target = "_blank";
   link.rel = "noopener noreferrer";
