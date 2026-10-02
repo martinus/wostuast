@@ -683,7 +683,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_the_status_file_keeps_the_session_and_prints_its_line`,
     `test_an_old_status_line_of_ours_is_moved_to_the_status_file`,
     `test_install_points_the_status_line_at_the_status_file`. So `cmd_hook` and everything it calls are
-    written once, and the tests of `wostuast hook` test the hook. **A part
+    written once, and the hook's tests run the hook file itself
+    (`run_installed` in `conftest.py` makes it with `program_files`). **A part
     left out is a NameError on every event that nobody sees**: the hook
     catches everything and may say nothing. `hook_source` refuses a name
     it cannot find, and `test_the_hook_file_defines_every_name_it_uses`
@@ -695,6 +696,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     the hooks still looked registered while every event was lost;
     `add_hooks` moves an old `wostuast hook` entry to the file where it
     stands, and only that way round (`is_hook_file`).
+    - **The verbs `wostuast hook` and `wostuast status` are gone (#322), and
+      a gone verb exits 1, never 2** (`GONE_VERBS`). An entry from before
+      the hook file still calls one until its session restarts, and Claude
+      Code reads exit 2 from a hook as "block": argparse's "invalid choice"
+      would have refused the tool call or thrown the prompt away. 1 is an
+      error it shows and goes on from. `doctor` counts only an entry that
+      runs the hook file (`runs_hook_file`), never the old shape `is_ours`
+      still knows for moving and removing it.
+      `test_hook_and_status_are_gone_and_never_block`,
+      `test_doctor_counts_an_entry_from_before_the_hook_file_as_missing`.
     `test_the_hook_file_records_an_event_and_says_nothing`,
     `test_the_hook_file_loads_little`,
     `test_an_old_install_is_moved_to_the_hook_file_in_place`,

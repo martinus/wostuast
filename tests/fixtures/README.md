@@ -1,7 +1,7 @@
 # Fixtures
 
 `events.jsonl` is one recorded run of a Claude Code session, one line per hook
-event, in the shape `wostuast hook` writes.
+event, in the shape the hook file writes.
 
 The field names come from the hook payload schema of Claude Code 2.1.276, not
 from guessing. The base payload of every hook event is:
@@ -58,7 +58,7 @@ to the base payload, and `permission_mode` reads `auto`. None of them is read,
 and the log keeps them because it keeps whatever arrives: a field from a newer
 Claude Code must never break an older wostuast.
 
-`wostuast hook` adds three fields of its own: `ts`, `pane` and `pid`.
+The hook adds three fields of its own: `ts`, `pane` and `pid`.
 
 ### A question the agent is stopped on
 

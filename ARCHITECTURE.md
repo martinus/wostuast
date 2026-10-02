@@ -295,9 +295,9 @@ for three reasons:
 
 ### A hook made from the program itself
 
-For a long time, the hook was simply `wostuast hook`. Python then had to read
-and compile the whole file — the page included — on every event. On a test
-machine that cost about 131 ms for each event.
+For a long time, the hook was simply `wostuast hook` (the verb is gone now).
+Python then had to read and compile the whole file — the page included — on
+every event. On a test machine that cost about 131 ms for each event.
 
 Now `install` writes a small file, `~/.local/share/wostuast/hook.py`. It is
 *generated* from `wostuast` itself:
