@@ -27,8 +27,14 @@ if TYPE_CHECKING:  # only the annotations need these; the hot paths must not pay
 
 # --- constants: paths, hook names, limits -----------------------------------
 
-VERSION = "0.1.0"
 RAW_URL = "https://raw.githubusercontent.com/martinus/wostuast/main/wostuast"
+#: The last commit on main that changed the program, which `install` asks
+#: for, and the program as that commit left it (#345). Raw `main` is cached
+#: for five minutes, so the bytes are fetched at the commit's SHA: they and
+#: the commit's date are then of one commit.
+COMMITS_URL = ("https://api.github.com/repos/martinus/wostuast/commits"
+               "?sha=main&path=wostuast&per_page=1")
+RAW_AT = "https://raw.githubusercontent.com/martinus/wostuast/{}/wostuast"
 
 #: The hook events wostuast records. Claude Code sends one JSON object per event.
 HOOK_EVENTS: tuple[str, ...] = (
@@ -8218,7 +8224,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
         # for ever. The event stream writes at least every fifteen seconds,
         # so it is never the one that runs out.
         timeout = 30
-        server_version = f"wostuast/{VERSION}"
+        server_version = "wostuast"
         daemon = None        # this server's own, set right below
 
     Handler.daemon = daemon
@@ -8849,7 +8855,7 @@ def build_report(days: float, now: float | None = None,
     git = (run(["git", "--version"]) or "").strip() or "not found"
     out += ["", "## Versions", ""]
     out += report_table(("What", "Version"), [
-        ("wostuast", own_version() or VERSION),
+        ("wostuast", own_version() or "unknown"),
         ("Python", sys.version.split()[0]),
         ("Platform", f"{platform.system()} {platform.release()} ({platform.machine()})"),
         ("tmux", tmux),
@@ -9065,21 +9071,26 @@ def doctor_checks() -> list[tuple[str, str]]:
     return lines
 
 
-def own_version() -> str:
-    """Which copy of this file is running: the day it was last written, and
-    the first seven hex digits of the SHA-256 of its bytes.
+def own_version(path: Path | None = None) -> str:
+    """Which copy of this file is running, or of the program at `path`: the
+    day it was last written, and the first seven hex digits of the SHA-256
+    of its bytes. `--version` prints it (#344).
 
     There is no version number to keep up to date, on purpose -- a number
     somebody has to remember to raise is one that is wrong half the time.
     The bytes are what `install_behind` compares, so two copies that say the
-    same here are the same program. "" when the file cannot be read.
+    same here are the same program. A copy `install` fetched carries the day
+    of its commit (`fetch_newest`), not the day it was fetched. The day is
+    UTC's, as a commit's is: in local time, a commit at 23:00 UTC read as
+    the next day east of London, and one copy had two versions. "" when the
+    file cannot be read.
     """
     import hashlib
 
     try:
-        here = Path(__file__).resolve()
+        here = path or Path(__file__).resolve()
         data = here.read_bytes()
-        day = time.strftime("%Y-%m-%d", time.localtime(here.stat().st_mtime))
+        day = time.strftime("%Y-%m-%d", time.gmtime(here.stat().st_mtime))
     except (NameError, OSError):
         return ""
     return f"{day} \u00b7 {hashlib.sha256(data).hexdigest()[:7]}"
@@ -9174,6 +9185,88 @@ def self_source() -> str:
 
     with urllib.request.urlopen(RAW_URL, timeout=30) as response:
         return response.read().decode("utf-8")
+
+
+def newest_program(opener: Callable[[str], Any] | None = None) -> tuple[str, float]:
+    """The program as the last commit on main that changed it left it, and
+    that commit's time.
+
+    Two requests: which commit (`COMMITS_URL`), then the file at its SHA
+    (`RAW_AT`). The text must compile and start as the program does, so an
+    error page or half a file is refused here and is never installed.
+    Raises OSError, ValueError, KeyError, IndexError, TypeError or
+    SyntaxError; `fetch_newest` says them in one line.
+    """
+    import datetime
+    import urllib.request
+
+    def fetch(url: str) -> bytes:
+        if opener is not None:
+            with opener(url) as response:
+                return response.read()
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read()
+
+    commit = json.loads(fetch(COMMITS_URL).decode("utf-8"))[0]
+    sha = commit["sha"]
+    # It goes into a URL: forty hex digits, or nothing is fetched.
+    if not re.fullmatch(r"[0-9a-f]{40}", str(sha)):
+        raise ValueError(f"not a commit: {clip(str(sha), 60)}")
+    when = datetime.datetime.fromisoformat(
+        str(commit["commit"]["committer"]["date"]).replace("Z", "+00:00"))
+    text = fetch(RAW_AT.format(sha)).decode("utf-8")
+    if not text.startswith("#!/usr/bin/env python3\n"):
+        raise ValueError("what came back is not the program")
+    compile(text, "wostuast", "exec")
+    return text, when.timestamp()
+
+
+def runs_installed() -> bool:
+    """Whether this is the installed copy, or no file at all -- the one-line
+    install runs the program from a string. Only these fetch the newest
+    from GitHub: `./wostuast install` in a checkout installs the checkout,
+    so a branch being tried is not replaced by main. **Neither is a link**:
+    an installed copy that is a symlink to a checkout resolved to the
+    checkout's own path, and `install` would have renamed main over it."""
+    if "__file__" not in globals():
+        return True
+    try:
+        target = install_path()
+        return (not target.is_symlink()
+                and Path(__file__).resolve() == target.resolve())
+    except OSError:
+        return False
+
+
+def fetch_newest(target: Path,
+                 newest: Callable[[], tuple[str, float]] | None = None
+                 ) -> tuple[str, str]:
+    """Bring the program at `target` to the newest on main (#345). Returns
+    the line to print, and "changed", "same", or "" when the fetch failed.
+    Changed, the new copy must run its own `install`, because the hook file
+    is built from the program that builds it.
+
+    The file takes the commit's time, so `own_version` says the day the
+    program was made, not the day it was fetched -- and when the bytes are
+    already the newest, the time alone is set. A fetch that fails says why
+    in one line, and the install goes on with the copy it has: no network
+    is no reason to leave the hooks unregistered.
+    """
+    try:
+        text, when = (newest or newest_program)()
+    except (OSError, ValueError, KeyError, IndexError, TypeError, SyntaxError) as error:
+        reason = str(error).strip() or type(error).__name__
+        return (f"could not check GitHub for a newer wostuast"
+                f" ({clip(reason, 120)}); installing this one"), ""
+    before = own_version(target) if target.exists() else ""
+    changed = write_program(target, text)
+    with contextlib.suppress(OSError):
+        os.utime(target, (when, when))
+    now = own_version(target)
+    if not changed:
+        return f"already the newest wostuast: {now}", "same"
+    return (f"updated {tilde(target)}: {before} → {now}" if before
+            else f"fetched the newest wostuast: {now}"), "changed"
 
 
 #: What the hook file is made of: the definitions on the hook's path, by
@@ -9383,8 +9476,24 @@ def bring_up_to_date() -> tuple[list[str], list[str], str, tuple[str, str] | Non
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    """Copy wostuast to ~/.local/bin and register the hooks and the status line."""
+    """Copy wostuast to ~/.local/bin and register the hooks and the status line.
+
+    The installed copy, and the one-line install, first fetch the newest
+    from GitHub (`fetch_newest`), and run its own install when it differs.
+    `--fetched` is that run: it never fetches again. Keep the flag's name,
+    because an older copy is what passes it.
+    """
     target = install_path()
+    if not getattr(args, "fetched", False) and runs_installed():
+        said, fetched = fetch_newest(target)
+        print(said)
+        # The one-line install has no file, so `bring_up_to_date` would
+        # take raw `main` (`self_source`), which is cached and can be older
+        # than what was just written: it hands over even when nothing changed.
+        if fetched == "changed" or (fetched and "__file__" not in globals()):
+            sys.stdout.flush()
+            os.execv(sys.executable,
+                     [sys.executable, str(target), "install", "--fetched"])
     changes, notes, trouble, _ = bring_up_to_date()
     if trouble:
         print(trouble, file=sys.stderr)
@@ -9693,7 +9802,10 @@ def build_parser() -> argparse.ArgumentParser:
                     " check the setup, bring the hooks up to date, and serve"
                     " the page.",
     )
-    parser.add_argument("--version", action="version", version=f"wostuast {VERSION}")
+    # The day and the start of the SHA-256, as the page shows it: no number
+    # anybody has to remember to raise (#344, `own_version`).
+    parser.add_argument("--version", action="version",
+                        version=f"wostuast {own_version() or 'unknown'}")
     # No command is the start: check, bring the hooks up to date, serve
     # (#275). So the two options of serving are the program's own.
     parser.add_argument("--port", type=port_number, default=DEFAULT_PORT,
@@ -9715,6 +9827,10 @@ def build_parser() -> argparse.ArgumentParser:
     for name, handler, help_text in commands:
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
         sub.set_defaults(handler=handler)
+        if name == "install":
+            # The run of a copy `install` just fetched (`cmd_install`).
+            sub.add_argument("--fetched", action="store_true",
+                             help=argparse.SUPPRESS)
         if name == "report":
             sub.add_argument("--days", type=float, default=SHAPES_DAYS,
                              help=f"how far back to read (default {SHAPES_DAYS})")
@@ -11429,7 +11545,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <div class="sidebar">
       <div class="sidebar-head"><a class="brand" href="https://github.com/martinus/wostuast"
         target="_blank" rel="noopener noreferrer" title="wostuast on GitHub">wostuast</a><span
-        class="version" title="the day this copy was written, and the start of its SHA-256"
+        class="version" title="the day this copy was made, and the start of its SHA-256"
         >__WOSTUAST_VERSION__</span></div>
       <div class="findslot">
         <input class="find" id="pick" type="search" placeholder="filter sessions  f"
