@@ -567,8 +567,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     one of the two cases. **Where nothing can be read, the pane stays**: no
     pid, no `/proc` (macOS), so there an rc session is still typed into.
     The page needed nothing new: an empty pane is "not in tmux" already.
+    **The worker is found by its executable, not only its name**
+    (`looks_like_claude`): Claude Code's installer keeps each version at
+    `~/.local/share/claude/versions/<version>` behind the `claude` link, and
+    rc starts the worker from that real path, so it is called `2.1.287`.
+    `agent_pid` passed over it to `claude rc`, which reads the pane, and on
+    the owner's machine send stayed on after the first fix; this container's
+    Claude Code is `/opt/claude-code/bin/claude`, so the measurement here
+    could not show it. `/proc/<pid>/exe` in a `claude/versions` folder is
+    Claude Code, whatever the process is called.
     `test_an_agent_that_reads_no_terminal_has_no_pane`,
-    `test_reads_terminal_says_yes_unless_it_can_tell_no`.
+    `test_reads_terminal_says_yes_unless_it_can_tell_no`,
+    `test_a_remote_control_worker_is_the_agent_under_its_version_name`.
 - **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
   is no `/proc` — on macOS, always. Such a session is taken for gone after
   `QUIET_MAX`. One with a pid is never buried for being quiet.

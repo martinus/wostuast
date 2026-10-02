@@ -2418,10 +2418,29 @@ def parent_pid(pid: int) -> int:
 
 
 def looks_like_claude(pid: int) -> bool:
+    """Whether this process is Claude Code: by its name, by its command line
+    under a runtime, or by where its executable lives.
+
+    Claude Code's installer keeps each version as a file named after it,
+    `~/.local/share/claude/versions/2.1.287`, behind the link `claude`. What
+    runs through the link is called `claude`. What Claude Code starts from
+    its real path -- a Remote Control worker, from `process.execPath` -- is
+    called `2.1.287`: `agent_pid` passed over it to `claude rc` above it,
+    whose stdin is the pane's terminal, and the worker kept the pane
+    (`reads_terminal`). `/proc/<pid>/exe` names the file, whatever the
+    process is called; a version replaced by an update reads "… (deleted)",
+    which changes the name and not the folder.
+    """
     name = process_name(pid)
     if name == "claude":
         return True
-    return name in AGENT_NAMES and "claude" in process_args(pid)
+    if name in AGENT_NAMES and "claude" in process_args(pid):
+        return True
+    try:
+        folder = Path(os.readlink(f"/proc/{pid}/exe")).parent
+    except OSError:
+        return False
+    return folder.name == "versions" and folder.parent.name == "claude"
 
 
 def agent_pid() -> int:

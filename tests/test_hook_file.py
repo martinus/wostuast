@@ -6,8 +6,10 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import shutil
 import subprocess
 import symtable
+import sys
 
 import pytest
 
@@ -44,6 +46,36 @@ def test_an_agent_that_reads_no_terminal_has_no_pane(ws, tmp_path, keys, pane):
     line = json.loads((tmp_path / "state" / "events.jsonl").read_text())
     assert line["pid"] > 0, "the stand-in was not taken for the agent"
     assert line["pane"] == pane
+
+
+def test_a_remote_control_worker_is_the_agent_under_its_version_name(ws, tmp_path):
+    """Claude Code's installer keeps each version as a file named after it,
+    `~/.local/share/claude/versions/2.1.287`, behind the `claude` link. `claude
+    rc`, run through the link, is called `claude` and reads the pane; the
+    worker it starts from the real file (`process.execPath`) is called
+    `2.1.287` and reads a pipe. `looks_like_claude` passed over the worker,
+    took `claude rc` for the agent, and the pane stayed: send was still on.
+
+    The worker here is a copy of Python at that path -- `/proc/<pid>/exe`
+    and the process's name are then what a real one has -- which finds its
+    library through a `pyvenv.cfg`, as a virtual environment does."""
+    path = written(ws, tmp_path)
+    versions = tmp_path / "share" / "claude" / "versions"
+    versions.mkdir(parents=True)
+    worker = versions / "2.1.287"
+    shutil.copy(sys.executable, worker)
+    home = os.path.dirname(os.path.realpath(sys.executable))
+    (versions / "pyvenv.cfg").write_text(f"home = {home}\n")
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
+           "WOSTUAST_STATE": str(tmp_path / "state"), "TMUX_PANE": "%3"}
+    folder = tmp_path / "stand-in"
+    payload = json.dumps({"session_id": "s1", "hook_event_name": "UserPromptSubmit"})
+    done = as_claude([str(worker), str(folder / "stand_in.py"), "pipe", str(path)],
+                     payload, env, folder, "terminal")
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
+    line = json.loads((tmp_path / "state" / "events.jsonl").read_text())
+    assert line["pid"] > 0
+    assert line["pane"] == "", "the worker was passed over for `claude rc`"
 
 
 def test_reads_terminal_says_yes_unless_it_can_tell_no(ws):
