@@ -182,6 +182,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/browser.py` | The shared Chromium, `opened`, `own_context`, `show_tab`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
 | `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `--eval JS` runs in the page first: a click, a scroll. `tests/test_shot.py` keeps it working. |
 | `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working. |
+| `tests/claude_pane.py` | Not a test. A real Claude Code in a tmux pane of its own, against a fake Messages API that keeps every request and can answer once with a tool call: `send`, `paste`, `ask`, `turns`, `statuses`, `hooks`, `settings`. How a question about what Claude Code does is measured, not guessed (topics/payloads). `tests/test_claude_pane.py` keeps the fake API working. |
 | `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
@@ -427,6 +428,10 @@ reliable shape when making several edits at once. Three scars on that shape:
   hold a backslash.** `PAGE` is a raw string, so `\\d` in the program is
   `\\d` in the JavaScript; a plain `'''` in the edit script turned it into
   `\d`, and the page read `NO-(d+)`.
+  **And write that script with the Write tool, not as a heredoc inside a
+  Bash command**: twice in one session a `\\` in the command reached the
+  file as `\`, raw string or not -- a test's list held `"path\;"`, an
+  invalid escape -- and only a warning said so.
 - **Chain the tests after the script with `&&`.** A failed `assert` stops
   the script before its later edits, and three runs under load then tested
   code that had not changed.

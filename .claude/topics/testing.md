@@ -82,6 +82,14 @@ job sees, put a `playwright/__init__.py` that raises `ImportError` in a
 folder of the scratchpad and run the suite with that folder on
 `PYTHONPATH`: every browser test must skip, and nothing may fail.
 
+**Measure where something is with `getBoundingClientRect`, never
+`offsetTop`**: a `.turn` is positioned, so `offsetTop` inside it counts
+from the turn, and a test that scrolled to "the middle of the log" never
+moved the pane -- its break went GREEN. **And a scroll test needs content
+after what it scrolls past**: with a short transcript under it, the
+browser cut the scroll back to the new end, and the message was in sight
+by chance (`test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight`).
+
 **Playwright.** **`fill` with a long text of many lines takes for ever**:
 60 KB of short lines did not end in 60 s, while the page's own input
 handler took 10 ms of it. Put a long text in as a paste does: set `value`
