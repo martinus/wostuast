@@ -2445,6 +2445,32 @@ def agent_pid() -> int:
     return 0
 
 
+def reads_terminal(pid: int) -> bool:
+    """Whether this agent reads its keys from a terminal: False only when we
+    can tell it does not.
+
+    A pane is where keys go, and `TMUX_PANE` is inherited by everything
+    started inside it. A session that `claude remote-control` (`claude rc`)
+    starts runs `claude --print --sdk-url …` with a pipe for its stdin, and
+    takes the pane of the terminal `claude rc` runs in: a send went into
+    the rc screen, and was gone. A `claude -p` that an agent runs from its
+    Bash tool takes the agent's pane, and a send to it went into the other
+    agent's prompt. Measured on 2.1.287: an interactive session's stdin was
+    `/dev/pts/1`, a `claude -p`'s a `pipe:[…]`.
+
+    Where nothing can be read -- no pid, no /proc, another user -- the
+    answer is yes, as it was before anybody asked: saying nothing beats
+    saying something wrong.
+    """
+    if pid <= 0:
+        return True
+    try:
+        stdin = os.readlink(f"/proc/{pid}/fd/0")
+    except OSError:
+        return True
+    return stdin.startswith(("/dev/pts/", "/dev/tty"))
+
+
 def pid_alive(pid: int) -> bool:
     """True when that agent is still running.
 
@@ -8297,8 +8323,11 @@ def cmd_hook(args: argparse.Namespace) -> int:
         try:
             give_up_after(HOOK_TIMEOUT)
             record = read_stdin_json()
-            record["pane"] = os.environ.get("TMUX_PANE", "")
             record["pid"] = agent_pid()
+            # The pane it inherited is not its own when the agent reads no
+            # terminal: an rc session, a `claude -p` (`reads_terminal`).
+            record["pane"] = (os.environ.get("TMUX_PANE", "")
+                              if reads_terminal(record["pid"]) else "")
             record["shell_pid"] = os.getppid()
             append_event(record, stamp=True)    # `ts`, under the log's lock
             stand_down()
@@ -9280,7 +9309,7 @@ HOOK_PARTS = frozenset({
     "events_path", "archived_events_paths", "file_key", "archive_number",
     "log_path", "log", "rotate", "still_the_file", "append_event",
     "archive_log", "to_int", "process_name", "process_args", "parent_pid",
-    "looks_like_claude", "agent_pid", "give_up_after", "stand_down",
+    "looks_like_claude", "agent_pid", "reads_terminal", "give_up_after", "stand_down",
     "read_stdin_json", "cmd_hook",
 })
 

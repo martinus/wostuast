@@ -551,6 +551,24 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   carries neither. Everything that asks "is it in tmux" reads the empty
   pane as no: `in_tmux`, the row, the page's `s.pane`, `ls`, `link_clear`.
   `test_a_resume_outside_tmux_takes_the_old_pane_and_pid_away`.
+  - **An agent that reads no terminal has no pane** (`reads_terminal`,
+    in `cmd_hook`). `TMUX_PANE` is inherited by everything started in a
+    pane. A Remote Control session (`claude rc`) is a worker, `claude
+    --print --sdk-url … --input-format stream-json`, spawned with
+    `stdio: ["pipe","pipe","pipe"]` (read off the 2.1.287 binary): it
+    took the pane `claude rc` ran in, and every send went into the rc
+    screen and was gone. A `claude -p` from an agent's Bash tool took the
+    agent's pane, and a send went into that agent's prompt. **The test is
+    the agent's stdin, `/proc/<pid>/fd/0`**: measured, an interactive
+    session read `/dev/pts/1`, a `claude -p` a `pipe:[…]`. Not
+    `CLAUDE_CODE_ENTRYPOINT` (`cli` against `sdk-cli`): a list of names
+    that keep their pane is wrong for every name not on it yet. Not
+    `CLAUDE_CODE_ENVIRONMENT_KIND=bridge` either, which rc sets: it names
+    one of the two cases. **Where nothing can be read, the pane stays**: no
+    pid, no `/proc` (macOS), so there an rc session is still typed into.
+    The page needed nothing new: an empty pane is "not in tmux" already.
+    `test_an_agent_that_reads_no_terminal_has_no_pane`,
+    `test_reads_terminal_says_yes_unless_it_can_tell_no`.
 - **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
   is no `/proc` — on macOS, always. Such a session is taken for gone after
   `QUIET_MAX`. One with a pid is never buried for being quiet.

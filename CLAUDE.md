@@ -85,7 +85,7 @@ bullets beside it are the same part's other scars.
 | `remote_url`, `config_entries`, `config_section`, `config_value`, `CONFIG_MAX`, `hide_secrets`, `clip_hidden`, `SECRET_SHAPES`, `tool_target` | topics/safety: a remote URL and a command reach the page without their secrets, and a long one costs no time |
 | `build_report`, `named`, `tool_named`, `labelled`, `exception_named`, `REPORT_KINDS`, `private_paths`, `installed_files`, `cmd_files` | topics/safety: the report holds names and counts only, and one list of the files |
 | `read_worktree_file`, `is_listed`, `worktree_target`, `inside`, `SHOWN_AS`, the `raw` route, `askFile`, `FileText.stamp` | topics/safety: a path out of the page is input |
-| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear`, `Session.pane`, `Session.pid` | topics/state |
+| `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear`, `Session.pane`, `Session.pid`, `reads_terminal` | topics/state |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `iconPicture`, `tellAbout`, `waitsFor`, `shown_prompt`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
@@ -252,7 +252,9 @@ This list exists because each entry was re-implemented once already.
 `inside`, `CONTROL_CHARS`, `ESCAPE_CODES`, `GONE_STATES`, `STATE_WORDS`.
 
 **Test helpers**: `run_installed(["hook"], stdin)` runs the hook file or the
-status file this checkout makes, as Claude Code does. `conftest.event(name, sid=..., **extra)` builds a hook event —
+status file this checkout makes, as Claude Code does -- the hook under a
+stand-in `claude` whose stdin is a terminal, or a pipe with `keys="pipe"`
+(`as_claude`). `conftest.event(name, sid=..., **extra)` builds a hook event —
 never hand-write the dict. **To call the program from a scratch script,
 `sys.path.insert(0, "tests")` and `from conftest import wostuast`**: a
 `SourceFileLoader` of its own, without the module in `sys.modules`, failed

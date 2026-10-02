@@ -80,15 +80,50 @@ def run_cli(tmp_path):
     return run
 
 
+#: What `as_claude` runs as the agent: it reads what the hook is to be
+#: handed, puts a terminal or a pipe on its own stdin, and runs the hook.
+STAND_IN = r"""
+import os, subprocess, sys
+given = sys.stdin.buffer.read()
+if sys.argv[1] == "terminal":
+    _, keys = os.openpty()
+else:
+    keys, _ = os.pipe()
+os.dup2(keys, 0)
+sys.exit(subprocess.run(sys.argv[2:], input=given).returncode)
+"""
+
+
+def as_claude(command, stdin, env, folder, keys="terminal"):
+    """Run `command` as Claude Code runs a hook: the child of a process
+    called `claude`, whose own stdin is a terminal -- or a pipe, as a
+    `claude -p` and a Remote Control session have it (`reads_terminal`).
+
+    Without it, `agent_pid` walks up to whatever Claude Code runs the tests,
+    if one does: in CI none, under an agent the agent, whose stdin is a
+    pipe -- and the hook's pane depended on who ran the suite."""
+    folder.mkdir(parents=True, exist_ok=True)
+    claude = folder / "claude"
+    if not claude.exists():
+        claude.symlink_to(sys.executable)
+    script = folder / "stand_in.py"
+    script.write_text(STAND_IN)
+    return subprocess.run([str(claude), str(script), keys, *command],
+                          input=stdin, capture_output=True, text=True,
+                          env=env, timeout=60)
+
+
 @pytest.fixture
 def run_installed(tmp_path):
     """Run what Claude Code runs: the hook file or the status file `install`
     makes from this checkout (`program_files`), by its own name, through its
     `#!`, in a bare environment. `["status", "--then", line]` passes the rest
-    on. The verbs `wostuast hook` and `wostuast status` are gone (#322)."""
+    on. The verbs `wostuast hook` and `wostuast status` are gone (#322).
+    The hook runs under a stand-in `claude` (`as_claude`), whose stdin is
+    `keys`: "terminal", or "pipe"."""
     made = {}
 
-    def run(args, stdin="", home=None):
+    def run(args, stdin="", home=None, keys="terminal"):
         if not made:
             hook, status = wostuast.program_files(
                 (ROOT / "wostuast").read_text(encoding="utf-8"))
@@ -106,6 +141,9 @@ def run_installed(tmp_path):
             "TMUX_PANE": "%3",
             "NO_COLOR": "1",
         }
+        if args[0] == "hook":
+            return as_claude([str(made["hook"]), *args[1:]], stdin, env,
+                             tmp_path / "stand-in", keys)
         return subprocess.run(
             [str(made[args[0]]), *args[1:]],
             input=stdin, capture_output=True, text=True, env=env,

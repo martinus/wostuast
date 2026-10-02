@@ -34,6 +34,15 @@ and passes on any desk that has one. Run the suite once with
 `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1` when a test commits
 somewhere new.
 
+**A hook test runs the hook under a stand-in `claude`** (`as_claude` in
+`conftest.py`; `run_installed(["hook"], …)` does it). `agent_pid` walks up
+the process tree to the first process that looks like Claude Code, and a
+suite run by an agent has one above it -- whose stdin is a pipe, so the
+hook dropped the pane (`reads_terminal`) and two tests went red under the
+agent and green in CI. The stand-in is a symlink called `claude` to
+Python, with a pty or a pipe on its own stdin (`keys`), so the agent the
+hook finds is the one the test made.
+
 **A fake of a call that never returns must raise.** `os.execv`,
 `sys.exit` and `os._exit` end the code that calls them; a fake that only
 records its arguments lets that code run on, into what the real call would
