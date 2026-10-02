@@ -81,6 +81,40 @@ def run_cli(tmp_path):
 
 
 @pytest.fixture
+def run_installed(tmp_path):
+    """Run what Claude Code runs: the hook file or the status file `install`
+    makes from this checkout (`program_files`), by its own name, through its
+    `#!`, in a bare environment. `["status", "--then", line]` passes the rest
+    on. The verbs `wostuast hook` and `wostuast status` are gone (#322)."""
+    made = {}
+
+    def run(args, stdin="", home=None):
+        if not made:
+            hook, status = wostuast.program_files(
+                (ROOT / "wostuast").read_text(encoding="utf-8"))
+            folder = tmp_path / "share" / "wostuast"
+            for name, text in (("hook", hook), ("status", status)):
+                made[name] = folder / f"{name}.py"
+                wostuast.write_program(made[name], text)
+        root = home or tmp_path
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(root),
+            "WOSTUAST_STATE": str(root / "state"),
+            "WOSTUAST_CONFIG": str(root / "config"),
+            "CLAUDE_CONFIG_DIR": str(root / "claude"),
+            "TMUX_PANE": "%3",
+            "NO_COLOR": "1",
+        }
+        return subprocess.run(
+            [str(made[args[0]]), *args[1:]],
+            input=stdin, capture_output=True, text=True, env=env,
+        )
+
+    return run
+
+
+@pytest.fixture
 def written_events(ws, recorded_events, monkeypatch):
     """The recorded log on disk, with time and liveness frozen."""
     for event in recorded_events:

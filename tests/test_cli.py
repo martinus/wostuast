@@ -96,6 +96,26 @@ def test_doctor_reports_a_missing_install(ws, capsys):
     assert code == 1
 
 
+def test_doctor_counts_an_entry_from_before_the_hook_file_as_missing(
+        ws, tmp_path, monkeypatch, capsys):
+    """`wostuast hook` is gone (#322), so an entry that still names it records
+    nothing, and a doctor that counted it as registered said "all good" about
+    a setup that kept no history. The status line says the same in a note."""
+    monkeypatch.setattr(ws, "install_path", lambda: tmp_path / "bin" / "wostuast")
+    ws.cmd_install(None)
+    settings = json.loads(ws.settings_path().read_text())
+    settings["hooks"]["Stop"] = [{"hooks": [
+        {"type": "command", "command": "/home/m/.local/bin/wostuast hook"}]}]
+    settings["statusLine"] = {"type": "command",
+                              "command": "/home/m/.local/bin/wostuast status"}
+    ws.settings_path().write_text(json.dumps(settings))
+    capsys.readouterr()
+    assert ws.cmd_doctor(None) == 1
+    out = capsys.readouterr().out
+    assert "hooks missing" in out and "Stop" in out, out
+    assert "runs `wostuast status`, which is gone" in out, out
+
+
 def test_doctor_is_happy_after_install(ws, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(ws, "install_path", lambda: tmp_path / "bin" / "wostuast")
     ws.cmd_install(None)
@@ -312,22 +332,31 @@ def test_serve_says_the_port_it_got_when_asked_for_any(ws, capsys,
     assert ":0/" not in out and " 0:" not in out
 
 
-def test_hook_and_status_skip_the_argument_parser(ws, monkeypatch):
-    """They run on every tool call and every redraw, so they must stay cheap."""
-    built = False
+@pytest.mark.parametrize("verb", ["hook", "status"])
+def test_hook_and_status_are_gone_and_never_block(ws, capsys, monkeypatch, verb):
+    """Claude Code runs the hook file and the status file now (#271, #286),
+    so the verbs are gone (#322). An entry from before them still calls one
+    until its session restarts, and Claude Code reads exit 2 from a hook as
+    "block": argparse's "invalid choice" refused the tool call, or threw the
+    prompt away. A gone verb says what to do and exits 1, which Claude Code
+    shows and goes on from."""
+    monkeypatch.setattr(ws, "cmd_hook", lambda args: pytest.fail("ran"))
+    monkeypatch.setattr(ws, "cmd_status", lambda args: pytest.fail("ran"))
+    assert ws.main([verb]) == 1
+    assert ws.main([verb, "--then", "mine.sh"]) == 1
+    said = capsys.readouterr().err
+    assert f"`wostuast {verb}` is gone" in said
+    assert "Start `wostuast` once" in said
 
-    def fail_if_built():
-        nonlocal built
-        built = True
-        raise AssertionError("build_parser must not run for hook or status")
 
-    monkeypatch.setattr(ws, "build_parser", fail_if_built)
-    monkeypatch.setattr(ws, "cmd_hook", lambda args: 0)
-    monkeypatch.setattr(ws, "cmd_status", lambda args: 0)
-    monkeypatch.setattr(ws, "FAST_PATH", {"hook": ws.cmd_hook, "status": ws.cmd_status})
-    assert ws.main(["hook"]) == 0
-    assert ws.main(["status"]) == 0
-    assert built is False
+def test_help_lists_no_verb_claude_code_used_to_call(ws, capsys):
+    with pytest.raises(SystemExit):
+        ws.main(["--help"])
+    listed = capsys.readouterr().out
+    assert "install" in listed
+    assert re.search(r"^\s+install\b", listed, re.M), listed
+    for verb in ("hook", "status"):
+        assert not re.search(rf"^\s+{verb}\b", listed, re.M), listed
 
 
 def test_every_other_command_still_goes_through_the_parser(ws, capsys):
@@ -352,7 +381,7 @@ def test_serve_is_gone_and_says_what_took_its_place(ws, capsys, monkeypatch):
     """argparse alone would say "invalid choice" and list every command but
     the answer. Nothing is started."""
     monkeypatch.setattr(ws, "cmd_serve", lambda args: pytest.fail("started"))
-    assert ws.main(["serve", "--open"]) == 2
+    assert ws.main(["serve", "--open"]) == 1
     said = capsys.readouterr().err
     assert "`wostuast serve` is now just `wostuast`" in said
     assert "--port and --open" in said

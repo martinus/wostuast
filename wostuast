@@ -5987,6 +5987,16 @@ def has_verb(group: Any, verb: str) -> bool:
     )
 
 
+def runs_hook_file(group: Any) -> bool:
+    """True when this matcher group runs the hook file `install` writes."""
+    if not isinstance(group, dict):
+        return False
+    return any(
+        isinstance(entry, dict) and is_hook_file(entry.get("command"))
+        for entry in group.get("hooks") or []
+    )
+
+
 def add_hooks(settings: dict[str, Any], command: str) -> list[str]:
     """Add our hook entries. Returns one line per change."""
     changes: list[str] = []
@@ -8473,17 +8483,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as error:
         report(False, "", unreadable(path, error))
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    # Only the hook file counts. An entry from before it names `wostuast
+    # hook`, which is gone (#322): it records nothing, so it is missing.
     missing = [
         event
         for event in HOOK_EVENTS
-        if not any(has_verb(group, "hook") for group in (hooks.get(event) or []))
+        if not any(runs_hook_file(group) for group in (hooks.get(event) or []))
     ]
     report(not missing, f"all {len(HOOK_EVENTS)} hooks registered in {path}",
            f"hooks missing in {path}: {', '.join(missing)}; run `wostuast install`")
 
     current = settings.get("statusLine")
-    mine = isinstance(current, dict) and is_ours(current.get("command"), "status")
+    line = current.get("command") if isinstance(current, dict) else None
+    mine = is_status_file(line)
     report(mine, "status line registered (session names and context)",
+           "status line runs `wostuast status`, which is gone; run `wostuast install`"
+           if is_ours(line, "status") else
            "status line not registered; without it sessions have no name and no context percent",
            fatal=False)
 
@@ -9156,8 +9171,6 @@ def build_parser() -> argparse.ArgumentParser:
     commands = [
         ("install", cmd_install, "copy to ~/.local/bin and register the hooks"),
         ("uninstall", cmd_uninstall, "remove the hooks; keep the event log"),
-        ("hook", cmd_hook, "the hook entry point; reads JSON from stdin"),
-        ("status", cmd_status, "the status line entry point; reads JSON from stdin"),
         ("ls", cmd_ls, "list the sessions"),
         ("doctor", cmd_doctor, "check the setup"),
         ("shapes", cmd_shapes,
@@ -9166,32 +9179,37 @@ def build_parser() -> argparse.ArgumentParser:
     for name, handler, help_text in commands:
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
         sub.set_defaults(handler=handler)
-        if name == "status":
-            sub.add_argument("--then", metavar="COMMAND",
-                             help="run this status line too, and print its output")
         if name == "shapes":
             sub.add_argument("--days", type=float, default=SHAPES_DAYS,
                              help=f"how far back to read (default {SHAPES_DAYS})")
     return parser
 
 
-#: The two verbs Claude Code calls itself. They skip argparse, because the hook
-#: runs on every tool call and the status line runs on every redraw.
-FAST_PATH = {"hook": cmd_hook, "status": cmd_status}
+#: Verbs that are gone, each said by name: argparse alone would answer
+#: "invalid choice" and list commands, none of which is the answer.
+GONE_VERBS = {
+    # #275.
+    "serve": "`wostuast serve` is now just `wostuast`: it checks the setup,"
+             " brings the hooks up to date and serves the page."
+             " --port and --open work as before.",
+    # #322: Claude Code runs the hook file and the status file that `install`
+    # writes (#271, #286). Only an entry from before them still names these.
+    "hook": "`wostuast hook` is gone: Claude Code runs the hook file now."
+            " Start `wostuast` once to move this entry, then restart the session.",
+    "status": "`wostuast status` is gone: Claude Code runs the status file now."
+              " Start `wostuast` once to move this line, then restart the session.",
+}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     words = list(argv) if argv is not None else sys.argv[1:]
-    if len(words) == 1 and words[0] in FAST_PATH:
-        return FAST_PATH[words[0]](None)
-
-    if words[:1] == ["serve"]:
-        # Gone in #275, and said so by name: argparse alone would answer
-        # "invalid choice" and list commands, none of which is the answer.
-        print("`wostuast serve` is now just `wostuast`: it checks the setup,"
-              " brings the hooks up to date and serves the page."
-              " --port and --open work as before.", file=sys.stderr)
-        return 2
+    if words[:1] and words[0] in GONE_VERBS:
+        print(GONE_VERBS[words[0]], file=sys.stderr)
+        # 1, never argparse's 2. An old hook entry calls `wostuast hook` until
+        # its session restarts, and Claude Code reads 2 from a hook as "block":
+        # the tool call refused, or the prompt thrown away. 1 is an error it
+        # shows and goes on from.
+        return 1
     parser = build_parser()
     args = parser.parse_args(words)
     handler = getattr(args, "handler", None)

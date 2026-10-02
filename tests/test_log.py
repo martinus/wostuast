@@ -48,7 +48,7 @@ def test_the_payload_is_kept_whole(ws):
     assert stored["tool_response"]["deep"]["list"] == [1, 2, 3]
 
 
-def test_hook_writes_ts_pane_and_pid(run_cli, tmp_path):
+def test_hook_writes_ts_pane_and_pid(run_installed, tmp_path):
     """The three fields the hook adds to whatever Claude Code sent.
 
     `pid` is the agent, found by walking up the ancestry, so it is 0 wherever
@@ -59,7 +59,7 @@ def test_hook_writes_ts_pane_and_pid(run_cli, tmp_path):
     found when there is one.
     """
     payload = {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/w"}
-    done = run_cli(["hook"], json.dumps(payload))
+    done = run_installed(["hook"], json.dumps(payload))
     assert done.returncode == 0
     line = json.loads((tmp_path / "state" / "events.jsonl").read_text().strip())
     assert line["session_id"] == "s1"
@@ -69,19 +69,19 @@ def test_hook_writes_ts_pane_and_pid(run_cli, tmp_path):
     assert line["ts"] > 0
 
 
-def test_hook_exits_zero_on_broken_input(run_cli, tmp_path):
-    done = run_cli(["hook"], "this is not json")
+def test_hook_exits_zero_on_broken_input(run_installed, tmp_path):
+    done = run_installed(["hook"], "this is not json")
     assert done.returncode == 0
     assert not (tmp_path / "state" / "events.jsonl").exists()
 
 
-def test_hook_exits_zero_on_empty_input(run_cli):
-    assert run_cli(["hook"], "").returncode == 0
+def test_hook_exits_zero_on_empty_input(run_installed):
+    assert run_installed(["hook"], "").returncode == 0
 
 
-def test_hook_exits_zero_when_the_state_directory_is_a_file(run_cli, tmp_path):
+def test_hook_exits_zero_when_the_state_directory_is_a_file(run_installed, tmp_path):
     (tmp_path / "state").write_text("in the way")
-    assert run_cli(["hook"], '{"session_id": "s"}').returncode == 0
+    assert run_installed(["hook"], '{"session_id": "s"}').returncode == 0
 
 
 def test_counting_does_not_parse(ws):
@@ -247,10 +247,10 @@ def test_both_files_are_read_and_counted(ws, monkeypatch):
     assert [e["n"] for e in ws.read_events()] == list(range(written))
 
 
-def test_the_hook_says_nothing_at_all(run_cli):
+def test_the_hook_says_nothing_at_all(run_installed):
     """Claude Code reads a hook's stdout as its answer, and for PreToolUse that
     answer can allow or deny a tool. wostuast must never answer."""
-    done = run_cli(["hook"], json.dumps(
+    done = run_installed(["hook"], json.dumps(
         {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
          "tool_input": {"command": "rm -rf /"}}))
     assert done.returncode == 0
@@ -258,9 +258,9 @@ def test_the_hook_says_nothing_at_all(run_cli):
     assert done.stderr == ""
 
 
-def test_the_hook_stays_silent_even_when_it_fails(run_cli, tmp_path):
+def test_the_hook_stays_silent_even_when_it_fails(run_installed, tmp_path):
     (tmp_path / "state").write_text("in the way")
-    done = run_cli(["hook"], json.dumps({"session_id": "s"}))
+    done = run_installed(["hook"], json.dumps({"session_id": "s"}))
     assert done.returncode == 0
     assert done.stdout == ""
     assert done.stderr == ""
@@ -277,7 +277,7 @@ PROBE_RUN = (
     "ws = importlib.util.module_from_spec(spec)\n"
     "sys.modules['wostuast'] = ws\n"
     "loader.exec_module(ws)\n"
-    "assert ws.main(['hook']) == 0\n"
+    "assert ws.cmd_hook(None) == 0\n"
 )
 
 
@@ -315,11 +315,11 @@ def test_the_hook_does_not_import_what_it_does_not_need():
     assert not (added & avoidable), f"the hook now loads: {sorted(added & avoidable)}"
 
 
-def test_the_hook_says_nothing_to_a_permission_request(run_cli):
+def test_the_hook_says_nothing_to_a_permission_request(run_installed):
     """PermissionRequest takes a decision to allow or deny. Our silence is what
     makes it "no opinion", so this is the most important assertion in the suite.
     """
-    done = run_cli(["hook"], json.dumps({
+    done = run_installed(["hook"], json.dumps({
         "session_id": "s1", "hook_event_name": "PermissionRequest",
         "tool_name": "Bash", "tool_input": {"command": "rm -rf /"},
     }))
