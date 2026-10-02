@@ -9,7 +9,9 @@ import os
 import subprocess
 import symtable
 
-from conftest import ROOT
+import pytest
+
+from conftest import ROOT, as_claude
 
 SOURCE = (ROOT / "wostuast").read_text(encoding="utf-8")
 
@@ -21,13 +23,48 @@ def written(ws, tmp_path):
     return path
 
 
-def run_hook(path, home, payload):
+def run_hook(path, home, payload, keys="terminal"):
     """Run the hook file as Claude Code does: by its own name, through its
-    `#!`, in a bare environment."""
+    `#!`, in a bare environment, under an agent whose stdin is `keys`."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
            "WOSTUAST_STATE": str(home / "state"), "TMUX_PANE": "%3"}
-    return subprocess.run([str(path)], input=json.dumps(payload),
-                          capture_output=True, text=True, env=env, timeout=30)
+    return as_claude([str(path)], json.dumps(payload), env, home / "stand-in", keys)
+
+
+@pytest.mark.parametrize("keys, pane", [("terminal", "%3"), ("pipe", "")])
+def test_an_agent_that_reads_no_terminal_has_no_pane(ws, tmp_path, keys, pane):
+    """A Remote Control session (`claude rc`) and a `claude -p` read a pipe,
+    and inherit the pane they were started in: a send went into the rc
+    screen, or into another agent's prompt. With no pane, nothing is typed
+    into it, and the page says why (`reads_terminal`)."""
+    path = written(ws, tmp_path)
+    done = run_hook(path, tmp_path, {"session_id": "s1",
+                                     "hook_event_name": "UserPromptSubmit"}, keys)
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
+    line = json.loads((tmp_path / "state" / "events.jsonl").read_text())
+    assert line["pid"] > 0, "the stand-in was not taken for the agent"
+    assert line["pane"] == pane
+
+
+def test_reads_terminal_says_yes_unless_it_can_tell_no(ws):
+    """A pty, as an interactive session has, is a terminal; a pipe and
+    /dev/null are not. Where nothing can be read, the answer is yes, as it
+    was before: no pid where there is no /proc, a process that is gone."""
+    main, sub = os.openpty()
+    try:
+        for stdin, reads in ((sub, True), (subprocess.PIPE, False),
+                             (subprocess.DEVNULL, False)):
+            child = subprocess.Popen(["sleep", "30"], stdin=stdin)
+            try:
+                assert ws.reads_terminal(child.pid) is reads, stdin
+            finally:
+                child.kill()
+                child.wait()
+    finally:
+        os.close(main)
+        os.close(sub)
+    assert ws.reads_terminal(0) is True
+    assert ws.reads_terminal(child.pid) is True   # gone now
 
 
 def test_the_hook_file_defines_every_name_it_uses(ws):

@@ -496,6 +496,12 @@ Reading works: the session list, all three tabs, and alerts. The things that
 type into a pane (jump, send, answer, no) need tmux. Those controls are
 off for a session with no pane, and the page says why.
 
+A session that has no terminal of its own has no pane either, even when it
+was started inside tmux. Examples are a session that Remote Control
+(`claude rc`) starts, and a `claude -p` that an agent runs. You can read it on
+the page, but the page does not type into it. On Linux, wostuast sees this
+from the agent's stdin, which is a pipe and not a terminal.
+
 </details>
 
 <details>

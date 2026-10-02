@@ -262,7 +262,9 @@ A few details in this picture carry real weight.
 
 - **The pane.** tmux tells every program in a pane its id, in `$TMUX_PANE`.
   The hook adds it to the event. Later, the daemon uses it to type into the
-  right pane.
+  right pane. An agent that reads no terminal gets no pane
+  (`reads_terminal`): a Remote Control session and a `claude -p` read a
+  pipe, and the pane they inherited belongs to something else.
 - **The agent's pid.** The hook's parent is a short-lived shell, not Claude
   Code. So `agent_pid` walks up the process tree in `/proc` until it finds
   Claude Code. The daemon uses the pid to learn when an agent dies without a
