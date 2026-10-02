@@ -983,6 +983,8 @@ The life cycle is three commands, and one of them runs by itself.
 ```mermaid
 flowchart LR
     I["wostuast install"] --> BU["bring_up_to_date()"]
+    I -. "installed copy" .-> FN["fetch_newest():<br/>the file of the newest commit"]
+    FN -. "new: runs its own install" .-> I
     S["wostuast<br/>(every start)"] --> BU
     BU --> W1["~/.local/bin/wostuast"]
     BU --> W2["~/.local/share/wostuast/hook.py"]
@@ -994,7 +996,16 @@ flowchart LR
 
 - **`bring_up_to_date`** is shared by `install` and every start of the daemon.
   It writes a file only if its content differs, and saves `settings.json` only
-  if the JSON changed. So an update is: download the new `wostuast`, start it.
+  if the JSON changed.
+- **An update is `wostuast install`.** The installed copy asks GitHub which
+  commit last changed the program, downloads the file at that commit, gives
+  it the commit's time, and runs the install of the new copy, because the
+  new program builds the new hook file (`fetch_newest`). A copy in a clone
+  installs itself and goes to no network, so a branch you try is not
+  replaced by `main`. A bare start never goes to the network.
+- **The version is the file**, not a number: the day it was made and the
+  start of its SHA-256 (`own_version`). `--version`, the start and the page
+  all print it.
 - **`uninstall`** keeps your event log and the program file. It tells you the
   one command to delete the program too.
 - **`doctor`** checks Python, the state directory, the log, every hook entry,

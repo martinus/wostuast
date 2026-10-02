@@ -163,6 +163,21 @@ It writes nothing that is already right, so a start with nothing to fix
 leaves `~/.claude/settings.json` alone. After it did update something,
 restart your Claude Code sessions.
 
+**3. Update.** Run `wostuast install` again. It asks GitHub for the newest
+wostuast, and when that is not the copy you have, it installs it and prints
+the version before and after. Without a network, it says so and installs the
+copy you have. Then restart your Claude Code sessions.
+
+```sh
+wostuast install
+wostuast --version    # wostuast 2026-10-02 · 3f9a1c2
+```
+
+There is no version number. The version is the day the file was made, in
+UTC, and the start of its SHA-256. For a copy that `install` got from GitHub,
+the day is the day of its commit. Two copies with the same SHA-256 are the
+same program.
+
 > [!TIP]
 > **On another machine?** Forward the port over SSH:
 >
@@ -366,7 +381,8 @@ is depends on your window manager.
 | Command | What it does |
 | --- | --- |
 | `wostuast` | Check the setup, bring the program, the hook file and the hooks up to date when they are behind, and serve the page on `127.0.0.1:7331`. `--port` picks another port (`0` lets the system pick a free one, and it prints the one it got), `--open` opens a browser. This was `wostuast serve`. |
-| `wostuast install` | Copy to `~/.local/bin`, write the hook file and the status file to `~/.local/share/wostuast/`, and register the hooks and the status line. A bare `wostuast` does this too, when something is behind. |
+| `wostuast install` | Get the newest wostuast from GitHub, copy it to `~/.local/bin`, write the hook file and the status file to `~/.local/share/wostuast/`, and register the hooks and the status line. A bare `wostuast` does the same when something is behind, but does not go to GitHub. `./wostuast install` in a clone installs that file and does not go to GitHub either. |
+| `wostuast --version` | Print the version: the day the file was made (for a copy from GitHub, the day of its commit), and the start of its SHA-256. |
 | `wostuast uninstall` | Remove our hooks, our status line, the hook file and the status file. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
 | `wostuast ls` | List the sessions, in the same order as the page. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |

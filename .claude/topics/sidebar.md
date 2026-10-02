@@ -127,9 +127,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   session list (`.sidebar-head`, as tall as `.tabs`, so the two rules under
   them are one line), and the settings are one icon at the end of the tab
   row, its words in `aria-label` and `title`. The version is
-  `own_version`: the day the running file was written and the start of its
-  SHA-256 -- never a number to raise by hand, and the same bytes
-  `install_behind` compares.
+  `own_version`: the day the running file was written -- for a copy
+  `install` fetched, the day of its commit, in UTC -- and the start of its
+  SHA-256: never a number to raise by hand, and the same bytes
+  `install_behind` compares. `--version` prints the same (#344).
   `test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list`,
   `test_the_page_says_which_copy_is_running`.
   - **Every setting is one menu** (`putSettings`, `paintSettings`,

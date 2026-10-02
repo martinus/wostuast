@@ -72,7 +72,7 @@ bullets beside it are the same part's other scars.
 | About to touch | Read |
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
-| `install`, `bring_up_to_date`, `unreadable`, `cmd_serve`'s start, `one_daemon`, `daemon_lock_path`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
+| `install`, `bring_up_to_date`, `fetch_newest`, `newest_program`, `runs_installed`, `own_version`, `unreadable`, `cmd_serve`'s start, `one_daemon`, `daemon_lock_path`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
 | `hook_source`, `HOOK_PARTS`, `HOOK_HEAD`, `hook_path`, `hook_command`, `is_hook_file`, `write_program`, `install_behind`, `hook_files_missing`, `program_files`, `GONE_VERBS`, `runs_hook_file`, `STATUS_PARTS`, `status_program_path`, `is_status_file`, `then_in` | topics/safety: the hooks run the installed copy, and the hook file is made from it |
 | `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety: our `settings.json`, written from the page; topics/sidebar for the menu |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |

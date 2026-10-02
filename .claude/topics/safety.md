@@ -806,6 +806,40 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_an_old_install_is_moved_to_the_hook_file_in_place`,
     `test_doctor_says_when_the_hook_file_is_not_this_versions`,
     `test_doctor_says_when_the_hook_file_is_gone`.
+- **`install` fetches the newest only as the installed copy, pinned to a
+  commit, and installs nothing that is not the program** (#345,
+  `fetch_newest`, `newest_program`, `runs_installed`). **Only the installed
+  copy and the one-line install fetch**: `./wostuast install` in a checkout
+  installs the checkout, or the branch being tried is replaced by `main`
+  the moment it is installed. **An installed copy that is a symlink is not
+  the installed copy**: it resolved to the checkout it points at, and the
+  rename would have put `main` in the link's place. A bare start never fetches: the reader chose
+  `install` alone, and a start that went to the network paid its time,
+  or a timeout offline, every day. **The bytes come from the commit's SHA
+  (`RAW_AT`), never from raw `main`**: `COMMITS_URL` names the last commit
+  that changed the file, raw `main` is cached for five minutes, and the
+  file and the date would then be of two commits. The SHA goes into a URL,
+  so it must be forty hex digits. **What came back must start as the
+  program and compile**: a 404 page or half a file would be written over
+  the program that every hook runs. **The new copy runs its own install**
+  (`os.execv` with `install --fetched`), because the hook file is built
+  from the program that builds it, and the old one would build the old
+  hooks. **Keep `--fetched`, hidden, for ever**: it is the older copy that
+  passes it, to a newer one. **The one-line install hands over even when
+  nothing changed**: it has no file, so `bring_up_to_date` would take raw
+  `main` (`self_source`) and could write a cached, older program over the
+  one just fetched. **A fetch that fails says why in one line and
+  the install goes on** with the copy it has: no network is no reason to
+  leave the hooks unregistered. The file takes the commit's time
+  (`os.utime`), so `own_version` says the day the program was made.
+  `test_newest_program_fetches_the_file_at_the_commit_it_names`,
+  `test_newest_program_refuses_what_is_not_the_program`,
+  `test_the_installed_copy_fetches_the_newest_and_hands_over_to_it`,
+  `test_the_copy_install_hands_over_to_installs_and_never_fetches`,
+  `test_a_fetch_that_fails_says_why_and_installs_this_copy`,
+  `test_a_checkout_installs_itself_and_never_fetches`,
+  `test_a_link_to_a_checkout_is_not_the_installed_copy`,
+  `test_the_one_line_install_hands_over_even_to_the_same_copy`.
 - **`settings.json` is the user's file, not ours.** `install` touches our hooks
   and nothing else: its permissions are kept (a fresh temporary takes the
   umask, so 0600 came back 0644, on a file that can hold API keys), and the
