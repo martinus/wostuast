@@ -326,6 +326,12 @@ def status_path(session_id: str) -> Path:
     return status_dir() / f"{safe_name(session_id)}.json"
 
 
+def daemon_lock_path() -> Path:
+    """The lock the running daemon holds (`one_daemon`), and what it says
+    about itself: its pid, and the address of its page once it has one."""
+    return state_dir() / "daemon.lock"
+
+
 def names_path() -> Path:
     """The names the reader gave sessions, all of them in one file.
 
@@ -8924,7 +8930,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
     red one; `doctor` is still there for the long form.
     """
     import shutil
-    import threading
 
     color = use_color()
     head = "wostuast"
@@ -8943,6 +8948,88 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(mark("fail", f"cannot write {tilde(directory)}: {trouble}", color),
               file=sys.stderr)
         return 1
+
+    held, holder = one_daemon()
+    if held is None:
+        print(mark("fail", holder, color), file=sys.stderr)
+        return 1
+    try:
+        return serve_page(args, color, held)
+    finally:
+        os.close(held)
+
+
+def one_daemon() -> tuple[int | None, str]:
+    """Take the lock that says a daemon serves this state directory: the
+    open descriptor, which holds it until it is closed or the process ends,
+    or None and a line that says where the one that holds it is (#320).
+
+    A second daemon on another port ran beside the first, and was nearly
+    harmless: both appended a `Declined` for the same dialog, two renames at
+    once could lose one, and "one send at a time" holds within one daemon,
+    so two pages on two daemons could type into one pane together. The
+    port alone cannot stop it, because `--port` picks another. A lock in
+    the state directory can, and `flock` lets go when the process dies, so
+    a crash leaves nothing behind that a start would have to clear. It is
+    taken before the start writes anything, so a second start changes
+    nothing at all.
+    """
+    path = daemon_lock_path()
+    try:
+        held = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as error:
+        return None, f"cannot open {tilde(path)}: {error.strerror or error}"
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # Only this one means another process holds it. Any other error --
+        # a file system with no locks -- said "already running" about a
+        # daemon that did not exist.
+        try:
+            said = os.read(held, 512).decode("utf-8", "replace")
+        except OSError:
+            said = ""
+        os.close(held)
+        return None, holder_of(said)
+    except OSError as error:
+        os.close(held)
+        return None, f"cannot lock {tilde(path)}: {error.strerror or error}"
+    say_who(held, {"pid": os.getpid()})
+    return held, ""
+
+
+def say_who(held: int, who: dict[str, Any]) -> None:
+    """Write what the lock says about the daemon that holds it."""
+    try:
+        os.ftruncate(held, 0)
+        os.pwrite(held, (json.dumps(who) + "\n").encode("utf-8"), 0)
+    except OSError as error:
+        log(f"could not write {daemon_lock_path()}: {error!r}")
+
+
+def holder_of(said: str) -> str:
+    """The line a second start prints, from what the lock file says."""
+    try:
+        who = json.loads(said)
+    except ValueError:
+        who = {}
+    if not isinstance(who, dict):
+        who = {}
+    pid = who.get("pid")
+    url = who.get("url")
+    line = "wostuast is already running"
+    if isinstance(url, str) and url:
+        line += f" at {url}"
+    elif pid:
+        line += ", and still starting"
+    if isinstance(pid, int):
+        line += f" (pid {pid})"
+    return line + ": open that page, or stop it first"
+
+
+def serve_page(args: argparse.Namespace, color: bool, held: int) -> int:
+    """The rest of the start, with the daemon's lock held."""
+    import threading
 
     changes, notes, trouble, built = bring_up_to_date()
     if trouble:
@@ -8974,13 +9061,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except OSError as error:
         print(mark("fail", f"cannot listen on {BIND_HOST}:{port}: {error}", color),
               file=sys.stderr)
-        print("    another wostuast may already be running.", file=sys.stderr)
+        print("    another program has that port; `--port` picks another.",
+              file=sys.stderr)
         return 1
 
     # The port the socket has, not the one asked for: `--port 0` asks the
     # system for a free one, and printed `http://127.0.0.1:0/` (#235).
     port = server.server_address[1]
     where = f"http://{BIND_HOST}:{port}/"
+    say_who(held, {"pid": os.getpid(), "url": where})
     print()
     print(mark("go", f"\033[1m{where}\033[0m      ctrl-c stops" if color
                else f"{where}      ctrl-c stops", color))

@@ -362,13 +362,23 @@ work in this order:
 
 1. It prints the tools it found (Python, tmux, git).
 2. It makes sure the state directory exists and is private (mode `0700`).
-3. It brings the install up to date (`bring_up_to_date`): the program, the hook
+3. It takes the daemon's lock, `daemon.lock` in the state directory
+   (`one_daemon`). If another daemon holds it, the start stops here, before it
+   writes anything, and says where the other one serves its page.
+4. It brings the install up to date (`bring_up_to_date`): the program, the hook
    file, the status file, and the entries in Claude Code's `settings.json`. It
    rewrites only what is out of date.
-4. It binds to `127.0.0.1` on port 7331 (or `--port`; `0` lets the system
-   pick).
-5. It starts one worker thread that reads the log, and serves HTTP on the main
+5. It binds to `127.0.0.1` on port 7331 (or `--port`; `0` lets the system
+   pick), and writes the page's address into the lock file.
+6. It starts one worker thread that reads the log, and serves HTTP on the main
    thread.
+
+> [!NOTE]
+> **Why a lock, and not just the port?** With `--port`, a second daemon could
+> run beside the first. Both would then write a `Declined` event for the same
+> dialog, and "one send at a time" would hold in each daemon, but not across
+> the two. The lock is an `flock`, so the kernel lets go of it when the process
+> ends, even after a crash or a `kill -9`. No stale lock is ever left behind.
 
 ### The threads
 

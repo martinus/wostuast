@@ -370,6 +370,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
+| `~/.local/state/wostuast/daemon.lock` | Held while `wostuast` runs, so a second start stops and says where the first one serves its page. It says the pid and the address. |
 | `~/.config/wostuast/settings.json` | Your settings and your ticket links. The page writes it when you change a setting. |
 | `~/.claude/settings.json` | Where the hooks are registered. |
 

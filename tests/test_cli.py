@@ -171,6 +171,99 @@ def test_serve_says_so_when_the_port_is_taken(ws, capsys):
         held.close()
 
 
+def test_a_second_start_says_where_the_first_runs_and_changes_nothing(
+        ws, capsys, monkeypatch):
+    """A second daemon on another port ran beside the first (#320): both
+    appended a `Declined` for the same dialog, and two pages on two daemons
+    could type into one pane together. The lock in the state directory
+    stops it before the start writes anything, and the line says where the
+    one that runs is, so the reader can go there."""
+    ws.state_dir_trouble()
+    held, said = ws.one_daemon()
+    assert held is not None and said == ""
+    try:
+        ws.say_who(held, {"pid": 4242, "url": "http://127.0.0.1:7331/"})
+        monkeypatch.setattr(ws, "bring_up_to_date",
+                            lambda: pytest.fail("a second start wrote"))
+        monkeypatch.setattr(ws, "make_server",
+                            lambda daemon, port: pytest.fail("it listened"))
+        assert ws.cmd_serve(argparse.Namespace(port=0, open=False)) == 1
+        err = capsys.readouterr().err
+        assert "already running at http://127.0.0.1:7331/" in err, err
+        assert "pid 4242" in err, err
+    finally:
+        os.close(held)
+
+
+def test_the_lock_is_let_go_when_a_start_ends(ws, monkeypatch):
+    """Every way out of the start lets go: one that served, and one that
+    stopped at the port. A test or a reader that starts it again must not
+    be told that it is already running."""
+    assert start(ws, monkeypatch) == 0
+    # What it said about itself is the address it served, for the next start.
+    told = json.loads(ws.daemon_lock_path().read_text(encoding="utf-8"))
+    assert told == {"pid": os.getpid(), "url": "http://127.0.0.1:7331/"}
+    held, said = ws.one_daemon()
+    assert held is not None, said
+    os.close(held)
+    monkeypatch.setattr(ws, "make_server",
+                        lambda daemon, port: (_ for _ in ()).throw(OSError(98, "taken")))
+    assert ws.cmd_serve(argparse.Namespace(port=0, open=False)) == 1
+    held, said = ws.one_daemon()
+    assert held is not None, said
+    os.close(held)
+
+
+def test_a_daemon_that_died_leaves_no_lock_behind(ws, tmp_path):
+    """`flock` belongs to the process: killed with no chance to clean up,
+    it still lets go, so a crash never leaves a start that refuses."""
+    import subprocess
+    import sys
+
+    ws.state_dir_trouble()
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import fcntl, os, sys, time; fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600);"
+         " fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); time.sleep(60)",
+         str(ws.daemon_lock_path())],
+        stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        held, said = ws.one_daemon()
+        assert held is None and "already running" in said
+    finally:
+        holder.kill()
+        holder.wait(10)
+    held, said = ws.one_daemon()
+    assert held is not None, said
+    os.close(held)
+
+
+def test_a_lock_that_cannot_be_taken_is_not_a_daemon_that_runs(ws, monkeypatch):
+    """`flock` fails for more than one reason. Only "held" means another
+    daemon; a file system with no locks is said as what it is."""
+    ws.state_dir_trouble()
+
+    def refuse(fd, how):
+        raise OSError(37, "No locks available")
+
+    monkeypatch.setattr(ws.fcntl, "flock", refuse)
+    held, said = ws.one_daemon()
+    assert held is None
+    assert "cannot lock" in said and "already running" not in said, said
+
+
+@pytest.mark.parametrize("said, line", [
+    ('{"pid": 7, "url": "http://127.0.0.1:7331/"}',
+     "wostuast is already running at http://127.0.0.1:7331/ (pid 7)"),
+    ('{"pid": 7}', "wostuast is already running, and still starting (pid 7)"),
+    ("", "wostuast is already running"),
+    ("not json", "wostuast is already running"),
+])
+def test_the_second_start_says_what_the_lock_holds(ws, said, line):
+    assert ws.holder_of(said).startswith(line)
+
+
 @pytest.mark.parametrize("port", ["-1", "65536", "70000", "many"])
 def test_serve_refuses_a_port_that_is_not_one_without_a_traceback(
         ws, capsys, monkeypatch, port):
