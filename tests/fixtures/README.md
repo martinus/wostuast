@@ -172,6 +172,8 @@ not. The fields wostuast reads or might read:
 | --- | --- |
 | `session_id`, `session_name` | the id, and the name `/rename` sets |
 | `model.display_name` | "Opus 5" |
+| `model.id` | "claude-opus-5-5", the full id `/model` takes (2.1.287) |
+| `effort.level` | "low", "medium", "high", "xhigh" or "max"; no `effort` at all for Haiku (2.1.287) |
 | `context_window.used_percentage` | how full the window is, 0 to 100 |
 | `cost.total_cost_usd` | what this session has spent, **estimated client-side at list price** — Claude Code says it may differ from the bill, and it resets to 0 on `/clear` |
 | `cost.total_duration_ms`, `cost.total_api_duration_ms` | wall-clock time, and time spent waiting on the API |

@@ -291,9 +291,15 @@ words marked.
 
 </details>
 
-The model, how full the context window is, and what the session has spent
-show at the end of the tab row, on every tab. Beside them, the terminal icon
-jumps to the agent's tmux pane (or press <kbd>Enter</kbd>).
+The model and its effort level, how full the context window is, and what the
+session has spent show at the end of the tab row, on every tab. Beside them,
+the terminal icon jumps to the agent's tmux pane (or press <kbd>Enter</kbd>).
+
+Click the model to change it or its effort level. The menu offers the model
+names Claude Code knows (`opus`, `sonnet` and the others, each the newest of
+its family), the full names of the models your sessions ran this week, and the
+effort levels. Your pick is typed into the session as `/model` or `/effort`.
+Claude Code then also makes it the default for new sessions.
 
 > [!WARNING]
 > The spend is Claude Code's own estimate at list price. It can differ from
