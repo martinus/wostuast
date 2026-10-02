@@ -176,3 +176,20 @@ def test_a_chained_line_that_is_not_a_command_does_not_crash(run_installed, reco
     done = run_installed(["status", "--then", "definitely-not-here --x"],
                    json.dumps(recorded_status))
     assert done.returncode == 0
+
+
+def test_the_effort_and_the_full_id_are_read_and_kept(ws):
+    """Measured on Claude Code 2.1.287: the status line carries `effort:
+    {"level": "high"}` and `model: {"id": "claude-opus-5-5", "display_name":
+    "Opus 5.5"}`; `/effort` moves the one and `/model` the other (issues 337
+    and 338). Haiku has no effort, and the payload then says nothing."""
+    payload = {"model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"},
+               "effort": {"level": "high"}}
+    status = ws.status_from_payload(payload, now=1.0)
+    assert (status.model, status.model_id, status.effort) == (
+        "Opus 5.5", "claude-opus-5-5", "high")
+    ws.write_status("s1", status)
+    kept = ws.read_status("s1")
+    assert (kept.model_id, kept.effort) == ("claude-opus-5-5", "high")
+    plain = ws.status_from_payload({"model": {"display_name": "Haiku 4.5"}}, now=1.0)
+    assert plain.effort == "" and plain.model_id == ""

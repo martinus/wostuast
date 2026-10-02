@@ -1575,3 +1575,14 @@ def test_the_shown_prompt_is_worked_out_once_a_prompt(ws, monkeypatch):
     session.last_prompt = "second"
     assert ws.row(session)["prompt"] == "second"
     assert calls == ["first", "second"]
+
+
+def test_the_full_model_id_is_the_status_lines_or_the_start(ws):
+    """The page offers it as `/model <id>`, typed into a terminal, so it is
+    held to a shape: a payload that says anything else gives none."""
+    session = fold(ws, event("SessionStart", model="claude-opus-5", ts=1000.0))
+    assert ws.row(session)["model_id"] == "claude-opus-5"
+    session.status = ws.Status(model_id="claude-opus-5-5[1m]")
+    assert ws.row(session)["model_id"] == "claude-opus-5-5[1m]"
+    session.status = ws.Status(model_id="x\n/clear")
+    assert ws.row(session)["model_id"] == ""

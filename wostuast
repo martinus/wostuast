@@ -1034,6 +1034,14 @@ class Status:
     #: you cannot. `None` is "the status line did not say", which is not 0.
     cost_usd: float | None = None
     agent: str = ""
+    #: The model's full id, `model.id` of the status line: "claude-opus-5-5"
+    #: where `model` is its display name, "Opus 5.5". An alias names only the
+    #: newest of a family, so an older one is reached by this (`row`).
+    model_id: str = ""
+    #: How hard the model thinks: `effort.level` of the status line --
+    #: "low", "medium", "high", "xhigh" or "max", measured on 2.1.287. ""
+    #: when the payload has none, as for Haiku, which has no effort at all.
+    effort: str = ""
 
 
 @dataclass
@@ -1062,6 +1070,9 @@ class Session:
     last_ts: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
+    #: The model's full id as `SessionStart` names it, for a session with no
+    #: status line: see `model_id`.
+    started_model: str = ""
     #: The last prompt as an alert shows it, and the prompt it was made
     #: from: see `shown_prompt`.
     prompt_shown: tuple[str, str] = ("", "")
@@ -1889,6 +1900,21 @@ def shown_prompt(session: Session) -> str:
     return shown
 
 
+#: What a model id may look like to reach the page: the page types it into
+#: a terminal as `/model <id>` (issue 338), so it is held to a shape, as a
+#: command's name is (`COMMAND_SHAPE`). "claude-opus-5-5", and a context
+#: suffix such as "[1m]".
+MODEL_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}")
+
+
+def model_id(session: Session) -> str:
+    """The full id of the model a session runs, or "" when there is none or
+    it is not one. The status line's when it has spoken, since `/model`
+    changes it mid-session; else the one it started with."""
+    found = session.status.model_id or session.started_model
+    return found if MODEL_SHAPE.fullmatch(found) else ""
+
+
 def row(session: Session) -> dict[str, Any]:
     """One session as the page wants it: flat, small, and ready to compare.
 
@@ -1941,6 +1967,8 @@ def row(session: Session) -> dict[str, Any]:
         # box with it in, rather than making them type it again to change it.
         "mine": bool(session.mine),
         "model": session.status.model,
+        "effort": session.status.effort,
+        "model_id": model_id(session),
         "context_pct": session.status.context_pct,
         # What the session has spent. It moves only when a status line
         # lands, so it never makes a row differ by itself -- which is the
@@ -1995,6 +2023,7 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     if source not in ("clear", "compact"):
         session.cleared_into = ""
     session.start_source = source
+    session.started_model = str(event.get("model") or "")
     session.last_event = f"started ({source})" if source else "started"
 
 
@@ -5518,6 +5547,8 @@ def status_from_payload(payload: dict[str, Any], now: float | None = None) -> St
         context_pct=opt_float(nested("context_window").get("used_percentage")),
         cost_usd=opt_float(nested("cost").get("total_cost_usd")),
         agent=str(nested("agent").get("name") or ""),
+        effort=str(nested("effort").get("level") or ""),
+        model_id=str(nested("model").get("id") or ""),
     )
 
 
@@ -5833,6 +5864,8 @@ def read_status(session_id: str) -> Status:
         context_pct=opt_float(payload.get("context_pct")),
         cost_usd=opt_float(payload.get("cost_usd")),
         agent=str(payload.get("agent") or ""),
+        effort=str(payload.get("effort") or ""),
+        model_id=str(payload.get("model_id") or ""),
     )
 
 
@@ -10328,7 +10361,27 @@ body.dragging { cursor: col-resize; user-select: none; }
    are about what an agent is doing, and this is about what it has cost. */
 .spent { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
   cursor: help; }
-.ctxslot .model { color: var(--ink-mute); font-size: 12px; white-space: nowrap; }
+/* The model and its effort, a button that opens `#modelpop` (issues 337
+   and 338). It reads as the words it always was until the pointer is on it. */
+.ctxslot .model { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
+  padding: 2px 4px; margin: 0 -4px; border: 0; border-radius: 4px;
+  background: none; font-family: inherit; cursor: pointer; }
+.ctxslot .model:hover, .ctxslot .model[aria-expanded="true"] {
+  color: var(--ink-bright); background: var(--raised); }
+.ctxslot .model .effort { color: var(--ink-faint); }
+.modelpop {
+  position: fixed; z-index: 30; display: grid;
+  grid-template-columns: max-content max-content; gap: 10px 14px;
+  align-items: baseline; padding: 14px 16px; font-family: var(--sans);
+  background: var(--raised); border: 1px solid var(--edge-bright);
+  border-radius: 8px; box-shadow: 0 6px 20px var(--shadow);
+}
+.modelpop .setlabel { color: var(--ink-mute); font-size: 12px; }
+.modelpop .choice .verb { font-family: inherit; }
+/* The models used are full ids, and there may be several: they wrap. */
+.modelpop .choice.usedmodels { display: flex; flex-wrap: wrap; max-width: 420px; }
+.modelpop .modelnote { grid-column: 1 / -1; margin: 2px 0 0; max-width: 360px;
+  color: var(--ink-faint); font-size: 12px; line-height: 1.45; }
 .live { margin-left: 12px; display: inline-flex; align-items: center;
   color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
 mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0 1px; }
@@ -11345,6 +11398,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
                  autocomplete="off" spellcheck="false">
         </div>
         <div class="ctxslot" id="ctxslot" hidden></div>
+        <div class="modelpop" id="modelpop" hidden></div>
         <div class="live" id="live"></div>
         <button type="button" class="theme" id="jump" hidden
                 aria-label="jump to its tmux pane"></button>
@@ -12801,17 +12855,31 @@ function drawContext() {
   // with `/model` mid-session, and it is what the percentage is a
   // percentage of, so it stands beside it. The status line sends it; without one there is nothing to say.
   const model = (s && s.model) || "";
+  const effort = (s && s.effort) || "";
   slot.hidden = !hasContext(s) && !spent && !model;
   if (slot.hidden) {
     slot.replaceChildren();
     slot.dataset.shows = "";
+    showModels(false);
     return;
   }
-  const shows = [model, hasContext(s) ? Math.round(s.context_pct) : "", spent]
-    .join("\n");
+  const shows = [model, effort, hasContext(s) ? Math.round(s.context_pct) : "",
+                 spent].join("\n");
   if (!fresh(slot, "shows", shows)) return;  // a push a second, rarely moved
   slot.replaceChildren();
-  if (model) put(slot, "span", "model", model);
+  // The model and how hard it thinks (issue 337), as one button that opens
+  // the menu to change them (issue 338): see `putModels`.
+  if (model) {
+    const button = put(slot, "button", "model", model);
+    if (effort) put(button, "span", "effort", " · " + effort);
+    button.title = "change the model or the effort";
+    button.setAttribute("aria-haspopup", "true");
+    button.setAttribute("aria-expanded", String(!$("modelpop").hidden));
+    button.addEventListener("click", (press) => {
+      press.stopPropagation();          // or the page's listener shuts it
+      showModels($("modelpop").hidden);
+    });
+  }
   if (hasContext(s)) putContext(slot, s.context_pct);
   if (spent) {
     // Claude Code works this out on the client at list price and says so, and
@@ -12825,6 +12893,86 @@ function drawContext() {
       + " list price, worked out in your terminal, and it may differ from"
       + " your bill. It starts again at zero after /clear.";
   }
+}
+
+// The models and the effort levels the menu offers, as `/model` and
+// `/effort` take them. Measured on Claude Code 2.1.287: each of these went
+// in typed, and `default` takes the choice out of Claude Code's settings
+// again. Its own menu lists the same five models.
+const MODELS = ["default", "opus", "fable", "sonnet", "haiku"];
+// Only aliases here. A full id comes from the sessions (`model_id`).
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+// The menu under the model: a choice of model and of effort, each typed into
+// the agent's pane as `/model <name>` or `/effort <level>` through `send`,
+// the verb the send box uses (issue 338). **It says that the choice is the
+// default for new sessions too**: measured on 2.1.287, a typed `/model` or
+// `/effort` writes Claude Code's own settings file, and only its menu in the
+// terminal offers "this session only". The reader chose this over opening
+// that menu, knowing it.
+function showModels(open) {
+  const pop = $("modelpop");
+  const button = document.querySelector("#ctxslot .model");
+  if (open && button) putModels(pop, button);
+  pop.hidden = !open || !button;
+  if (button) button.setAttribute("aria-expanded", String(!pop.hidden));
+  if (pop.hidden) return;
+  // Under the button, and inside the window: it is wider than the button,
+  // which stands near the right edge.
+  const at = button.getBoundingClientRect();
+  const most = window.innerWidth - pop.offsetWidth - 8;
+  pop.style.left = Math.max(8, Math.min(Math.round(at.left), most)) + "px";
+  pop.style.top = Math.round(at.bottom + 8) + "px";
+}
+
+function putModels(pop, button) {
+  const s = current();
+  pop.replaceChildren();
+  const why = s ? whyNotTyped(s) : "no session is chosen";
+  // An alias names the newest of a family as this Claude Code maps it, so
+  // none is pressed: which one the session runs is the full id, below.
+  put(pop, "span", "setlabel", "model");
+  putChoice(pop, "models", MODELS.map((one) => [one, one]),
+            (one) => pickModel("/model " + one));
+  // The full ids of the models the sessions on this page ran, which the
+  // daemon keeps for a week: an older one, such as claude-opus-5, which no
+  // alias reaches -- measured, `/model claude-opus-5` gave "Opus 5". From
+  // what was run, so nothing here is a list to keep up to date by hand.
+  const used = [...new Set(state.sessions.map((one) => one.model_id)
+                                          .filter(Boolean))].sort();
+  if (used.length) {
+    put(pop, "span", "setlabel", "used");
+    const ids = putChoice(pop, "usedmodels", used.map((one) => [one, one]),
+                          (one) => pickModel("/model " + one));
+    paintChoice(ids, (s && s.model_id) || "");
+  }
+  // Only while the session says how hard it thinks: a model with no effort
+  // -- Haiku -- has nothing here to set.
+  if (s && s.effort) {
+    put(pop, "span", "setlabel", "effort");
+    const efforts = putChoice(pop, "efforts", EFFORTS.map((one) => [one, one]),
+                              (one) => pickModel("/effort " + one));
+    paintChoice(efforts, s.effort);
+  }
+  put(pop, "p", "modelnote", why
+    ? "It cannot be changed from here: " + why + "."
+    : "Typed into the session as /model or /effort. Claude Code also makes"
+      + " it the default for new sessions.");
+  for (const one of pop.querySelectorAll(".choice button")) one.disabled = !!why;
+}
+
+async function pickModel(text) {
+  showModels(false);
+  const id = state.chosen;
+  if (!id || !startSending(id)) return;
+  let answer;
+  try {
+    answer = await tell(id, "send", { text });
+  } finally {
+    doneSending(id);
+  }
+  said(answer);
+  if (answer && answer.done) note("typed " + text);
 }
 
 // What a session has spent. Cents below ten dollars, because that is where
@@ -18482,6 +18630,7 @@ document.addEventListener("keydown", (press) => {
       if (box.open) box.close();
     }
     showSettings(false);     // not a dialog, and it closes the same way
+    showModels(false);
     return;
   }
   if (press.metaKey || press.ctrlKey || press.altKey) return;
@@ -18573,6 +18722,10 @@ document.addEventListener("click", (press) => {
   if (!$("setpop").hidden
       && !press.composedPath().some((one) => one.classList && one.classList.contains("setslot"))) {
     showSettings(false);
+  }
+  if (!$("modelpop").hidden
+      && !press.composedPath().some((one) => one.id === "modelpop")) {
+    showModels(false);
   }
 });
 

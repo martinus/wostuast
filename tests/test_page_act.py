@@ -1486,3 +1486,97 @@ def test_the_list_is_asked_for_each_time_it_opens(ws, in_pane, tmp_path):
         page.keyboard.type("/")
         page.wait_for_function("document.querySelectorAll('#slash button').length === 2")
         assert page.evaluate(SLASH_ROWS) == ["/notes", "/review-pr"]
+
+
+# --- the model and its effort -------------------------------------------------
+
+
+def with_model(ws, daemon, model="Opus 5.5", model_id="claude-opus-5-5",
+               effort="high"):
+    ws.write_status("s1", ws.Status(ts=1.0, model=model, model_id=model_id,
+                                    effort=effort, context_pct=10.0))
+    daemon.store.refresh()
+
+
+def test_the_model_says_its_effort_and_a_pick_types_the_command(ws, in_pane):
+    """The model and how hard it thinks stand beside the context bar (issue
+    337), and a click on them opens a menu that types `/model` or `/effort`
+    into the pane through `send` (issue 338). The menu says that Claude Code
+    makes the choice the default for new sessions too -- measured on
+    2.1.287, a typed one writes its settings file."""
+    daemon, base, seen = in_pane
+    with_model(ws, daemon)
+    with opened((None, base)) as page:
+        page.wait_for_selector("#ctxslot .model")
+        assert page.locator("#ctxslot .model").inner_text() == "Opus 5.5 · high"
+        page.click("#ctxslot .model")
+        page.wait_for_selector("#modelpop:not([hidden])")
+        assert "default for new sessions" in page.locator("#modelpop").inner_text()
+        pressed = page.eval_on_selector_all(
+            "#modelpop [aria-pressed='true']", "els => els.map((e) => e.textContent)")
+        assert pressed == ["claude-opus-5-5", "high"], pressed
+        page.click("#modelpop .models button[data-value='sonnet']")
+        page.wait_for_selector("#modelpop", state="hidden")
+        wait_until(page, lambda: conftest.typed(seen) == ["/model sonnet"])
+        page.wait_for_function("sending.size === 0")
+        page.click("#ctxslot .model")
+        page.click("#modelpop .efforts button[data-value='max']")
+        wait_until(page, lambda: conftest.typed(seen)[-1:] == ["/effort max"])
+
+
+def test_an_older_model_is_offered_by_its_full_id(ws, in_pane):
+    """An alias names the newest of its family; `/model claude-opus-5` gave
+    "Opus 5", measured. The full ids the sessions ran are offered, from the
+    rows, so nothing is a list kept by hand."""
+    daemon, base, seen = in_pane
+    with_model(ws, daemon, model="Opus 5", model_id="claude-opus-5")
+    ws.append_event(conftest.event("SessionStart", sid="s2", pane="%9", pid=2,
+                                   model="claude-sonnet-4-5", ts=time.time()))
+    daemon.store.refresh()
+    with opened((None, base)) as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")       # the newer one has no status line
+        page.click("#ctxslot .model")
+        used = page.eval_on_selector_all(
+            "#modelpop .usedmodels button", "els => els.map((e) => e.textContent)")
+        assert used == ["claude-opus-5", "claude-sonnet-4-5"], used
+        page.click("#modelpop .usedmodels button[data-value='claude-sonnet-4-5']")
+        wait_until(page, lambda: conftest.typed(seen) == ["/model claude-sonnet-4-5"])
+
+
+def test_a_model_with_no_effort_offers_none(ws, in_pane):
+    """Haiku has no effort: the status line says none, so there is nothing
+    to show beside the model and nothing to set."""
+    daemon, base, seen = in_pane
+    with_model(ws, daemon, model="Haiku 4.5", model_id="claude-haiku-4-5",
+               effort="")
+    with opened((None, base)) as page:
+        page.wait_for_selector("#ctxslot .model")
+        assert page.locator("#ctxslot .model").inner_text() == "Haiku 4.5"
+        page.click("#ctxslot .model")
+        page.wait_for_selector("#modelpop:not([hidden])")
+        assert page.locator("#modelpop .efforts").count() == 0
+
+
+def test_the_model_menu_shuts_and_types_nothing_it_cannot(ws, served):
+    """Escape and a click elsewhere shut it, as they shut the settings. A
+    session outside tmux cannot be typed into, so its menu says why, and
+    every choice in it is off."""
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", pane="", pid=1, ts=time.time()))
+    ws.write_status("s1", ws.Status(ts=1.0, model="Opus 5.5", effort="high",
+                                    context_pct=10.0))
+    daemon.store.refresh()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#ctxslot .model")
+        page.click("#ctxslot .model")
+        page.wait_for_selector("#modelpop:not([hidden])")
+        assert "cannot be changed from here" in page.locator("#modelpop").inner_text()
+        assert page.evaluate("[...document.querySelectorAll('#modelpop .choice button')]"
+                             ".every((one) => one.disabled)")
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#modelpop", state="hidden")
+        page.click("#ctxslot .model")
+        page.wait_for_selector("#modelpop:not([hidden])")
+        page.click(".turnbody")
+        page.wait_for_selector("#modelpop", state="hidden")

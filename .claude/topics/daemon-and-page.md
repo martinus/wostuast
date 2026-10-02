@@ -789,6 +789,32 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   It is part of the same redraw key. `tests/shot.py` writes a status line
   for its session, so a picture of the strip has all three in it.
   `test_the_model_stands_left_of_the_context_bar`.
+  - **The effort stands after it, "Opus 5.5 · high"** (issue 337):
+    `effort.level` of the status line, measured on 2.1.287 -- `/effort`
+    moves it, and Haiku has none, so then nothing is shown. In the redraw
+    key with the model.
+  - **The two are a button that opens `#modelpop`** (`showModels`,
+    `putModels`, issue 338): the aliases (`MODELS`), the full ids the
+    sessions on the page ran (`model_id` of each row, the daemon keeps a
+    week), and the efforts (`EFFORTS`) while the session has one. A pick is
+    typed as `/model <name>` or `/effort <level>` through `send`, and the
+    menu shuts. **It says that Claude Code makes the choice the default for
+    new sessions too**: measured on 2.1.287, a typed `/model sonnet` writes
+    `"model": "sonnet"` into Claude Code's own `settings.json`, and a typed
+    `/effort` its `modelSettings`; only its menu in the terminal offers
+    "this session only". The reader chose this over opening that menu.
+  - **An alias is pressed never; the full id is.** An alias names the
+    newest of a family as this Claude Code maps it -- `opus` gave Opus 5.5
+    and `/model claude-opus-5` gave Opus 5, measured -- so which one the
+    session runs is only known by its id.
+  - **A full id reaches the page through `MODEL_SHAPE`**, since the page
+    types it into a terminal, as `COMMAND_SHAPE` holds a command's name.
+  - **Off where nothing can be typed** (`whyNotTyped`), saying why, and
+    Escape and a click elsewhere shut it, as they shut the settings.
+  `test_the_model_says_its_effort_and_a_pick_types_the_command`,
+  `test_an_older_model_is_offered_by_its_full_id`,
+  `test_a_model_with_no_effort_offers_none`,
+  `test_the_model_menu_shuts_and_types_nothing_it_cannot`.
 - **One painter for the live slot, and four things that want it.**
   `state.live` is what the stream is doing, `state.trouble` is something you
   asked for and did not get, `state.linkTrouble` is the reader's own file
