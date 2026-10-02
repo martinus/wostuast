@@ -305,6 +305,13 @@ browser asks for permission the first time. Your choice goes into your
 settings file. The permission itself stays in each browser.
 While alerts are off, the settings button carries a small crossed-out bell.
 
+An alert says what the agent wants: the question it asks, the permission it
+wants, or, when it has finished, the start of what you asked it. Under that
+it says the folder and the branch. It shows the robot of the browser tab,
+amber or grey. An alert that needs you stays until you click or close it.
+Click an alert to open its session. Secrets in what an alert says are
+hidden, because an alert can show on a locked screen.
+
 ### Settings
 
 The **settings** button (the sliders, at the end of the tab row) holds all

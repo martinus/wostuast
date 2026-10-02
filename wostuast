@@ -1062,6 +1062,9 @@ class Session:
     last_ts: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
+    #: The last prompt as an alert shows it, and the prompt it was made
+    #: from: see `shown_prompt`.
+    prompt_shown: tuple[str, str] = ("", "")
     last_tool: str = ""
     reason: str = ""
     attention_since: float = 0.0
@@ -1863,6 +1866,29 @@ def typing_trouble(text: str, what: str) -> str:
     return ""
 
 
+#: How much of the last prompt the page is sent for an alert that says a
+#: session has finished: the start of what was asked, not the whole of it.
+PROMPT_SHOWN = 120
+
+
+def shown_prompt(session: Session) -> str:
+    """The last prompt as an alert shows it: cut, and its secrets hidden.
+
+    An alert can stand on a locked screen, so what it says goes through
+    `clip_hidden`, as a command on the row does. That costs 170 µs, measured
+    on 500 characters: on every row of every tick it was the dearest thing
+    in the row, and at the time of the prompt every prompt of a long log
+    paid it again when the daemon starts. So it is worked out when a row is
+    built and the prompt has changed since, and kept with the prompt it was
+    made from.
+    """
+    made_from, shown = session.prompt_shown
+    if made_from != session.last_prompt:
+        shown = clip_hidden(session.last_prompt, PROMPT_SHOWN)
+        session.prompt_shown = (session.last_prompt, shown)
+    return shown
+
+
 def row(session: Session) -> dict[str, Any]:
     """One session as the page wants it: flat, small, and ready to compare.
 
@@ -1907,6 +1933,8 @@ def row(session: Session) -> dict[str, Any]:
         # can read what they are declining. Only while the row is amber.
         "permission": session.dialog,
         "last_event": session.last_event,
+        # What it was last asked, for the alert that says it has finished.
+        "prompt": shown_prompt(session),
         "since": round(session.since, 3),
         "name": session.mine or session.status.name,
         # Whether that name is one the reader set here. The page shows the
@@ -12873,22 +12901,32 @@ function drawIcon(state_) {
   const key = state_ + " " + dark;
   if (key === iconWas) return;
   iconWas = key;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 32;
-  const pen = canvas.getContext("2d");
-  if (!pen) return;
-  const palette = getComputedStyle(document.documentElement);
-  const read = (name) => palette.getPropertyValue("--tab-" + name).trim();
   const shown = state_ === "needs_you" ? "needs"
                 : state_ === "working" ? "working" : "ready";
-  paintIcon(pen, read(shown + (dark ? "-dark" : "-light")));
+  const picture = iconPicture(shown);
+  if (!picture) return;
   let link = document.querySelector("link[rel='icon']");
   if (!link) {
     link = document.createElement("link");
     link.rel = "icon";
     document.head.appendChild(link);
   }
-  link.href = canvas.toDataURL("image/png");
+  link.href = picture;
+}
+
+// The robot of the tab's icon as a picture: in the colour of `shown` --
+// "needs", "working" or "ready" -- for the system's own light or dark.
+// The tab's icon and an alert's are the one drawing. "" where a canvas
+// cannot be had.
+function iconPicture(shown) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 32;
+  const pen = canvas.getContext("2d");
+  if (!pen) return "";
+  const palette = getComputedStyle(document.documentElement);
+  paintIcon(pen, palette.getPropertyValue(
+    "--tab-" + shown + (tabBarIsDark() ? "-dark" : "-light")).trim());
+  return canvas.toDataURL("image/png");
 }
 
 // --- telling you when an agent wants you ------------------------------------
@@ -13262,8 +13300,8 @@ function notifyAbout(sessions) {
   for (const session of sessions) {
     if (want.needs && session.state === "needs_you" && !waiting.has(session.id)) {
       waiting.add(session.id);
-      tellAbout(session, rowName(session) + " needs you",
-                session.reason || "waiting for you");
+      tellAbout(session, rowName(session) + " needs you", waitsFor(session),
+                true);
     }
     // A change, not a state: "done" is where a session sits between turns,
     // so the news is the moment it got there. A session this page has not
@@ -13271,20 +13309,42 @@ function notifyAbout(sessions) {
     // opened the page says nothing.
     if (want.done && session.state === "done"
         && before.get(session.id) === "working") {
-      tellAbout(session, rowName(session) + " has finished", "ready for you");
+      tellAbout(session, rowName(session) + " has finished",
+                session.prompt || "ready for you");
     }
   }
 }
 
-function tellAbout(session, title, body) {
+// What a session that needs you is waiting for, in the alert's words: the
+// question it asks, from `asking` -- the row's `reason` names only its
+// header -- or else the `reason`, the permission it wants and for what,
+// with its secrets hidden already: an alert can stand on a locked screen.
+function waitsFor(session) {
+  const asked = session.asking && session.asking.questions;
+  const first = asked && asked[0] && asked[0].question;
+  if (first) return clip(first, 200);
+  return session.reason || "waiting for you";
+}
+
+// One alert (issue 330). It says what the session wants, and where the
+// session stands -- the folder and the branch, the row's second line --
+// and it wears the tab's robot in the colour of what it says. An alert
+// that needs you stays until it is clicked or closed (`urgent`): it is
+// what this program is for, and one that went away on its own while the
+// reader was in another room said nothing to them. A click opens the
+// session, as it always did.
+function tellAbout(session, title, body, urgent = false) {
+  const where = [session.place, session.branch].filter(Boolean).join(" · ");
   try {
     const note = new Notification(title, {
-      body: body,
+      body: where ? body + "\n" + where : body,
+      icon: iconPicture(urgent ? "needs" : "ready"),
       tag: "wostuast-" + session.id,
       // One tag per session, so a second alert replaces the first -- and a
       // replacement makes no sound and shows no banner unless it says so.
       // An agent that stopped on a second question went unsaid.
       renotify: true,
+      requireInteraction: urgent,
     });
     note.onclick = () => { window.focus(); choose(session.id); note.close(); };
   } catch (error) {
