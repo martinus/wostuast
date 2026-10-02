@@ -275,6 +275,8 @@ at its right edge), `.find`/`.findslot`,
 `.empty`, `.nohits`, `.note`, `.comment`. **Every colour is a variable**
 and a `:root` block is the only place a colour may be a number —
 `test_every_colour_outside_the_palette_is_named` fails the build otherwise.
+It reads an issue number in a CSS comment as a colour too: `(#333)` failed
+it, so a comment in the CSS says `issue 333`.
 Derive a tint or a ring with `color-mix`, never by copying an rgb triple.
 
 Three page functions are about matching and they are easy to confuse:
