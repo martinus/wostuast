@@ -10271,6 +10271,18 @@ body.dragging { cursor: col-resize; user-select: none; }
    taller than its button. */
 .say { line-height: 18px; min-height: 32px; }
 .say + .verb { height: 32px; }
+/* The send button, and over it the size of what is in the box (`sizeSay`),
+   in the room a tall box leaves there. One column, so it widens to fit
+   "2,400 lines" on one row: laid over the bar, a size wider than the button
+   ran over the edge of the box, and broken into rows it read badly. */
+.sendside { display: flex; flex-direction: column; align-items: flex-end;
+  gap: 6px; flex-shrink: 0; }
+.sendside > .verb { height: 32px; }
+.saysize {
+  display: flex; flex-direction: column; align-items: flex-end;
+  font-family: var(--sans); font-size: 12px; line-height: 15px;
+  color: var(--ink-faint); white-space: nowrap;
+}
 .say::placeholder { color: var(--ink-faint); }
 
 .ctx { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -11348,7 +11360,10 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <textarea class="say" id="say" rows="1" autocomplete="off"
                   spellcheck="false"
                   placeholder="type into the terminal  ·  s  ·  shift+enter for a new line"></textarea>
-        <button class="verb" type="submit">send</button>
+        <div class="sendside">
+          <div class="saysize" id="saysize" hidden></div>
+          <button class="verb" type="submit">send</button>
+        </div>
         <div class="slash" id="slash" role="listbox" hidden></div>
       </form>
       <form class="sendbar reviewbar" id="reviewbar" hidden>
@@ -18772,6 +18787,29 @@ function fitSay(box = $("say")) {
   if (!box.getClientRects().length) return;
   box.style.height = "auto";
   box.style.height = (box.scrollHeight + 2) + "px";
+  if (box === $("say")) sizeSay(box);
+}
+
+// How tall the send box must be before there is room above the send button
+// for its size: the button's 32 px, a gap, and the two rows of the size.
+// Three lines of text make the box 68 px.
+const SAY_ROOM = 66;
+
+// How much is in the send box: its lines and its bytes, above the send
+// button, once the box is tall enough to leave room there (issue 332). A
+// box scrolled to the end of a long log shows its last screenful and
+// nothing of how long it is. Bytes, as the daemon counts what it may send.
+// Here because every change of the box -- a key, a paste, a send that
+// empties it, a refusal that puts the text back -- comes through `fitSay`.
+function sizeSay(box) {
+  const out = $("saysize");
+  const text = box.value;
+  out.hidden = !text || box.offsetHeight < SAY_ROOM;
+  if (out.hidden) return;
+  const lines = lineCount(text);
+  out.replaceChildren();
+  put(out, "span", null, roughly(lines) + (lines === 1 ? " line" : " lines"));
+  put(out, "span", null, sizeOf(new TextEncoder().encode(text).length));
 }
 
 $("say").addEventListener("input", () => { fitSay(); followSlash(); });

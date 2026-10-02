@@ -803,6 +803,55 @@ def test_the_send_box_belongs_to_the_transcript(in_pane):
 # --- the send box -----------------------------------------------------------
 
 
+def test_a_tall_send_box_says_how_much_it_holds(in_pane):
+    """A box scrolled to the end of a long log shows its last screenful and
+    nothing of how long it is (issue 332). Its lines and bytes stand over
+    the send button, once the box is tall enough to leave room there, in
+    the sans face and "2.4k" -- the reader said no to "2,400" in a fixed
+    face, which took two rows."""
+    daemon, base, seen = in_pane
+    log = "\n".join(f"06:00 [build] module_{n:04d}.c ok" for n in range(2400))
+    with opened((None, base)) as page:
+        page.fill("#say", "one line")
+        assert page.locator("#saysize").is_hidden()
+        # As a paste puts it in: one `input` event. Playwright's `fill` of
+        # 60 KB of lines did not end in 60 s; the page's own handler takes
+        # 10 ms of it, measured.
+        page.evaluate("""(text) => {
+          const box = document.getElementById('say');
+          box.value = text;
+          box.dispatchEvent(new Event('input'));
+        }""", log)
+        page.wait_for_selector("#saysize:not([hidden])")
+        rows = page.locator("#saysize span").all_inner_texts()
+        assert rows == ["2.4k lines", f"{round(len(log.encode()) / 1024)} KB"], rows
+        out = page.evaluate("""() => {
+          const size = document.getElementById('saysize').getBoundingClientRect();
+          const box = document.getElementById('say').getBoundingClientRect();
+          const send = document.querySelector('#sendbar .sendside .verb')
+            .getBoundingClientRect();
+          return {clear: size.left >= box.right, above: size.bottom <= send.top,
+                  oneRow: size.height < 40, button: send.height,
+                  level: Math.abs(send.bottom - box.bottom),
+                  face: getComputedStyle(document.getElementById('saysize')).fontFamily};
+        }""")
+        assert out["clear"] and out["above"] and out["oneRow"], out
+        assert out["button"] == 32 and out["level"] <= 1, out
+        assert "Mono" not in out["face"], out
+
+
+def test_the_size_goes_when_the_send_box_empties(in_pane):
+    """The box empties the moment a send starts, and its size goes with it:
+    a size left standing over an empty box would describe nothing."""
+    daemon, base, seen = in_pane
+    with opened((None, base)) as page:
+        page.fill("#say", "a\nb\nc\nd")
+        page.wait_for_selector("#saysize:not([hidden])")
+        assert page.locator("#saysize span").first.inner_text() == "4 lines"
+        page.press("#say", "Enter")
+        page.wait_for_selector("#saysize", state="hidden")
+
+
 def test_shift_and_enter_writes_a_second_line(in_pane):
     """Enter sends, which is what every chat box does. A prompt with a plan in
     it needs a way to write the second line."""
