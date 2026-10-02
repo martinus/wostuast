@@ -246,6 +246,30 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   read. They are 6 and 22 now. **The numbers in the CSS are not the gaps**:
   the margins collapse against `.turn`'s own 22, so above is 22 + (−16) and
   below is max(5, 22). Change one and measure it; do not read it off.
+- **A message too long to read is drawn folded** (`foldedHead`,
+  `putFoldBar`, issue 329). A log pasted into a prompt ran to 140 KB, and the
+  transcript drew all of it: fifty screens between the question and its
+  answer. Past `FOLD_LINES` or `FOLD_CHARS` a prompt, a note, a reply or a
+  `!` command's output shows its first `FOLD_SHOWN` lines, faded, in a
+  `.foldbox` with a `.foldbar` under it ("show all 2.4k lines · 188 KB",
+  `roughly`); a short one is drawn as it always was, with no box. Each part
+  is a scar or the reader's word:
+  - **Counted with `indexOf`, never a split**: a split of 140 KB on every
+    redraw is what the fold saves. `lineCount` is the same.
+  - **A find that matches the message draws it whole**, or the hit is in
+    the part nobody can see. `test_a_search_opens_a_folded_message_where_it_matches`.
+  - **Open, the bar is sticky at the foot of the pane, at the right**, so a
+    reader folds the log from its middle and not from its end, 2,000 lines
+    down; at the left it covered the start of a line. Folding then calls
+    `scrollIntoView`, or the reader was left far under what was left of it.
+    `test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight`.
+  - **The bar is in the sans face, and the count is "2.4k"**: the reader
+    said no to the fixed face and to "2,401", which took two rows over the
+    send button (issue 332).
+  - **It opens through `state.turns.open`**, the set a tool call opens
+    with, so a session keeps it (`PLACE_FIELDS`).
+  `test_a_long_message_is_drawn_folded_and_opens_and_folds_again`,
+  `test_a_message_short_enough_is_drawn_as_it_always_was`.
 - **Thinking is never drawn, and the daemon never makes it a block.**
   Claude Code keeps the text of most thoughts out of the transcript: 4,274
   of 4,785 thinking blocks on one machine were a signature and nothing

@@ -10470,6 +10470,29 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   white-space: pre; overflow-x: auto;
 }
 .prose { flex-grow: 1; line-height: 1.55; min-width: 0; }
+/* A message too long to show whole (`foldedHead`): its first lines, fading
+   out, and the bar under it. Open, the bar stays at the foot of the pane
+   while any of the message is on screen, so it folds from anywhere in it --
+   at the right, where it covers the end of a line and not its start. */
+.foldbox { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.folded {
+  -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent);
+  mask-image: linear-gradient(to bottom, black 50%, transparent);
+}
+.foldbar {
+  align-self: flex-start; display: flex; align-items: center; gap: 6px;
+  margin-top: 4px; padding: 3px 8px 3px 4px; border: 1px solid var(--edge);
+  border-radius: 5px; background: var(--bg); cursor: pointer;
+  font-family: var(--sans); font-size: 12px; color: var(--ink-mute);
+}
+.foldbar:hover { color: var(--needs); border-color: var(--edge-bright); }
+.foldbar .icon {
+  width: 12px; height: 12px; fill: none; stroke: currentColor;
+  stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round;
+  transform: rotate(90deg);
+}
+.foldbar.open { position: sticky; bottom: 8px; align-self: flex-end; }
+.foldbar.open .icon { transform: rotate(-90deg); }
 /* One of the reader's own autolinks. It sits inside an agent's words, so it
    is underlined rather than coloured: a colour here would compete with the
    four this page already spends on state. */
@@ -13931,27 +13954,111 @@ function blockTurn(block, index) {
   // The copy button shares the time's line: see `.who .stamp`.
   const stamp = block.ts ? put(who, "div", "stamp", clock(block.ts)) : who;
   putCopy(stamp, block, mine);
+  // A message too long to show whole is drawn in a box of its own, with the
+  // bar that opens and folds it under it: see `foldedHead`.
+  const whole = String((shell ? block.result : block.text) || "");
+  const head = foldedHead(whole);
+  const open = !head || state.turns.open.has(index)
+    || (!!state.find && whole.toLowerCase().includes(state.find));
+  const drawn = open ? whole : head;
+  const box = head ? put(node, "div", "foldbox") : node;
+  let shown;
   if (shell) {
-    putShell(node, block);
+    shown = putShell(box, block, drawn);
   } else if (mine || aside) {
-    linkTickets(put(node, "div", "bubble", block.text));
+    shown = put(box, "div", "bubble", drawn);
+    linkTickets(shown);
   } else {
-    markdown(node, block.text);
+    shown = markdown(box, drawn);
+  }
+  if (head) {
+    if (!open) shown.classList.add("folded");
+    putFoldBar(box, whole, index, open);
   }
   return node;
+}
+
+// A message too long to read in the transcript is drawn folded: its first
+// lines, faded out, and a bar under it that opens it. A log pasted into a
+// prompt ran to 140 KB (#329), and the transcript drew all of it -- fifty
+// screens to scroll past to reach the answer under it. Lines and characters
+// both: a log is many short lines, a minified file one long one.
+const FOLD_LINES = 40;
+const FOLD_CHARS = 6000;
+// What a folded message shows: enough to tell which one it is.
+const FOLD_SHOWN = 12;
+
+// The start of a text too long to show whole, or null for one short enough.
+// The lines are counted with `indexOf` and only up to `FOLD_LINES`, never by
+// splitting the whole: a split of 140 KB on every redraw is what the fold
+// is there to save.
+function foldedHead(text) {
+  let at = -1;
+  let lines = 0;
+  let cut = -1;
+  while (lines < FOLD_LINES) {
+    at = text.indexOf("\n", at + 1);
+    if (at < 0) break;
+    lines += 1;
+    if (lines === FOLD_SHOWN) cut = at;
+  }
+  if (lines < FOLD_LINES && text.length <= FOLD_CHARS) return null;
+  const head = cut >= 0 ? text.slice(0, cut) : text;
+  return head.slice(0, FOLD_SHOWN * 100);
+}
+
+// A count read at a glance: "2.4k" for 2,401, "12k", "1.2M", and below a
+// thousand the number. "2,401 lines" was too long for the reader, in the
+// fold bar and over the send button.
+function roughly(n) {
+  if (n < 1000) return String(n);
+  const [size, unit] = n < 1e6 ? [n / 1e3, "k"] : [n / 1e6, "M"];
+  return String(size < 10 ? Math.round(size * 10) / 10 : Math.round(size)) + unit;
+}
+
+// How many lines a text has, without an array of them.
+function lineCount(text) {
+  let lines = 1;
+  for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) {
+    lines += 1;
+  }
+  return lines;
+}
+
+// The bar under a long message. Folded, it says how much there is; open, it
+// folds it again, and it stays at the foot of the pane while any of the
+// message is on screen (`.foldbar.open`), so the reader can fold it from
+// wherever they are in it, not only from its end, 2,000 lines down. It uses
+// the set a tool call opens with, so a session keeps it as it keeps those.
+function putFoldBar(box, whole, index, open) {
+  const bar = put(box, "button", "foldbar" + (open ? " open" : ""));
+  putIcon(bar, "chevron");
+  put(bar, "span", null, open
+    ? "fold"
+    : "show all " + roughly(lineCount(whole)) + " lines · "
+      + sizeOf(new TextEncoder().encode(whole).length));
+  bar.title = open ? "fold this message again" : "show the whole message";
+  bar.addEventListener("click", () => {
+    if (open) state.turns.open.delete(index); else state.turns.open.add(index);
+    const node = redrawBlock(index);
+    // Folding from the bar at the foot of the pane would leave the reader
+    // where the message's end was, far below what is left of it.
+    if (open) node.scrollIntoView({ block: "nearest" });
+  });
 }
 
 // A command the reader ran with `!`, and what it printed, in the fixed face,
 // as a terminal shows them. Text and never markup: a program wrote the
 // output, and `<draft>` in a branch name is a branch name.
-function putShell(node, block) {
+function putShell(node, block, result = block.result) {
   const bubble = put(node, "div", "bubble shell");
   // A slash command wears its own `/`; a shell command gets the `!` typed.
   if (block.text) {
     put(bubble, "div", "command",
         (block.kind === "shell" ? "! " : "") + block.text);
   }
-  if (block.result) put(bubble, "pre", "output", block.result);
+  if (result) put(bubble, "pre", "output", result);
+  return bubble;
 }
 
 // A code block copies itself: what an agent puts in a fence is most often a
@@ -15403,7 +15510,7 @@ function blankTurns() {
     blocks: [],         // what the daemon has pushed, by seq
     nodes: [],          // the node drawn for each one, so one can be redrawn
     run: -1,            // which reading of this transcript those are from
-    open: new Set(),    // tool blocks the reader expanded
+    open: new Set(),    // blocks the reader opened: a tool, a long message
     shut: new Set(),    // rounds the reader folded shut on the map
     goTo: null,         // a block a link asked for, until it is on screen
     at: null,           // the block the list marks: the last place you went

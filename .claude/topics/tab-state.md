@@ -7,7 +7,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **A session remembers the choices, never the caches.** `savePlace` and
   `usePlace`, into `state.visits` by session id: the tab, the open file and
   the place in it, the directories opened by hand, the expanded tool blocks
-  and diff files. Not the listing, the text or the diff — those are fetched
+  and long messages (one set, `state.turns.open`), and diff files. Not the listing, the text or the diff — those are fetched
   again, because by the time the reader comes back they have moved, and they
   are also the big things: 52,799 names is 1.7 MB, per session. **The names
   are the exception, kept once per worktree** (`state.listings`, see the ssh
