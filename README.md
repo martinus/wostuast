@@ -347,7 +347,8 @@ is depends on your window manager.
 | `wostuast uninstall` | Remove our hooks, our status line, the hook file and the status file. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
 | `wostuast ls` | List the sessions, in the same order as the page. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
-| `wostuast shapes` | List what in your transcripts of the last 7 days the page cannot show: record types it does not read, and Claude Code's own tags it leaves showing. It prints names and counts, never your text, so you can paste the output into a bug report. `--days` reads further back. |
+| `wostuast files` | List every file wostuast wrote on this machine, grouped, with its size, what it is for, and what `uninstall` does to it. |
+| `wostuast report` | Print a Markdown report for an AI agent that works on wostuast: versions, the setup check, the files, the hook events and payload fields of the last 7 days (and which ones wostuast does not handle yet), what in your transcripts the page cannot show, the errors in its log by kind, and what the hook and the status line cost. It holds names, counts, sizes and timings only, never your text, so you can paste it into an issue. `--days` reads further back. This was `wostuast shapes`. |
 
 `install` also registers `~/.local/share/wostuast/status.py` as your Claude
 Code status line, but only if you do not have one. A status line of ours from
@@ -362,12 +363,16 @@ keep your own status line, `install` tells you the line to add to it.
 Everything wostuast writes is on your machine, in private files (`0600`, in
 `0700` directories).
 
+`wostuast files` lists them on your machine, with their sizes.
+
 | Path | What it holds |
 | --- | --- |
 | `~/.local/bin/wostuast` | The program. One file. |
 | `~/.local/share/wostuast/hook.py` | The hook. `install` makes it from the program; do not edit it. |
+| `~/.local/share/wostuast/status.py` | The status line. `install` makes it from the program too. |
 | `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
+| `~/.local/state/wostuast/names.json` | The names you gave sessions on the page. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
 | `~/.local/state/wostuast/daemon.lock` | Held while `wostuast` runs, so a second start stops and says where the first one serves its page. It says the pid and the address. |
 | `~/.config/wostuast/settings.json` | Your settings and your ticket links. The page writes it when you change a setting. |
