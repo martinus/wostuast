@@ -702,7 +702,7 @@ def test_a_size_is_said_the_way_a_person_reads_it(ws):
 
 
 def shaped_transcript(transcript_file):
-    """One transcript holding every shape `shapes` sorts: read, left out on
+    """One transcript holding every shape the report sorts: read, left out on
     purpose, not known, and a tag the page leaves showing. The words in it
     are the reader's own, and must never reach the output."""
     note = ("<task-notification>\n<task-id>b1</task-id>\n"
@@ -733,15 +733,16 @@ def shaped_transcript(transcript_file):
     return path
 
 
-def test_shapes_lists_what_the_page_cannot_show_and_never_the_text(
+def test_the_report_lists_what_the_page_cannot_show_and_never_the_text(
         ws, transcript_file, capsys):
     """Every bug of one kind lately -- `!git up`, `/clear`, `/model`, paste
     tags on the row -- was a shape Claude Code wrote and the page did not
     know, found by the reader as tags on the screen. `shapes` reads recent
     transcripts with the page's own reader and lists what it leaves out or
-    leaves tagged: names and counts, so it can go into a public report."""
+    leaves tagged: names and counts, so it can go into a public report.
+    `report` took it over (#323)."""
     shaped_transcript(transcript_file)
-    assert ws.main(["shapes"]) == 0
+    assert ws.main(["report"]) == 0
     out = capsys.readouterr().out
     assert "brand-new-record" in out
     assert "attachment/new_thing" in out
@@ -765,21 +766,22 @@ def test_shapes_lists_what_the_page_cannot_show_and_never_the_text(
     assert "PRIVATE" not in out and "secret-output" not in out
 
 
-def test_shapes_reads_only_the_days_asked_for(ws, transcript_file, capsys):
+def test_the_report_reads_only_the_days_asked_for(ws, transcript_file, capsys):
     import os
     old = shaped_transcript(transcript_file)
     week_ago = time.time() - 8 * 86400
     os.utime(old, (week_ago, week_ago))
-    ws.main(["shapes"])
-    assert "Read 0 records in 0 transcripts" in capsys.readouterr().out
-    ws.main(["shapes", "--days", "9"])
+    ws.main(["report"])
+    assert "0 records in 0 transcripts" in capsys.readouterr().out
+    ws.main(["report", "--days", "9"])
     assert "brand-new-record" in capsys.readouterr().out
 
 
-def test_shapes_says_so_when_it_knows_everything(ws, transcript_file, capsys):
+def test_the_report_says_so_when_the_page_knows_everything(ws, transcript_file,
+                                                          capsys):
     transcript_file("plain", [conftest.record("you", "hello"),
                               conftest.record("claude", "hi")])
-    ws.main(["shapes"])
+    ws.main(["report"])
     assert "Nothing the page does not know." in capsys.readouterr().out
 
 

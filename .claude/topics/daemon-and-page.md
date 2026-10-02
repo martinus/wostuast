@@ -129,8 +129,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     never guessed. Record one before handling it.
     `test_a_slash_command_and_what_it_answered_are_one_block`,
     `test_a_slash_command_is_drawn_with_what_it_answered`.
-- **`wostuast shapes` is how a new Claude Code shape is found before the
-  reader finds it.** Every bug of this kind -- `!git up`, `/clear`,
+- **`wostuast report`'s transcript section (it was `wostuast shapes`, #323)
+  is how a new Claude Code shape is found before the reader finds it.** Every bug of this kind -- `!git up`, `/clear`,
   `/model`, paste tags on the row -- was reported as tags on the screen.
   `transcript_shapes` reads recent transcripts through `Transcript.add`
   itself and lists records and pieces it leaves out that are not on

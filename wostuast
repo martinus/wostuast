@@ -8414,49 +8414,426 @@ def recent_transcripts(days: float, now: float | None = None) -> list[Path]:
     return sorted(found)
 
 
-def cmd_shapes(args: argparse.Namespace) -> int:
-    """List the transcript shapes the page cannot show. Names and counts only."""
-    days = getattr(args, "days", SHAPES_DAYS)
-    paths = recent_transcripts(days)
-    found = transcript_shapes(paths)
-    out = [f"Read {found.records} records in {found.transcripts} transcripts"
-           f" from the last {days:g} days."]
-    if found.versions:
-        named = sorted(found.versions.items(), key=lambda one: -one[1])
-        out.append("Claude Code: " + ", ".join(f"{v} ({n})" for v, n in named))
-    if found.not_read:
-        out.append("")
-        out.append("Records and pieces the page does not show:")
-        for name, n in sorted(found.not_read.items(), key=lambda one: -one[1]):
-            out.append(f"  {n:6}  {name}")
-    if found.tags:
-        out.append("")
-        out.append("Claude Code's tags still on the page:")
-        for name, n in sorted(found.tags.items(), key=lambda one: -one[1]):
-            out.append(f"  {n:6}  {name}")
-    if not found.not_read and not found.tags:
-        out.append("Nothing the page does not know.")
-    else:
-        out.append("")
-        out.append("This lists names and counts, never your text, so you can"
-                   " paste it into a report as it is.")
+@dataclass
+class Installed:
+    """One thing wostuast put on the disk, for `files` and `report` (#321)."""
+
+    group: str
+    path: Path
+    what: str
+    count: int = 0          # files behind it: archives, one status file a session
+    size: int = 0
+    there: bool = False
+
+
+#: The groups, in the order they are listed, and what `uninstall` does to each.
+INSTALLED_GROUPS = {
+    "Program": "uninstall keeps it",
+    "Run by Claude Code": "uninstall removes these",
+    "Claude Code's settings": "uninstall takes out only the entries wostuast added",
+    "History": "uninstall keeps it: it is yours",
+    "Your settings": "uninstall keeps it",
+}
+
+
+def installed_files() -> list[Installed]:
+    """Every file and folder wostuast writes, grouped, with what it is for.
+
+    One list for `wostuast files` and the report, so the two cannot drift.
+    A new file on the disk belongs here, and in the README's Files table.
+    """
+    archives = archived_events_paths() or []
+    rows = [
+        Installed("Program", install_path(),
+                  "the program: the page, the daemon and every command"),
+        Installed("Run by Claude Code", hook_path(),
+                  "the hook: one line in the event log for every event"),
+        Installed("Run by Claude Code", status_program_path(),
+                  "the status line: each session's name, model, context and cost"),
+        Installed("Claude Code's settings", settings_path(),
+                  "Claude Code's own file; wostuast adds its hooks and its status line"),
+        Installed("History", events_path(), "every hook event, one JSON line each"),
+        Installed("History", events_path().with_name("events.N.jsonl"),
+                  "older events, moved out of the way at 20 MB; never deleted"),
+        Installed("History", log_path(), "what went wrong, if anything"),
+        Installed("History", status_dir(),
+                  "the latest status line of each session, one file each"),
+        Installed("History", names_path(), "the names you gave sessions on the page"),
+        Installed("History", daemon_lock_path(),
+                  "held while wostuast serves the page; says where"),
+        Installed("Your settings", config_path(),
+                  "what the settings menu sets, and your ticket links"),
+    ]
+    if links_path().exists():
+        rows.append(Installed("Your settings", links_path(),
+                              "no longer read: add the links in the menu, then delete it"))
+    for row in rows:
+        if row.path.name == "events.N.jsonl":
+            parts = archives
+        elif row.path == log_path():
+            parts = [row.path, row.path.with_name(row.path.name + ".1")]
+        elif row.path == status_dir():
+            try:
+                parts = list(row.path.glob("*.json"))
+            except OSError:
+                parts = []
+        else:
+            parts = [row.path]
+        for part in parts:
+            try:
+                row.size += part.stat().st_size
+                row.count += 1
+            except OSError:
+                pass
+        row.there = row.count > 0
+    return rows
+
+
+def cmd_files(args: argparse.Namespace) -> int:
+    """List every file wostuast wrote, grouped, with what each is for."""
+    rows = installed_files()
+    width = max(len(tilde(row.path)) for row in rows)
+    out = ["wostuast files"]
+    for group, fate in INSTALLED_GROUPS.items():
+        mine = [row for row in rows if row.group == group]
+        if not mine:
+            continue
+        out += ["", f"{group} ({fate})"]
+        for row in mine:
+            size = size_label(row.size) if row.there else "-"
+            many = f", {counted(row.count, 'file', 'files')}" if row.count > 1 else ""
+            gone = "" if row.there else " (not there)"
+            out.append(f"  {tilde(row.path):<{width}}  {size:>8}  {row.what}{many}{gone}")
     print("\n".join(out))
+    return 0
+
+
+#: Payload fields whose value is a kind, not the reader's text: what the
+#: report may count. A value is counted only when it looks like a name.
+REPORT_KINDS = {
+    "SessionStart": ("source",),
+    "SessionEnd": ("reason",),
+    "PreCompact": ("trigger",),
+    "Notification": ("notification_type",),
+    "PostToolUseFailure": ("error_type",),
+}
+REPORT_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+#: What the transcript section's labels may hold: "attachment/new_thing",
+#: "<task-id> in a note", "user piece: image".
+REPORT_LABEL = re.compile(r"[A-Za-z0-9_.:<>/ -]{1,64}")
+
+
+def named(value: Any) -> str:
+    """The value when it is a name, never the reader's text: "(other)"."""
+    return value if isinstance(value, str) and REPORT_NAME.fullmatch(value) else "(other)"
+
+
+def labelled(value: Any) -> str:
+    """A label of the transcript section, held to the same promise."""
+    return value if isinstance(value, str) and REPORT_LABEL.fullmatch(value) else "(other)"
+
+
+def tool_named(value: Any) -> str:
+    """A tool's name; an MCP tool without its server. The reader names the
+    server, and the name is often a company's or a project's."""
+    name = named(value)
+    parts = name.split("__")
+    if name.startswith("mcp__") and len(parts) >= 3:
+        return "mcp__\u2026__" + parts[-1]
+    return name
+
+
+def exception_named(line: str) -> str:
+    """The builtin exception a line of the log names, or "(other)". Only a
+    builtin: a capitalised word ending in "Error" was a folder's name in
+    "listing /home/m/AcmeError/src failed: OSError(5)"."""
+    import builtins
+
+    for word in reversed(re.findall(r"\b([A-Z][A-Za-z]+)\(", line)):
+        found = getattr(builtins, word, None)
+        if isinstance(found, type) and issubclass(found, BaseException):
+            return word
+    return "(other)"
+
+
+def recent_events(days: float, now: float | None = None) -> Iterator[dict[str, Any]]:
+    """The events of the last `days`, oldest file first. An archive whose
+    last write is older than that holds none, and is not read."""
+    cutoff = (now if now is not None else time.time()) - days * 86400
+    for path in (archived_events_paths() or []) + [events_path()]:
+        try:
+            if path.stat().st_mtime < cutoff:
+                continue
+            handle = path.open(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if isinstance(event, dict) and to_float(event.get("ts")) >= cutoff:
+                    yield event
+
+
+def program_cost(path: Path, payload: str, runs: int = 5) -> float | None:
+    """The median milliseconds the hook or the status file takes, run as
+    Claude Code runs it, into a state directory of its own. None when it
+    is not installed or did not run."""
+    import statistics
+    import subprocess
+    import tempfile
+
+    if not os.access(path, os.X_OK):
+        return None
+    took: list[float] = []
+    with tempfile.TemporaryDirectory() as home:
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home,
+               "WOSTUAST_STATE": str(Path(home) / "state")}
+        for _ in range(runs):
+            began = time.perf_counter()
+            try:
+                done = subprocess.run([str(path)], input=payload, text=True,
+                                      capture_output=True, env=env, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if done.returncode != 0:
+                return None
+            took.append((time.perf_counter() - began) * 1000)
+    return statistics.median(took)
+
+
+def report_table(head: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[str]:
+    """A Markdown table. A `|` in a cell would end it, so it is escaped."""
+    def cell(value: Any) -> str:
+        return " ".join(str(value).split()).replace("|", "\\|")
+
+    out = ["| " + " | ".join(head) + " |", "|" + " --- |" * len(head)]
+    out += ["| " + " | ".join(cell(one) for one in row) + " |" for row in rows]
+    return out
+
+
+def counts_of(found: Counter[str]) -> str:
+    """"startup (3), resume (1)", most first."""
+    return ", ".join(f"{name} ({n})" for name, n in found.most_common())
+
+
+def private_paths() -> Callable[[str], str]:
+    """What hides the paths in a line of the report: wostuast's own folders
+    by name when they are not under home -- `XDG_STATE_HOME` can put the log
+    anywhere, and that path can carry a user name -- and home as `~`."""
+    home = str(Path.home())
+    homed = home not in ("", "/")
+    folders = [(state_dir(), "<state dir>"), (config_path().parent, "<config dir>"),
+               (settings_path().parent, "<claude dir>"), (install_path().parent, "<bin dir>"),
+               (hook_path().parent, "<share dir>")]
+    swaps = [(str(path), label) for path, label in folders
+             if not (homed and str(path).startswith(home + os.sep))]
+    try:
+        # A checkout's path names its project: "run `~/work/acme/wostuast install`".
+        swaps.append((str(Path(__file__).resolve()), "<this copy>"))
+    except NameError:
+        pass
+    if homed:
+        swaps.append((home, "~"))
+    # Longest first, home among them: a folder that holds home, `/home`,
+    # replaced first left "<claude dir>/alice/...".
+    swaps.sort(key=lambda one: -len(one[0]))
+
+    def private(text: str) -> str:
+        for path, label in swaps:
+            text = text.replace(path, label)
+        # What is left: any other absolute path, and anything quoted, which
+        # is how a regular expression's error repeats the reader's pattern.
+        text = re.sub(r"(?<![\w~>.])/[^\s,;:'\"`)]+", "<path>", text)
+        return re.sub(r"'[^']*'|\"[^\"]*\"", "'\u2026'", text)
+
+    return private
+
+
+def build_report(days: float, now: float | None = None,
+                 measure: bool = True) -> str:
+    """Everything an agent needs to improve wostuast for this machine, as
+    Markdown: names, counts, sizes and timings, never the reader's text
+    (#323). It replaces `shapes`, whose transcript section it keeps."""
+    import platform
+
+    private = private_paths()
+
+    out = [
+        "# wostuast report",
+        "",
+        "This report describes one installation of wostuast"
+        " (https://github.com/martinus/wostuast), a single Python file that"
+        " watches Claude Code agents running in tmux: hooks append every event"
+        " to a log, and a daemon serves a page that shows who needs the reader,"
+        " what each agent said, and what it changed. `ARCHITECTURE.md` in that"
+        " repository explains every part named here.",
+        "",
+        "It holds names, counts, sizes and timings only: never a prompt, a"
+        " reply, a command, a file's content or a path outside the home"
+        " folder's own layout. Use it to find a setup problem, Claude Code"
+        " behaviour wostuast does not read yet (an event, a payload field, a"
+        " transcript record), and what wostuast costs on this machine.",
+        "",
+        f"Made {time.strftime('%Y-%m-%d %H:%M')}; events and transcripts of the"
+        f" last {days:g} days.",
+    ]
+
+    shapes = transcript_shapes(recent_transcripts(days, now))
+    tmux = (run(["tmux", "-V"]) or "").strip() or "not found"
+    git = (run(["git", "--version"]) or "").strip() or "not found"
+    out += ["", "## Versions", ""]
+    out += report_table(("What", "Version"), [
+        ("wostuast", own_version() or VERSION),
+        ("Python", sys.version.split()[0]),
+        ("Platform", f"{platform.system()} {platform.release()} ({platform.machine()})"),
+        ("tmux", tmux),
+        ("git", git),
+        ("Claude Code, in transcripts",
+         counts_of(Counter({named(v): n for v, n in shapes.versions.items()})) or "none seen"),
+    ])
+
+    out += ["", "## Setup", "", "What `wostuast doctor` checks.", ""]
+    out += report_table(("Result", "Check"),
+                        [(verdict, private(text)) for verdict, text in doctor_checks()])
+
+    out += ["", "## Files", "", "What `wostuast files` lists.", ""]
+    out += report_table(
+        ("Group", "Path", "Size", "Files", "What it is for"),
+        [(row.group, private(str(row.path)),
+          size_label(row.size) if row.there else "not there",
+          row.count, row.what) for row in installed_files()])
+
+    events: Counter[str] = Counter()
+    fields: dict[str, Counter[str]] = {}
+    kinds: dict[str, Counter[str]] = {}
+    tools: Counter[str] = Counter()
+    sessions: set[str] = set()
+    for event in recent_events(days, now):
+        name = named(event.get("hook_event_name"))
+        events[name] += 1
+        fields.setdefault(name, Counter()).update(named(key) for key in event)
+        sessions.add(str(event.get("session_id") or ""))
+        if event.get("tool_name") is not None and name in ("PreToolUse", "PermissionRequest"):
+            tools[tool_named(event.get("tool_name"))] += 1
+        for field_name in REPORT_KINDS.get(name, ()):
+            if field_name in event:
+                kinds.setdefault(f"{name}.{field_name}", Counter())[
+                    named(event[field_name])] += 1
+    known = set(HOOK_EVENTS) | {"Declined"}
+    out += ["", f"## Hook events, last {days:g} days", ""]
+    if not events:
+        out.append("No events in that time.")
+    else:
+        out.append(f"{sum(events.values())} events from"
+                   f" {counted(len(sessions), 'session', 'sessions')}. An event"
+                   " wostuast does not handle is marked **new**: it is kept in the"
+                   " log, and nothing reads it yet.")
+        out.append("")
+        out += report_table(("Event", "Count", "Handled"), [
+            (name, n, "yes" if name in known else "**new**")
+            for name, n in events.most_common()])
+        out += ["", "### Payload fields", "",
+                "Every top-level field each event carried, with how often."
+                " `ts`, `pane`, `pid` and `shell_pid` are added by the hook;"
+                " `tests/fixtures/README.md` lists the fields wostuast reads.", ""]
+        out += report_table(("Event", "Fields"), [
+            (name, counts_of(fields[name])) for name, _ in events.most_common()])
+        if kinds:
+            out += ["", "### Kinds", "",
+                    "Fields whose value names a kind; `(other)` is a value that"
+                    " was not a plain name and is not shown.", ""]
+            out += report_table(("Field", "Values"),
+                                [(key, counts_of(found)) for key, found in sorted(kinds.items())])
+        if tools:
+            out += ["", "### Tools", "", "Tool calls that started or asked for permission.", ""]
+            out += report_table(("Tool", "Calls"), tools.most_common())
+
+    out += ["", f"## Transcripts, last {days:g} days", "",
+            f"{shapes.records} records in {counted(shapes.transcripts, 'transcript', 'transcripts')}."]
+    if shapes.not_read:
+        out += ["", "Records and pieces the page does not show:", ""]
+        out += report_table(("Record or piece", "Count"),
+                            [(labelled(name), n) for name, n in
+                             sorted(shapes.not_read.items(), key=lambda one: -one[1])])
+    if shapes.tags:
+        out += ["", "Claude Code's tags that still reach the page as text:", ""]
+        out += report_table(("Tag", "Count"),
+                            [(labelled(name), n) for name, n in
+                             sorted(shapes.tags.items(), key=lambda one: -one[1])])
+    if not shapes.not_read and not shapes.tags:
+        out += ["", "Nothing the page does not know."]
+
+    errors: Counter[str] = Counter()
+    last: dict[str, str] = {}
+    for path in (log_path().with_name(log_path().name + ".1"), log_path()):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            kind = exception_named(line)
+            errors[kind] += 1
+            # The day, when the line starts with one: a line a newline in a
+            # logged path began gave its first ten letters instead.
+            if re.match(r"\d{4}-\d{2}-\d{2}", line):
+                last[kind] = line[:10]
+    out += ["", "## Errors", "",
+            "What `wostuast.log` holds, by the exception it names; the messages"
+            " are left out, because they can hold paths and commands.", ""]
+    if errors:
+        out += report_table(("Exception", "Lines", "Last day"),
+                            [(kind, n, last.get(kind, "-")) for kind, n in errors.most_common()])
+    else:
+        out.append("None.")
+
+    out += ["", "## Cost", ""]
+    if measure:
+        hook = program_cost(hook_path(), json.dumps(
+            {"session_id": "wostuast-report", "hook_event_name": "Notification"}))
+        status = program_cost(status_program_path(),
+                              json.dumps({"session_id": "wostuast-report"}))
+        out.append("The installed hook and status file, each run five times as"
+                   " Claude Code runs them, into a state directory of their own.")
+        out.append("")
+        out += report_table(("Program", "Median"), [
+            ("hook.py, one event", f"{hook:.0f} ms" if hook is not None else "did not run"),
+            ("status.py, one redraw", f"{status:.0f} ms" if status is not None else "did not run"),
+        ])
+    else:
+        out.append("Not measured.")
+    return "\n".join(out) + "\n"
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Print the report: Markdown for an agent, names and counts only."""
+    print(build_report(getattr(args, "days", SHAPES_DAYS)), end="")
     return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Check the setup and say what is wrong."""
-    problems = 0
-    lines: list[str] = []
+    checks = doctor_checks()
+    problems = sum(1 for verdict, _ in checks if verdict == "FAIL")
+    print("wostuast doctor")
+    print("\n".join(f"  {verdict:<4}  {text}" for verdict, text in checks))
+    print()
+    print("all good." if problems == 0 else f"{problems} problem(s) to fix.")
+    return 1 if problems else 0
+
+
+def doctor_checks() -> list[tuple[str, str]]:
+    """Every check `doctor` makes, as ("ok" | "FAIL" | "note", what it found).
+    `report` hands an agent the same rows (#323)."""
+    lines: list[tuple[str, str]] = []
 
     def report(ok: bool, good: str, bad: str, fatal: bool = True) -> None:
-        nonlocal problems
         if ok:
-            lines.append(f"  ok    {good}")
+            lines.append(("ok", good))
         else:
-            lines.append(f"  {'FAIL' if fatal else 'note'}  {bad}")
-            if fatal:
-                problems += 1
+            lines.append(("FAIL" if fatal else "note", bad))
 
     report(sys.version_info >= (3, 10), f"python {sys.version.split()[0]}",
            f"python {sys.version.split()[0]} is older than 3.10")
@@ -8522,12 +8899,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
            f"not installed at {install_path()}; run `wostuast install`", fatal=False)
     behind = install_behind()
     report(not behind, "the installed copy is this version", behind)
-
-    print("wostuast doctor")
-    print("\n".join(lines))
-    print()
-    print("all good." if problems == 0 else f"{problems} problem(s) to fix.")
-    return 1 if problems else 0
+    return lines
 
 
 def own_version() -> str:
@@ -9173,13 +9545,14 @@ def build_parser() -> argparse.ArgumentParser:
         ("uninstall", cmd_uninstall, "remove the hooks; keep the event log"),
         ("ls", cmd_ls, "list the sessions"),
         ("doctor", cmd_doctor, "check the setup"),
-        ("shapes", cmd_shapes,
-         "list what in your transcripts the page cannot show; names and counts only"),
+        ("files", cmd_files, "list every file wostuast wrote, and what it is for"),
+        ("report", cmd_report,
+         "a Markdown report for an agent to improve wostuast; names and counts only"),
     ]
     for name, handler, help_text in commands:
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
         sub.set_defaults(handler=handler)
-        if name == "shapes":
+        if name == "report":
             sub.add_argument("--days", type=float, default=SHAPES_DAYS,
                              help=f"how far back to read (default {SHAPES_DAYS})")
     return parser
@@ -9192,6 +9565,9 @@ GONE_VERBS = {
     "serve": "`wostuast serve` is now just `wostuast`: it checks the setup,"
              " brings the hooks up to date and serves the page."
              " --port and --open work as before.",
+    # #323: `report` says what `shapes` said, and more.
+    "shapes": "`wostuast shapes` is now part of `wostuast report`, which an"
+              " agent can read: names and counts only, as before.",
     # #322: Claude Code runs the hook file and the status file that `install`
     # writes (#271, #286). Only an entry from before them still names these.
     "hook": "`wostuast hook` is gone: Claude Code runs the hook file now."

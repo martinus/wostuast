@@ -968,6 +968,13 @@ flowchart LR
 - **`doctor`** checks Python, the state directory, the log, every hook entry,
   the status line, tmux, our settings file, and whether the hook files are the
   ones this version would write.
+- **`files`** lists every file wostuast wrote, grouped, with what it is for
+  and what `uninstall` does to it (`installed_files`).
+- **`report`** prints all of that, and more, as Markdown for an AI agent that
+  works on wostuast: versions, the hook events and payload fields of the last
+  days, the ones wostuast does not handle yet, the transcript records the page
+  cannot show, errors by kind, and what the hook costs. It holds names, counts,
+  sizes and timings only, never your text, so it can go into an issue.
 
 Our own settings live in `~/.config/wostuast/settings.json`: colours, alerts,
 tab width, long lines, diff columns and ticket links. Every setting in it is a

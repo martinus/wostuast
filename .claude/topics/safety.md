@@ -619,6 +619,33 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   had its own probe with a bare `mkdir`, so on a new machine the directory
   stood at the umask, 0755, until a hook ran (#285).
   `test_doctor_makes_the_state_directory_private`.
+- **`wostuast report` holds names, counts, sizes and timings, never the
+  reader's text** (#323). It is made to be handed to an agent and pasted
+  into an issue. A value is shown only when it is a name (`named`,
+  `REPORT_NAME`), and only from the fields `REPORT_KINDS` lists, plus
+  `tool_name`, whose MCP server is left out (`tool_named`: the reader
+  names the server, often after a company); every other payload field is
+  counted by its key alone. The error log is counted by the **builtin**
+  exception a line names (`exception_named`), never by its message, which
+  holds paths and commands: any capitalised word ending in "Error" was a
+  folder's name once. The transcript section's labels pass `labelled`.
+  `doctor`'s lines go in through `private_paths`: home becomes `~`,
+  wostuast's own folders that are not under home become `<state dir>`
+  and the like -- `XDG_STATE_HOME` can put the log anywhere, and that
+  path can carry a user name -- this copy's path `<this copy>`, any other
+  absolute path `<path>`, and anything quoted `'…'`, which is how a bad
+  ticket-link pattern came back in a regular expression's error. The
+  swaps go longest first with home among them: a folder of ours that
+  holds home, replaced first, left the user name behind it. A review
+  found six of these before it shipped. A new section adds to
+  `test_the_report_never_holds_the_readers_text` or
+  `test_what_the_review_found_does_not_leak_either`, which write the
+  reader's text into every place it can stand.
+- **`installed_files` is the one list of what wostuast puts on the disk**,
+  for `wostuast files` and the report (#321). A new file goes on it, and in
+  the README's Files table; `test_every_file_wostuast_writes_is_listed`
+  calls every `*_path()` and `*_dir()` of the program and fails on one it
+  does not find there.
 - **One daemon a state directory, held by a lock, not by the port.** A
   second start on another port ran beside the first (#320): both appended
   a `Declined` for the same dialog, two renames at once could lose one,
