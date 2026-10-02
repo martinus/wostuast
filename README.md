@@ -209,6 +209,11 @@ The map beside the transcript has one row for each thing you typed, with the
 replies under it. Click a row to go there. Click its chevron to fold that round
 away. When you scroll up, a round **↓** button at the foot of the transcript takes you back to the end. After a reload, the page stays on the same session, and the transcript and the map both open at the latest round.
 
+A very long message, such as a log you pasted, shows only its first lines.
+Click **show all** under it to read all of it, and **fold** to make it short
+again. While you search, a message that holds what you search for shows all
+of it.
+
 A command you run in Claude Code shows with its answer, in a fixed-width font:
 a `!` command with what it printed, and a slash command such as `/model opus`
 with what Claude Code answered. You can send a slash command from the send box

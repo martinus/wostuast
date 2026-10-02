@@ -2503,3 +2503,129 @@ def test_the_rows_are_the_readers_while_the_menu_is_open(ws, page_at):
         page.keyboard.press("Escape")
         page.click("#settings")
         assert [one[:2] for one in link_rows(page)] == [[r"OA-(\d+)", "https://t/$1"]]
+
+
+# --- a message too long to show whole ---------------------------------------
+
+
+#: A log pasted into a prompt, as the reader's was: 140 KB of it (#329).
+LOG = "Why does the build fail? Here is the log:\n" + "\n".join(
+    f"06:00:{n % 60:02d} [build] compiling src/module_{n:04d}.c ok"
+    for n in range(2400))
+
+
+def lines_of(page, selector):
+    return page.evaluate(
+        f"document.querySelector({selector!r}).innerText.split('\\n').length")
+
+
+def test_a_long_message_is_drawn_folded_and_opens_and_folds_again(page_at):
+    """A log pasted into a prompt ran to 140 KB, and the transcript drew all
+    of it: fifty screens between the question and its answer (#329). It is
+    drawn folded, its first lines and a bar that says how much there is,
+    and the bar opens it and folds it again."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        write_records(daemon, conftest.record("you", LOG))
+        daemon.tick()
+        page.wait_for_selector(".turn.mine .foldbar")
+        assert lines_of(page, ".turn.mine .bubble.folded") <= 12
+        bar = page.locator(".turn.mine .foldbar")
+        assert "2.4k lines" in bar.inner_text()
+        bar.click()
+        page.wait_for_selector(".turn.mine .foldbar.open")
+        assert page.locator(".turn.mine .bubble.folded").count() == 0
+        assert lines_of(page, ".turn.mine .foldbox .bubble") == 2401
+        page.locator(".turn.mine .foldbar").click()
+        page.wait_for_selector(".turn.mine .bubble.folded")
+
+
+def test_a_message_short_enough_is_drawn_as_it_always_was(page_at):
+    """Forty lines is a plan, which is read, not a log. Nothing about it
+    changes: no box round it and no bar under it."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        plan = "\n".join(f"step {n}" for n in range(40))
+        write_records(daemon, conftest.record("you", plan))
+        daemon.tick()
+        page.wait_for_function(
+            "[...document.querySelectorAll('.turn.mine .bubble')]"
+            ".some((one) => one.textContent.includes('step 39'))")
+        assert page.locator(".foldbox, .foldbar, .folded").count() == 0
+
+
+@pytest.mark.parametrize("kind, text", [
+    ("claude", "\n\n".join(f"Paragraph {n} of a long reply." for n in range(30))),
+    ("you", "x" * 7000),
+])
+def test_a_long_reply_or_one_long_line_is_folded_too(page_at, kind, text):
+    """A reply is Markdown and folds the same way, and a text of one line can
+    be as long as a log: a minified file is one line."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        write_records(daemon, conftest.record(kind, text))
+        daemon.tick()
+        page.wait_for_selector(".foldbox .folded")
+        shown = page.evaluate(
+            "document.querySelector('.foldbox .folded').textContent.length")
+        assert shown < len(text) // 3
+
+
+def test_a_search_opens_a_folded_message_where_it_matches(page_at):
+    """A hit in the folded part is a hit the reader cannot see, so a message
+    the find box matches is drawn whole, and the hit is marked."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        write_records(daemon, conftest.record("you", LOG))
+        daemon.tick()
+        page.wait_for_selector(".turn.mine .bubble.folded")
+        page.fill("#find", "module_2000")
+        page.wait_for_function(
+            "[...document.querySelectorAll('mark')]"
+            ".some((one) => one.textContent === 'module_2000')")
+        assert page.locator(".turn.mine .bubble.folded").count() == 0
+
+
+def test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight(page_at):
+    """Open, the bar stays at the foot of the pane, so a reader folds the log
+    from its middle. Folded there, the message shrank above them, and they
+    were left a long way under what was left of it. A conversation goes on
+    under the log, or the browser cuts the scroll back to the new end and
+    the message is in sight by chance."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        write_records(daemon, conftest.record("you", LOG), *[
+            conftest.record("claude", f"Reply {n} after the log.")
+            for n in range(80)])
+        daemon.tick()
+        page.wait_for_selector(".turn.mine .foldbar")
+        page.locator(".turn.mine .foldbar").click()
+        page.wait_for_selector(".turn.mine .foldbar.open")
+        page.evaluate("""() => {
+          // From the pane, not `offsetTop`: a `.turn` is positioned, so
+          // that is measured from the turn, and the pane stayed at the top.
+          const pane = document.querySelector('.turnbody');
+          const box = document.querySelector('.turn.mine .foldbox');
+          pane.scrollTop += box.getBoundingClientRect().top
+            - pane.getBoundingClientRect().top + box.offsetHeight / 2;
+        }""")
+        bar = page.locator(".turn.mine .foldbar.open")
+        within = page.evaluate("""() => {
+          const pane = document.querySelector('.turnbody').getBoundingClientRect();
+          const bar = document.querySelector('.foldbar.open').getBoundingClientRect();
+          return bar.bottom <= pane.bottom && bar.top >= pane.top;
+        }""")
+        assert within, "the open bar is not on screen in the middle of the log"
+        bar.click()
+        page.wait_for_selector(".turn.mine .bubble.folded")
+        seen = page.evaluate("""() => {
+          const pane = document.querySelector('.turnbody').getBoundingClientRect();
+          const box = document.querySelector('.turn.mine .foldbox').getBoundingClientRect();
+          return box.bottom > pane.top && box.top < pane.bottom;
+        }""")
+        assert seen, "folding left the message out of sight"

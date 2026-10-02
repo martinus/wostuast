@@ -1,7 +1,7 @@
 """Draw a transcript on the page, save a picture of it, and say what it measured.
 
     python3 tests/shot.py CASE OUT.png [--width 1500] [--height 900]
-                         [--light] [--hover WORDS] [--measure]
+                         [--light] [--hover WORDS] [--eval JS] [--measure]
                          [--part SELECTOR]
 
 This is the first thing to run on a report about how the page looks: build
@@ -29,7 +29,9 @@ session's is. `result` answers the call just above it.
 `--measure` prints, for each block on screen, the gap from the bottom of
 what it shows -- its text, not its box -- to the top of the next block.
 `--hover WORDS` puts the pointer on WORDS first, which is what shows the
-copy button of their turn, and of their code block when they are in one. `--part SELECTOR` is what the picture is of: the
+copy button of their turn, and of their code block when they are in one.
+`--eval JS` runs in the page after that, and the picture waits for what it
+started to settle: a click on a button, a scroll of the pane. `--part SELECTOR` is what the picture is of: the
 transcript pane unless it says otherwise, `#content` for the map beside it
 too, `body` for the whole page.
 """
@@ -127,6 +129,7 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--height", type=int, default=900)
     ask.add_argument("--light", action="store_true")
     ask.add_argument("--hover")
+    ask.add_argument("--eval", dest="script")
     ask.add_argument("--measure", action="store_true")
     ask.add_argument("--part", default=".turnbody")
     said = ask.parse_args(argv)
@@ -158,6 +161,9 @@ def main(argv: list[str]) -> int:
             # turn may be text beside it.
             page.locator(".turnbody .turn", has_text=said.hover) \
                 .get_by_text(said.hover).first.hover()
+        if said.script:
+            page.evaluate(said.script)
+            page.wait_for_function("() => !document.getAnimations().length")
         page.locator(said.part).first.screenshot(path=said.out)
         if said.measure:
             print(f"{'box':>4} {'shows':>5} {'gap':>4}  block")

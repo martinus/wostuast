@@ -68,3 +68,19 @@ def test_it_draws_the_case_and_measures_from_the_text(tmp_path):
     assert int(reply[1]) < int(reply[0]), done.stdout
     # The group sits under the words that announced it.
     assert int(words[2]) < int(second[2]), done.stdout
+
+
+@skip_without_browser
+def test_eval_runs_in_the_page_before_the_picture(tmp_path):
+    """`--eval` is how a picture shows a state a click makes: a message
+    opened, a pane scrolled. It runs before the picture and the measure."""
+    case = tmp_path / "case.txt"
+    case.write_text("you: Do the thing.\nclaude: Done.\n")
+    out = tmp_path / "out.png"
+    gone = "document.querySelectorAll('.turnbody .turn').forEach((t) => t.remove())"
+    done = subprocess.run(
+        [sys.executable, str(HERE / "shot.py"), str(case), str(out),
+         "--measure", "--eval", gone],
+        capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[1:-1] == [], done.stdout
