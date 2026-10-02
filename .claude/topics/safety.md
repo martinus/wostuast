@@ -619,6 +619,24 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   had its own probe with a bare `mkdir`, so on a new machine the directory
   stood at the umask, 0755, until a hook ran (#285).
   `test_doctor_makes_the_state_directory_private`.
+- **One daemon a state directory, held by a lock, not by the port.** A
+  second start on another port ran beside the first (#320): both appended
+  a `Declined` for the same dialog, two renames at once could lose one,
+  and "one send at a time" (`claim`) holds within one daemon, so two
+  pages on two daemons could type into one pane together. `cmd_serve`
+  takes `one_daemon`'s `flock` on `daemon_lock_path()` after
+  `state_dir_trouble` and **before `bring_up_to_date`**, so a second start
+  writes nothing; `serve_page` runs under it and lets go on every way out.
+  `flock`, not a pid file: the kernel lets go when the process dies, so a
+  `kill -9` leaves no lock a start would have to clear or guess about.
+  The file says the pid and, once bound, the page's address (`say_who`),
+  which is what the second start prints. Only `BlockingIOError` means
+  "held": any other `flock` error, a file system with no locks, is said as
+  itself, never as a daemon that runs
+  (`test_a_lock_that_cannot_be_taken_is_not_a_daemon_that_runs`). Tests that call `cmd_serve` get
+  their own state directory, so they never meet each other's lock.
+  `test_a_second_start_says_where_the_first_runs_and_changes_nothing`,
+  `test_a_daemon_that_died_leaves_no_lock_behind`.
 - **The hooks and the status line run the installed copy, not the checkout,
   and a start mends it when the two differ.** `install` copies this file to
   `install_path()`. A reader who pulled and restarted `serve` had a page
