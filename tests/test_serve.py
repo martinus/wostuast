@@ -902,7 +902,7 @@ def in_tmux(ws, served, monkeypatch):
     seen = []
 
     def runner(args, **rest):
-        seen.append(list(args))
+        seen.append(conftest.said(args, rest))
         return ""
 
     monkeypatch.setattr(ws, "run", runner)
@@ -983,10 +983,8 @@ def test_a_post_from_this_page_acts(in_tmux):
                         token=daemon.token, origin="http://127.0.0.1:1234")
     assert status == 200
     assert body["done"] is True
-    assert seen == [
-        ["tmux", "send-keys", "-t", "%7", "-l", "--", "run the tests"],
-        ["tmux", "send-keys", "-t", "%7", "Enter"],
-    ]
+    assert conftest.typed(seen) == ["run the tests"]
+    assert conftest.entered(seen) == 1
 
 
 def test_jump_picks_the_window_and_the_pane(in_tmux):
@@ -1359,7 +1357,7 @@ def test_a_long_paste_goes_in(in_tmux):
     status, body = post(f"{base}/api/session/s1/send",
                         {"text": "x" * 4400}, token=daemon.token)
     assert status == 200 and body["done"] is True
-    assert len(seen) == 2
+    assert conftest.typed(seen) == ["x" * 4400]
 
 
 def test_the_cap_on_a_send_is_in_bytes(ws, in_tmux):
@@ -1377,13 +1375,28 @@ def test_the_cap_on_a_send_is_in_bytes(ws, in_tmux):
     assert seen == []
 
 
-def test_a_message_too_large_to_read_says_that(in_tmux):
+def test_the_cap_counts_what_is_pasted_not_the_controls(in_tmux):
+    """A log full of colour codes is smaller once `typed` takes them out,
+    and that is what is pasted: it was refused for bytes that never go."""
+    daemon, base, seen = in_tmux
+    text = "a\x1b" * 600_000                # 1.2 MB sent, 600 KB pasted
+    status, body = post(f"{base}/api/session/s1/send", {"text": text},
+                        token=daemon.token)
+    assert status == 200, body
+    assert conftest.typed(seen) == ["a" * 600_000]
+
+
+def test_a_message_too_large_to_read_says_that(ws, in_tmux, monkeypatch):
     """A body over `POST_MAX` is never read, so the route sees an empty one --
     and refused it as "there is nothing to send", which is the opposite of
     what happened."""
     daemon, base, seen = in_tmux
+    # Small here: the daemon closes a body it will not read, and a client
+    # still writing megabytes into that socket gets a broken pipe, not the
+    # answer. The cap's size is not what this holds.
+    monkeypatch.setattr(ws, "POST_MAX", 64 * 1024)
     status, body = post(f"{base}/api/session/s1/send",
-                        {"text": "x" * (64 * 1024)}, token=daemon.token)
+                        {"text": "x" * ws.POST_MAX}, token=daemon.token)
     assert status == 413, (status, body)
     assert "large" in body["error"]
     assert seen == []
@@ -1533,13 +1546,17 @@ def test_a_name_needs_the_token_like_every_other_post(ws, served):
     assert ws.read_names() == {}
 
 
-def test_a_name_too_large_to_read_keeps_the_name_there_was(ws, served):
+def test_a_name_too_large_to_read_keeps_the_name_there_was(ws, served, monkeypatch):
     """`asked()` does not read a body over `POST_MAX` and hands the route
     `{}`, and `name` read that as "take the name away": a paste of 70,000
     characters into the rename box answered `{"name": "", "done": true}`
     and emptied `names.json` (#235). It is refused, as `send` and
     `decline` refuse theirs."""
     daemon, base = served
+    # Small here: the daemon closes a body it will not read, and a client
+    # still writing megabytes into that socket gets a broken pipe, not the
+    # answer. The cap's size is not what this holds.
+    monkeypatch.setattr(ws, "POST_MAX", 64 * 1024)
     ws.append_event(event("SessionStart", sid="s1", cwd="/w/one", pane="%7", pid=1))
     daemon.store.refresh()
     post(f"{base}/api/session/s1/name", {"name": "kept"}, token=daemon.token)
@@ -1614,6 +1631,26 @@ def test_a_body_too_large_to_read_does_not_frame_the_next_request(in_tmux):
     assert out.count(b"HTTP/1.") == 1, out[:400]
     assert b"403" in out.split(b"\r\n")[0]
     assert b'"sessions"' not in out
+    assert seen == []
+
+
+def test_a_post_that_may_not_act_is_refused_before_its_body_is_read(in_tmux):
+    """A body may be `POST_MAX`, which is megabytes since a send may be a long
+    log (#328), and any site in the reader's browser can POST to us. Who asks
+    is known from the headers and the socket, so a request without the token
+    is answered before its body is read: here the body never comes, and the
+    answer does, at once. Read first, it waited on the body for as long as
+    the socket allows."""
+    daemon, base, seen = in_tmux
+    request = (b"POST /api/session/s1/send HTTP/1.1\r\n"
+               b"Host: localhost\r\n"
+               b"Content-Type: text/plain\r\n"
+               b"Content-Length: 1000000\r\n"
+               b"\r\n" + b'{"text": "')
+    started = time.monotonic()
+    out = raw_exchange(base, request, wait=4.0, reads=1)
+    assert b"403" in out.split(b"\r\n")[0], out[:200]
+    assert time.monotonic() - started < 3
     assert seen == []
 
 
@@ -1760,8 +1797,9 @@ def test_the_c1_controls_do_not_reach_a_terminal(ws):
     agent wrote. U+2028 is a line break that `"\\n" in text` does not see."""
     sent = []
     ws.tmux_send("%1", "before\u009bafter\u0085and more",
-                 runner=lambda args, **rest: sent.append(args) or "")
-    text = sent[0][-1]
+                 runner=lambda args, **rest: sent.append(
+                     conftest.said(args, rest)) or "")
+    text = conftest.typed(sent)[0]
     assert text == "beforeafterandmore"
     assert "\u009b" not in text and "\u0085" not in text and " " not in text
 
@@ -1877,11 +1915,15 @@ def test_an_answer_for_a_question_no_longer_waiting_presses_nothing(
     assert seen == []
 
 
-def test_an_answer_too_large_to_read_says_that(ws, in_tmux):
+def test_an_answer_too_large_to_read_says_that(ws, in_tmux, monkeypatch):
     """A body over `POST_MAX` is not read, and the route sees `{}`, which
     has no `ask`: it was refused as "that question is no longer waiting",
     and the question was waiting (#254)."""
     daemon, base, seen = in_tmux
+    # Small here: the daemon closes a body it will not read, and a client
+    # still writing megabytes into that socket gets a broken pipe, not the
+    # answer. The cap's size is not what this holds.
+    monkeypatch.setattr(ws, "POST_MAX", 64 * 1024)
     asking(ws, daemon)
     status, body = post(base + "/api/session/s1/answer",
                         {"ask": "toolu_two", "picks": [[1], [1]],
@@ -1953,7 +1995,7 @@ def declining(ws, served, transcript_file, monkeypatch):
     seen, closes = [], [True]
 
     def runner(args, **rest):
-        seen.append(list(args))
+        seen.append(conftest.said(args, rest))
         if args[-1] == "Escape" and closes[0]:
             with open(path, "a") as handle:
                 handle.write(conftest.records(conftest.record(
@@ -1975,10 +2017,6 @@ def declining(ws, served, transcript_file, monkeypatch):
     return daemon, base, seen, closes, key, path
 
 
-def typed(seen):
-    return [one[-1] for one in seen if "-l" in one]
-
-
 def test_a_decline_is_escape_then_the_reason_once_the_dialog_closed(
         ws, declining):
     """Escape declines every dialog -- measured on 2.1.282, where the number
@@ -1991,7 +2029,7 @@ def test_a_decline_is_escape_then_the_reason_once_the_dialog_closed(
                         token=daemon.token)
     assert status == 200 and body["sent"] and body["seen"], body
     assert seen[0][-1] == "Escape"
-    assert typed(seen) == ["Use the ninja build instead"]
+    assert conftest.typed(seen) == ["Use the ninja build instead"]
     daemon.store.refresh()
     session = daemon.store.sessions["s1"]
     assert session.state == "done" and session.permission is None
@@ -2103,7 +2141,7 @@ def test_two_sends_at_once_do_not_mix_in_the_pane(ws, served, monkeypatch):
     seen = []
 
     def runner(args, **rest):
-        seen.append(list(args))
+        seen.append(conftest.said(args, rest))
         time.sleep(0.2)
         return ""
 
@@ -2128,8 +2166,10 @@ def test_two_sends_at_once_do_not_mix_in_the_pane(ws, served, monkeypatch):
     assert sorted(status for status, _ in answers) == [200, 409], answers
     refused = [body for status, body in answers if status == 409][0]
     assert "already being typed" in refused["error"]
-    typed_now = [one[-1] for one in seen]
-    assert len(typed_now) == 2 and typed_now[1] == "Enter", typed_now
+    assert len(conftest.typed(seen)) == 1, seen
+    assert [one[1] for one in seen] == ["send-keys", "load-buffer",
+                                        "paste-buffer", "load-buffer",
+                                        "paste-buffer"], seen
     # And the session is given back: the next send goes in.
     status, _ = post(base + "/api/session/s1/send", {"text": "third"},
                      token=daemon.token)
@@ -2281,10 +2321,14 @@ def test_a_refused_link_is_named_in_the_answer(ws, served):
     assert [one["match"] for one in held["links"]] == [r"OK-(\d+)"]
 
 
-def test_a_setting_too_large_to_read_says_that(ws, served):
+def test_a_setting_too_large_to_read_says_that(ws, served, monkeypatch):
     """`asked()` hands over `{}` for a body it did not read, which is a
     change of nothing, and must not answer as if it were done."""
     daemon, base = served
+    # Small here: the daemon closes a body it will not read, and a client
+    # still writing megabytes into that socket gets a broken pipe, not the
+    # answer. The cap's size is not what this holds.
+    monkeypatch.setattr(ws, "POST_MAX", 64 * 1024)
     status, body = post(f"{base}/api/settings",
                         {"links": [{"match": "x", "url": "https://t/" + "x" * 70000}]},
                         token=daemon.token)

@@ -63,6 +63,14 @@ file back after each, and on Ctrl-C. Read its last line, not its exit
 status alone: `GREEN` is a break no test saw, and "nothing ran" is a
 selection that matched no test, which passes for proof if nobody reads it.
 Keep the breaks list in the scratchpad; it is about one fix.
+- **It deletes the file's bytecode after every write** (`forget_bytecode`),
+  the break and the file put back. Python runs a cached `.pyc` while the
+  source's mtime in whole seconds and its size match, and two breaks in
+  one second that change the size by the same count ran the first one's
+  code: `SEND_MAX = 12000`, then `POST_MAX = 64 * 1024`, said GREEN for the
+  second, which was red alone (#328). **A GREEN that is red alone is this,
+  or a test that leans on another**: run that break by itself before you
+  believe either. `test_no_bytecode_of_a_break_is_left_behind`.
 
 **Playwright.** A hover-only control (`.plus`) needs `click(force=True)`. Wait
 for what the page has drawn, never for a number of seconds; `wait_for_timeout`

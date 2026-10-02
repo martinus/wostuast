@@ -194,6 +194,35 @@ def record(kind, text="", ts="2026-09-18T14:00:00.000Z", tool="Bash",
             "message": {"role": "assistant", "content": [piece]}}
 
 
+def said(args, rest):
+    """What a runner that records keeps of one call: its arguments, and the
+    text it read on stdin as one more. `tmux_send` hands the text to
+    `load-buffer` that way, so a runner that drops `stdin` drops the text."""
+    stdin = rest.get("stdin")
+    return [*args, stdin.decode()] if stdin is not None else list(args)
+
+
+def typed(seen):
+    """The texts `tmux_send` typed, in order: what each `load-buffer` read,
+    leaving out the carriage return that is its Enter."""
+    return [one[-1] for one in seen
+            if one[:2] == ["tmux", "load-buffer"] and one[-1] != "\r"]
+
+
+def entered(seen):
+    """How many times `tmux_send` pressed Enter: a pasted carriage return."""
+    return sum(1 for one in seen
+               if one[:2] == ["tmux", "load-buffer"] and one[-1] == "\r")
+
+
+def into_pane(seen):
+    """Every recorded call that put something into a pane: a key, a paste.
+    `send-keys -X cancel` leaves copy mode and puts nothing in."""
+    return [one for one in seen
+            if (one[:2] == ["tmux", "send-keys"] and "-X" not in one)
+            or one[:2] == ["tmux", "paste-buffer"]]
+
+
 def records(*made):
     """Records from `record`, as the lines of a transcript file."""
     return "".join(json.dumps(one) + "\n" for one in made)
@@ -447,7 +476,7 @@ def in_pane(ws, served, tmp_path, monkeypatch, transcript_file):
     seen = []
 
     def runner(args, **rest):
-        seen.append(list(args))
+        seen.append(said(args, rest))
         return ""
 
     monkeypatch.setattr(ws, "run", runner)

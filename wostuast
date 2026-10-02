@@ -1853,7 +1853,9 @@ def typed(text: str) -> str:
 
 def typing_trouble(text: str, what: str) -> str:
     """Why this text is too long to type, or "". Bytes, because that is what
-    tmux counts: see `SEND_MAX`."""
+    everything on the way counts: see `SEND_MAX`. Handed what `typed` keeps,
+    because that is what is pasted: a log full of colour codes is smaller
+    once they are out."""
     size = len(text.encode("utf-8", "replace"))
     if size > SEND_MAX:
         return (f"{what} is {size} bytes, and the most that can be typed is"
@@ -3175,8 +3177,12 @@ class Transcript:
 
 
 def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT,
-        ok: Sequence[int] = (0,)) -> str | None:
+        ok: Sequence[int] = (0,), stdin: bytes | None = None) -> str | None:
     """Run a command and return its stdout, unchanged. None on any failure.
+
+    `stdin` is what the command reads; without it, the command has the
+    daemon's own, as it always had. `tmux load-buffer -` takes the text of a
+    send that way (see `tmux_send`).
 
     `ok` is the exit statuses that are an answer. Only 0 by default. A caller
     that knows a command says "no" with another status names it: `git
@@ -3209,6 +3215,7 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
             command,
             cwd=cwd or None,
             env=env,
+            input=stdin,
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -3723,11 +3730,6 @@ DIFF_MAX_BYTES = 2 * 1024 * 1024
 #: request thread, never in the tick, so waiting here holds up nothing else.
 DIFF_TIMEOUT = 8.0
 
-#: What a terminal puts around a paste. Inside these a program knows the text
-#: arrived all at once and does not act on its newlines. See `tmux_send`.
-PASTE_START = "\x1b[200~"
-PASTE_END = "\x1b[201~"
-
 #: What `tmux_send` takes out of anything on its way to a terminal: everything
 #: below a space except tab and newline, the delete character, and the C1
 #: block above it. C1 holds NEL (U+0085) and CSI (U+009B), controls a terminal
@@ -3766,8 +3768,14 @@ SETTINGS_MARK = '"__WOSTUAST_SETTINGS__"'
 #: "The tool use was rejected (eg. if it was a file edit, …)".
 REJECTED = "The user doesn't want to proceed with this tool use"
 
-#: The most a POST body may be.
-POST_MAX = 64 * 1024
+#: The most a POST body may be. It holds a send of `SEND_MAX` bytes as JSON:
+#: a newline or a tab is two bytes there, and a control character six
+#: (`\u001b`), which a log with colours is full of -- `tmux_send` takes them
+#: out, but they come in the body first. Six times `SEND_MAX`, and room for
+#: the rest of the body. Only a request that passed `allowed` is read at
+#: all (`route_post`), so a site in the reader's browser cannot make the
+#: daemon read this much.
+POST_MAX = 8 * 1024 * 1024
 
 #: Which answers are packed with gzip: text, never a picture or a video,
 #: which are packed already. Measured on 53,000 made-up file names, 2.4 MB:
@@ -3784,18 +3792,19 @@ PACK_MIN = 1024
 #: than cut: what arrives in the terminal must be what the user wrote, or
 #: nothing.
 #:
-#: Bytes and not characters, because that is what tmux counts. Measured
-#: against tmux 3.4: `send-keys -t %0 -l -- <text>` takes 16,341 bytes of
-#: text and refuses 16,342 with "command too long", and the same bisection
-#: run with `ä` -- two bytes in UTF-8 -- stops at 8,170. The target's name
-#: comes out of the same budget: by session name rather than pane id it was
-#: 16,338. So a cap on `len()` would let 16,000 characters of Japanese
-#: through as 48,000 bytes, and tmux would refuse the lot.
+#: tmux sets no number any more: `tmux_send` hands the text to `load-buffer`
+#: on stdin, not as an argument, and a command line was what tmux 3.4 cut
+#: off at 16,341 bytes (`send-keys -l`). So the number is what the agent
+#: takes. Measured with Claude Code 2.1.287 in tmux 3.4, against a fake
+#: Messages API that recorded each request: 17 KB, 136 KB and 1.36 MB of
+#: log lines each arrived as the one user turn, every byte, the largest in
+#: 1.2 s from the paste to the request. The cap is 1 MiB, under that: a
+#: long log is a few hundred KB, and a megabyte is some 300,000 tokens,
+#: more than most models take, so more would be refused by the API instead.
 #:
-#: 12,000 leaves room for the paste markers, for a longer pane name, and for
-#: a tmux whose number is not this one. It was 4,000 characters, which is
-#: less than one long paste: a reader hit it with 4,400.
-SEND_MAX = 12000
+#: Bytes and not characters, because a byte is what everything on the way
+#: counts, and a cap on `len()` lets three times as much through in Japanese.
+SEND_MAX = 1024 * 1024
 
 #: How much of a permission request the page is sent, counted over every
 #: field of its input. A `Write` carries a whole file, and a row goes to
@@ -6407,30 +6416,68 @@ def tmux_keys(pane: str, keys: Sequence[str],
     return len(keys)
 
 
+def tmux_paste(pane: str, data: bytes, bracket: bool,
+               runner: Callable[..., str | None]) -> bool:
+    """Paste bytes into one pane through a buffer of our own. True when they
+    went in.
+
+    `load-buffer -b <name> -` reads them on stdin, and `paste-buffer -d -r -b
+    <name> -t <pane>` writes them into the pane and deletes the buffer.
+    Buffers belong to the whole tmux server, so the name is ours and never
+    used twice, and a named buffer is never the "most recent" one a reader's
+    own paste key takes. **`-r` is required**: without it tmux turns every
+    newline into a carriage return, which is Enter -- measured in a raw
+    pane. `bracket` is `-p`: see `tmux_send`.
+
+    A paste that fails leaves its buffer: tmux 3.4 keeps it, `-d` or not,
+    when the pane is gone -- measured. So it is deleted then, and after a
+    failed load too, since one that ran out of time may have filled it.
+    """
+    import secrets
+
+    name = f"wostuast-{os.getpid()}-{secrets.token_hex(8)}"
+    flags = ["-p"] if bracket else []
+    if (runner(["tmux", "load-buffer", "-b", name, "-"], stdin=data) is not None
+            and runner(["tmux", "paste-buffer", *flags, "-d", "-r", "-b", name,
+                        "-t", pane]) is not None):
+        return True
+    runner(["tmux", "delete-buffer", "-b", name])
+    return False
+
+
 def tmux_send(pane: str, text: str,
               runner: Callable[..., str | None] | None = None) -> bool:
     """Type text into a pane, then press Enter.
 
-    `-l` sends the text literally, so nothing here escapes anything: an escape
-    of our own would arrive as characters. `--` stops tmux reading a leading
-    dash as an option of its own. Empty text is refused, because a bare Enter
-    into an agent's prompt is a keystroke nobody asked for.
+    **Pasted from a buffer, never typed with `send-keys -l`** (#328).
+    `send-keys` took the text as an argument, and tmux 3.4 refuses a command
+    over 16,341 bytes: a long log could not be sent at all. `tmux_paste`
+    hands it to tmux on stdin, which has no such limit. Empty text is
+    refused, because a bare Enter into an agent's prompt is a keystroke
+    nobody asked for. Four steps, each a scar or a measurement:
 
-    **Except a `;` at the very end.** tmux reads an argument that ends in
-    `;` as the end of a command before `-l` or `--` are looked at: "use
-    foo();" arrived as "use foo()", ";" as nothing but the Enter, and
-    "path\\;" as "path;". That last `;` goes as `\\;`, which tmux turns
-    back into the one `;` and nothing else. Measured on tmux 3.4 with the
-    bytes read out of a pane, for ";", ";;", "a ;", "path\\;" and "a\\\\;":
-    what arrived was what was written. A `;` anywhere else is only a `;`.
-
-    A newline typed into a terminal *is* Enter, so a message of two lines
-    would submit its first line and leave the second sitting on the prompt —
-    measured against a real shell, which ran it. Text with a newline in it is
-    therefore wrapped in the bracketed paste markers, which say "this arrived
-    as a paste, do not act on it yet"; every program that accepts a multi-line
-    prompt understands them. One line is sent exactly as it always was, so a
-    program that does not understand the markers never sees them.
+    1. **`send-keys -X cancel`, which leaves copy mode.** A pane scrolled
+       back with the mouse wheel is in copy mode, and there a paste reaches
+       the program without the paste markers, and the Enter is eaten by the
+       mode. A real bash ran the first line of two and the page said done.
+       It fails when the pane is in no mode, which is the usual answer.
+    2. **The text, as one bracketed paste: `-p`, one line too.** A newline
+       typed into a terminal *is* Enter: a real shell ran the first line of
+       two. The markers say "this arrived as a paste, do not act on it yet".
+       **A long line needs them as much**: 100 KB on one line with no
+       markers reached Claude Code 2.1.287 in pieces, read as several pastes
+       with the Enter inside the last one, so nothing was submitted. With
+       `-p` the same went in five times of five, and logs of 310 KB and
+       930 KB each byte. `-p` adds them only for a program that asked, as
+       Claude Code and a modern shell do; one that did not cannot read
+       them. Markers of our own went on many lines only, and always.
+    3. **Enter, as a pasted carriage return, not `send-keys Enter`.** Under
+       `synchronize-panes` a key goes to every pane of the window, and a
+       paste only to its target -- measured -- so the other panes got a
+       bare Enter, which runs whatever was on their prompt. Without `-p`,
+       or the return would be inside a paste and only a new line.
+    4. Nothing else. stdin is not a command line, so nothing is escaped: a
+       `;` at the end is a `;`, where `send-keys` lost it.
 
     Control characters are taken out first, and this is the one place that has
     to happen. A paste ends at `ESC [ 2 0 1 ~`, so text carrying those bytes
@@ -6444,14 +6491,9 @@ def tmux_send(pane: str, text: str,
     if not pane or not text.strip():
         return False
     runner = runner or run
-    body = text
-    if "\n" in text:
-        body = PASTE_START + text + PASTE_END
-    if body.endswith(";"):
-        body = body[:-1] + "\\;"
-    if runner(["tmux", "send-keys", "-t", pane, "-l", "--", body]) is None:
-        return False
-    return runner(["tmux", "send-keys", "-t", pane, "Enter"]) is not None
+    runner(["tmux", "send-keys", "-X", "-t", pane, "cancel"])
+    return (tmux_paste(pane, text.encode("utf-8"), True, runner)
+            and tmux_paste(pane, b"\r", False, runner))
 
 
 # --- slash commands: what the send box can complete ---------------------------
@@ -7475,12 +7517,18 @@ class Serving:
     def route_post(self) -> None:
         from urllib.parse import urlparse
 
-        body = self.asked()
+        # Who asks is known from the headers and the socket, so a request
+        # that may not act is refused before its body is read: a site in the
+        # reader's browser could otherwise make the daemon read and parse
+        # `POST_MAX` bytes, which is megabytes since a send may be a long
+        # log. The body stays in the socket, so the connection closes.
         if not self.ours():
+            self.close_connection = True
             self.reply_json({"error": "wostuast answers on localhost only"},
                             403)
             return
         if not self.allowed():
+            self.close_connection = True
             if self.stale_page():
                 self.reply_json(
                     {"error": "wostuast was restarted, so this page is out of"
@@ -7489,6 +7537,7 @@ class Serving:
                 self.reply_json({"error": "that did not come from this page"},
                                 403)
             return
+        body = self.asked()
         if self.unread:
             # The route would see `{}` and take it for an empty body: `name`
             # read it as "take the name away".
@@ -7663,7 +7712,7 @@ class Serving:
         reason = reason if isinstance(reason, str) else ""
         if not typed(reason).strip():
             reason = ""
-        why = typing_trouble(reason, "that reason")
+        why = typing_trouble(typed(reason), "that reason")
         if why:
             self.refuse(session_id, 400, why)
             return
@@ -7729,7 +7778,7 @@ class Serving:
         text = body.get("text")
         text = text if isinstance(text, str) else ""
         why = ("there is nothing to send" if not typed(text).strip()
-               else typing_trouble(text, "that"))
+               else typing_trouble(typed(text), "that"))
         if why:
             self.refuse(session_id, 400, why)
             return
