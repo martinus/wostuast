@@ -134,7 +134,10 @@ Judgement, not ceremony. A two-line fix needs neither.
   the promise and the diff, and ask for the input that breaks it. The
   report's own privacy test passed, and such an agent then found six ways
   the reader's text still got through, each with the input that showed it.
-  A test of examples finds what its author thought of.
+  A test of examples finds what its author thought of. **Tell it to try
+  other versions of the tool the promise goes through**: for #331 it
+  built tmux 3.7, where a pasted Escape arrived as `^[`, while every
+  real-pane test ran on the 3.4 the container had.
 - **`/simplify`** after a pass that added a lot of code, or that wrote a
   third spelling of something the codebase already had a word for. It has
   twice found real defects in code that was already merged.
