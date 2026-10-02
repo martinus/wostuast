@@ -36,11 +36,16 @@ carrying the whole summary — which went into the transcript as a prompt,
 because it is a `user` record. A claim about a payload is worth what the
 sample behind it is worth.
 
-**A measurement that needs a live Claude Code session, or the owner's
-`~/.claude`, is the owner's to take.** A cloud session has no login for a
-nested Claude Code, and listing `~/.claude` or the environment there is
-refused as credential exploration -- and the refusal covers every other
-way to the same answer. Write the probe as a short script into the
+**A live Claude Code is measured against a fake Messages API, with
+`tests/claude_pane.py`**: a home of its own, a fake key, the API on
+127.0.0.1, a status line and hooks that keep what they are handed -- no
+login and nothing of the owner's. This bullet said a cloud session could
+not run one; one session then measured four issues this way: what a long
+paste does in the prompt (#328), the keys of a dialog (#331), what a typed
+`/model` writes and the status line's `effort` (#337, #338). **What only
+the owner's `~/.claude` holds is still the owner's to take**: listing it,
+or the environment, is refused as credential exploration -- and the
+refusal covers every other way to the same answer. Write the probe as a short script into the
 issue, say what its output answers, and leave the issue open for the
 result: #266 holds the shape. Plugin skills (#268) are not read for the
 same reason.
