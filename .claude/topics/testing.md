@@ -146,7 +146,11 @@ gives Playwright a turn, so the `hold` handler that should let the second
 POST through never ran and the test waited out its timeout. Wait with
 `page.expect_response(...)` first, then read the file:
 `test_two_quick_changes_reach_the_file_in_the_order_they_were_made` is the
-shape. **A mark that
+shape. **A reload after a setting waits for `kept()` first**: the page
+shows a choice at once and writes it by a POST it does not wait on, so a
+reload before the POST landed lost it, and
+`test_the_tab_width_and_wrap_are_the_readers_and_are_remembered` went red
+on CI (#385). With the POST taken away, the reload shows the old value. **A mark that
 shows for a set time is written down by the page, not waited for**: the
 copy button's tick (`putCodeCopies`, `.copycode.done`) lasts 1.4 s, and
 `test_a_code_block_copies_itself_from_a_button_that_shows_on_hover` spent
