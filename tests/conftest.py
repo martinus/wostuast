@@ -38,6 +38,15 @@ def ws(tmp_path, monkeypatch):
     monkeypatch.setenv("WOSTUAST_CONFIG", str(tmp_path / "config"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("NO_COLOR", "1")
+    # No test reaches the tmux it runs under. A rename types `/rename` into
+    # the session's pane (#351), and a page test that renames one in `%1`
+    # typed it into the reader's own pane when the suite ran inside tmux.
+    # A plain `tmux` talks to the server `TMUX` names, so it names one that
+    # is not there. Not `TMUX_TMPDIR`: a socket under `tmp_path` is longer
+    # than a socket's path may be, and `test_tmux.py`'s own server did not
+    # start. A test that wants a real tmux starts its own and sets `TMUX`
+    # after this.
+    monkeypatch.setenv("TMUX", f"{tmp_path}/no-tmux-here,0,0")
     # A bare start writes the program, the hook file and the hooks (#275),
     # and every test that serves starts that way: never into a real home.
     monkeypatch.setattr(wostuast, "install_path",

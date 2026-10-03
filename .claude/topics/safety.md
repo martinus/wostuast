@@ -43,6 +43,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   send to each go at once: their pastes and Enters made one prompt, 20
   times of 20 (#331). `claim` takes the pane too (`typing_panes`), and
   `release` gives it back. `test_two_sessions_in_one_pane_are_typed_into_one_at_a_time`.
+  **A rename types too** (`type_rename`, #351): `/rename <name>` and Enter,
+  through `holding` like a send, refused when the pane is held, never
+  queued. The name goes through `clean_name` first -- one line, no
+  controls, `NAME_MAX` -- because a newline in it was an Enter in the pane
+  and the rest of the name a prompt. **And no backslash at its end**:
+  Claude Code reads a backslash and Enter as a new line, so `/rename foo\`
+  stayed in the box unsent and the reader's next message became the rest
+  of the name. `test_a_rename_waits_for_nothing_already_being_typed`,
+  `test_a_rename_is_typed_on_one_line`, `test_a_name_ending_in_a_backslash_loses_it`.
   `sending` holds the sessions a send is on its way to, and `submitReview`,
   `sendTyped`, `submitAsk` and `submitDecline` all go through it
   (`startSending`, `doneSending`). **Not "`submitAsk` disables its button",

@@ -2441,3 +2441,140 @@ def test_a_snooze_needs_the_token_like_every_other_post(ws, served):
                      token=daemon.token)
     assert status == 404
     assert ws.read_snoozed() == {}
+
+
+# --- a rename on the page types /rename (#351) ----------------------------------
+
+
+def renamed(base, daemon, name):
+    return post(f"{base}/api/session/s1/name", {"name": name}, token=daemon.token)
+
+
+def test_a_rename_on_the_page_renames_the_session_in_claude_code(in_tmux):
+    """The reader asked for one name in both places. `/rename` at the
+    prompt starts no turn (measured, 2.1.288), and it is typed as a send
+    is: one paste, then Enter."""
+    daemon, base, seen = in_tmux
+    status, body = renamed(base, daemon, "the parser")
+    assert status == 200 and body["name"] == "the parser"
+    assert body["kept_here"] == ""
+    assert conftest.typed(seen) == ["/rename the parser"]
+    assert conftest.pressed(seen) == ["Enter"]
+
+
+def test_a_rename_is_typed_while_a_turn_runs(in_tmux, ws):
+    """Measured: during a turn `/rename` is done at once and the turn goes
+    on, so a working session is no reason to keep the name to the page."""
+    daemon, base, seen = in_tmux
+    ws.append_event(event("UserPromptSubmit", prompt="go", pane="%7", pid=1))
+    daemon.store.refresh()
+    _, body = renamed(base, daemon, "busy one")
+    assert conftest.typed(seen) == ["/rename busy one"]
+
+
+def test_a_rename_types_nothing_into_a_session_that_waits_on_you(in_tmux, ws):
+    """A dialog's cursor is on "1. Yes", so the Enter would approve it. The
+    name is kept on the page, and the answer says why there are two."""
+    daemon, base, seen = in_tmux
+    ws.append_event(event("PermissionRequest", tool_name="Bash", pane="%7",
+                          pid=1, tool_input={"command": "rm -rf build"}))
+    daemon.store.refresh()
+    status, body = renamed(base, daemon, "careful")
+    assert status == 200 and body["name"] == "careful"
+    assert "permission dialog" in body["kept_here"]
+    assert conftest.into_pane(seen) == []
+    # The page's alone: a name Claude Code shows later does not undo it.
+    ws.write_status("s1", ws.Status(ts=2.0, name="something else"))
+    daemon.store.refresh()
+    assert daemon.store.rows[0]["name"] == "careful"
+
+
+def test_a_rename_types_nothing_while_a_question_is_on_screen(in_tmux, ws):
+    """An `AskUserQuestion` is on screen from its `PreToolUse`, a moment
+    before the `PermissionRequest` turns the row amber, and its keys are
+    digits and Enter."""
+    daemon, base, seen = in_tmux
+    ws.append_event(event("PreToolUse", tool_name="AskUserQuestion", pane="%7",
+                          pid=1, tool_use_id="q1", tool_input={"questions": [
+                              {"question": "Which?", "header": "Pick",
+                               "multiSelect": False,
+                               "options": [{"label": "A", "description": ""},
+                                           {"label": "B", "description": ""}]}]}))
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].asking
+    assert daemon.store.sessions["s1"].state == "working"
+    _, body = renamed(base, daemon, "later")
+    assert body["kept_here"] == "it waits on you in the terminal"
+    assert conftest.into_pane(seen) == []
+
+
+def test_a_rename_types_nothing_when_the_name_is_taken_away(in_tmux, ws):
+    """An empty name gives the row back Claude Code's name, which has
+    nothing to tell Claude Code. A name equal to the one the status line
+    shows is typed all the same: after a `/rename` at an idle prompt the
+    status line is not run again until the next turn, so it can be stale."""
+    daemon, base, seen = in_tmux
+    ws.write_status("s1", ws.Status(ts=1.0, name="its title"))
+    daemon.store.refresh()
+    renamed(base, daemon, "")
+    assert conftest.into_pane(seen) == []
+    renamed(base, daemon, "its title")
+    assert conftest.typed(seen) == ["/rename its title"]
+
+
+def test_a_name_ending_in_a_backslash_loses_it(in_tmux):
+    """Claude Code reads a backslash and then Enter as a new line: `/rename
+    foo\\` stayed in the prompt box unsent, and the reader's next message
+    was taken as the rest of the name (measured, 2.1.288)."""
+    daemon, base, seen = in_tmux
+    _, body = renamed(base, daemon, "foo\\ \\")
+    assert body["name"] == "foo"
+    assert conftest.typed(seen) == ["/rename foo"]
+
+
+def test_a_rename_is_typed_on_one_line(in_tmux):
+    """A newline in the name would be an Enter in the pane: `/rename` with
+    half a name, and the rest a prompt."""
+    daemon, base, seen = in_tmux
+    _, body = renamed(base, daemon, "two\nlines")
+    assert body["name"] == "two lines"
+    assert conftest.typed(seen) == ["/rename two lines"]
+
+
+def test_a_rename_waits_for_nothing_already_being_typed(in_tmux):
+    """It goes through the pane's lock, as a send does: refused, never
+    queued, and the name is the page's until the next try."""
+    daemon, base, seen = in_tmux
+    assert daemon.claim("s1", pane="%7") == ""
+    try:
+        _, body = renamed(base, daemon, "later")
+    finally:
+        daemon.release("s1")
+    assert "already being typed" in body["kept_here"]
+    assert body["name"] == "later"
+    assert conftest.into_pane(seen) == []
+
+
+def test_a_session_outside_tmux_is_renamed_on_the_page_only(ws, served):
+    daemon, base = served
+    ws.append_event(event("SessionStart", sid="s1", cwd="/w/one", pane="", pid=1))
+    daemon.store.refresh()
+    status, body = renamed(base, daemon, "here")
+    assert status == 200 and body["name"] == "here"
+    assert body["kept_here"] == "this session is not in tmux"
+
+
+def test_a_rename_types_nothing_into_an_mcp_form(in_tmux, ws):
+    """An MCP form says it is there only through a notification, and it
+    has no `permission` for `cannot_type` to see: the row needing you is
+    the one sign, and `/rename` and Enter would fill the form and submit
+    it."""
+    daemon, base, seen = in_tmux
+    ws.append_event(event("Notification", notification_type="elicitation_dialog",
+                          message="the server asks", pane="%7", pid=1))
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].state == "needs_you"
+    assert daemon.store.sessions["s1"].dialog is None
+    _, body = renamed(base, daemon, "later")
+    assert body["kept_here"] == "it waits on you in the terminal"
+    assert conftest.into_pane(seen) == []

@@ -900,10 +900,10 @@ def test_an_alert_switched_on_mid_turn_still_reports_that_turn(ws, page_at):
 
 
 def test_an_alert_names_the_session_as_its_row_does(ws, page_at):
-    """The row and the tab's title name a session by `rowName`: the reader's
-    name, or else where it stands. The alerts used `label`, which leads with
-    the title Claude Code writes from the first prompt -- a title `/rename`
-    never reaches -- so the alert named a session the list did not."""
+    """The row and the tab's title name a session by `rowName`, and so do
+    the alerts. They used `label`, which led with Claude Code's title while
+    the row showed where the session stood, so the alert named a session the
+    list did not. Both are Claude Code's name now (#351)."""
     daemon, path = page_at
     with alerts_page(path) as page:
         page.wait_for_function("state.sessions.length === 1")
@@ -925,8 +925,8 @@ def test_an_alert_names_the_session_as_its_row_does(ws, page_at):
         name = page.evaluate("rowName(state.sessions[0])")
         titles = [one[0] for one in page.evaluate("window.__told")]
         assert titles == [name + " has finished", name + " needs you"], titles
-        # The fixture's status line names it; that name is not the row's.
-        assert not any("A session" in one for one in titles), titles
+        # The fixture's status line names it, and that is the row's name.
+        assert name == "A session"
 
 
 def test_the_two_switches_are_remembered_apart(page_at, ws):
@@ -1083,7 +1083,7 @@ def rows_at(ws, served, monkeypatch, tmp_path):
     ws.append_event(conftest.event("SessionEnd", sid="old",
                                    cwd=str(places["old"]), reason="logout",
                                    ts=now - 5))
-    # The title Claude Code writes from the first prompt. It is not the row's.
+    # The title Claude Code wrote, which the row shows (#351).
     ws.write_status("fresh", ws.Status(ts=now, name="A generated title"))
     daemon.store.rename("named", "rule work")
     daemon.store.refresh()
@@ -1123,16 +1123,15 @@ def test_a_row_says_its_name_where_it_is_its_branch_and_when(rows_at):
     """The name, the repository and the worktree, the branch and what git
     counts, and the time -- and the state nowhere but the colour and the
     group: a word at the top and "waiting for input" at the foot said it a
-    third and a fourth time, and the dot a fifth. A name not given is where
-    the session stands, never the title Claude Code wrote, which `/rename`
-    does not reach and which went stale beside the branch."""
+    third and a fourth time, and the dot a fifth. A name not given here is
+    the one Claude Code shows (#351): the reader asked for one name in both
+    places, and a rename on the page reaches it now, by `/rename`."""
     _, _, places = rows_at
     with open_rows(rows_at) as page:
         rows = page.evaluate(READ_ROWS)
         named, fresh = rows["named"], rows["fresh"]
         assert named["name"] == "rule work"
-        assert fresh["name"] == "agent/bluefox"
-        assert "A generated title" not in fresh["text"]
+        assert fresh["name"] == "A generated title"
         # Every row, named or not, says its repository and worktree, and
         # a hover says where each one is.
         assert (named["repo"], named["tree"]) == ("agent", "richpalm")
@@ -1198,7 +1197,7 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
     with open_rows(rows_at) as page:
         page.dblclick('.row[data-id="fresh"] .name')
         box = page.locator('.row[data-id="fresh"] input.rowname')
-        assert box.input_value() == "agent/bluefox"
+        assert box.input_value() == "A generated title"
         # No more than the daemon keeps: a longer paste reached it (#235).
         assert box.evaluate("b => b.maxLength") == ws.NAME_MAX
         page.keyboard.type("retry work")
@@ -1229,7 +1228,7 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
         assert page.locator('.row[data-id="idle"] .name').inner_text() \
             == "agent/oakleaf"
         # Enter on the name it came with is not a name chosen: kept, it
-        # would stop following the worktree for good.
+        # would stop following Claude Code's name for good.
         page.keyboard.press("e")
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)          # proving nothing was sent
@@ -1546,3 +1545,21 @@ def test_z_on_a_session_that_does_not_need_you_says_why(page_at):
         page.wait_for_function("window.__said.length > 0")
         assert "only a session that needs you" in page.evaluate("window.__said")[-1]
         assert not page.is_visible(".row .snooze")
+
+
+def test_a_rename_that_could_not_reach_claude_code_says_so(rows_at):
+    """`named` waits on a dialog, so `/rename` is not typed into it, and the
+    name is the page's alone until Claude Code's changes (#351). The reader
+    asked for one name in both places, so the page says why there are two."""
+    daemon, _, _ = rows_at
+    with open_rows(rows_at) as page:
+        spy_on_note(page)
+        page.dblclick('.row[data-id="named"] .name')
+        page.keyboard.press("Control+a")
+        page.keyboard.type("dialog work")
+        page.keyboard.press("Enter")
+        page.wait_for_function("window.__said.length > 0")
+        said = page.evaluate("window.__said")[-1]
+        assert said.startswith("renamed on this page only: ")
+        assert "permission dialog" in said
+        assert daemon.store.names.get("named") == "dialog work"

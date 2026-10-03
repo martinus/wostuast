@@ -89,6 +89,7 @@ bullets beside it are the same part's other scars.
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
 | `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/sidebar: a snooze is a mark on one wait |
+| `Session.title`, `first_prompt`, `Store.page_name`, `Store.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/sidebar, the name bullet; topics/daemon-and-page for `name`; topics/safety for the typing |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `iconPicture`, `tellAbout`, `waitsFor`, `shown_prompt`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `putCodeCopies`, `foldedHead`, `putFoldBar` | topics/daemon-and-page: the transcript's shape |
 | `Commands`, `command_used`, `front_matter`, `read_command`, `project_dirs`, `claude_dir`, `slashWord`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
@@ -116,7 +117,8 @@ over HTTP + SSE. The page shows a session list and three tabs: Transcript, Files
 Review, which is the diff with the review written on it (`data-tab="diff"`).
 Four things go back to the terminal, all through tmux: jump, send, the
 keys that answer a question, and a No to a permission dialog, which is an
-Escape and then a send. Nothing else writes to a
+Escape and then a send. A rename on the page is a send of `/rename` (#351).
+Nothing else writes to a
 terminal. Nothing owns the agent process —
 interrupt is a keystroke, not a signal.
 

@@ -36,6 +36,19 @@ carrying the whole summary — which went into the transcript as a prompt,
 because it is a `user` record. A claim about a payload is worth what the
 sample behind it is worth.
 
+**The session's name** (#351, read from the 2.1.288 binary and
+measured): Claude Code shows `agentName || customTitle || aiTitle ||
+summary || first prompt || … || sessionId.slice(0, 8)` (its `fq`). The
+status line's `session_name` is `customTitle ?? aiTitle` (`Nf`, `WK`).
+`/rename` writes `{"type":"custom-title","customTitle":…}` and
+`{"type":"agent-name","agentName":…}` with the same name, fires no hook,
+and both records are written again at the end of every turn. No
+`ai-title` record was seen here: `claude_pane.py` sets
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, and the remote sessions on this
+machine are named by `/rename`. Its shape is the binary's,
+`{"type":"ai-title","aiTitle":…}`, and nothing here reads it from a
+transcript: the status line hands it over.
+
 **A live Claude Code is measured against a fake Messages API, with
 `tests/claude_pane.py`**: a home of its own, a fake key, the API on
 127.0.0.1, a status line and hooks that keep what they are handed -- no

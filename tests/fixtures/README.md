@@ -170,7 +170,7 @@ not. The fields wostuast reads or might read:
 
 | Field | Holds |
 | --- | --- |
-| `session_id`, `session_name` | the id, and the name `/rename` sets |
+| `session_id`, `session_name` | the id, and Claude Code's name for the session: what `/rename` set, else the title it wrote itself (`customTitle ?? aiTitle`, 2.1.288). It follows a `/rename` at once. |
 | `model.display_name` | "Opus 5" |
 | `model.id` | "claude-opus-5-5", the full id `/model` takes (2.1.287) |
 | `effort.level` | "low", "medium", "high", "xhigh" or "max"; no `effort` at all for Haiku (2.1.287) |

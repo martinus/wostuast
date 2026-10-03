@@ -240,11 +240,38 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     dot said it three more times. Only a finished row keeps the word,
     because "ended" and "killed" share one group and one grey. The pulse
     that was the dot's is the needs-you row's own now.
-  - **The name is the reader's, and until they give one, `place`**
-    (`rowName`). Never the title Claude Code writes from the first prompt:
-    `/rename` does not reach it, so it went stale beside the branch -- a
-    row named after one ticket over a branch named after another. The
-    **It wears the sans face**: in the fixed
+  - **The name is the one Claude Code shows** (`rowName`, `Session.title`,
+    #351): the reader's from the page while it is the newer one, then the
+    status line's `session_name` (`customTitle ?? aiTitle`), then the first
+    prompt that is not a command (`first_prompt`), then `place`. **This
+    reversed a rule**: the row showed `place` until the reader named it,
+    because Claude Code's title was written once from the first prompt and
+    went stale beside the branch -- a row named after one ticket over a
+    branch named after another. The reader asked for one name in both
+    places, and a rename on the page reaches Claude Code now, by `/rename`,
+    so a stale title is one keystroke from right. The row's second line
+    still says where it stands.
+    **A typed name bridges; a name nothing was typed for stands**
+    (`Store.page_name`). A name the page typed as `/rename` is kept with
+    Claude Code's name just before (`Store.over`) and shown until that
+    moves: then the status line carries ours, or a later terminal
+    `/rename`. The bridge is long -- at an idle prompt Claude Code runs the
+    status line again only at the next turn. A name nothing could be typed
+    for is the page's alone and stands until the reader changes it, and so
+    is the one a `/clear` moves (`link_clear`): Claude Code does not carry
+    a `/rename` into the new session. **"Last wins" against the terminal
+    was built and taken out**: the status line says what the name is, not
+    when it was set, and with the stale status above a rename made before
+    the page's looked like one made after it and dropped the reader's. An
+    empty `over` taken as "Claude Code's first guess" swallowed a real
+    `/rename` the same way. **`page_name` never writes**: `settle` runs in
+    `ls` and `wait` as well, each with its own copy of the names, and one
+    that wrote the file lost a name the daemon had just been given.
+    `Store.rename`, the one writer, prunes a typed name Claude Code took.
+    `test_a_typed_name_stands_until_claude_codes_moves`,
+    `test_a_name_nothing_was_typed_for_stands_until_the_reader_changes_it`,
+    `test_reading_the_names_writes_nothing`.
+    The **It wears the sans face**: in the fixed
     face it was half as wide again as the lines under it, and the reader
     said so. The age beside it stays fixed, so its digits do not dance.
   - **A ticket in the name, the worktree or the branch is a link**, by
