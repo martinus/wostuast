@@ -17,10 +17,19 @@ time here than on the fix.
      "tests": ["tests/test_serve.py::test_a_transcript_push_leaves_under_the_lock"]}
 
 `tests` is what pytest is handed: node ids, files, or `-k` and its
-expression. Every break is put back before the next one, and on Ctrl-C.
-A break is proven when at least one selected test failed. It is not when
-all passed, when nothing was selected, or when the old text is not in the
-file exactly once. The exit status is 0 only when every break was proven.
+expression. Every break is put back before the next one, on Ctrl-C, and
+on a `kill`. A break is proven when at least one selected test failed. It
+is not when all passed, when nothing was selected, when the old text is not
+in the file exactly once, or when the tests ran past `timeout` seconds
+(an optional key, 300 by default). The exit status is 0 only when every
+break was proven.
+
+A break that makes a test wait for ever is not proven: it is a test with no
+time limit, and CI would hang on it the same way. Give the test one -- a
+thread joined with a timeout, a `wait_for` -- so the break turns it red.
+Before this, a FIFO named like a skill hung the run, the run was stopped
+with `kill`, and the break stayed in `wostuast`: the file was put back
+only on Ctrl-C.
 
 `WOSTUAST_WAIT` is 5000 unless it is set already, so a break that makes the
 page wait for something that never comes fails in five seconds, not thirty.
@@ -31,6 +40,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -77,17 +87,29 @@ def one(entry: dict, env: dict) -> tuple[bool, str]:
     found = text.count(entry["old"])
     if found != 1:
         return False, f"old text is in {path} {found} times, not once"
+    limit = entry.get("timeout", 300)
     try:
         path.write_bytes(text.replace(entry["old"], entry["new"]).encode("utf-8"))
         forget_bytecode(path)
-        ran = subprocess.run(
+        # A session of its own, so a timeout or a kill takes the browsers
+        # and daemons the tests started with it, not pytest alone.
+        tests = subprocess.Popen(
             [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
              *entry["tests"]],
-            capture_output=True, text=True, env=env)
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            env=env, start_new_session=True)
+        try:
+            printed, _ = tests.communicate(timeout=limit)
+        except BaseException:
+            os.killpg(tests.pid, signal.SIGKILL)
+            tests.wait()
+            raise
+    except subprocess.TimeoutExpired:
+        return False, f"HUNG   past {limit} s -- give the test a time limit"
     finally:
         path.write_bytes(was)
         forget_bytecode(path)
-    failed, passed = counts(ran.stdout + ran.stderr)
+    failed, passed = counts(printed)
     if failed:
         return True, f"red    {failed} failed, {passed} passed"
     if not passed:
@@ -102,6 +124,9 @@ def main(argv: list[str]) -> int:
     breaks = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
     env = dict(os.environ)
     env.setdefault("WOSTUAST_WAIT", "5000")
+    # A `kill` puts the file back as Ctrl-C does: it raises in here, and
+    # `one`'s `finally` runs.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     proven = 0
     for index, entry in enumerate(breaks):
         ok, line = one(entry, env)

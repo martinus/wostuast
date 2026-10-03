@@ -77,10 +77,20 @@ one you make, the test is about something else than you think.
 **`tests/perturb.py` does the breaking.** Each break in its JSON list names
 the tests it should turn red, and only those run: the whole file for each
 break cost 7 to 40 s a break, and one fix had twelve breaks. It puts the
-file back after each, and on Ctrl-C. Read its last line, not its exit
-status alone: `GREEN` is a break no test saw, and "nothing ran" is a
-selection that matched no test, which passes for proof if nobody reads it.
+file back after each, on Ctrl-C and on a `kill`. Read its last line, not
+its exit status alone: `GREEN` is a break no test saw, and "nothing ran" is
+a selection that matched no test, which passes for proof if nobody reads it.
 Keep the breaks list in the scratchpad; it is about one fix.
+- **`HUNG` is a test with no time limit, not a proof.** A break gets
+  `timeout` seconds, 300 unless the break says so, and then its tests are
+  stopped and the file put back. A FIFO named like a skill made the listing
+  block, the test with it, and the run: it was stopped with `kill`, which
+  ran no `finally` then, and the break stayed in `wostuast` until a diff
+  against HEAD found it. Give the test a limit of its own -- the call in a
+  thread joined with a timeout, as `test_a_fifo_named_like_a_skill_is_not_listed`
+  does -- so that the break turns it red, here and in CI.
+  `test_a_break_that_hangs_a_test_is_put_back_and_said`,
+  `test_a_kill_puts_the_file_back`.
 - **It deletes the file's bytecode after every write** (`forget_bytecode`),
   the break and the file put back. Python runs a cached `.pyc` while the
   source's mtime in whole seconds and its size match, and two breaks in

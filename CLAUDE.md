@@ -444,6 +444,9 @@ reliable shape when making several edits at once. Three scars on that shape:
 - **Chain the tests after the script with `&&`.** A failed `assert` stops
   the script before its later edits, and three runs under load then tested
   code that had not changed.
+  - **A pipe's status is its last command's.** `pytest … | tail -1 && …` ran
+    the next step after red tests, because `tail` succeeded. Put
+    `set -o pipefail;` first, or read the count before the next step.
 - **Grep for a name before you define it**: a second top-level `def` or
   `function` silently replaces the first. `test_no_name_is_defined_twice`
   holds it now; `load_settings` was written twice in one session. It runs
