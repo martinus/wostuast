@@ -170,7 +170,12 @@ what the stop hook asks for -- it wants every change committed and pushed,
 and a push to the branch would restart CI on the open pull request. One
 session merged fifteen pull requests this way, each built while the one
 before it was in CI. `git worktree remove` each one when its pull request
-is merged.
+is merged. **Base each worktree on the commit of the one before it, not on
+`main`**, when they will land in a row: the commits then go onto `main`
+one after another with no conflict. Built side by side from `main`, #355
+and #351 each added a session field, a CSS rule, a map row and a block of
+tests at the same places, and the second one met five conflicting files
+after the first had merged.
 
 ### 8. Merge, reset, and read the list again
 

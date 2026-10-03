@@ -19,6 +19,7 @@ nothing each time, in a scratchpad that stays behind on the machine.
         cc.turns()                          # what the API was asked, by turn
         cc.statuses()[-1]["effort"]         # what the status line received
         cc.ask("Bash", {"command": "touch x", "description": "x"})
+        cc.busy(25)                         # a turn that runs for 25 s
         cc.paste(b"\\x1b")                   # a key, as its bytes
         cc.screen()
 
@@ -242,6 +243,18 @@ class ClaudePane:
         self.api.next_call = {"id": f"toolu_{time.monotonic_ns()}",
                               "name": tool, "input": given}
         self.send(prompt)
+
+    def busy(self, seconds: int = 25, prompt: str = "go") -> None:
+        """Start a turn that is still running when this returns: its answer
+        is `sleep <seconds>` in Bash, for "what does X do while a turn
+        runs" (#351). `sleep` needs no dialog, even in manual mode (2.1.288),
+        so waiting for one let the turn end first. And not
+        `wait_for_turns(2)`: the second request is the one after the tool's
+        result, when the turn is all but over."""
+        self.ask("Bash", {"command": f"sleep {seconds}", "description": "wait"},
+                 prompt)
+        if not self.wait_for(f"sleep {seconds}", 30):
+            raise TimeoutError("the turn never started:\n" + self.screen())
 
     def turns(self) -> list[dict]:
         """The agent's own requests, in order: those that offer tools."""

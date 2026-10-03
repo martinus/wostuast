@@ -1489,6 +1489,12 @@ def test_every_colour_outside_the_palette_is_named(ws):
     read something.
     """
     loose = sorted(set(COLOUR.findall(stylesheet(ws.PAGE))))
+    # An issue's number in a CSS comment reads as a colour too: "(#352)"
+    # and "(#355)" each failed this in one session, with the rule already
+    # in CLAUDE.md. Say so, and the fix is one word.
+    issues = [one for one in loose if re.fullmatch(r"#\d{3,4}", one)]
+    assert not issues, (f"an issue in a CSS comment is written `issue 352`,"
+                        f" not `#352`, or it reads as a colour: {issues}")
     assert not loose, f"write these as a variable in the palette: {loose}"
 
 
