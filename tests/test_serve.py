@@ -2653,3 +2653,33 @@ def test_the_last_answer_is_asked_for_and_cut(ws, served):
     with pytest.raises(urllib.error.HTTPError) as gone:
         get(base + "/api/session/nope/last")
     assert gone.value.code == 404
+
+
+
+def test_a_turn_is_saved_by_a_post_and_listed_by_a_get(ws, served, monkeypatch):
+    """A file of ours and no terminal. The list is asked for when it opens;
+    the pushes carry only how many."""
+    daemon, base = served
+    typed = []
+    monkeypatch.setattr(ws, "run", lambda args, **rest: typed.append(args) or "")
+    ws.append_event(event("SessionStart", pane="%7", ts=time.time()))
+    daemon.store.refresh()
+    url = base + "/api/session/s1/save"
+    turn = {"seq": 2, "ts": 1234.0, "text": "Keep this.", "save": True}
+    assert post(url, turn, token="nope")[0] == 403
+    for wrong in (dict(turn, seq=True), dict(turn, seq=-1), dict(turn, ts="x")):
+        status, body = post(url, wrong, token=daemon.token)
+        assert status == 400 and "saved turn" in body["error"], (wrong, body)
+    status, body = post(url, turn, token=daemon.token)
+    assert status == 200 and body["saved"][0]["text"] == "Keep this.", body
+    status, listed = get(base + "/api/saved")
+    assert status == 200 and [e["seq"] for e in listed["saved"]] == [2]
+    assert daemon.sessions_payload()["saved"] == 1
+    # A session the daemon has forgotten: its turn cannot be saved, and can
+    # still be taken off the list.
+    gone = base + "/api/session/gone/save"
+    assert post(gone, turn, token=daemon.token)[0] == 404
+    daemon.store.save({"id": "gone", "seq": 1, "ts": 5.0, "text": "", "at": 0.0}, True)
+    status, body = post(gone, dict(turn, ts=5.0, save=False), token=daemon.token)
+    assert status == 200 and [e["id"] for e in body["saved"]] == ["s1"], body
+    assert not typed

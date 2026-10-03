@@ -92,6 +92,7 @@ bullets beside it are the same part's other scars.
 | `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/sidebar: a snooze is a mark on one wait |
 | `Session.unread`, `ended_at`, `seen_at`, `Store.see`, `seen_path`, `read_seen`, `setUnread`, `markSeen`, `keptUnread` | topics/sidebar: unread is a mark on a finished turn |
 | `putNewLine`, `landOnNew`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |
+| `saved_path`, `saved_entry`, `Store.save`, `SAVED_MAX`, `SAVED_PREVIEW`, `putSave`, `drawSaved`, `takeSaved`, `askSaved`, `goToTs` | topics/sidebar: a saved turn |
 | `last_answer`, `Serving.last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `drawFeedLink`, `state.feed`, `infeed` | topics/sidebar: "All unreads" |
 | `remind_at`, `Store.remind`, `reminders_path`, `REMIND_MOST`, `reminderDue`, `reminderSet`, `armReminders`, `endReminder`, `serverNow` | topics/sidebar: a reminder is the snooze's twin with a clock |
 | `Session.title`, `first_prompt`, `Store.page_name`, `Store.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/sidebar, the name bullet; topics/daemon-and-page for `name`; topics/safety for the typing |

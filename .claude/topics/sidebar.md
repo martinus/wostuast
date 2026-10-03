@@ -59,6 +59,25 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   entry that no longer holds is pruned on the next write. Its POST touches
   no terminal, and carries the token as every POST does.
   `tests/test_store.py`, `test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again`.
+- **A saved turn is its session and its moment, and the start of its
+  words** (#377). `seq` is a place in one reading (topics/daemon-and-page,
+  the link bullet), so saving the same answer after a resume would make two
+  entries, and "open" would land on another block: `Store.save` keys on
+  `id` and `ts`, and `landOnBlock` looks the moment up (`goToTs`) and falls
+  back on nothing, not on the wrong block. The entry keeps the first
+  `SAVED_PREVIEW` characters, so the list (`GET /api/saved`, asked for when
+  it opens; the pushes carry only the count) reads no transcript. Kept for
+  a session gone from the list, without "open". `saved_entry` checks every
+  entry, from the disk and from a POST alike. **Taking one off needs no
+  session** (`POST_VERBS` gives `save` "", and `Serving.save` asks `known`
+  only to save): registered "known", "done" on a turn of a forgotten
+  session was a 404, and the entry could never go.
+  - **The bookmark stands before the name** (`putSave`): the column is
+    64 px and right-aligned. A word beside "copy" pushed "copy" out of it;
+    after the name, an invisible bookmark moved "claude" out of line with
+    the time; in the gap beside the words, it touched them.
+  `test_a_saved_turn_is_its_session_and_its_moment`,
+  `test_an_answer_is_saved_and_opened_again_from_the_list`.
 - **"All unreads" is the last answer of every unread session, asked for
   when it opens** (#376). The text is `Session.last_answer`, from the
   `Stop` hook's `last_assistant_message` (topics/payloads) -- not read out
