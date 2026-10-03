@@ -511,6 +511,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     input event, and the next `/` opened nothing. A row takes on
     `mousedown` with `preventDefault`: a click blurs the box first, and the
     blur shuts the list.
+  - **A `/` after white space completes too, and there only what has a
+    file** (#368, `slashSpot`). Measured on 2.1.288 with
+    `tests/claude_pane.py`: a `/deploy` in the middle of a prompt is not
+    run, but Claude Code adds a note for the model, "the user's message
+    contains /deploy, which is the name of a skill", to call the Skill tool
+    if asked -- for a skill and for a command file alike. A built-in is no
+    skill, so `drawSlash` offers there only what has a `file`. A `/` that does
+    not start the box or follow white space opens nothing: `src/main.py`.
+    `takeSlash` replaces the word wherever it stands and keeps both sides.
+    `test_a_slash_in_the_middle_of_a_message_completes_too`,
+    `test_a_slash_inside_a_word_opens_nothing`.
   - **An answer for a box the reader left opens nothing.** `followSlash`
     checks the focus after its fetch, as it checks the session: the list
     opened over the transcript with no box to type into.

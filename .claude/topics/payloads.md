@@ -49,6 +49,11 @@ machine are named by `/rename`. Its shape is the binary's,
 `{"type":"ai-title","aiTitle":…}`, and nothing here reads it from a
 transcript: the status line hands it over.
 
+**A `/command` in the middle of a prompt is not run** (#368, 2.1.288): it
+reaches the model as words, and Claude Code adds a system note that the
+message contains the name of a skill and that the Skill tool runs it. A
+command file counts as a skill there; a built-in does not.
+
 **A live Claude Code is measured against a fake Messages API, with
 `tests/claude_pane.py`**: a home of its own, a fake key, the API on
 127.0.0.1, a status line and hooks that keep what they are handed -- no

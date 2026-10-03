@@ -1608,3 +1608,45 @@ def test_a_session_that_is_over_offers_the_line_that_brings_it_back(ws, page_at)
         page.click("#resumebar button")
         assert page.evaluate("window.copied") == line
         page.wait_for_selector("#resumebar button:text-is('copied')")
+
+
+def test_a_slash_in_the_middle_of_a_message_completes_too(ws, in_pane, tmp_path):
+    """After a space, a `/` opens the list as it does at the start (#368).
+    Claude Code names a skill or a command file in a message to the model,
+    so those are offered; a built-in works only at the start, so it is not.
+    Taking one replaces the word being typed and keeps the rest."""
+    daemon, base, seen = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    ran(daemon, "clear")
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("please /")
+        page.wait_for_function("!$('slash').hidden")
+        assert page.evaluate(SLASH_ROWS) == ["/review-pr"]
+        page.keyboard.type("rev")
+        page.keyboard.press("Tab")
+        assert page.input_value("#say") == "please /review-pr "
+        page.keyboard.type("12 and then stop")
+        # A `/` at the start, before all of it: the built-in is offered
+        # there, and taking a row keeps everything after it.
+        page.evaluate("""() => { const box = $('say');
+          box.setRangeText('/ ', 0, 0, 'end');
+          box.setSelectionRange(1, 1);
+          box.dispatchEvent(new Event('input')); }""")
+        page.wait_for_function("!$('slash').hidden")
+        assert page.evaluate(SLASH_ROWS) == ["/clear", "/review-pr"]
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Tab")
+        assert page.input_value("#say") == "/review-pr please /review-pr 12 and then stop"
+        assert not conftest.into_pane(seen)
+
+
+def test_a_slash_inside_a_word_opens_nothing(ws, in_pane, tmp_path):
+    """`src/main.py` and `and/or` are not commands."""
+    daemon, base, _ = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("look at src/")
+        page.wait_for_timeout(300)          # proving nothing opens
+        assert page.evaluate("$('slash').hidden")
