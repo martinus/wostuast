@@ -520,3 +520,75 @@ def test_a_saved_entry_is_checked_before_it_is_kept(ws):
     ws.saved_path().parent.mkdir(parents=True, exist_ok=True)
     ws.saved_path().write_text('[{"id": "s1", "seq": 0, "ts": 1, "text": "", "at": 0}, 5]')
     assert [e["id"] for e in ws.read_saved()] == ["s1"]
+
+
+# --- search every session (#379) ----------------------------------------------
+
+
+def searched(ws, store):
+    """Two sessions, each with a prompt and a last answer, and a tool call
+    whose command says "cache" too: only what was said is searched."""
+    day = time.mktime(time.strptime("2026-10-01", "%Y-%m-%d"))
+    for sid, at in (("s1", day + 3600), ("s2", day + 86400 + 3600)):
+        ws.append_event(event("SessionStart", sid=sid, ts=at))
+        ws.append_event(event("UserPromptSubmit", sid=sid, ts=at + 1,
+                              prompt=f"Fix the cache race in {sid}."))
+        ws.append_event(event("PreToolUse", sid=sid, ts=at + 2, tool_name="Bash",
+                              tool_input={"command": "grep cache *.py"}))
+        ws.append_event(event("Stop", sid=sid, ts=at + 3,
+                              last_assistant_message=f"The cache in {sid} takes a lock now. Über."))
+    store.refresh(alive=lambda p: True)
+    store.sessions["s2"].mine = "the search one"
+    return day
+
+
+def test_search_finds_what_was_said_newest_first(ws, store):
+    searched(ws, store)
+    found = ws.search_log("cache", store.sessions)
+    assert [(one["id"], one["who"]) for one in found] == [
+        ("s2", "claude"), ("s2", "me"), ("s1", "claude"), ("s1", "me")]
+    assert "lock" in found[0]["text"]
+    assert ws.search_log("", store.sessions) == []
+    assert ws.search_log("zebra", store.sessions) == []
+
+
+def test_search_takes_slacks_filters(ws, store):
+    day = searched(ws, store)
+    ids = lambda query: [(one["id"], one["who"]) for one in ws.search_log(query, store.sessions)]
+    assert ids("cache from:me") == [("s2", "me"), ("s1", "me")]
+    assert ids("cache from:claude in:search") == [("s2", "claude")]
+    assert ids("cache before:2026-10-02") == [("s1", "claude"), ("s1", "me")]
+    assert ids("after:2026-10-02") == [("s2", "claude"), ("s2", "me")]
+    assert ids("über") == [("s2", "claude"), ("s1", "claude")]   # not ASCII
+    # A log line that writes it as an escape is found too: the raw line
+    # holds "\u00dc", so only the parsed text can be asked.
+    import json
+    with ws.events_path().open("a") as handle:
+        handle.write(json.dumps(event("Stop", sid="s3", ts=day + 7,
+                                      last_assistant_message="Ünd fertig"),
+                                ensure_ascii=True) + "\n")
+    assert ("s3", "claude") in ids("ünd")
+    store.sessions["s1"].ended_at, store.sessions["s1"].seen_at = day + 9, 0.0
+    assert ids("lock is:unread") == [("s1", "claude")]
+    # A word with a colon that is no filter is a word.
+    assert ids("note:cache") == []
+    # A filter that cannot be read is said, never dropped.
+    for wrong in ("before:yesterday", "cache after:10/01", "is:read", "from:bob"):
+        with pytest.raises(ValueError):
+            ws.search_log(wrong, store.sessions)
+    # JSON writes a quote and a backslash as escapes: still found.
+    ws.append_event(event("UserPromptSubmit", sid="s1", ts=day + 8,
+                          prompt='say "hi" to C:\\temp'))
+    assert ids('"hi"') == [("s1", "me")]
+    assert ids("c:\\temp") == [("s1", "me")]
+
+
+def test_search_reads_the_archives_too(ws, store):
+    """The log is never thrown away, and moved out of the way at 20 MB: a
+    search of only the live file lost everything before the last cut."""
+    searched(ws, store)
+    ws.events_path().rename(ws.events_path().with_name("events.1.jsonl"))
+    ws.append_event(event("UserPromptSubmit", ts=time.time(), prompt="cache, again"))
+    found = ws.search_log("cache from:me", store.sessions)
+    assert [one["text"] for one in found][:1] == ["cache, again"]
+    assert len(found) == 3

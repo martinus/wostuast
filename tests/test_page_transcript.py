@@ -2775,3 +2775,37 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
         page.click(".feedentry button:text('done')")
         page.wait_for_selector(".feed .empty")
         assert daemon.store.saved == []
+
+
+
+# --- search every session (#379) ----------------------------------------------
+
+
+def test_search_every_session_and_open_a_result(ws, page_at):
+    """The box searches what was typed and answered in every session; a
+    result opens its session at the turn, which the hook stamped a moment
+    after the transcript did."""
+    daemon, url = page_at
+    import calendar
+    # The reply the transcript holds at 14:03, its block 1, stamped by the
+    # hook 0.4 s after: not block 0, which is where a lost landing ends up.
+    ws.append_event(conftest.event("Stop", ts=calendar.timegm(
+        time.strptime("2026-09-18 14:03:00", "%Y-%m-%d %H:%M:%S")) + 0.4,
+        last_assistant_message="A thing in zanzibar."))
+    daemon.store.refresh()
+    with opened(url) as page:
+        wait_for_map(page)
+        page.click("#searchlink")
+        page.fill(".searchbox", "zanzibar")
+        page.wait_for_selector(".searchresults .feedentry mark")
+        assert page.locator(".searchresults .feedentry").count() == 1
+        assert page.text_content(".searchresults .feedwho") == "claude"
+        assert not page.is_visible(".tabs .tab")
+        page.fill(".searchbox", "zebra")
+        page.wait_for_selector(".searchresults .empty")
+        page.fill(".searchbox", "zanzibar")
+        page.click(".searchresults button:text('open')")
+        page.wait_for_selector(".turn:not(.mine).linked")
+        assert page.evaluate("state.turns.nodes.indexOf("
+                             "document.querySelector('.turn.linked'))") == 1
+        assert page.is_visible(".tabs .tab")

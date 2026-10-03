@@ -17,7 +17,7 @@ import os
 import re
 import sys
 import time
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Sequence
@@ -6382,6 +6382,129 @@ def write_saved(saved: list[dict[str, Any]]) -> None:
     write_atomic(saved_path(), json.dumps(saved), private=True)
 
 
+#: Search (#379): the most results, the longest query, and how much of the
+#: words round a hit each result carries.
+SEARCH_MAX = 100
+SEARCH_QUERY_MAX = 200
+SEARCH_AROUND = 120
+#: The filters a query may carry, as Slack's search has them.
+SEARCH_FILTERS = ("in", "from", "before", "after", "is")
+
+
+def parse_search(query: str) -> tuple[list[str], dict[str, str]]:
+    """The words of a query, lower case, and its filters: `in:name`,
+    `from:me` or `from:claude`, `before:2026-10-01`, `after:…`,
+    `is:unread`. A word with a colon that is no filter is a word."""
+    words: list[str] = []
+    filters: dict[str, str] = {}
+    for part in query[:SEARCH_QUERY_MAX].split():
+        key, colon, value = part.partition(":")
+        if colon and key.lower() in SEARCH_FILTERS and value:
+            filters[key.lower()] = value.lower()
+        else:
+            words.append(part.lower())
+    return words, filters
+
+
+def search_day(text: str, end: bool = False) -> float | None:
+    """The start of a day written `2026-10-01`, or of the next one, in the
+    machine's own time zone, which is the reader's. None for anything else."""
+    try:
+        day = time.mktime(time.strptime(text, "%Y-%m-%d"))
+    except (ValueError, OverflowError):
+        return None
+    return day + 86400 if end else day
+
+
+def search_log(query: str, sessions: dict[str, Session]) -> list[dict[str, Any]]:
+    """What the reader typed and what the agents answered, from the event
+    log, newest first (#379): `UserPromptSubmit`'s `prompt` and the last
+    words of each turn, `Stop`'s `last_assistant_message`. No transcript is
+    read: they are many and long, the log is one place, and it is never
+    thrown away (its archives are read too).
+
+    A plain scan, with no index: a line that cannot hold every word is
+    passed over before it is parsed, so most of the log is read as bytes
+    and never as JSON. A word that is not ASCII is looked for only after
+    the parse, because the log may write it as an escape."""
+    words, filters = parse_search(query)
+    if not words and not filters:
+        return []
+    # A filter that cannot be read is said, not dropped: dropped, a query
+    # of `before:yesterday` alone answered with the newest of everything.
+    after = before = None
+    for key, end in (("after", False), ("before", True)):
+        if key in filters:
+            day = search_day(filters[key], end=False)
+            if day is None:
+                raise ValueError(f"{key}: is a day, written 2026-10-01")
+            after, before = (day, before) if key == "after" else (after, day)
+    if filters.get("from", "me") not in ("me", "claude"):
+        raise ValueError("from: is me or claude")
+    if filters.get("is", "unread") != "unread":
+        raise ValueError("is: is unread")
+    who = filters.get("from")
+    within = filters.get("in")
+    # Asked of the raw line only where the line holds the word as typed:
+    # JSON writes a quote, a backslash and anything not ASCII as escapes.
+    plain = [word for word in words
+             if word.isascii() and '"' not in word and "\\" not in word]
+    kept: deque[dict[str, Any]] = deque(maxlen=SEARCH_MAX)
+    for path in (archived_events_paths() or []) + [events_path()]:
+        try:
+            handle = open(path, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                low = line.lower()
+                if any(word not in low for word in plain):
+                    continue
+                if '"userpromptsubmit"' not in low and '"stop' not in low:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                name = event.get("hook_event_name")
+                if name == "UserPromptSubmit":
+                    said, by = event.get("prompt"), "me"
+                elif name in ("Stop", "StopFailure"):
+                    said, by = event.get("last_assistant_message"), "claude"
+                else:
+                    continue
+                if not isinstance(said, str) or not said.strip():
+                    continue
+                if who and not by.startswith(who):
+                    continue
+                ts = event.get("ts")
+                ts = float(ts) if isinstance(ts, (int, float)) else 0.0
+                if (after is not None and ts < after) or (before is not None and ts >= before):
+                    continue
+                sid = str(event.get("session_id") or "")
+                session = sessions.get(sid)
+                if within and not (session and within in
+                                   f"{session.title} {session.place}".lower()):
+                    continue
+                if filters.get("is") == "unread" and not (session and session.unread):
+                    continue
+                text = said.lower()
+                if any(word not in text for word in words):
+                    continue
+                # Found in the words as written: lower case can be longer
+                # ("İ" is two), and a place in it cuts the original wrong.
+                hit = re.search(re.escape(words[0]), said, re.I) if words else None
+                at = hit.start() if hit else 0
+                start = max(0, at - SEARCH_AROUND)
+                piece = " ".join(said[start:at + SEARCH_AROUND].split())
+                kept.append({"id": sid, "ts": ts, "who": by,
+                             "text": ("… " if start else "") + piece
+                             + (" …" if at + SEARCH_AROUND < len(said) else "")})
+    return sorted(kept, key=lambda one: -one["ts"])
+
+
 def read_reminders() -> dict[str, float]:
     """Every reminder kept, or none: the same shape as the snoozes, and
     read as carefully."""
@@ -8733,6 +8856,15 @@ class Serving:
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
+        elif path == "/api/search":
+            # Every session's prompts and last answers (#379): a scan of the
+            # log, asked for as the reader types, never pushed.
+            try:
+                found = search_log(query.get("q", ""), self.daemon.store.sessions)
+            except ValueError as error:
+                self.reply_json({"results": [], "error": str(error)})
+            else:
+                self.reply_json({"results": found})
         elif path == "/api/saved":
             # Every saved turn, of every session (#377): asked for when the
             # list opens, not pushed.
@@ -11426,6 +11558,15 @@ body.infeed #resumebar, body.infeed .findhome { display: none; }
 .feedwhen { font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
   flex-grow: 1; }
 .feedwait, .feedmore { color: var(--ink-faint); font-size: 13px; }
+/* Search (issue 379): the box under the heading, a word for who said it. */
+/* A way in, not a box to type in: beside the filter box, a bordered one
+   read as a second filter. */
+.feedlink.quiet { color: var(--ink-faint); border-color: transparent; }
+.feedlink.quiet:hover, .feedlink.quiet.open { color: var(--ink-soft); }
+/* As specific as `.find`, which set the width of every find box. */
+.content.feed .searchbox { width: 100%; max-width: 90ch; margin: 4px 0 10px; }
+.feedwho { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+.searchtext { margin: 2px 0; color: var(--ink); }
 .row .remindmenu { display: flex; gap: 12px; padding: 2px 0 4px; }
 
 /* One switch for everything that moves. A reader whose system asks for less
@@ -12677,6 +12818,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       </div>
       <button type="button" class="feedlink" id="feedlink" hidden></button>
       <button type="button" class="feedlink" id="savedlink" hidden></button>
+      <button type="button" class="feedlink quiet" id="searchlink">search every session</button>
       <div class="rows" id="rows"></div>
     </div>
     <div class="grip" id="grip"></div>
@@ -13652,6 +13794,7 @@ function drawFeedLink() {
   keep.hidden = !kept && state.feed !== "saved";
   keep.classList.toggle("open", state.feed === "saved");
   if (fresh(keep, "text", String(kept))) keep.textContent = "saved · " + kept;
+  $("searchlink").classList.toggle("open", state.feed === "search");
   // A session read elsewhere leaves the feed while it is open.
   if (state.feed) drawFeed($("content"));
 }
@@ -13688,6 +13831,7 @@ async function askLast(id) {
 
 function drawFeed(box) {
   if (state.feed === "saved") { drawSaved(box); return; }
+  if (state.feed === "search") { drawSearch(box); return; }
   const shown = unreadSessions();
   const key = JSON.stringify([shown.map((s) => [s.id, s.ended_at, rowName(s), s.state]),
                               [...state.feedText.entries()]]);
@@ -13776,6 +13920,87 @@ function drawSaved(box) {
       takeSaved(answer.saved);
     });
     markdown(entry, one.text + (one.text.length >= 300 ? " …" : ""));
+  }
+}
+
+// Search every session (#379): what the reader typed and what the agents
+// answered, from the event log, newest first, with Slack's filters. The
+// box is built once and kept while the view is open; only the results
+// under it are drawn again, so typing never loses the focus.
+const SEARCH_HINT = "words, and in:name  from:me  from:claude  after:2026-10-01  "
+  + "before:2026-10-03  is:unread";
+
+function drawSearch(box) {
+  if (box.dataset.tab !== "search") {
+    box.className = "content feed";
+    box.dataset.tab = "search";
+    box.replaceChildren();
+    const head = put(box, "div", "feedhead");
+    put(head, "h2", null, "Search");
+    const back = put(head, "button", "link", "back to the session");
+    back.addEventListener("click", () => { if (state.chosen) choose(state.chosen); });
+    const field = put(box, "input", "find searchbox");
+    field.type = "search";
+    field.placeholder = SEARCH_HINT;
+    field.spellcheck = false;
+    field.value = state.searchQuery || "";
+    let timer = null;
+    field.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => runSearch(field.value), 250);
+    });
+    put(box, "div", "searchresults");
+    field.focus();
+  }
+  drawResults(box.querySelector(".searchresults"));
+}
+
+async function runSearch(query) {
+  state.searchQuery = query;
+  const asked = query;
+  let found = null;
+  try {
+    found = await (await fetch("/api/search?q=" + encodeURIComponent(query))).json();
+  } catch (error) {
+    found = { error: "the daemon did not answer" };
+  }
+  if (state.searchQuery !== asked || state.feed !== "search") return;  // typed on
+  state.searchResults = found;
+  drawResults($("content").querySelector(".searchresults"));
+}
+
+function drawResults(list) {
+  if (!list) return;
+  list.replaceChildren();
+  const found = state.searchResults;
+  if (!state.searchQuery || !found) return;
+  if (found.error) { put(list, "p", "empty", found.error); return; }
+  if (!found.results.length) { put(list, "p", "empty", "Nothing found."); return; }
+  const words = state.searchQuery.split(/\s+/)
+    // The daemon's rule (`parse_search`): a filter is a known word, a colon
+    // and a value; anything else is a word, and marked.
+    .filter((word) => word && !/^(in|from|before|after|is):\S/i.test(word));
+  for (const one of found.results) {
+    const s = state.sessions.find((x) => x.id === one.id);
+    const entry = put(list, "div", "feedentry");
+    entry.dataset.id = one.id;
+    const top = put(entry, "div", "feedtop");
+    put(top, "span", "feedname", s ? rowName(s) : "a session no longer listed");
+    put(top, "span", "feedwho", one.who === "me" ? "you" : "claude");
+    put(top, "span", "feedwhen", (dayOf(one.ts) ? dayOf(one.ts) + " " : "") + clock(one.ts));
+    if (s) {
+      const open = put(top, "button", "link", "open");
+      open.addEventListener("click", () => {
+        choose(one.id);
+        state.turns.goTo = 0;
+        state.turns.goToNear = one.ts;
+        showTab("transcript");
+      });
+    }
+    // Text, never Markdown: a piece cut from the middle of an answer is
+    // not Markdown any more.
+    const said = put(entry, "p", "searchtext", one.text);
+    for (const word of words) markHits(said, word.toLowerCase());
   }
 }
 
@@ -15938,6 +16163,22 @@ function goToLink() {
 // session.
 function landOnBlock(box) {
   if (state.turns.goTo === null) return false;
+  // A search result names a moment the hook stamped (#379), which is a
+  // little after the transcript's own: the nearest block within a minute.
+  if (state.turns.goToNear) {
+    const blocks = state.turns.blocks;
+    if (!state.turns.whole && !blocks.length) return false;   // not here yet
+    let best = -1;
+    for (let at = 0; at < blocks.length; at += 1) {
+      const one = blocks[at];
+      if (!one || !one.ts || Math.abs(one.ts - state.turns.goToNear) > 60) continue;
+      if (best < 0 || Math.abs(one.ts - state.turns.goToNear)
+                      < Math.abs(blocks[best].ts - state.turns.goToNear)) best = at;
+    }
+    state.turns.goToNear = null;
+    state.turns.goTo = best < 0 ? null : best;
+    if (state.turns.goTo === null) return false;
+  }
   // A saved turn names its moment too (#377): a resumed session counts its
   // blocks from nought again, and the place may hold another block now.
   if (state.turns.goToTs) {
@@ -17622,6 +17863,7 @@ function blankTurns() {
     shut: new Set(),    // rounds the reader folded shut on the map
     goTo: null,         // a block a link asked for, until it is on screen
     goToTs: null,       // and its moment, for a saved turn (#377)
+    goToNear: null,     // or about when, for a search result (#379)
     at: null,           // the block the list marks: the last place you went
     down: null,         // how far down the transcript you were; null is none
     early: null,        // pushes that land while a fetch is on its way
@@ -20871,6 +21113,9 @@ $("feedlink").addEventListener("click", () => {
   if (state.feed === "unread") { if (state.chosen) choose(state.chosen); } else openFeed("unread");
 });
 askSaved();        // which answers are saved, for their "saved"
+$("searchlink").addEventListener("click", () => {
+  if (state.feed === "search") { if (state.chosen) choose(state.chosen); } else openFeed("search");
+});
 $("savedlink").addEventListener("click", () => {
   if (state.feed === "saved") { if (state.chosen) choose(state.chosen); } else openFeed("saved");
 });
