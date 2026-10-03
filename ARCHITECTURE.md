@@ -635,6 +635,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/sessions` | The rows of the sidebar. |
 | GET | `/api/events?watch=ID` | The live stream (SSE). |
 | GET | `/api/session/ID/transcript` | The blocks of a transcript. |
+| GET | `/api/session/ID/last` | What the agent said last, for "All unreads". |
 | GET | `/api/session/ID/files` | The file list of the worktree. |
 | GET | `/api/session/ID/file?path=…` | One file's text. |
 | GET | `/api/session/ID/raw?path=…` | One file's bytes (for images). |

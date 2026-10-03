@@ -1747,3 +1747,44 @@ def test_later_offers_the_choices_and_keeps_the_one_picked(ws, pair_at):
         assert abs(at - (time.time() + 3600)) < 30, at
         assert page.evaluate("state.chosen") == "s1"     # not a choice of the row
         assert page.text_content(f"{row} .age").startswith("at ")
+
+
+
+# --- all unreads (#376) -------------------------------------------------------
+
+
+def test_all_unreads_is_one_scroll_through_the_last_answers(ws, pair_at):
+    """Coming back from a break: every unread session's last answer, as
+    Markdown, newest first, each with "mark read" and "open". Open leaves
+    the feed for the session; the tabs come back."""
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        now = time.time()
+        ws.append_event(conftest.event(
+            "Stop", sid="s2", ts=now + 1,
+            last_assistant_message="**Done** with the search.\n\n- one\n- two"))
+        daemon.tick()
+        page.wait_for_function(
+            "document.querySelector('#feedlink').textContent === 'all unreads · 1'")
+        page.click("#feedlink")
+        page.wait_for_selector('.feedentry[data-id="s2"] .prose strong')
+        assert page.locator(".feedentry").count() == 1
+        assert page.locator('.feedentry[data-id="s2"] .prose li').count() == 2
+        assert not page.is_visible(".tabs .tab")
+        # Newest first, and a second one comes in while it is open.
+        ws.append_event(conftest.event("Stop", sid="s1", ts=now + 2,
+                                       last_assistant_message="Second."))
+        # s1 is chosen but behind the feed: not read from there.
+        daemon.tick()
+        page.wait_for_function("document.querySelectorAll('.feedentry').length === 2")
+        assert page.eval_on_selector_all(
+            ".feedentry", "els => els.map((e) => e.dataset.id)") == ["s1", "s2"]
+        page.click('.feedentry[data-id="s1"] button:text("mark read")')
+        page.wait_for_function("document.querySelectorAll('.feedentry').length === 1")
+        page.click('.feedentry[data-id="s2"] button:text("open")')
+        page.wait_for_function("state.chosen === 's2' && !state.feed")
+        assert page.is_visible(".tabs .tab")
+        page.wait_for_selector('.row[data-id="s2"]:not(.unread)')

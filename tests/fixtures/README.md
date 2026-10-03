@@ -39,6 +39,10 @@ sentence about the error, the one it also writes into the transcript, and
 `cloud_credential_error` -- read off the 2.1.285 schema, and only
 `model_not_found` recorded. Claude Code ignores what the hook prints.
 
+`Stop` on 2.1.288 (`stop_answer.jsonl`) carries `last_assistant_message`,
+the agent's last words in the turn, beside `stop_hook_active`,
+`background_tasks` and `session_crons`. The words are invented.
+
 A plan's approval is a `PermissionRequest` for `ExitPlanMode`, measured on
 2.1.288 in plan mode (`plan_events.jsonl`: its `PreToolUse` and its
 `PermissionRequest`; `plan_transcript.jsonl`: the `plan_mode` attachment,

@@ -2636,3 +2636,20 @@ def test_a_reminder_is_a_moment_in_the_next_week_or_nothing(ws, served, monkeypa
     status, body = post(url, {"at": 0}, token=daemon.token)
     assert status == 200 and body["remind_at"] == 0.0, body
     assert not typed
+
+
+
+def test_the_last_answer_is_asked_for_and_cut(ws, served):
+    """The feed asks for each unread session's last answer; a very long one
+    is cut, and the answer says so."""
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="%7", ts=time.time()))
+    ws.append_event(event("Stop", pane="%7", ts=time.time() + 1,
+                          last_assistant_message="x" * (ws.LAST_MAX + 10)))
+    daemon.store.refresh()
+    status, found = get(base + "/api/session/s1/last")
+    assert status == 200
+    assert found["cut"] is True and len(found["text"]) == ws.LAST_MAX
+    with pytest.raises(urllib.error.HTTPError) as gone:
+        get(base + "/api/session/nope/last")
+    assert gone.value.code == 404

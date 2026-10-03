@@ -59,6 +59,23 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   entry that no longer holds is pruned on the next write. Its POST touches
   no terminal, and carries the token as every POST does.
   `tests/test_store.py`, `test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again`.
+- **"All unreads" is the last answer of every unread session, asked for
+  when it opens** (#376). The text is `Session.last_answer`, from the
+  `Stop` hook's `last_assistant_message` (topics/payloads) -- not read out
+  of each transcript, and **not on the row**: a row goes out on every
+  change, and an answer can run to pages. `Serving.last` hands one over,
+  cut at `LAST_MAX`, and `askLast` asks once a session while the feed is
+  open. The feed stands in place of the tabs (`state.feed`, `body.infeed`),
+  newest first by the row's `ended_at`; `drawFeedLink` redraws it on every
+  push, so a session read elsewhere leaves it. **While it is open nothing
+  is read from behind it** (`markSeen` returns): the chosen session's tabs
+  are covered. Choosing a session closes it, the one on screen too.
+  **A `StopFailure` sets it too**, to Claude Code's sentence about the
+  error: kept from the turn before, the feed showed that turn's answer
+  under the new time.
+  `test_all_unreads_is_one_scroll_through_the_last_answers`,
+  `test_a_turn_keeps_what_the_agent_said_last`,
+  `test_a_turn_an_error_ended_keeps_the_error_not_the_answer_before`.
 - **A reminder is the snooze's twin with a clock, and the clock is the
   page's** (#375). The snooze has no timer on purpose; the reader asked
   for one by name -- Slack's "remind me in 20 min, 1 h, 3 h, tomorrow" --
