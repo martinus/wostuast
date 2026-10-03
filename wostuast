@@ -363,6 +363,13 @@ def seen_path() -> Path:
     return state_dir() / "seen.json"
 
 
+def reminders_path() -> Path:
+    """The reminders the reader set on the page (#375): each session by the
+    moment it comes back. Ours, beside the snoozes, so every browser rings
+    the same ones."""
+    return state_dir() / "reminders.json"
+
+
 def links_path() -> Path:
     """Where the ticket links were kept before `settings.json` took them.
 
@@ -1150,6 +1157,10 @@ class Session:
     snoozed_at: float = 0.0
     #: When its last turn ended: a `Stop`, or a `StopFailure` (#373).
     ended_at: float = 0.0
+    #: The moment the reader asked to be reminded of it, or 0 (#375). The
+    #: page decides when that has come, by its own clock: a row must not
+    #: change by itself, so "due" is never a field.
+    remind_at: float = 0.0
     #: When the reader last had it on screen (`Store.see`), or -1 when they
     #: marked it unread. See `unread`.
     seen_at: float = 0.0
@@ -1645,6 +1656,8 @@ class Store:
         #: for a session not in it (#373). Replaced whole under `naming`,
         #: as the snoozes are.
         self.seen_floor, self.seen = read_seen()
+        #: The reminders, by session (#375). Replaced whole under `naming`.
+        self.reminders: dict[str, float] = read_reminders()
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -1866,6 +1879,7 @@ class Store:
             session.mine = self.page_name(session)
             session.snoozed_at = self.snoozes.get(session.session_id, 0.0)
             session.seen_at = self.seen.get(session.session_id, self.seen_floor)
+            session.remind_at = self.reminders.get(session.session_id, 0.0)
         return sessions
 
     def page_name(self, session: Session) -> str:
@@ -1954,6 +1968,25 @@ class Store:
         if session is not None:
             session.snoozed_at = self.snoozes.get(session_id, 0.0)
         return session is not None and session.snoozed
+
+    def remind(self, session_id: str, at: float) -> float:
+        """Remind the reader of this session at `at`, or forget its
+        reminder when `at` is 0 (#375). Returns the moment kept. A session
+        no longer known is dropped from the file on the write."""
+        session = self.sessions.get(session_id)
+        with self.naming:
+            reminders = {key: when for key, when in self.reminders.items()
+                         if key in self.sessions}
+            if session is not None and at > 0:
+                reminders[session_id] = at
+            else:
+                reminders.pop(session_id, None)
+            write_reminders(reminders)
+            self.reminders = reminders
+        if session is None:
+            return 0.0
+        session.remind_at = self.reminders.get(session_id, 0.0)
+        return session.remind_at
 
     def see(self, session_id: str, read: bool) -> bool:
         """The reader had this session on screen, or marked it unread
@@ -2206,6 +2239,8 @@ def row(session: Session) -> dict[str, Any]:
         # moves only when the reader looks, so it never makes a row differ
         # by itself.
         "seen_at": round(session.seen_at, 3),
+        # When to bring it back (#375): a moment, and the page decides.
+        "remind_at": round(session.remind_at, 3),
         "name": session.title,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -6269,6 +6304,24 @@ def write_snoozed(snoozes: dict[str, float]) -> None:
     write_atomic(snoozed_path(), json.dumps(snoozes), private=True)
 
 
+def read_reminders() -> dict[str, float]:
+    """Every reminder kept, or none: the same shape as the snoozes, and
+    read as carefully."""
+    try:
+        payload = json.loads(reminders_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): float(value) for key, value in payload.items()
+            if isinstance(key, str) and isinstance(value, (int, float))
+            and not isinstance(value, bool) and value > 0}
+
+
+def write_reminders(reminders: dict[str, float]) -> None:
+    write_atomic(reminders_path(), json.dumps(reminders), private=True)
+
+
 def read_seen() -> tuple[float, dict[str, float]]:
     """The floor and the moment each session was last seen, or now and none.
 
@@ -8344,6 +8397,21 @@ class Serving:
         snoozed = self.daemon.store.snooze(session_id, bool(body.get("snooze")))
         self.reply_json({"id": session_id, "snoozed": snoozed, "done": True})
 
+    def remind(self, session_id: str, session: Session,
+               body: dict[str, Any]) -> None:
+        """Bring a session back at a moment, or forget its reminder (#375).
+        A file of ours, and no terminal. The moment is a number, 0 or in
+        the next `REMIND_MOST` seconds: anything else is refused, not
+        clipped, so a page that sent milliseconds says so."""
+        at = body.get("at")
+        now = time.time()
+        if (not isinstance(at, (int, float)) or isinstance(at, bool)
+                or not (at == 0 or now < at <= now + REMIND_MOST)):
+            self.refuse(session_id, 400, "a reminder is 0 or a moment in the next week")
+            return
+        kept = self.daemon.store.remind(session_id, float(at))
+        self.reply_json({"id": session_id, "remind_at": kept, "done": True})
+
     def seen(self, session_id: str, session: Session,
              body: dict[str, Any]) -> None:
         """The reader had this session on screen, or marked it unread
@@ -8842,7 +8910,13 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "snooze": (Serving.snooze, "snooze", "known"),
     # And so is what the reader has read (#373).
     "seen": (Serving.seen, "seen", "known"),
+    # And a reminder (#375).
+    "remind": (Serving.remind, "reminder", "known"),
 }
+
+#: The furthest a reminder may be set, in seconds: a week. The page offers
+#: tomorrow morning at most; this only bounds what a POST may write.
+REMIND_MOST = 7 * 24 * 3600
 
 
 def make_server(daemon: Daemon, port: int) -> Any:
@@ -9322,6 +9396,8 @@ def installed_files() -> list[Installed]:
         Installed("History", names_path(), "the names you gave sessions on the page"),
         Installed("History", snoozed_path(),
                   "the sessions you snoozed on the page, until each moves on"),
+        Installed("History", reminders_path(),
+                  "the reminders you set on the page, until each is read"),
         Installed("History", seen_path(),
                   "when you last read each session on the page, for its unread mark"),
         Installed("History", daemon_lock_path(),
@@ -11199,6 +11275,16 @@ body.dragging { cursor: col-resize; user-select: none; }
   --soft: var(--done-soft); border-left-color: var(--done);
   background: var(--done-soft); box-shadow: none; animation: none;
 }
+/* A reminder that has come (issue 375): the amber of a session that needs
+   you, on whatever state the session is in. */
+.row.reminded {
+  --soft: var(--needs-soft); border-left-color: var(--needs);
+  background: var(--needs-soft);
+}
+/* "later" shows on the row's hover, as "unread" does; its choices take a
+   line of their own under the name until one is picked. */
+.row:not(:hover):not(:focus-within) .remindlater { display: none; }
+.row .remindmenu { display: flex; gap: 12px; padding: 2px 0 4px; }
 
 /* One switch for everything that moves. A reader whose system asks for less
    motion gets a page that only changes colour. */
@@ -13159,7 +13245,100 @@ const BANDS = [
 // tab's title and icon, the alerts -- or a snoozed session would still shout
 // from one of them.
 function needsYou(s) {
-  return s.state === "needs_you" && !s.snoozed;
+  // A reminder that has come counts, whatever the session does; one that
+  // has not come yet puts a waiting session aside, as a snooze does (#375).
+  return reminderDue(s)
+    || (s.state === "needs_you" && !s.snoozed && !reminderSet(s));
+}
+
+// --- reminders ----------------------------------------------------------------
+
+// The daemon keeps the moment; the page decides when it has come, by the
+// daemon's clock (`skew`), because a row must not change by itself (#375).
+function serverNow() {
+  return Date.now() / 1000 + state.skew;
+}
+
+function reminderDue(s) {
+  return !!s.remind_at && s.remind_at <= serverNow();
+}
+
+function reminderSet(s) {
+  return !!s.remind_at && s.remind_at > serverNow();
+}
+
+// What a reminder says on its row. One that has come says so in the word
+// beside the name; one still to come says when in place of the age, which
+// says little about a row put aside -- in the word, "until 20:23" took the
+// room of the name.
+function reminderWord(s) {
+  return reminderDue(s) ? "reminder" : "";
+}
+
+function reminderAt(s) {
+  const day = dayOf(s.remind_at);
+  return "at " + (day ? day + " " : "") + clock(s.remind_at);
+}
+
+// The choices, as Slack offers them. Tomorrow is nine in the morning.
+const REMIND_IN = [["20 min", 20 * 60], ["1 h", 3600], ["3 h", 3 * 3600],
+                   ["tomorrow", null]];
+
+function remindMoment(seconds) {
+  if (seconds) return serverNow() + seconds;
+  const at = new Date(serverNow() * 1000);
+  at.setDate(at.getDate() + 1);
+  at.setHours(9, 0, 0, 0);
+  return at.getTime() / 1000;
+}
+
+async function setReminder(id, at) {
+  const answer = await tell(id, "remind", { at });
+  if (!answer || answer.error) { said(answer || {}); return; }
+  const s = state.sessions.find((one) => one.id === id);
+  if (s) s.remind_at = answer.remind_at;
+  $("rows").dataset.drawn = "";
+  drawSessions();
+}
+
+// The row's "later": the choices in its place until one is picked, or the
+// pointer leaves the row.
+function openReminders(row, id) {
+  const menu = row.querySelector(".remindmenu");
+  menu.replaceChildren();
+  for (const [word, seconds] of REMIND_IN) {
+    const pick = put(menu, "button", "link", word);
+    pick.addEventListener("click", (press) => {
+      press.stopPropagation();
+      menu.hidden = true;
+      setReminder(id, remindMoment(seconds));
+    });
+  }
+  menu.hidden = false;
+  row.addEventListener("mouseleave", () => { menu.hidden = true; }, { once: true });
+}
+
+// A reminder that has come ends when the reader opens its session, as
+// reading it ends an unread mark.
+function endReminder(s) {
+  if (s && reminderDue(s) && !state.ending) {
+    state.ending = s.id;
+    setReminder(s.id, 0).finally(() => { state.ending = null; });
+  }
+}
+
+// The page's clock moves a row into "needs you" with no push: wake at the
+// next reminder and draw again, which rings it (`notifyAbout`).
+let reminderTimer = null;
+function armReminders() {
+  clearTimeout(reminderTimer);
+  const next = state.sessions.filter(reminderSet).map((s) => s.remind_at);
+  if (!next.length) return;
+  const wait = Math.max(0, (Math.min(...next) - serverNow()) * 1000) + 50;
+  reminderTimer = setTimeout(() => {
+    $("rows").dataset.drawn = "";
+    drawSessions();
+  }, Math.min(wait, 2 ** 31 - 1));
 }
 
 // Snooze the chosen session, or wake it: `z`, and the row's control. Only a
@@ -13223,6 +13402,7 @@ function toggleUnread(id) {
 function markSeen() {
   const s = current();
   if (!s || document.visibilityState !== "visible") return;
+  endReminder(s);
   // Taken before it is read, and once: a turn that ends while the reader
   // watches is not news, and must not move the line (#374).
   if (state.turns.newSince === undefined) {
@@ -13342,6 +13522,17 @@ function newRow(id) {
     press.stopPropagation();           // not a choice of the row
     toggleSnooze(id);
   });
+  // "later": remind me about it (#375), shown on the hover too.
+  const later2 = put(one, "button", "link remindlater", "later");
+  later2.title = "remind me about it later";
+  later2.addEventListener("click", (press) => {
+    press.stopPropagation();
+    if (reminderSet(state.sessions.find((x) => x.id === id) || {})) {
+      setReminder(id, 0);
+    } else {
+      openReminders(row, id);
+    }
+  });
   // "unread" on a row that is read, shown on its hover (#373). Before the
   // age, as "not now" is: after it, "5min unread" read as a state.
   const unread = put(one, "button", "link markunread", "unread");
@@ -13351,6 +13542,8 @@ function newRow(id) {
     setUnread(id, true);
   });
   put(one, "span", "age");
+  const menu = put(row, "div", "remindmenu");
+  menu.hidden = true;
   put(row, "div", "line2 where");
   put(row, "div", "line2");
   const three = put(row, "div", "line3");
@@ -13369,9 +13562,12 @@ function newRow(id) {
 // a third and a fourth time. The word stays in the history, where "ended"
 // and "killed" share one group and one grey.
 function fillRow(row, s) {
-  const [one, where, two, three] = row.children;
+  const [one, , where, two, three] = row.children;
+  // A reminder not yet come puts a waiting row aside as a snooze does, and
+  // one that has come wears the amber of a session that needs you (#375).
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "")
-    + (s.snoozed ? " snoozed" : "") + (s.unread ? " unread" : "");
+    + (s.snoozed || (reminderSet(s) && s.state === "needs_you") ? " snoozed" : "")
+    + (s.unread ? " unread" : "") + (reminderDue(s) ? " reminded" : "");
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
   // Each part is written again only when what it says has changed. This
@@ -13385,9 +13581,12 @@ function fillRow(row, s) {
     slot.textContent = rowName(s);
     linkTickets(slot);
   }
-  one.children[1].textContent = isGone(s) ? s.state_word : s.snoozed ? "snoozed" : "";
+  one.children[1].textContent = isGone(s) ? s.state_word
+    : reminderWord(s) || (s.snoozed ? "snoozed" : "");
   const later = one.children[2];
-  later.hidden = !needsYou(s) && !s.snoozed;
+  // Only where a snooze can hold: a session that waits. A row a reminder
+  // brought back is not one, and the daemon would refuse it (#375).
+  later.hidden = !(s.state === "needs_you" && !reminderSet(s)) && !s.snoozed;
   later.textContent = s.snoozed ? "wake" : "not now";
   later.title = s.snoozed ? "it needs you again  ·  z" : "it waits, but not now  ·  z";
   // On every row, the same four lines: the name, where it stands, the
@@ -13441,9 +13640,19 @@ function fillRow(row, s) {
   three.hidden = !said;
   // Beside the name, at the right: "how long has this needed me?" is read
   // with the name, and a ready row has no fourth line to carry it.
-  one.children[3].hidden = !!s.unread || needsYou(s) || s.snoozed;
-  one.children[4].textContent = ago(s.since);
-  ages.push([one.children[4], s.since]);
+  // On a row a reminder brought back too: "later" again, as Slack lets a
+  // reminder be put off once more.
+  one.children[3].hidden = isGone(s);
+  one.children[3].textContent = reminderSet(s) ? "cancel" : "later";
+  one.children[4].hidden = !!s.unread || needsYou(s) || s.snoozed;
+  if (reminderSet(s)) {
+    one.children[5].textContent = reminderAt(s);
+    one.children[5].title = "it comes back then";
+  } else {
+    one.children[5].textContent = ago(s.since);
+    one.children[5].title = "";
+    ages.push([one.children[5], s.since]);
+  }
 }
 
 // The name Claude Code shows for the session, or the reader's from the page
@@ -13661,6 +13870,7 @@ function drawCounts() {
   // About every session, filter or no filter: "who needs me" must not
   // change because you typed in a box.
   notifyAbout(state.sessions);
+  armReminders();
 }
 
 function current() {
@@ -14764,6 +14974,9 @@ function notifyAbout(sessions) {
 // header -- or else the `reason`, the permission it wants and for what,
 // with its secrets hidden already: an alert can stand on a locked screen.
 function waitsFor(session) {
+  if (reminderDue(session) && session.state !== "needs_you") {
+    return "the reminder you set";
+  }
   const asked = session.asking && session.asking.questions;
   const first = asked && asked[0] && asked[0].question;
   if (first) return clip(first, 200);

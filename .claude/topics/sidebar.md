@@ -59,6 +59,35 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   entry that no longer holds is pruned on the next write. Its POST touches
   no terminal, and carries the token as every POST does.
   `tests/test_store.py`, `test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again`.
+- **A reminder is the snooze's twin with a clock, and the clock is the
+  page's** (#375). The snooze has no timer on purpose; the reader asked
+  for one by name -- Slack's "remind me in 20 min, 1 h, 3 h, tomorrow" --
+  and it is a second mark, not a change to the snooze. The daemon keeps
+  only the moment (`Store.remind`, `reminders_path`, under `naming`), and
+  the row carries it as `remind_at`. **"Due" is never a field**: a row must
+  not change by itself (`row`'s rule), so `reminderDue` and `reminderSet`
+  compare it with `serverNow`, and `armReminders` wakes the page at the
+  next one and draws again, which rings it through `notifyAbout`.
+  - **`needsYou` asks it**: a reminder that has come counts whatever the
+    session does; one still to come puts a waiting session aside, with the
+    snooze's colours (`.snoozed`). One that has come wears the amber
+    (`.reminded`) and the word "reminder", and its alert says "the reminder
+    you set". Opening the session ends it (`endReminder`, from `markSeen`).
+  - **"not now" only where a snooze can hold**: on a row a reminder brought
+    back the session may wait for nothing, and the daemon refuses the
+    snooze. "later" stays, to put it off again.
+  - **The time stands in the age's place, not in the word**: "until
+    20:23" beside the name took the name's room.
+  - **The route refuses, never clips**: 0, or a moment in the next week
+    (`REMIND_MOST`). `False` is 0 to Python and 0 clears, so a bool is
+    refused as a bool. `test_a_reminder_is_a_moment_in_the_next_week_or_nothing`.
+  **A test sets a reminder far off, then near**: 3 s from now came before
+  a loaded machine had drawn the page, and the first look found it due --
+  red twice under two runs at once. The second `remind` and its push are
+  also what proves a push sets the page's timer again.
+  `test_a_reminder_puts_a_waiting_session_aside_until_it_comes`,
+  `test_a_reminder_brings_a_ready_session_back_until_it_is_opened`,
+  `test_later_offers_the_choices_and_keeps_the_one_picked`.
 - **Unread is a mark on a finished turn, as a snooze is a mark on a wait,
   and it is no state either** (#373). `Session.unread` is a turn that
   ended (`ended_at`, stamped by `Stop` and `StopFailure`) after the reader

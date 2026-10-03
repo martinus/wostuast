@@ -2611,3 +2611,28 @@ def test_seen_is_a_post_with_the_token_and_touches_no_terminal(ws, served, monke
     status, body = post(base + "/api/session/s1/seen", {"seen": False}, token=daemon.token)
     assert status == 200 and body["unread"] is True, body
     assert not typed
+
+
+
+def test_a_reminder_is_a_moment_in_the_next_week_or_nothing(ws, served, monkeypatch):
+    """A file of ours and no terminal, like `seen`. A moment that is past,
+    further than a week, or not a number is refused, not clipped: a page
+    that sent milliseconds hears about it."""
+    daemon, base = served
+    typed = []
+    monkeypatch.setattr(ws, "run", lambda args, **rest: typed.append(args) or "")
+    ws.append_event(event("SessionStart", pane="%7", ts=time.time()))
+    daemon.store.refresh()
+    url = base + "/api/session/s1/remind"
+    assert post(url, {"at": time.time() + 60}, token="nope")[0] == 403
+    # False is 0 to Python, and 0 clears: a bool is refused as a bool.
+    for wrong in (time.time() - 1, time.time() + 8 * 24 * 3600, "soon", True,
+                  False, time.time() * 1000):
+        status, body = post(url, {"at": wrong}, token=daemon.token)
+        assert status == 400 and "reminder" in body["error"], (wrong, body)
+    at = time.time() + 60
+    status, body = post(url, {"at": at}, token=daemon.token)
+    assert status == 200 and body["remind_at"] == at, body
+    status, body = post(url, {"at": 0}, token=daemon.token)
+    assert status == 200 and body["remind_at"] == 0.0, body
+    assert not typed
