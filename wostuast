@@ -363,6 +363,13 @@ def seen_path() -> Path:
     return state_dir() / "seen.json"
 
 
+def saved_path() -> Path:
+    """The turns the reader saved for later (#377): which session, which
+    block, when, and the start of its words. Ours, beside the snoozes, so
+    every browser lists the same ones."""
+    return state_dir() / "saved.json"
+
+
 def reminders_path() -> Path:
     """The reminders the reader set on the page (#375): each session by the
     moment it comes back. Ours, beside the snoozes, so every browser rings
@@ -1664,6 +1671,10 @@ class Store:
         self.seen_floor, self.seen = read_seen()
         #: The reminders, by session (#375). Replaced whole under `naming`.
         self.reminders: dict[str, float] = read_reminders()
+        #: The turns saved for later, newest first (#377). Replaced whole
+        #: under `naming`. Kept for a session that has gone from the list
+        #: too: a saved turn is what the reader wanted to keep.
+        self.saved: list[dict[str, Any]] = read_saved()
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -1974,6 +1985,20 @@ class Store:
         if session is not None:
             session.snoozed_at = self.snoozes.get(session_id, 0.0)
         return session is not None and session.snoozed
+
+    def save(self, entry: dict[str, Any], on: bool) -> list[dict[str, Any]]:
+        """Save a turn, or take it off the list (#377). A turn is the same
+        turn when its session and its moment are: `seq` is a place in one
+        reading of the transcript, and a resumed session counts again."""
+        with self.naming:
+            saved = [one for one in self.saved
+                     if (one["id"], one["ts"]) != (entry["id"], entry["ts"])]
+            if on:
+                saved.insert(0, entry)
+            saved = saved[:SAVED_MAX]
+            write_saved(saved)
+            self.saved = saved
+        return self.saved
 
     def remind(self, session_id: str, at: float) -> float:
         """Remind the reader of this session at `at`, or forget its
@@ -6318,6 +6343,45 @@ def write_snoozed(snoozes: dict[str, float]) -> None:
     write_atomic(snoozed_path(), json.dumps(snoozes), private=True)
 
 
+#: The most turns kept saved (#377), and the most of each one's words
+#: kept with it: enough to know it again in the list, not a copy of it --
+#: the words stay in the transcript, and "open" goes there.
+SAVED_MAX = 500
+SAVED_PREVIEW = 300
+
+
+def saved_entry(raw: Any) -> dict[str, Any] | None:
+    """One saved turn, checked: a session id, a place, a moment, and the
+    start of its words. None for anything else; nothing read from a disk
+    or a POST is trusted blindly."""
+    if not isinstance(raw, dict):
+        return None
+    sid, seq, ts = raw.get("id"), raw.get("seq"), raw.get("ts")
+    text, at = raw.get("text", ""), raw.get("at", 0.0)
+    number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool)
+    if (not isinstance(sid, str) or not sid or not isinstance(seq, int)
+            or isinstance(seq, bool) or seq < 0 or not number(ts)
+            or not isinstance(text, str) or not number(at)):
+        return None
+    return {"id": sid, "seq": seq, "ts": float(ts), "text": text[:SAVED_PREVIEW],
+            "at": float(at)}
+
+
+def read_saved() -> list[dict[str, Any]]:
+    """Every saved turn, newest first, or none."""
+    try:
+        payload = json.loads(saved_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [one for one in map(saved_entry, payload) if one is not None][:SAVED_MAX]
+
+
+def write_saved(saved: list[dict[str, Any]]) -> None:
+    write_atomic(saved_path(), json.dumps(saved), private=True)
+
+
 def read_reminders() -> dict[str, float]:
     """Every reminder kept, or none: the same shape as the snoozes, and
     read as carefully."""
@@ -7720,7 +7784,10 @@ class Daemon:
         return wrote
 
     def sessions_payload(self) -> dict[str, Any]:
-        return {"now": time.time(), "sessions": self.store.rows}
+        # How many turns are saved, for the sidebar's link (#377): the list
+        # itself is asked for when it opens.
+        return {"now": time.time(), "sessions": self.store.rows,
+                "saved": len(self.store.saved)}
 
     def tick(self) -> None:
         """One pass: fold new events, then tell the browsers what changed."""
@@ -8411,6 +8478,23 @@ class Serving:
         snoozed = self.daemon.store.snooze(session_id, bool(body.get("snooze")))
         self.reply_json({"id": session_id, "snoozed": snoozed, "done": True})
 
+    def save(self, session_id: str, session: Session | None,
+             body: dict[str, Any]) -> None:
+        """Save a turn of this session for later, or take it off the list
+        (#377). A file of ours, and no terminal. Taking one off needs no
+        session: the list keeps the turns of sessions the daemon has
+        forgotten, and their "done" was a 404 that nothing could clear."""
+        if body.get("save") and self.known(session_id) is None:
+            return
+        entry = saved_entry({"id": session_id, "seq": body.get("seq"),
+                             "ts": body.get("ts"), "text": body.get("text", ""),
+                             "at": time.time()})
+        if entry is None:
+            self.refuse(session_id, 400, "a saved turn is a place, a moment and its words")
+            return
+        saved = self.daemon.store.save(entry, bool(body.get("save")))
+        self.reply_json({"id": session_id, "saved": saved, "done": True})
+
     def remind(self, session_id: str, session: Session,
                body: dict[str, Any]) -> None:
         """Bring a session back at a moment, or forget its reminder (#375).
@@ -8649,6 +8733,10 @@ class Serving:
             self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/sessions":
             self.reply_json(self.daemon.sessions_payload())
+        elif path == "/api/saved":
+            # Every saved turn, of every session (#377): asked for when the
+            # list opens, not pushed.
+            self.reply_json({"saved": self.daemon.store.saved})
         elif path == "/api/events":
             self.stream(query.get("watch", ""))
         elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
@@ -8942,6 +9030,8 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "seen": (Serving.seen, "seen", "known"),
     # And a reminder (#375).
     "remind": (Serving.remind, "reminder", "known"),
+    # And a turn saved for later (#377).
+    "save": (Serving.save, "saved turn", ""),
 }
 
 #: The furthest a reminder may be set, in seconds: a week. The page offers
@@ -9426,6 +9516,8 @@ def installed_files() -> list[Installed]:
         Installed("History", names_path(), "the names you gave sessions on the page"),
         Installed("History", snoozed_path(),
                   "the sessions you snoozed on the page, until each moves on"),
+        Installed("History", saved_path(),
+                  "the turns you saved on the page, and the start of each"),
         Installed("History", reminders_path(),
                   "the reminders you set on the page, until each is read"),
         Installed("History", seen_path(),
@@ -11589,6 +11681,20 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   opacity: 0; transition: opacity .1s ease;
 }
 .turn:hover .copy, .copy:focus { opacity: 1; }
+/* Saved for later (issue 377): a bookmark after the name, on the hover, and
+   always once saved, filled. */
+.who .save {
+  /* Before the name: the column is right-aligned, so it moves nothing.
+     After it, an invisible bookmark pushed "claude" out of line with the
+     time; in the gap beside the words, it touched them. */
+  margin-right: 4px; padding: 0; border: none; background: none;
+  cursor: pointer; color: var(--ink-faint); opacity: 0; vertical-align: -1px;
+}
+.turn:hover .who .save, .who .save:focus, .who .save.on { opacity: 1; }
+.who .save:hover, .who .save.on { color: var(--needs); }
+.who .save .icon { width: 11px; height: 11px; fill: none; stroke: currentColor;
+  stroke-width: 1.3; stroke-linejoin: round; }
+.who .save.on .icon { fill: currentColor; }
 .who .copy:hover { color: var(--needs); }
 /* Where a link landed, for long enough to find with your eye. */
 .turn.linked { outline: 2px solid var(--needs); outline-offset: 6px;
@@ -12570,6 +12676,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
                autocomplete="off" spellcheck="false">
       </div>
       <button type="button" class="feedlink" id="feedlink" hidden></button>
+      <button type="button" class="feedlink" id="savedlink" hidden></button>
       <div class="rows" id="rows"></div>
     </div>
     <div class="grip" id="grip"></div>
@@ -12664,6 +12771,11 @@ const state = {
   // session is followed into its new id once, when the link appears; a
   // reader who then goes back to read the old one is not sent on again.
   cleared: new Set(),
+  // The turns saved for later (#377): the list when it was last asked for,
+  // its keys for the transcript's "saved", and the count the pushes carry.
+  saved: [],
+  savedKeys: new Set(),
+  savedCount: 0,
   // The reader's `settings.json` as this page last heard it: from the page
   // as it was served, then from every `settings` push. See `takeSettings`.
   settings: SETTINGS,
@@ -13125,6 +13237,8 @@ const ICONS = {
   copy: "M4.6 4.2V2.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H9.8"
         + "M1.6 5.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z",
   check: "M2.4 7.4l3 3 6.2-6.6",
+  // A bookmark: a turn saved for later (#377).
+  save: "M4 1.8h6a.6.6 0 0 1 .6.6v9.8L7 9.6l-3.6 2.6V2.4a.6.6 0 0 1 .6-.6z",
   // Settings: three rails, each with its knob somewhere else.
   sliders: "M1.6 3.5h10.8M1.6 7h10.8M1.6 10.5h10.8M4.5 2v3M9.5 5.5v3M6 9v3",
   // The rows of the settings menu, and two of their choices.
@@ -13529,17 +13643,25 @@ function unreadSessions() {
 function drawFeedLink() {
   const link = $("feedlink");
   const count = unreadSessions().length;
-  link.hidden = !count && !state.feed;
-  link.classList.toggle("open", !!state.feed);
+  link.hidden = !count && state.feed !== "unread";
+  link.classList.toggle("open", state.feed === "unread");
   if (fresh(link, "text", String(count))) link.textContent = "all unreads · " + count;
+  // The saved turns, below it (#377).
+  const keep = $("savedlink");
+  const kept = state.savedCount || 0;
+  keep.hidden = !kept && state.feed !== "saved";
+  keep.classList.toggle("open", state.feed === "saved");
+  if (fresh(keep, "text", String(kept))) keep.textContent = "saved · " + kept;
   // A session read elsewhere leaves the feed while it is open.
   if (state.feed) drawFeed($("content"));
 }
 
-function openFeed() {
-  if (state.feed) return;
-  savePlace(state.chosen);
-  state.feed = true;
+function openFeed(kind = "unread") {
+  if (state.feed === kind) return;
+  if (!state.feed) savePlace(state.chosen);
+  state.feed = kind;
+  $("content").dataset.tab = "";
+  if (kind === "saved") askSaved();
   state.feedText = new Map();
   document.body.classList.add("infeed");
   homeFind($("findhome"));
@@ -13565,6 +13687,7 @@ async function askLast(id) {
 }
 
 function drawFeed(box) {
+  if (state.feed === "saved") { drawSaved(box); return; }
   const shown = unreadSessions();
   const key = JSON.stringify([shown.map((s) => [s.id, s.ended_at, rowName(s), s.state]),
                               [...state.feedText.entries()]]);
@@ -13607,6 +13730,52 @@ function drawFeed(box) {
       markdown(entry, head || found.text);
       if (head || found.cut) put(entry, "p", "feedmore", "… open it to read the rest");
     }
+  }
+}
+
+// The saved turns of every session, newest first (#377): the start of
+// each, its session and its moment, "open" to go there and "done" to take
+// it off the list.
+function drawSaved(box) {
+  const saved = state.saved || [];
+  const key = JSON.stringify([saved, state.sessions.map((s) => [s.id, rowName(s)])]);
+  if (box.dataset.tab === "saved" && !fresh(box, "feed", key)) return;
+  if (box.dataset.tab !== "saved") fresh(box, "feed", key);
+  box.className = "content feed";
+  box.dataset.tab = "saved";
+  box.replaceChildren();
+  const head = put(box, "div", "feedhead");
+  put(head, "h2", null, "Saved");
+  const back = put(head, "button", "link", "back to the session");
+  back.addEventListener("click", () => { if (state.chosen) choose(state.chosen); });
+  if (!saved.length) {
+    put(box, "p", "empty", "Nothing saved. “save” on an answer keeps it here.");
+    return;
+  }
+  for (const one of saved) {
+    const s = state.sessions.find((x) => x.id === one.id);
+    const entry = put(box, "div", "feedentry");
+    entry.dataset.id = one.id;
+    const top = put(entry, "div", "feedtop");
+    put(top, "span", "feedname", s ? rowName(s) : "a session no longer listed");
+    put(top, "span", "feedwhen",
+        (dayOf(one.ts) ? dayOf(one.ts) + " " : "") + clock(one.ts));
+    if (s) {
+      const open = put(top, "button", "link", "open");
+      open.addEventListener("click", () => {
+        choose(one.id);
+        state.turns.goTo = one.seq;
+        state.turns.goToTs = one.ts;
+        showTab("transcript");
+      });
+    }
+    const done = put(top, "button", "link", "done");
+    done.addEventListener("click", async () => {
+      const answer = await tell(one.id, "save", { seq: one.seq, ts: one.ts, save: false });
+      if (!answer || answer.error) { said(answer || {}); return; }
+      takeSaved(answer.saved);
+    });
+    markdown(entry, one.text + (one.text.length >= 300 ? " …" : ""));
   }
 }
 
@@ -15769,6 +15938,16 @@ function goToLink() {
 // session.
 function landOnBlock(box) {
   if (state.turns.goTo === null) return false;
+  // A saved turn names its moment too (#377): a resumed session counts its
+  // blocks from nought again, and the place may hold another block now.
+  if (state.turns.goToTs) {
+    const blocks = state.turns.blocks;
+    const at = blocks.findIndex((one) => one && one.ts === state.turns.goToTs);
+    if (at < 0 && !state.turns.whole) return false;   // not all here yet
+    state.turns.goTo = at < 0 ? null : at;
+    state.turns.goToTs = null;
+    if (state.turns.goTo === null) return false;
+  }
   const node = state.turns.nodes[state.turns.goTo];
   if (!node || node.parentNode !== box) return false;
   state.turns.goTo = null;
@@ -15817,6 +15996,9 @@ function blockTurn(block, index) {
   name.href = blockHref(index);
   name.title = "link to this " + (mine ? "prompt"
                                        : aside ? "message" : plan ? "plan" : "reply");
+  // A bookmark beside the name, not a word beside "copy": the column is
+  // 64 px, and the two words pushed "copy" out of it (#377).
+  if (!mine && !aside) putSave(who, block, index);
   if (block.ts) {
     const day = dayOf(block.ts);
     if (day) put(who, "div", "day", day);
@@ -15995,6 +16177,57 @@ function putCopy(parent, block, mine) {
                  ["copied", "cannot"]);
   });
   return copy;
+}
+
+// "save" on an answer, beside "copy" (#377): kept for later, in a list
+// of every session's. A turn is its session and its moment.
+function savedKey(id, ts) {
+  return id + "\n" + ts;
+}
+
+function putSave(parent, block, index) {
+  // A turn is its moment too: a block with none could not be saved.
+  if (!block.text || !block.ts || !state.chosen) return null;
+  const id = state.chosen;
+  const key = savedKey(id, block.ts);
+  const button = put(parent, "button", "save" + (state.savedKeys.has(key) ? " on" : ""));
+  parent.insertBefore(button, parent.firstChild);   // before the name
+  putIcon(button, "save");
+  const say = () => {
+    button.title = state.savedKeys.has(key) ? "saved: take it off the list"
+                                             : "save it for later";
+    button.setAttribute("aria-label", button.title);
+  };
+  say();
+  button.addEventListener("click", async () => {
+    const on = !state.savedKeys.has(key);
+    const answer = await tell(id, "save", {
+      seq: index, ts: block.ts, save: on,
+      text: block.text.slice(0, 300),
+    });
+    if (!answer || answer.error) { said(answer || {}); return; }
+    takeSaved(answer.saved);
+    button.classList.toggle("on", state.savedKeys.has(key));
+    say();
+  });
+  return button;
+}
+
+// The list as the daemon holds it, and the keys the transcript asks.
+function takeSaved(saved) {
+  state.saved = saved || [];
+  state.savedKeys = new Set(state.saved.map((one) => savedKey(one.id, one.ts)));
+  state.savedCount = state.saved.length;
+  drawFeedLink();
+}
+
+async function askSaved() {
+  try {
+    const answer = await (await fetch("/api/saved")).json();
+    takeSaved(answer.saved);
+  } catch (error) {
+    // The daemon went away; the list stays as it was.
+  }
 }
 
 function nearBottom(box) {
@@ -17388,6 +17621,7 @@ function blankTurns() {
     open: new Set(),    // blocks the reader opened: a tool, a long message
     shut: new Set(),    // rounds the reader folded shut on the map
     goTo: null,         // a block a link asked for, until it is on screen
+    goToTs: null,       // and its moment, for a saved turn (#377)
     at: null,           // the block the list marks: the last place you went
     down: null,         // how far down the transcript you were; null is none
     early: null,        // pushes that land while a fetch is on its way
@@ -20461,6 +20695,7 @@ function resubscribe() {
     const waiting = !!state.chosen && !current();
     const first = !state.sessions.length;
     state.sessions = body.sessions || [];
+    if (typeof body.saved === "number") state.savedCount = body.saved;
     forgetAnswered();
     followClear(first);
     if (!current() && state.sessions.length) {
@@ -20633,7 +20868,11 @@ setInterval(tickAges, 1000);
 document.addEventListener("visibilitychange", repoll);
 document.addEventListener("visibilitychange", markSeen);
 $("feedlink").addEventListener("click", () => {
-  if (state.feed) { if (state.chosen) choose(state.chosen); } else openFeed();
+  if (state.feed === "unread") { if (state.chosen) choose(state.chosen); } else openFeed("unread");
+});
+askSaved();        // which answers are saved, for their "saved"
+$("savedlink").addEventListener("click", () => {
+  if (state.feed === "saved") { if (state.chosen) choose(state.chosen); } else openFeed("saved");
 });
 
 for (const button of document.querySelectorAll(".tab")) {

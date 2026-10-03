@@ -2745,3 +2745,33 @@ def test_the_line_holds_when_marked_comes_late(seen_before):
         assert page.evaluate("document.querySelector('.turnbody').scrollHeight") > before
         page.wait_for_function(AT_TOP)
 
+
+
+# --- saved turns (#377) -------------------------------------------------------
+
+
+def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
+    """A bookmark before the name saves the answer; "saved" over the list
+    opens every saved turn, and "open" lands on it. The bookmark stays
+    filled, and "done" takes it off the list."""
+    daemon, url = page_at
+    with opened(url) as page:
+        wait_for_map(page)
+        reply = ".turn:not(.mine):not(.toolrow)"
+        mark = f"{reply} .who .save"
+        assert page.locator(mark).count() == 1
+        assert page.locator(".turn.mine .who .save").count() == 0
+        page.hover(reply)
+        page.click(mark)
+        page.wait_for_selector(f"{mark}.on")
+        assert daemon.store.saved[0]["id"] == "s1"
+        page.wait_for_function(
+            "document.querySelector('#savedlink').textContent.endsWith(' 1')")
+        page.click("#savedlink")
+        page.wait_for_selector(".feedentry .prose")
+        page.click(".feedentry button:text('open')")
+        page.wait_for_selector(f"{reply}.linked")
+        page.click("#savedlink")
+        page.click(".feedentry button:text('done')")
+        page.wait_for_selector(".feed .empty")
+        assert daemon.store.saved == []

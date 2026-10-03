@@ -12,6 +12,7 @@ import pytest
 
 import conftest
 from browser import (
+    kept,
     settings,
     open_file,
     code_text,
@@ -923,7 +924,7 @@ def test_the_long_line_scrollbar_is_at_the_bottom_of_the_screen(repo_page):
         assert seen["rows"] == "visible", seen
 
 
-def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(repo_page):
+def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(ws, repo_page):
     """Two choices about reading, not about a session, so they live in this
     browser like the theme does."""
     repo, _ = repo_page
@@ -941,6 +942,10 @@ def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(repo_page):
             "getComputedStyle(document.querySelector('.dlines')).tabSize === '8'")
         settings(page, "wrapping", "true")
         page.wait_for_function(f"{wrapped} === 'pre-wrap'")
+        # Shown at once and written by a POST the page does not wait on: a
+        # reload before it landed lost the choice, red on CI (#385).
+        kept(ws, "tab_width", 8)
+        kept(ws, "long_lines", "wrap")
 
         page.reload(wait_until="domcontentloaded")
         page.wait_for_selector(".row")

@@ -58,6 +58,9 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   the tab's title, its icon and the alerts leave it out. The snooze ends by
   itself when the session moves on: you answer, the turn ends, or it asks
   something new. "wake" on the card ends it by hand.
+- **You keep an answer for later.** Hover an answer and click the bookmark
+  before "claude". "saved" over the list shows every saved answer of every
+  session, with "open" to go back to it and "done" to take it off.
 - **You catch up in one scroll.** "all unreads" over the list shows the
   last answer of every unread session, newest first, as Markdown. Each
   has "mark read" and "open".
@@ -515,6 +518,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/names.json` | The names you gave sessions on the page. |
 | `~/.local/state/wostuast/snoozed.json` | The sessions you snoozed on the page, until each moves on. |
+| `~/.local/state/wostuast/saved.json` | The turns you saved on the page, and the start of each. |
 | `~/.local/state/wostuast/reminders.json` | The reminders you set on the page, until each is read. |
 | `~/.local/state/wostuast/seen.json` | When you last read each session on the page, for its unread mark. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |

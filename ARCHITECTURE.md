@@ -635,6 +635,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/sessions` | The rows of the sidebar. |
 | GET | `/api/events?watch=ID` | The live stream (SSE). |
 | GET | `/api/session/ID/transcript` | The blocks of a transcript. |
+| GET | `/api/saved` | Every saved turn, of every session. |
 | GET | `/api/session/ID/last` | What the agent said last, for "All unreads". |
 | GET | `/api/session/ID/files` | The file list of the worktree. |
 | GET | `/api/session/ID/file?path=…` | One file's text. |
@@ -651,6 +652,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | POST | `/api/session/ID/name` | Give the session a name, and type `/rename` with it where that is safe. |
 | POST | `/api/session/ID/snooze` | Snooze a session that needs you, or wake it. Touches no terminal. |
 | POST | `/api/session/ID/seen` | Mark a session read, or unread. Touches no terminal. |
+| POST | `/api/session/ID/save` | Save a turn for later, or take it off the list. Touches no terminal. |
 | POST | `/api/session/ID/remind` | Bring a session back at a moment, or forget its reminder. Touches no terminal. |
 
 The GET routes live in one table, `GET_VERBS`, and the POST routes in another,

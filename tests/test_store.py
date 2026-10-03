@@ -491,3 +491,32 @@ def test_a_turn_an_error_ended_keeps_the_error_not_the_answer_before(ws, store):
     store.refresh(alive=lambda p: True)
     assert store.sessions["s1"].last_answer.startswith("There's an issue with the selected model")
 
+
+# --- saved turns (#377) -------------------------------------------------------
+
+
+def test_a_saved_turn_is_its_session_and_its_moment(ws, store):
+    """Saved twice is saved once: a turn is its session and its moment, as
+    `seq` counts again in a resumed session. Kept for a session that is
+    gone, newest first, in a file of ours."""
+    one = {"id": "s1", "seq": 3, "ts": 1000.0, "text": "First.", "at": 1.0}
+    two = {"id": "gone", "seq": 1, "ts": 2000.0, "text": "Second.", "at": 2.0}
+    store.save(one, True)
+    store.save(two, True)
+    store.save(dict(one, seq=4), True)
+    assert [(e["id"], e["seq"]) for e in store.saved] == [("s1", 4), ("gone", 1)]
+    assert ws.read_saved() == store.saved
+    assert ws.saved_path().stat().st_mode & 0o777 == 0o600
+    store.save(one, False)
+    assert ws.read_saved() == [two]
+
+
+def test_a_saved_entry_is_checked_before_it_is_kept(ws):
+    good = {"id": "s1", "seq": 0, "ts": 1.0, "text": "x" * 400, "at": 0}
+    assert len(ws.saved_entry(good)["text"]) == ws.SAVED_PREVIEW
+    for wrong in ({}, [], dict(good, id=""), dict(good, seq=-1), dict(good, seq=True),
+                  dict(good, seq=1.5), dict(good, ts="now"), dict(good, text=3)):
+        assert ws.saved_entry(wrong) is None, wrong
+    ws.saved_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.saved_path().write_text('[{"id": "s1", "seq": 0, "ts": 1, "text": "", "at": 0}, 5]')
+    assert [e["id"] for e in ws.read_saved()] == ["s1"]
