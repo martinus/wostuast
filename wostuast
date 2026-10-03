@@ -349,6 +349,13 @@ def names_path() -> Path:
     return state_dir() / "names.json"
 
 
+def snoozed_path() -> Path:
+    """The sessions the reader snoozed (#355): each by the moment its wait began,
+    so the snooze holds while that wait does. Ours, and in the
+    state folder beside the names, so every browser shares it."""
+    return state_dir() / "snoozed.json"
+
+
 def links_path() -> Path:
     """Where the ticket links were kept before `settings.json` took them.
 
@@ -1128,6 +1135,9 @@ class Session:
     #: A name the reader gave this session on the page. It wins over the one
     #: Claude Code sent, which is the name the session started with.
     mine: str = ""
+    #: The `attention_since` the reader snoozed this session at, or 0: see
+    #: `snoozed`.
+    snoozed_at: float = 0.0
 
     @property
     def label(self) -> str:
@@ -1154,6 +1164,22 @@ class Session:
         second spelling is how one of them starts answering it differently.
         """
         return path_label(self.home or self.cwd, self.git.repo)
+
+    @property
+    def snoozed(self) -> bool:
+        """Whether the reader said "it waits, but not now" (#355). It holds
+        while the session still waits on what it waited on then: the moment
+        that wait began is the one it was snoozed at. An answer, a turn that
+        ends, a new question -- any change -- ends it, so there is no timer
+        to set and no setting for one.
+
+        Not `settled`: a second question with no turn between leaves the
+        session in the one state, so `settled` did not move and the snooze
+        held over a question the reader never saw. `attention_since` moves
+        with every new question, and not with a late `Notification` about
+        the same wait."""
+        return (self.state == "needs_you" and self.snoozed_at > 0
+                and self.snoozed_at == self.attention_since)
 
     @property
     def dialog(self) -> dict[str, Any] | None:
@@ -1546,6 +1572,10 @@ class Store:
         # about which, so a restart silently swapped them.
         self.names: dict[str, str] = read_names()
         self.naming = threading.Lock()
+        #: The snoozes, by session: the moment each was snoozed at (#355).
+        #: Replaced whole under `naming`, as the names are, and for the same
+        #: reason: two POSTs at once built from one snapshot lose one.
+        self.snoozes: dict[str, float] = read_snoozed()
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -1761,6 +1791,7 @@ class Store:
         for session in sessions:
             self.reload_status(session)
             session.mine = self.names.get(session.session_id, "")
+            session.snoozed_at = self.snoozes.get(session.session_id, 0.0)
         return sessions
 
     def reload_git(self, sessions: Sequence[Session], moment: float) -> None:
@@ -1804,6 +1835,25 @@ class Store:
             one = facts.get(session.cwd)
             if one is not None and not one.failed:
                 session.git = one
+
+    def snooze(self, session_id: str, on: bool) -> bool:
+        """Snooze a session that needs you, or wake it. Returns whether it is
+        snoozed now. A snooze that no longer holds -- its session moved on --
+        is dropped from the file on the next write, so it does not grow."""
+        session = self.sessions.get(session_id)
+        with self.naming:
+            snoozes = {key: at for key, at in self.snoozes.items()
+                       if (one := self.sessions.get(key)) is not None
+                       and one.snoozed_at == at and one.snoozed}
+            if on and session is not None and session.state == "needs_you":
+                snoozes[session_id] = session.attention_since
+            else:
+                snoozes.pop(session_id, None)
+            write_snoozed(snoozes)
+            self.snoozes = snoozes
+        if session is not None:
+            session.snoozed_at = self.snoozes.get(session_id, 0.0)
+        return session is not None and session.snoozed
 
     def rename(self, session_id: str, name: str) -> str:
         """Give a session a name, or take the name away when it is empty.
@@ -2015,6 +2065,7 @@ def row(session: Session) -> dict[str, Any]:
         "since": round(session.since, 3),
         # For a session that is over, the line that brings it back.
         "resume": resume_command(session) if session.state in GONE_STATES else "",
+        "snoozed": session.snoozed,
         "name": session.mine or session.status.name,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -6021,6 +6072,24 @@ def read_names() -> dict[str, str]:
     }
 
 
+def read_snoozed() -> dict[str, float]:
+    """Every snooze kept, or none. A value that is not a number is left out:
+    the file is ours, but nothing read from a disk is trusted blindly."""
+    try:
+        payload = json.loads(snoozed_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): float(value) for key, value in payload.items()
+            if isinstance(key, str) and isinstance(value, (int, float))
+            and not isinstance(value, bool)}
+
+
+def write_snoozed(snoozes: dict[str, float]) -> None:
+    write_atomic(snoozed_path(), json.dumps(snoozes), private=True)
+
+
 def write_names(names: dict[str, str]) -> None:
     """Keep them. The file is ours and nobody else reads it, so it is one map
     rather than a file per session: there is no hook writing it in parallel."""
@@ -7924,6 +7993,17 @@ class Serving:
         # show it without waiting for that.
         self.reply_json({"id": session_id, "name": given, "done": True})
 
+    def snooze(self, session_id: str, session: Session,
+               body: dict[str, Any]) -> None:
+        """Snooze a session that needs you, or wake it (#355). It writes a
+        file of ours and touches no terminal, as `name` does."""
+        if body.get("snooze") and session.state != "needs_you":
+            self.reply_json({"id": session_id, "error":
+                             "only a session that needs you can be snoozed"}, 409)
+            return
+        snoozed = self.daemon.store.snooze(session_id, bool(body.get("snooze")))
+        self.reply_json({"id": session_id, "snoozed": snoozed, "done": True})
+
     def answer(self, session_id: str, session: Session,
                body: dict[str, Any]) -> None:
         """Answer the question the agent is waiting on, in its own dialog.
@@ -8382,6 +8462,8 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     # It writes no terminal, so it needs no pane: a session that has ended
     # can still be named, which is the point of naming one at all.
     "name": (Serving.name, "name", "known"),
+    # A file of ours as well, and no terminal (#355).
+    "snooze": (Serving.snooze, "snooze", "known"),
 }
 
 
@@ -8596,6 +8678,7 @@ def session_json(session: Session) -> dict[str, Any]:
         "last_event": session.last_event,
         "model": session.status.model,
         "cleared_into": session.cleared_into,
+        "snoozed": session.snoozed,
     }
 
 
@@ -8859,6 +8942,8 @@ def installed_files() -> list[Installed]:
         Installed("History", status_dir(),
                   "the latest status line of each session, one file each"),
         Installed("History", names_path(), "the names you gave sessions on the page"),
+        Installed("History", snoozed_path(),
+                  "the sessions you snoozed on the page, until each moves on"),
         Installed("History", daemon_lock_path(),
                   "held while wostuast serves the page; says where"),
         Installed("Your settings", config_path(),
@@ -10701,6 +10786,10 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* What git has started and not finished, and its conflicts: the amber of
    waiting, in the narrow face's weight, so it is read before the counts. */
 .row .gitstate .doing, .row .gitstate .conflict { color: var(--needs); font-weight: 600; }
+/* A snoozed row (issue 355) stands with the ready ones, in their colour: it waits,
+   but the reader said not now. Its control shows on a row that needs you,
+   and on a snoozed one, at the edge of the first line. */
+.row .line1 .snooze { margin: 0 8px 0 auto; font-size: 12px; }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
 /* The row has no dot: its edge and its tint say the state, and the group it
@@ -10711,6 +10800,13 @@ body.dragging { cursor: col-resize; user-select: none; }
 @keyframes ring {
   0%, 100% { box-shadow: 0 0 0 3px var(--ring-near); }
   50% { box-shadow: 0 0 0 5px var(--ring-far); }
+}
+/* After the pulse, and as specific as the rule it undoes: a snoozed row is
+   still `needs_you`, and with `.row.snoozed` alone it kept the amber ground
+   and the pulse it had been put aside to lose. */
+.row.needs_you.snoozed {
+  --soft: var(--done-soft); border-left-color: var(--done);
+  background: var(--done-soft); box-shadow: none; animation: none;
 }
 
 /* One switch for everything that moves. A reader whose system asks for less
@@ -11971,6 +12067,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>f</dt><dd>filter the session list</dd>
     <dt>e</dt><dd>rename the chosen session</dd>
     <dt>b</dt><dd>back to the session before, and again to return</dd>
+    <dt>z</dt><dd>snooze the session that needs you, or wake it</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 3</dt><dd>transcript, files, review</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
@@ -12617,11 +12714,35 @@ function whyNotTyped(s, no) {
 // second, on the reading that a session wanting a prompt is nearer to wanting
 // you -- it is not, because nothing about it is waiting.
 const BANDS = [
-  ["needs", "needs you", (s) => s.state === "needs_you"],
+  ["needs", "needs you", needsYou],
   ["working", "working", (s) => s.state === "working"],
   ["ready", "ready", (s) => s.state === "done"],
   ["history", "history", isGone],
 ];
+
+// Whether a session needs you now: it waits, and the reader has not snoozed
+// it (#355). Every answer to "who needs me" asks this one -- the group, the
+// tab's title and icon, the alerts -- or a snoozed session would still shout
+// from one of them.
+function needsYou(s) {
+  return s.state === "needs_you" && !s.snoozed;
+}
+
+// Snooze the chosen session, or wake it: `z`, and the row's control. Only a
+// session that needs you can be snoozed; the daemon says so for any other.
+async function toggleSnooze(id) {
+  const s = state.sessions.find((one) => one.id === id);
+  if (!s) return;
+  if (!s.snoozed && s.state !== "needs_you") {
+    note("only a session that needs you can be snoozed");
+    return;
+  }
+  const answer = await tell(id, "snooze", { snooze: !s.snoozed });
+  if (answer && answer.error) { said(answer); return; }
+  s.snoozed = !!(answer && answer.snoozed);
+  $("rows").dataset.drawn = "";
+  drawSessions();
+}
 
 function bandOf(s) {
   for (const band of BANDS) if (band[2](s)) return band[0];
@@ -12678,6 +12799,12 @@ function newRow(id) {
     if (!onLink(press)) renameRow(row);
   });
   put(one, "span", "word");
+  // "Not now", on a row that needs you, and "wake" on one snoozed (#355).
+  const later = put(one, "button", "link snooze");
+  later.addEventListener("click", (press) => {
+    press.stopPropagation();           // not a choice of the row
+    toggleSnooze(id);
+  });
   put(one, "span", "age");
   put(row, "div", "line2 where");
   put(row, "div", "line2");
@@ -12698,7 +12825,8 @@ function newRow(id) {
 // and "killed" share one group and one grey.
 function fillRow(row, s) {
   const [one, where, two, three] = row.children;
-  row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "");
+  row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "")
+    + (s.snoozed ? " snoozed" : "");
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
   // Each part is written again only when what it says has changed. This
@@ -12712,7 +12840,11 @@ function fillRow(row, s) {
     slot.textContent = rowName(s);
     linkTickets(slot);
   }
-  one.children[1].textContent = isGone(s) ? s.state_word : "";
+  one.children[1].textContent = isGone(s) ? s.state_word : s.snoozed ? "snoozed" : "";
+  const later = one.children[2];
+  later.hidden = !needsYou(s) && !s.snoozed;
+  later.textContent = s.snoozed ? "wake" : "not now";
+  later.title = s.snoozed ? "it needs you again  ·  z" : "it waits, but not now  ·  z";
   // On every row, the same four lines: the name, where it stands, the
   // branch and what git counts, and what it is doing. A row not renamed
   // says its repository twice, and a row that is always one shape is read
@@ -12764,8 +12896,8 @@ function fillRow(row, s) {
   three.hidden = !said;
   // Beside the name, at the right: "how long has this needed me?" is read
   // with the name, and a ready row has no fourth line to carry it.
-  one.children[2].textContent = ago(s.since);
-  ages.push([one.children[2], s.since]);
+  one.children[3].textContent = ago(s.since);
+  ages.push([one.children[3], s.since]);
 }
 
 function rowName(s) {
@@ -12972,7 +13104,7 @@ function drawCounts() {
     seen.n += 1;
     tally.set(s.state, seen);
   }
-  const needs = (tally.get("needs_you") || { n: 0 }).n;
+  const needs = state.sessions.filter(needsYou).length;
   const working = (tally.get("working") || { n: 0 }).n;
   document.title = tabTitle(state.sessions);
   drawIcon(needs ? "needs_you" : working ? "working"
@@ -13570,7 +13702,7 @@ function money(dollars) {
 // names of the sessions that need you, or else how many work, or else how
 // many are ready. By the name on the row, so the tab and the list agree.
 function tabTitle(sessions) {
-  const needs = sessions.filter((s) => s.state === "needs_you");
+  const needs = sessions.filter(needsYou);
   if (needs.length) {
     const names = needs.slice(0, 2).map((s) => clip(rowName(s), 30));
     const more = needs.length > 2 ? " +" + (needs.length - 2) : "";
@@ -14007,7 +14139,7 @@ function putReadAs(parent, asText, pick, textTitle) {
 function notifyAbout(sessions) {
   const want = alertsWanted();
   const on = alertsCan();
-  const now = new Set(sessions.filter((s) => s.state === "needs_you").map((s) => s.id));
+  const now = new Set(sessions.filter(needsYou).map((s) => s.id));
   for (const id of waiting) if (!now.has(id)) waiting.delete(id);
 
   // Read before anything is sent, and written on every pass whatever the
@@ -14034,7 +14166,7 @@ function notifyAbout(sessions) {
   // prompt, which `/rename` never reaches, so the alert named a session that
   // was not in the list.
   for (const session of sessions) {
-    if (want.needs && session.state === "needs_you" && !waiting.has(session.id)) {
+    if (want.needs && needsYou(session) && !waiting.has(session.id)) {
       waiting.add(session.id);
       tellAbout(session, rowName(session) + " needs you", waitsFor(session),
                 true);
@@ -19362,6 +19494,7 @@ document.addEventListener("keydown", (press) => {
       break;
     case "c": nextTheme(); break;
     case "b": goBack(); break;
+    case "z": if (state.chosen) toggleSnooze(state.chosen); break;
     case "?": help.open ? help.close() : help.showModal(); break;
     default: {
       // A tab per number key, in the order the tabs are drawn. The list is

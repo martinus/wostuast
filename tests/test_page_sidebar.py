@@ -1481,3 +1481,68 @@ def test_b_says_why_it_cannot_go_back(pair_at):
         assert page.evaluate("state.chosen") == "s2"
         assert page.evaluate("window.__said")[-1] == (
             "the session before this one is hidden by the filter")
+
+
+# --- a snooze (#355) -----------------------------------------------------------
+
+
+def test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again(ws, page_at):
+    """`z` on a session that needs you: it moves to the ready ones, in their
+    colour, and the tab's title and the alerts leave it out. Every answer to
+    "who needs me" asks `needsYou`, so none of them still shouts. A new
+    question ends the snooze by itself, and is said again."""
+    daemon, path = page_at
+    with alerts_page(path) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        ws.append_event(conftest.event(
+            "PermissionRequest", tool_name="Bash",
+            tool_input={"command": "rm -rf build"}, ts=time.time()))
+        daemon.tick()
+        page.wait_for_function("window.__told.length === 1")
+        page.wait_for_function("document.title.includes(' asks ')")
+        assert page.is_visible(".row .snooze")
+        assert page.text_content(".row .snooze") == "not now"
+
+        page.click(".row")
+        page.keyboard.press("z")
+        page.wait_for_function("state.sessions[0].snoozed === true")
+        page.wait_for_function(
+            "[...document.querySelectorAll('.rows .band')]"
+            ".some((e) => e.textContent.startsWith('ready'))")
+        assert bands(page) == ["ready · 1"]
+        assert "snoozed" in page.get_attribute(".row", "class")
+        assert page.text_content(".row .line1 .word") == "snoozed"
+        assert page.text_content(".row .snooze") == "wake"
+        page.wait_for_function("!document.title.includes(' asks ')")
+
+        # The same wait, said again late: the row changes, and the alert
+        # stays quiet, because the session still waits on what it was
+        # snoozed on.
+        ws.append_event(conftest.event(
+            "Notification", notification_type="elicitation_dialog",
+            message="still here", ts=time.time()))
+        daemon.tick()
+        page.wait_for_function(
+            "() => state.sessions[0].last_event === 'still here'")
+        assert page.evaluate("state.sessions[0].snoozed") is True
+        assert page.evaluate("window.__told.length") == 1
+
+        # A new question wakes it, and is said.
+        ws.append_event(conftest.event(
+            "PermissionRequest", tool_name="Bash",
+            tool_input={"command": "rm -rf dist"}, ts=time.time() + 1))
+        daemon.tick()
+        page.wait_for_function("window.__told.length === 2")
+        assert bands(page) == ["needs you · 1"]
+        assert page.text_content(".row .snooze") == "not now"
+
+
+def test_z_on_a_session_that_does_not_need_you_says_why(page_at):
+    _, path = page_at
+    with opened(path) as page:
+        spy_on_note(page)
+        page.click(".row")
+        page.keyboard.press("z")
+        page.wait_for_function("window.__said.length > 0")
+        assert "only a session that needs you" in page.evaluate("window.__said")[-1]
+        assert not page.is_visible(".row .snooze")

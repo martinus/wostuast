@@ -410,9 +410,10 @@ lock.
 
 There are two small exceptions, and each one has a lock:
 
-- **Names.** `POST name` runs in a request thread. Two renames at once once
-  built two new name maps from the same old one, and one name was lost. Now
-  writers of `Store.names` take the `naming` lock.
+- **Names and snoozes.** `POST name` runs in a request thread. Two renames
+  at once once built two new name maps from the same old one, and one name
+  was lost. Now writers of `Store.names` take the `naming` lock. `POST
+  snooze` writes `Store.snoozes` under the same lock, for the same reason.
 - **Transcript readers** are shared between the worker and the request
   threads, under `Daemon.lock`.
 
@@ -644,6 +645,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | POST | `/api/session/ID/answer` | Press the keys that answer a question. |
 | POST | `/api/session/ID/decline` | Say **No** to a permission dialog. |
 | POST | `/api/session/ID/name` | Give the session a name. Touches no terminal. |
+| POST | `/api/session/ID/snooze` | Snooze a session that needs you, or wake it. Touches no terminal. |
 
 The GET routes live in one table, `GET_VERBS`, and the POST routes in another,
 `POST_VERBS`. `Serving.dispatch` reads the tables. Adding a route means adding
@@ -768,6 +770,11 @@ The sidebar also feeds three signals that work from another room:
   most urgent state;
 - a **browser alert** fires once when an agent starts to need you, and,
   if you want, when one finishes.
+
+A session that needs you can be **snoozed**: "not now" on its row, or `z`.
+It then stands with the ready ones, and none of the three signals counts
+it. The snooze is a mark on one wait (`attention_since`), so the next
+answer, turn or question ends it by itself.
 
 ### Markdown you can trust
 

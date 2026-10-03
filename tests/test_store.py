@@ -277,3 +277,90 @@ def test_a_session_too_old_is_forgotten_not_merely_hidden(ws, store):
     assert "s1" in store.sessions
     store.refresh(now=1000.0 + ws.SESSION_MAX_AGE + 10, alive=lambda p: True)
     assert store.sessions == {}
+
+
+# --- a snooze (#355) -----------------------------------------------------------
+
+
+def asks(ws, sid="s1", ts=1000.0, command="make"):
+    ws.append_event(event("PermissionRequest", sid=sid, ts=ts, tool_name="Bash",
+                          tool_input={"command": command}))
+
+
+def test_a_snooze_holds_while_the_session_waits_on_the_same_thing(ws, store):
+    asks(ws)
+    store.refresh(now=1000.0, alive=lambda p: True)
+    assert store.snooze("s1", True) is True
+    store.refresh(now=1050.0, alive=lambda p: True)
+    assert store.rows[0]["snoozed"] is True
+    assert store.rows[0]["state"] == "needs_you"     # it still waits
+    assert ws.read_snoozed() == {"s1": 1000.0}
+
+
+def test_a_snooze_ends_when_the_session_moves_on(ws, store):
+    """No timer and no setting: the next thing that happens wakes it. An
+    answer and a new question are both that."""
+    asks(ws)
+    store.refresh(now=1000.0, alive=lambda p: True)
+    store.snooze("s1", True)
+    ws.append_event(event("PostToolUse", ts=1010.0, tool_name="Bash"))
+    ws.append_event(event("Stop", ts=1020.0))
+    asks(ws, ts=1030.0, command="make install")
+    store.refresh(now=1030.0, alive=lambda p: True)
+    assert store.rows[0]["state"] == "needs_you"
+    assert store.rows[0]["snoozed"] is False
+
+
+def test_a_second_question_in_the_same_wait_wakes_it_too(ws, store):
+    """Two questions in a row, with no turn between: the session was in the
+    one state all along, so the moment it became so did not move, and the
+    snooze held over a question the reader never saw."""
+    asks(ws)
+    store.refresh(now=1000.0, alive=lambda p: True)
+    store.snooze("s1", True)
+    asks(ws, ts=1030.0, command="rm -rf build")
+    store.refresh(now=1030.0, alive=lambda p: True)
+    assert store.rows[0]["snoozed"] is False
+
+
+def test_only_a_session_that_needs_you_is_snoozed(ws, store):
+    ws.append_event(event("SessionStart"))
+    store.refresh(now=1000.0, alive=lambda p: True)
+    assert store.snooze("s1", True) is False
+    assert store.snooze("nope", True) is False
+    assert ws.read_snoozed() == {}
+
+
+def test_a_snooze_outlives_the_daemon_and_wakes_by_hand(ws, stub_git):
+    asks(ws)
+    first = ws.Store()
+    first.refresh(now=1000.0, alive=lambda p: True)
+    first.snooze("s1", True)
+    again = ws.Store()
+    again.refresh(now=1001.0, alive=lambda p: True)
+    assert again.rows[0]["snoozed"] is True
+    assert again.snooze("s1", False) is False
+    again.refresh(now=1002.0, alive=lambda p: True)
+    assert again.rows[0]["snoozed"] is False
+    assert ws.read_snoozed() == {}
+
+
+def test_a_snooze_that_no_longer_holds_leaves_the_file(ws, store):
+    """The file is pruned on the next write, so it does not grow by one entry
+    a question for ever."""
+    asks(ws, sid="a")
+    asks(ws, sid="b")
+    store.refresh(now=1000.0, alive=lambda p: True)
+    store.snooze("a", True)
+    ws.append_event(event("Stop", sid="a", ts=1010.0))
+    store.refresh(now=1010.0, alive=lambda p: True)
+    store.snooze("b", True)
+    assert set(ws.read_snoozed()) == {"b"}
+
+
+def test_a_snooze_file_that_is_not_ours_is_read_as_none(ws):
+    ws.snoozed_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.snoozed_path().write_text('{"a": "x", "b": true, "c": 5}')
+    assert ws.read_snoozed() == {"c": 5.0}
+    ws.snoozed_path().write_text("[1]")
+    assert ws.read_snoozed() == {}
