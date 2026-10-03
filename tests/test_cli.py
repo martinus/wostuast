@@ -81,6 +81,47 @@ def test_ls_prints_one_row_per_session(ws, written_events, capsys):
     assert "1 ready · 1 ended" in out
 
 
+#: Every field `ls --json` prints, and none other (#353). A field renamed
+#: or taken out breaks somebody's script: this list says so first.
+JSON_FIELDS = {
+    "id", "name", "place", "worktree_path", "cwd", "state", "state_word",
+    "settled", "last_ts", "branch", "ahead", "behind", "dirty",
+    "touched_files", "pane", "pid", "reason", "last_event", "model",
+    "cleared_into",
+}
+
+
+def test_ls_json_keeps_its_shape(ws, written_events, capsys):
+    """For a script: one object, with a version, and every session in the
+    order of the page, each with exactly the fields README.md lists."""
+    assert ws.cmd_ls(argparse.Namespace(json=True)) == 0
+    found = json.loads(capsys.readouterr().out)
+    assert set(found) == {"version", "now", "sessions"}
+    assert found["version"] == 1
+    assert isinstance(found["now"], float)
+    sessions = found["sessions"]
+    assert [one["id"] for one in sessions] == [
+        one.session_id for one in ws.build_sessions()]
+    for one in sessions:
+        assert set(one) == JSON_FIELDS
+        assert isinstance(one["settled"], float)
+        assert one["state"] in ws.STATE_WORDS
+
+
+def test_the_json_fields_are_the_ones_readme_lists():
+    """The shape is a promise, and README.md is where a reader finds it."""
+    readme = (conftest.ROOT / "README.md").read_text(encoding="utf-8")
+    listed = set(re.findall(r"^\| `([a-z_]+)` \|", readme.split("### ls --json")[1]
+                            .split("\n## ")[0], re.M))
+    assert listed == JSON_FIELDS
+
+
+def test_ls_json_with_no_sessions_is_still_json(ws, capsys):
+    assert ws.cmd_ls(argparse.Namespace(json=True)) == 0
+    found = json.loads(capsys.readouterr().out)
+    assert found["sessions"] == []
+
+
 def test_ls_shows_the_name_from_the_status_file(ws, written_events, recorded_status, capsys):
     ws.write_status(recorded_status["session_id"],
                     ws.status_from_payload(recorded_status, now=1.0))

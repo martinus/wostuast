@@ -8429,14 +8429,68 @@ def run_status_line(command: str, payload: str) -> str:
     return done.stdout
 
 
+#: The version of the shape `session_json` and `ls --json` print. It goes up
+#: only when a field is renamed or removed, which breaks a reader's script;
+#: a field added is not a new version (#353).
+JSON_VERSION = 1
+
+
+def session_json(session: Session) -> dict[str, Any]:
+    """One session as a script reads it: `ls --json` and `wait --json` (#353).
+
+    Not `row`: that is the page's, and changes whenever the page does. This
+    one is a promise, written in `README.md` and held field by field by
+    `test_ls_json_keeps_its_shape`, so a field is added here and never
+    renamed. Times are moments in seconds since the epoch, never "3min",
+    which a script would have to parse back.
+    """
+    facts = session.git
+    return {
+        "id": session.session_id,
+        "name": session.mine or session.status.name,
+        "place": session.place,
+        "worktree_path": facts.root or session.home or session.cwd,
+        "cwd": session.cwd,
+        "state": session.state,
+        "state_word": STATE_WORDS.get(session.state, session.state),
+        # The moment it became what it is: `now - settled` is how long.
+        "settled": round(session.settled, 3),
+        "last_ts": round(session.last_ts, 3),
+        "branch": facts.branch,
+        "ahead": facts.ahead,
+        "behind": facts.behind,
+        "dirty": facts.dirty,
+        "touched_files": facts.touched_files,
+        "pane": session.pane,
+        "pid": session.pid,
+        "reason": session.reason,
+        "last_event": session.last_event,
+        "model": session.status.model,
+        "cleared_into": session.cleared_into,
+    }
+
+
+def print_json(sessions: Sequence[Session]) -> None:
+    """The sessions as one JSON object on stdout: the version, the moment it
+    was read, and the sessions in the order of the page."""
+    print(json.dumps({"version": JSON_VERSION, "now": round(time.time(), 3),
+                      "sessions": [session_json(one) for one in sessions]},
+                     ensure_ascii=False))
+
+
 def cmd_ls(args: argparse.Namespace) -> int:
     """Print one row per session, in the order of the sidebar."""
+    as_json = bool(getattr(args, "json", False))
     drop_old_status()
     try:
         sessions = build_sessions()
     except OSError as error:        # a history read in part would look whole
         print(f"cannot read the event log: {error}", file=sys.stderr)
         return 1
+    if as_json:
+        add_git_facts(sessions)
+        print_json(sort_sessions(sessions))
+        return 0
     if not sessions:
         print("no sessions yet.")
         print("start a Claude Code session in tmux; run `wostuast doctor` to check the setup.")
@@ -9028,6 +9082,108 @@ def cmd_report(args: argparse.Namespace) -> int:
     """Print the report: Markdown for an agent, names and counts only."""
     print(build_report(getattr(args, "days", SHAPES_DAYS)), end="")
     return 0
+
+
+#: How often `wait` looks at the log again. It reads only what was appended
+#: (`EventFollower`), so this is a cheap look, not a read of the history.
+WAIT_STEP = 0.5
+
+
+def wait_states(text: str) -> frozenset[str]:
+    """The states a `--until` names: a state as the log says it
+    (`needs_you`), as `ls` prints it (`needs you`, `ready`, `killed`), or
+    `over`, which is both ways a session ends."""
+    import argparse
+
+    key = text.strip().lower().replace("-", "_").replace(" ", "_")
+    if key == "over":
+        return frozenset(GONE_STATES)
+    for state, word in STATE_WORDS.items():
+        if key in (state, word.replace(" ", "_")):
+            return frozenset({state})
+    words = ", ".join([*STATE_WORDS, "over"])
+    raise argparse.ArgumentTypeError(f"{text!r} is not a state: use {words}")
+
+
+def pick_session(sessions: Sequence[Session], text: str) -> tuple[Session | None, str]:
+    """The session `text` names, or why there is none: its id, the start of
+    its id, its name, or its place -- the first of these that any session
+    fits. Two that fit the same way is no answer, and the message names
+    both, so the reader can say which."""
+    tests = (
+        lambda s: s.session_id == text,
+        lambda s: s.session_id.startswith(text),
+        lambda s: (s.mine or s.status.name) == text,
+        lambda s: s.place == text,
+    )
+    for fits in tests:
+        found = [one for one in sessions if fits(one)]
+        if len(found) == 1:
+            return found[0], ""
+        if found:
+            named = "; ".join(f"{one.session_id[:8]} {one.label}" for one in found[:5])
+            return None, (f"{text!r} fits {counted(len(found), 'session', 'sessions')}:"
+                          f" {named}. Say which, by the start of its id.")
+    return None, f"no session is called {text!r}: `wostuast ls` lists them"
+
+
+def cmd_wait(args: argparse.Namespace) -> int:
+    """Return when a session reaches a state, or any session does (#356).
+
+    It only reads: the log, as the daemon does, so no daemon has to run.
+    A `/clear` ends a session and goes on in a new one in the same pane;
+    the wait goes with it, as the page does (`cleared_into`). Exit 0 when
+    the state is reached, 1 for a session that is unknown or has ended in
+    another state, 124 at `--timeout`, as `timeout(1)` says it.
+    """
+    wanted = frozenset().union(*args.until)
+    store = Store()
+    deadline = None if args.timeout is None else time.monotonic() + args.timeout
+    pinned = ""
+    try:
+        while True:
+            store.follow()
+            sessions = sort_sessions(store.settle(time.time()))
+            hit: Session | None = None
+            if args.session:
+                if not pinned:
+                    found, trouble = pick_session(sessions, args.session)
+                    if found is None:
+                        print(trouble, file=sys.stderr)
+                        return 1
+                    pinned = found.session_id
+                session = store.sessions.get(pinned)
+                while session is not None and session.cleared_into \
+                        and session.state not in wanted:
+                    pinned = session.cleared_into
+                    session = store.sessions.get(pinned)
+                if session is None:
+                    print(f"session {pinned[:8]} is no longer in the log",
+                          file=sys.stderr)
+                    return 1
+                if session.state in wanted:
+                    hit = session
+                elif session.state in GONE_STATES:
+                    print(f"{session.label} {STATE_WORDS[session.state]}"
+                          f" without becoming {'/'.join(sorted(wanted))}",
+                          file=sys.stderr)
+                    return 1
+            else:
+                hit = next((one for one in sessions if one.state in wanted), None)
+            if hit is not None:
+                if args.json:
+                    add_git_facts([hit])
+                    print_json([hit])
+                else:
+                    print(f"{hit.session_id[:8]} {hit.label}:"
+                          f" {STATE_WORDS.get(hit.state, hit.state)}")
+                return 0
+            if deadline is not None and time.monotonic() >= deadline:
+                print("timed out", file=sys.stderr)
+                return 124
+            time.sleep(WAIT_STEP)
+    except KeyboardInterrupt:
+        return 130
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -9867,6 +10023,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("install", cmd_install, "copy to ~/.local/bin and register the hooks"),
         ("uninstall", cmd_uninstall, "remove the hooks; keep the event log"),
         ("ls", cmd_ls, "list the sessions"),
+        ("wait", cmd_wait, "wait until a session reaches a state"),
         ("doctor", cmd_doctor, "check the setup"),
         ("files", cmd_files, "list every file wostuast wrote, and what it is for"),
         ("report", cmd_report,
@@ -9875,6 +10032,20 @@ def build_parser() -> argparse.ArgumentParser:
     for name, handler, help_text in commands:
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
         sub.set_defaults(handler=handler)
+        if name in ("ls", "wait"):
+            sub.add_argument("--json", action="store_true",
+                             help="print JSON for a script (see README.md)")
+        if name == "wait":
+            sub.add_argument("session", nargs="?", default="",
+                             help="its id, the start of its id, or its name;"
+                                  " without one, any session")
+            sub.add_argument("--until", type=wait_states, action="append",
+                             required=True, metavar="STATE",
+                             help="needs_you, working, done, ended, dead or"
+                                  " over; give it more than once for any of them")
+            sub.add_argument("--timeout", type=float, default=None,
+                             metavar="SECONDS", help="give up after this long:"
+                                                     " exit 124")
         if name == "install":
             # The run of a copy `install` just fetched (`cmd_install`).
             sub.add_argument("--fetched", action="store_true",
