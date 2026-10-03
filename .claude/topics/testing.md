@@ -151,6 +151,15 @@ after the push: it began on the new state, and the read waited for a second
 event that never came. `read_events(..., then=change)` runs the change once
 the first event is in, and `stream` joins the hub before it writes that
 event, so nothing pushed after it is lost.
+- **A rule turned round has tests of the old one in other files: grep them
+  all before the gate.** #351 reversed "the row shows its place, never
+  Claude Code's title". The sidebar tests of the old rule were found and
+  rewritten; `test_the_page_draws_the_session`, in the transcript's file,
+  asserted it too, and only the whole-suite run found it, after three
+  green runs under load of the files that changed. `grep -rn` the old
+  rule's words -- the value it promised ("A session"), the phrase its
+  comments use ("not the row's", "never reaches") -- over `tests/` when
+  the rule is rewritten, not when CI goes red.
 - **No test reaches the tmux it runs under.** `ws` points `TMUX` at a
   socket in the test's own folder, where no server runs: a plain `tmux`
   talks to the server `TMUX` names. Not `TMUX_TMPDIR`: a socket under

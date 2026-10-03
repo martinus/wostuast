@@ -55,7 +55,12 @@ transcript: the status line hands it over.
 login and nothing of the owner's. This bullet said a cloud session could
 not run one; one session then measured four issues this way: what a long
 paste does in the prompt (#328), the keys of a dialog (#331), what a typed
-`/model` writes and the status line's `effort` (#337, #338). **What only
+`/model` writes and the status line's `effort` (#337, #338). **"What does
+X do while a turn runs" is `busy(seconds)`**: a turn that runs a Bash
+`sleep`, running when it returns. It took three runs of #351 to find:
+`sleep` asks for no permission, even in manual mode, so a wait for its
+dialog let the turn end first, and `wait_for_turns(2)` waits for the
+request after the tool's result. **What only
 the owner's `~/.claude` holds is still the owner's to take**: listing it,
 or the environment, is refused as credential exploration -- and the
 refusal covers every other way to the same answer. Write the probe as a short script into the
