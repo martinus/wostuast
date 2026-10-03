@@ -70,6 +70,30 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   **`seq` is digits and nothing else** (`placeInHash`): `Number("")` is 0,
   so `#s1/` was a link to the first block, and `Number` takes " 3", "1e2"
   and "0x10" too. `test_a_link_to_a_block_is_digits_and_nothing_else`.
+- **Coming back to a session lands on a "new" line, over the first block
+  after the reader last had it on screen** (#374), as Slack opens a
+  channel. `state.turns.newSince` is the row's `seen_at` (#373), taken
+  once by `markSeen` *before* it reads the session: taken after, it was
+  now, and a turn that ends while the reader watches would have drawn a
+  line over itself. `undefined` is not taken yet, `null` no line, so a
+  session whose row arrives after the choice still gets it. It is a field
+  of `blankTurns` and not of `PLACE_FIELDS`: a visit's news is not kept.
+  - **`putNewLine` puts the line on every draw**, as a sibling before the
+    block's node and not inside it, so `redrawBlock` leaves it standing,
+    and `patchTranscript` puts it when the first block after arrives in a
+    push of its own.
+  - **`landOnNew` lands again on a draw the reader has not scrolled
+    since** (`newDown`): the transcript is drawn as text and then as
+    Markdown, much taller, and a landing only once left the pixel offset of
+    the first draw, with the line near the foot. A link (`goTo`) wins. A
+    line that cannot reach the top -- too little after it -- stands where
+    the end of the pane lets it, which is right.
+  **A test of "at the top" has two bounds** (`AT_TOP`): `top < 20` passed
+  with the landing taken out, because the line stood 470 px *above* the
+  pane. `test_coming_back_lands_on_a_line_over_the_first_turn_not_seen`,
+  `test_the_line_holds_when_marked_comes_late`,
+  `test_the_line_stays_and_lets_the_reader_scroll_away`,
+  `test_a_turn_that_ends_while_you_watch_draws_no_line`.
 - **A session can be chosen before the session list exists.** The address bar
   holds a link at startup, so `choose` runs with `state.sessions` empty —
   `current()` is null and every tab draws its empty state. The `sessions`

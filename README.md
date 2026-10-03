@@ -62,7 +62,9 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   last looked at it has a blue dot before its name, and the tab's title
   counts them. Opening it marks it read. "unread" on a card's hover, or
   <kbd>u</kbd>, marks it unread again: you looked, but you are not done
-  with it. Every browser sees the same marks.
+  with it. Every browser sees the same marks. When you open it, a blue
+  "new" line stands over the first turn you have not seen, and the
+  transcript opens there instead of at its end.
 - **Each session is one card.** It shows the session's name and its age,
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or

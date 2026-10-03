@@ -2202,6 +2202,10 @@ def row(session: Session) -> dict[str, Any]:
         "snoozed": session.snoozed,
         # A turn ended since the reader last had it on screen (#373).
         "unread": session.unread,
+        # When that was, for the "new" line in the transcript (#374). It
+        # moves only when the reader looks, so it never makes a row differ
+        # by itself.
+        "seen_at": round(session.seen_at, 3),
         "name": session.title,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -11726,6 +11730,15 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .divider::before, .divider::after {
   content: ""; flex-grow: 1; height: 1px; background: var(--edge);
 }
+/* The first block the reader has not seen (issue 374), as Slack marks the
+   first new message: a word and a rule, in the colour of a turn that is
+   done, which is the colour of the row's unread dot. */
+.newline {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 18px;
+  font-family: var(--mono); font-size: 11px; color: var(--done);
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.newline::after { content: ""; flex-grow: 1; height: 1px; background: var(--done); }
 
 /* files and diff: a list on the left, what it names on the right */
 /* `relative` for the Transcript tab's "latest" button, which is the one
@@ -13209,9 +13222,63 @@ function toggleUnread(id) {
 // `seeing` keeps a push that arrives before the answer from asking twice.
 function markSeen() {
   const s = current();
-  if (!s || !s.unread || state.keptUnread === s.id || state.seeing === s.id) return;
-  if (document.visibilityState !== "visible") return;
+  if (!s || document.visibilityState !== "visible") return;
+  // Taken before it is read, and once: a turn that ends while the reader
+  // watches is not news, and must not move the line (#374).
+  if (state.turns.newSince === undefined) {
+    state.turns.newSince = s.unread && s.seen_at > 0 ? s.seen_at : null;
+    if (state.turns.newSince !== null) {
+      const pane = $("content").querySelector(".turnbody");
+      if (pane && state.tab === "transcript") {
+        putNewLine(pane);
+        landOnNew(pane);
+      }
+    }
+  }
+  if (!s.unread || state.keptUnread === s.id || state.seeing === s.id) return;
   setUnread(s.id, false);
+}
+
+// The line over the first block the reader has not seen (#374), as Slack
+// draws one over the first message. Put again on every draw, so a redraw
+// keeps it; the blocks' own nodes do not carry it, so redrawing one leaves
+// it standing. Returns the line, or null when there is none to draw.
+function putNewLine(pane) {
+  const old = pane.querySelector(":scope > .newline");
+  if (old) old.remove();
+  const since = state.turns.newSince;
+  if (since === undefined || since === null) return null;
+  const blocks = state.turns.blocks;
+  for (let at = 0; at < blocks.length; at += 1) {
+    const block = blocks[at];
+    if (!block || !(block.ts > since)) continue;
+    // A block with no node here is passed over, not the end of the search:
+    // the line goes over the first one there is.
+    const node = state.turns.nodes[at];
+    if (!node || node.parentNode !== pane) continue;
+    const line = document.createElement("div");
+    line.className = "newline";
+    line.textContent = "new";
+    pane.insertBefore(line, node);
+    return line;
+  }
+  return null;
+}
+
+// Opening a session with something new lands on the line, not the foot,
+// and once: landing again on every draw would drag the reader back up. A
+// draw the reader has not scrolled since is still that landing: the
+// transcript is drawn as text and again as Markdown, much taller, and the
+// place kept from the first put the line far down the second.
+function landOnNew(pane) {
+  if (state.turns.goTo !== null) return false;
+  if (state.turns.newLanded && state.turns.down !== state.turns.newDown) return false;
+  const line = pane.querySelector(":scope > .newline");
+  if (!line) return false;
+  state.turns.newLanded = true;
+  line.scrollIntoView({ block: "start" });
+  state.turns.down = state.turns.newDown = nearBottom(pane) ? null : pane.scrollTop;
+  return true;
 }
 
 function bandOf(s) {
@@ -15882,7 +15949,8 @@ function drawTranscript(box) {
     // bottom -- the last thing the agent said is the thing you came for --
     // so that is where a session with no kept place lands.
     // `null` is "no place kept"; nought is the very top, and a place too.
-    if (!landOnBlock(pane)) {
+    putNewLine(pane);
+    if (!landOnBlock(pane) && !landOnNew(pane)) {
       pane.scrollTop = place ?? pane.scrollHeight;
     }
   }
@@ -15946,6 +16014,9 @@ function patchTranscript(indexes) {
       pane.appendChild(node);
     }
   }
+  // The first blocks after the reader's last look may come in a push of
+  // their own, after the draw that found none.
+  if (!pane.querySelector(":scope > .newline") && putNewLine(pane)) landOnNew(pane);
   if (!landOnBlock(pane) && stick) pane.scrollTop = pane.scrollHeight;
   // A block arriving makes the transcript taller, so a reader who was at the
   // foot and is no longer carried there has somewhere to go back to.
@@ -16966,6 +17037,12 @@ function blankTurns() {
     // with no `run`, so nothing else tells "empty" from "not asked yet" --
     // and the tests wait on it before they read the tab.
     landed: false,
+    // When the reader last had this session on screen, taken once, before
+    // it is read (#374): the "new" line stands over the first block after
+    // it. `undefined` is not taken yet, null is no line.
+    newSince: undefined,
+    newLanded: false,   // the line was scrolled to, once
+    newDown: null,      // where that left the pane, to tell a scroll since
   };
 }
 
