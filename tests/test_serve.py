@@ -281,7 +281,15 @@ def test_a_stream_too_slow_to_keep_up_is_closed_and_never_given_a_gap(
         while b"event: sessions" not in got:       # the stream is in the hub
             got += sock.recv(4096)
         pad = "x" * (256 * 1024)
-        for n in range(60):
+        # The first one arrives before the flood (#363). Pushed all at once,
+        # a stream thread starved under load did not run before the queue
+        # was full: it closed having written nothing, which is right, and
+        # `numbers` was empty, which the assert below read as a failure --
+        # about one run in ten with other tests beside it.
+        daemon.hub.send("transcript", {"id": "s1", "n": 0, "pad": pad}, "s1")
+        while b'"n": 0' not in got:
+            got += sock.recv(1 << 20)
+        for n in range(1, 60):
             daemon.hub.send("transcript", {"id": "s1", "n": n, "pad": pad}, "s1")
         closed = False
         while True:

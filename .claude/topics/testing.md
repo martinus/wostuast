@@ -151,6 +151,13 @@ after the push: it began on the new state, and the read waited for a second
 event that never came. `read_events(..., then=change)` runs the change once
 the first event is in, and `stream` joins the hub before it writes that
 event, so nothing pushed after it is lost.
+**And a stream test that floods waits for its first push to arrive.**
+`test_a_stream_too_slow_to_keep_up_is_closed_and_never_given_a_gap`
+pushed 60 at once; a stream thread starved under load had not run before
+the queue was full, so it closed having written nothing -- right -- and
+the test's `numbers` was empty, about one run in ten (#363). Reproduced
+by making the stream's first `queue.get` wait 2 s; the test now pushes
+one, reads until it is there, then floods.
 - **A rule turned round has tests of the old one in other files: grep them
   all before the gate.** #351 reversed "the row shows its place, never
   Claude Code's title". The sidebar tests of the old rule were found and
