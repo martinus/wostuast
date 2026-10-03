@@ -119,5 +119,141 @@ def test_the_daemon_answers_with_the_commands(ws, served, tmp_path, transcript_f
         body = json.loads(answer.read())
     named = {one["name"]: one for one in body["commands"]}
     assert named["compact"] == {"name": "compact", "about": "", "hint": "",
-                                "came": "used", "uses": 1}
+                                "came": "used", "uses": 1, "file": ""}
     assert named["deploy"]["came"] == "project"
+
+
+
+# --- the Commands tab (#367) -----------------------------------------------------
+
+
+def command_route(base, name):
+    from urllib.parse import quote
+    try:
+        with urllib.request.urlopen(
+                f"{base}/api/session/s1/command?name={quote(name)}", timeout=5) as answer:
+            return answer.status, json.loads(answer.read())
+    except urllib.error.HTTPError as refused:
+        return refused.status, json.loads(refused.read())
+
+
+def a_session_in(ws, daemon, below, transcript_file, *used):
+    path = transcript_file("s1", [command_record(one) for one in used])
+    ws.append_event(conftest.event("SessionStart", cwd=str(below), ts=time.time(),
+                                   transcript_path=str(path)))
+    daemon.store.refresh()
+
+
+def test_a_command_is_read_by_its_name_without_its_frontmatter(ws, served, tmp_path,
+                                                               transcript_file):
+    """The tab draws what a command says, as Markdown; its frontmatter is
+    shown beside it already, and its `---` lines would be rules."""
+    daemon, base = served
+    project, below = staged(ws, tmp_path)
+    a_session_in(ws, daemon, below, transcript_file)
+    status, body = command_route(base, "deploy")
+    assert status == 200
+    assert (body["text"], body["cut"]) == ("Deploy to $ARGUMENTS.\n", False)
+    status, body = command_route(base, "notes")      # a skill of your own
+    assert status == 200 and body["text"].strip()
+
+
+def test_only_a_listed_file_is_read(ws, served, tmp_path, transcript_file):
+    """A built-in has no file, so it has no text: the page does not ask,
+    and the route has nothing to give. A name no file has, or a path, is
+    not read."""
+    daemon, base = served
+    project, below = staged(ws, tmp_path)
+    a_session_in(ws, daemon, below, transcript_file, "compact")
+    # A real `.md` that no list holds, named by its path: only "listed, by
+    # name" keeps it out, as every other name here fails `real_md` too.
+    outside = tmp_path / "outside.md"
+    outside.write_text("not a command\n")
+    for name in ("compact", "../../etc/passwd", "nothing", str(outside)):
+        status, body = command_route(base, name)
+        assert status == 404 and "text" not in body, name
+
+
+def test_a_command_that_links_to_a_secret_is_not_read(ws, served, tmp_path,
+                                                      transcript_file):
+    """An agent can write into its worktree's `.claude/commands` a link named
+    `x.md` that points at a key. It is not listed, so the send box and the
+    tab agree it is no command, and it is not read."""
+    daemon, base = served
+    project, below = staged(ws, tmp_path)
+    secret = tmp_path / "id_rsa"
+    secret.write_text("-----BEGIN PRIVATE KEY-----\n")
+    (project / ".claude" / "commands" / "leak.md").symlink_to(secret)
+    a_session_in(ws, daemon, below, transcript_file)
+    with urllib.request.urlopen(f"{base}/api/session/s1/commands", timeout=5) as answer:
+        listed = json.loads(answer.read())["commands"]
+    assert "leak" not in [one["name"] for one in listed]
+    status, body = command_route(base, "leak")
+    assert status == 404 and "PRIVATE" not in json.dumps(body)
+
+
+def test_a_folder_of_commands_linked_from_elsewhere_is_read(ws, served, tmp_path,
+                                                             transcript_file):
+    """Your own commands may live in a dotfiles repository, linked into
+    place: a file that is a real `.md` is read wherever it lies."""
+    daemon, base = served
+    project, below = staged(ws, tmp_path)
+    dotfiles = tmp_path / "dotfiles" / "commands"
+    dotfiles.mkdir(parents=True)
+    (dotfiles / "tidy.md").write_text("---\ndescription: Tidy up\n---\nTidy the tests.\n")
+    shutil.rmtree(ws.claude_dir() / "commands")
+    (ws.claude_dir() / "commands").symlink_to(dotfiles)
+    a_session_in(ws, daemon, below, transcript_file)
+    status, body = command_route(base, "tidy")
+    assert status == 200 and body["text"] == "Tidy the tests.\n"
+
+
+def test_a_long_command_is_cut_and_says_so(ws, served, tmp_path, transcript_file,
+                                           monkeypatch):
+    daemon, base = served
+    monkeypatch.setattr(ws, "COMMAND_TEXT_MAX", 64)
+    project, below = staged(ws, tmp_path)
+    (project / ".claude" / "commands" / "long.md").write_text("x" * 500)
+    a_session_in(ws, daemon, below, transcript_file)
+    status, body = command_route(base, "long")
+    assert body["cut"] is True and len(body["text"]) == 64
+
+
+def test_frontmatter_comes_off_only_when_it_is_there(ws):
+    assert ws.after_front("---\na: b\n---\n\nBody\n") == "Body\n"
+    assert ws.after_front("No front\n---\n") == "No front\n---\n"
+    assert ws.after_front("---\nnever closed\n") == "---\nnever closed\n"
+
+
+
+def test_frontmatter_ends_in_the_same_place_for_keys_and_body(ws):
+    """`front_matter` split on every line ending and `after_front` on
+    newlines alone, so a file with CR endings had its keys read and its
+    frontmatter drawn as rules."""
+    text = "---\rdescription: Tidy\r---\rTidy the tests.\r"
+    assert ws.front_matter(text) == {"description": "Tidy"}
+    assert ws.after_front(text) == "Tidy the tests.\r"
+
+
+def test_a_fifo_named_like_a_skill_is_not_listed(ws, tmp_path):
+    """Opened to read its frontmatter, a FIFO held the request thread for
+    ever."""
+    import os
+    import threading
+    folder = ws.claude_dir() / "skills" / "stuck"
+    folder.mkdir(parents=True)
+    fifo = folder / "SKILL.md"
+    os.mkfifo(fifo)
+    found = {}
+    # In a thread, so a listing that opens the FIFO fails here rather than
+    # hanging the run, as it hung the request thread.
+    reader = threading.Thread(daemon=True, target=lambda: found.update(
+        by_name(ws.Commands().of(str(tmp_path), "", []))))
+    reader.start()
+    reader.join(5)
+    try:
+        assert not reader.is_alive(), "the listing opened the FIFO and waits on it"
+        assert "stuck" not in found
+    finally:
+        if reader.is_alive():               # a writer lets the reader go
+            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))

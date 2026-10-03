@@ -22,7 +22,7 @@ pytestmark = skip_without_browser
 
 def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
     """A number key picks the tab in that place in `TAB_KEYS`, so a key past
-    the last one changes nothing. There are five; there is no `6`."""
+    the last one changes nothing. There are four; there is no `6`."""
     with opened(page_at) as page:
         # Both counts have to be of the same transcript. Taking the first
         # before it had arrived made the second one larger, and the key

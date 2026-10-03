@@ -638,7 +638,8 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/session/ID/raw?path=…` | One file's bytes (for images). |
 | GET | `/api/session/ID/diff?of=…&base=…` | The diff. |
 | GET | `/api/session/ID/whole?path=…` | A whole file, for the diff view. |
-| GET | `/api/session/ID/commands` | The slash commands the send box can complete. |
+| GET | `/api/session/ID/commands` | The slash commands the send box can complete, and the Commands tab lists. |
+| GET | `/api/session/ID/command?name=N` | One command's text, by its name, for the Commands tab. |
 | POST | `/api/settings` | Save our `settings.json`. |
 | POST | `/api/session/ID/jump` | Show the agent's tmux pane. |
 | POST | `/api/session/ID/send` | Type text into the pane. |

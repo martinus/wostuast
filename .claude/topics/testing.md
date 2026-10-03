@@ -167,6 +167,11 @@ one, reads until it is there, then floods.
   rule's words -- the value it promised ("A session"), the phrase its
   comments use ("not the row's", "never reaches") -- over `tests/` when
   the rule is rewritten, not when CI goes red.
+  - **A count in the page's own words is an old rule too.** The fourth
+    tab (#367) changed the help's "1 – 3" to "1 – 4", and
+    `test_the_keys_nobody_pressed_are_gone` asserted "1 – 3": found again
+    only by the whole suite, the day this bullet was written. Grep for
+    the words the page shows, not only for the code's names.
 - **No test reaches the tmux it runs under.** `ws` points `TMUX` at a
   socket in the test's own folder, where no server runs: a plain `tmux`
   talks to the server `TMUX` names. Not `TMUX_TMPDIR`: a socket under

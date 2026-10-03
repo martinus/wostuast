@@ -514,6 +514,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **An answer for a box the reader left opens nothing.** `followSlash`
     checks the focus after its fetch, as it checks the session: the list
     opened over the transcript with no box to type into.
+  - **The Commands tab shows the same list, and reads one by its name**
+    (#367, `drawCommands`, `Serving.command`). The one asked for is
+    found among `Commands.defined`, nearest first as the list has them,
+    and it sends only the text: the rest the tab shows is the list's
+    entry (`commandOf`). Its text comes without its frontmatter
+    (`after_front`, which asks `front_end` as `front_matter` does: one
+    split on newlines and the other on every line ending, and a file with
+    CR endings had its frontmatter drawn as rules). **"use" fills the send box
+    and types nothing** (`useCommand`): the reader chose it, in so many
+    words, over a button that sends. **It and the `/` list put a command
+    the same way, `putCommand`**: "use" had its own rule for the space
+    after it, and joined two lines into one. It keeps a draft after the
+    command and replaces a command at the start; on a
+    session nothing can be typed into it says why (`whyNotTyped`) and
+    stays. `tests/test_page_commands.py`.
   `test_the_project_and_your_own_commands_are_read`,
   `test_what_the_transcripts_say_was_run_is_counted`,
   `test_a_transcript_is_read_on_from_where_it_stopped`,
