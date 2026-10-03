@@ -1157,6 +1157,12 @@ class Session:
     snoozed_at: float = 0.0
     #: When its last turn ended: a `Stop`, or a `StopFailure` (#373).
     ended_at: float = 0.0
+    #: What the agent said last, as the `Stop` hook hands it over in
+    #: `last_assistant_message` (measured on 2.1.288,
+    #: `tests/fixtures/stop_answer.jsonl`): for the "All unreads" feed
+    #: (#376). Not on the row, which goes out on every change: the page asks
+    #: for it (`Serving.last`) when the feed opens.
+    last_answer: str = ""
     #: The moment the reader asked to be reminded of it, or 0 (#375). The
     #: page decides when that has come, by its own clock: a row must not
     #: change by itself, so "due" is never a field.
@@ -2241,6 +2247,8 @@ def row(session: Session) -> dict[str, Any]:
         "seen_at": round(session.seen_at, 3),
         # When to bring it back (#375): a moment, and the page decides.
         "remind_at": round(session.remind_at, 3),
+        # When its last turn ended, for the order of the feed (#376).
+        "ended_at": round(session.ended_at, 3),
         "name": session.title,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -2562,6 +2570,8 @@ def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     session.state = "done"
     session.last_event = "stopped"
     session.ended_at = ts
+    said = event.get("last_assistant_message")
+    session.last_answer = said if isinstance(said, str) else ""
 
 
 #: What each `error` of a `StopFailure` means, for when Claude Code sends no
@@ -2604,6 +2614,10 @@ def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None
     session.reason = "stopped: " + (words or STOP_FAILURES.get(error, error))
     session.last_event = f"stopped by an API error ({error})"
     session.ended_at = ts
+    # Its last words are Claude Code's sentence about the error: the turn
+    # before's answer, kept, read as this turn's in the feed (#376).
+    said = event.get("last_assistant_message")
+    session.last_answer = said if isinstance(said, str) else ""
 
 
 def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -8690,6 +8704,17 @@ class Serving:
         self.reply_json({"id": session_id, "run": run, "version": version,
                          "blocks": blocks_json(blocks)})
 
+    def last(self, session_id: str, session: Session,
+             query: dict[str, str]) -> None:
+        """What the agent said last, for the "All unreads" feed (#376).
+        Cut at `LAST_MAX`: the feed shows the start of each and opens the
+        session for the rest, and a very long answer would go whole down an
+        ssh tunnel for a glance."""
+        text = session.last_answer
+        cut = len(text) > LAST_MAX
+        self.reply_json({"id": session_id, "text": text[:LAST_MAX] if cut else text,
+                         "cut": cut, "at": session.ended_at})
+
     def commands(self, session_id: str, session: Session,
                  query: dict[str, str]) -> None:
         """What the send box can complete for this session.
@@ -8878,7 +8903,12 @@ class Serving:
 
 # The verbs a session route can end in.
 #: Each with the session it needs (`Serving.dispatch`).
+#: The most of a last answer the feed is sent (#376): the feed folds an
+#: answer past `FOLD_LINES` lines anyway, and opens the session for more.
+LAST_MAX = 20_000
+
 GET_VERBS: dict[str, tuple[Any, str]] = {
+    "last": (Serving.last, "known"),
     "commands": (Serving.commands, "known"),
     "command": (Serving.command, "known"),
     "transcript": (Serving.transcript, ""),
@@ -11284,6 +11314,26 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* "later" shows on the row's hover, as "unread" does; its choices take a
    line of their own under the name until one is picked. */
 .row:not(:hover):not(:focus-within) .remindlater { display: none; }
+
+/* The way into "All unreads" (issue 376), over the groups, and the feed
+   itself in place of the tabs. */
+.feedlink {
+  margin: 0 10px 6px; padding: 6px 10px; border: 1px solid var(--edge);
+  border-radius: 6px; background: none; color: var(--done); cursor: pointer;
+  font-family: var(--mono); font-size: 12px; text-align: left;
+}
+.feedlink:hover, .feedlink.open { background: var(--done-soft); }
+body.infeed .tabs .tab, body.infeed #asking, body.infeed #sendbar,
+body.infeed #resumebar, body.infeed .findhome { display: none; }
+.content.feed { overflow: auto; padding: 20px 28px; }
+.feedhead { display: flex; align-items: baseline; gap: 16px; margin-bottom: 10px; }
+.feedhead h2 { margin: 0; font-size: 18px; }
+.feedentry { border-top: 1px solid var(--edge); padding: 14px 0 6px; max-width: 90ch; }
+.feedtop { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.feedname { font-weight: 600; color: var(--ink-bright); }
+.feedwhen { font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  flex-grow: 1; }
+.feedwait, .feedmore { color: var(--ink-faint); font-size: 13px; }
 .row .remindmenu { display: flex; gap: 12px; padding: 2px 0 4px; }
 
 /* One switch for everything that moves. A reader whose system asks for less
@@ -12519,6 +12569,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <input class="find" id="pick" type="search" placeholder="filter sessions  f"
                autocomplete="off" spellcheck="false">
       </div>
+      <button type="button" class="feedlink" id="feedlink" hidden></button>
       <div class="rows" id="rows"></div>
     </div>
     <div class="grip" id="grip"></div>
@@ -13401,7 +13452,8 @@ function toggleUnread(id) {
 // `seeing` keeps a push that arrives before the answer from asking twice.
 function markSeen() {
   const s = current();
-  if (!s || document.visibilityState !== "visible") return;
+  // The feed covers the session's tabs: what it shows is read from there.
+  if (!s || state.feed || document.visibilityState !== "visible") return;
   endReminder(s);
   // Taken before it is read, and once: a turn that ends while the reader
   // watches is not news, and must not move the line (#374).
@@ -13459,6 +13511,103 @@ function landOnNew(pane) {
   line.scrollIntoView({ block: "start" });
   state.turns.down = state.turns.newDown = nearBottom(pane) ? null : pane.scrollTop;
   return true;
+}
+
+// --- all unreads (#376) ------------------------------------------------------
+
+// The last answer of every unread session, one under the other, newest
+// first: coming back from a break is one scroll, not a click a session.
+// The texts are asked for when the feed is drawn, one route a session, and
+// kept while it is open; a row going out on every change does not carry
+// them.
+
+function unreadSessions() {
+  return state.sessions.filter((s) => s.unread)
+    .sort((a, b) => (b.ended_at || 0) - (a.ended_at || 0));
+}
+
+function drawFeedLink() {
+  const link = $("feedlink");
+  const count = unreadSessions().length;
+  link.hidden = !count && !state.feed;
+  link.classList.toggle("open", !!state.feed);
+  if (fresh(link, "text", String(count))) link.textContent = "all unreads · " + count;
+  // A session read elsewhere leaves the feed while it is open.
+  if (state.feed) drawFeed($("content"));
+}
+
+function openFeed() {
+  if (state.feed) return;
+  savePlace(state.chosen);
+  state.feed = true;
+  state.feedText = new Map();
+  document.body.classList.add("infeed");
+  homeFind($("findhome"));
+  draw();
+  drawFeedLink();
+}
+
+function closeFeed() {
+  state.feed = false;
+  document.body.classList.remove("infeed");
+  $("content").dataset.tab = "";        // the tab is built again
+  drawFeedLink();
+}
+
+async function askLast(id) {
+  if (state.feedText.has(id)) return;
+  state.feedText.set(id, null);           // asked, not answered
+  const answer = await ask(id, "last");
+  if (!state.feed) return;
+  state.feedText.set(id, answer && !answer.error ? answer : { text: "", failed: true });
+  $("content").dataset.feed = "";
+  drawFeed($("content"));
+}
+
+function drawFeed(box) {
+  const shown = unreadSessions();
+  const key = JSON.stringify([shown.map((s) => [s.id, s.ended_at, rowName(s), s.state]),
+                              [...state.feedText.entries()]]);
+  if (box.dataset.tab === "feed" && !fresh(box, "feed", key)) return;
+  if (box.dataset.tab !== "feed") fresh(box, "feed", key);
+  box.className = "content feed";
+  box.dataset.tab = "feed";
+  box.replaceChildren();
+  const head = put(box, "div", "feedhead");
+  put(head, "h2", null, "All unreads");
+  const back = put(head, "button", "link", "back to the session");
+  back.addEventListener("click", () => { if (state.chosen) choose(state.chosen); });
+  if (!shown.length) {
+    put(box, "p", "empty", "Nothing unread. Every answer has been read.");
+    return;
+  }
+  for (const s of shown) {
+    askLast(s.id);
+    const entry = put(box, "div", "feedentry");
+    entry.dataset.id = s.id;
+    const top = put(entry, "div", "feedtop");
+    put(top, "span", "feedname", rowName(s));
+    put(top, "span", "feedwhen",
+        (dayOf(s.ended_at) ? dayOf(s.ended_at) + " " : "") + clock(s.ended_at));
+    const open = put(top, "button", "link", "open");
+    open.addEventListener("click", () => choose(s.id));
+    const read = put(top, "button", "link", "mark read");
+    read.addEventListener("click", () => setUnread(s.id, false));
+    const found = state.feedText.get(s.id);
+    if (!found) {
+      put(entry, "p", "feedwait", found === null ? "reading…" : "");
+    } else if (!found.text) {
+      put(entry, "p", "feedwait", found.failed
+        ? "Its last answer could not be read. Open it to read it."
+        : "It said nothing at the end of its turn. Open it to read the rest.");
+    } else {
+      // The start of a long answer, as the transcript folds one: the feed
+      // is for a glance, and "open" is the rest.
+      const head = foldedHead(found.text);
+      markdown(entry, head || found.text);
+      if (head || found.cut) put(entry, "p", "feedmore", "… open it to read the rest");
+    }
+  }
 }
 
 function bandOf(s) {
@@ -13871,6 +14020,7 @@ function drawCounts() {
   // change because you typed in a box.
   notifyAbout(state.sessions);
   armReminders();
+  drawFeedLink();
 }
 
 function current() {
@@ -19777,6 +19927,7 @@ const TAB_KEYS = Object.keys(TABS);
 
 function draw() {
   const box = $("content");
+  if (state.feed) { drawFeed(box); return; }
   box.className = "content split";
   if (!current()) {
     // The find box lives inside this box, so it goes home before the box is
@@ -19901,6 +20052,11 @@ function forgetAnswered() {
 }
 
 function choose(id) {
+  // Choosing a session leaves the feed, the one on screen too (#376).
+  if (state.feed) {
+    closeFeed();
+    if (state.chosen === id) { showTab(state.tab); markSeen(); return; }
+  }
   if (state.chosen === id) return;
   if (state.chosen) {
     state.before = state.chosen;
@@ -20476,6 +20632,9 @@ setInterval(tickAges, 1000);
 // A hidden page polls nothing. Looking at it again starts the timer.
 document.addEventListener("visibilitychange", repoll);
 document.addEventListener("visibilitychange", markSeen);
+$("feedlink").addEventListener("click", () => {
+  if (state.feed) { if (state.chosen) choose(state.chosen); } else openFeed();
+});
 
 for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));

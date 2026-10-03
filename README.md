@@ -58,6 +58,9 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   the tab's title, its icon and the alerts leave it out. The snooze ends by
   itself when the session moves on: you answer, the turn ends, or it asks
   something new. "wake" on the card ends it by hand.
+- **You catch up in one scroll.** "all unreads" over the list shows the
+  last answer of every unread session, newest first, as Markdown. Each
+  has "mark read" and "open".
 - **You can say "later".** Hover a card and pick "later": 20 minutes, an
   hour, three hours, or tomorrow at nine. Until then the card shows when
   it comes back, and a session that waits stands with the ready ones, as

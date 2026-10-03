@@ -454,3 +454,40 @@ def test_a_reminder_is_a_moment_kept_in_a_file_of_ours(ws, store):
     store.reminders["gone"] = at
     assert store.remind("s1", 0) == 0.0
     assert ws.read_reminders() == {}
+
+
+# --- the last answer, for "All unreads" (#376) --------------------------------
+
+
+def recorded_stop(**changes):
+    """The `Stop` Claude Code 2.1.288 sent, with `last_assistant_message`:
+    the 2.1.276 fixture has only `stop_hook_active`."""
+    import json
+    from conftest import FIXTURES
+
+    line = json.loads((FIXTURES / "stop_answer.jsonl").read_text())
+    line.update(session_id="s1", cwd="/w/repo/dir", pane="%1", pid=4242)
+    line.update(changes)
+    return line
+
+
+def test_a_turn_keeps_what_the_agent_said_last(ws, store):
+    ws.append_event(event("SessionStart", ts=time.time()))
+    ws.append_event(recorded_stop(ts=time.time() + 1))
+    store.refresh(alive=lambda p: True)
+    session = store.sessions["s1"]
+    assert session.last_answer.startswith("Done. The cache takes a lock")
+    assert "last_answer" not in store.rows[0]        # asked for, not pushed
+    ws.append_event(recorded_stop(ts=time.time() + 2, last_assistant_message=None))
+    store.refresh(alive=lambda p: True)
+    assert session.last_answer == ""
+
+
+def test_a_turn_an_error_ended_keeps_the_error_not_the_answer_before(ws, store):
+    """The feed showed the turn before's answer under the new time."""
+    ws.append_event(event("SessionStart", ts=time.time()))
+    ws.append_event(recorded_stop(ts=time.time() + 1))
+    ws.append_event(recorded_stop_failure(ts=time.time() + 2))
+    store.refresh(alive=lambda p: True)
+    assert store.sessions["s1"].last_answer.startswith("There's an issue with the selected model")
+

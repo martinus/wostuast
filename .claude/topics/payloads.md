@@ -36,6 +36,12 @@ carrying the whole summary — which went into the transcript as a prompt,
 because it is a `user` record. A claim about a payload is worth what the
 sample behind it is worth.
 
+**`Stop` carries `last_assistant_message`** on 2.1.288 (measured with
+`tests/claude_pane.py`, `tests/fixtures/stop_answer.jsonl`), the agent's
+last words in the turn, and `background_tasks` and `session_crons`. The
+2.1.276 fixture has only `stop_hook_active`: one fixture is one sample.
+The feed reads it (#376); an older build that sends none shows "open it".
+
 **The session's name** (#351, read from the 2.1.288 binary and
 measured): Claude Code shows `agentName || customTitle || aiTitle ||
 summary || first prompt || … || sessionId.slice(0, 8)` (its `fq`). The
