@@ -2592,3 +2592,22 @@ def test_a_rename_types_nothing_into_an_mcp_form(in_tmux, ws):
     _, body = renamed(base, daemon, "later")
     assert body["kept_here"] == "it waits on you in the terminal"
     assert conftest.into_pane(seen) == []
+
+
+
+def test_seen_is_a_post_with_the_token_and_touches_no_terminal(ws, served, monkeypatch):
+    """What the reader has read is a file of ours (#373): a POST like every
+    other, refused without the token, and never a keystroke."""
+    daemon, base = served
+    typed = []
+    monkeypatch.setattr(ws, "run", lambda args, **rest: typed.append(args) or "")
+    ws.append_event(event("SessionStart", pane="%7", ts=time.time()))
+    ws.append_event(event("Stop", pane="%7", ts=time.time() + 1))
+    daemon.store.refresh()
+    status, _ = post(base + "/api/session/s1/seen", {"seen": True}, token="nope")
+    assert status == 403
+    status, body = post(base + "/api/session/s1/seen", {"seen": True}, token=daemon.token)
+    assert status == 200 and body["unread"] is False, body
+    status, body = post(base + "/api/session/s1/seen", {"seen": False}, token=daemon.token)
+    assert status == 200 and body["unread"] is True, body
+    assert not typed

@@ -205,6 +205,9 @@ one, reads until it is there, then floods.
   three, on `main` as well: `test_a_search_keeps_its_place_while_the_agent_works`,
   `test_the_top_of_the_transcript_is_a_place_too` and
   `test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it`.
+  **A `daemon.hub.send` is that push too**: `test_only_a_block_that_has_just_arrived_slides_in`
+  sent one straight after `opened` and went red under load once the page
+  did more at its start (#373).
   A test about what happens while nobody listens leaves the wait out on
   purpose, and says so.
 
@@ -232,7 +235,8 @@ page has *written down*, not for what the DOM shows: a scroll event writes
 `state.files.down` a frame after the scroller moves, and a test that
 switched sessions in between saved the top.
 `test_open_page_returns_once_the_transcript_has_answered` slows the
-daemon's answer, so the gap is there every time.
+daemon's answer, so the gap is there every time -- by three seconds: one
+was shorter than a first frame under two loaded runs at once.
 
 - **An empty send box is the send starting, not landing.** `sendTyped`
   empties `#say` in the same call as the Enter, before the POST leaves --
