@@ -194,6 +194,9 @@ def main(argv: list[str]) -> int:
     os.environ["WOSTUAST_STATE"] = str(home / "state")
     os.environ["WOSTUAST_CONFIG"] = str(home / "config")
     os.environ["CLAUDE_CONFIG_DIR"] = str(home / "claude")
+    # Its session stands in pane `%7`, and a click that sends or renames
+    # types into that pane: never the reader's own (#351), as `ws` does.
+    os.environ["TMUX"] = f"{home}/no-tmux-here,0,0"
     if said.settings:
         (home / "config").mkdir(parents=True)
         (home / "config" / "settings.json").write_text(

@@ -102,3 +102,39 @@ def test_it_draws_the_slash_command_list(tmp_path):
         capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@skip_without_browser
+def test_it_types_into_no_real_tmux(tmp_path):
+    """Its session stands in pane `%7`, and a step that sends types into
+    it. Run from inside the reader's tmux, that was their own `%7` (#351).
+    Here a tmux of its own has a `%7`, `TMUX` names it, and nothing may
+    arrive there."""
+    import os
+    import shutil
+    import time
+
+    import pytest
+
+    if shutil.which("tmux") is None:
+        pytest.skip("tmux is not installed")
+    name = f"stage-{os.getpid()}-{time.monotonic_ns()}"
+    tmux = lambda *args: subprocess.run(
+        ["tmux", "-L", name, *args], capture_output=True, text=True,
+        timeout=10).stdout.strip()
+    tmux("-f", "/dev/null", "new-session", "-d", "cat")
+    try:
+        for _ in range(7):
+            tmux("new-window", "cat")
+        assert "%7" in tmux("list-panes", "-a", "-F", "#{pane_id}").split()
+        env = dict(os.environ, TMUX=tmux("display-message", "-p",
+                                          "#{socket_path}") + ",0,0")
+        done = subprocess.run(
+            [sys.executable, str(HERE / "stage.py"), str(tmp_path / "out.png"),
+             "--tab", "transcript", "--type", "#say=hello from stage"],
+            capture_output=True, text=True, timeout=120, env=env)
+        assert done.returncode == 0, done.stderr
+        time.sleep(0.5)
+        assert "hello from stage" not in tmux("capture-pane", "-p", "-t", "%7")
+    finally:
+        tmux("kill-server")

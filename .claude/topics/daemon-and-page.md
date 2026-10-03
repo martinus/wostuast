@@ -11,9 +11,23 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   49.5 ms for one that has imported it, and **the hook pays for every import
   on every tool call**. `test_the_hook_does_not_import_what_it_does_not_need`
   fails if that slips.
-- **`name` is a POST that writes no terminal.** It keeps a name in
-  `names.json`, and the row shows no other: Claude Code hands the status
-  line the name the session started with and `/rename` does not change it. `Store.rename` replaces the whole map rather than editing it,
+- **`name` keeps the page's name, and types `/rename` where it may**
+  (`Serving.name`, `type_rename`, #351). This bullet said the status line
+  kept the name a session started with and `/rename` did not change it;
+  on 2.1.288 `session_name` is `customTitle ?? aiTitle` and follows a
+  `/rename` at once (measured with `tests/claude_pane.py`). `/rename`
+  fires no hook, so the status line is the only way the daemon hears of
+  one. It writes a `custom-title` and an `agent-name` record with the same
+  name. At the prompt it starts no turn; during a turn it is done at once
+  and the turn goes on, so a working session is typed into. Not one that
+  needs you, one with a question on screen (`asking`, set a moment before
+  the `PermissionRequest`), and not one `cannot_type` refuses: the name is
+  the page's alone then, and the answer's `kept_here` says why, which
+  `keepRename` puts in a note. It waits for nothing to type later. A name
+  equal to what the status line shows is typed all the same: the status
+  line can be stale. **What it cannot see**: a draft in the prompt box,
+  which the command goes after and submits as a prompt, and an MCP form,
+  which shows only through a late `Notification`. A send has both too. `Store.rename` replaces the whole map rather than editing it,
   the trick `rows` plays: the HTTP thread writes, the fold thread reads. It
   pushes nothing — the rows are built from the names every pass, so the next
   one differs and goes out on its own.

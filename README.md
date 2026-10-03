@@ -613,14 +613,17 @@ submit.
 <details>
 <summary><b>Where does the name of a session come from?</b></summary>
 
-From you. A new session is called by its repository and worktree, for
-example `agent/richpalm`. To give it a name, double-click the name in the
-session list, or press <kbd>e</kbd>. Press <kbd>Enter</kbd> to keep the name,
-or <kbd>Esc</kbd> to cancel. An empty name gives the session back its
-repository and worktree.
-
-The title that Claude Code gives a session does not change when you use
-`/rename`, so the list does not show it.
+From you. A session has the name Claude Code shows for it: the name you
+gave with `/rename`, else the title Claude Code wrote, else your first
+prompt. To rename it, double-click the name in the session list, or press
+<kbd>e</kbd>. Press <kbd>Enter</kbd> to keep the name, or <kbd>Esc</kbd> to
+cancel. The page then types `/rename` and the name into the session's
+pane, so Claude Code shows the same name. It does this only when it can
+type safely: the session is in tmux, not over, and not waiting on you. If
+it cannot, the name is kept on this page only, and the page says why;
+it stays until you change it. An empty name gives the session back Claude
+Code's name. If you have half typed a prompt in the terminal, the
+`/rename` goes after it and sends both, as any send from the page does.
 
 `/clear` starts a new session in the same pane. The page moves to it by
 itself, and your name for the session goes with it. The conversation before

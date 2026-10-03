@@ -1088,6 +1088,9 @@ class Session:
     last_ts: float = 0.0
     last_event: str = ""
     last_prompt: str = ""
+    #: The first prompt that was not a command, on one line: the name Claude
+    #: Code gives a session before it has a title (#351). See `title`.
+    first_prompt: str = ""
     #: The model's full id as `SessionStart` names it, for a session with no
     #: status line: see `model_id`.
     started_model: str = ""
@@ -1150,7 +1153,7 @@ class Session:
         its place.
         """
         place = self.place
-        name = self.mine or self.status.name
+        name = self.title
         if not name:
             return place
         return f"{clip(name, 40)} · {place}"
@@ -1180,6 +1183,24 @@ class Session:
         the same wait."""
         return (self.state == "needs_you" and self.snoozed_at > 0
                 and self.snoozed_at == self.attention_since)
+
+    @property
+    def title(self) -> str:
+        """The session's name, in Claude Code's own order (#351): the one the
+        reader gave on the page while it is the newer one (`Store.page_name`),
+        then Claude Code's, then the first prompt. "" when there is none, and
+        the row shows its place.
+
+        Claude Code's is the status line's `session_name`, which is
+        `customTitle ?? aiTitle` -- what `/rename` set, else the title it
+        wrote itself from the start of the session -- read from 2.1.288,
+        where the name it shows is `agentName || customTitle || aiTitle ||
+        summary || first prompt || id`. `/rename` writes `agentName` as well,
+        with the same name, so the two differ only for a named agent, which
+        has no status line of its own here. Before the first title, Claude
+        Code shows the first prompt, and so does this.
+        """
+        return self.mine or self.status.name or self.first_prompt
 
     @property
     def dialog(self) -> dict[str, Any] | None:
@@ -1571,6 +1592,10 @@ class Store:
         # snapshot: one name was lost, and memory and the file disagreed
         # about which, so a restart silently swapped them.
         self.names: dict[str, str] = read_names()
+        #: For a name the page typed as `/rename`: Claude Code's name just
+        #: before it. A name not in here is the page's alone. See
+        #: `page_name`. Replaced whole with `names`, under `naming`.
+        self.over: dict[str, str] = read_names_over()
         self.naming = threading.Lock()
         #: The snoozes, by session: the moment each was snoozed at (#355).
         #: Replaced whole under `naming`, as the names are, and for the same
@@ -1685,10 +1710,14 @@ class Store:
         with self.naming:
             if old.session_id not in self.names or new.session_id in self.names:
                 return
-            names = dict(self.names)
+            names, over = dict(self.names), dict(self.over)
             names[new.session_id] = names.pop(old.session_id)
-            write_names(names)
-            self.names = names
+            # The new session has no `/rename` of its own: Claude Code does
+            # not carry it over. So the name is the page's alone there.
+            over.pop(old.session_id, None)
+            over.pop(new.session_id, None)
+            write_names(names, over)
+            self.names, self.over = names, over
 
     def _cleared_partner(self, session: Session, want: str) -> Session | None:
         """The other half of a `/clear`: same process or pane, moments apart."""
@@ -1790,9 +1819,35 @@ class Store:
                 mark_dead(session, alive, moment)
         for session in sessions:
             self.reload_status(session)
-            session.mine = self.names.get(session.session_id, "")
+            session.mine = self.page_name(session)
             session.snoozed_at = self.snoozes.get(session.session_id, 0.0)
         return sessions
+
+    def page_name(self, session: Session) -> str:
+        """The name the reader gave this session on the page, while it is
+        the one to show, else "" (#351). It reads and never writes:
+        `settle` runs it, and so do `ls` and `wait` in processes of their
+        own, whose copy of the names is not the daemon's.
+
+        A name the page typed as `/rename` is shown only until Claude
+        Code's name moves from what it was just before (`over`): then the
+        status line carries ours, or a later `/rename` from the terminal,
+        and either is the name. Until then it bridges the wait, which is
+        long: at an idle prompt Claude Code does not run the status line
+        again after a `/rename`, only at the next turn (measured, 2.1.288).
+
+        A name nothing could be typed for -- no tmux, the session over, a
+        dialog up -- is the page's alone, and it stands until the reader
+        changes it. "Last wins" against a `/rename` in the terminal was
+        tried and cannot be told: the status line says what the name is,
+        not when it was set, and with the stale status above a rename made
+        before the page's looked like one made after it.
+        """
+        sid = session.session_id
+        name = self.names.get(sid, "")
+        if not name or sid not in self.over:
+            return name
+        return name if session.status.name == self.over[sid] else ""
 
     def reload_git(self, sessions: Sequence[Session], moment: float) -> None:
         """Read git for the directories that asked, and for any we have never
@@ -1855,22 +1910,35 @@ class Store:
             session.snoozed_at = self.snoozes.get(session_id, 0.0)
         return session is not None and session.snoozed
 
-    def rename(self, session_id: str, name: str) -> str:
+    def rename(self, session_id: str, name: str,
+               over: str | None = None) -> str:
         """Give a session a name, or take the name away when it is empty.
+        `over` is Claude Code's name just before the page typed this one as
+        `/rename`; None for a name that is the page's alone (`page_name`).
 
         Returns what the name now is. The map is replaced rather than edited
         so that the thread folding events never reads a half-written one.
+        A typed name Claude Code has taken since is dropped from the file
+        here, the one writer, so the file does not keep what nobody shows.
         """
-        clean = " ".join(name.split())[:NAME_MAX]
+        clean = clean_name(name)
+        session = self.sessions.get(session_id)
         with self.naming:
-            names = dict(self.names)
+            names, kept = dict(self.names), dict(self.over)
+            for key, was in self.over.items():
+                one = self.sessions.get(key)
+                if one is not None and one.status.name != was:
+                    names.pop(key, None)
+                    kept.pop(key, None)
+            kept.pop(session_id, None)
             if clean:
                 names[session_id] = clean
+                if over is not None:
+                    kept[session_id] = over
             else:
                 names.pop(session_id, None)
-            write_names(names)
-            self.names = names
-        session = self.sessions.get(session_id)
+            write_names(names, kept)
+            self.names, self.over = names, kept
         if session is not None:
             session.mine = clean
         return clean
@@ -2066,7 +2134,7 @@ def row(session: Session) -> dict[str, Any]:
         # For a session that is over, the line that brings it back.
         "resume": resume_command(session) if session.state in GONE_STATES else "",
         "snoozed": session.snoozed,
-        "name": session.mine or session.status.name,
+        "name": session.title,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
         "mine": bool(session.mine),
@@ -2143,6 +2211,8 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     prompt = unwrap_pastes(str(event.get("prompt") or ""))
     session.last_prompt = clip(prompt, PROMPT_WIDTH)
     session.last_event = f"prompt: {session.last_prompt}"
+    if not session.first_prompt and not prompt.lstrip().startswith("/"):
+        session.first_prompt = clip(" ".join(typed(prompt).split()), NAME_MAX)
 
 
 def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -6057,19 +6127,37 @@ def save_config(change: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     return "", refused
 
 
-def read_names() -> dict[str, str]:
-    """Every name the reader has given, or an empty map."""
+def clean_name(text: str) -> str:
+    """A name as it is kept and typed: one line, no controls, `NAME_MAX` at
+    most. It goes into a pane after `/rename`, so a newline in it would be
+    an Enter there."""
+    # Not a backslash at its end: Claude Code reads a backslash and then
+    # Enter as a new line, so `/rename foo\` stayed in the prompt box,
+    # unsent, and the reader's next message was taken as the rest of the
+    # name (measured, 2.1.288). The cut to `NAME_MAX` can leave one too.
+    return " ".join(typed(text).split())[:NAME_MAX].rstrip("\\ ")
+
+
+def read_name_entries() -> dict[str, tuple[str, str | None]]:
+    """Every name the reader has given, with Claude Code's name just before
+    the page typed it as `/rename`, or None for a name that is the page's
+    alone (`Store.page_name`). That one is kept as a bare string, as every
+    name was before #351, so an older wostuast still reads it."""
     try:
         payload = json.loads(names_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(payload, dict):
         return {}
-    return {
-        str(key): str(value)[:NAME_MAX]
-        for key, value in payload.items()
-        if isinstance(key, str) and isinstance(value, str) and value.strip()
-    }
+    found: dict[str, tuple[str, str | None]] = {}
+    for key, value in payload.items():
+        name, over = value, None
+        if isinstance(value, dict):
+            name, over = value.get("name"), value.get("over")
+            over = over[:NAME_MAX] if isinstance(over, str) else None
+        if isinstance(key, str) and isinstance(name, str) and name.strip():
+            found[key] = (name[:NAME_MAX], over)
+    return found
 
 
 def read_snoozed() -> dict[str, float]:
@@ -6090,10 +6178,25 @@ def write_snoozed(snoozes: dict[str, float]) -> None:
     write_atomic(snoozed_path(), json.dumps(snoozes), private=True)
 
 
-def write_names(names: dict[str, str]) -> None:
+def read_names() -> dict[str, str]:
+    """Every name the reader has given, or an empty map."""
+    return {key: name for key, (name, _) in read_name_entries().items()}
+
+
+def read_names_over() -> dict[str, str]:
+    """Claude Code's name just before the page typed each, for the names
+    it typed."""
+    return {key: over for key, (_, over) in read_name_entries().items()
+            if over is not None}
+
+
+def write_names(names: dict[str, str], over: dict[str, str] | None = None) -> None:
     """Keep them. The file is ours and nobody else reads it, so it is one map
     rather than a file per session: there is no hook writing it in parallel."""
-    write_atomic(names_path(), json.dumps(names), private=True)
+    over = over or {}
+    write_atomic(names_path(), json.dumps(
+        {key: {"name": name, "over": over[key]} if key in over else name
+         for key, name in names.items()}), private=True)
 
 
 def read_status(session_id: str) -> Status:
@@ -7981,17 +8084,60 @@ class Serving:
              body: dict[str, Any]) -> None:
         """Name a session, or take its name away with an empty one.
 
-        It writes no terminal, so it needs no pane: a session that has ended
-        can still be named, which is the point of naming one at all.
+        It needs no pane: a session that has ended can still be named, which
+        is the point of naming one at all. Where the session can be typed
+        into, it is renamed in Claude Code too, with `/rename` (#351), so
+        the two show one name; where it cannot, the name is the page's
+        alone, and the answer says why (`kept_here`).
         """
         asked = body.get("name")
-        given = self.daemon.store.rename(
-            session_id, asked if isinstance(asked, str) else "")
+        clean = clean_name(asked if isinstance(asked, str) else "")
+        # Read before the keys go: the status line may carry the new name
+        # a moment after, and the typed name stands until it moves from
+        # this one (`page_name`).
+        before = session.status.name
+        why = self.type_rename(session_id, session, clean) if clean else ""
+        given = self.daemon.store.rename(session_id, clean,
+                                         None if why else before)
         # Nothing is pushed from here. A rename is not an event, but the rows
         # are built from the names on every pass, so the next one differs and
         # goes out on its own. The answer carries the name so the page can
         # show it without waiting for that.
-        self.reply_json({"id": session_id, "name": given, "done": True})
+        self.reply_json({"id": session_id, "name": given, "done": True,
+                         "kept_here": why})
+
+    def type_rename(self, session_id: str, session: Session, name: str) -> str:
+        """Type `/rename <name>` and Enter into the session's pane: "" when it
+        went in, else why not.
+
+        Measured on 2.1.288 (`tests/claude_pane.py`): at the prompt it writes
+        a `custom-title` record and starts no turn; while a turn runs it is
+        done at once, in the middle of the turn, which goes on. So a working
+        session is typed into, as a send is. Not one that needs you: a
+        dialog's cursor is on "1. Yes", and an MCP form has no `permission`
+        that `cannot_type` could see. The rename waits for nothing -- a
+        keystroke nobody is watching is how a spend limit typed into a
+        terminal on its own -- so the page's name is kept, and it says so.
+        A draft in the prompt box is the one thing this cannot see: the
+        command goes after it, as every send does.
+        """
+        if not session.pane:
+            return "this session is not in tmux"
+        why = cannot_type(session)
+        # `asking` too: an `AskUserQuestion` is on screen from its
+        # `PreToolUse`, a moment before the `PermissionRequest` turns the
+        # row amber.
+        if not why and (session.state == "needs_you" or session.asking):
+            why = "it waits on you in the terminal"
+        if why:
+            return why
+        pane = session.pane
+        with self.daemon.holding(session_id, pane) as busy:
+            if busy:
+                return busy
+            if not tmux_send(pane, f"/rename {name}"):
+                return "tmux did not answer"
+        return ""
 
     def snooze(self, session_id: str, session: Session,
                body: dict[str, Any]) -> None:
@@ -8459,8 +8605,9 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "send": (Serving.send, "message", "in_tmux"),
     "answer": (Serving.answer, "answer", "in_tmux"),
     "decline": (Serving.decline, "reason", "in_tmux"),
-    # It writes no terminal, so it needs no pane: a session that has ended
-    # can still be named, which is the point of naming one at all.
+    # It needs no pane: a session that has ended can still be named, which
+    # is the point of naming one at all. Where there is one it types
+    # `/rename` (#351), through the same lock as a send.
     "name": (Serving.name, "name", "known"),
     # A file of ours as well, and no terminal (#355).
     "snooze": (Serving.snooze, "snooze", "known"),
@@ -8656,7 +8803,7 @@ def session_json(session: Session) -> dict[str, Any]:
     facts = session.git
     return {
         "id": session.session_id,
-        "name": session.mine or session.status.name,
+        "name": session.title,
         "place": session.place,
         "worktree_path": facts.root or session.home or session.cwd,
         "cwd": session.cwd,
@@ -9327,7 +9474,7 @@ def pick_session(sessions: Sequence[Session], text: str) -> tuple[Session | None
     tests = (
         lambda s: s.session_id == text,
         lambda s: s.session_id.startswith(text),
-        lambda s: (s.mine or s.status.name) == text,
+        lambda s: s.title == text,
         lambda s: s.place == text,
     )
     for fits in tests:
@@ -12207,6 +12354,12 @@ async function keepRename(box, id) {
   box.blur();
   const answer = await tell(id, "name", { name: asked });
   if (answer && answer.error) { said(answer); return; }
+  // Claude Code was not told (#351): the name is this page's alone, until
+  // Claude Code's changes. The reader asked for one name in both places, so
+  // the page says why there are two.
+  if (answer && answer.name && answer.kept_here) {
+    note("renamed on this page only: " + answer.kept_here);
+  }
   // The rows are rebuilt from the names on the daemon's next pass, which is a
   // second away. This is so the header does not sit on the old one until then.
   const s = state.sessions.find((one) => one.id === id);
@@ -12900,8 +13053,11 @@ function fillRow(row, s) {
   ages.push([one.children[3], s.since]);
 }
 
+// The name Claude Code shows for the session, or the reader's from the page
+// while that is the newer one: the daemon works out which (`title`, #351).
+// Its place when it has none, which the next line says as well.
 function rowName(s) {
-  return (s.mine && s.name) || s.place || s.id.slice(0, 8);
+  return s.name || s.place || s.id.slice(0, 8);
 }
 
 // Renaming where the name stands, by a double-click or `e` -- a name you

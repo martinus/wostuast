@@ -151,6 +151,20 @@ after the push: it began on the new state, and the read waited for a second
 event that never came. `read_events(..., then=change)` runs the change once
 the first event is in, and `stream` joins the hub before it writes that
 event, so nothing pushed after it is lost.
+- **No test reaches the tmux it runs under.** `ws` points `TMUX` at a
+  socket in the test's own folder, where no server runs: a plain `tmux`
+  talks to the server `TMUX` names. Not `TMUX_TMPDIR`: a socket under
+  `tmp_path` was too long for a socket's path, and `test_tmux.py`'s own
+  server did not start. A
+  rename on the page types `/rename` (#351), and the page tests rename
+  sessions in pane `%1`, `conftest.event`'s default: run from inside the
+  owner's tmux, one typed `/rename …` into their real `%1`. It was
+  reproduced with a tmux of three panes and `TMUX` pointing at it. A test
+  that wants a real tmux starts its own, with `-L`, and sets `TMUX` after
+  `ws`, as `test_tmux.py` does. **`tests/stage.py` and `tests/shot.py` set
+  it too**: they serve a session in `%7` without `ws`, and a `--type
+  '#say=…'` typed into the reader's own `%7`.
+  `test_no_test_reaches_the_tmux_it_runs_under`, `test_it_types_into_no_real_tmux`.
 - **In a browser test, `wait_for_watching(daemon)` comes before the first
   `daemon.tick()`.** `open_page` and `wait_for_map` prove the fetch
   answered, not that the stream listens: `showTab` fetches and *then*

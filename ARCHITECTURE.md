@@ -644,7 +644,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | POST | `/api/session/ID/send` | Type text into the pane. |
 | POST | `/api/session/ID/answer` | Press the keys that answer a question. |
 | POST | `/api/session/ID/decline` | Say **No** to a permission dialog. |
-| POST | `/api/session/ID/name` | Give the session a name. Touches no terminal. |
+| POST | `/api/session/ID/name` | Give the session a name, and type `/rename` with it where that is safe. |
 | POST | `/api/session/ID/snooze` | Snooze a session that needs you, or wake it. Touches no terminal. |
 
 The GET routes live in one table, `GET_VERBS`, and the POST routes in another,

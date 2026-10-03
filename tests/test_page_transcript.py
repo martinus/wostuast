@@ -33,11 +33,9 @@ def test_the_page_draws_the_session(page_at):
     with opened(page_at) as page:
         wait_for_map(page)
         assert page.locator(".row").count() == 1
-        # Until the reader names it, a session is called by where it
-        # stands. What Claude Code called it is not on the row: `/rename`
-        # never reaches it, and it went stale beside the branch.
-        place = page.locator(".row .name").inner_text()
-        assert place and "A session" not in page.locator(".row").inner_text()
+        # The row's name is the one Claude Code shows, which the
+        # fixture's status line carries (#351).
+        assert page.locator(".row .name").inner_text() == "A session"
         assert page.title() == "1 ready \u00b7 wostuast"
         assert page.locator(".turn").count() >= 2
         # The model stands on the strip, beside the window it fills.

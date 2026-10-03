@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
 import pytest
 
 import conftest
@@ -584,3 +585,19 @@ def test_a_key_tmux_refused_stops_the_rest(ws, monkeypatch):
     assert ws.tmux_keys("%3", ["1", "2", "Tab", "Enter"], runner=runner) == 1
     assert [text for text, _ in conftest.pastes(seen)] == ["1", "2"]
     assert seen[-1][1] == "delete-buffer"
+
+
+@pytest.fixture
+def inside_tmux(monkeypatch):
+    """The suite run from inside a tmux, as the reader runs it. Asked for
+    before `ws`, so `ws` finds it set."""
+    monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+
+
+def test_no_test_reaches_the_tmux_it_runs_under(inside_tmux, ws, tmp_path):
+    """A rename types `/rename` into its session's pane (#351), and a page
+    test that renamed a session in `%1` typed it into the reader's own pane
+    when the suite ran inside tmux. `ws` points `TMUX` at a socket in the
+    test's own folder, where no server runs."""
+    assert os.environ["TMUX"].startswith(str(tmp_path))
+    assert not ws.tmux_send("%1", "/rename x")

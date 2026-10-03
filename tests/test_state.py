@@ -955,9 +955,9 @@ def test_two_renames_at_once_keep_both_names(ws):
     store = ws.Store()
     real = ws.write_names
 
-    def slow(names):
+    def slow(names, *rest):
         time.sleep(0.05)
-        real(names)
+        real(names, *rest)
 
     ws.write_names = slow
     try:
@@ -1586,3 +1586,120 @@ def test_the_full_model_id_is_the_status_lines_or_the_start(ws):
     assert ws.row(session)["model_id"] == "claude-opus-5-5[1m]"
     session.status = ws.Status(model_id="x\n/clear")
     assert ws.row(session)["model_id"] == ""
+
+
+# --- Claude Code's name, and the page's (#351) ---------------------------------
+
+
+def test_the_name_follows_claude_codes_order(ws):
+    """The page's name while it is the newer one, then Claude Code's -- its
+    `/rename` or its own title, which the status line carries -- then the
+    first prompt, which is what Claude Code shows before it has a title."""
+    store = ws.Store()
+    store.apply(event("SessionStart", ts=1000.0))
+    session = store.sessions["s1"]
+    assert session.title == ""
+    store.apply(event("UserPromptSubmit", prompt="/model opus", ts=1001.0))
+    assert session.title == ""          # a command is not what it is about
+    store.apply(event("UserPromptSubmit", prompt="fix the\nlogin  bug", ts=1002.0))
+    store.apply(event("UserPromptSubmit", prompt="and the tests", ts=1003.0))
+    assert session.title == "fix the login bug"
+    session.status = ws.Status(name="Login bug fix")
+    assert session.title == "Login bug fix"
+    session.mine = "mine"
+    assert session.title == "mine"
+    assert ws.row(session)["name"] == "mine"
+    assert ws.session_json(session)["name"] == "mine"
+
+
+def name_seen(ws, store, name, moment):
+    """Claude Code's name, as the status line hands it over, read."""
+    ws.write_status("s1", ws.Status(ts=moment, name=name))
+    store.status_seen.clear()
+    store.settle(moment, alive=lambda pid: True)
+    return store.sessions["s1"]
+
+
+def test_a_typed_name_stands_until_claude_codes_moves(ws):
+    """A name the page typed as `/rename` bridges the wait for the status
+    line, which at an idle prompt comes only with the next turn. Once
+    Claude Code's name moves -- to ours, or to a later `/rename` in the
+    terminal -- that is the name."""
+    store = ws.Store()
+    store.apply(event("SessionStart", ts=1000.0))
+    name_seen(ws, store, "its title", 1001.0)
+    store.rename("s1", "mine", over="its title")
+    assert name_seen(ws, store, "its title", 1002.0).title == "mine"
+    assert name_seen(ws, store, "mine", 1003.0).title == "mine"
+    assert store.sessions["s1"].mine == ""            # Claude Code's now
+    assert name_seen(ws, store, "from the terminal", 1004.0).title \
+        == "from the terminal"
+
+
+def test_a_name_nothing_was_typed_for_stands_until_the_reader_changes_it(ws):
+    """Nothing in the status line says when a name was set, so a `/rename`
+    made before the page's looked like one made after it, and dropped the
+    page's (the stale status line above). The page's alone stands."""
+    store = ws.Store()
+    store.apply(event("SessionStart", ts=1000.0))
+    name_seen(ws, store, "its title", 1001.0)
+    store.rename("s1", "mine")
+    assert name_seen(ws, store, "renamed", 1002.0).title == "mine"
+    assert ws.read_names() == {"s1": "mine"}
+
+
+def test_reading_the_names_writes_nothing(ws):
+    """`settle` runs in `ls` and `wait` too, each with its own copy of the
+    names: one that wrote the file from that copy lost a name the daemon
+    had just been given."""
+    store = ws.Store()
+    store.apply(event("SessionStart", ts=1000.0))
+    name_seen(ws, store, "its title", 1001.0)
+    store.rename("s1", "mine", over="its title")
+    before = ws.names_path().read_text()
+    name_seen(ws, store, "mine", 1002.0)
+    assert ws.names_path().read_text() == before
+
+
+def test_a_typed_name_claude_code_took_leaves_the_file_on_the_next_write(ws):
+    store = ws.Store()
+    store.apply(event("SessionStart", ts=1000.0))
+    name_seen(ws, store, "its title", 1001.0)
+    store.rename("s1", "mine", over="its title")
+    name_seen(ws, store, "mine", 1002.0)
+    store.rename("s2", "other")
+    assert ws.read_names() == {"s2": "other"}
+
+
+def test_a_name_kept_alone_is_a_string_an_older_wostuast_reads(ws):
+    """An older wostuast skips a value that is not a string, so a name of
+    the page's alone is kept the way every name was before #351."""
+    store = ws.Store()
+    store.rename("s1", "alone")
+    store.rename("s2", "typed", over="was")
+    import json
+    assert json.loads(ws.names_path().read_text()) == {
+        "s1": "alone", "s2": {"name": "typed", "over": "was"}}
+
+
+def test_the_name_a_clear_moves_is_the_pages_alone(ws):
+    """Claude Code does not carry a `/rename` into the session a `/clear`
+    starts, so the name the page moves there is the page's alone, and a
+    title the new session gets does not take it away."""
+    store = ws.Store()
+    store.apply(event("SessionStart", source="startup", ts=1000.0))
+    name_seen(ws, store, "old title", 1001.0)
+    store.rename("s1", "the payments work", over="old title")
+    for one in clear_events():
+        store.apply(one)
+    ws.write_status("s2", ws.Status(ts=2001.0, name="a new title"))
+    store.status_seen.clear()
+    store.settle(2001.0, alive=lambda pid: True)
+    assert store.sessions["s2"].title == "the payments work"
+
+
+def test_a_name_is_kept_on_one_line_and_without_controls(ws):
+    """It is typed after `/rename`: a newline in it would be an Enter in
+    the pane, and an escape would be a key."""
+    store = ws.Store()
+    assert store.rename("s", "two\nlines\x1b[2J\there") == "two lines[2J here"
