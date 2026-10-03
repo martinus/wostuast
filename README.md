@@ -255,6 +255,12 @@ or while what you typed is the start of the name. Otherwise <kbd>Enter</kbd>
 sends what you typed. <kbd>Esc</kbd> closes the list. Plugin skills, and command files in a
 subdirectory of `commands`, are not in the list yet.
 
+A `/` after a space, in the middle of a message, opens the list too. There
+it shows only skills and command files. Claude Code does not run a command
+in the middle of a message, but it tells the agent that you named a skill,
+and the agent can then use it. A built-in such as `/clear` works only at the
+start.
+
 Point at a code block in a reply to show a copy button at its top right. It
 copies the block and nothing else.
 

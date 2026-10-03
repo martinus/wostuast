@@ -20007,8 +20007,8 @@ async function jumpToPane() {
 // its way.
 // --- completing a slash command ---------------------------------------------
 
-// A `/` at the start of the send box opens a list of the commands this
-// session has: its skills and command files, yours, and the commands its
+// A `/` at the start of the send box, or after a space in it (#368), opens
+// a list of the commands this session has: its skills and command files, yours, and the commands its
 // transcripts say were run, which is the only place the built-in ones are
 // written (`Commands` in the daemon). The list is asked for each time it
 // opens, so a skill written a minute ago is in it, and then narrowed here as
@@ -20028,13 +20028,27 @@ const CAME = {
   used: ["used before", "built in, or no longer on disk"],
 };
 
-// The command word being typed: what stands between the `/` and the caret,
-// while the caret is still in the first word. null when there is none.
-function slashWord(box) {
+// The command word the caret stands in: where its `/` is, what stands
+// between the `/` and the caret, and whether it is the first word. null when
+// there is none.
+//
+// Not only the first word (#368). Measured on Claude Code 2.1.288, a
+// `/deploy` in the middle of a prompt is not run there, but Claude Code
+// tells the model "the user's message contains /deploy, which is the name of
+// a skill" and to call the Skill tool if asked to run it -- for a skill and
+// for a command file alike. A built-in such as `/clear` is no skill, so in
+// the middle it does nothing: `drawSlash` leaves those out there.
+//
+// The `/` must start the box or follow white space: `src/main.py` and
+// `and/or` are not commands.
+function slashSpot(box) {
   const end = box.selectionStart;
-  if (end !== box.selectionEnd || !box.value.startsWith("/")) return null;
-  const word = box.value.slice(1, end);
-  return /\s/.test(word) ? null : word;
+  if (end !== box.selectionEnd) return null;
+  const text = box.value;
+  let from = end;
+  while (from > 0 && !/\s/.test(text[from - 1])) from -= 1;
+  if (text[from] !== "/" || from === end) return null;
+  return { from, word: text.slice(from + 1, end), first: !text.slice(0, from).trim() };
 }
 
 function closeSlash() {
@@ -20045,8 +20059,7 @@ function closeSlash() {
 
 async function followSlash() {
   const box = $("say");
-  const word = slashWord(box);
-  if (word === null) {
+  if (!slashSpot(box)) {
     slash.dismissed = false;
     closeSlash();
     return;
@@ -20063,17 +20076,20 @@ async function followSlash() {
         || document.activeElement !== box) return;
     slash.list = answer && Array.isArray(answer.commands) ? answer.commands : [];
   }
-  drawSlash(slashWord(box));
+  drawSlash(slashSpot(box));       // again: the box may have moved meanwhile
 }
 
 // The commands whose name holds the letters typed, best first. With nothing
 // typed yet, the daemon's order: the most used first.
-function drawSlash(word) {
+function drawSlash(spot) {
   const pop = $("slash");
-  if (word === null || !slash.list || slash.dismissed) { closeSlash(); return; }
-  const query = word.toLowerCase();
+  if (!spot || !slash.list || slash.dismissed) { closeSlash(); return; }
+  const query = spot.word.toLowerCase();
+  // In the middle of a message only what has a file works: Claude Code
+  // names a skill or a command file to the model, and nothing else.
+  const list = spot.first ? slash.list : slash.list.filter((one) => one.file);
   const scored = [];
-  for (const one of slash.list) {
+  for (const one of list) {
     const hit = query ? fuzzy(one.name, query) : { score: 0, at: [] };
     if (hit) scored.push({ one, hit });
   }
@@ -20114,8 +20130,11 @@ function markSlash(index) {
 
 // The command goes in place of the word, with a space after it for what it
 // is given. What was typed after the word stays.
+// The command goes in place of the word, wherever in the message it stands.
+// Only an open list comes here, and a list is open only over a `/word`.
 function takeSlash(one) {
-  putCommand($("say"), 0, one.name);
+  const box = $("say");
+  putCommand(box, slashSpot(box).from, one.name);
   closeSlash();
 }
 
@@ -20141,9 +20160,9 @@ function putCommand(box, from, name) {
 // never run and so not listed, took `/docs-to-review` and the next Enter
 // sent the wrong command -- and a word that is the whole name is done.
 function enterTakes() {
-  const word = slashWord($("say"));
+  const spot = slashSpot($("say"));
   const name = slash.shown[slash.at].name.toLowerCase();
-  const typed = (word || "").toLowerCase();
+  const typed = (spot ? spot.word : "").toLowerCase();
   return slash.moved || (name.startsWith(typed) && name !== typed);
 }
 
