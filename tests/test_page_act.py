@@ -1579,3 +1579,32 @@ def test_the_model_menu_shuts_and_types_nothing_it_cannot(ws, served):
         page.wait_for_selector("#modelpop:not([hidden])")
         page.click(".turnbody")
         page.wait_for_selector("#modelpop", state="hidden")
+
+
+def test_a_session_that_is_over_offers_the_line_that_brings_it_back(ws, page_at):
+    """Where the send box stood, the command to bring it back, to read and
+    copy (#352). The page runs nothing: the reader does, where they want."""
+    import shlex
+
+    daemon, _ = page_at
+    home = daemon.store.sessions["s1"].home
+    with opened(page_at) as page:
+        page.wait_for_selector("#sendbar:not([hidden])")
+        assert page.locator("#resumebar").is_hidden()
+        ws.append_event(conftest.event("SessionEnd", reason="prompt_input_exit",
+                                       pane="%7", pid=1, cwd=home, ts=time.time()))
+        daemon.tick()                   # what pushes the change to the page
+        page.wait_for_selector("#resumebar:not([hidden]) .resumeline")
+        assert page.locator("#sendbar").is_hidden()
+        line = page.inner_text("#resumebar .resumeline")
+        # The test's transcript is under its own config folder, not
+        # `~/.claude`, so the line names it.
+        words = shlex.split(line)
+        assert words[:3] == ["cd", home, "&&"]
+        assert words[3].startswith("CLAUDE_CONFIG_DIR=")
+        assert words[4:] == ["claude", "--resume", "s1"]
+        page.evaluate("""() => { window.copied = null;
+          copyToClipboard = async (text) => { window.copied = text; return true; }; }""")
+        page.click("#resumebar button")
+        assert page.evaluate("window.copied") == line
+        page.wait_for_selector("#resumebar button:text-is('copied')")

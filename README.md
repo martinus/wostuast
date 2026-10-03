@@ -211,7 +211,7 @@ where you left it: the tab, the open file, and your place in it.
 
 | Tab | What it shows |
 | --- | --- |
-| **Transcript** | What the agent said and did, with a map of the conversation beside it. |
+| **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
 

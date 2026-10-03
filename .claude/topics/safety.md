@@ -582,6 +582,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **A path out of the event log is input, not fact.** `transcript_path` goes
   through `safe_transcript`. `cwd` is used for git and for labels, never to open
   a file the page asked for.
+  - **A line handed to the reader to run is quoted, every part, and
+    typed nowhere** (#352, `resume_command`, `drawResume`). A session that
+    is over shows `cd <home> && claude --resume <id>` where the send box
+    stood, to copy. The folder and the id came out of an event, and the
+    reader runs the line: each part goes through `shlex.quote`, an id that
+    is not `[\w-]+` gives no line, and so does a folder with a control
+    character -- `CONTROL_CHARS` keeps a tab and a newline, being for text
+    typed into a terminal, so those are refused by name. Starting the
+    agent is a non-goal; the page only copies. `claude --resume` finds a
+    session only from the folder it started in (measured, 2.1.288), so the
+    `cd` is to `home`, never `cwd`; a transcript under another config folder
+    than `~/.claude` puts `CLAUDE_CONFIG_DIR=` in front.
+    `test_every_part_is_quoted_and_a_control_character_gives_no_line`,
+    `test_a_session_that_is_over_offers_the_line_that_brings_it_back`.
 - **A path out of the page is input too.** `worktree_target` opens a file only
   when `is_listed` says git offers that exact name and `inside` says the resolved
   path is still in the worktree. Keep all three parts of the first check — the
