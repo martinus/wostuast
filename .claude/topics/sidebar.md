@@ -33,6 +33,32 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   The worktree is the tiebreaker only. Sorting on `label` is still wrong, for
   the reason it always was: the name arrives from the status line a second
   after the session starts, and `/rename` changes it later.
+- **A snooze is a mark on one wait, not a state and not a timer** (#355).
+  `Session.snoozed` holds while the session still waits on what it waited
+  on when the reader said "not now": `snoozed_at` is that wait's
+  `attention_since`. An answer, a turn that ends, a new question -- any
+  change -- ends it, so there is no timer to set and no setting for one.
+  **Not `settled`**: a second question with no turn between leaves the
+  session in the one state, so `settled` did not move and the snooze held
+  over a question the reader had not seen.
+  `test_a_second_question_in_the_same_wait_wakes_it_too`. A late
+  `Notification` about the same wait moves neither, and must not wake it.
+  **Every answer to "who needs me" asks `needsYou`** -- `BANDS`,
+  `drawCounts` and the tab's icon it picks, `tabTitle` and `notifyAbout` -- and
+  never `state === "needs_you"` on its own: one that asks the state still
+  shouts about a session the reader put aside, and the page then says two
+  things. A snoozed row stands with the ready ones, in their colour, and
+  its first line says "snoozed". The row and `ls --json` say `snoozed`; the
+  state stays `needs_you`, because the session does still wait, and a
+  script that waits on it (`cmd_wait`) must still see that.
+  **Only a session that needs you is snoozed**: snoozing one at work would
+  hide its next question before anybody saw it, so `Serving.snooze` answers
+  409 and `toggleSnooze` says why. The snoozes are kept in `snoozed_path`,
+  beside the names and written the same way (`Store.snooze`, under
+  `naming`), so every browser shares them and a restart keeps them; an
+  entry that no longer holds is pruned on the next write. Its POST touches
+  no terminal, and carries the token as every POST does.
+  `tests/test_store.py`, `test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again`.
 - **There are four states, not five.** "starting" is gone: it was the first
   few minutes of a session that had said nothing else, which is the same as
   being ready, told in a way that went stale. `SessionStart` sets `done`, and

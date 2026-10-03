@@ -2397,3 +2397,47 @@ def test_a_lone_surrogate_in_the_sessions_breaks_no_stream(ws, served,
     got = read_events(f"{base}/api/events", 1)
     assert got[0][0] == "sessions"
     assert got[0][1]["note"].startswith("cut ")
+
+
+# --- a snooze (#355) -----------------------------------------------------------
+
+
+def test_a_session_that_needs_you_can_be_snoozed_over_http(ws, served):
+    daemon, base = served
+    ws.append_event(event("PermissionRequest", sid="s1", tool_name="Bash",
+                          tool_input={"command": "make"}))
+    daemon.store.refresh()
+    status, body = post(f"{base}/api/session/s1/snooze", {"snooze": True},
+                        token=daemon.token)
+    assert status == 200 and body["snoozed"] is True
+    daemon.store.refresh()
+    assert daemon.store.rows[0]["snoozed"] is True
+    status, body = post(f"{base}/api/session/s1/snooze", {"snooze": False},
+                        token=daemon.token)
+    assert status == 200 and body["snoozed"] is False
+    assert ws.read_snoozed() == {}
+
+
+def test_a_session_that_does_not_need_you_is_not_snoozed(ws, served):
+    """Snoozing a working session would hide its next question before the
+    reader saw it: the snooze is for a wait that is already on screen."""
+    daemon, base = served
+    ws.append_event(event("UserPromptSubmit", sid="s1", prompt="go"))
+    daemon.store.refresh()
+    status, body = post(f"{base}/api/session/s1/snooze", {"snooze": True},
+                        token=daemon.token)
+    assert status == 409 and "needs you" in body["error"]
+    assert ws.read_snoozed() == {}
+
+
+def test_a_snooze_needs_the_token_like_every_other_post(ws, served):
+    daemon, base = served
+    ws.append_event(event("PermissionRequest", sid="s1", tool_name="Bash",
+                          tool_input={"command": "make"}))
+    daemon.store.refresh()
+    status, _ = post(f"{base}/api/session/s1/snooze", {"snooze": True}, token="wrong")
+    assert status == 403
+    status, _ = post(f"{base}/api/session/nope/snooze", {"snooze": True},
+                     token=daemon.token)
+    assert status == 404
+    assert ws.read_snoozed() == {}

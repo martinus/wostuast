@@ -88,7 +88,7 @@ JSON_FIELDS = {
     "settled", "last_ts", "branch", "ahead", "behind", "dirty",
     "touched_files", "doing", "conflicts", "pane", "pid", "reason",
     "last_event", "model",
-    "cleared_into",
+    "cleared_into", "snoozed",
 }
 
 

@@ -53,6 +53,11 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   and amber when one needs you. Your browser can also notify you. An agent
   that an API error stopped, for example a spend limit or a failed login,
   needs you too: its card says the error.
+- **You can say "not now".** A card that needs you has a "not now" link
+  (or press <kbd>z</kbd>). The session then stands with the ready ones, and
+  the tab's title, its icon and the alerts leave it out. The snooze ends by
+  itself when the session moves on: you answer, the turn ends, or it asks
+  something new. "wake" on the card ends it by hand.
 - **Each session is one card.** It shows the session's name and its age,
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or
@@ -365,6 +370,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>f</kbd> | Filter the session list |
 | <kbd>e</kbd> | Rename the chosen session (or double-click its name) |
 | <kbd>b</kbd> | Back to the session you looked at before; press again to return |
+| <kbd>z</kbd> | Snooze the chosen session that needs you, or wake it |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
 | <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
@@ -430,6 +436,7 @@ taken out without a new `version`. Times are seconds since 1970, as numbers.
 | `last_event` | Its last event, in a few words. |
 | `model` | The model, as the status line names it. |
 | `cleared_into` | The session a `/clear` turned it into. Empty otherwise. |
+| `snoozed` | `true` when it needs you and you said "not now" on the page. |
 
 ### wait
 
@@ -467,6 +474,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/names.json` | The names you gave sessions on the page. |
+| `~/.local/state/wostuast/snoozed.json` | The sessions you snoozed on the page, until each moves on. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
 | `~/.local/state/wostuast/daemon.lock` | Held while `wostuast` runs, so a second start stops and says where the first one serves its page. It says the pid and the address. |
 | `~/.config/wostuast/settings.json` | Your settings and your ticket links. The page writes it when you change a setting. |

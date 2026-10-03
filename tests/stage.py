@@ -245,8 +245,12 @@ def main(argv: list[str]) -> int:
                 page.type(selector, text)
             else:
                 page.evaluate(value)
-        page.wait_for_function("() => !document.getAnimations().length",
-                               timeout=wait)
+        # Only an animation that ends: a row that needs you pulses for ever,
+        # and a wait for no animation at all never ended on one.
+        page.wait_for_function(
+            "() => !document.getAnimations().some("
+            "(a) => a.effect && a.effect.getTiming().iterations !== Infinity)",
+            timeout=wait)
         page.wait_for_timeout(200)     # a frame for what a click redrew
         page.locator(said.part).first.screenshot(path=said.out)
         print(said.out)
