@@ -72,3 +72,23 @@ refusal covers every other way to the same answer. Write the probe as a short sc
 issue, say what its output answers, and leave the issue open for the
 result: #266 holds the shape. Plugin skills (#268) are not read for the
 same reason.
+
+**A plan's approval is a `PermissionRequest` for `ExitPlanMode`, and the
+plan is in its `tool_input`** (measured on 2.1.288 with
+`ClaudePane(mode="plan")`). The tool's schema says it takes no plan -- the
+model writes the plan to `~/.claude/plans/<slug>.md` with `Write` and calls
+`ExitPlanMode` with `{}` -- so reading the schema says the plan is not in
+the payload. It is: Claude Code fills `tool_input` with `plan` (the file's
+Markdown, whole) and `planFilePath`, in `PreToolUse`, in
+`PermissionRequest`, and in the transcript's own `tool_use` record. The
+path is announced earlier, in an `attachment` of `type: "plan_mode"` with
+`planFilePath` and `planExists`. The dialog offers "Yes, and use auto
+mode", "Yes, manually approve edits" and "Tell Claude what to change".
+Escape closes it, fires no hook, and writes the usual `tool_result` with
+`is_error` and `toolUseResult: "User rejected tool use"`, then leaves the
+prompt in plan mode: so `decline` works on a plan as on any tool, and a
+reason typed after it reaches the agent still planning. No `Notification`
+came in the six seconds the dialog was up. Today the page draws the plan
+as the catch-all's JSON in the transcript (`tool_target`) and as a `pre`
+of raw Markdown in `drawPermission`, and `PERMISSION_SHOWN` withholds a
+plan longer than that.
