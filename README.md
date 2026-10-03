@@ -75,7 +75,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   request: every field, not a clipped line. Press **no**, and add what the
   agent should do instead if you want to. It never offers **yes**: approving
   stays in the terminal, one click away. While the dialog is up, the send
-  box is gone, because its Enter would say yes.
+  box is gone, because its Enter would say yes. A plan that asks to start
+  is in the transcript, drawn as a document, and the dialog points at it.
 - **You review its work like a pull request.** Click the `+` beside a line in
   the diff or in a file, and write what you want changed. The comments collect
   into one review. You read the whole message, then send it to the agent in

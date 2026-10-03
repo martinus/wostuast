@@ -136,7 +136,10 @@ class FakeApi:
 class ClaudePane:
     """Claude Code in a tmux pane of its own, talking to a `FakeApi`."""
 
-    def __init__(self, manual: bool = True, width: int = 200) -> None:
+    def __init__(self, manual: bool = True, width: int = 200,
+                 events: tuple[str, ...] = ("UserPromptSubmit", "Stop",
+                                            "PermissionRequest"),
+                 mode: str = "default") -> None:
         if not shutil.which("claude") or not shutil.which("tmux"):
             raise RuntimeError("claude_pane needs claude and tmux on the PATH")
         self.home = Path(tempfile.mkdtemp(prefix="claude-pane-"))
@@ -150,18 +153,22 @@ class ClaudePane:
             "customApiKeyResponses": {"approved": [key[-20:]], "rejected": []},
             "projects": {str(self.work): {"hasTrustDialogAccepted": True,
                                           "hasCompletedProjectOnboarding": True}}}))
-        # A status line and two hooks that keep what they are handed, so a
-        # question about a payload is read off the real one.
+        # A status line and hooks that keep what they are handed, so a
+        # question about a payload is read off the real one. `events` names
+        # the hooks: a question about `PreToolUse` or `Notification` needs
+        # them too.
         keep = lambda name: f"cat >> {self.home}/{name}.jsonl; echo >> {self.home}/{name}.jsonl"
         hooks = {event: [{"hooks": [{"type": "command", "command": keep("hooks")}]}]
-                 for event in ("UserPromptSubmit", "Stop", "PermissionRequest")}
+                 for event in events}
         settings = {"statusLine": {"type": "command",
                                    "command": keep("status") + "; echo ok"},
                     "hooks": hooks}
         if manual:
             # So a tool call asks for permission, rather than auto mode
             # deciding: the dialogs are what most questions are about.
-            settings["permissions"] = {"defaultMode": "default"}
+            # `mode="plan"` starts in plan mode, for what a plan's approval
+            # looks like.
+            settings["permissions"] = {"defaultMode": mode}
         (self.home / ".claude").mkdir()
         (self.home / ".claude" / "settings.json").write_text(json.dumps(settings))
         env = {"HOME": str(self.home), "PATH": os.environ["PATH"],
@@ -294,7 +301,7 @@ class ClaudePane:
         return self._kept("status")
 
     def hooks(self) -> list[dict]:
-        """Every hook payload: UserPromptSubmit, Stop, PermissionRequest."""
+        """Every hook payload of the `events` it was started with."""
         return self._kept("hooks")
 
     def settings(self) -> dict:

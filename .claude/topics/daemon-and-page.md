@@ -244,7 +244,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_code_block_copies_itself_from_a_button_that_shows_on_hover`.
 - **A `note` is neither a round nor a reply.** `rounds()` takes prompts and
   the agent's text and nothing else, so the map stays a map of the
-  conversation.
+  conversation. **A `plan` is a reply** (#372): it is the agent's words, and
+  the map names it by its title.
 - **A `.turn` lays out from the top, not stretched.** `.who` carries a name,
   a day, a time and a copy button — 71 px of them, measured — and a flex item
   stretches to its row by default, so a one-line bubble was 71 px tall with

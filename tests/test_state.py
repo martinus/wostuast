@@ -1703,3 +1703,55 @@ def test_a_name_is_kept_on_one_line_and_without_controls(ws):
     the pane, and an escape would be a key."""
     store = ws.Store()
     assert store.rename("s", "two\nlines\x1b[2J\there") == "two lines[2J here"
+
+
+# --- a plan waiting for approval (#372) -------------------------------------
+
+
+def recorded_plan(**changes):
+    """The `PreToolUse` and `PermissionRequest` Claude Code 2.1.288 sent for
+    a plan's approval, as this test's session. The plan is in `tool_input`
+    although the model called `ExitPlanMode` with `{}`."""
+    import json
+    from conftest import FIXTURES
+
+    out = []
+    for at, line in enumerate((FIXTURES / "plan_events.jsonl").read_text().splitlines()):
+        one = json.loads(line)
+        one.update(session_id="s1", cwd="/w/repo/dir", pane="%1", pid=4242,
+                   transcript_path="/t.jsonl", ts=1000.0 + at / 10)
+        if "plan" in changes:
+            one["tool_input"] = dict(one["tool_input"], plan=changes["plan"])
+        out.append(one)
+    return out
+
+
+def test_a_plan_waiting_for_approval_is_pointed_at_not_copied(ws):
+    """The panel showed `plan` and `planFilePath` as raw text in a box, cut
+    off. The plan is read in the transcript now; the request carries no
+    fields, says it is a plan, and still knows its call, which a No waits
+    on. The row reads the plan's title, not `{"plan": "# Fix…`."""
+    session = fold(ws, *recorded_plan())
+    assert session.state == "needs_you"
+    assert session.reason == "permission: ExitPlanMode Fix the race in the cache"
+    shown = session.permission
+    assert shown["plan"] is True and shown["fields"] == [], shown
+    assert not shown["withheld"] and shown["call"] == "toolu_exit1"
+
+
+def test_a_long_plan_is_not_withheld(ws):
+    """A plan past `PERMISSION_SHOWN` was not shown at all: "read it in the
+    terminal". Real plans pass it. The transcript has no such limit."""
+    long = "# A big plan\n\n" + "One more step of the plan.\n" * 2000
+    assert len(long) > ws.PERMISSION_SHOWN
+    shown = fold(ws, *recorded_plan(plan=long)).permission
+    assert shown["plan"] is True and not shown["withheld"]
+
+
+def test_any_other_request_keeps_its_fields(ws):
+    shown = fold(
+        ws,
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "ls"}, ts=1000.0),
+        event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"},
+              ts=1000.5)).permission
+    assert shown["plan"] is False and shown["fields"] == [["command", "ls"]]
