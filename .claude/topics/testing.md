@@ -172,6 +172,15 @@ the queue was full, so it closed having written nothing -- right -- and
 the test's `numbers` was empty, about one run in ten (#363). Reproduced
 by making the stream's first `queue.get` wait 2 s; the test now pushes
 one, reads until it is there, then floods.
+
+**Two loaded runs at once find what CI shows now and then.** The gate's
+one run at `-n 12` passed five times over a test that CI, or a run beside
+a picture being drawn, failed once. Two at once -- `(python3 -m pytest
+-q -n 12 -rf F) & (python3 -m pytest -q -n 12 -rf F); wait` -- failed it
+in two rounds, and found two more timing-sensitive tests in the same
+sitting: a push before the stream listened, a "slow" daemon of one second,
+and a reminder set three seconds out. Do that before calling a red run
+luck, and on `main` too, to tell whose it is.
 - **A rule turned round has tests of the old one in other files: grep them
   all before the gate.** #351 reversed "the row shows its place, never
   Claude Code's title". The sidebar tests of the old rule were found and
@@ -267,6 +276,10 @@ key is bound to the thing that speaks, and what it said. Calling the function
 directly instead proves only the second, and then nothing guards the binding.
 `spy_on_note(page)` in `tests/browser.py` does the reassigning, into
 `window.__said`; two test files each wrote it out for themselves.
+**A refusal is not a note**: `said(answer)` writes `state.trouble` and
+repaints, and `spy_on_note` never sees it. A test that waited for the
+refusal in `window.__said` waited out its timeout; wait for
+`state.trouble`.
 
 **The live slot is repainted on every push, so read it in the same
 `evaluate` that writes it.** `note()` borrows the slot and the stream is

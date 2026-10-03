@@ -128,7 +128,10 @@ Judgement, not ceremony. A two-line fix needs neither.
 
 - **`/code-review`** before opening a PR that touches the token, the tmux
   verbs, the scrub, a file read, or the hook — anything on the safety list in
-  `CLAUDE.md` — or one whose diff runs past a few hundred lines.
+  `CLAUDE.md` — or one whose diff runs past a few hundred lines. **Tell it
+  that the page has `[hidden] { display: none !important; }`**: without
+  that, it reported a hidden menu as drawn, and proving it wrong took a
+  browser run.
 - **An agent asked to break a promise** before a PR whose point is one --
   "names and counts only", "never typed into a terminal unseen": give it
   the promise and the diff, and ask for the input that breaks it. The
@@ -247,6 +250,13 @@ for `martinus/martinus/wostuast`.
 9. **Back onto main**: `git fetch origin main && git checkout -B <branch>
    origin/main`, then `git push -u origin <branch>`. The merge commit holds
    the branch's head, so this is a fast-forward and needs no force.
+   - **A stack that lands in a row through the one branch skips this until
+     its last pull request**: after each merge, `git checkout -B <branch>
+     <next commit>` and push. The next commit is a child of the head just
+     merged, so that is a fast-forward too, and its pull request shows only
+     its own change. Six landed so in one session, with no force and no
+     conflict; the session may push to one branch only, so they cannot go
+     up side by side.
 
 ## While looping
 
