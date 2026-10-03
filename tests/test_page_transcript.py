@@ -2633,3 +2633,115 @@ def test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight(page_at):
           return box.bottom > pane.top && box.top < pane.bottom;
         }""")
         assert seen, "folding left the message out of sight"
+
+
+
+# --- the "new" line (#374) ----------------------------------------------------
+
+
+def stamp(at):
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(at))
+
+
+@pytest.fixture
+def seen_before(ws, served, tmp_path, transcript_file):
+    """A session of eight rounds, read after the second, that has ended
+    its last turn since: what a reader comes back to."""
+    daemon, base = served
+    now = time.time()
+    made = []
+    for n in range(8):
+        at = now - 3600 + n * 400
+        made.append(conftest.record("you", f"Step {n + 1}.", ts=stamp(at)))
+        made.append(conftest.record("claude", f"Done with step {n + 1}.\n\n"
+                                    + "A line of the answer.\n\n" * 3, ts=stamp(at + 60)))
+    path = transcript_file("s1", made)
+    ws.append_event(conftest.event("SessionStart", cwd=str(tmp_path), pane="%7",
+                                   pid=1, ts=now - 4000, transcript_path=str(path)))
+    ws.append_event(conftest.event("Stop", cwd=str(tmp_path), pane="%7", pid=1,
+                                   ts=now - 3600 + 7 * 400 + 61))
+    daemon.store.seen = {"s1": now - 3600 + 400 + 120}
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].unread
+    return daemon, base + "/"
+
+
+LINE_AT = """() => { const line = document.querySelector('.turnbody > .newline');
+  return line && [line.nextElementSibling.textContent.includes('Step 3.'),
+                  Math.round(line.getBoundingClientRect().top
+                    - document.querySelector('.turnbody').getBoundingClientRect().top)]; }"""
+#: The line at the top of the pane: above it is scrolled past, not landed on.
+AT_TOP = f"(() => {{ const at = ({LINE_AT})(); return !!at && at[1] > -5 && at[1] < 20; }})()"
+
+
+def test_coming_back_lands_on_a_line_over_the_first_turn_not_seen(seen_before):
+    """Slack draws a line over the first message you have not read, and
+    opens the channel there. The transcript opened at its foot, and the
+    reader scrolled up to find where they had stopped."""
+    daemon, url = seen_before
+    with opened(url) as page:
+        page.set_viewport_size({"width": 1200, "height": 600})
+        page.wait_for_selector(".turnbody > .newline")
+        assert page.locator(".turnbody > .newline").count() == 1
+        page.wait_for_function(f"(({LINE_AT})() || [])[0] === true")
+        # At the top of the pane, through the second draw as Markdown.
+        page.wait_for_function(AT_TOP)
+        page.wait_for_timeout(500)
+        assert -5 < page.evaluate(LINE_AT)[1] < 20
+
+
+def test_the_line_stays_and_lets_the_reader_scroll_away(seen_before):
+    """A tab and back draws the transcript again: the line is still there,
+    and the reader who scrolled to the foot is not dragged back to it."""
+    daemon, url = seen_before
+    with opened(url) as page:
+        page.set_viewport_size({"width": 1200, "height": 600})
+        page.wait_for_function(AT_TOP)
+        page.evaluate("""() => { const pane = document.querySelector('.turnbody');
+          pane.scrollTop = pane.scrollHeight; }""")
+        page.wait_for_function("state.turns.down === null")
+        show_tab(page, "files")
+        show_tab(page, "transcript")
+        page.wait_for_selector(".turnbody > .newline")
+        # Still at the foot: the line stands far above the top of the pane.
+        assert page.evaluate(LINE_AT)[1] < -200
+
+
+def test_a_turn_that_ends_while_you_watch_draws_no_line(ws, page_at):
+    """Read as it happens, so it is not news: no line, then or after."""
+    daemon, url = page_at
+    with opened(url) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        later = stamp(time.time() + 5)
+        write_records(daemon, conftest.record("you", "More.", ts=later),
+                      conftest.record("claude", "Here is more.", ts=later))
+        ws.append_event(conftest.event("Stop", ts=time.time() + 6))
+        daemon.tick()
+        page.wait_for_selector(".turnbody .turn:has-text('Here is more.')")
+        page.wait_for_timeout(300)       # proving nothing comes
+        assert page.locator(".newline").count() == 0
+
+
+def test_the_line_holds_when_marked_comes_late(seen_before):
+    """Drawn as text first and again as Markdown, much taller: a landing
+    made once left the first draw's pixels, and the line far from the top.
+    The second draw lands again while the reader has not scrolled."""
+    from pathlib import Path
+    daemon, url = seen_before
+    marked = Path(__file__).parent / "fixtures" / "marked.min.js"
+    with own_context() as context:
+        held = []
+        context.route("**/marked.min.js", lambda route: held.append(route))
+        page = context.new_page()
+        page.set_viewport_size({"width": 1200, "height": 600})
+        page.goto(url, wait_until="domcontentloaded")
+        page.wait_for_function(AT_TOP)
+        assert not page.evaluate("!!window.marked"), "drawn as text first"
+        before = page.evaluate("document.querySelector('.turnbody').scrollHeight")
+        held[0].fulfill(path=str(marked), content_type="application/javascript",
+                        headers={"access-control-allow-origin": "*"})
+        page.wait_for_selector(".turnbody .prose p")
+        assert page.evaluate("document.querySelector('.turnbody').scrollHeight") > before
+        page.wait_for_function(AT_TOP)
+
