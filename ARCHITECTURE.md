@@ -414,7 +414,8 @@ There are two small exceptions, and each one has a lock:
   at once once built two new name maps from the same old one, and one name
   was lost. Now writers of `Store.names` take the `naming` lock. `POST
   snooze` writes `Store.snoozes` under the same lock, for the same reason,
-  and so does `POST seen`, which writes `Store.seen`.
+  and so does `POST seen`, which writes `Store.seen`, and `POST remind`,
+  which writes `Store.reminders`.
 - **Transcript readers** are shared between the worker and the request
   threads, under `Daemon.lock`.
 
@@ -649,6 +650,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | POST | `/api/session/ID/name` | Give the session a name, and type `/rename` with it where that is safe. |
 | POST | `/api/session/ID/snooze` | Snooze a session that needs you, or wake it. Touches no terminal. |
 | POST | `/api/session/ID/seen` | Mark a session read, or unread. Touches no terminal. |
+| POST | `/api/session/ID/remind` | Bring a session back at a moment, or forget its reminder. Touches no terminal. |
 
 The GET routes live in one table, `GET_VERBS`, and the POST routes in another,
 `POST_VERBS`. `Serving.dispatch` reads the tables. Adding a route means adding
@@ -778,6 +780,11 @@ A session that needs you can be **snoozed**: "not now" on its row, or `z`.
 It then stands with the ready ones, and none of the three signals counts
 it. The snooze is a mark on one wait (`attention_since`), so the next
 answer, turn or question ends it by itself.
+
+"later" on a row sets a **reminder**. The daemon keeps only the moment
+(`reminders.json`); the page compares it with the clock, so a row never
+changes by itself. Until the moment, a waiting session is put aside as if
+snoozed; then it needs you again, whatever it is doing, until you open it.
 
 A session whose turn ended after you last had it on screen is **unread**:
 a dot before its name, and a count in the tab's title. Opening it reads

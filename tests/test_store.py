@@ -431,3 +431,26 @@ def test_a_seen_file_that_is_not_ours_reads_as_none(ws):
         floor, seen = ws.read_seen()
         assert isinstance(floor, float) and floor > 1e9
         assert seen == ({"b": 3.0} if "floor" in text else {})
+
+
+# --- reminders (#375) ---------------------------------------------------------
+
+
+def test_a_reminder_is_a_moment_kept_in_a_file_of_ours(ws, store):
+    """The daemon keeps the moment; whether it has come is the page's to
+    say, by its clock, because a row must not change by itself."""
+    ws.append_event(event("SessionStart", ts=time.time()))
+    store.refresh(alive=lambda p: True)
+    at = time.time() + 600
+    assert store.remind("s1", at) == at
+    store.refresh(alive=lambda p: True)
+    assert store.rows[0]["remind_at"] == round(at, 3)
+    assert store.rows[0]["state"] == "done"         # a mark, not a state
+    assert ws.read_reminders() == {"s1": at}
+    assert ws.reminders_path().stat().st_mode & 0o777 == 0o600
+    again = ws.Store()
+    again.refresh(alive=lambda p: True)
+    assert again.rows[0]["remind_at"] == round(at, 3)
+    store.reminders["gone"] = at
+    assert store.remind("s1", 0) == 0.0
+    assert ws.read_reminders() == {}

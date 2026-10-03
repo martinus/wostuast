@@ -1671,3 +1671,79 @@ def test_a_mark_the_daemon_refused_is_taken_back_and_said(ws, pair_at):
         assert "unread" not in page.get_attribute('.row[data-id="s1"]', "class")
         assert page.evaluate("state.keptUnread") is None
 
+
+
+# --- reminders (#375) ---------------------------------------------------------
+
+
+def test_a_reminder_puts_a_waiting_session_aside_until_it_comes(ws, page_at):
+    """Until its moment, a session that waits stands with the ready ones,
+    and says when it comes back; then it needs you again, by the page's own
+    clock -- no event comes -- and the alert rings."""
+    daemon, path = page_at
+    ws.append_event(conftest.event("PermissionRequest", tool_name="Bash",
+                                   tool_input={"command": "make"}, ts=time.time()))
+    daemon.store.refresh()
+    # Far off first: 3 s from now was gone before a loaded machine had
+    # drawn the page, and the reminder had come by the first look.
+    daemon.store.remind("s1", time.time() + 3600)
+    daemon.tick()
+    with alerts_page(path) as page:
+        page.wait_for_function("state.sessions[0].remind_at > 0")
+        assert bands(page) == ["ready · 1"]
+        assert page.text_content(".row .age").startswith("at ")
+        assert "snoozed" in page.get_attribute(".row", "class")
+        assert page.evaluate("window.__told.length") == 0
+        # Then near: the push sets the page's timer again.
+        daemon.store.remind("s1", time.time() + 1)
+        daemon.tick()
+        page.wait_for_function("window.__told.length === 1", timeout=15000)
+        assert bands(page) == ["needs you · 1"]
+        assert "snoozed" not in page.get_attribute(".row", "class")
+
+
+def test_a_reminder_brings_a_ready_session_back_until_it_is_opened(ws, pair_at):
+    """A session waiting for nothing comes back too, which a snooze cannot
+    do: amber, with the word, and the alert says it is the reminder. Opening
+    it ends the reminder."""
+    daemon, url = pair_at
+    with alerts_page(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        daemon.store.remind("s2", time.time() + 2)
+        daemon.tick()
+        page.wait_for_selector('.row.reminded[data-id="s2"]', timeout=15000)
+        assert page.text_content('.row[data-id="s2"] .line1 .word') == "reminder"
+        assert bands(page)[0] == "needs you · 1"
+        page.wait_for_function("window.__told.length === 1")
+        assert page.evaluate("window.__told[0][1]").startswith("the reminder you set")
+        page.click('.row[data-id="s2"]')
+        deadline = time.time() + 10
+        while daemon.store.sessions["s2"].remind_at and time.time() < deadline:
+            time.sleep(0.05)
+        assert daemon.store.sessions["s2"].remind_at == 0.0
+        daemon.tick()
+        page.wait_for_selector('.row[data-id="s2"]:not(.reminded)')
+
+
+def test_later_offers_the_choices_and_keeps_the_one_picked(ws, pair_at):
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        row = '.row[data-id="s2"]'
+        assert page.evaluate(f"document.querySelector('{row} .remindlater').offsetWidth") == 0
+        page.hover(row)
+        page.click(f"{row} .remindlater")
+        words = page.eval_on_selector_all(
+            f"{row} .remindmenu button", "els => els.map((e) => e.textContent)")
+        assert words == ["20 min", "1 h", "3 h", "tomorrow"]
+        page.click(f"{row} .remindmenu button:text('1 h')")
+        page.wait_for_function(
+            "state.sessions.find((s) => s.id === 's2').remind_at > 0")
+        at = daemon.store.sessions["s2"].remind_at
+        assert abs(at - (time.time() + 3600)) < 30, at
+        assert page.evaluate("state.chosen") == "s1"     # not a choice of the row
+        assert page.text_content(f"{row} .age").startswith("at ")

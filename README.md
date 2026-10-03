@@ -58,6 +58,12 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   the tab's title, its icon and the alerts leave it out. The snooze ends by
   itself when the session moves on: you answer, the turn ends, or it asks
   something new. "wake" on the card ends it by hand.
+- **You can say "later".** Hover a card and pick "later": 20 minutes, an
+  hour, three hours, or tomorrow at nine. Until then the card shows when
+  it comes back, and a session that waits stands with the ready ones, as
+  with "not now". Then it needs you again, whatever it is doing: the card
+  turns amber and says "reminder", and the tab and the alert tell you.
+  Opening the session ends the reminder. An alert needs a page open.
 - **You see what you have not read.** A session whose turn ended after you
   last looked at it has a blue dot before its name, and the tab's title
   counts them. Opening it marks it read. "unread" on a card's hover, or
@@ -506,6 +512,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/names.json` | The names you gave sessions on the page. |
 | `~/.local/state/wostuast/snoozed.json` | The sessions you snoozed on the page, until each moves on. |
+| `~/.local/state/wostuast/reminders.json` | The reminders you set on the page, until each is read. |
 | `~/.local/state/wostuast/seen.json` | When you last read each session on the page, for its unread mark. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
 | `~/.local/state/wostuast/daemon.lock` | Held while `wostuast` runs, so a second start stops and says where the first one serves its page. It says the pid and the address. |
