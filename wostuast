@@ -11827,6 +11827,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   <dl>
     <dt>f</dt><dd>filter the session list</dd>
     <dt>e</dt><dd>rename the chosen session</dd>
+    <dt>b</dt><dd>back to the session before, and again to return</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 3</dt><dd>transcript, files, review</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
@@ -11843,6 +11844,13 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
 const state = {
   sessions: [],
   chosen: null,
+  // The session chosen before this one, which `b` goes back to (#354). Per
+  // browser tab, as the chosen one is -- that one is in the address, this
+  // one in the tab's own storage -- so a reload keeps both.
+  before: (() => {
+    try { return sessionStorage.getItem("wostuast-before") || ""; }
+    catch (error) { return ""; }
+  })(),
   tab: "transcript",
   find: "",
   pick: "",             // what the sidebar filter box holds
@@ -18626,6 +18634,11 @@ function forgetAnswered() {
 
 function choose(id) {
   if (state.chosen === id) return;
+  if (state.chosen) {
+    state.before = state.chosen;
+    try { sessionStorage.setItem("wostuast-before", state.before); }
+    catch (error) { /* a tab that keeps nothing still goes back until a reload */ }
+  }
   savePlace(state.chosen);
   state.chosen = id;
   // The address names the session on screen, so a reload comes back to it.
@@ -18660,6 +18673,30 @@ function choose(id) {
   // way every tab change ends -- `showTab` draws the header, loads the tab
   // and resubscribes, which was this function's own tail.
   showTab(back && TABS[back.tab] ? back.tab : state.tab);
+}
+
+// `b`: back to the session chosen before this one, and pressed again, back
+// to this one (#354) -- two agents on related work are read in turns, and
+// the list moves under you when a session changes state, so the other one is
+// never in the same place twice. A `/clear` since is followed into the
+// session it started, as the page follows one. A session forgotten, or one
+// the filter hides, is not gone to: the page says why instead.
+function goBack() {
+  let id = state.before;
+  for (let hops = 0; id && hops < 10; hops++) {
+    const s = state.sessions.find((one) => one.id === id);
+    if (!s || !s.cleared_into) break;
+    id = s.cleared_into;
+  }
+  if (!id || id === state.chosen) {
+    note("no session was chosen before this one");
+  } else if (!state.sessions.some((one) => one.id === id)) {
+    note("the session before this one is no longer in the list");
+  } else if (!shownSessions().some((one) => one.id === id)) {
+    note("the session before this one is hidden by the filter");
+  } else {
+    choose(id);
+  }
 }
 
 // A tab that reads the worktree asks again while it is on screen. The
@@ -19137,6 +19174,7 @@ document.addEventListener("keydown", (press) => {
       $("say").focus();
       break;
     case "c": nextTheme(); break;
+    case "b": goBack(); break;
     case "?": help.open ? help.close() : help.showModal(); break;
     default: {
       // A tab per number key, in the order the tabs are drawn. The list is

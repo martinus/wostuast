@@ -364,6 +364,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | --- | --- |
 | <kbd>f</kbd> | Filter the session list |
 | <kbd>e</kbd> | Rename the chosen session (or double-click its name) |
+| <kbd>b</kbd> | Back to the session you looked at before; press again to return |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
 | <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |

@@ -527,6 +527,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   in `?` that hid the ones in use. `3` is the review already. A key that is
   added again needs a reader who asked for it.
   `test_the_keys_nobody_pressed_are_gone`.
+  - **`b` was asked for** (#354, `goBack`, `state.before`): back to the
+    session chosen before, and again to return. `choose` keeps the one it
+    leaves, in `sessionStorage` -- per browser tab, as the chosen one is in
+    the address, so a reload keeps both. A `/clear` since is followed
+    (`cleared_into`). A session forgotten, or hidden by the filter, is not
+    gone to, and `note` says why: landing on a row the reader cannot see
+    reads as the key doing nothing.
+    `test_b_goes_back_to_the_session_before_and_again_returns`,
+    `test_b_says_why_it_cannot_go_back`.
 - **A row of a list is one line, and `.filelist button` is a block.** A
   list whose rows are one line says so in the one rule that groups them —
   `.fixed` for the file tree, `.diff` for the Diff tab's tree, `.transcript`
