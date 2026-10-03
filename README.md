@@ -384,7 +384,8 @@ is depends on your window manager.
 | `wostuast install` | Get the newest wostuast from GitHub, copy it to `~/.local/bin`, write the hook file and the status file to `~/.local/share/wostuast/`, and register the hooks and the status line. A bare `wostuast` does the same when something is behind, but does not go to GitHub. `./wostuast install` in a clone installs that file and does not go to GitHub either. |
 | `wostuast --version` | Print the version: the day the file was made (for a copy from GitHub, the day of its commit), and the start of its SHA-256. |
 | `wostuast uninstall` | Remove our hooks, our status line, the hook file and the status file. Keep the event log. If your own status line runs through ours with `--then`, it gets yours back. |
-| `wostuast ls` | List the sessions, in the same order as the page. |
+| `wostuast ls` | List the sessions, in the same order as the page. `--json` prints them for a script: see below. |
+| `wostuast wait [SESSION] --until STATE` | Wait until the session reaches the state, then print one line and exit 0. Without a session, any session will do. See below. |
 | `wostuast doctor` | Check Python, the state directory, the log, the hooks, and tmux. |
 | `wostuast files` | List every file wostuast wrote on this machine, grouped, with its size, what it is for, and what `uninstall` does to it. |
 | `wostuast report` | Print a Markdown report for an AI agent that works on wostuast: versions, the setup check, the files, the hook events and payload fields of the last 7 days (and which ones wostuast does not handle yet), what in your transcripts the page cannot show, the errors in its log by kind, and what the hook and the status line cost. It holds names, counts, sizes and timings only, never your text, so you can paste it into an issue. `--days` reads further back. This was `wostuast shapes`. |
@@ -396,6 +397,57 @@ context usage and its spend; hooks carry neither. Without it, wostuast
 still works, but sessions have no context bar and no spend. If you
 keep your own status line, `install` tells you the line to add to it.
 `uninstall` then puts your own line back.
+
+### ls --json
+
+`wostuast ls --json` prints one JSON object: `version` (now 1), `now` (the
+moment it was read), and `sessions`, in the order of the page. Each session
+has these fields. A field may be added later. A field is not renamed or
+taken out without a new `version`. Times are seconds since 1970, as numbers.
+
+| Field | What it holds |
+| --- | --- |
+| `id` | The session id. |
+| `name` | The name you gave it on the page, or the one Claude Code sent. Empty when there is none. |
+| `place` | Where it started, as the page shows it: `repo/folder`. |
+| `worktree_path` | The top of its git worktree, or the folder where it started. |
+| `cwd` | The folder the agent stands in now. |
+| `state` | `needs_you`, `working`, `done`, `ended` or `dead`. |
+| `state_word` | The same, as the page says it: `needs you`, `working`, `ready`, `ended`, `killed`. |
+| `settled` | When it became what it is. `now - settled` is how long it has been so. |
+| `last_ts` | When its last event came. |
+| `branch` | The git branch. Empty outside git. |
+| `ahead` | Commits ahead of its upstream. |
+| `behind` | Commits behind its upstream. |
+| `dirty` | Whether it has changes that are not committed. |
+| `touched_files` | How many files those changes touch. |
+| `pane` | Its tmux pane, such as `%5`. Empty when it is in none. |
+| `pid` | The Claude Code process. 0 when it could not be found. |
+| `reason` | Why it waits or ended, when it does. |
+| `last_event` | Its last event, in a few words. |
+| `model` | The model, as the status line names it. |
+| `cleared_into` | The session a `/clear` turned it into. Empty otherwise. |
+
+### wait
+
+`wostuast wait SESSION --until STATE` returns when the session reaches the
+state. It reads the event log, so the page does not have to be running.
+
+- `SESSION` is its id, the start of its id, its name, or its place. A name
+  that fits two sessions is refused, and both are named. Without a session,
+  the first session in that state will do.
+- `STATE` is `needs_you`, `working`, `done`, `ended`, `dead`, a word the page
+  shows (`ready`, `killed`), or `over` for both ways a session ends. Give
+  `--until` more than once for any of them.
+- A session that is already in the state returns at once. A `/clear` is
+  followed into the session it starts.
+- Exit 0 when the state is reached, 1 for a session that is unknown or ended
+  another way, 124 after `--timeout SECONDS`.
+- It prints one line, or with `--json` the same object as `ls --json`.
+
+```sh
+wostuast wait 3f9a --until done && notify-send "3f9a is done"
+```
 
 ## Files
 

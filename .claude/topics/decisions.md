@@ -88,6 +88,27 @@ it. The reason is the part to weigh before undoing one.
   `deny` would need; it is not built, because it means a hook that
   prints, which topics/safety's first bullet forbids today -- ask first.
 
+**For a script**
+
+- **`ls --json` prints `session_json`, a promise, and never `row`** (#353).
+  `row` is the page's, and changes whenever the page does; a script that
+  read it would break on the next pull request. `session_json` only grows:
+  a field is added, never renamed or taken out without a new
+  `JSON_VERSION`. Times are moments, never "3min". README.md lists every
+  field, and `test_ls_json_keeps_its_shape` and
+  `test_the_json_fields_are_the_ones_readme_lists` hold both lists to it.
+- **`wait` reads the log, as the daemon does, and needs no daemon** (#356,
+  `cmd_wait`). A `Store` and its `EventFollower`, folded every `WAIT_STEP`:
+  only what was appended is read. It types nothing, so a script that types
+  the next prompt after it is the reader's, not orchestration of ours.
+  **It follows a `/clear`** (`cleared_into`), as the page does: waiting on
+  a session that cleared would otherwise end in "ended", exit 1. A name is
+  found by `pick_session` -- id, start of the id, name, place, the first
+  that fits -- and two that fit the same way are refused with both named.
+  Exit 124 at `--timeout`, as `timeout(1)`.
+  `test_it_waits_for_the_state_to_come`,
+  `test_a_clear_is_followed_into_the_session_it_became`.
+
 **Serving**
 
 - **Polling, not inotify.** No dependency, and the scale is tens of files.
