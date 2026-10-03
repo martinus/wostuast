@@ -58,6 +58,10 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   the tab's title, its icon and the alerts leave it out. The snooze ends by
   itself when the session moves on: you answer, the turn ends, or it asks
   something new. "wake" on the card ends it by hand.
+- **You search every session.** "search every session" under the filter
+  box finds what you typed and what each agent answered last, in every
+  session, newest first. Slack's filters work: `in:name`, `from:me`,
+  `from:claude`, `after:2026-10-01`, `before:2026-10-03`, `is:unread`.
 - **You keep an answer for later.** Hover an answer and click the bookmark
   before "claude". "saved" over the list shows every saved answer of every
   session, with "open" to go back to it and "done" to take it off.

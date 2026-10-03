@@ -27,6 +27,28 @@ it. The reason is the part to weigh before undoing one.
   `Declined`**, and it is not a guess: the transcript showed the call
   rejected before it was written, whether the page pressed the Escape or
   the reader did in the terminal.
+- **Search is a plain scan of the event log, with no index and no
+  transcript** (#379). The log holds what the reader typed
+  (`UserPromptSubmit`'s `prompt`) and each turn's last answer (`Stop`'s
+  `last_assistant_message`), in one place, archives and all; transcripts
+  are many, long, and may be gone. Measured: a 20 MB log, the size it is
+  archived at, took 130 to 340 ms a query, so a box that asks 250 ms after
+  the last key needs no index, and goal 4 keeps SQLite out. `search_log`
+  passes over a line that cannot hold every ASCII word before it parses
+  it; **a word that is not ASCII is asked of the parsed text only**,
+  because a line may write it as an escape (`\u00dc`), and the raw check
+  missed it -- **and so is a word with a quote or a backslash**, which JSON
+  escapes the same way. The excerpt's place is found in the words as
+  written, not in their lower case, which can be longer. **A filter that
+  cannot be read is refused, never dropped** (`ValueError`, said by the
+  route): dropped, `before:yesterday` alone answered with the newest of
+  everything. Filters are Slack's (`parse_search`): `in:`, `from:me`,
+  `from:claude`, `before:`, `after:` (a day in the machine's zone, the
+  reader's), `is:unread`. A result is a moment the hook stamped, a little
+  after the transcript's, so "open" lands on the nearest block within a
+  minute (`goToNear`), never on block 0 by default.
+  `test_search_takes_slacks_filters`, `test_search_reads_the_archives_too`,
+  `test_search_every_session_and_open_a_result`.
 - **The status line writes one small file per session, and never the log.**
   It runs on every redraw, so an append would flood the log with nothing
   new. `install` never replaces a status line the user already has: it

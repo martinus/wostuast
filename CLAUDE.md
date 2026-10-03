@@ -92,6 +92,7 @@ bullets beside it are the same part's other scars.
 | `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/sidebar: a snooze is a mark on one wait |
 | `Session.unread`, `ended_at`, `seen_at`, `Store.see`, `seen_path`, `read_seen`, `setUnread`, `markSeen`, `keptUnread` | topics/sidebar: unread is a mark on a finished turn |
 | `putNewLine`, `landOnNew`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |
+| `search_log`, `parse_search`, `search_day`, `SEARCH_MAX`, `SEARCH_FILTERS`, `drawSearch`, `runSearch`, `drawResults`, `goToNear` | topics/decisions: search is a scan of the event log |
 | `saved_path`, `saved_entry`, `Store.save`, `SAVED_MAX`, `SAVED_PREVIEW`, `putSave`, `drawSaved`, `takeSaved`, `askSaved`, `goToTs` | topics/sidebar: a saved turn |
 | `last_answer`, `Serving.last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `drawFeedLink`, `state.feed`, `infeed` | topics/sidebar: "All unreads" |
 | `remind_at`, `Store.remind`, `reminders_path`, `REMIND_MOST`, `reminderDue`, `reminderSet`, `armReminders`, `endReminder`, `serverNow` | topics/sidebar: a reminder is the snooze's twin with a clock |
@@ -573,8 +574,7 @@ before you edit its part:
 ## Status
 
 All seven milestones are done: record, watch, read, fit, act, shine, review.
-Nothing is planned. Candidates, not committed: collision watch (two agents
+Nothing is planned. A candidate, not committed: collision watch (two agents
 editing the same file in different worktrees — the daemon already caches a
-changed-file map per worktree), and something over the event log, which is a
-local history of every prompt and tool call nobody is reading yet. A new
-feature starts at **Goals and non-goals**.
+changed-file map per worktree). The event log is read now: search every
+session (#379) scans it. A new feature starts at **Goals and non-goals**.
