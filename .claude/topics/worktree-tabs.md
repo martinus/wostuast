@@ -208,6 +208,27 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   too. `test_a_tall_file_tree_is_drawn_to_its_foot`.
 - **Search every name, or say you cannot.** Sending the first 5000 of 52,799 made
   a search find 16 files and miss a thousand: a wrong answer that looks right.
+- **What git has started and not finished is read off its files, in the
+  worktree's own git folder** (#357, `worktree_doing`, `own_git_dir`,
+  `GitFacts.doing`, `GitFacts.conflicts`). Measured on git 2.43: a rebase
+  leaves `rebase-merge/` (`msgnum`, `end`) or, with `--apply`,
+  `rebase-apply/` (`rebasing`, `next`, `last`) -- and `git am` the same
+  folder with `applying`; a merge `MERGE_HEAD`, a cherry-pick
+  `CHERRY_PICK_HEAD`, a revert `REVERT_HEAD`, a bisect `BISECT_LOG`. **A
+  linked worktree keeps them in a folder of its own**, which its `.git`
+  file names (`gitdir: …/.git/worktrees/<name>`): the repository's folder
+  said nothing for a rebase in a linked worktree. Read from the file, so
+  it costs no git call. **During a rebase `status` says `HEAD (no
+  branch)`**, which `parse_status_branch` rightly takes for no branch, and
+  the row hid its whole second line: `head-name` names the branch being
+  rebased. Conflicts are the `UNMERGED` lines `status` already returned.
+  **Read only when git is read** -- after an event that can touch the
+  tree, as every other fact: a rebase begun by hand in the terminal shows
+  after the agent's next such event. Page tests stub git (`stub_git`), so
+  the page's test hands the real `git_facts` in.
+  `test_a_rebase_says_how_far_and_keeps_its_branch`,
+  `test_a_linked_worktree_is_read_in_its_own_git_folder`,
+  `test_a_worktree_git_has_not_finished_with_says_so`.
 - **A git call that failed must not render as an empty answer.** "No files" and
   "git did not answer" look the same and mean opposite things. **Nor may a
   failure be remembered as one**: `Files.root_of` kept the empty string a

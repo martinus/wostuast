@@ -1023,6 +1023,11 @@ class GitFacts:
     #: What reading the facts raised, when it raised: `failed` is set too.
     #: For the log only (`git_facts_or_failed`).
     raised: str = ""
+    #: What git has started and not finished in this worktree: "rebasing
+    #: 2/3", "merging", … or "" (`worktree_doing`, #357).
+    doing: str = ""
+    #: How many files git holds in conflict: the unmerged lines of `status`.
+    conflicts: int = 0
 
 
 @dataclass
@@ -1956,6 +1961,8 @@ def row(session: Session) -> dict[str, Any]:
         "behind": facts.behind,
         "dirty": facts.dirty,
         "touched_files": facts.touched_files,
+        "doing": facts.doing,
+        "conflicts": facts.conflicts,
         "reason": session.reason,
         # The question the agent is waiting on, so the page can draw it over
         # whatever tab you are reading. It is here and not on a route of its
@@ -3633,6 +3640,83 @@ def repo_name(git_dir: str) -> str:
     return re.sub(r"\.git$", "", name)
 
 
+#: The two letters of `git status --porcelain` that say a file is in
+#: conflict ("unmerged"), from git's own documentation of the format.
+UNMERGED = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
+
+
+def own_git_dir(root: str) -> str:
+    """The git folder of this worktree, not of the repository: a linked
+    worktree keeps `rebase-merge/` and `MERGE_HEAD` in a folder of its own,
+    which `<root>/.git` names in a line `gitdir: …` -- the main worktree's
+    `.git` is that folder itself. Read from the file, so it costs no git
+    call. "" when it cannot be read."""
+    if not root:
+        return ""
+    dot = os.path.join(root, ".git")
+    if os.path.isdir(dot):
+        return dot
+    try:
+        with open(dot, encoding="utf-8", errors="replace") as handle:
+            line = handle.read(4096).strip()
+    except OSError:
+        return ""
+    if not line.startswith("gitdir:"):
+        return ""
+    found = line[len("gitdir:"):].strip()
+    return found if os.path.isabs(found) else os.path.normpath(os.path.join(root, found))
+
+
+def worktree_doing(git_dir: str) -> tuple[str, str]:
+    """What git has started in this worktree and not finished, and the
+    branch a rebase is rebasing: ("rebasing 2/3", "side"), or ("", "").
+
+    Read off the files git leaves, as measured on git 2.43 (#357): a rebase
+    keeps `rebase-merge/` with `msgnum` and `end`, or, with `--apply`,
+    `rebase-apply/` with `rebasing`, `next` and `last` -- and `git am` the
+    same folder with `applying`. A merge leaves `MERGE_HEAD`, a cherry-pick
+    `CHERRY_PICK_HEAD`, a revert `REVERT_HEAD`, a bisect `BISECT_LOG`. During
+    a rebase `status` says `HEAD (no branch)`, and the row lost its whole
+    second line; `head-name` names the branch being rebased. Only reads:
+    a file that cannot be read is no state, never an error on the row.
+    """
+    if not git_dir:
+        return "", ""
+
+    def read(*parts: str) -> str:
+        try:
+            with open(os.path.join(git_dir, *parts), encoding="utf-8",
+                      errors="replace") as handle:
+                return handle.read(256).strip()
+        except OSError:
+            return ""
+
+    def there(name: str) -> bool:
+        return os.path.exists(os.path.join(git_dir, name))
+
+    def branch_of(folder: str) -> str:
+        head = read(folder, "head-name")
+        return head[len("refs/heads/"):] if head.startswith("refs/heads/") else ""
+
+    def step(done: str, of: str) -> str:
+        return f" {done}/{of}" if done.isdigit() and of.isdigit() else ""
+
+    if there("rebase-merge"):
+        return ("rebasing" + step(read("rebase-merge", "msgnum"),
+                                  read("rebase-merge", "end")),
+                branch_of("rebase-merge"))
+    if there("rebase-apply"):
+        counted_step = step(read("rebase-apply", "next"), read("rebase-apply", "last"))
+        if there(os.path.join("rebase-apply", "applying")):
+            return "applying patches" + counted_step, ""
+        return "rebasing" + counted_step, branch_of("rebase-apply")
+    for name, word in (("MERGE_HEAD", "merging"), ("CHERRY_PICK_HEAD", "cherry-picking"),
+                       ("REVERT_HEAD", "reverting"), ("BISECT_LOG", "bisecting")):
+        if there(name):
+            return word, ""
+    return "", ""
+
+
 def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     """Read the repository name, branch, ahead, behind and dirty state.
 
@@ -3698,6 +3782,9 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     changed = [line for line in lines if line.strip()]
     facts.touched_files = len(changed)
     facts.dirty = bool(changed)
+    facts.conflicts = sum(1 for line in changed if line[:2] in UNMERGED)
+    facts.doing, rebasing = worktree_doing(own_git_dir(facts.root))
+    facts.branch = facts.branch or rebasing
     return facts
 
 
@@ -8461,6 +8548,8 @@ def session_json(session: Session) -> dict[str, Any]:
         "behind": facts.behind,
         "dirty": facts.dirty,
         "touched_files": facts.touched_files,
+        "doing": facts.doing,
+        "conflicts": facts.conflicts,
         "pane": session.pane,
         "pid": session.pid,
         "reason": session.reason,
@@ -10569,6 +10658,9 @@ body.dragging { cursor: col-resize; user-select: none; }
 .row .said { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; font-size: 12px; }
 .dirty { color: var(--needs); }
+/* What git has started and not finished, and its conflicts: the amber of
+   waiting, in the narrow face's weight, so it is read before the counts. */
+.row .gitstate .doing, .row .gitstate .conflict { color: var(--needs); font-weight: 600; }
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
 /* The row has no dot: its edge and its tint say the state, and the group it
@@ -12590,12 +12682,23 @@ function fillRow(row, s) {
   }
   two.hidden = !s.branch;
   if (fresh(two, "text", JSON.stringify([s.branch, s.ahead, s.behind, s.dirty,
-                                         s.touched_files, links]))) {
+                                         s.touched_files, s.doing, s.conflicts,
+                                         links]))) {
     two.replaceChildren();
     if (s.branch) fact(two, "branch", "branch", s.branch, s.branch);
     // What git counts, at the right edge, so the counts of every row stand
     // in one column however long each branch is.
     const counts = put(two, "span", "gitstate");
+    // What git has started and not finished, first, in the amber of
+    // something waiting: the diff, the branch and what is committed read
+    // differently until it ends (#357).
+    if (s.doing) {
+      put(counts, "span", "doing", s.doing).title = "git is " + s.doing
+        + " here, and has not finished: see the Review tab";
+    }
+    if (s.conflicts) {
+      put(counts, "span", "conflict", counted(s.conflicts, "conflict", "conflicts"));
+    }
     if (s.ahead) put(counts, "span", "ahead", "↑" + s.ahead);
     if (s.behind) put(counts, "span", "ahead", "↓" + s.behind);
     if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
@@ -16829,8 +16932,9 @@ function commitShown(report) {
 function diffKey() {
   const d = state.diffs;
   const runs = (map, word) => [...map].map(([key, one]) => key + "=" + word(one));
+  const s = current();
   return JSON.stringify([
-    state.chosen, d.tag, d.of, d.gone, d.loose, d.trouble,
+    state.chosen, s && s.doing, s && s.conflicts, d.tag, d.of, d.gone, d.loose, d.trouble,
     d.found ? d.found.stamp || "read" : "", state.find, state.sides,
     runs(d.open, String), runs(d.more, (ranges) => ranges.join(";")),
     runs(d.whole, (held) => held.asking ? "?" : held.file ? "+" : "-"),
@@ -16887,6 +16991,15 @@ function drawDiff(box) {
   // stand, which is what `markDiffFile` walks.
   scroll.blocks = new Map();
 
+  // git has started something here and not finished it: the branch, what
+  // is committed and what is not all read differently until it ends (#357).
+  const here = current();
+  if (here && (here.doing || here.conflicts)) {
+    put(next, "div", "note", "git is " + (here.doing || "stopped on a conflict")
+        + " in this worktree" + (here.conflicts
+          ? ", with " + counted(here.conflicts, "file", "files") + " in conflict" : "")
+        + ". Until it finishes, the branch and its changes read differently.");
+  }
   if (state.diffs.gone) {
     put(next, "div", "note", "The commit you picked is no longer on this"
         + " branch. It was probably amended or rebased away, so this shows"

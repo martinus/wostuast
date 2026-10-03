@@ -86,7 +86,8 @@ def test_ls_prints_one_row_per_session(ws, written_events, capsys):
 JSON_FIELDS = {
     "id", "name", "place", "worktree_path", "cwd", "state", "state_word",
     "settled", "last_ts", "branch", "ahead", "behind", "dirty",
-    "touched_files", "pane", "pid", "reason", "last_event", "model",
+    "touched_files", "doing", "conflicts", "pane", "pid", "reason",
+    "last_event", "model",
     "cleared_into",
 }
 
