@@ -56,6 +56,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   with the attention.** The row said it clipped to one line; a request is
   judged on all of it, so `read_permission` sends every field of the input
   (past `PERMISSION_SHOWN` it is withheld and the page points at the pane).
+  - **A plan is the exception: it is read in the transcript, not here**
+    (#372). `ExitPlanMode`'s request carries the plan whole (topics/payloads),
+    and the panel drew it as Markdown source in a `pre`, cut off, and
+    withheld a plan past `PERMISSION_SHOWN` -- which real plans pass. So
+    `plan_of` makes the call a block of kind `plan` in the transcript, drawn
+    by `markdown` and its scrub like any reply, and `read_permission` sends
+    `plan: true` and no fields; `drawPermission` says "It asks to start on
+    the plan above" and `lastPlan` scrolls to it. The block keeps the
+    call's `tool_use_id`, or a No's reason would wait for ever for a result
+    no block takes (`call_answered`). The row reads the plan's title
+    (`tool_target`), not `{"plan": "# …`. A call with no plan stays a tool
+    row. `test_a_plan_waiting_for_approval_is_pointed_at_not_copied`,
+    `test_a_long_plan_is_not_withheld`,
+    `test_a_plan_is_a_block_of_its_own_with_the_whole_markdown`,
+    `test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it`.
   Its `key` is the moment the dialog came up, so a No meant for one dialog
   is refused once another is up. Its `call` comes from `Session.calls`, the
   calls started and not finished, matched by `tool_summary` -- the

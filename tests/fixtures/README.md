@@ -39,6 +39,15 @@ sentence about the error, the one it also writes into the transcript, and
 `cloud_credential_error` -- read off the 2.1.285 schema, and only
 `model_not_found` recorded. Claude Code ignores what the hook prints.
 
+A plan's approval is a `PermissionRequest` for `ExitPlanMode`, measured on
+2.1.288 in plan mode (`plan_events.jsonl`: its `PreToolUse` and its
+`PermissionRequest`; `plan_transcript.jsonl`: the `plan_mode` attachment,
+the `Write` of the plan file, the call and its rejection). The model calls
+the tool with `{}`, and Claude Code fills `tool_input` with `plan` and
+`planFilePath`, in the hooks and in the transcript's `tool_use` alike.
+Escape writes the rejection with `toolUseResult: "User rejected tool use"`
+and `toolDenialKind`, and fires no hook. The plan is invented text.
+
 A slash command fires no hook at all: `/model opus` changes the model and
 the log says nothing, measured on 2.1.283. The status line sends the new
 `model` on its next redraw, and the transcript records the command and its

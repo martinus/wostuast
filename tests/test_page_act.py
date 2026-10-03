@@ -1650,3 +1650,52 @@ def test_a_slash_inside_a_word_opens_nothing(ws, in_pane, tmp_path):
         page.keyboard.type("look at src/")
         page.wait_for_timeout(300)          # proving nothing opens
         assert page.evaluate("$('slash').hidden")
+
+
+
+# --- a plan waiting for approval (#372) -------------------------------------
+
+
+def test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it(ws, in_pane):
+    """The plan was one row of JSON in the transcript and its raw source in
+    the panel. It is a document now, drawn as Markdown, and the panel says
+    what is asked and scrolls to it; it still offers no Yes."""
+    import json
+
+    daemon, base, seen = in_pane
+    path = daemon.store.sessions["s1"].transcript_path
+    with open(path, "a") as handle:
+        for line in (conftest.FIXTURES / "plan_transcript.jsonl").read_text().splitlines():
+            record = json.loads(line)
+            # Up to the call: its rejection has not come yet.
+            if record.get("toolUseResult") == "User rejected tool use":
+                break
+            handle.write(line + "\n")
+    cwd = daemon.store.sessions["s1"].cwd
+    for at, line in enumerate((conftest.FIXTURES / "plan_events.jsonl").read_text().splitlines()):
+        one = json.loads(line)
+        one.update(session_id="s1", cwd=cwd, pane="%7", pid=1, ts=time.time() + at / 10)
+        one.pop("transcript_path")
+        ws.append_event(one)
+    daemon.store.refresh()
+    with opened((None, base)) as page:
+        page.set_viewport_size({"width": 1200, "height": 500})
+        page.wait_for_selector(".turn.plan .prose h1")
+        assert page.locator(".turn.plan .prose h1").inner_text() == "Fix the race in the cache"
+        assert page.locator(".turn.plan .prose table").count() == 1
+        assert "#" not in page.locator(".turn.plan .prose").inner_text()
+        assert page.locator(".turn.plan .who .self").inner_text() == "plan"
+        page.wait_for_selector("#asking:not([hidden]) .askwhat")
+        assert page.locator("#asking .askhead").inner_text().lower() == "plan"
+        assert page.locator("#asking .permfield").count() == 0
+        buttons = page.eval_on_selector_all(
+            "#asking button", "els => els.map((one) => one.textContent)")
+        assert buttons == ["read the plan", "open the terminal", "no"], buttons
+        # Its top away from the top of the pane first -- at the head of the
+        # transcript -- so the click is what brings it there.
+        top = """() => document.querySelector('.turn.plan').getBoundingClientRect().top
+          - document.querySelector('.turnbody').getBoundingClientRect().top"""
+        page.evaluate("document.querySelector('.turnbody').scrollTop = 0")
+        assert page.evaluate(top) > 100
+        page.click("#asking button:text('read the plan')")
+        page.wait_for_function(f"({top})() < 30")

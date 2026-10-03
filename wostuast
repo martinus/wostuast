@@ -1324,6 +1324,20 @@ def clip_hidden(text: str, width: int) -> str:
     return clip(hide_secrets(text), width)
 
 
+def plan_of(tool_name: str, tool_input: Any) -> str:
+    """The plan an `ExitPlanMode` call asks to start on, or "".
+
+    The tool's own schema takes no plan: the model writes it to a file and
+    calls the tool with `{}`. Claude Code then puts the file's text in
+    `tool_input.plan`, with `planFilePath`, in the hooks and in the
+    transcript alike (measured on 2.1.288, `tests/fixtures/plan_*.jsonl`).
+    """
+    if tool_name != "ExitPlanMode" or not isinstance(tool_input, dict):
+        return ""
+    plan = tool_input.get("plan")
+    return plan if isinstance(plan, str) and plan.strip() else ""
+
+
 def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
     """What a call worked on: the path, the command, or the pattern.
 
@@ -1347,6 +1361,12 @@ def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
         return clip(str(data.get("pattern") or ""), 60)
     if tool_name == "Task":
         return clip(str(data.get("description") or ""), 60)
+    if tool_name == "ExitPlanMode":
+        # The plan's first line, its title: the catch-all below made the row
+        # and the card read `{"plan": "# Fix the race…`.
+        plan = plan_of(tool_name, data)
+        first = next((line for line in plan.splitlines() if line.strip()), "")
+        return clip(first.lstrip("#").strip(), 60)
     if tool_name == "AskUserQuestion":
         # The headers, which is what the dialog puts over each question. The
         # catch-all below clipped the JSON at 80 characters, so the one row
@@ -2352,14 +2372,21 @@ def read_permission(event: dict[str, Any], calls: dict[str, str], summary: str,
     """
     data = event.get("tool_input")
     data = data if isinstance(data, dict) else {}
-    fields = [[str(key), value if isinstance(value, str)
-               else json.dumps(value, indent=2, ensure_ascii=False)]
-              for key, value in data.items()]
+    tool = str(event.get("tool_name") or "")
+    # A plan is read in the transcript, drawn as Markdown, whole (#372).
+    # Here it was its source in a `pre`, and a plan past `PERMISSION_SHOWN`
+    # was not shown at all; the panel points at it instead.
+    plan = bool(plan_of(tool, data))
+    fields = [] if plan else [
+        [str(key), value if isinstance(value, str)
+         else json.dumps(value, indent=2, ensure_ascii=False)]
+        for key, value in data.items()]
     withheld = sum(len(key) + len(text) for key, text in fields) > PERMISSION_SHOWN
     matches = [one for one, said in calls.items() if said == summary]
-    return {"key": f"{ts:.6f}", "tool": str(event.get("tool_name") or ""),
+    return {"key": f"{ts:.6f}", "tool": tool,
             "call": matches[0] if len(matches) == 1 else "",
-            "fields": [] if withheld else fields, "withheld": withheld}
+            "fields": [] if withheld else fields, "withheld": withheld,
+            "plan": plan}
 
 
 def _on_declined(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -2787,7 +2814,8 @@ class Block:
     """One thing the Transcript tab shows, in the order it happened."""
 
     seq: int = -1               # its place in the transcript, and its identity
-    #: prompt, text, tool, divider, note, shell. A `note` is a
+    #: prompt, text, tool, divider, note, shell, plan. A `plan` is an
+    #: `ExitPlanMode` call: `text` is the plan, as Markdown. A `note` is a
     #: `user` record the harness wrote -- a task finishing, another session's
     #: message -- so it is shown but never as something the reader typed. A
     #: `shell` is a command the reader ran with `!`: `text` is the command
@@ -3423,10 +3451,19 @@ class Transcript:
             # here -- until its result brings the patch, which counts what
             # really moved (`read_patch`), for an Edit too.
             added, removed = edit_counts(tool_input) if name in COUNTED_TOOLS else (0, 0)
-            block = Block(kind="tool", ts=ts, tool=name,
-                          target=tool_target(name, tool_input, self.cwd),
-                          added=added, removed=removed,
-                          tool_use_id=str(piece.get("id") or ""))
+            plan = plan_of(name, tool_input)
+            if plan:
+                # The plan a plan-mode agent asks to start on, read as the
+                # document it is (#372). As a tool row it was its JSON, cut
+                # at 80 characters. It keeps the call's id: a No on the page
+                # waits for this call's result like any other's.
+                block = Block(kind="plan", ts=ts, tool=name, text=plan,
+                              tool_use_id=str(piece.get("id") or ""))
+            else:
+                block = Block(kind="tool", ts=ts, tool=name,
+                              target=tool_target(name, tool_input, self.cwd),
+                              added=added, removed=removed,
+                              tool_use_id=str(piece.get("id") or ""))
             if block.tool_use_id:
                 self.by_tool_use[block.tool_use_id] = block
         elif kind == "tool_result":
@@ -11413,6 +11450,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: none; border-style: dashed; color: var(--ink-mute);
 }
 .turn.aside .who { color: var(--ink-faint); }
+/* A plan is a document the agent asks to start on (issue 372): framed, so it
+   reads as one thing and not as more of the reply above it. */
+.turn.plan .prose { border: 1px solid var(--edge-bright); border-radius: 6px;
+  padding: 4px 16px; }
 /* Your words against Claude's. A rail and a tint say where you spoke, and a
    rule above each one breaks a long transcript into rounds you can scan.
    Both used to be grey blocks told apart by one small word. */
@@ -13526,8 +13567,20 @@ function drawPermission(box, s, permission) {
   }
   box.replaceChildren();
   const block = put(box, "div", "askone");
-  put(block, "div", "askhead", "permission");
-  put(block, "p", "askwhat", "May it use " + (permission.tool || "this tool") + "?");
+  put(block, "div", "askhead", permission.plan ? "plan" : "permission");
+  if (permission.plan) {
+    // The plan itself is in the transcript, drawn as Markdown and whole;
+    // here it was its source in a box, cut off (#372).
+    const what = put(block, "p", "askwhat", "It asks to start on the plan above. ");
+    const read = put(what, "button", "link", "read the plan");
+    read.addEventListener("click", () => {
+      const at = lastPlan(permission.call);
+      const node = at === null ? null : state.turns.nodes[at];
+      if (node) node.scrollIntoView({ block: "start" });
+    });
+  } else {
+    put(block, "p", "askwhat", "May it use " + (permission.tool || "this tool") + "?");
+  }
   if (permission.withheld) {
     put(block, "p", "asknote",
         "This request is too long to show here. Read it in the terminal.");
@@ -13570,6 +13623,18 @@ function drawPermission(box, s, permission) {
   put(foot, "span", "asksays");
   paintDecline(box, s, permission);
   fitSay(why);   // a reason kept from before, or a placeholder on a narrow bar
+}
+
+// The place of the plan a dialog asks about: the call's own block when the
+// dialog knows its call, or else the last plan in the transcript.
+function lastPlan(call) {
+  const blocks = state.turns.blocks;
+  for (let at = blocks.length - 1; at >= 0; at -= 1) {
+    const block = blocks[at];
+    if (block && block.kind === "plan"
+        && (!call || block.tool_use_id === call)) return at;
+  }
+  return null;
 }
 
 // What pressing no would do, said before it is pressed.
@@ -15145,17 +15210,20 @@ function blockTurn(block, index) {
   const mine = block.kind === "prompt" || shell;
   // Something the harness said, not the reader and not the agent.
   const aside = block.kind === "note";
+  // The agent's plan, asking to start (#372): its words, as a document.
+  const plan = block.kind === "plan";
   const node = document.createElement("div");
-  node.className = "turn" + (mine ? " mine" : "") + (aside ? " aside" : "");
+  node.className = "turn" + (mine ? " mine" : "") + (aside ? " aside" : "")
+    + (plan ? " plan" : "");
   const who = put(node, "div", "who" + (mine || aside ? "" : " claude"));
   // The name is a link to this block, so the address bar holds one after a
   // click and the browser's own "open in a new tab" works on it. Nothing is
   // intercepted: a plain anchor is already all three of those things.
   const name = put(who, "a", "self",
-                   mine ? "you" : aside ? "system" : "claude");
+                   mine ? "you" : aside ? "system" : plan ? "plan" : "claude");
   name.href = blockHref(index);
   name.title = "link to this " + (mine ? "prompt"
-                                       : aside ? "message" : "reply");
+                                       : aside ? "message" : plan ? "plan" : "reply");
   if (block.ts) {
     const day = dayOf(block.ts);
     if (day) put(who, "div", "day", day);
@@ -15384,7 +15452,8 @@ function rounds() {
       out.push(here = { seq: at, text: "! " + block.text, replies: [] });
     } else if (block.kind === "command" && block.text) {   // with its `/`
       out.push(here = { seq: at, text: block.text, replies: [] });
-    } else if (block.kind === "text") {   // a `note` is neither, by design
+    } else if (block.kind === "text" || block.kind === "plan") {
+      // A `note` is neither, by design. A plan is the agent's words.
       if (!here) out.push(here = { seq: at, text: "", replies: [] });
       here.replies.push({ seq: at, text: block.text });
     }

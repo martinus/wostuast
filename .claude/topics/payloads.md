@@ -88,7 +88,6 @@ Escape closes it, fires no hook, and writes the usual `tool_result` with
 `is_error` and `toolUseResult: "User rejected tool use"`, then leaves the
 prompt in plan mode: so `decline` works on a plan as on any tool, and a
 reason typed after it reaches the agent still planning. No `Notification`
-came in the six seconds the dialog was up. Today the page draws the plan
-as the catch-all's JSON in the transcript (`tool_target`) and as a `pre`
-of raw Markdown in `drawPermission`, and `PERMISSION_SHOWN` withholds a
-plan longer than that.
+came in the six seconds the dialog was up. `plan_of` reads it, and
+`tests/fixtures/plan_events.jsonl` and `plan_transcript.jsonl` are the
+recording; topics/state says what the page does with it (#372).

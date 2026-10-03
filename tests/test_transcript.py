@@ -840,3 +840,34 @@ def test_a_long_change_is_cut_and_says_how_much_is_left(ws, tmp_path):
     fresh.add(made)
     assert [line["text"] for line in fresh.blocks[0].patch[0]["lines"]] == [
         "one still one", "two"]
+
+
+def test_a_plan_is_a_block_of_its_own_with_the_whole_markdown(ws):
+    """`ExitPlanMode` was a tool row: its input as JSON, cut at 80
+    characters. It is the plan's own Markdown now, whole, and it keeps the
+    call's id, so the rejection Escape writes still marks it answered --
+    that is the proof a No's reason waits for (`call_answered`)."""
+    path = conftest.FIXTURES / "plan_transcript.jsonl"
+    # A result hands its call back again, changed: one block a place.
+    read = ws.Transcript(str(path), "/w/repo/dir").read_new()
+    blocks = list({one.seq: one for one in read}.values())
+    plans = [one for one in blocks if one.kind == "plan"]
+    assert len(plans) == 1, [one.kind for one in blocks]
+    plan = plans[0]
+    assert plan.text.startswith("# Fix the race in the cache\n")
+    assert "| cache.py | lock |" in plan.text
+    assert plan.tool == "ExitPlanMode" and plan.tool_use_id == "toolu_exit1"
+    assert plan.answered and plan.failed
+    # The Write that made the plan file is still the tool row it was.
+    assert [one.tool for one in blocks if one.kind == "tool"] == ["Write"]
+
+
+def test_a_plan_call_with_no_plan_stays_a_tool_row(ws, tmp_path):
+    """An older Claude Code, or one that sent nothing: no plan, no block."""
+    path = tmp_path / "t.jsonl"
+    path.write_text(json.dumps({
+        "type": "assistant", "timestamp": "2026-10-03T17:30:30.000Z",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "ExitPlanMode", "input": {}}]}}) + "\n")
+    [block] = ws.Transcript(str(path)).read_new()
+    assert block.kind == "tool" and block.tool == "ExitPlanMode"
