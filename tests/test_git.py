@@ -1128,3 +1128,75 @@ def test_a_link_loop_is_not_inside_and_is_not_an_error(ws, repo):
     git(repo, "commit", "-qm", "a loop")
     assert ws.inside(repo, repo / "a") is None
     assert ws.read_worktree_file(str(repo), "a") is None
+
+
+# --- what git has started and not finished (#357) ----------------------------
+
+
+def conflicting(repo):
+    """`side`, three commits on `f`; `main`, one commit to `f` that conflicts
+    with each of them. From `main`, a cherry-pick, a merge or a rebase of
+    `side` stops on a conflict."""
+    (repo / "f").write_text("base\n")
+    git(repo, "add", "f")
+    git(repo, "commit", "-qm", "f")
+    git(repo, "checkout", "-qb", "side")
+    for n in range(3):
+        (repo / "f").write_text(f"side {n}\n")
+        git(repo, "commit", "-qam", f"side {n}")
+    git(repo, "checkout", "-q", "main")
+    (repo / "f").write_text("main\n")
+    git(repo, "commit", "-qam", "main")
+
+
+def stopped(repo, *args):
+    """Run a git command that is meant to stop half way, on a conflict."""
+    subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+
+
+@pytest.mark.parametrize("start, doing", [
+    (("rebase", "main"), "rebasing 1/3"),
+    (("rebase", "--apply", "main"), "rebasing 1/3"),
+])
+def test_a_rebase_says_how_far_and_keeps_its_branch(ws, repo, start, doing):
+    """`status` says `HEAD (no branch)` during a rebase, and the row lost
+    its whole second line: the branch comes from `head-name` now."""
+    conflicting(repo)
+    git(repo, "checkout", "-q", "side")
+    stopped(repo, *start)
+    facts = ws.git_facts(str(repo))
+    assert (facts.doing, facts.branch, facts.conflicts) == (doing, "side", 1)
+
+
+@pytest.mark.parametrize("start, doing", [
+    (("merge", "side"), "merging"),
+    (("cherry-pick", "side"), "cherry-picking"),
+    (("revert", "--no-edit", "HEAD~1"), "reverting"),
+])
+def test_a_merge_a_cherry_pick_and_a_revert_are_named(ws, repo, start, doing):
+    conflicting(repo)
+    if start[0] == "revert":
+        # A revert of the commit under one that changed the same line.
+        git(repo, "checkout", "-q", "side")
+    stopped(repo, *start)
+    facts = ws.git_facts(str(repo))
+    assert facts.doing == doing
+    assert facts.conflicts == 1
+
+
+def test_a_bisect_is_named_and_a_clean_worktree_says_nothing(ws, repo):
+    assert (ws.git_facts(str(repo)).doing, ws.git_facts(str(repo)).conflicts) == ("", 0)
+    git(repo, "bisect", "start")
+    assert ws.git_facts(str(repo)).doing == "bisecting"
+
+
+def test_a_linked_worktree_is_read_in_its_own_git_folder(ws, repo, tmp_path):
+    """A linked worktree keeps its rebase in `.git/worktrees/<name>`, which
+    its `.git` file names: the repository's own folder says nothing."""
+    conflicting(repo)
+    linked = tmp_path / "linked"
+    git(repo, "worktree", "add", "-q", str(linked), "side")
+    stopped(linked, "rebase", "main")
+    assert ws.git_facts(str(linked)).doing == "rebasing 1/3"
+    assert ws.git_facts(str(repo)).doing == ""
+    assert ws.own_git_dir(str(linked)).endswith(os.path.join(".git", "worktrees", "linked"))

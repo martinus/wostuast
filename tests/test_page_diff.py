@@ -1497,3 +1497,22 @@ def test_an_emoji_that_changed_is_marked_whole(repo_page):
         runs = page.evaluate("wordDiff('face = \"\\u{1F600}\"', "
                              "'face = \"\\u{1F603}\"')")
         assert runs == [[[8, 10]], [[8, 10]]], runs
+
+
+def test_a_worktree_git_has_not_finished_with_says_so(ws, repo_page, served,
+                                                     monkeypatch):
+    """The row, and the Review tab, say what git has started here and not
+    finished (#357): the branch and its changes read differently until it
+    ends, and only the terminal said so. The row's facts are git's own here,
+    not the stub every other page test has."""
+    root, _ = repo_page
+    daemon, _ = served
+    conftest.git_in(root, "bisect", "start")
+    monkeypatch.setattr(ws, "git_facts_many",
+                        lambda dirs: {d: ws.git_facts(d) for d in dirs})
+    daemon.store.git_read.clear()
+    daemon.tick()
+    with opened(repo_page) as page:
+        page.wait_for_selector(".row .gitstate .doing:text-is('bisecting')")
+        show_tab(page, "diff")
+        page.wait_for_selector(".diffscroll > .note:has-text('git is bisecting')")

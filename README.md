@@ -422,6 +422,8 @@ taken out without a new `version`. Times are seconds since 1970, as numbers.
 | `behind` | Commits behind its upstream. |
 | `dirty` | Whether it has changes that are not committed. |
 | `touched_files` | How many files those changes touch. |
+| `doing` | What git has started there and not finished: `rebasing 2/3`, `merging`, `cherry-picking`, `reverting`, `bisecting`, `applying patches`. Empty otherwise. |
+| `conflicts` | How many files git holds in conflict. |
 | `pane` | Its tmux pane, such as `%5`. Empty when it is in none. |
 | `pid` | The Claude Code process. 0 when it could not be found. |
 | `reason` | Why it waits or ended, when it does. |
