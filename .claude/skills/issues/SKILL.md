@@ -149,7 +149,11 @@ beside them.** A finding changes code, and the runs under load start
 again: twice in one session the gate was green, `/code-review` found a
 real bug, and the gate ran a second time. Once a finding changed what Enter
 does in a list the reader had already said yes to on the picture, so the
-yes was for something else.
+yes was for something else. **A finding that changes behaviour changes the
+commit message too**: read it again before the push. After `/simplify`
+moved the `.md` check to the listing, #367's message still said a link to
+a key "is listed but not read", which had stopped being true; it was
+caught only when the pull request's text was written.
 
 ### 7. The changed files under load, then push, then watch CI
 
@@ -176,6 +180,14 @@ one after another with no conflict. Built side by side from `main`, #355
 and #351 each added a session field, a CSS rule, a map row and a block of
 tests at the same places, and the second one met five conflicting files
 after the first had merged.
+- **When the base commit changes before it lands, rebuild the stacked
+  one from its edit script.** A review amended #367 under #368, and the
+  cherry-pick of #368 conflicted in `wostuast` and `CLAUDE.md`. `git
+  checkout --ours wostuast`, then the edit script again -- each anchor
+  asserted once, so a moved anchor stops it -- gave a clean file; conflict
+  markers merged by hand in a file of five figures of lines are how a hunk
+  is lost. So keep each pull request's edit script in the scratchpad until
+  it merges.
 
 ### 8. Merge, reset, and read the list again
 
