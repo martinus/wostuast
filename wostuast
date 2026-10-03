@@ -1926,6 +1926,44 @@ def model_id(session: Session) -> str:
     return found if MODEL_SHAPE.fullmatch(found) else ""
 
 
+def resume_command(session: Session) -> str:
+    """The command that brings back a session that is over, for the reader
+    to copy and run (#352), or "" when there is none to give.
+
+    `claude --resume <id>` finds a session only in the project of the folder
+    it is started in -- measured on 2.1.288: in the folder the session
+    started in it opened the conversation, anywhere else it asked whether to
+    trust that folder and found nothing. So it starts with `cd` to `home`,
+    and not to `cwd`, which moves with every `cd` the agent made. A
+    transcript under another config folder than `~/.claude` (a second
+    account) needs `CLAUDE_CONFIG_DIR` in front: it is the folder above
+    `projects/`. Every part came out of an event and the reader will run
+    the line, so each is quoted, and a folder or an id with a control
+    character in it gets no command at all.
+
+    Starting the agent is a non-goal; handing the reader the command is
+    not. Nothing here types into a terminal.
+    """
+    import shlex
+
+    folder = session.home or session.cwd
+    if not folder or not re.fullmatch(r"[\w-]+", session.session_id or ""):
+        return ""
+    # `CONTROL_CHARS` keeps a tab and a newline, being for text typed into a
+    # terminal; in a folder of a one-line command either one is a trap.
+    if CONTROL_CHARS.search(folder) or "\n" in folder or "\t" in folder:
+        return ""
+    prefix = ""
+    transcript = Path(session.transcript_path) if session.transcript_path else None
+    if transcript is not None and transcript.parent.parent.name == "projects":
+        config = transcript.parent.parent.parent
+        if config != Path.home() / ".claude" and not re.search(r"[\x00-\x1f]", str(config)) \
+                and not CONTROL_CHARS.search(str(config)):
+            prefix = f"CLAUDE_CONFIG_DIR={shlex.quote(str(config))} "
+    return (f"cd {shlex.quote(folder)} && {prefix}claude --resume"
+            f" {shlex.quote(session.session_id)}")
+
+
 def row(session: Session) -> dict[str, Any]:
     """One session as the page wants it: flat, small, and ready to compare.
 
@@ -1975,6 +2013,8 @@ def row(session: Session) -> dict[str, Any]:
         # What it was last asked, for the alert that says it has finished.
         "prompt": shown_prompt(session),
         "since": round(session.since, 3),
+        # For a session that is over, the line that brings it back.
+        "resume": resume_command(session) if session.state in GONE_STATES else "",
         "name": session.mine or session.status.name,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -10739,6 +10779,16 @@ body.dragging { cursor: col-resize; user-select: none; }
   flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
 }
+/* The line that brings back a session that is over (issue 352), where the send
+   box stands for one that is not: the words, then the command whole, in the
+   face it is typed in, so it can be read before it is copied. */
+.resumebar { align-items: center; }
+.resumewords { flex: 1; min-width: 0; }
+.resumesays { color: var(--ink-mute); font-size: 12.5px; margin-bottom: 4px; }
+.resumeline {
+  display: block; font-family: var(--mono); font-size: 12.5px;
+  color: var(--ink-bright); overflow-x: auto; white-space: pre;
+}
 /* The commands a `/` can complete, over the transcript and above the box,
    where the eye already is. As wide as the box, so a description has room;
    it scrolls past a screenful rather than run under the tabs. */
@@ -11900,6 +11950,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         </div>
         <div class="slash" id="slash" role="listbox" hidden></div>
       </form>
+      <div class="sendbar resumebar" id="resumebar" hidden></div>
       <form class="sendbar reviewbar" id="reviewbar" hidden>
         <div class="saycol">
           <textarea class="say overall" id="overall" rows="1" autocomplete="off"
@@ -13329,11 +13380,34 @@ function drawHeader() {
   // so the Enter after a message approves, and a digit picks an option. The
   // dialog's bar says so where the box stood; the daemon refuses it anyway.
   $("sendbar").hidden = state.tab !== "transcript" || !!whyNotTyped(s);
+  drawResume(s);
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
   // layout it has just made dirty. What is in the box cannot change without
   // the reader typing, and that has its own listener.
   if (was && !$("sendbar").hidden) fitSay();
+}
+
+// Where the send box stands for a session that can still be typed into: for
+// one that is over, the line that brings it back, to copy (#352). After a
+// reboot, or tmux gone, every session comes back with one paste. The page
+// starts nothing and types nothing: the reader runs it, where they want it.
+function drawResume(s) {
+  const bar = $("resumebar");
+  const line = state.tab === "transcript" && s && isGone(s) ? s.resume || "" : "";
+  bar.hidden = !line;
+  if (!fresh(bar, "line", line) || !line) return;
+  bar.replaceChildren();
+  const words = put(bar, "div", "resumewords");
+  put(words, "div", "resumesays", "This session is over. To carry on with it, run:");
+  put(words, "code", "resumeline", line);
+  const copy = put(bar, "button", "verb", "copy");
+  copy.title = "copy the command";
+  copy.addEventListener("click", async () => {
+    const done = await copyToClipboard(line);
+    flashOutcome(copy, "copy", "copy the command", done,
+                 done ? "copied" : "the browser would not copy it", ["copied", "cannot"]);
+  });
 }
 
 // How full the chosen session's window is, in the strip at the end of the tab
