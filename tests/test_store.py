@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 
@@ -364,3 +366,68 @@ def test_a_snooze_file_that_is_not_ours_is_read_as_none(ws):
     assert ws.read_snoozed() == {"c": 5.0}
     ws.snoozed_path().write_text("[1]")
     assert ws.read_snoozed() == {}
+
+
+# --- unread (#373) ------------------------------------------------------------
+
+
+def test_a_turn_that_ends_after_the_reader_looked_is_unread(ws, store):
+    """Unread is a turn that ended since the reader last had the session on
+    screen. Looking at it reads it; the next turn's end makes it unread
+    again. It is a mark, not a state: the session stays ready."""
+    ws.append_event(event("SessionStart", ts=time.time()))
+    ws.append_event(event("Stop", ts=time.time() + 1))
+    store.refresh(alive=lambda p: True)
+    assert store.rows[0]["unread"] is True
+    assert store.rows[0]["state"] == "done"
+    assert store.see("s1", True) is False
+    store.refresh(alive=lambda p: True)
+    assert store.rows[0]["unread"] is False
+    ws.append_event(event("Stop", ts=time.time() + 5))
+    store.refresh(alive=lambda p: True)
+    assert store.rows[0]["unread"] is True
+
+
+def test_marked_unread_holds_until_it_is_seen_again(ws, store):
+    """"I looked, but I am not done with it": no turn has to end."""
+    ws.append_event(event("SessionStart", ts=time.time()))
+    store.refresh(alive=lambda p: True)
+    assert store.rows[0]["unread"] is False
+    assert store.see("s1", False) is True
+    store.refresh(alive=lambda p: True)
+    assert store.rows[0]["unread"] is True
+    assert store.see("s1", True) is False
+
+
+def test_turns_that_ended_before_the_file_was_made_are_read(ws, stub_git):
+    """With no file, the floor is now: a session that ended a turn before
+    the mark existed is not unread, or the first start would light up every
+    row in the list at once."""
+    ws.append_event(event("Stop", ts=time.time() - 60))
+    store = ws.Store()
+    store.refresh(alive=lambda p: True)
+    assert store.rows[0]["unread"] is False
+
+
+def test_the_marks_outlive_the_daemon_and_forget_unknown_sessions(ws, store):
+    """Every browser and every restart sees the same marks: they are a file
+    of ours, beside the snoozes, and a session nobody knows is dropped."""
+    ws.append_event(event("SessionStart", ts=time.time()))
+    store.refresh(alive=lambda p: True)
+    store.seen["gone"] = 5.0
+    store.see("s1", False)
+    floor, seen = ws.read_seen()
+    assert seen == {"s1": -1.0} and floor == store.seen_floor
+    again = ws.Store()
+    again.refresh(alive=lambda p: True)
+    assert again.rows[0]["unread"] is True
+    assert ws.seen_path().stat().st_mode & 0o777 == 0o600
+
+
+def test_a_seen_file_that_is_not_ours_reads_as_none(ws):
+    ws.seen_path().parent.mkdir(parents=True, exist_ok=True)
+    for text in ("[1, 2]", "{nope", '{"floor": true, "seen": {"a": "x", "b": 3}}'):
+        ws.seen_path().write_text(text)
+        floor, seen = ws.read_seen()
+        assert isinstance(floor, float) and floor > 1e9
+        assert seen == ({"b": 3.0} if "floor" in text else {})

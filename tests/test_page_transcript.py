@@ -257,6 +257,10 @@ def test_only_a_block_that_has_just_arrived_slides_in(page_at):
     daemon, path = page_at
     with opened(path) as page:
         assert page.locator(".fresh").count() == 0, "the history slid in too"
+        # A push before the stream listens goes to nobody, and the wait for
+        # one `.fresh` ran out: red under load once the page did more at
+        # its start (#373).
+        wait_for_watching(daemon)
         blocks, run, _ = daemon.read_transcript("s1")
         one = dict(blocks[-1].__dict__)
         one.update(seq=len(blocks), kind="text", text="and one more thing")
@@ -2280,8 +2284,10 @@ def test_open_page_returns_once_the_transcript_has_answered(page_at, ws, monkeyp
     daemon, _ = page_at
     real = ws.Daemon.read_transcript
 
+    # Three seconds, not one: two loaded runs at once drew the first frame
+    # more than a second after the page asked, and the answer was there.
     def slow(self, session_id):
-        time.sleep(1.0)
+        time.sleep(3.0)
         return real(self, session_id)
 
     monkeypatch.setattr(ws.Daemon, "read_transcript", slow)

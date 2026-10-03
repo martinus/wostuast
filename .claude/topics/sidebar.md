@@ -59,6 +59,41 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   entry that no longer holds is pruned on the next write. Its POST touches
   no terminal, and carries the token as every POST does.
   `tests/test_store.py`, `test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again`.
+- **Unread is a mark on a finished turn, as a snooze is a mark on a wait,
+  and it is no state either** (#373). `Session.unread` is a turn that
+  ended (`ended_at`, stamped by `Stop` and `StopFailure`) after the reader
+  last had the session on screen (`seen_at`), or a mark the reader set:
+  `seen_at` -1. They are kept in `seen_path`, beside the snoozes and
+  written the same way (`Store.see`, under `naming`), so every browser
+  agrees. **The file has a floor**, the moment it was first written, and
+  a session not in it was seen then (`read_seen`): without one, the first
+  start lit up every row that had ever ended a turn.
+  - **What is on screen in a window the reader can see is read**
+    (`markSeen`): on a choice, on every push, and when the window comes
+    back (`visibilitychange`). **Except the one marked unread while on
+    screen** (`state.keptUnread`), until another is chosen: "I looked,
+    but I am not done with it" is the whole point of the mark, and a push
+    a second later read it again. `test_u_marks_the_session_on_screen_unread_until_another_is_chosen`.
+  - **The route pushes nothing, as `name` does**: the next pass builds the
+    row from the file and sends it. A full push already on its way carries
+    a row built before the mark, so `setUnread` finds the session again
+    after the answer instead of writing to the one it started with. **A
+    refusal takes the mark back**: the row changes before the answer, and
+    a dot for a mark the file never got stood until the next push.
+    `test_a_mark_the_daemon_refused_is_taken_back_and_said`.
+  - **A dot, not bold**: the name is bold already. The dot is the colour of
+    a turn that is done (`--done`). A test of the dot reads `content` as
+    well as `width`: `getComputedStyle` gives the declared width of a
+    `::before` whose content is `none`, and a dot nobody can see passed.
+  - "unread" on a read row shows on its hover, before the age -- after it,
+    "5min unread" read as a state -- and `u` toggles the chosen one. The
+    tab's title says "2 unread ·" after the sessions that need you. **Not
+    there at all until the hover** (`display: none`, not `opacity: 0`):
+    invisible, it still took its room, and a long name was cut short for a
+    link nobody could see.
+  `test_a_turn_that_ends_after_the_reader_looked_is_unread`,
+  `test_turns_that_ended_before_the_file_was_made_are_read`,
+  `test_a_turn_that_ends_off_screen_is_unread_until_it_is_opened`.
 - **There are four states, not five.** "starting" is gone: it was the first
   few minutes of a session that had said nothing else, which is the same as
   being ready, told in a way that went stale. `SessionStart` sets `done`, and

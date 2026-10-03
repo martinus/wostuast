@@ -1563,3 +1563,111 @@ def test_a_rename_that_could_not_reach_claude_code_says_so(rows_at):
         assert said.startswith("renamed on this page only: ")
         assert "permission dialog" in said
         assert daemon.store.names.get("named") == "dialog work"
+
+
+
+# --- unread (#373) ------------------------------------------------------------
+
+
+def unread_of(page, sid):
+    return page.evaluate(
+        f"(state.sessions.find((s) => s.id === '{sid}') || {{}}).unread")
+
+
+def test_a_turn_that_ends_off_screen_is_unread_until_it_is_opened(ws, pair_at):
+    """The session on screen is read as it ends; the other one is marked
+    with a dot, named in the tab's title, and read once it is opened."""
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        now = time.time()
+        ws.append_event(conftest.event("Stop", sid="s1", ts=now + 1))
+        ws.append_event(conftest.event("Stop", sid="s2", ts=now + 1))
+        daemon.tick()
+        page.wait_for_selector('.row.unread[data-id="s2"]')
+        assert "unread" not in page.get_attribute('.row[data-id="s1"]', "class")
+        page.wait_for_function("document.title.startsWith('1 unread')")
+        # The dot is drawn: a class nothing paints is not a mark.
+        dot = page.evaluate("""(() => { const it = getComputedStyle(
+          document.querySelector('.row[data-id="s2"] .name'), '::before');
+          return [it.content, it.width]; })()""")
+        assert dot == ['""', "7px"], dot
+        page.click('.row[data-id="s2"]')
+        page.wait_for_selector('.row[data-id="s2"]:not(.unread)')
+        deadline = time.time() + 10
+        while daemon.store.sessions["s2"].unread and time.time() < deadline:
+            daemon.store.refresh()
+            time.sleep(0.05)
+        assert not daemon.store.sessions["s2"].unread
+        # A push already on its way may carry the row from before; the next
+        # pass sends the one after, and the title follows it.
+        daemon.tick()
+        page.wait_for_function("!document.title.startsWith('1 unread')")
+
+
+def test_u_marks_the_session_on_screen_unread_until_another_is_chosen(ws, pair_at):
+    """Marked unread while looking at it, it stays unread -- the point of
+    the mark -- and is read when the reader comes back to it."""
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        page.keyboard.press("u")
+        deadline = time.time() + 10
+        while daemon.store.sessions["s1"].seen_at >= 0 and time.time() < deadline:
+            time.sleep(0.05)
+        daemon.tick()          # the pass that sends the row built after it
+        page.wait_for_selector('.row.unread[data-id="s1"]')
+        # Pushes come and go while it stays on screen; it stays unread.
+        ws.append_event(conftest.event("Notification", sid="s1",
+                                       notification_type="idle_prompt",
+                                       message="waiting", ts=time.time()))
+        daemon.tick()
+        page.wait_for_timeout(600)       # proving it did not go
+        assert unread_of(page, "s1") is True
+        assert daemon.store.sessions["s1"].seen_at < 0
+        page.click('.row[data-id="s2"]')
+        page.wait_for_function("state.chosen === 's2'")
+        assert unread_of(page, "s1") is True
+        page.click('.row[data-id="s1"]')
+        page.wait_for_selector('.row[data-id="s1"]:not(.unread)')
+
+
+def test_the_row_offers_unread_on_a_read_row_only(ws, pair_at):
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        mark = '.row[data-id="s2"] .markunread'
+        # Not there until the hover: invisible, it took the name's room.
+        assert page.evaluate(f"document.querySelector('{mark}').offsetWidth") == 0
+        page.hover('.row[data-id="s2"]')
+        assert page.locator(mark).is_visible()
+        page.click(mark)
+        page.wait_for_selector('.row.unread[data-id="s2"]')
+        assert page.locator(mark).is_hidden()
+        assert page.evaluate("state.chosen") == "s1"   # not a choice of the row
+
+
+def test_a_mark_the_daemon_refused_is_taken_back_and_said(ws, pair_at):
+    """The row changes at once, before the answer. When the answer is a
+    refusal, the dot goes again and the page says why: a dot for a mark
+    the file never got was the bug."""
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        page.route("**/api/session/s1/seen", lambda route: route.fulfill(
+            status=409, content_type="application/json",
+            body='{"id": "s1", "error": "refused here"}'))
+        page.keyboard.press("u")
+        page.wait_for_function("state.trouble === 'refused here'")
+        assert unread_of(page, "s1") is False
+        assert "unread" not in page.get_attribute('.row[data-id="s1"]', "class")
+        assert page.evaluate("state.keptUnread") is None
+

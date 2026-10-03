@@ -356,6 +356,13 @@ def snoozed_path() -> Path:
     return state_dir() / "snoozed.json"
 
 
+def seen_path() -> Path:
+    """When the reader last had each session on screen (#373), and the
+    floor every session not in it was seen at. Ours, beside the snoozes, so
+    every browser agrees on what is unread."""
+    return state_dir() / "seen.json"
+
+
 def links_path() -> Path:
     """Where the ticket links were kept before `settings.json` took them.
 
@@ -1141,6 +1148,19 @@ class Session:
     #: The `attention_since` the reader snoozed this session at, or 0: see
     #: `snoozed`.
     snoozed_at: float = 0.0
+    #: When its last turn ended: a `Stop`, or a `StopFailure` (#373).
+    ended_at: float = 0.0
+    #: When the reader last had it on screen (`Store.see`), or -1 when they
+    #: marked it unread. See `unread`.
+    seen_at: float = 0.0
+
+    @property
+    def unread(self) -> bool:
+        """A turn ended since the reader last had this session on screen,
+        or they marked it unread: "I looked, but I am not done with it"
+        (#373). Not a state: the session is ready, or waits, or works, as it
+        was, and this is a mark on it, as a snooze is."""
+        return self.seen_at < 0 or self.ended_at > self.seen_at
 
     @property
     def label(self) -> str:
@@ -1621,6 +1641,10 @@ class Store:
         #: Replaced whole under `naming`, as the names are, and for the same
         #: reason: two POSTs at once built from one snapshot lose one.
         self.snoozes: dict[str, float] = read_snoozed()
+        #: When the reader last had each session on screen, and the floor
+        #: for a session not in it (#373). Replaced whole under `naming`,
+        #: as the snoozes are.
+        self.seen_floor, self.seen = read_seen()
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -1841,6 +1865,7 @@ class Store:
             self.reload_status(session)
             session.mine = self.page_name(session)
             session.snoozed_at = self.snoozes.get(session.session_id, 0.0)
+            session.seen_at = self.seen.get(session.session_id, self.seen_floor)
         return sessions
 
     def page_name(self, session: Session) -> str:
@@ -1929,6 +1954,27 @@ class Store:
         if session is not None:
             session.snoozed_at = self.snoozes.get(session_id, 0.0)
         return session is not None and session.snoozed
+
+    def see(self, session_id: str, read: bool) -> bool:
+        """The reader had this session on screen, or marked it unread
+        (#373). Returns whether it is unread now. A session no longer known
+        is dropped from the file on the write, so it does not grow.
+
+        Seen at now, or at the turn's end when that is later: a clock the
+        hook read a moment ahead of this one must not leave the turn the
+        reader is looking at unread."""
+        session = self.sessions.get(session_id)
+        with self.naming:
+            seen = {key: at for key, at in self.seen.items() if key in self.sessions}
+            if session is not None:
+                seen[session_id] = (max(time.time(), session.ended_at)
+                                    if read else -1.0)
+            write_seen(self.seen_floor, seen)
+            self.seen = seen
+        if session is None:
+            return False
+        session.seen_at = self.seen.get(session_id, self.seen_floor)
+        return session.unread
 
     def rename(self, session_id: str, name: str,
                over: str | None = None) -> str:
@@ -2154,6 +2200,8 @@ def row(session: Session) -> dict[str, Any]:
         # For a session that is over, the line that brings it back.
         "resume": resume_command(session) if session.state in GONE_STATES else "",
         "snoozed": session.snoozed,
+        # A turn ended since the reader last had it on screen (#373).
+        "unread": session.unread,
         "name": session.title,
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
@@ -2474,6 +2522,7 @@ def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     session.calls.clear()
     session.state = "done"
     session.last_event = "stopped"
+    session.ended_at = ts
 
 
 #: What each `error` of a `StopFailure` means, for when Claude Code sends no
@@ -2515,6 +2564,7 @@ def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None
     session.attention_since = ts
     session.reason = "stopped: " + (words or STOP_FAILURES.get(error, error))
     session.last_event = f"stopped by an API error ({error})"
+    session.ended_at = ts
 
 
 def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -6215,6 +6265,35 @@ def write_snoozed(snoozes: dict[str, float]) -> None:
     write_atomic(snoozed_path(), json.dumps(snoozes), private=True)
 
 
+def read_seen() -> tuple[float, dict[str, float]]:
+    """The floor and the moment each session was last seen, or now and none.
+
+    The floor is when the file was first written. With no file there is no
+    floor yet, and now stands in for it: else every session that ended a
+    turn before this feature was there would come up unread at once. A value
+    that is not a number is left out, as `read_snoozed` leaves one out.
+    """
+    now = time.time()
+    try:
+        payload = json.loads(seen_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return now, {}
+    if not isinstance(payload, dict):
+        return now, {}
+    number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool)
+    floor = payload.get("floor")
+    seen = payload.get("seen")
+    return (float(floor) if number(floor) else now,
+            {str(key): float(value) for key, value in seen.items()
+             if isinstance(key, str) and number(value)}
+            if isinstance(seen, dict) else {})
+
+
+def write_seen(floor: float, seen: dict[str, float]) -> None:
+    write_atomic(seen_path(), json.dumps({"floor": floor, "seen": seen}),
+                 private=True)
+
+
 def read_names() -> dict[str, str]:
     """Every name the reader has given, or an empty map."""
     return {key: name for key, (name, _) in read_name_entries().items()}
@@ -8261,6 +8340,13 @@ class Serving:
         snoozed = self.daemon.store.snooze(session_id, bool(body.get("snooze")))
         self.reply_json({"id": session_id, "snoozed": snoozed, "done": True})
 
+    def seen(self, session_id: str, session: Session,
+             body: dict[str, Any]) -> None:
+        """The reader had this session on screen, or marked it unread
+        (#373). A file of ours, and no terminal, as `snooze`."""
+        unread = self.daemon.store.see(session_id, bool(body.get("seen")))
+        self.reply_json({"id": session_id, "unread": unread, "done": True})
+
     def answer(self, session_id: str, session: Session,
                body: dict[str, Any]) -> None:
         """Answer the question the agent is waiting on, in its own dialog.
@@ -8750,6 +8836,8 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "name": (Serving.name, "name", "known"),
     # A file of ours as well, and no terminal (#355).
     "snooze": (Serving.snooze, "snooze", "known"),
+    # And so is what the reader has read (#373).
+    "seen": (Serving.seen, "seen", "known"),
 }
 
 
@@ -9230,6 +9318,8 @@ def installed_files() -> list[Installed]:
         Installed("History", names_path(), "the names you gave sessions on the page"),
         Installed("History", snoozed_path(),
                   "the sessions you snoozed on the page, until each moves on"),
+        Installed("History", seen_path(),
+                  "when you last read each session on the page, for its unread mark"),
         Installed("History", daemon_lock_path(),
                   "held while wostuast serves the page; says where"),
         Installed("Your settings", config_path(),
@@ -11010,6 +11100,17 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* Only a finished session carries a word; the colour says the rest. */
 .row .word { flex-shrink: 0; color: var(--ink-faint); }
 .row .word:empty { display: none; }
+/* Unread (issue 373): a turn ended since the reader last had it on screen.
+   A dot before the name, in the colour of a turn that is done: the name is
+   already bold, so bold could not say it. */
+.row.unread .name::before {
+  content: ""; display: inline-block; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--done); margin-right: 7px;
+  vertical-align: 2px;
+}
+/* "unread" shows on a read row's hover. Not there at all until then:
+   invisible, it still took its room, and the name was cut short for it. */
+.row:not(:hover):not(:focus-within) .markunread { display: none; }
 .row .line2 .repo, .row .line2 .worktree, .row .line2 .branch {
   display: inline-flex; align-items: center; gap: 4px; min-width: 0;
 }
@@ -12380,6 +12481,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>e</dt><dd>rename the chosen session</dd>
     <dt>b</dt><dd>back to the session before, and again to return</dd>
     <dt>z</dt><dd>snooze the session that needs you, or wake it</dd>
+    <dt>u</dt><dd>mark the session unread, or read</dd>
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 4</dt><dd>transcript, files, review, commands</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
@@ -13063,6 +13165,55 @@ async function toggleSnooze(id) {
   drawSessions();
 }
 
+// A session is unread when a turn ended since the reader last had it on
+// screen, or when they marked it so (#373). What is on screen, in a window
+// the reader can see, is read -- except the one they marked unread while
+// looking at it, until they choose another: "I looked, but I am not done
+// with it" is the whole point of the mark.
+async function setUnread(id, unread) {
+  const s = state.sessions.find((one) => one.id === id);
+  if (!s) return;
+  const was = { unread: !!s.unread, kept: state.keptUnread };
+  if (unread && id === state.chosen) state.keptUnread = id;
+  if (!unread && state.keptUnread === id) state.keptUnread = null;
+  state.seeing = id;
+  s.unread = unread;
+  $("rows").dataset.drawn = "";
+  drawSessions();
+  const answer = await tell(id, "seen", { seen: !unread });
+  if (state.seeing === id) state.seeing = null;
+  // Found again: a push while the answer was out replaced the list, and
+  // the row it drew was built before the mark. The next pass sends one
+  // built after it, as it does for a name.
+  const now = state.sessions.find((one) => one.id === id);
+  if (!answer || answer.error) {
+    // It did not land: the row says what the file holds, not what was
+    // asked, or the dot stood for a mark nobody kept.
+    if (now) now.unread = was.unread;
+    state.keptUnread = was.kept;
+    said(answer || { error: "the daemon did not answer" });
+  } else if (now) {
+    now.unread = !!answer.unread;
+  }
+  $("rows").dataset.drawn = "";
+  drawSessions();
+}
+
+function toggleUnread(id) {
+  const s = state.sessions.find((one) => one.id === id);
+  if (s) setUnread(id, !s.unread);
+}
+
+// The session on screen is read, while the window is in front of the
+// reader. Asked on every push, on a choice and when the window comes back;
+// `seeing` keeps a push that arrives before the answer from asking twice.
+function markSeen() {
+  const s = current();
+  if (!s || !s.unread || state.keptUnread === s.id || state.seeing === s.id) return;
+  if (document.visibilityState !== "visible") return;
+  setUnread(s.id, false);
+}
+
 function bandOf(s) {
   for (const band of BANDS) if (band[2](s)) return band[0];
   return "ready";                    // a state nobody here knows is not urgent
@@ -13124,6 +13275,14 @@ function newRow(id) {
     press.stopPropagation();           // not a choice of the row
     toggleSnooze(id);
   });
+  // "unread" on a row that is read, shown on its hover (#373). Before the
+  // age, as "not now" is: after it, "5min unread" read as a state.
+  const unread = put(one, "button", "link markunread", "unread");
+  unread.title = "mark it unread  ·  u";
+  unread.addEventListener("click", (press) => {
+    press.stopPropagation();
+    setUnread(id, true);
+  });
   put(one, "span", "age");
   put(row, "div", "line2 where");
   put(row, "div", "line2");
@@ -13145,7 +13304,7 @@ function newRow(id) {
 function fillRow(row, s) {
   const [one, where, two, three] = row.children;
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "")
-    + (s.snoozed ? " snoozed" : "");
+    + (s.snoozed ? " snoozed" : "") + (s.unread ? " unread" : "");
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
   // Each part is written again only when what it says has changed. This
@@ -13215,8 +13374,9 @@ function fillRow(row, s) {
   three.hidden = !said;
   // Beside the name, at the right: "how long has this needed me?" is read
   // with the name, and a ready row has no fourth line to carry it.
-  one.children[3].textContent = ago(s.since);
-  ages.push([one.children[3], s.since]);
+  one.children[3].hidden = !!s.unread || needsYou(s) || s.snoozed;
+  one.children[4].textContent = ago(s.since);
+  ages.push([one.children[4], s.since]);
 }
 
 // The name Claude Code shows for the session, or the reader's from the page
@@ -14055,10 +14215,13 @@ function tabTitle(sessions) {
     return names.join(", ") + more
       + (needs.length === 1 ? " asks" : " need you") + " \u00b7 wostuast";
   }
+  // What is unread comes next (#373): it is what to read when nothing waits.
+  const unread = sessions.filter((s) => s.unread).length;
+  const first = unread ? unread + " unread \u00b7 " : "";
   const working = sessions.filter((s) => s.state === "working").length;
-  if (working) return working + " working \u00b7 wostuast";
+  if (working) return first + working + " working \u00b7 wostuast";
   const ready = sessions.filter((s) => s.state === "done").length;
-  return ready ? ready + " ready \u00b7 wostuast" : "wostuast";
+  return first + (ready ? ready + " ready \u00b7 wostuast" : "wostuast");
 }
 
 function clip(text, most) {
@@ -19456,6 +19619,7 @@ function choose(id) {
   }
   savePlace(state.chosen);
   state.chosen = id;
+  state.keptUnread = null;        // a mark made while looking holds till now
   // The address names the session on screen, so a reload comes back to it.
   // Without it a reload chose the first row, which after a `/clear` is the
   // new session, and the conversation the reader was on seemed to be gone.
@@ -19489,6 +19653,7 @@ function choose(id) {
   // way every tab change ends -- `showTab` draws the header, loads the tab
   // and resubscribes, which was this function's own tail.
   showTab(back && TABS[back.tab] ? back.tab : state.tab);
+  markSeen();
 }
 
 // `b`: back to the session chosen before this one, and pressed again, back
@@ -19864,6 +20029,7 @@ function resubscribe() {
     }
     drawSessions();
     drawHeader();
+    markSeen();
     state.live = "live";
     paintLive();
   });
@@ -19992,6 +20158,7 @@ document.addEventListener("keydown", (press) => {
     case "c": nextTheme(); break;
     case "b": goBack(); break;
     case "z": if (state.chosen) toggleSnooze(state.chosen); break;
+    case "u": if (state.chosen) toggleUnread(state.chosen); break;
     case "?": help.open ? help.close() : help.showModal(); break;
     default: {
       // A tab per number key, in the order the tabs are drawn. The list is
@@ -20018,6 +20185,7 @@ setInterval(tickAges, 1000);
 
 // A hidden page polls nothing. Looking at it again starts the timer.
 document.addEventListener("visibilitychange", repoll);
+document.addEventListener("visibilitychange", markSeen);
 
 for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
