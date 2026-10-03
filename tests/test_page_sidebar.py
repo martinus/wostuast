@@ -1443,3 +1443,41 @@ def test_the_keys_nobody_pressed_are_gone(pair_at):
         assert "s" in listed and "1 – 3" in listed, listed
         for gone in ("j / k", "n", "r", "t"):
             assert gone not in listed, listed
+
+
+def test_b_goes_back_to_the_session_before_and_again_returns(pair_at):
+    """Two agents on related work are read in turns (#354), and the list
+    moves under you, so the other one is never where it was."""
+    with opened(pair_at) as page:
+        page.wait_for_selector(".row[data-id='s2']")
+        page.evaluate("choose('s1')")
+        page.click(".row[data-id='s2']")
+        assert page.evaluate("state.chosen") == "s2"
+        page.press("body", "b")
+        assert page.evaluate("state.chosen") == "s1"
+        page.press("body", "b")
+        assert page.evaluate("state.chosen") == "s2"
+        # A reload keeps it: per tab, as the chosen session is.
+        page.reload()
+        page.wait_for_selector(".row[data-id='s1']")
+        page.press("body", "b")
+        page.wait_for_function("state.chosen === 's1'")
+
+
+def test_b_says_why_it_cannot_go_back(pair_at):
+    """A session the filter hides is not gone to: the reader would land on
+    a row they cannot see. Nothing chosen before says so too."""
+    with opened(pair_at) as page:
+        page.wait_for_selector(".row[data-id='s2']")
+        spy_on_note(page)
+        page.evaluate("state.before = ''; try { sessionStorage.clear() } catch (e) {}")
+        page.press("body", "b")
+        assert page.evaluate("window.__said") == ["no session was chosen before this one"]
+        page.evaluate("choose('s1')")
+        page.click(".row[data-id='s2']")
+        page.fill("#pick", "warmhare")
+        page.evaluate("document.activeElement.blur()")   # keys go to the page
+        page.press("body", "b")
+        assert page.evaluate("state.chosen") == "s2"
+        assert page.evaluate("window.__said")[-1] == (
+            "the session before this one is hidden by the filter")
