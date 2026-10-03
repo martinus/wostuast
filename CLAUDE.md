@@ -296,6 +296,10 @@ and a `:root` block is the only place a colour may be a number —
 It reads an issue number in a CSS comment as a colour too: `(#333)` failed
 it, so a comment in the CSS says `issue 333`.
 Derive a tint or a ring with `color-mix`, never by copying an rgb triple.
+**A control that shows on hover is `display: none` until then, or out of
+the flow -- never `opacity: 0` in it**: invisible, it keeps its room. The
+"unread" link cut long names short and the bookmark moved "claude" out of
+line with its time, one after the other in one session (#373, #377).
 
 Three page functions are about matching and they are easy to confuse:
 `matches` asks whether a transcript block matches, `matching` filters the file
@@ -448,6 +452,12 @@ reliable shape when making several edits at once. Three scars on that shape:
   Bash command**: twice in one session a `\\` in the command reached the
   file as `\`, raw string or not -- a test's list held `"path\;"`, an
   invalid escape -- and only a warning said so.
+  - **The Write tool writes `\uXXXX` as the character itself.** The
+    program spells its middle dot `\u00b7`; an anchor copied from it
+    into an edit script reached the file as `·`, matched nothing, and the
+    script stopped at its `assert`. `grep -c u00b7 script.py` after writing
+    it says whether it survived; a script that must hold one builds it with
+    `chr(92) + "u00b7"`.
 - **Chain the tests after the script with `&&`.** A failed `assert` stops
   the script before its later edits, and three runs under load then tested
   code that had not changed.
