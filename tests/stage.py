@@ -64,7 +64,8 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-TABS = {"review": "diff", "files": "files", "transcript": "transcript"}
+TABS = {"review": "diff", "files": "files", "transcript": "transcript",
+        "commands": "commands"}
 WIDE = "x" * 40
 MESSAGES = [
     "Add ring_push\n\nPushes one item.",

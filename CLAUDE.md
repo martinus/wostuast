@@ -92,7 +92,7 @@ bullets beside it are the same part's other scars.
 | `Session.title`, `first_prompt`, `Store.page_name`, `Store.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/sidebar, the name bullet; topics/daemon-and-page for `name`; topics/safety for the typing |
 | `newRow`, `fillRow`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `iconPicture`, `tellAbout`, `waitsFor`, `shown_prompt`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `putCodeCopies`, `foldedHead`, `putFoldBar` | topics/daemon-and-page: the transcript's shape |
-| `Commands`, `command_used`, `front_matter`, `read_command`, `project_dirs`, `claude_dir`, `slashWord`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
+| `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `project_dirs`, `claude_dir`, `slashWord`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
 | `state.files`, `state.turns`, `state.diffs`, `savePlace`, `usePlace`, `PLACE_FIELDS`, `blank…()`, `diffKey` | topics/tab-state |
 | `git_facts_many`, `git_facts_or_failed`, `worktree_doing`, `own_git_dir`, `worktree_files`, `walk_ignored`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of`, `base` and `held`, `Daemon.diffs`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext`, `putMessage`, `putReadAs`, `stepat`, `blockSig`, `settle`, `readerAt` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
@@ -113,8 +113,9 @@ bullets beside it are the same part's other scars.
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
 A bare `wostuast` (`cmd_serve`) checks the setup, writes what is behind
 (`bring_up_to_date`), then tails that log into a `Store` and serves one page
-over HTTP + SSE. The page shows a session list and three tabs: Transcript, Files, and
-Review, which is the diff with the review written on it (`data-tab="diff"`).
+over HTTP + SSE. The page shows a session list and four tabs: Transcript, Files,
+Review, which is the diff with the review written on it (`data-tab="diff"`),
+and Commands, the skills and commands a session can run.
 Four things go back to the terminal, all through tmux: jump, send, the
 keys that answer a question, and a No to a permission dialog, which is an
 Escape and then a send. A rename on the page is a send of `/rename` (#351).
@@ -187,7 +188,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working. |
 | `tests/claude_pane.py` | Not a test. A real Claude Code in a tmux pane of its own, against a fake Messages API that keeps every request and can answer once with a tool call: `send`, `paste`, `ask`, `busy` (a turn still running), `turns`, `statuses`, `hooks`, `settings`. How a question about what Claude Code does is measured, not guessed (topics/payloads). `tests/test_claude_pane.py` keeps the fake API working. |
 | `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
-| `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act. |
+| `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act, commands. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
 | `README.md` | What a user reads. Keep in step with the commands. |
@@ -211,8 +212,8 @@ Page: asking the daemon · dragging an edge · the two fetched scripts · colour
 **the sidebar** · the tab icon and title · notifications · **the transcript** · painting code ·
 **the Files tab** · finding a file · the tree · a file too long to draw whole ·
 how a file is drawn · **the Diff tab** · **the review** ·
-keeping a review · **the review on the Review tab** · the tabs · talking to the
-daemon · keys.
+keeping a review · **the review on the Review tab** · the Commands tab · the tabs ·
+talking to the daemon · keys.
 
 ## Before you write anything new
 

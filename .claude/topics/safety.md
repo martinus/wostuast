@@ -236,6 +236,24 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `COMMAND_SHAPE`, because a taken name goes into the send box and from
     there into a terminal; the page sets every part with `put`.
     `test_a_name_that_is_not_a_command_is_left_out`.
+  - **And its whole text is read by name, never by path** (#367,
+    `Serving.command`, `command_text`). `~/.claude` is outside every
+    worktree, so the Files tab's route may not read it, and a path from
+    the page is input. The page names a command from the list it was
+    sent; only a file that list holds is read (`Commands.defined`, the
+    files alone, no transcripts). **And the file must be a real `.md`,
+    asked where the list is made** (`real_md` in `read_command`): an
+    agent can write a link named `leak.md` into its worktree's
+    `.claude/commands/` that points at a key, or a FIFO named `SKILL.md`
+    that held the request thread for ever. Asked only when the text was
+    read, the send box listed `/leak` and the tab called it unreadable.
+    Asked again in `command_text`, as the link can be swapped in between.
+    Not "inside `.claude`": your own commands folder may be a link into
+    a dotfiles repository. At most `COMMAND_TEXT_MAX`, and drawn through
+    the scrub, as every agent's text is.
+    `test_a_command_that_links_to_a_secret_is_not_read`,
+    `test_a_fifo_named_like_a_skill_is_not_listed`,
+    `test_a_folder_of_commands_linked_from_elsewhere_is_read`.
   `test_markdown_keeps_task_boxes_step_numbers_sides_and_picture_words`,
   `test_the_scrub_keeps_only_values_it_has_checked`, which feeds the scrub
   a hostile `start`, `align`, `img onerror` and `javascript:` by hand,

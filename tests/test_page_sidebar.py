@@ -1439,7 +1439,7 @@ def test_the_keys_nobody_pressed_are_gone(pair_at):
         page.press("body", "?")
         listed = page.eval_on_selector_all(
             "#help dt", "els => els.map((one) => one.textContent.trim())")
-        assert "s" in listed and "1 – 3" in listed, listed
+        assert "s" in listed and "1 – 4" in listed, listed
         for gone in ("j / k", "n", "r", "t"):
             assert gone not in listed, listed
 

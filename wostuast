@@ -6945,6 +6945,9 @@ def tmux_send(pane: str, text: str,
 #: How much of a skill or command file is read: the frontmatter is at the top,
 #: and the body -- a whole skill's instructions -- is never needed.
 FRONT_MAX = 8192
+#: The most of one command's file the Commands tab is sent (#367). A skill
+#: is a page or two; one larger than this is cut, and says so.
+COMMAND_TEXT_MAX = 256 * 1024
 #: A description is a line in a list, not the skill's documentation.
 ABOUT_MAX = 160
 #: What Claude Code accepts as a command's name, and so all this takes from a
@@ -6958,6 +6961,20 @@ def claude_dir() -> Path:
     return settings_path().parent
 
 
+def front_end(lines: list[str]) -> int | None:
+    """Where the frontmatter's closing `---` is among these lines, or None
+    when there is no frontmatter or it never closes. `front_matter` and
+    `after_front` both ask, so they agree about where it ends: one split on
+    "\n" and the other on every line ending, and a file with CR endings had
+    its keys read and then its frontmatter drawn as Markdown rules."""
+    if not lines or lines[0].strip() != "---":
+        return None
+    for at, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return at
+    return None
+
+
 def front_matter(text: str) -> dict[str, str]:
     """The `key: value` lines between the first two `---` lines.
 
@@ -6969,11 +6986,10 @@ def front_matter(text: str) -> dict[str, str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}
+    end = front_end(lines)
     found: dict[str, str] = {}
     key = ""
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
+    for line in lines[1:len(lines) if end is None else end]:
         if key and line[:1] in (" ", "\t"):
             found[key] = (found[key] + " " + line.strip()).strip()
             continue
@@ -7002,14 +7018,40 @@ class Command:
     hint: str = ""
     came: str = ""
     uses: int = 0
+    #: The file it was read from, or "" for one only seen in a transcript.
+    #: The page is sent it to show where a command lives, never asked for
+    #: it back: `Serving.command` takes a name (#367).
+    file: str = ""
+
+
+def real_md(path: str | Path) -> Path | None:
+    """The file a command's path names, when it is a regular file whose own
+    name ends in `.md`, else None (#367).
+
+    An agent in a worktree can write a link named `x.md` into its
+    `.claude/commands` that points at a key, or a FIFO named `SKILL.md`
+    that would hold a request thread for ever. Asked where the list is made
+    (`read_command`), so such a file is in neither the send box's list nor
+    the Commands tab's, and again where its text is read (`command_text`),
+    because the link can be swapped in between. Not "inside `.claude`":
+    your own commands folder may be a link into a dotfiles repository."""
+    try:
+        real = Path(path).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return real if real.is_file() and real.suffix.lower() == ".md" else None
 
 
 def read_command(path: Path, came: str, name: str) -> Command | None:
     """A skill's `SKILL.md` or a command's `.md`, read as far as its
-    frontmatter. None for a file that cannot be read, a name that is not a
-    command's, and a skill that says it is not one (`user-invocable`)."""
+    frontmatter. None for a file that is not a real `.md` (`real_md`) or
+    cannot be read, a name that is not a command's, and a skill that says
+    it is not one (`user-invocable`)."""
+    real = real_md(path)
+    if real is None:
+        return None
     try:
-        with open(path, "rb") as handle:
+        with open(real, "rb") as handle:
             text = handle.read(FRONT_MAX).decode("utf-8", "replace")
     except OSError:
         return None
@@ -7020,7 +7062,33 @@ def read_command(path: Path, came: str, name: str) -> Command | None:
     if not COMMAND_SHAPE.fullmatch(name):
         return None
     return Command(name=name, about=clip(front.get("description", ""), ABOUT_MAX),
-                   hint=clip(front.get("argument-hint", ""), ABOUT_MAX), came=came)
+                   hint=clip(front.get("argument-hint", ""), ABOUT_MAX), came=came,
+                   file=str(path))
+
+
+def after_front(text: str) -> str:
+    """The text after its frontmatter: what a skill or a command says, which
+    the Commands tab draws as Markdown. The frontmatter's keys are shown
+    beside it already, and as Markdown its `---` lines were rules."""
+    lines = text.splitlines(keepends=True)
+    end = front_end(lines)
+    return text if end is None else "".join(lines[end + 1:]).lstrip("\r\n")
+
+
+def command_text(one: Command) -> tuple[str, bool] | None:
+    """What a listed command's file says, and whether it was cut, or None
+    when it cannot be read now (#367). Checked again with `real_md`: the
+    file may have been swapped for a link since it was listed."""
+    real = real_md(one.file) if one.file else None
+    if real is None:
+        return None
+    try:
+        with open(real, "rb") as handle:
+            raw = handle.read(COMMAND_TEXT_MAX + 1)
+    except OSError:
+        return None
+    cut = len(raw) > COMMAND_TEXT_MAX
+    return after_front(raw[:COMMAND_TEXT_MAX].decode("utf-8", "replace")), cut
 
 
 def command_files(base: Path, came: str) -> Iterator[Command]:
@@ -7134,16 +7202,22 @@ class Commands:
                 total.update(counts)
         return total
 
+    def defined(self, cwd: str, root: str) -> Iterator[Command]:
+        """The skills and command files a session standing in `cwd` can see,
+        nearest first: the project's from `cwd` up to `root`, then yours.
+        No transcript is read, so finding one by its name costs only the
+        files (`Serving.command`), not the lock `used` holds."""
+        for where in project_dirs(cwd, root):
+            yield from command_files(where / ".claude", "project")
+        yield from command_files(claude_dir(), "yours")
+
     def of(self, cwd: str, root: str, transcripts: Iterable[Path]) -> list[Command]:
         """Every command for a session standing in `cwd`: the project's,
         nearest directory first, then yours, then the ones only used. Most
         used first; a name defined twice is kept where it is nearest."""
         found: dict[str, Command] = {}
-        places = [(where / ".claude", "project") for where in project_dirs(cwd, root)]
-        places.append((claude_dir(), "yours"))
-        for base, came in places:
-            for one in command_files(base, came):
-                found.setdefault(one.name, one)
+        for one in self.defined(cwd, root):
+            found.setdefault(one.name, one)
         for name, uses in self.used(transcripts).items():
             found.setdefault(name, Command(name=name, came="used")).uses = uses
         return sorted(found.values(), key=lambda one: (-one.uses, one.name))
@@ -8432,10 +8506,37 @@ class Serving:
         """
         seen = [safe_transcript(one.transcript_path)
                 for one in list(self.daemon.store.sessions.values())]
-        found = self.daemon.commands.of(session.cwd, worktree_root(session.cwd) or "",
+        found = self.daemon.commands.of(session.cwd, self.command_root(session),
                                         [path for path in seen if path])
         self.reply_json({"id": session_id,
                          "commands": [asdict(one) for one in found]})
+
+    def command_root(self, session: Session) -> str:
+        """Where the session's worktree starts, from the answer the Files
+        tab keeps: asked of git on every poll, it was a process each time."""
+        return self.daemon.files.root_of(session.cwd, run) or ""
+
+    def command(self, session_id: str, session: Session,
+                query: dict[str, str]) -> None:
+        """One command's text, for the Commands tab (#367).
+
+        Asked for by its name, never by a path: the page names one from
+        the list it was sent, and only a file this session's list holds is
+        read. `~/.claude` is outside every worktree, so the Files tab's
+        route could not read it, and a path from the page is input
+        (topics/safety). Found among the definitions alone
+        (`Commands.defined`), nearest first as the list has them; a
+        built-in has no file and is not asked for. The rest of what the
+        tab shows -- the hint, the file, the uses -- is the list's."""
+        name = query.get("name", "")
+        one = next((each for each in self.daemon.commands.defined(
+            session.cwd, self.command_root(session)) if each.name == name), None)
+        read = command_text(one) if one else None
+        if read is None:
+            self.reply_json({"id": session_id, "error": "no such command"}, 404)
+            return
+        self.reply_json({"id": session_id, "name": name,
+                         "text": read[0], "cut": read[1]})
 
     def files(self, session_id: str, session: Session,
               query: dict[str, str]) -> None:
@@ -8584,6 +8685,7 @@ class Serving:
 #: Each with the session it needs (`Serving.dispatch`).
 GET_VERBS: dict[str, tuple[Any, str]] = {
     "commands": (Serving.commands, "known"),
+    "command": (Serving.command, "known"),
     "transcript": (Serving.transcript, ""),
     "files": (Serving.files, "known"),
     "file": (Serving.file, "known"),
@@ -11651,9 +11753,30 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .minus { color: var(--cut-ink); }
 /* What a tab's body is: the column that scrolls. The diff sets its own
    padding, because its rows run to the edge. */
-.filebody, .diffbody, .turnbody {
+.filebody, .diffbody, .turnbody, .cmdbody {
   flex-grow: 1; overflow-y: auto; min-width: 0;
 }
+/* The Commands tab (issue 367). A row is a command's name in the face it is
+   typed in, how often it was used at the right, and its description under
+   it on one line. The pane is a skill to read, like a document on the
+   Files tab. */
+.filelist .cmdrow .name { font-family: var(--mono); }
+.filelist .cmdrow .cmduses { float: right; margin-left: 8px; font-size: 11px; color: var(--ink-faint); }
+.filelist .cmdrow .cmdabout {
+  font-size: 12px; color: var(--ink-faint); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cmdbody { padding: 18px 26px 24px; }
+.cmdbody > .empty { max-width: 52ch; }
+.cmdhead { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.cmdtitle { flex: 1; min-width: 0; }
+.cmdname { font-family: var(--mono); font-size: 16px; font-weight: 600; color: var(--ink-bright); }
+.cmdhint { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); margin-left: 10px; }
+.cmdfile {
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint);
+  margin-bottom: 10px; overflow-wrap: anywhere;
+}
+.cmdsays { color: var(--ink-soft); margin: 0 0 14px; }
 .turnbody { padding: 20px 24px; }
 .turnbody > .empty { max-width: 52ch; }
 /* Over the transcript, at its foot, and only while it would do something.
@@ -12165,6 +12288,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button class="tab" role="tab" aria-selected="false" data-tab="diff">3 Review<span
           class="badge" id="diffcount" hidden></span><span
           class="badge notes" id="reviewcount" hidden></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="commands">4 Commands</button>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -12216,7 +12340,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>b</dt><dd>back to the session before, and again to return</dd>
     <dt>z</dt><dd>snooze the session that needs you, or wake it</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 3</dt><dd>transcript, files, review</dd>
+    <dt>1 – 4</dt><dd>transcript, files, review, commands</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>jump to the send box</dd>
     <dt>c</dt><dd>colours: auto, light, dark</dd>
@@ -12305,6 +12429,7 @@ const state = {
 };
 
 state.files = blankFiles();
+state.commands = blankCommands();
 state.turns = blankTurns();
 state.diffs = blankDiff();
 state.review = blankReview();
@@ -18959,6 +19084,147 @@ function drawDiffCount() {
   badge.textContent = "+" + added + " \u2212" + removed;
 }
 
+// --- the Commands tab -------------------------------------------------------
+
+// The skills and commands a session can run, to read and to use again
+// (#367). The list is the one the send box completes from (#268). A
+// command's text is asked for by its name, never by its path: `~/.claude`
+// is outside every worktree, and a path from the page is input. "use" puts
+// the command in the send box and types nothing; the reader adds what it
+// needs and sends.
+function blankCommands() {
+  return {
+    list: null,     // the daemon's answer; null until the first one
+    picked: "",     // the name chosen, which a session keeps
+    read: null,     // the chosen one's text, or `{ error }`
+  };
+}
+
+function commandOf(name) {
+  return (state.commands.list || []).find((one) => one.name === name) || null;
+}
+
+async function loadCommands() {
+  const want = state.chosen;
+  // Side by side: the name is known before the list comes. The text is
+  // asked again each time, as the file may have been edited.
+  const [body] = await Promise.all([ask(want, "commands"), readCommand(want)]);
+  if (!body || state.chosen !== want) return;
+  state.commands.list = body.commands || [];
+  draw();
+}
+
+async function readCommand(want) {
+  const name = state.commands.picked;
+  const one = commandOf(name);
+  // A built-in has no file: the list says all there is to say of it.
+  if (!name || (one && !one.file)) return;
+  const body = await ask(want, "command", "?name=" + encodeURIComponent(name));
+  // The reader may have chosen another session, or another command, while
+  // this was on its way: it answers a question nobody asks now.
+  if (state.chosen !== want || state.commands.picked !== name) return;
+  state.commands.read = body || { error: "no answer" };
+}
+
+async function pickCommand(name) {
+  state.commands.picked = name;
+  state.commands.read = null;
+  draw();
+  await readCommand(state.chosen);
+  draw();
+}
+
+// "use": the command into the send box on the Transcript tab, the cursor
+// after it, as the `/` list puts one (`putCommand`). A session nothing can
+// be typed into says why, and changes no tab.
+function useCommand(name) {
+  const why = whyNotTyped(current());
+  if (why) {
+    note(why);
+    return;
+  }
+  showTab("transcript");
+  putCommand($("say"), 0, name);
+}
+
+function drawCommands(box) {
+  const [list, pane, note] = split(box, "commands", "cmdbody");
+  const held = state.commands;
+  const all = held.list || [];
+  const found = state.find ? hits(all, (one) => one.name)
+                           : all.map((one) => ({ one, at: [] }));
+  const key = JSON.stringify([!held.list, state.find, held.picked,
+                              found.map((hit) => [hit.one.name, hit.one.uses, hit.at])]);
+  if (fresh(list, "commands", key)) {
+    list.replaceChildren();
+    note.textContent = !held.list ? "reading…"
+      : state.find ? counted(found.length, "command", "commands") + " of " + all.length
+      : counted(all.length, "command", "commands");
+    for (const [came, [, words]] of Object.entries(CAME)) {
+      const these = found.filter((hit) => hit.one.came === came);
+      if (!these.length) continue;
+      put(list, "div", "head", words);
+      for (const { one, at } of these) {
+        const row = put(list, "button", "cmdrow" + (one.name === held.picked ? " chosen" : ""));
+        row.title = one.about || "/" + one.name;
+        if (one.uses) put(row, "span", "cmduses", counted(one.uses, "use", "uses"));
+        putName(row, "/" + one.name, at.map((where) => where + 1));
+        if (one.about) put(row, "div", "cmdabout", one.about);
+        row.addEventListener("click", () => pickCommand(one.name));
+      }
+    }
+    if (held.list && !found.length) {
+      put(list, "div", "nohits", state.find ? "Nothing here matches."
+                                            : "This session has no commands.");
+    }
+  }
+  drawCommand(pane);
+}
+
+// The chosen command: its name and what it takes, "use", where its file is,
+// and what it says, as Markdown -- a skill is a page written to be read.
+// What the list knows comes from the list; only the text is asked for.
+// Drawn again only when one of those moved, so a poll does not lose the
+// reader's place in a long skill.
+function drawCommand(pane) {
+  const held = state.commands;
+  const one = commandOf(held.picked);
+  const read = held.read;
+  if (!fresh(pane, "command", JSON.stringify([held.picked, !!held.list, one, read]))) return;
+  pane.replaceChildren();
+  if (!held.picked) {
+    const empty = put(pane, "div", "empty");
+    put(empty, "h2", null, "Choose a command");
+    put(empty, "p", null, "What it says is shown here, and “use” puts it"
+        + " into the send box for you to finish and send.");
+    return;
+  }
+  const head = put(pane, "div", "cmdhead");
+  const title = put(head, "div", "cmdtitle");
+  put(title, "span", "cmdname", "/" + held.picked);
+  if (one && one.hint) put(title, "span", "cmdhint", one.hint);
+  const use = put(head, "button", "verb", "use");
+  use.title = "put it into the send box on the Transcript tab";
+  use.addEventListener("click", () => useCommand(held.picked));
+  if (held.list && !one) {
+    put(pane, "div", "note", "This session cannot run it any more.");
+    return;
+  }
+  if (one && one.file) put(pane, "div", "cmdfile", one.file);
+  if (one && one.about) put(pane, "p", "cmdsays", one.about);
+  if (one && !one.file) {
+    put(pane, "div", "note", "Built into Claude Code, or its file has gone: no"
+        + " file says what it does. Used " + counted(one.uses, "time", "times") + ".");
+  } else if (!read) {
+    put(pane, "div", "note", "reading…");
+  } else if (read.error) {
+    put(pane, "div", "note", "Its file cannot be read now.");
+  } else {
+    linkTickets(markdown(pane, read.text));
+    if (read.cut) put(pane, "div", "note", "Cut here: the file goes on.");
+  }
+}
+
 // --- the tabs ---------------------------------------------------------------
 
 // `finds` is what the find box is for on that tab, and a tab that does not
@@ -18977,6 +19243,10 @@ const TABS = {
            finds: "go to file  /" },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /" },
+  // Asked again now and then: a skill written in another window turns up
+  // without a reload, and the list is small (#367).
+  commands: { draw: drawCommands, load: loadCommands, poll: 10000,
+              finds: "find a command  /" },
 };
 
 // Which tab each number key picks: the order of `TABS`, so a new tab is one
@@ -19057,6 +19327,7 @@ const PLACE_FIELDS = [
   ["diffs", "shut", (value) => new Set(value)],
   ["diffs", "more", (value) => new Map([...value].map(([key, runs]) => [key, runs.slice()]))],
   ["diffs", "loose", asIs],
+  ["commands", "picked", asIs],
 ];
 
 function savePlace(id) {
@@ -19135,6 +19406,7 @@ function choose(id) {
   // added to either must not need a line here to be forgotten from.
   state.turns = blankTurns();
   state.files = blankFiles();
+  state.commands = blankCommands();
   state.diffs = blankDiff();
   state.diff = null;
   recallReview(id);
@@ -19746,8 +20018,15 @@ async function jumpToPane() {
 const slash = { list: null, shown: [], at: 0, asked: 0, dismissed: false,
                 moved: false };
 
-// Where each command comes from, in the words the list shows.
-const CAME = { project: "this project", yours: "yours", used: "used before" };
+// Where each command comes from: a short word for the `/` list, and a long
+// one for the Commands tab's group headings (#367), in the order the groups
+// are drawn. One table, so a new origin is not drawn in one and lost in the
+// other.
+const CAME = {
+  project: ["this project", "this project"],
+  yours: ["yours", "yours, in every project"],
+  used: ["used before", "built in, or no longer on disk"],
+};
 
 // The command word being typed: what stands between the `/` and the caret,
 // while the caret is still in the first word. null when there is none.
@@ -19811,7 +20090,7 @@ function drawSlash(word) {
     putName(row, "/" + one.name, hit.at.map((at) => at + 1));
     if (one.hint) put(row, "span", "hint", one.hint);
     if (one.about) put(row, "span", "about", one.about);
-    put(row, "span", "came", CAME[one.came] || "");
+    put(row, "span", "came", (CAME[one.came] || [""])[0]);
     // Pressed, not clicked: a click moves the focus out of the box first.
     row.addEventListener("mousedown", (press) => {
       press.preventDefault();
@@ -19836,13 +20115,23 @@ function markSlash(index) {
 // The command goes in place of the word, with a space after it for what it
 // is given. What was typed after the word stays.
 function takeSlash(one) {
-  const box = $("say");
-  const rest = box.value.replace(/^\S*/, "");
-  const head = "/" + one.name + (/^\s/.test(rest) ? "" : " ");
+  putCommand($("say"), 0, one.name);
+  closeSlash();
+}
+
+// `/name ` into the box at `from`: in place of a `/word` standing there, or
+// before what is there, with a space after it and the caret after that.
+// The `/` list and the Commands tab's "use" both come here, so they keep
+// the same text round the command: "use" had its own rule, and joined two
+// lines into one.
+function putCommand(box, from, name) {
+  const before = box.value.slice(0, from);
+  let rest = box.value.slice(from);
+  if (rest.startsWith("/")) rest = rest.replace(/^\S*/, "");
+  const head = before + "/" + name + (/^\s/.test(rest) ? "" : " ");
   box.value = head + rest;
   box.setSelectionRange(head.length, head.length);
-  closeSlash();
-  fitSay();
+  fitSay(box);
   box.focus();
 }
 

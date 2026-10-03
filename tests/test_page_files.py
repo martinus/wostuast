@@ -1491,6 +1491,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
           state.diffs.shut = new Set(['committed src']);
           state.diffs.more = new Map([['x', [[4, 30]]]]);
           state.diffs.loose = 'loose.txt';
+          state.commands.picked = 'review-pr';
           const flat = (one) =>
             (one instanceof Map || one instanceof Set)
               ? JSON.stringify([...one]) : JSON.stringify(one);
@@ -1504,6 +1505,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
           state.turns = blankTurns();
           state.files = blankFiles();
           state.diffs = blankDiff();
+          state.commands = blankCommands();
           const blank = read();
           usePlace('probe');
           return {before, blank, after: read(),
@@ -1523,7 +1525,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
             "turns.at", "turns.down", "turns.run", "turns.open", "turns.shut",
             "files.path", "files.at", "files.asText", "files.down",
             "files.dirs", "diffs.open", "diffs.of", "diffs.shut",
-            "diffs.more", "diffs.loose"], seen["names"]
+            "diffs.more", "diffs.loose", "commands.picked"], seen["names"]
 
 
 def test_the_go_to_list_is_wider_than_the_box_it_hangs_under(repo_page):
