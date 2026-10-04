@@ -82,6 +82,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     block's node and not inside it, so `redrawBlock` leaves it standing,
     and `patchTranscript` puts it when the first block after arrives in a
     push of its own.
+  - **It says since when** (#398): "new since 08:27", and the day before
+    the time when it was not today -- `newSince`, through `clock` and
+    `dayOf`. "new" alone did not say how much was missed. A test reads the
+    reader's last look *before* the page opens: once open, the page has
+    marked the session read, and `store.seen` holds now.
   - **`landOnNew` lands again on a draw the reader has not scrolled
     since** (`newDown`): the transcript is drawn as text and then as
     Markdown, much taller, and a landing only once left the pixel offset of
@@ -848,6 +853,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   it returned. Naming that element `money` puts the call above it in the
   temporal dead zone — a page that throws on every draw, from a line that
   reads perfectly. Same scar as `matches` / `matching` / `hits`.
+- **A tab's name never wraps, and the tab row asks itself how wide it is**
+  (#397): `.tabs` is a query container, because the sidebar's width moves
+  its room as much as the window's does. At 760 px or less the keys'
+  numbers (`.tabkey`) go -- the key still works and the tab's title names
+  it -- and at 560 px or less the context bar and the spend step aside.
+  At 1024 px "1 Transcript" broke over two lines and the cost was cut by
+  the icons. The tabs have no icons to fall back on. A test of it needs
+  the status line's model, context and cost in the row (`page_at` writes
+  them): an empty row fits without any of this.
+  `test_the_tab_names_stay_on_one_line_in_a_narrow_window`.
 - **The context bar is its own slot, beside `#live` and never in it.**
   `paintLive` is the one writer of that slot and four things already want it
   — what the stream is doing, something you asked for and did not get, a

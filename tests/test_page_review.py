@@ -297,7 +297,8 @@ def test_3_goes_to_the_review(repo_page):
     with opened(repo_page) as page:
         page.press("body", "3")
         page.wait_for_function("$('content').dataset.tab === 'diff'")
-        assert page.inner_text(".tab[data-tab='diff']").startswith("3 Review")
+        assert page.text_content(".tab[data-tab='diff'] .tabkey") == "3"
+        assert page.inner_text(".tab[data-tab='diff']").replace("\n", "").startswith("3Review")
         # Nothing written yet, so there is nothing to send.
         assert page.locator("#reviewbar").is_hidden()
 
