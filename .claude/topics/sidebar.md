@@ -92,7 +92,32 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   all three always there: three lines in three styles took a hundred
   pixels, came and went with their counts and moved the list, and
   "search every session" read as a second filter box.
-  `test_the_three_views_are_one_row_and_always_there`. **While it is open nothing
+  `test_the_three_views_are_one_row_and_always_there`.
+  - **A view stands in the tab row** (`drawViewTitle`, `#viewtitle`,
+    #392): its name where the tabs were, and `#ctxslot`, `#modelpop` and
+    `#jump` hidden, because the chosen session's model, context, spend and
+    jump are not the view's. The heading inside the content said the name
+    a second time and is gone. **`#live` stays**: a refusal of "mark read"
+    or "done" is said there. **Escape leaves a view** (`leaveFeed`), unless
+    it closed a dialog or a menu first, or the filter box took it; there
+    was no key for it, though the title says "esc".
+  - **Every entry is a card, drawn by one helper** (`putCard`, #393): the
+    edge in its session's colour (`--hue`, as the row's), the repository,
+    worktree and branch under the name (`.feedwhere`), the actions only
+    on its hover, `display: none` until then. **A press on the card opens
+    it**, as "open" does, but not one on a button, a link or an input, and
+    not one that ends a selection: a reader copying a line from an answer
+    left the view. Three views each built their entries by hand; one
+    helper keeps them alike. A test presses an action after `hover`:
+    Playwright waits for a button that is not drawn and never presses it.
+  - **A search excerpt is text without its Markdown signs** (`unmarked`,
+    #395): a fence, a bold and a code tick are dropped on the page, and the
+    hits are marked after, on what is shown, so a hit's place cannot drift.
+    `__` is kept: it is half of `__init__`. Its `mark` is a tint of
+    `--needs`, not the find box's solid `--mark`, which made a page of
+    results a page of blocks.
+  `test_all_unreads_is_one_scroll_through_the_last_answers`,
+  `test_search_every_session_and_open_a_result`. **While it is open nothing
   is read from behind it** (`markSeen` returns): the chosen session's tabs
   are covered. Choosing a session closes it, the one on screen too.
   **A `StopFailure` sets it too**, to Claude Code's sentence about the

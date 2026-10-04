@@ -66,8 +66,9 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   before "claude". "Saved" over the list shows every saved answer of every
   session, with "open" to go back to it and "done" to take it off.
 - **You catch up in one scroll.** "Unread" over the list shows the last
-  answer of every unread session, newest first, as Markdown. Each has
-  "mark read" and "open".
+  answer of every unread session, newest first, as Markdown. Each is a
+  card in its session's colour: click it to open the session, or point at
+  it for "mark read". <kbd>Esc</kbd> goes back to the session.
 - **You can say "later".** Point at a card, click the clock and pick: in
   20 minutes, in an hour, in three hours, or tomorrow at nine. Until then
   the card shows a clock and the time it comes back, and a session that
