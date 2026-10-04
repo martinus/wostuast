@@ -2769,9 +2769,11 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
             "document.querySelector('#savedlink .n').textContent === '1'")
         page.click("#savedlink")
         page.wait_for_selector(".feedentry .prose")
+        page.hover(".feedentry")
         page.click(".feedentry button:text('open')")
         page.wait_for_selector(f"{reply}.linked")
         page.click("#savedlink")
+        page.hover(".feedentry")
         page.click(".feedentry button:text('done')")
         page.wait_for_selector(".feed .empty")
         assert daemon.store.saved == []
@@ -2791,7 +2793,7 @@ def test_search_every_session_and_open_a_result(ws, page_at):
     # hook 0.4 s after: not block 0, which is where a lost landing ends up.
     ws.append_event(conftest.event("Stop", ts=calendar.timegm(
         time.strptime("2026-09-18 14:03:00", "%Y-%m-%d %H:%M:%S")) + 0.4,
-        last_assistant_message="A thing in zanzibar."))
+        last_assistant_message="A **thing** in `zanzibar`:\n\n```\nmake\n```"))
     daemon.store.refresh()
     with opened(url) as page:
         wait_for_map(page)
@@ -2801,9 +2803,24 @@ def test_search_every_session_and_open_a_result(ws, page_at):
         assert page.locator(".searchresults .feedentry").count() == 1
         assert page.text_content(".searchresults .feedwho") == "claude"
         assert not page.is_visible(".tabs .tab")
+        # Text without the Markdown signs, and a softer mark than the find
+        # box's solid one (#395).
+        said = page.text_content(".searchresults .searchtext")
+        assert "thing in zanzibar" in said and not any(c in said for c in "*`"), said
+        tint = page.evaluate("""() => {
+          const probe = document.createElement('mark');
+          document.body.appendChild(probe);
+          const solid = getComputedStyle(probe).backgroundColor;
+          probe.remove();
+          return [solid, getComputedStyle(
+            document.querySelector('.searchtext mark')).backgroundColor];
+        }""")
+        assert tint[0] != tint[1], tint
         page.fill(".searchbox", "zebra")
         page.wait_for_selector(".searchresults .empty")
         page.fill(".searchbox", "zanzibar")
+        page.wait_for_selector(".searchresults .feedentry mark")
+        page.hover(".searchresults .feedentry")
         page.click(".searchresults button:text('open')")
         page.wait_for_selector(".turn:not(.mine).linked")
         assert page.evaluate("state.turns.nodes.indexOf("

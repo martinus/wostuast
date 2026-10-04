@@ -1868,6 +1868,43 @@ def test_all_unreads_is_one_scroll_through_the_last_answers(ws, pair_at):
         assert page.locator(".feedentry").count() == 1
         assert page.locator('.feedentry[data-id="s2"] .prose li').count() == 2
         assert not page.is_visible(".tabs .tab")
+        # The view stands in the tab row (#392): its name, and none of the
+        # chosen session's model, context, spend or jump. Shown by force,
+        # because a pair with no status line and no pane has none to show.
+        assert page.text_content("#viewtitle .viewname") == "All unreads"
+        assert page.locator(".feedhead").count() == 0
+        assert page.evaluate("""['ctxslot', 'jump'].map((id) => {
+          const it = document.getElementById(id); it.hidden = false;
+          return getComputedStyle(it).display; })""") == ["none", "none"]
+        # A card that reads like its row (#393): the state's colour on its
+        # edge, where it stands under its name, and what can be done to it
+        # only on its hover.
+        card = '.feedentry[data-id="s2"]'
+        look = page.evaluate("""(card) => {
+          const it = document.querySelector(card);
+          const probe = document.createElement('div');
+          probe.style.color = 'var(--done)';
+          document.body.appendChild(probe);
+          const done = getComputedStyle(probe).color;
+          probe.remove();
+          const s = state.sessions.find((x) => x.id === 's2');
+          return {edge: getComputedStyle(it).borderLeftColor, done,
+                  where: it.querySelector('.feedwhere').textContent,
+                  worktree: s.worktree,
+                  open: it.querySelector('.feedtop .link').offsetWidth};
+        }""", card)
+        assert look["edge"] == look["done"], look
+        assert look["worktree"] and look["worktree"] in look["where"], look
+        assert look["open"] == 0, look
+        page.hover(card)
+        assert page.is_visible(f"{card} button:text('open')")
+        # Escape leaves it, as the title says, and the tabs come back.
+        page.keyboard.press("Escape")
+        page.wait_for_function("!state.feed")
+        assert page.is_visible(".tabs .tab")
+        assert not page.is_visible("#viewtitle")
+        page.click("#feedlink")
+        page.wait_for_selector(card)
         # Newest first, and a second one comes in while it is open.
         ws.append_event(conftest.event("Stop", sid="s1", ts=now + 2,
                                        last_assistant_message="Second."))
@@ -1876,9 +1913,11 @@ def test_all_unreads_is_one_scroll_through_the_last_answers(ws, pair_at):
         page.wait_for_function("document.querySelectorAll('.feedentry').length === 2")
         assert page.eval_on_selector_all(
             ".feedentry", "els => els.map((e) => e.dataset.id)") == ["s1", "s2"]
+        page.hover('.feedentry[data-id="s1"]')
         page.click('.feedentry[data-id="s1"] button:text("mark read")')
         page.wait_for_function("document.querySelectorAll('.feedentry').length === 1")
-        page.click('.feedentry[data-id="s2"] button:text("open")')
+        # A press anywhere on the card opens it, as "open" does.
+        page.click('.feedentry[data-id="s2"] .prose li')
         page.wait_for_function("state.chosen === 's2' && !state.feed")
         assert page.is_visible(".tabs .tab")
         page.wait_for_selector('.row[data-id="s2"]:not(.unread)')
