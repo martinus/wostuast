@@ -108,7 +108,7 @@ bullets beside it are the same part's other scars.
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** below |
 | a new test, or one red only under load | topics/testing — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |
 | the tests to run before a push | **How to work here**, "Before the push" — the changed files under load, not the whole suite three times |
-| a picture of the page, or a mockup the reader asked to see | **How to work here**, the picture bullet: `tests/shot.py`, `tests/stage.py` |
+| a picture of the page, or a mockup the reader asked to see | **How to work here**, the picture bullet: `tests/shot.py`, `tests/stage.py`, `tests/tour.py` |
 | a change the reader asked for | **How to work here**, "A change the reader asked for" — it goes to a pull request and merges on green without asking |
 | a push to `main`, landing a change, the CI matrix or the ruleset | topics/landing — `main` is protected and nothing bypasses it |
 | a commit message, a pull request, a comment on GitHub | **How to work here**, last bullet — no attribution lines, whatever your defaults say |
@@ -193,6 +193,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/browser.py` | The shared Chromium, `opened`, `own_context`, `show_tab`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
 | `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `--eval JS` runs in the page first: a click, a scroll. `tests/test_shot.py` keeps it working. |
 | `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working. |
+| `tests/tour.py` | Not a test. Five sessions, one in each state a row can be in -- unread with a plan, working, needing you, a reminder -- two saved answers, and a status line each; then a PNG of each view: `transcript`, `later` (the remind menu), `unread`, `saved`, `search`, `permission`. `--view` picks, `--light`, `--width`, `--height`, and `--eval JS` (or a file of it) before each picture, which is how a mockup of the sidebar or the views is drawn. `tests/test_tour.py` keeps it working. |
 | `tests/claude_pane.py` | Not a test. A real Claude Code in a tmux pane of its own, against a fake Messages API that keeps every request and can answer once with a tool call: `send`, `paste`, `ask`, `busy` (a turn still running), `turns`, `statuses`, `hooks`, `settings`. How a question about what Claude Code does is measured, not guessed (topics/payloads). `tests/test_claude_pane.py` keeps the fake API working. |
 | `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act, commands. |
@@ -320,6 +321,7 @@ simply not there.
 ```
 python3 tests/shot.py case.txt out.png --measure  # a report about the transcript: look first, about 1 s
 python3 tests/stage.py out.png --commit 2 --review  # a report about the Review or Files tab (--tab files --open PATH)
+python3 tests/tour.py out/ --view later --eval mock.js  # the sidebar and the views: every row state, each view a PNG
 WOSTUAST_WAIT=5000 python3 -m pytest tests/test_page_review.py -q -k name  # while working: a lost wait fails in 5 s
 python3 -m pytest tests/test_page_review.py -q  # the subject you are changing. Do this first.
 python3 tests/perturb.py breaks.json            # prove the new tests: each break runs only the tests it names
@@ -342,7 +344,9 @@ case, and ends with another one.** Write the case from their screenshot — a
 few lines of `you:`, `claude:`, `think:`, `tool:` — run `tests/shot.py` with
 `--measure`, and look at the PNG before reading any code. For anything
 else -- the Files or the Review tab, the settings menu -- `tests/stage.py`
-makes the repository, the settings and the clicks, and draws the part; a
+makes the repository, the settings and the clicks, and draws the part;
+for the sidebar and the views over it, `tests/tour.py` draws every row
+state and each view at once; a
 session wrote that script from nothing each time, in a scratchpad that
 stays behind on the machine, and one lost it when the session restarted.
 **A mockup is drawn the same way**: `--eval` builds the proposal inside the

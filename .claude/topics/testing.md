@@ -99,10 +99,20 @@ Keep the breaks list in the scratchpad; it is about one fix.
   second, which was red alone (#328). **A GREEN that is red alone is this,
   or a test that leans on another**: run that break by itself before you
   believe either. `test_no_bytecode_of_a_break_is_left_behind`.
+- **A GREEN on a style read after a click may be the hover's style.** The
+  pointer stays on what it clicked, and that element's `:hover` rule then
+  stands in for the rule broken: the chosen row's coloured line was taken
+  out and the test still read a line, the hover's `--edge-bright` (#396).
+  Move the pointer off (`page.mouse.move` to an empty spot) before reading
+  a style of what was clicked.
+- **A filtered run that prints nothing has not run.** `pytest ... | grep -E
+  "passed|failed"` printed an empty line for `--count 3`, a flag of a
+  plugin that is not installed: pytest stopped on a usage error, and the
+  filter dropped it. Put `error` in the filter, or read the exit status.
 
 **A test outside `tests/test_page_*` that drives a browser carries
-`@skip_without_browser`** -- one that runs `tests/shot.py` or
-`tests/stage.py` too. CI's pytest jobs have no Playwright, and only the
+`@skip_without_browser`** -- one that runs `tests/shot.py`,
+`tests/stage.py` or `tests/tour.py` too. CI's pytest jobs have no Playwright, and only the
 browser shards do; locally both are there, so nothing on the desk says it
 is missing. `test_eval_runs_in_the_page_before_the_picture` went red on all
 four Python versions in CI, after three green runs here. To see what that
