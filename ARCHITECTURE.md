@@ -780,19 +780,19 @@ The sidebar also feeds three signals that work from another room:
 - a **browser alert** fires once when an agent starts to need you, and,
   if you want, when one finishes.
 
-A session that needs you can be **snoozed**: "not now" on its row, or `z`.
+A session that needs you can be **snoozed**: the moon on its row's hover, or `z`.
 It then stands with the ready ones, and none of the three signals counts
 it. The snooze is a mark on one wait (`attention_since`), so the next
 answer, turn or question ends it by itself.
 
-"later" on a row sets a **reminder**. The daemon keeps only the moment
+The clock on a row's hover sets a **reminder**. The daemon keeps only the moment
 (`reminders.json`); the page compares it with the clock, so a row never
 changes by itself. Until the moment, a waiting session is put aside as if
 snoozed; then it needs you again, whatever it is doing, until you open it.
 
 A session whose turn ended after you last had it on screen is **unread**:
 a dot before its name, and a count in the tab's title. Opening it reads
-it; `u` or "unread" on its row marks it unread again. The marks are kept
+it; `u` or the dot on its row's hover marks it unread again. The marks are kept
 in `seen.json` (`Store.see`), so every browser agrees.
 
 ### Markdown you can trust

@@ -71,8 +71,8 @@ def test_a_row_shows_its_state_in_its_colour(page_at):
         row = page.locator(".row").first
         edge = page.evaluate(
             "getComputedStyle(document.querySelector('.row')).borderLeftColor")
-        # The chosen row wears its tint as a layer under its fade, so
-        # the tint is asked of the row itself.
+        # The tint is asked of the row itself: the chosen row wears its
+        # state's colour mixed into its fade instead (#396).
         look = page.evaluate("""() => {
           const row = document.querySelector('.row');
           const probe = document.createElement('div');
@@ -88,8 +88,11 @@ def test_a_row_shows_its_state_in_its_colour(page_at):
         }""")
         assert edge not in ("rgba(0, 0, 0, 0)", "transparent")
         assert look["tint"] not in ("rgba(0, 0, 0, 0)", look["plain"]), look
-        worn = look["image"] if look["chosen"] else look["face"]
-        assert look["tint"] in worn, "the row is not tinted by its state"
+        if look["chosen"]:
+            assert look["image"].startswith("linear-gradient"), look
+            assert "rgba(0, 0, 0, 0)" not in look["image"].split(" 55%")[0], look
+        else:
+            assert look["tint"] in look["face"], "the row is not tinted by its state"
 
 
 def test_the_sidebar_filter_narrows_the_list(pair_at):
@@ -184,7 +187,13 @@ READ_TAB = """() => {
   const beside = side ? getComputedStyle(side).backgroundColor
                       : colour(root.getPropertyValue('--bg'));
   return {
-    fade: look.backgroundImage.split('), linear-gradient')[0] + ')', content: beside,
+    fade: look.backgroundImage, content: beside,
+    line: look.borderTopColor, hue: look.borderLeftColor,
+    edgeWidth: look.borderLeftWidth, otherEdge: other.borderLeftWidth,
+    otherLine: other.borderTopColor,
+    textAt: Math.round(row.querySelector('.name').getBoundingClientRect().left),
+    otherTextAt: Math.round(document.querySelector('.row:not(.chosen) .name')
+      .getBoundingClientRect().left),
     ground: look.backgroundColor,
     list: getComputedStyle(document.querySelector('.sidebar')).backgroundColor,
     edge: colour(root.getPropertyValue('--edge')),
@@ -218,6 +227,9 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
         page.set_viewport_size({"width": 1100, "height": 420})
         page.click('.row[data-id="fresh"]', position={"x": 5, "y": 5})
         page.wait_for_function("state.chosen === 'fresh'")
+        # Off the row: its hover draws a line of its own, which stood in
+        # for the chosen row's when the chosen one was taken away.
+        page.mouse.move(900, 300)
         # The row fades into its new ground, and the scroll event lands a
         # frame after the scroll.
         page.wait_for_function(
@@ -235,9 +247,19 @@ def test_the_chosen_row_is_a_tab_of_the_content_beside_it(rows_at, ws, tmp_path)
         # group's rows' do.
         assert seen["list"] == seen["edge"], seen
         assert seen["ground"] == "rgba(0, 0, 0, 0)", seen
-        # Its outline is the other rows' own: a line in the list's
-        # colour could not be seen, and cut the corner of its edge.
+        # Its outline is as wide as the other rows' own, so it does not
+        # move, and in its state's colour, not the list's: a line in the
+        # list's colour could not be seen, and cut the corner of its edge.
         assert [seen["top"], seen["bottom"]] == seen["others"], seen
+        # The strongest row in the list (#396): it starts in its state's
+        # colour, not in nothing, and a line in that colour runs round it,
+        # where the others have none. Its edge is wider, and its text
+        # stands where it would have stood.
+        assert "transparent" not in seen["fade"]
+        assert "rgba(0, 0, 0, 0)" not in seen["fade"].split(" 55%")[0], seen
+        assert seen["line"] != seen["otherLine"] == "rgba(0, 0, 0, 0)", seen
+        assert seen["edgeWidth"] == "6px" and seen["otherEdge"] == "4px", seen
+        assert seen["textAt"] - seen["otherTextAt"] == seen["indent"], seen
         # In from the other rows by the grip's width, as it crosses the
         # grip on the right; and they run to the line as well, as tabs
         # behind it.
@@ -1499,8 +1521,14 @@ def test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again(ws, pag
         daemon.tick()
         page.wait_for_function("window.__told.length === 1")
         page.wait_for_function("document.title.includes(' asks ')")
-        assert page.is_visible(".row .snooze")
-        assert page.text_content(".row .snooze") == "not now"
+        # A moon on the hover, in the age's place (#389), and nothing
+        # until then.
+        assert not page.is_visible(".row .snooze")
+        page.hover(".row")
+        assert page.is_visible(".row .snooze svg")
+        assert not page.is_visible(".row .age")
+        assert page.get_attribute(".row .snooze", "data-icon") == "moon"
+        assert page.get_attribute(".row .snooze", "title").startswith("it waits, but not now")
 
         page.click(".row")
         page.keyboard.press("z")
@@ -1511,7 +1539,7 @@ def test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again(ws, pag
         assert bands(page) == ["ready · 1"]
         assert "snoozed" in page.get_attribute(".row", "class")
         assert page.text_content(".row .line1 .word") == "snoozed"
-        assert page.text_content(".row .snooze") == "wake"
+        assert page.get_attribute(".row .snooze", "data-icon") == "sun"
         page.wait_for_function("!document.title.includes(' asks ')")
 
         # The same wait, said again late: the row changes, and the alert
@@ -1533,7 +1561,7 @@ def test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again(ws, pag
         daemon.tick()
         page.wait_for_function("window.__told.length === 2")
         assert bands(page) == ["needs you · 1"]
-        assert page.text_content(".row .snooze") == "not now"
+        assert page.get_attribute(".row .snooze", "data-icon") == "moon"
 
 
 def test_z_on_a_session_that_does_not_need_you_says_why(page_at):
@@ -1593,9 +1621,14 @@ def test_a_turn_that_ends_off_screen_is_unread_until_it_is_opened(ws, pair_at):
         dot = page.evaluate("""(() => { const it = getComputedStyle(
           document.querySelector('.row[data-id="s2"] .name'), '::before');
           return [it.content, it.width]; })()""")
-        assert dot == ['""', "7px"], dot
+        assert dot == ['""', "8px"], dot
+        # And its name is bold, where a read one is not (#390): s1 is read
+        # but chosen, so bold too, until s2 is chosen.
+        weight = "(id) => getComputedStyle(document.querySelector(`.row[data-id=\"${id}\"] .name`)).fontWeight"
+        assert page.evaluate(weight, "s2") == "600"
         page.click('.row[data-id="s2"]')
         page.wait_for_selector('.row[data-id="s2"]:not(.unread)')
+        assert page.evaluate(weight, "s2") == "600"   # chosen
         deadline = time.time() + 10
         while daemon.store.sessions["s2"].unread and time.time() < deadline:
             daemon.store.refresh()
@@ -1605,6 +1638,10 @@ def test_a_turn_that_ends_off_screen_is_unread_until_it_is_opened(ws, pair_at):
         # pass sends the one after, and the title follows it.
         daemon.tick()
         page.wait_for_function("!document.title.startsWith('1 unread')")
+        # s1 is neither chosen nor unread now, and its name is quiet. Only
+        # after that pass: the push on its way could carry s1 unread, from
+        # before the page read it, and a look then found it bold under load.
+        page.wait_for_function(f"({weight})('s1') === '500'")
 
 
 def test_u_marks_the_session_on_screen_unread_until_another_is_chosen(ws, pair_at):
@@ -1645,8 +1682,22 @@ def test_the_row_offers_unread_on_a_read_row_only(ws, pair_at):
         mark = '.row[data-id="s2"] .markunread'
         # Not there until the hover: invisible, it took the name's room.
         assert page.evaluate(f"document.querySelector('{mark}').offsetWidth") == 0
+        # The hover's icons take the age's place, and the row keeps its
+        # height and its name's room (#389): as words they cut the name
+        # short, and "not now" broke over two lines.
+        size = """() => { const row = document.querySelector('.row[data-id="s2"]');
+          return [row.offsetHeight, row.querySelector('.name').offsetWidth]; }"""
+        before = page.evaluate(size)
         page.hover('.row[data-id="s2"]')
         assert page.locator(mark).is_visible()
+        assert page.locator(f"{mark} svg").is_visible()
+        assert page.locator('.row[data-id="s2"] .remindlater svg').is_visible()
+        assert not page.is_visible('.row[data-id="s2"] .age')
+        after = page.evaluate(size)
+        assert after[0] == before[0], (before, after)
+        # Two icons where "3s" was: a little of the name's room, where the
+        # words "later" and "unread" took nearly twice as much.
+        assert before[1] - after[1] <= 60, (before, after)
         page.click(mark)
         page.wait_for_selector('.row.unread[data-id="s2"]')
         assert page.locator(mark).is_hidden()
@@ -1691,7 +1742,13 @@ def test_a_reminder_puts_a_waiting_session_aside_until_it_comes(ws, page_at):
     with alerts_page(path) as page:
         page.wait_for_function("state.sessions[0].remind_at > 0")
         assert bands(page) == ["ready · 1"]
-        assert page.text_content(".row .age").startswith("at ")
+        # A clock and the time say it is a reminder (#394), and they stay
+        # on the hover: they say when the row comes back.
+        assert page.is_visible(".row .age.when svg")
+        assert ":" in page.text_content(".row .age")
+        page.hover(".row")
+        assert page.is_visible(".row .age.when")
+        assert page.get_attribute(".row .remindlater", "data-icon") == "clockOff"
         assert "snoozed" in page.get_attribute(".row", "class")
         assert page.evaluate("window.__told.length") == 0
         # Then near: the push sets the page's timer again.
@@ -1715,6 +1772,7 @@ def test_a_reminder_brings_a_ready_session_back_until_it_is_opened(ws, pair_at):
         daemon.tick()
         page.wait_for_selector('.row.reminded[data-id="s2"]', timeout=15000)
         assert page.text_content('.row[data-id="s2"] .line1 .word') == "reminder"
+        assert "pill" in page.get_attribute('.row[data-id="s2"] .line1 .word', "class")
         assert bands(page)[0] == "needs you · 1"
         page.wait_for_function("window.__told.length === 1")
         assert page.evaluate("window.__told[0][1]").startswith("the reminder you set")
@@ -1736,19 +1794,54 @@ def test_later_offers_the_choices_and_keeps_the_one_picked(ws, pair_at):
         row = '.row[data-id="s2"]'
         assert page.evaluate(f"document.querySelector('{row} .remindlater').offsetWidth") == 0
         page.hover(row)
+        tall = page.evaluate(f"document.querySelector('{row}').offsetHeight")
         page.click(f"{row} .remindlater")
+        # A small menu over the rows below, in whole words (#394): four grey
+        # abbreviations in a line of their own were missed.
         words = page.eval_on_selector_all(
             f"{row} .remindmenu button", "els => els.map((e) => e.textContent)")
-        assert words == ["20 min", "1 h", "3 h", "tomorrow"]
-        page.click(f"{row} .remindmenu button:text('1 h')")
+        assert words == ["In 20 minutes", "In 1 hour", "In 3 hours", "Tomorrow, 9:00"]
+        assert page.text_content(f"{row} .remindmenu .menuhead") == "Remind me"
+        assert page.evaluate(f"document.querySelector('{row}').offsetHeight") == tall
+        # A press between the choices chooses nothing.
+        page.click(f"{row} .remindmenu .menuhead")
+        assert page.evaluate("state.chosen") == "s1"
+        page.click(f"{row} .remindmenu button:text('In 1 hour')")
         page.wait_for_function(
             "state.sessions.find((s) => s.id === 's2').remind_at > 0")
         at = daemon.store.sessions["s2"].remind_at
         assert abs(at - (time.time() + 3600)) < 30, at
         assert page.evaluate("state.chosen") == "s1"     # not a choice of the row
-        assert page.text_content(f"{row} .age").startswith("at ")
+        assert page.is_visible(f"{row} .age.when svg")
 
 
+
+
+def test_the_three_views_are_one_row_and_always_there(page_at):
+    """Unread, Saved and Search in one row of equal buttons over the list
+    (#391), each with an icon, the two counts in badges, a nought grey.
+    Three lines in three styles took a hundred pixels, and the first two
+    came and went with their counts, which moved the list."""
+    _, path = page_at
+    with opened(path) as page:
+        page.wait_for_function("document.querySelector('#feedlink .n')")
+        seen = page.evaluate("""() => ['feedlink', 'savedlink', 'searchlink'].map((id) => {
+          const it = document.getElementById(id);
+          const at = it.getBoundingClientRect();
+          const n = it.querySelector('.n');
+          return {top: Math.round(at.top), width: Math.round(at.width),
+                  word: it.querySelector('.viewname').textContent,
+                  icon: !!it.querySelector('svg'), n: n && n.textContent,
+                  none: !!n && n.classList.contains('none')};
+        })""")
+        assert [one["word"] for one in seen] == ["Unread", "Saved", "Search"], seen
+        assert all(one["icon"] for one in seen), seen
+        assert len({one["top"] for one in seen}) == 1, seen
+        assert max(one["width"] for one in seen) - min(one["width"] for one in seen) <= 1, seen
+        assert [one["n"] for one in seen] == ["0", "0", None], seen
+        assert seen[0]["none"] and seen[1]["none"], seen
+        rows = page.evaluate("document.getElementById('rows').getBoundingClientRect().top")
+        assert rows - seen[0]["top"] < 60, (rows, seen)
 
 # --- all unreads (#376) -------------------------------------------------------
 
@@ -1768,7 +1861,8 @@ def test_all_unreads_is_one_scroll_through_the_last_answers(ws, pair_at):
             last_assistant_message="**Done** with the search.\n\n- one\n- two"))
         daemon.tick()
         page.wait_for_function(
-            "document.querySelector('#feedlink').textContent === 'all unreads · 1'")
+            "document.querySelector('#feedlink .n').textContent === '1'")
+        assert page.text_content("#feedlink .viewname") == "Unread"
         page.click("#feedlink")
         page.wait_for_selector('.feedentry[data-id="s2"] .prose strong')
         assert page.locator(".feedentry").count() == 1

@@ -53,33 +53,34 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   and amber when one needs you. Your browser can also notify you. An agent
   that an API error stopped, for example a spend limit or a failed login,
   needs you too: its card says the error.
-- **You can say "not now".** A card that needs you has a "not now" link
-  (or press <kbd>z</kbd>). The session then stands with the ready ones, and
-  the tab's title, its icon and the alerts leave it out. The snooze ends by
-  itself when the session moves on: you answer, the turn ends, or it asks
-  something new. "wake" on the card ends it by hand.
-- **You search every session.** "search every session" under the filter
-  box finds what you typed and what each agent answered last, in every
-  session, newest first. Slack's filters work: `in:name`, `from:me`,
-  `from:claude`, `after:2026-10-01`, `before:2026-10-03`, `is:unread`.
+- **You can say "not now".** Point at a card that needs you and click the
+  moon (or press <kbd>z</kbd>). The session then stands with the ready
+  ones, and the tab's title, its icon and the alerts leave it out. The
+  snooze ends by itself when the session moves on: you answer, the turn
+  ends, or it asks something new. The sun on the card ends it by hand.
+- **You search every session.** "Search" under the filter box finds what
+  you typed and what each agent answered last, in every session, newest
+  first. Slack's filters work: `in:name`, `from:me`, `from:claude`,
+  `after:2026-10-01`, `before:2026-10-03`, `is:unread`.
 - **You keep an answer for later.** Hover an answer and click the bookmark
-  before "claude". "saved" over the list shows every saved answer of every
+  before "claude". "Saved" over the list shows every saved answer of every
   session, with "open" to go back to it and "done" to take it off.
-- **You catch up in one scroll.** "all unreads" over the list shows the
-  last answer of every unread session, newest first, as Markdown. Each
-  has "mark read" and "open".
-- **You can say "later".** Hover a card and pick "later": 20 minutes, an
-  hour, three hours, or tomorrow at nine. Until then the card shows when
-  it comes back, and a session that waits stands with the ready ones, as
-  with "not now". Then it needs you again, whatever it is doing: the card
-  turns amber and says "reminder", and the tab and the alert tell you.
+- **You catch up in one scroll.** "Unread" over the list shows the last
+  answer of every unread session, newest first, as Markdown. Each has
+  "mark read" and "open".
+- **You can say "later".** Point at a card, click the clock and pick: in
+  20 minutes, in an hour, in three hours, or tomorrow at nine. Until then
+  the card shows a clock and the time it comes back, and a session that
+  waits stands with the ready ones, as with "not now". Then it needs you
+  again, whatever it is doing: the card turns amber and says "reminder",
+  and the tab and the alert tell you.
   Opening the session ends the reminder. An alert needs a page open.
 - **You see what you have not read.** A session whose turn ended after you
-  last looked at it has a blue dot before its name, and the tab's title
-  counts them. Opening it marks it read. "unread" on a card's hover, or
-  <kbd>u</kbd>, marks it unread again: you looked, but you are not done
-  with it. Every browser sees the same marks. When you open it, a blue
-  "new" line stands over the first turn you have not seen, and the
+  last looked at it has a bold name with a blue dot before it, and the
+  tab's title counts them. Opening it marks it read. The dot on a card's
+  hover, or <kbd>u</kbd>, marks it unread again: you looked, but you are
+  not done with it. Every browser sees the same marks. When you open it,
+  a blue "new" line stands over the first turn you have not seen, and the
   transcript opens there instead of at its end.
 - **Each session is one card.** It shows the session's name and its age,
   the repository and the worktree, the branch and its git status, and what
