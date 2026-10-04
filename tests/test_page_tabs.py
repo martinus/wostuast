@@ -338,3 +338,43 @@ def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
         page.keyboard.press("2")
         page.wait_for_function("state.tab === 'files'")
         assert page.evaluate(ringed) == [reached]
+
+
+def test_the_tab_names_stay_on_one_line_in_a_narrow_window(page_at):
+    """At 1024 px "1 Transcript" broke over two lines (#397). A name never
+    wraps; short of room the key's number goes, and the tab's title still
+    names the key. Wide, the numbers are there."""
+    with opened(page_at) as page:
+        look = """() => [...document.querySelectorAll('.tab')].map((tab) => ({
+          lines: Math.round(tab.getBoundingClientRect().height),
+          key: getComputedStyle(tab.querySelector('.tabkey')).display,
+          right: Math.round(document.querySelector('#settings').getBoundingClientRect().right),
+          title: tab.title}))"""
+        page.set_viewport_size({"width": 1440, "height": 800})
+        wide = page.evaluate(look)
+        assert all(one["key"] != "none" for one in wide), wide
+        page.set_viewport_size({"width": 1024, "height": 768})
+        page.wait_for_function("getComputedStyle(document.querySelector('.tabkey')).display === 'none'")
+        narrow = page.evaluate(look)
+        # One line: every tab as tall as the row, none taller.
+        assert len({one["lines"] for one in narrow}) == 1, narrow
+        # Each name is one box of text: two would be a name on two lines.
+        names = """[...document.querySelectorAll('.tab')].map((tab) => {
+          const text = [...tab.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+          const range = document.createRange(); range.selectNodeContents(text);
+          return range.getClientRects().length; })"""
+        assert page.evaluate(names) == [1, 1, 1, 1]
+        # The settings button is still on screen, at the row's right.
+        assert narrow[0]["right"] <= 1024, narrow
+        assert [one["title"] for one in narrow] == [
+            "Transcript  ·  1", "Files  ·  2", "Review  ·  3", "Commands  ·  4"]
+        assert page.evaluate("[...document.querySelectorAll('.tab')].map("
+                             "(tab) => getComputedStyle(tab).whiteSpace)") == ["nowrap"] * 4
+        # Narrower still, the context bar and the spend step aside, and the
+        # names and the buttons at the end still fit.
+        assert page.is_visible(".ctxslot .spent")
+        page.set_viewport_size({"width": 860, "height": 768})
+        page.wait_for_function("getComputedStyle(document.querySelector('.ctxslot .spent')).display === 'none'")
+        assert page.evaluate(names) == [1, 1, 1, 1]
+        assert page.evaluate(look)[0]["right"] <= 860
+

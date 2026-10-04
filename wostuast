@@ -11811,16 +11811,34 @@ body.infeed .viewtitle {
 .ctx .fill { display: block; height: 100%; background: var(--working); }
 .ctx.warm .fill { background: var(--needs); }
 .ctx.hot .fill { background: var(--hot); }
+/* A query container (issue 397): how much room the tab row has depends on
+   the sidebar's width as well as the window's, so the row asks itself. */
 .tabs {
   height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
   padding: 0 24px; border-bottom: 1px solid var(--edge);
-  font-family: var(--mono); font-size: 13px;
+  font-family: var(--mono); font-size: 13px; container-type: inline-size;
 }
+/* A name on one line (issue 397): at 1024 px "1 Transcript" broke over two,
+   and the row looked broken. */
 .tab {
   display: inline-flex; align-items: center; gap: 6px; padding: 0 12px;
   color: var(--ink-mute); border-bottom: 2px solid transparent;
   background: none; border-top: 0; border-left: 0; border-right: 0;
-  font: inherit; cursor: pointer;
+  font: inherit; cursor: pointer; white-space: nowrap;
+}
+.tab .tabkey { color: var(--ink-faint); }
+/* Short of room, the key's number goes first: the key still works, and the
+   tab's title still names it. The tabs have no icons to fall back on, and
+   the names alone fit the row of a window 1024 px wide. */
+@container (max-width: 760px) {
+  .tab .tabkey { display: none; }
+  .tab { padding: 0 9px; }
+}
+/* Shorter still, the context bar and the spend step aside, so the names
+   stay on one line and the buttons at the end stay on screen; the model
+   stays, because it is a button. */
+@container (max-width: 560px) {
+  .ctxslot .ctx, .ctxslot .spent { display: none; }
 }
 .tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
 .tab:disabled { color: var(--edge-bright); cursor: default; }
@@ -12929,12 +12947,16 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <div class="main">
       <div class="tabs" role="tablist">
         <div class="viewtitle" id="viewtitle"></div>
-        <button class="tab" role="tab" aria-selected="true" data-tab="transcript">1 Transcript</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="files">2 Files</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="diff">3 Review<span
+        <button class="tab" role="tab" aria-selected="true" data-tab="transcript"
+          title="Transcript  ·  1"><span class="tabkey">1</span>Transcript</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="files"
+          title="Files  ·  2"><span class="tabkey">2</span>Files</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="diff"
+          title="Review  ·  3"><span class="tabkey">3</span>Review<span
           class="badge" id="diffcount" hidden></span><span
           class="badge notes" id="reviewcount" hidden></span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="commands">4 Commands</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="commands"
+          title="Commands  ·  4"><span class="tabkey">4</span>Commands</button>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -13872,7 +13894,9 @@ function putNewLine(pane) {
     if (!node || node.parentNode !== pane) continue;
     const line = document.createElement("div");
     line.className = "newline";
-    line.textContent = "new";
+    // Since when (#398): "new" alone did not say how much was missed.
+    line.textContent = "new since " + (dayOf(since) ? dayOf(since) + ", " : "")
+      + clock(since);
     pane.insertBefore(line, node);
     return line;
   }

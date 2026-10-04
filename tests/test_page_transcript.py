@@ -2679,10 +2679,14 @@ def test_coming_back_lands_on_a_line_over_the_first_turn_not_seen(seen_before):
     opens the channel there. The transcript opened at its foot, and the
     reader scrolled up to find where they had stopped."""
     daemon, url = seen_before
+    # The reader's last look, before this one marks it read.
+    seen = daemon.store.seen["s1"]
     with opened(url) as page:
         page.set_viewport_size({"width": 1200, "height": 600})
         page.wait_for_selector(".turnbody > .newline")
         assert page.locator(".turnbody > .newline").count() == 1
+        # It says since when: that look, today (#398).
+        assert page.text_content(".newline") == "new since " + page.evaluate(f"clock({seen})")
         page.wait_for_function(f"(({LINE_AT})() || [])[0] === true")
         # At the top of the pane, through the second draw as Markdown.
         page.wait_for_function(AT_TOP)
