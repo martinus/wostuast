@@ -2766,7 +2766,7 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
         page.wait_for_selector(f"{mark}.on")
         assert daemon.store.saved[0]["id"] == "s1"
         page.wait_for_function(
-            "document.querySelector('#savedlink').textContent.endsWith(' 1')")
+            "document.querySelector('#savedlink .n').textContent === '1'")
         page.click("#savedlink")
         page.wait_for_selector(".feedentry .prose")
         page.click(".feedentry button:text('open')")

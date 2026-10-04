@@ -11392,12 +11392,12 @@ body.dragging { cursor: col-resize; user-select: none; }
   border-radius: 6px 0 0 6px;
   cursor: pointer; display: flex; flex-direction: column; gap: 4px;
   border: 1px solid transparent; border-left: 4px solid var(--gone);
-  border-right: 0;
+  border-right: 0; --hue: var(--gone);
   transition: background .2s ease, border-color .2s ease;
 }
-.row.needs_you { --soft: var(--needs-soft); border-left-color: var(--needs); background: var(--needs-soft); }
-.row.working { --soft: var(--working-soft); border-left-color: var(--working); background: var(--working-soft); }
-.row.done { --soft: var(--done-soft); border-left-color: var(--done); background: var(--done-soft); }
+.row.needs_you { --soft: var(--needs-soft); --hue: var(--needs); border-left-color: var(--needs); background: var(--needs-soft); }
+.row.working { --soft: var(--working-soft); --hue: var(--working); border-left-color: var(--working); background: var(--working-soft); }
+.row.done { --soft: var(--done-soft); --hue: var(--done); border-left-color: var(--done); background: var(--done-soft); }
 .row:hover { border-color: var(--edge-bright); border-left-width: 4px; }
 /* The chosen row is a tab of the content beside it, as in a browser: it
    runs through the list's padding to the line between the two, that line
@@ -11409,16 +11409,23 @@ body.dragging { cursor: col-resize; user-select: none; }
    where they met the state's edge on the left they cut its corner. It
    stands in from the other rows by the grip's width, as it crosses the grip
    on the right, so its left edge is not one more in the column of theirs.
-   Its fade ends in `--meet`, and it starts in its group's colour
-   because it has no ground of its own: the tints are half transparent, and
-   on the list's old ground it came out brighter in the light and darker in
-   the dark than the rows beside it. */
+   Its fade ends in `--meet`.
+   It is the strongest row in the list (issue 396): its state's colour at a
+   third over `--meet`, held for half its width before the fade, a line
+   round it in that colour and a wider edge. It faded from its tint into
+   grey before, so it was the one row with less colour than the others, and
+   the eye went to every row but the chosen one. A shadow could not say it:
+   on the dark ground it did not show, and a shadow lifts a tab off what it
+   belongs to. The colour is mixed into `--meet`, which is opaque, so it is
+   the same on any ground under it. The edge is 2 px wider and the padding
+   2 px narrower, so the text keeps its place. */
 .row.chosen, .row.chosen:hover {
-  background: linear-gradient(90deg, transparent, var(--meet)),
-    linear-gradient(var(--soft, transparent), var(--soft, transparent));
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--hue) 34%, var(--meet)) 55%, var(--meet));
+  border-color: color-mix(in srgb, var(--hue) 55%, transparent);
+  border-left: 6px solid var(--hue); padding-left: 9px;
   margin-left: calc(4px + var(--grip-w));
 }
-.row.chosen .name { color: var(--ink-bright); }
 .row .line1 {
   display: flex; align-items: center; gap: 8px;
   font-family: var(--mono); font-size: 13px; min-width: 0;
@@ -11428,23 +11435,52 @@ body.dragging { cursor: col-resize; user-select: none; }
    keeps the fixed face, so its digits do not dance. */
 .row .name {
   font-family: var(--sans); font-size: 14px;
-  color: var(--ink-bright); font-weight: 600; overflow: hidden;
+  color: var(--ink); font-weight: 500; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; flex-grow: 1;
 }
+/* Bold and bright only where there is something to read (issue 390): a
+   turn not read, a session that needs you, and the chosen one. Every name
+   was bold, and the unread dot alone had to tell the rows apart. */
+.row.unread .name, .row.needs_you:not(.snoozed) .name, .row.reminded .name,
+.row.chosen .name { color: var(--ink-bright); font-weight: 600; }
 /* Only a finished session carries a word; the colour says the rest. */
 .row .word { flex-shrink: 0; color: var(--ink-faint); }
 .row .word:empty { display: none; }
 /* Unread (issue 373): a turn ended since the reader last had it on screen.
-   A dot before the name, in the colour of a turn that is done: the name is
-   already bold, so bold could not say it. */
+   A dot before the name, in the colour of a turn that is done, and the
+   name bold (issue 390): the dot is what is seen from across a room. */
 .row.unread .name::before {
-  content: ""; display: inline-block; width: 7px; height: 7px;
+  content: ""; display: inline-block; width: 8px; height: 8px;
   border-radius: 50%; background: var(--done); margin-right: 7px;
   vertical-align: 2px;
 }
-/* "unread" shows on a read row's hover. Not there at all until then:
-   invisible, it still took its room, and the name was cut short for it. */
-.row:not(:hover):not(:focus-within) .markunread { display: none; }
+/* What a row offers on its hover (issue 389): small icons in the age's
+   place -- "not now", "later" and "unread" -- so nothing pushes the name.
+   As words they cut the name short, and "not now" broke over two lines at
+   a narrow width. Not there at all until the hover: invisible, they still
+   took their room. Taller than the line, so a margin gives the room back
+   and the row does not grow on the hover. */
+.row .line1 .act {
+  display: inline-grid; place-items: center; width: 22px; height: 22px;
+  margin: -3px 0; padding: 0; border: none; border-radius: 5px;
+  background: none; color: var(--ink-soft); cursor: pointer; flex-shrink: 0;
+}
+.row .line1 .act .icon { width: 14px; height: 14px; color: inherit; stroke-width: 1.4; }
+.row .line1 .act:hover { background: var(--chosen); color: var(--ink-bright); }
+.row:not(:hover):not(:focus-within) .line1 .act { display: none; }
+.row:is(:hover, :focus-within) .line1 .age.swap { display: none; }
+/* "Unread" is the dot it leaves. */
+.row .line1 .markunread .icon path { fill: var(--done); stroke: none; }
+/* A reminder still to come shows a clock and its time in the age's place
+   (issue 394): "at 09:55" alone did not say it was a reminder. One that
+   has come says "reminder" as a pill, in the amber of a session that
+   needs you. */
+.row .line1 .age.when { display: inline-flex; align-items: center; gap: 4px; color: var(--needs); }
+.row .line1 .age.when .icon { color: inherit; }
+.row .line1 .word.pill {
+  padding: 0 7px; border-radius: 9px; line-height: 18px; font-size: 12px;
+  background: color-mix(in srgb, var(--needs) 22%, transparent); color: var(--needs-warm);
+}
 .row .line2 .repo, .row .line2 .worktree, .row .line2 .branch {
   display: inline-flex; align-items: center; gap: 4px; min-width: 0;
 }
@@ -11508,9 +11544,8 @@ body.dragging { cursor: col-resize; user-select: none; }
    waiting, in the narrow face's weight, so it is read before the counts. */
 .row .gitstate .doing, .row .gitstate .conflict { color: var(--needs); font-weight: 600; }
 /* A snoozed row (issue 355) stands with the ready ones, in their colour: it waits,
-   but the reader said not now. Its control shows on a row that needs you,
-   and on a snoozed one, at the edge of the first line. */
-.row .line1 .snooze { margin: 0 8px 0 auto; font-size: 12px; }
+   but the reader said not now. Its control is a moon on the hover of a row
+   that needs you, and a sun on a snoozed one. */
 .clean { color: var(--working); }
 .ahead { color: var(--ink-faint); }
 /* The row has no dot: its edge and its tint say the state, and the group it
@@ -11526,27 +11561,59 @@ body.dragging { cursor: col-resize; user-select: none; }
    still `needs_you`, and with `.row.snoozed` alone it kept the amber ground
    and the pulse it had been put aside to lose. */
 .row.needs_you.snoozed {
-  --soft: var(--done-soft); border-left-color: var(--done);
+  --soft: var(--done-soft); --hue: var(--done); border-left-color: var(--done);
   background: var(--done-soft); box-shadow: none; animation: none;
 }
 /* A reminder that has come (issue 375): the amber of a session that needs
    you, on whatever state the session is in. */
 .row.reminded {
-  --soft: var(--needs-soft); border-left-color: var(--needs);
+  --soft: var(--needs-soft); --hue: var(--needs); border-left-color: var(--needs);
   background: var(--needs-soft);
 }
-/* "later" shows on the row's hover, as "unread" does; its choices take a
-   line of their own under the name until one is picked. */
-.row:not(:hover):not(:focus-within) .remindlater { display: none; }
-
-/* The way into "All unreads" (issue 376), over the groups, and the feed
-   itself in place of the tabs. */
-.feedlink {
-  margin: 0 10px 6px; padding: 6px 10px; border: 1px solid var(--edge);
-  border-radius: 6px; background: none; color: var(--done); cursor: pointer;
-  font-family: var(--mono); font-size: 12px; text-align: left;
+/* "Later"'s choices (issue 394): a small menu under the row's first line,
+   over the rows below rather than pushing them, in whole words. Four grey
+   abbreviations in a line of their own were missed. */
+.row { position: relative; }
+.row .remindmenu {
+  position: absolute; right: 12px; top: 30px; z-index: 5;
+  display: flex; flex-direction: column; min-width: 150px; padding: 4px;
+  background: var(--raised); border: 1px solid var(--edge-bright);
+  border-radius: 8px; box-shadow: 0 8px 24px var(--shadow); cursor: default;
 }
-.feedlink:hover, .feedlink.open { background: var(--done-soft); }
+.row .remindmenu .menuhead { padding: 4px 10px 6px; font-size: 11px; color: var(--ink-faint); }
+.row .remindmenu button {
+  display: block; margin: 0; padding: 6px 10px; border: none; border-radius: 5px;
+  background: none; text-align: left; font-family: var(--sans); font-size: 13px;
+  line-height: 1.3; color: var(--ink); cursor: pointer;
+}
+.row .remindmenu button:hover { background: var(--chosen); color: var(--ink-bright); }
+
+/* The three views over the groups -- unread (issue 376), saved (377) and
+   search (379) -- in one row of equal buttons (issue 391), each always
+   there, so the list does not move when a count comes to nought. Three
+   lines in three styles took a hundred pixels, and "search every session"
+   read as a second filter box. Words in the reading face, the counts in
+   the fixed one. */
+.views { display: flex; gap: 6px; margin: 0 10px 10px; }
+.feedlink {
+  flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; min-width: 0; padding: 5px 6px; border: none; border-radius: 6px;
+  background: none; color: var(--ink-soft); cursor: pointer;
+  font-family: var(--sans); font-size: 12.5px; white-space: nowrap;
+}
+.feedlink:hover { background: var(--raised); color: var(--ink-bright); }
+.feedlink.open { background: var(--chosen); color: var(--ink-bright); }
+.feedlink .viewname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.feedlink .icon {
+  width: 13px; height: 13px; flex-shrink: 0; fill: none; stroke: currentColor;
+  stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
+}
+.feedlink .n {
+  font-family: var(--mono); font-size: 10.5px; line-height: 16px; padding: 0 6px;
+  border-radius: 8px; color: var(--done);
+  background: color-mix(in srgb, var(--done) 22%, transparent);
+}
+.feedlink .n.none { background: none; color: var(--ink-faint); }
 body.infeed .tabs .tab, body.infeed #asking, body.infeed #sendbar,
 body.infeed #resumebar, body.infeed .findhome { display: none; }
 .content.feed { overflow: auto; padding: 20px 28px; }
@@ -11559,15 +11626,10 @@ body.infeed #resumebar, body.infeed .findhome { display: none; }
   flex-grow: 1; }
 .feedwait, .feedmore { color: var(--ink-faint); font-size: 13px; }
 /* Search (issue 379): the box under the heading, a word for who said it. */
-/* A way in, not a box to type in: beside the filter box, a bordered one
-   read as a second filter. */
-.feedlink.quiet { color: var(--ink-faint); border-color: transparent; }
-.feedlink.quiet:hover, .feedlink.quiet.open { color: var(--ink-soft); }
 /* As specific as `.find`, which set the width of every find box. */
 .content.feed .searchbox { width: 100%; max-width: 90ch; margin: 4px 0 10px; }
 .feedwho { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
 .searchtext { margin: 2px 0; color: var(--ink); }
-.row .remindmenu { display: flex; gap: 12px; padding: 2px 0 4px; }
 
 /* One switch for everything that moves. A reader whose system asks for less
    motion gets a page that only changes colour. */
@@ -12816,9 +12878,14 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <input class="find" id="pick" type="search" placeholder="filter sessions  f"
                autocomplete="off" spellcheck="false">
       </div>
-      <button type="button" class="feedlink" id="feedlink" hidden></button>
-      <button type="button" class="feedlink" id="savedlink" hidden></button>
-      <button type="button" class="feedlink quiet" id="searchlink">search every session</button>
+      <div class="views">
+        <button type="button" class="feedlink" id="feedlink"
+          title="All unreads: the last answer of every unread session"></button>
+        <button type="button" class="feedlink" id="savedlink"
+          title="Saved: every answer you kept"></button>
+        <button type="button" class="feedlink" id="searchlink"
+          title="Search every session: what you typed and what each agent answered"></button>
+      </div>
       <div class="rows" id="rows"></div>
     </div>
     <div class="grip" id="grip"></div>
@@ -13379,6 +13446,16 @@ const ICONS = {
   copy: "M4.6 4.2V2.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H9.8"
         + "M1.6 5.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z",
   check: "M2.4 7.4l3 3 6.2-6.6",
+  // A row's hover (#389) and its reminder (#394): a clock, the same clock
+  // struck through to cancel, and the dot an unread row wears. The views
+  // over the list (#391): an inbox, the bookmark below, and a lens.
+  clock: "M1.8 7a5.2 5.2 0 1 0 10.4 0a5.2 5.2 0 1 0-10.4 0zM7 4.3V7l1.9 1.3",
+  clockOff: "M1.8 7a5.2 5.2 0 1 0 10.4 0a5.2 5.2 0 1 0-10.4 0zM7 4.3V7l1.9 1.3"
+            + "M2.2 2.2l9.6 9.6",
+  dot: "M4 7a3 3 0 1 0 6 0a3 3 0 1 0-6 0z",
+  inbox: "M1.8 8.2h3l1 1.6h2.4l1-1.6h3M1.8 8.2l1.6-5h7.2l1.6 5v2.8a1 1 0 0 1-1 1"
+         + "H2.8a1 1 0 0 1-1-1z",
+  search: "M2 6a4 4 0 1 0 8 0a4 4 0 1 0-8 0zM9 9l3.2 3.2",
   // A bookmark: a turn saved for later (#377).
   save: "M4 1.8h6a.6.6 0 0 1 .6.6v9.8L7 9.6l-3.6 2.6V2.4a.6.6 0 0 1 .6-.6z",
   // Settings: three rails, each with its knob somewhere else.
@@ -13407,6 +13484,14 @@ const ICONS = {
           + "M8.6 4a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0z"
           + "M4 4.4v5.2M10 5.4c0 2.4-6 1.8-6 4.2",
 };
+
+// A button whose icon says what it does now: drawn again only when that
+// changed, because a row is filled on every push.
+function setIcon(button, kind) {
+  if (!fresh(button, "icon", kind)) return;
+  button.replaceChildren();
+  putIcon(button, kind);
+}
 
 function putIcon(parent, kind) {
   const where = "http://www.w3.org/2000/svg";
@@ -13582,14 +13667,16 @@ function reminderWord(s) {
   return reminderDue(s) ? "reminder" : "";
 }
 
+// The time, after a clock that says it is a reminder (#394).
 function reminderAt(s) {
   const day = dayOf(s.remind_at);
-  return "at " + (day ? day + " " : "") + clock(s.remind_at);
+  return (day ? day + " " : "") + clock(s.remind_at);
 }
 
-// The choices, as Slack offers them. Tomorrow is nine in the morning.
-const REMIND_IN = [["20 min", 20 * 60], ["1 h", 3600], ["3 h", 3 * 3600],
-                   ["tomorrow", null]];
+// The choices, as Slack offers them, in whole words (#394). Tomorrow is
+// nine in the morning.
+const REMIND_IN = [["In 20 minutes", 20 * 60], ["In 1 hour", 3600],
+                   ["In 3 hours", 3 * 3600], ["Tomorrow, 9:00", null]];
 
 function remindMoment(seconds) {
   if (seconds) return serverNow() + seconds;
@@ -13608,11 +13695,12 @@ async function setReminder(id, at) {
   drawSessions();
 }
 
-// The row's "later": the choices in its place until one is picked, or the
-// pointer leaves the row.
+// The row's "later": a small menu of the choices until one is picked, or
+// the pointer leaves the row.
 function openReminders(row, id) {
   const menu = row.querySelector(".remindmenu");
   menu.replaceChildren();
+  put(menu, "div", "menuhead", "Remind me");
   for (const [word, seconds] of REMIND_IN) {
     const pick = put(menu, "button", "link", word);
     pick.addEventListener("click", (press) => {
@@ -13782,19 +13870,12 @@ function unreadSessions() {
     .sort((a, b) => (b.ended_at || 0) - (a.ended_at || 0));
 }
 
+// The three views over the list, in one row (#391): unread, saved (#377)
+// and search (#379), each always there, with its count.
 function drawFeedLink() {
-  const link = $("feedlink");
-  const count = unreadSessions().length;
-  link.hidden = !count && state.feed !== "unread";
-  link.classList.toggle("open", state.feed === "unread");
-  if (fresh(link, "text", String(count))) link.textContent = "all unreads · " + count;
-  // The saved turns, below it (#377).
-  const keep = $("savedlink");
-  const kept = state.savedCount || 0;
-  keep.hidden = !kept && state.feed !== "saved";
-  keep.classList.toggle("open", state.feed === "saved");
-  if (fresh(keep, "text", String(kept))) keep.textContent = "saved · " + kept;
-  $("searchlink").classList.toggle("open", state.feed === "search");
+  viewLink($("feedlink"), "inbox", "Unread", unreadSessions().length, "unread");
+  viewLink($("savedlink"), "save", "Saved", state.savedCount || 0, "saved");
+  viewLink($("searchlink"), "search", "Search", null, "search");
   // A session read elsewhere leaves the feed while it is open.
   if (state.feed) drawFeed($("content"));
 }
@@ -14004,6 +14085,15 @@ function drawResults(list) {
   }
 }
 
+function viewLink(button, icon, word, count, feed) {
+  button.classList.toggle("open", state.feed === feed);
+  if (!fresh(button, "text", String(count))) return;
+  button.replaceChildren();
+  putIcon(button, icon);
+  put(button, "span", "viewname", word);
+  if (count !== null) put(button, "span", count ? "n" : "n none", String(count));
+}
+
 function bandOf(s) {
   for (const band of BANDS) if (band[2](s)) return band[0];
   return "ready";                    // a state nobody here knows is not urgent
@@ -14059,15 +14149,15 @@ function newRow(id) {
     if (!onLink(press)) renameRow(row);
   });
   put(one, "span", "word");
+  // What the hover offers, as icons in the age's place (#389).
   // "Not now", on a row that needs you, and "wake" on one snoozed (#355).
-  const later = put(one, "button", "link snooze");
+  const later = put(one, "button", "act snooze");
   later.addEventListener("click", (press) => {
     press.stopPropagation();           // not a choice of the row
     toggleSnooze(id);
   });
   // "later": remind me about it (#375), shown on the hover too.
-  const later2 = put(one, "button", "link remindlater", "later");
-  later2.title = "remind me about it later";
+  const later2 = put(one, "button", "act remindlater");
   later2.addEventListener("click", (press) => {
     press.stopPropagation();
     if (reminderSet(state.sessions.find((x) => x.id === id) || {})) {
@@ -14076,10 +14166,10 @@ function newRow(id) {
       openReminders(row, id);
     }
   });
-  // "unread" on a row that is read, shown on its hover (#373). Before the
-  // age, as "not now" is: after it, "5min unread" read as a state.
-  const unread = put(one, "button", "link markunread", "unread");
+  // "unread" on a row that is read, shown on its hover (#373).
+  const unread = put(one, "button", "act markunread");
   unread.title = "mark it unread  ·  u";
+  putIcon(unread, "dot");
   unread.addEventListener("click", (press) => {
     press.stopPropagation();
     setUnread(id, true);
@@ -14087,6 +14177,8 @@ function newRow(id) {
   put(one, "span", "age");
   const menu = put(row, "div", "remindmenu");
   menu.hidden = true;
+  // A press on the menu between its choices is no choice of the row.
+  menu.addEventListener("click", (press) => press.stopPropagation());
   put(row, "div", "line2 where");
   put(row, "div", "line2");
   const three = put(row, "div", "line3");
@@ -14126,11 +14218,12 @@ function fillRow(row, s) {
   }
   one.children[1].textContent = isGone(s) ? s.state_word
     : reminderWord(s) || (s.snoozed ? "snoozed" : "");
+  one.children[1].classList.toggle("pill", !isGone(s) && reminderDue(s));
   const later = one.children[2];
   // Only where a snooze can hold: a session that waits. A row a reminder
   // brought back is not one, and the daemon would refuse it (#375).
   later.hidden = !(s.state === "needs_you" && !reminderSet(s)) && !s.snoozed;
-  later.textContent = s.snoozed ? "wake" : "not now";
+  setIcon(later, s.snoozed ? "sun" : "moon");
   later.title = s.snoozed ? "it needs you again  ·  z" : "it waits, but not now  ·  z";
   // On every row, the same four lines: the name, where it stands, the
   // branch and what git counts, and what it is doing. A row not renamed
@@ -14185,16 +14278,29 @@ function fillRow(row, s) {
   // with the name, and a ready row has no fourth line to carry it.
   // On a row a reminder brought back too: "later" again, as Slack lets a
   // reminder be put off once more.
-  one.children[3].hidden = isGone(s);
-  one.children[3].textContent = reminderSet(s) ? "cancel" : "later";
+  const remind = one.children[3];
+  remind.hidden = isGone(s);
+  setIcon(remind, reminderSet(s) ? "clockOff" : "clock");
+  remind.title = reminderSet(s) ? "cancel the reminder" : "remind me about it later";
   one.children[4].hidden = !!s.unread || needsYou(s) || s.snoozed;
+  // The hover's icons stand in the age's place, on a row that offers any;
+  // a reminder's time stays, because it says when the row comes back.
+  const age = one.children[5];
+  const offers = [later, remind, one.children[4]].some((act) => !act.hidden);
+  age.classList.toggle("swap", offers && !reminderSet(s));
+  age.classList.toggle("when", reminderSet(s));
   if (reminderSet(s)) {
-    one.children[5].textContent = reminderAt(s);
-    one.children[5].title = "it comes back then";
+    if (fresh(age, "text", reminderAt(s))) {
+      age.replaceChildren();
+      putIcon(age, "clock");
+      age.append(reminderAt(s));
+    }
+    age.title = "the reminder brings it back then";
   } else {
-    one.children[5].textContent = ago(s.since);
-    one.children[5].title = "";
-    ages.push([one.children[5], s.since]);
+    delete age.dataset.text;
+    age.textContent = ago(s.since);
+    age.title = "";
+    ages.push([age, s.since]);
   }
 }
 

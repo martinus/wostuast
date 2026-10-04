@@ -86,7 +86,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   cut at `LAST_MAX`, and `askLast` asks once a session while the feed is
   open. The feed stands in place of the tabs (`state.feed`, `body.infeed`),
   newest first by the row's `ended_at`; `drawFeedLink` redraws it on every
-  push, so a session read elsewhere leaves it. **While it is open nothing
+  push, so a session read elsewhere leaves it. **Its way in is one of three
+  equal buttons in a row over the list** -- Unread, Saved, Search, each
+  with an icon, the counts in badges (`viewLink`, `.views`, #391) -- and
+  all three always there: three lines in three styles took a hundred
+  pixels, came and went with their counts and moved the list, and
+  "search every session" read as a second filter box.
+  `test_the_three_views_are_one_row_and_always_there`. **While it is open nothing
   is read from behind it** (`markSeen` returns): the chosen session's tabs
   are covered. Choosing a session closes it, the one on screen too.
   **A `StopFailure` sets it too**, to Claude Code's sentence about the
@@ -113,7 +119,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     back the session may wait for nothing, and the daemon refuses the
     snooze. "later" stays, to put it off again.
   - **The time stands in the age's place, not in the word**: "until
-    20:23" beside the name took the name's room.
+    20:23" beside the name took the name's room. **After a clock**
+    (`.age.when`, #394): "at 09:55" alone did not say it was a reminder,
+    and it stays on the hover, because it says when the row comes back.
+    One that has come wears its word as an amber pill (`.word.pill`).
+  - **The choices are a small menu over the rows below** (`openReminders`,
+    `REMIND_IN`), in whole words with a "Remind me" head: four grey
+    abbreviations in a line of their own were missed (#394). Absolute in
+    the row (`.row` is `position: relative`), so opening it moves no row;
+    a press on it between the choices stops there, or it chose the row.
   - **The route refuses, never clips**: 0, or a moment in the next week
     (`REMIND_MOST`). `False` is 0 to Python and 0 clears, so a bool is
     refused as a bool. `test_a_reminder_is_a_moment_in_the_next_week_or_nothing`.
@@ -146,16 +160,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     refusal takes the mark back**: the row changes before the answer, and
     a dot for a mark the file never got stood until the next push.
     `test_a_mark_the_daemon_refused_is_taken_back_and_said`.
-  - **A dot, not bold**: the name is bold already. The dot is the colour of
-    a turn that is done (`--done`). A test of the dot reads `content` as
-    well as `width`: `getComputedStyle` gives the declared width of a
-    `::before` whose content is `none`, and a dot nobody can see passed.
-  - "unread" on a read row shows on its hover, before the age -- after it,
-    "5min unread" read as a state -- and `u` toggles the chosen one. The
-    tab's title says "2 unread ·" after the sessions that need you. **Not
-    there at all until the hover** (`display: none`, not `opacity: 0`):
-    invisible, it still took its room, and a long name was cut short for a
-    link nobody could see.
+  - **A dot, and the name bold** (#390). The dot is the colour of a turn
+    that is done (`--done`), and what is seen from across a room. A test of
+    the dot reads `content` as well as `width`: `getComputedStyle` gives
+    the declared width of a `::before` whose content is `none`, and a dot
+    nobody can see passed. **Only a name with something to read is bold**:
+    unread, needing you, a reminder that came, the chosen one; the rest
+    are 500 in `--ink`. Every name was bold, and the dot alone told the
+    rows apart. **A test that reads a row the reader just left reads it
+    after the daemon's next pass**: a push on its way can carry that row
+    as it was before the page read it -- unread, so bold -- and only the
+    next pass sends it read. Under load it was bold three runs in six,
+    with the daemon's own `unread` already False.
+  - "Unread" on a read row is a dot icon on its hover (#389), and `u`
+    toggles the chosen one. The tab's title says "2 unread ·" after the
+    sessions that need you.
   `test_a_turn_that_ends_after_the_reader_looked_is_unread`,
   `test_turns_that_ended_before_the_file_was_made_are_read`,
   `test_a_turn_that_ends_off_screen_is_unread_until_it_is_opened`.
@@ -330,6 +349,22 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_alerts_are_off_until_you_ask`. **Nor a strip of keys under
   the rows**: it said in two cramped lines what `?` shows in full, and the
   reader asked for it to go. `test_the_session_list_ends_with_its_rows`.
+- **What a row offers is icons in the age's place, on its hover** (#389):
+  a moon for "not now" and a sun to wake it, a clock for "later" and the
+  clock struck through to cancel, a dot for "unread" (`.act`, `setIcon`,
+  `ICONS`). As words, "later unread" and "not now" cut long names short,
+  and "not now" broke over two lines at a narrow width. **The age goes
+  while they show** (`.age.swap`, set only on a row that offers any),
+  and they are `margin: -3px 0` because 22 px is taller than the line:
+  the row keeps its height. They still take a little of the name's room
+  where the age was short ("3s"): less than 60 px, where the words took
+  nearly twice that. **Not there at all until the hover** (`display:
+  none`, not `opacity: 0`): invisible, a link took its room, and a long
+  name was cut short for it. **The snooze's moon is hover-only too**, as
+  the others are; the word "snoozed" says a snoozed row, and `z` works
+  without the pointer. `setIcon` keeps the kind in `data-icon`, which is
+  what a test reads. `test_the_row_offers_unread_on_a_read_row_only`,
+  `test_a_snoozed_session_stops_saying_it_needs_you_until_it_asks_again`.
 - **A row says what nothing else on the page says, in four lines that are
   the same on every row.** The reader chose each line. The name; the
   repository and the worktree, with the remote and the path on a hover; the
@@ -371,7 +406,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_a_typed_name_stands_until_claude_codes_moves`,
     `test_a_name_nothing_was_typed_for_stands_until_the_reader_changes_it`,
     `test_reading_the_names_writes_nothing`.
-    The **It wears the sans face**: in the fixed
+    **It wears the sans face**: in the fixed
     face it was half as wide again as the lines under it, and the reader
     said so. The age beside it stays fixed, so its digits do not dance.
   - **A ticket in the name, the worktree or the branch is a link**, by
@@ -405,11 +440,19 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   browser.** A faint ring marked it, and the reader had to look for it. It
   runs through the list's padding to the grip, its ground fades from the
   state's colour into `--meet`, and the grip opens where they meet. The
-  reader chose each part from pictures. **Its outline is the other rows'
-  own**: it had top and bottom lines of 2 px in `--edge`, chosen while the
-  list had another ground, and once the list wore `--edge` they could not be
-  seen and cut the corner of the state's edge on the left. So the grip opens
-  over the row's whole height, border and all (`openGrip`).
+  reader chose each part from pictures.
+  **It is the strongest row in the list** (#396): its state's colour (`--hue`,
+  set with `--soft` on every state) at 34 % in `--meet`, held to half its
+  width before the fade, a 1 px line round it in that colour at 55 %, and a
+  6 px edge with 2 px less padding, so its text stands where it would.
+  It faded from the half-transparent tint into grey before, the one row
+  with less colour than the rest, and the reader could not find it. **A
+  shadow was drawn and refused**: on the dark ground it does not show, and
+  it lifts a tab off what it belongs to. **Its line is as wide as the other
+  rows' own** (1 px, transparent on theirs): it had lines of 2 px in
+  `--edge`, which could not be seen once the list wore `--edge` and cut the
+  corner of the state's edge on the left. So the grip opens over the row's
+  whole height, border and all (`openGrip`).
   **Every row runs to the line**, as a tab behind the chosen one: cards with
   four round corners read as buttons.
   - **The list wears the grip's colour (`--edge`), and a split tab's own
@@ -418,10 +461,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     stands apart from the page without a line. `--meet` is `--panel`,
     set on `.body`, because every tab is split now; the map's ground, the fade's end and the grip's
     opening all read it, so the row flows into what is there.
-  - **The chosen row has no ground of its own.** The state tints are half
-    transparent: on the list's old ground under it, it came out brighter
-    in the light and darker in the dark than the rows of its own group,
-    and the reader saw it.
+  - **The chosen row has no ground colour of its own, only the gradient**,
+    and the gradient mixes into `--meet`, which is opaque. The state tints
+    are half transparent: laid on the list's old ground, it came out
+    brighter in the light and darker in the dark than the rows of its own
+    group, and the reader saw it. `test_a_row_shows_its_state_in_its_colour`
+    reads whichever row comes first, chosen or not, so it holds both.
   - **It stands in from the other rows by the grip's width**
     (`calc(4px + var(--grip-w))`), as it crosses the grip on the right.
     It stood out to the left first; the reader asked for this.
