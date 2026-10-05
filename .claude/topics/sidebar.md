@@ -171,9 +171,25 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     abbreviations in a line of their own were missed (#394). Absolute in
     the row (`.row` is `position: relative`), so opening it moves no row;
     a press on it between the choices stops there, or it chose the row.
-  - **The route refuses, never clips**: 0, or a moment in the next week
-    (`REMIND_MOST`). `False` is 0 to Python and 0 clears, so a bool is
-    refused as a bool. `test_a_reminder_is_a_moment_in_the_next_week_or_nothing`.
+    **They are Slack's** (#406): 30 minutes, 1 and 3 hours, tomorrow and
+    Monday at 08:00 (`remindMoment`; on a Monday, "Monday" is next
+    week's), and "Custom…" (`customReminder`): a list of days, today
+    first, and a box for the time, the next full hour. **Neither is the
+    browser's own date or time box**: those write as the browser's
+    language does, and the reader saw "10/05/2026" and "06:00 AM" and
+    asked for "22:10". The days are `dayName`'s ("Wed 7 Oct"), and the
+    time is text on a 24-hour clock (`readTime`: "22:10", "2210", "9").
+    **Custom stays open when the pointer leaves the row**: a list's
+    open options stand outside the row, and going to them closed it. It closes on its button, Enter, Escape
+    -- which go no further, or Escape left a view and Enter opened a row
+    -- and a press anywhere else. A moment past is said in the menu, not
+    sent.
+  - **The route refuses, never clips**: 0, or a moment in the next 31 days
+    (`REMIND_MOST`). A week was too short: "Monday at 08:00" on a Monday
+    morning is 7 days and more, and the reader asked for a custom day,
+    which goes to `REMIND_DAYS` (30) ahead. `False` is 0 to Python and 0
+    clears, so a bool is refused as a bool.
+    `test_a_reminder_is_a_moment_in_the_next_month_or_nothing`.
   **A test sets a reminder far off, then near**: 3 s from now came before
   a loaded machine had drawn the page, and the first look found it due --
   red twice under two runs at once. The second `remind` and its push are
