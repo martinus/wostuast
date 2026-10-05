@@ -433,6 +433,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     went red that way under load. The menu reads the tab width and the
     wrap from the settings (`readingWanted`), never back off the root.
     `test_two_quick_changes_reach_the_file_in_the_order_they_were_made`.
+    **So a test that changes a setting twice waits for each one's push**
+    before the next change: the push of the first came after the second
+    press of `c`, put "dark" back over "auto", and the third press started
+    from there, once in four runs under load (#439). It wraps
+    `takeSettings` and waits for the word it expects;
+    `test_the_c_key_steps_through_the_colours`.
   - **The ticket links are rows in the menu, saved on leave or Enter**
     (`putLinkRow`, `saveLinks`, `putLinkRows`): the reader chose that over a
     save button and over saving each keystroke, which linked half a

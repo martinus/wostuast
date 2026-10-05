@@ -106,6 +106,21 @@ Keep the breaks list in the scratchpad; it is about one fix.
   twice, so it went. Ask first whether any input could tell the two
   apart; a break no input can see is the same program (a new call never
   carries an id already kept, #430), and is dropped, not tested.
+  - **`tests/page_coverage.py` asks the same question of the whole page
+    script, before any break does** (#439): it runs the browser tests
+    with `WOSTUAST_COVERAGE` set, and `cover` in `tests/browser.py` has
+    Chromium count what each page ran, through the DevTools protocol and
+    no dependency. Its first run: 97.3 % of the lines ran, and three named
+    functions never did -- `nextTheme`, an alert's `onclick` and
+    `fromShebang`. None was dead; each was a path no test took, and each
+    has a test now. A function it names is dead code to delete or a test
+    to write; ask which before writing either. Three scars on the tool:
+    the counting must start before the page's script runs, so `cover`
+    wraps the context's `new_page` rather than finding the page later; V8
+    names an arrow after what holds it, so a name is listed only when it
+    stands on the function's own line; and the tool is not called
+    `coverage.py`, because pytest puts `tests/` on the path and it would
+    stand in for the coverage package. `test_page_coverage.py`.
 - **`page.evaluate` is not strict, and the page's script is.** A write to
   a frozen session threw in the page and was dropped without a word in an
   `evaluate`, and the test that was to prove the throw read nothing

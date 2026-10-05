@@ -392,3 +392,27 @@ def test_the_whole_settings_menu_is_in_the_proportional_face(page_at):
         page.fill("#linklist .linkurl", "https://t.example/" + "x" * 400)
         assert page.evaluate("document.getElementById('setpop').offsetWidth") == wide
 
+
+
+def test_the_c_key_steps_through_the_colours(page_at):
+    """`c` takes the next of auto, light and dark, and after dark auto
+    again. No test pressed it until the page script's coverage said that
+    `nextTheme` never ran (#439).
+
+    Each press waits for its own push before the next: a choice is shown
+    at once and made so by the push, and the push of an earlier press came
+    after a later one, put "dark" back over "auto", and the next press
+    started from there. It went red once in four runs under load."""
+    with opened(page_at) as page:
+        page.evaluate("""() => {
+          window.__took = [];
+          const take = takeSettings;
+          takeSettings = (body, first) => { window.__took.push(body.colours); take(body, first); };
+          document.activeElement && document.activeElement.blur();
+        }""")
+        seen = [page.evaluate("themeChoice()")]
+        for word in ("light", "dark", "auto"):
+            page.keyboard.press("c")
+            page.wait_for_function("w => window.__took.at(-1) === w", arg=word)
+            seen.append(page.evaluate("themeChoice()"))
+    assert seen == ["system", "light", "dark", "system"]

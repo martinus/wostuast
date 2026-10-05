@@ -1745,3 +1745,20 @@ def test_another_session_in_the_worktree_does_not_fetch_its_names_again(
                 f"state.chosen === '{other}'"
                 f" && state.files.names.length === {names}")
             page.wait_for_selector(".filelist button .name")
+
+
+def test_a_file_without_a_suffix_is_named_by_its_shebang(page_at):
+    """The page reads a shebang itself (`fromShebang`), so the daemon need
+    not ask `file`: options and `env` are passed over, a version is no
+    part of the name, an interpreter it does not know is no guess, and a
+    suffix outranks the first line. No test reached it until the page
+    script's coverage said so (#439)."""
+    with opened(page_at) as page:
+        said = page.evaluate("""() => [
+          languageOf("bin/run", "#!/usr/bin/env -S python3 -u\\nprint(1)\\n", null),
+          languageOf("bin/run", "#!/bin/sh\\n", null),
+          languageOf("bin/run", "#!/usr/bin/perl5 -w\\n", null),
+          languageOf("bin/run", "#!/opt/weird\\n", "sniffed"),
+          languageOf("bin/run", "no shebang", "sniffed"),
+          languageOf("bin/run.sh", "#!/usr/bin/perl\\n", null)]""")
+    assert said == ["python", "bash", "perl", "sniffed", "sniffed", "bash"]
