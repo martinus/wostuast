@@ -59,9 +59,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   Choosing a session is then `state.files = blankFiles()` rather than eleven
   assignments that could forget the twelfth. **A new tab gets the same shape from the start**: the
   flat bag this came out of grew fifteen names in one scope for the Files tab
-  alone, and nothing said which tab owned any of them. The Commands tab
-  (#367) is `state.commands` and `blankCommands()`, and what a session
-  keeps of it is the command chosen, one row of `PLACE_FIELDS`:
+  alone, and nothing said which tab owned any of them. The Commands view
+  (#367, #411) is `state.commands` and `blankCommands()`; it is no tab any
+  more, so no session keeps a command, and it has no row of `PLACE_FIELDS`:
   `test_what_a_session_keeps_is_what_comes_back` names every row.
 - The shared chrome — `sessions`, `chosen`, `tab`, `find`, `pick`, `history`,
   `skew`, `open`, `stream` — stays flat. It belongs to no tab.

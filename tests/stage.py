@@ -216,7 +216,9 @@ def main(argv: list[str]) -> int:
             page.wait_for_function("!!window.marked && state.chosen === 's1'",
                                    timeout=wait)
         tab = TABS[said.tab]
-        if tab != "transcript":
+        if tab == "commands":           # a view, not a tab (#411)
+            page.click("#cmdlink")
+        elif tab != "transcript":
             show_tab(page, tab)
         page.wait_for_selector(DRAWN[tab], timeout=wait)
         if tab == "diff":

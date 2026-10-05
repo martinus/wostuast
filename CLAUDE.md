@@ -94,12 +94,12 @@ bullets beside it are the same part's other scars.
 | `putNewLine`, `landOnNew`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |
 | `search_log`, `parse_search`, `search_day`, `SEARCH_MAX`, `SEARCH_FILTERS`, `drawSearch`, `runSearch`, `drawResults`, `goToNear` | topics/decisions: search is a scan of the event log |
 | `saved_path`, `saved_entry`, `Store.save`, `SAVED_MAX`, `SAVED_PREVIEW`, `putSave`, `drawSaved`, `takeSaved`, `askSaved`, `goToTs` | topics/sidebar: a saved turn |
-| `last_answer`, `Serving.last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `drawFeedLink`, `viewLink`, `drawViewTitle`, `leaveFeed`, `putCard`, `unmarked`, `state.feed`, `infeed`, `putBoard`, `layoutCards`, `CARD_MIN` | topics/sidebar: "All unreads" |
+| `last_answer`, `Serving.last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `drawFeedLink`, `viewLink`, `fitViews`, `VIEW_FITS`, `drawViewTitle`, `leaveFeed`, `putCard`, `unmarked`, `state.feed`, `infeed`, `putBoard`, `layoutCards`, `CARD_MIN` | topics/sidebar: "All unreads" |
 | `remind_at`, `Store.remind`, `reminders_path`, `REMIND_MOST`, `reminderDue`, `reminderSet`, `armReminders`, `endReminder`, `serverNow`, `openReminders`, `REMIND_IN`, `remindMoment`, `customReminder`, `REMIND_DAYS`, `dayName`, `readTime` | topics/sidebar: a reminder is the snooze's twin with a clock |
 | `Session.title`, `first_prompt`, `Store.page_name`, `Store.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/sidebar, the name bullet; topics/daemon-and-page for `name`; topics/safety for the typing |
 | `newRow`, `fillRow`, `setIcon`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `iconPicture`, `tellAbout`, `waitsFor`, `shown_prompt`, `putSettings`, `paintSettings`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `putTurnRow`, `GLIMPSE`, `putToFoot`, `putCodeCopies`, `foldedHead`, `putFoldBar` | topics/daemon-and-page: the transcript's shape |
-| `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `project_dirs`, `claude_dir`, `slashSpot`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
+| `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `commandKey`, `projectSessions`, `projectName`, `useTarget`, `toggleCommands`, `project_dirs`, `claude_dir`, `slashSpot`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
 | `state.files`, `state.turns`, `state.diffs`, `savePlace`, `usePlace`, `PLACE_FIELDS`, `blank…()`, `diffKey` | topics/tab-state |
 | `git_facts_many`, `git_facts_or_failed`, `worktree_doing`, `own_git_dir`, `worktree_files`, `walk_ignored`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of`, `base` and `held`, `Daemon.diffs`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `.dtext`, `putMessage`, `putReadAs`, `stepat`, `blockSig`, `settle`, `readerAt` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
@@ -120,9 +120,10 @@ bullets beside it are the same part's other scars.
 Claude Code hooks append one JSON line per event to `~/.local/state/wostuast/events.jsonl`.
 A bare `wostuast` (`cmd_serve`) checks the setup, writes what is behind
 (`bring_up_to_date`), then tails that log into a `Store` and serves one page
-over HTTP + SSE. The page shows a session list and four tabs: Transcript, Files,
-Review, which is the diff with the review written on it (`data-tab="diff"`),
-and Commands, the skills and commands a session can run.
+over HTTP + SSE. The page shows a session list and three tabs: Transcript, Files,
+and Review, which is the diff with the review written on it (`data-tab="diff"`).
+Four views stand over the tabs, for every session at once: Unread, Saved,
+Search, and Commands, the skills and commands your sessions can run (#411).
 Four things go back to the terminal, all through tmux: jump, send, the
 keys that answer a question, and a No to a permission dialog, which is an
 Escape and then a send. A rename on the page is a send of `/rename` (#351).
@@ -220,7 +221,7 @@ Page: asking the daemon · dragging an edge · the two fetched scripts · colour
 **the sidebar** · the tab icon and title · notifications · **the transcript** · painting code ·
 **the Files tab** · finding a file · the tree · a file too long to draw whole ·
 how a file is drawn · **the Diff tab** · **the review** ·
-keeping a review · **the review on the Review tab** · the Commands tab · the tabs ·
+keeping a review · **the review on the Review tab** · the Commands view · the tabs ·
 talking to the daemon · keys.
 
 ## Before you write anything new

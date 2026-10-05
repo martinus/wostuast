@@ -134,8 +134,10 @@ def test_every_way_from_one_tab_to_another_works(repo_page):
     stayed broken until a reload. The Peek tab did exactly this before it
     was removed, and this test is what it left behind.
     """
-    names = list(DRAWN)
     with opened(repo_page) as page:
+        # The page's own tabs: Commands is a view now, and `DRAWN` still
+        # names it for `tests/stage.py` (#411).
+        names = page.evaluate("TAB_KEYS")
         blew_up = []
         page.on("pageerror", lambda error: blew_up.append(str(error)))
         for one in names:
@@ -363,18 +365,18 @@ def test_the_tab_names_stay_on_one_line_in_a_narrow_window(page_at):
           const text = [...tab.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
           const range = document.createRange(); range.selectNodeContents(text);
           return range.getClientRects().length; })"""
-        assert page.evaluate(names) == [1, 1, 1, 1]
+        assert page.evaluate(names) == [1, 1, 1]
         # The settings button is still on screen, at the row's right.
         assert narrow[0]["right"] <= 1024, narrow
         assert [one["title"] for one in narrow] == [
-            "Transcript  ·  1", "Files  ·  2", "Review  ·  3", "Commands  ·  4"]
+            "Transcript  ·  1", "Files  ·  2", "Review  ·  3"]
         assert page.evaluate("[...document.querySelectorAll('.tab')].map("
-                             "(tab) => getComputedStyle(tab).whiteSpace)") == ["nowrap"] * 4
+                             "(tab) => getComputedStyle(tab).whiteSpace)") == ["nowrap"] * 3
         # Narrower still, the context bar and the spend step aside, and the
         # names and the buttons at the end still fit.
         assert page.is_visible(".ctxslot .spent")
         page.set_viewport_size({"width": 860, "height": 768})
         page.wait_for_function("getComputedStyle(document.querySelector('.ctxslot .spent')).display === 'none'")
-        assert page.evaluate(names) == [1, 1, 1, 1]
+        assert page.evaluate(names) == [1, 1, 1]
         assert page.evaluate(look)[0]["right"] <= 860
 

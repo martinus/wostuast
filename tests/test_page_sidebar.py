@@ -1539,7 +1539,8 @@ def test_the_keys_nobody_pressed_are_gone(pair_at):
         page.press("body", "?")
         listed = page.eval_on_selector_all(
             "#help dt", "els => els.map((one) => one.textContent.trim())")
-        assert "s" in listed and "1 – 4" in listed, listed
+        # Three tabs, and `4` is the Commands view now (#411).
+        assert "s" in listed and "1 – 3" in listed and "4" in listed, listed
         for gone in ("j / k", "n", "r", "t"):
             assert gone not in listed, listed
 
@@ -1986,31 +1987,53 @@ def test_later_offers_the_choices_and_keeps_the_one_picked(ws, pair_at):
 
 
 
-def test_the_three_views_are_one_row_and_always_there(page_at):
-    """Unread, Saved and Search in one row of equal buttons over the list
-    (#391), each with an icon, the two counts in badges, a nought grey.
-    Three lines in three styles took a hundred pixels, and the first two
-    came and went with their counts, which moved the list."""
+def test_the_four_views_are_one_row_and_always_there(page_at):
+    """Unread, Saved, Search and Commands in one row of equal buttons over
+    the list (#391, #411), the two counts in badges, a nought grey. Three
+    lines in three styles took a hundred pixels, and the first two came and
+    went with their counts, which moved the list. **One row at any width
+    the list is dragged to**: the icons go first, then the words, and a
+    word is never cut to its first letter -- two rows of two were drawn,
+    and the reader asked for one."""
     _, path = page_at
     with opened(path) as page:
         page.wait_for_function("document.querySelector('#feedlink .n')")
-        seen = page.evaluate("""() => ['feedlink', 'savedlink', 'searchlink'].map((id) => {
+        look = """() => ['feedlink', 'savedlink', 'searchlink', 'cmdlink'].map((id) => {
           const it = document.getElementById(id);
           const at = it.getBoundingClientRect();
           const n = it.querySelector('.n');
-          return {top: Math.round(at.top), width: Math.round(at.width),
-                  word: it.querySelector('.viewname').textContent,
-                  icon: !!it.querySelector('svg'), n: n && n.textContent,
-                  none: !!n && n.classList.contains('none')};
-        })""")
-        assert [one["word"] for one in seen] == ["Unread", "Saved", "Search"], seen
-        assert all(one["icon"] for one in seen), seen
-        assert len({one["top"] for one in seen}) == 1, seen
-        assert max(one["width"] for one in seen) - min(one["width"] for one in seen) <= 1, seen
-        assert [one["n"] for one in seen] == ["0", "0", None], seen
+          const word = it.querySelector('.viewname');
+          const icon = it.querySelector('svg');
+          return {top: Math.round(at.top), width: at.width,
+                  word: word.textContent, title: it.title,
+                  showsWord: word.offsetWidth > 0 && word.scrollWidth <= word.offsetWidth,
+                  showsIcon: !!icon && icon.getBoundingClientRect().width > 0,
+                  n: n && n.textContent, none: !!n && n.classList.contains('none'),
+                  fits: it.parentNode.scrollWidth <= it.parentNode.clientWidth};
+        })"""
+        seen = page.evaluate(look)
+        assert [one["word"] for one in seen] == ["Unread", "Saved", "Search", "Commands"], seen
+        assert [one["n"] for one in seen] == ["0", "0", None, None], seen
         assert seen[0]["none"] and seen[1]["none"], seen
         rows = page.evaluate("document.getElementById('rows').getBoundingClientRect().top")
-        assert rows - seen[0]["top"] < 60, (rows, seen)
+        assert rows - seen[0]["top"] < 40, (rows, seen)
+        shown = {}
+        for width in (480, 340, 200):
+            page.evaluate(f"document.documentElement.style.setProperty('--sidebar-w', '{width}px')")
+            page.wait_for_function(f"document.querySelector('.views').clientWidth < {width}"
+                                   f" && document.querySelector('.views').clientWidth > {width - 40}")
+            page.wait_for_timeout(100)        # the observer's next frame
+            seen = page.evaluate(look)
+            assert len({one["top"] for one in seen}) == 1, (width, seen)
+            assert max(one["width"] for one in seen) - min(one["width"] for one in seen) < 1, (width, seen)
+            assert all(one["fits"] for one in seen), (width, seen)
+            # A word is there whole, or not at all; never cut.
+            assert len({one["showsWord"] for one in seen}) == 1, (width, seen)
+            shown[width] = (seen[0]["showsIcon"], seen[0]["showsWord"])
+            # A word that is not shown is in the button's title.
+            assert all(one["word"].lower() in one["title"].lower() for one in seen), seen
+        assert shown[480] == (True, True), shown
+        assert shown[200] == (True, False), shown
 
 # --- all unreads (#376) -------------------------------------------------------
 
