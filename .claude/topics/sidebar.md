@@ -523,7 +523,24 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **The list's scrollbar shows only while the pointer is on it.** A bar
     stands between the row and the grip, and cut the tab from its content
     in both themes. The wheel scrolls without it.
-  `test_the_chosen_row_is_a_tab_of_the_content_beside_it`.
+  - **Its outline turns into the content's edge and runs on down it**
+    (#407): it ended square at the end of the list, two lines that stopped
+    for no reason. Where the row meets the grip, a quarter circle of
+    `--flare` turns the line upright, and the ground inside the curve is
+    `--meet`, so the row widens into the content as a tab into its page;
+    above and below, a 1 px line in the row's own colour (`--gap-line`)
+    runs down the content's edge. The reader chose it from a picture over
+    the corners alone. **All of it is the grip's own background**, layers
+    under `#grip.open`: the list scrolls and clips whatever a row draws
+    outside it. The circle's middle stands 3 px into the list, so the
+    curve starts on the row's line and ends upright on the content's edge;
+    the 6 px between two rows leave no room for a larger one, and a radius
+    of the grip's 5 px could not be seen. **A corner only where the row's
+    end is in view** (`flaretop`, `flarebottom`), and no line at all when
+    the row is out of the list. A test of it reads pixels (`pixels`):
+    the shape of a gradient is in no computed style.
+  `test_the_chosen_row_is_a_tab_of_the_content_beside_it`,
+  `test_the_chosen_row_turns_into_the_content_s_edge`.
 - **A drag on an edge starts only on the main button, and ends every way a
   press can end** (`dragWidth`, for the session list's edge and every split
   tab's). It started on any button and ended only on `pointerup`. A

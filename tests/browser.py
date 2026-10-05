@@ -183,6 +183,49 @@ def contrast(front, back):
     high, low = max(one, two), min(one, two)
     return (high + 0.05) / (low + 0.05)
 
+def pixels(png):
+    """The colours of a PNG that `page.screenshot` made, as rows of
+    `(r, g, b)`: what the page drew, not what its styles say. A gradient's
+    shape is in no computed style, so a corner or a line drawn by one is
+    proven only here. The standard library only: 8 bits a channel, no
+    interlace, which is what Chromium writes."""
+    import struct
+    import zlib
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    at, data, width, height, step = 8, b"", 0, 0, 0
+    while at < len(png):
+        size, kind = struct.unpack(">I4s", png[at:at + 8])
+        body = png[at + 8:at + 8 + size]
+        if kind == b"IHDR":
+            width, height, depth, colour = struct.unpack(">IIBB", body[:10])
+            assert depth == 8 and colour in (2, 6), (depth, colour)
+            step = 3 if colour == 2 else 4
+        elif kind == b"IDAT":
+            data += body
+        at += 12 + size
+    raw = zlib.decompress(data)
+    stride = width * step
+    rows, above = [], bytearray(stride)
+    for y in range(height):
+        kind, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for x in range(stride):
+            left = line[x - step] if x >= step else 0
+            up, corner = above[x], above[x - step] if x >= step else 0
+            if kind == 1:
+                line[x] = (line[x] + left) & 255
+            elif kind == 2:
+                line[x] = (line[x] + up) & 255
+            elif kind == 3:
+                line[x] = (line[x] + (left + up) // 2) & 255
+            elif kind == 4:
+                guess = left + up - corner
+                near = min((abs(guess - left), left), (abs(guess - up), up),
+                           (abs(guess - corner), corner), key=lambda one: one[0])
+                line[x] = (line[x] + near[1]) & 255
+        rows.append([tuple(line[x:x + 3]) for x in range(0, stride, step)])
+        above = line
+    return rows
+
 def daemon_transcript(daemon):
     return daemon.transcript("s1").tail.path
 

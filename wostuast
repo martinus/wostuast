@@ -11372,6 +11372,43 @@ body {
     var(--meet) var(--gap-top, 0px), var(--meet) var(--gap-bottom, 0px),
     var(--edge) var(--gap-bottom, 0px));
 }
+/* Where the chosen row meets the content, its outline turns into the
+   content's edge with a round corner, and runs on down that edge (issue
+   407): it stopped square at the end of the list, and the reader saw two
+   lines that ended for no reason. A corner a quarter circle of `--flare`
+   round, its middle 3 px into the list, so it starts on the row's own
+   line and ends upright on the content's edge; the 6 px between two rows
+   leave no room for a larger one. The ground inside the curve is the
+   content's, so the row widens into it as a tab into its page. Each is a
+   layer of the grip's own background: the list scrolls, and clips
+   anything a row draws out of it. `openGrip` sets the colour of the line
+   (`--gap-line`, the row's own) and which corners show: none where the
+   list cuts the row off. */
+#grip.open {
+  --flare: 8px; --mid: calc(var(--grip-w) - var(--flare));
+  --corner: var(--edge) calc(var(--flare) - 1.3px), var(--gap-line) calc(var(--flare) - 1px),
+    var(--gap-line) calc(var(--flare) - .2px), var(--meet) var(--flare);
+  --flare-top: none; --flare-bottom: none;
+  --line-top: var(--gap-top); --line-bottom: var(--gap-bottom);
+  background: var(--flare-top), var(--flare-bottom),
+    linear-gradient(var(--gap-line) var(--line-top), transparent var(--line-top),
+      transparent var(--line-bottom), var(--gap-line) var(--line-bottom)),
+    linear-gradient(var(--edge) var(--gap-top),
+      var(--meet) var(--gap-top), var(--meet) var(--gap-bottom),
+      var(--edge) var(--gap-bottom));
+  background-position: 0 calc(var(--gap-top) - var(--flare) + 1px),
+    0 calc(var(--gap-bottom) - 1px), 100% 0, 0 0;
+  background-size: 100% var(--flare), 100% var(--flare), 1px 100%, 100% 100%;
+  background-repeat: no-repeat;
+}
+#grip.open.flaretop {
+  --flare-top: radial-gradient(circle var(--flare) at var(--mid) 0, var(--corner));
+  --line-top: calc(var(--gap-top) - var(--flare) + 1px);
+}
+#grip.open.flarebottom {
+  --flare-bottom: radial-gradient(circle var(--flare) at var(--mid) 100%, var(--corner));
+  --line-bottom: calc(var(--gap-bottom) + var(--flare) - 1px);
+}
 .grip:hover, .grip.dragging, #grip:hover, #grip.dragging { background: var(--needs); }
 body.dragging { cursor: col-resize; user-select: none; }
 .sidebar-head {
@@ -14628,6 +14665,7 @@ function openGrip() {
   const row = list.querySelector(".row.chosen");
   let top = 0;
   let bottom = 0;
+  let corners = [false, false];
   if (row) {
     // The whole height: the row's border is see-through, and its ground
     // shows under it.
@@ -14636,10 +14674,17 @@ function openGrip() {
     const from = grip.getBoundingClientRect().top;
     top = Math.max(at.top, seen.top) - from;
     bottom = Math.min(at.bottom, seen.bottom) - from;
+    // A corner only where the row's own end is in view: where the list
+    // cuts it off, there is no end to turn (#407).
+    corners = [at.top >= seen.top, at.bottom <= seen.bottom];
     if (bottom <= top) top = bottom = 0;
   }
   grip.style.setProperty("--gap-top", top + "px");
   grip.style.setProperty("--gap-bottom", bottom + "px");
+  grip.classList.toggle("open", bottom > top);
+  grip.classList.toggle("flaretop", bottom > top && corners[0]);
+  grip.classList.toggle("flarebottom", bottom > top && corners[1]);
+  if (bottom > top) grip.style.setProperty("--gap-line", getComputedStyle(row).borderTopColor);
   if (row !== gripRow) {
     if (gripRow) gripWatch.unobserve(gripRow);
     if (row) gripWatch.observe(row);
