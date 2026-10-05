@@ -105,6 +105,12 @@ Keep the breaks list in the scratchpad; it is about one fix.
   out and the test still read a line, the hover's `--edge-bright` (#396).
   Move the pointer off (`page.mouse.move` to an empty spot) before reading
   a style of what was clicked.
+- **A pointer that jumps from an element the page replaced leaves
+  nothing.** "Custom…" replaced the button under the pointer with a form,
+  and `page.mouse.move` away from there fired no `mouseleave`: a break
+  that closed the form when the pointer left passed (#406). A hand moves
+  over the new content first, so the test does too: `page.hover` on it,
+  then away.
 - **A filtered run that prints nothing has not run.** `pytest ... | grep -E
   "passed|failed"` printed an empty line for `--count 3`, a flag of a
   plugin that is not installed: pytest stopped on a usage error, and the
@@ -205,6 +211,10 @@ luck, and on `main` too, to tell whose it is.
     `test_the_keys_nobody_pressed_are_gone` asserted "1 – 3": found again
     only by the whole suite, the day this bullet was written. Grep for
     the words the page shows, not only for the code's names.
+    **And read every line the grep prints**: a search for the fourth
+    tab's names was cut with `| head`, and the two tests it would have
+    shown -- `test_page_tabs.py` counting four tabs -- failed in the
+    whole suite instead (#411). `grep -c` or `-l` first, then each file.
 - **No test reaches the tmux it runs under.** `ws` points `TMUX` at a
   socket in the test's own folder, where no server runs: a plain `tmux`
   talks to the server `TMUX` names. Not `TMUX_TMPDIR`: a socket under

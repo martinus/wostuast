@@ -356,7 +356,11 @@ stays behind on the machine, and one lost it when the session restarted.
 **A mockup is drawn the same way**: `--eval` builds the proposal inside the
 real page, with its real CSS. A standalone HTML file with the CSS copied by
 hand drifts from the page, and needs the browser path that `browser.py`
-already knows. It reads the checkout when it starts, so run
+already knows. **Run them by their command line, never by their functions**:
+`stage.py` points `HOME` and `CLAUDE_CONFIG_DIR` at its throwaway home in
+`main`, so a script that called `stage.serve` itself wrote the command
+fixtures into the real `~/.claude`, and the session's own skill list
+showed them. It reads the checkout when it starts, so run
 it again after an edit. A spacing report
 went round three times, and three pull requests, because every fix was
 proven by a test measuring the box around each block, which said 6 px, while
@@ -472,6 +476,13 @@ reliable shape when making several edits at once. Three scars on that shape:
   - **A pipe's status is its last command's.** `pytest … | tail -1 && …` ran
     the next step after red tests, because `tail` succeeded. Put
     `set -o pipefail;` first, or read the count before the next step.
+- **A replace from one anchor to another deletes all that stands between
+  them.** A slice from `dayValue` to the next function's comment took
+  `setReminder` with it; the page still parsed, no name was defined twice,
+  and only the reminder tests, failing in a way that pointed elsewhere,
+  said so. After such an edit, compare the names defined before and after:
+  `diff <(git show HEAD:wostuast | grep -o "^\(async \)\?function [a-zA-Z]*" | sort) <(grep -o "^\(async \)\?function [a-zA-Z]*" wostuast | sort)`
+  -- every line it prints is a function gone or added.
 - **Grep for a name before you define it**: a second top-level `def` or
   `function` silently replaces the first. `test_no_name_is_defined_twice`
   holds it now; `load_settings` was written twice in one session. It runs
