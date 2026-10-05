@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import time
 
@@ -2821,6 +2822,48 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
         page.wait_for_selector(".feed .empty")
         assert daemon.store.saved == []
 
+
+
+def test_a_command_and_a_system_message_are_saved_too(ws, page_at):
+    """Every block with a link has a bookmark (#424): a `!` command with
+    what it printed, and a message of the harness, not only prompts and
+    answers. Each card draws it as the transcript does -- the command in
+    the reader's box in the fixed face, the harness's words in its dashed
+    box -- and says "you" or "system"."""
+    daemon, url = page_at
+    path = Path(daemon.store.sessions["s1"].transcript_path)
+    with path.open("a") as out:
+        out.write(conftest.records(
+            conftest.record("you", "<bash-input>make test</bash-input>",
+                            ts="2026-09-18T14:05:00.000Z"),
+            conftest.record("you", "<bash-stdout>ok 3</bash-stdout><bash-stderr></bash-stderr>",
+                            ts="2026-09-18T14:05:01.000Z"),
+            conftest.record("you", "[Request interrupted by user]",
+                            ts="2026-09-18T14:06:00.000Z")))
+    with opened(url) as page:
+        wait_for_map(page)
+        shell, note = ".turn.mine:has(.bubble.shell)", ".turn.aside"
+        for turn in (shell, note):
+            page.hover(turn)
+            page.click(f"{turn} .who .save")
+            page.wait_for_selector(f"{turn} .who .save.on")
+        assert [(one["who"], one["text"]) for one in daemon.store.saved] == [
+            ("system", "Interrupted."), ("shell", "! make test\nok 3")]
+        page.click("#savedlink")
+        page.wait_for_function("document.querySelectorAll('.feedentry').length === 2")
+        assert page.eval_on_selector_all(
+            ".feedentry .feedwho", "els => els.map((e) => e.textContent)") == ["system", "you"]
+        assert page.locator(".feedentry >> nth=0 >> .bubble.aside").inner_text() == "Interrupted."
+        command = page.locator(".feedentry >> nth=1 >> .bubble.mine.shell pre")
+        assert command.inner_text() == "! make test\nok 3"
+        faces = page.evaluate("""() => [
+          getComputedStyle(document.querySelector('.feedentry .bubble.shell')).fontFamily,
+          (() => { const probe = document.createElement('div');
+                   probe.style.fontFamily = 'var(--mono)'; document.body.appendChild(probe);
+                   const face = getComputedStyle(probe).fontFamily; probe.remove();
+                   return face; })(),
+          getComputedStyle(document.querySelector('.feedentry .bubble.aside')).borderTopStyle]""")
+        assert faces[0] == faces[1] and faces[2] == "dashed", faces
 
 
 def test_saved_turns_stand_in_columns_and_hold_still_on_hover(ws, page_at):
