@@ -70,7 +70,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   card in its session's colour: click it to open the session, or point at
   it for "mark read". <kbd>Esc</kbd> goes back to the session.
 - **You can say "later".** Point at a card, click the clock and pick: in
-  20 minutes, in an hour, in three hours, or tomorrow at nine. Until then
+  30 minutes, in an hour, in three hours, tomorrow at 08:00, Monday at
+  08:00, or "Custom…" for a day and a time of your own. Until then
   the card shows a clock and the time it comes back, and a session that
   waits stands with the ready ones, as with "not now". Then it needs you
   again, whatever it is doing: the card turns amber and says "reminder",

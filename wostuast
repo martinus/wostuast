@@ -8628,7 +8628,7 @@ class Serving:
         now = time.time()
         if (not isinstance(at, (int, float)) or isinstance(at, bool)
                 or not (at == 0 or now < at <= now + REMIND_MOST)):
-            self.refuse(session_id, 400, "a reminder is 0 or a moment in the next week")
+            self.refuse(session_id, 400, "a reminder is 0 or a moment in the next 31 days")
             return
         kept = self.daemon.store.remind(session_id, float(at))
         self.reply_json({"id": session_id, "remind_at": kept, "done": True})
@@ -9166,9 +9166,10 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "save": (Serving.save, "saved turn", ""),
 }
 
-#: The furthest a reminder may be set, in seconds: a week. The page offers
-#: tomorrow morning at most; this only bounds what a POST may write.
-REMIND_MOST = 7 * 24 * 3600
+#: The furthest a reminder may be set, in seconds: 31 days. The page offers
+#: a day up to 30 days ahead (#406); this bounds what a POST may write. A
+#: week was too short for "Monday at 08:00" on a Monday morning.
+REMIND_MOST = 31 * 24 * 3600
 
 
 def make_server(daemon: Daemon, port: int) -> Any:
@@ -11624,6 +11625,25 @@ body.dragging { cursor: col-resize; user-select: none; }
   line-height: 1.3; color: var(--ink); cursor: pointer;
 }
 .row .remindmenu button:hover { background: var(--chosen); color: var(--ink-bright); }
+/* "Custom..." (issue 406): a day and a time, as Slack asks for them, and a
+   button that says when. */
+.row .remindmenu.custom { min-width: 210px; }
+.row .remindmenu input, .row .remindmenu select {
+  margin: 2px 6px 4px; padding: 5px 8px; border-radius: 5px;
+  border: 1px solid var(--edge-bright); background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 13px;
+}
+.row .remindmenu input:focus, .row .remindmenu select:focus {
+  outline: none; border-color: var(--needs);
+}
+.row .remindmenu .remindtime { font-family: var(--mono); }
+.row .remindmenu .remindwhy { padding: 2px 10px; font-size: 12px; color: var(--needs); }
+.row .remindmenu .remindwhy:empty { display: none; }
+.row .remindmenu button.remindset {
+  margin: 6px 6px 2px; text-align: center; background: var(--chosen);
+  color: var(--ink-bright);
+}
+.row .remindmenu button.remindset:hover { color: var(--needs); }
 
 /* The three views over the groups -- unread (issue 376), saved (377) and
    search (379) -- in one row of equal buttons (issue 391), each always
@@ -13782,17 +13802,42 @@ function reminderAt(s) {
   return (day ? day + " " : "") + clock(s.remind_at);
 }
 
-// The choices, as Slack offers them, in whole words (#394). Tomorrow is
-// nine in the morning.
-const REMIND_IN = [["In 20 minutes", 20 * 60], ["In 1 hour", 3600],
-                   ["In 3 hours", 3 * 3600], ["Tomorrow, 9:00", null]];
+// The choices, as Slack offers them, in whole words (#394, #406): a
+// number of seconds from now, or a morning. "Custom..." comes after them.
+const REMIND_IN = [["In 30 minutes", 30 * 60], ["In 1 hour", 3600],
+                   ["In 3 hours", 3 * 3600], ["Tomorrow at 08:00", "tomorrow"],
+                   ["Monday at 08:00", "monday"]];
+// How far ahead a custom day may be. The daemon takes 31 days
+// (`REMIND_MOST`), so the last evening of the 30th fits.
+const REMIND_DAYS = 30;
 
-function remindMoment(seconds) {
-  if (seconds) return serverNow() + seconds;
+function remindMoment(choice) {
+  if (typeof choice === "number") return serverNow() + choice;
   const at = new Date(serverNow() * 1000);
-  at.setDate(at.getDate() + 1);
-  at.setHours(9, 0, 0, 0);
+  // Tomorrow, or the next Monday that is not today: on a Monday, "Monday"
+  // is next week's, as Slack's "next week" is.
+  at.setDate(at.getDate() + (choice === "tomorrow" ? 1 : (8 - at.getDay()) % 7 || 7));
+  at.setHours(8, 0, 0, 0);
   return at.getTime() / 1000;
+}
+
+// A day as the reader reads it on this page: "Today", "Tomorrow", then
+// "Wed 7 Oct" -- `dayOf`'s words, with the weekday a reminder needs.
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function dayName(at, ahead) {
+  if (ahead < 2) return ahead ? "Tomorrow" : "Today";
+  return WEEKDAYS[at.getDay()] + " " + at.getDate() + " " + MONTHS[at.getMonth()];
+}
+
+// A time as the reader types it, on a 24-hour clock: "22:10", "2210",
+// "9:05", "9". [hour, minute], or null for anything else.
+function readTime(text) {
+  const found = /^\s*(\d{1,2})(?:[:.h]?(\d{2}))?\s*$/.exec(text);
+  if (!found) return null;
+  const hour = Number(found[1]);
+  const minute = Number(found[2] || 0);
+  return hour < 24 && minute < 60 ? [hour, minute] : null;
 }
 
 async function setReminder(id, at) {
@@ -13809,17 +13854,87 @@ async function setReminder(id, at) {
 function openReminders(row, id) {
   const menu = row.querySelector(".remindmenu");
   menu.replaceChildren();
+  menu.classList.remove("custom");
   put(menu, "div", "menuhead", "Remind me");
-  for (const [word, seconds] of REMIND_IN) {
+  for (const [word, choice] of REMIND_IN) {
     const pick = put(menu, "button", "link", word);
     pick.addEventListener("click", (press) => {
       press.stopPropagation();
       menu.hidden = true;
-      setReminder(id, remindMoment(seconds));
+      setReminder(id, remindMoment(choice));
     });
   }
+  put(menu, "button", "link", "Custom…").addEventListener("click", (press) => {
+    press.stopPropagation();
+    customReminder(menu, id);
+  });
   menu.hidden = false;
-  row.addEventListener("mouseleave", () => { menu.hidden = true; }, { once: true });
+  // A custom day stays open when the pointer leaves: the date box's own
+  // calendar is outside the row, and going to it closed the menu.
+  row.addEventListener("mouseleave", () => {
+    if (!menu.classList.contains("custom")) menu.hidden = true;
+  }, { once: true });
+}
+
+// "Custom..." (#406): a day, today unless the reader picks another, and a
+// time, the next full hour unless they type another. It stays open until
+// it is set, Escape, or a press anywhere else. Neither is the browser's
+// own date or time box: those write the day and the hour as the browser's
+// language does, and the reader's said "10/05/2026" and "06:00 AM"; the
+// page says "Wed 7 Oct" and "22:10" everywhere else.
+function customReminder(menu, id) {
+  menu.replaceChildren();
+  menu.classList.add("custom");
+  put(menu, "div", "menuhead", "Remind me on");
+  const now = new Date(serverNow() * 1000);
+  const next = new Date(now);
+  next.setHours(next.getHours() + 1, 0, 0, 0);
+  const day = put(menu, "select", "remindday");
+  for (let ahead = 0; ahead <= REMIND_DAYS; ahead++) {
+    const at = new Date(now);
+    at.setDate(at.getDate() + ahead);
+    const option = put(day, "option", "", dayName(at, ahead));
+    option.value = String(ahead);
+  }
+  day.value = next.getDate() === now.getDate() ? "0" : "1";   // after 23:00, tomorrow
+  const time = put(menu, "input", "remindtime");
+  time.type = "text";
+  time.inputMode = "numeric";
+  time.spellcheck = false;
+  time.placeholder = "22:10";
+  time.value = String(next.getHours()).padStart(2, "0") + ":00";
+  const why = put(menu, "div", "remindwhy");
+  const set = put(menu, "button", "remindset", "Set reminder");
+  const close = () => {
+    menu.hidden = true;
+    menu.classList.remove("custom");
+    document.removeEventListener("pointerdown", outside, true);
+  };
+  const outside = (press) => { if (!menu.contains(press.target)) close(); };
+  document.addEventListener("pointerdown", outside, true);
+  const go = () => {
+    const clockAt = readTime(time.value);
+    if (!clockAt) { why.textContent = "Write the time as 22:10."; return; }
+    const on = new Date(serverNow() * 1000);
+    on.setDate(on.getDate() + Number(day.value));
+    on.setHours(clockAt[0], clockAt[1], 0, 0);
+    const at = on.getTime() / 1000;
+    if (at <= serverNow()) { why.textContent = "That time has passed."; return; }
+    close();
+    setReminder(id, at);
+  };
+  set.addEventListener("click", (press) => { press.stopPropagation(); go(); });
+  for (const box of [day, time]) {
+    box.addEventListener("keydown", (press) => {
+      if (press.key !== "Enter" && press.key !== "Escape") return;
+      // Not the page's: Escape there leaves a view, and Enter opens a row.
+      press.preventDefault();
+      press.stopPropagation();
+      if (press.key === "Enter") go(); else close();
+    });
+  }
+  time.focus();
+  time.select();
 }
 
 // A reminder that has come ends when the reader opens its session, as

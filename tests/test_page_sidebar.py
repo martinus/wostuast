@@ -1878,7 +1878,9 @@ def test_later_offers_the_choices_and_keeps_the_one_picked(ws, pair_at):
         # abbreviations in a line of their own were missed.
         words = page.eval_on_selector_all(
             f"{row} .remindmenu button", "els => els.map((e) => e.textContent)")
-        assert words == ["In 20 minutes", "In 1 hour", "In 3 hours", "Tomorrow, 9:00"]
+        # As Slack offers them (#406).
+        assert words == ["In 30 minutes", "In 1 hour", "In 3 hours", "Tomorrow at 08:00",
+                         "Monday at 08:00", "Custom…"]
         assert page.text_content(f"{row} .remindmenu .menuhead") == "Remind me"
         assert page.evaluate(f"document.querySelector('{row}').offsetHeight") == tall
         # A press between the choices chooses nothing.
@@ -1891,6 +1893,95 @@ def test_later_offers_the_choices_and_keeps_the_one_picked(ws, pair_at):
         assert abs(at - (time.time() + 3600)) < 30, at
         assert page.evaluate("state.chosen") == "s1"     # not a choice of the row
         assert page.is_visible(f"{row} .age.when svg")
+        # The mornings, from a clock set to a Monday at 09:00 and to a
+        # Sunday at 20:00: tomorrow, and the next Monday that is not today,
+        # at eight in the reader's own time. On a Monday that is next
+        # week's, more than 7 days on: the daemon takes it.
+        mornings = page.evaluate("""() => {
+          const kept = state.skew;
+          const from = (day, hour) => {
+            const at = new Date(2026, 9, day, hour, 0, 0);    // 5 Oct 2026 is a Monday
+            state.skew = at.getTime() / 1000 - Date.now() / 1000;
+            return ['tomorrow', 'monday'].map((one) => {
+              const then = new Date(remindMoment(one) * 1000);
+              return [then.getDay(), then.getHours(), then.getMinutes(),
+                      Math.round((then - at) / 3600000)];
+            });
+          };
+          const seen = [from(5, 9), from(11, 20)];
+          state.skew = kept;
+          return seen;
+        }""")
+        assert mornings == [[[2, 8, 0, 23], [1, 8, 0, 167]],
+                            [[1, 8, 0, 12], [1, 8, 0, 12]]], mornings
+
+        # Custom: a day and a time. It stays open when the pointer leaves,
+        # a moment past is said, not sent, and Enter sets it.
+        page.hover(row)
+        page.click(f"{row} .remindlater")       # a set reminder: off again
+        page.wait_for_function(
+            "state.sessions.find((s) => s.id === 's2').remind_at === 0")
+        page.hover(row)
+        page.click(f"{row} .remindlater")
+        page.click(f"{row} .remindmenu button:text('Custom…')")
+        page.wait_for_selector(f"{row} .remindmenu select.remindday")
+        # In the page's own words and on a 24-hour clock, whatever the
+        # browser's language: its own boxes said "10/05/2026" and "06:00 AM".
+        days = page.eval_on_selector_all(f"{row} .remindday option",
+                                          "els => els.map((e) => e.textContent)")
+        assert days[:2] == ["Today", "Tomorrow"] and len(days) == 31, days
+        assert all(len(one.split()) == 3 and one.split()[0] in
+                   ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat") for one in days[2:]), days
+        assert page.evaluate("document.activeElement.className") == "remindtime"
+        shown = page.input_value(f"{row} .remindtime")
+        assert len(shown) == 5 and shown.endswith(":00") and 0 <= int(shown[:2]) < 24, shown
+        # Over the form first, as a hand goes: the button under the pointer
+        # is gone, and a jump from where it stood leaves nothing.
+        page.hover(f"{row} .remindset")
+        page.mouse.move(900, 500)
+        assert page.is_visible(f"{row} .remindtime")
+        page.select_option(f"{row} .remindday", "0")
+        page.fill(f"{row} .remindtime", "25:00")
+        page.click(f"{row} .remindset")
+        assert page.text_content(f"{row} .remindwhy") == "Write the time as 22:10."
+        page.fill(f"{row} .remindtime", "00:00")
+        page.click(f"{row} .remindset")
+        assert page.text_content(f"{row} .remindwhy") == "That time has passed."
+        assert daemon.store.sessions["s2"].remind_at == 0
+        page.select_option(f"{row} .remindday", "3")
+        page.fill(f"{row} .remindtime", "1430")
+        page.press(f"{row} .remindtime", "Enter")
+        page.wait_for_function(
+            "state.sessions.find((s) => s.id === 's2').remind_at > 0")
+        set_at = page.evaluate("""() => {
+            const at = new Date(state.sessions.find((s) => s.id === 's2').remind_at * 1000);
+            const want = new Date(serverNow() * 1000);
+            want.setDate(want.getDate() + 3);
+            return [at.toDateString() === want.toDateString(), at.getHours(), at.getMinutes()]; }""")
+        assert set_at == [True, 14, 30], set_at
+        assert page.is_hidden(f"{row} .remindmenu")
+        assert page.evaluate("state.chosen") == "s1"
+        # Escape closes it and sets nothing, and goes no further: over a
+        # view, the page's Escape left the view too. A press elsewhere
+        # closes it as well.
+        page.hover(row)
+        page.click(f"{row} .remindlater")
+        page.wait_for_function(
+            "state.sessions.find((s) => s.id === 's2').remind_at === 0")
+        page.click("#savedlink")
+        page.wait_for_function("state.feed === 'saved'")
+        page.hover(row)
+        page.click(f"{row} .remindlater")
+        page.click(f"{row} .remindmenu button:text('Custom…')")
+        page.press(f"{row} .remindtime", "Escape")
+        assert page.is_hidden(f"{row} .remindmenu")
+        assert page.evaluate("state.feed") == "saved"
+        page.hover(row)
+        page.click(f"{row} .remindlater")
+        page.click(f"{row} .remindmenu button:text('Custom…')")
+        page.mouse.click(900, 500)
+        assert page.is_hidden(f"{row} .remindmenu")
+        assert daemon.store.sessions["s2"].remind_at == 0
 
 
 
