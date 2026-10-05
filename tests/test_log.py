@@ -569,6 +569,63 @@ def test_no_name_is_defined_twice():
     assert len(names) > 100 and len(script) > 100, "the patterns stopped matching"
 
 
+#: A function this long is read in pieces and changed in pieces, and its
+#: scars hide each other (#436). These were past the limit when the rule
+#: was written; each may only shrink, and goes from the list once it is
+#: under. Python by `ast`, methods as `Class.method`; the page's top-level
+#: `function`s as `page:name`, to the `}` that closes them.
+LINES_MOST = 100
+LONGER_ALREADY = {
+    "EventFollower.new_lines": 117, "pick_base": 124, "worktree_diff": 149,
+    "build_report": 153, "page:fillRow": 109, "page:drawFiles": 169,
+    "page:drawDiff": 171, "page:resubscribe": 101,
+}
+
+
+def function_lengths() -> dict[str, int]:
+    """Every function of the program and its length in lines."""
+    import ast
+    import pathlib
+    import re
+
+    program = (pathlib.Path(__file__).resolve().parent.parent
+               / "wostuast").read_text(encoding="utf-8")
+    found: dict[str, int] = {}
+
+    def walk(nodes, prefix=""):
+        for node in nodes:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found[prefix + node.name] = node.end_lineno - node.lineno + 1
+                walk(node.body, prefix + node.name + ".")
+            elif isinstance(node, ast.ClassDef):
+                walk(node.body, prefix + node.name + ".")
+
+    walk(ast.parse(program).body)
+    lines = program[program.index('PAGE = r"""'):].split("\n")
+    for at, line in enumerate(lines):
+        named = re.match(r"^(?:async )?function (\w+)", line)
+        if named:
+            end = next(k for k in range(at + 1, len(lines)) if lines[k] == "}")
+            found["page:" + named.group(1)] = end - at + 1
+    return found
+
+
+def test_no_function_grows_past_the_limit():
+    """A function past `LINES_MOST` lines is not written, and one already
+    past it does not grow (#436): a change to it first moves the part it
+    touches into a helper of its own, with that part's comments. Rewriting
+    them all at once would risk the fixes they hold. One that shrank under
+    the limit leaves the list, so the list only ever gets shorter."""
+    lengths = function_lengths()
+    assert len(lengths) > 600, "the patterns stopped matching"
+    over = {name: count for name, count in lengths.items()
+            if count > LONGER_ALREADY.get(name, LINES_MOST)}
+    assert not over, f"past {LINES_MOST} lines, or longer than it was: {over}"
+    under = sorted(name for name in LONGER_ALREADY
+                   if lengths.get(name, 0) <= LINES_MOST)
+    assert not under, f"under the limit now, so off LONGER_ALREADY: {under}"
+
+
 def test_every_rules_file_is_routed_to_and_every_route_is_a_file():
     """The rules are one file a subject in `.claude/topics/`, read only when
     `CLAUDE.md` sends an agent there. A file nothing routes to is a subject
