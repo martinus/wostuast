@@ -2784,6 +2784,45 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
 
 
 
+def test_saved_turns_stand_in_columns_and_hold_still_on_hover(ws, page_at):
+    """Like Google Keep (#404): as many columns as fit, the newest along the
+    top, no card over another, and a word too long for a card broken in it
+    rather than out of it. The links a card shows on hover move nothing
+    (#405): a `.link`'s margin made its line 3 px taller, and every card
+    under it moved down. A narrower window takes the columns away."""
+    daemon, url = page_at
+    now = time.time()
+    path = "see /" + "/".join(["a_long_folder_name"] * 12) + "/cache.py"
+    for n in reversed(range(5)):
+        daemon.store.save({"id": "s1", "seq": n, "ts": float(int(now) - 60 * n),
+                           "at": now - n,
+                           "text": path if n == 0 else "word " * (4 + 30 * (n % 2))}, True)
+    columns = ("new Set([...document.querySelectorAll('.feedentry')]"
+               ".map((e) => Math.round(e.getBoundingClientRect().left))).size")
+    with opened(url) as page:
+        page.set_viewport_size({"width": 1700, "height": 900})
+        page.click("#savedlink")
+        page.wait_for_function("document.querySelectorAll('.feedentry').length === 5")
+        page.wait_for_function(f"{columns} === 3")
+        cards = """els => els.map((e) => { const r = e.getBoundingClientRect();
+                     return [r.left, r.top, r.width, r.bottom, e.scrollWidth - e.clientWidth]; })"""
+        before = page.eval_on_selector_all(".feedentry", cards)
+        # The newest three start the three columns, side by side.
+        assert len({round(one[1]) for one in before[:3]}) == 1, before
+        assert [one[0] for one in before[:3]] == sorted(one[0] for one in before[:3])
+        for n, one in enumerate(before):
+            assert one[4] <= 0, ("a word runs out of the card", n, one)
+            for other in before[n + 1:]:
+                if round(other[0]) == round(one[0]):
+                    assert other[1] >= one[3] or one[1] >= other[3], (one, other)
+        page.hover(".feedentry >> nth=0")
+        page.wait_for_selector(".feedentry >> nth=0 >> button:text('done')")
+        assert page.eval_on_selector_all(".feedentry", cards) == before
+        page.set_viewport_size({"width": 900, "height": 900})
+        page.wait_for_function(f"{columns} === 1")
+
+
+
 # --- search every session (#379) ----------------------------------------------
 
 

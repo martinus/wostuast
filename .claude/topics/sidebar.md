@@ -110,6 +110,24 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     left the view. Three views each built their entries by hand; one
     helper keeps them alike. A test presses an action after `hover`:
     Playwright waits for a button that is not drawn and never presses it.
+  - **The cards stand on a board, as Google Keep's notes** (`putBoard`,
+    `layoutCards`, #404, #408): as many columns of at least `CARD_MIN` as
+    fit, each card under the shortest column, so the newest stand along the
+    top and read across. One column of 90ch at the left left most of a wide
+    screen empty, in all three views. **Placed by hand, not by CSS
+    `columns`**: those fill the first column down before the next, so the
+    newest were all at the left. The cards keep their order in the page, so
+    a test and the keys meet them newest first. A `ResizeObserver` on the
+    board and on each card lays out again on the next frame -- a card grows
+    when its code is painted, the board when the window does -- and a
+    layout inside the observer itself is the loop the browser complains
+    of. A word too long for the card breaks in it (`overflow-wrap`): a path
+    ran out of the card.
+  - **The links on a card's hover take no room** (#405): a `.link` carries
+    `margin-top`, and in the card's top line, aligned on the baseline, it
+    made the line 3 px taller, so the card grew and every card under it
+    moved down. `.feedtop .link` takes the margin off.
+  `test_saved_turns_stand_in_columns_and_hold_still_on_hover`.
   - **A search excerpt is text without its Markdown signs** (`unmarked`,
     #395): a fence, a bold and a code tick are dropped on the page, and the
     hits are marked after, on what is shown, so a hit's place cannot drift.
