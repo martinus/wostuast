@@ -565,7 +565,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `--flare` turns the line upright, and the ground inside the curve is
     `--meet`, so the row widens into the content as a tab into its page;
     above and below, a 1 px line in the row's own colour (`--gap-line`)
-    runs down the content's edge. The reader chose it from a picture over
+    runs down the content's edge.
+    - **The line is mixed from the row's `--hue`, never read off its
+      border** (`--gap-hue`, #416): the border fades in over .2 s, and read
+      at a choice it was all but transparent, so every click left the line
+      and the corners colourless until the next push drew them again. A
+      custom property does not transition. A test that reads a colour
+      after a choice waits for `getAnimations()` to be empty, and reads
+      nothing a push could have refreshed.
+      `test_the_outline_keeps_its_colour_when_another_row_is_chosen`. The reader chose it from a picture over
     the corners alone. **All of it is the grip's own background**, layers
     under `#grip.open`: the list scrolls and clips whatever a row draws
     outside it. The circle's middle stands 3 px into the list, so the

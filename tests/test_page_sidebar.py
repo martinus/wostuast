@@ -610,6 +610,37 @@ def test_the_chosen_row_turns_into_the_content_s_edge(rows_at):
         assert all(near(dot, edge) for line in shot for dot in line), "a line with no row"
 
 
+def test_the_outline_keeps_its_colour_when_another_row_is_chosen(rows_at):
+    """The line down the content's edge is the chosen row's colour from the
+    moment it is chosen (#416). It was copied from the row's computed
+    border while the row was still fading into it, so a click left it all
+    but transparent, until the next push drew it again."""
+    with open_rows(rows_at) as page:
+        page.set_viewport_size({"width": 1100, "height": 600})
+        page.click('.row[data-id="fresh"]', position={"x": 5, "y": 5})
+        page.wait_for_function("state.chosen === 'fresh'")
+        page.mouse.move(900, 300)
+        page.wait_for_function(
+            "document.querySelector('.row.chosen').getAnimations().length === 0")
+        for other in ("idle", "fresh"):
+            page.click(f'.row[data-id="{other}"]', position={"x": 5, "y": 5})
+            page.mouse.move(900, 300)
+            page.wait_for_function(f"state.chosen === '{other}'")
+            # Settled, and no push since: the line must be the row's own.
+            page.wait_for_function(
+                "document.querySelector('.row.chosen').getAnimations().length === 0")
+            seen = page.evaluate("""() => {
+              const probe = document.createElement('div');
+              probe.style.color = getComputedStyle(document.getElementById('grip'))
+                .getPropertyValue('--gap-line');
+              document.body.appendChild(probe);
+              const line = getComputedStyle(probe).color;
+              probe.remove();
+              return [line, getComputedStyle(document.querySelector('.row.chosen')).borderTopColor];
+            }""")
+            assert seen[0] == seen[1], (other, seen)
+
+
 def test_a_drag_on_an_edge_starts_only_by_hand_and_always_stops(page_at):
     """A drag started on any button, held no capture, and stopped only on
     `pointerup`. A right-click on the grip opens the context menu on Linux
