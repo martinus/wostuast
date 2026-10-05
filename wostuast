@@ -1187,6 +1187,8 @@ class Session:
     #: its Bash tool (#422). Such a session is no row of its own; the page
     #: draws it as a line under that one. See `Store.parent_of`.
     started_by: str = ""
+    #: The pid `started_by` was looked up for, so it is looked up once.
+    started_pid: int = 0
     #: Its first event: how long a child has run, on its parent's row.
     started_at: float = 0.0
     #: The subagents the Agent tool started in this session, by `agent_id`,
@@ -1778,10 +1780,19 @@ class Store:
             session.pane = pane if PANE_PATTERN.match(pane) else ""
         if "pid" in event:
             session.pid = to_int(event.get("pid"))
-        # The agent that ran this one, by its process (#422). Found once,
-        # and only while that agent's session is here to be found.
-        if not session.started_by and to_int(event.get("started_by")) > 0:
-            session.started_by = self.parent_of(session, to_int(event["started_by"]))
+        # The agent that ran this one, by its process (#422). Every event
+        # that carries the key decides: a `claude -p` resumed later at a
+        # terminal is nobody's child, and its events say 0 -- kept, it was
+        # hidden under its old parent while it waited for the reader. A pid
+        # is looked up once: a Remote Control worker's is `claude rc`'s,
+        # which has no session, and every event of it scanned them all.
+        if "started_by" in event:
+            by = to_int(event.get("started_by"))
+            if by <= 0:
+                session.started_by, session.started_pid = "", 0
+            elif by != session.started_pid:
+                session.started_pid = by
+                session.started_by = self.parent_of(session, by)
         note_subagent(session, event, name, ts)
 
         handler = _HANDLERS.get(name)
@@ -2758,6 +2769,15 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
             what = given.get("description") if isinstance(given, dict) else ""
             session.agent_asks = (session.agent_asks
                                   + [clip(str(what or ""), 120)])[-SUBAGENTS_HELD:]
+        elif tool in AGENT_TOOLS and name == "PostToolUseFailure":
+            # A call that failed started no subagent: its description must
+            # not name the next one, and every one after it.
+            session.agent_asks = session.agent_asks[1:]
+        elif name in ("UserPromptSubmit", "Stop", "StopFailure"):
+            # A call declined in its dialog fires no hook at all, so a turn
+            # boundary is where what it asked for is let go: its subagent
+            # started at once, or never.
+            session.agent_asks = []
         elif tool in AGENT_TOOLS and name == "PostToolUse":
             said = event.get("tool_response")
             if isinstance(said, dict) and isinstance(said.get("description"), str):
@@ -9498,8 +9518,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
             # And such an agent may have been run by another one, from its
             # Bash tool: the page draws it under that one's row (#422).
             # Only then, so an agent at a terminal pays nothing for it.
-            record["started_by"] = (0 if reads
-                                    else claude_from(parent_pid(record["pid"])))
+            # Its own `try`: a process name above that is not UTF-8 raised
+            # in `read_text`, and the event was lost, not only the link.
+            try:
+                record["started_by"] = (0 if reads
+                                        else claude_from(parent_pid(record["pid"])))
+            except Exception:
+                record["started_by"] = 0
             record["shell_pid"] = os.getppid()
             append_event(record, stamp=True)    # `ts`, under the log's lock
             stand_down()
@@ -14723,10 +14748,18 @@ function bandOf(s) {
 // and nothing that counts sessions counts it: it is a line under its
 // parent's row (`fillKids`). It came and went in a second as a row, and
 // nothing said whose it was.
+//
+// Never one that may need the reader: one with a pane of its own, or
+// waiting -- hidden, its dialog had no row, no title and no alert. Nor one
+// still working under a parent that is over (killed, or a `/clear` it was
+// linked across): its line stood under a folded history.
 function childIds() {
-  const ids = new Set(state.sessions.map((s) => s.id));
-  return new Set(state.sessions.filter((s) => s.started_by && ids.has(s.started_by))
-    .map((s) => s.id));
+  const byId = new Map(state.sessions.map((s) => [s.id, s]));
+  return new Set(state.sessions.filter((s) => {
+    const parent = s.started_by && byId.get(s.started_by);
+    if (!parent || s.pane || s.state === "needs_you") return false;
+    return !(isGone(parent) && s.state === "working");
+  }).map((s) => s.id));
 }
 
 // The sessions that are rows: every one but the children.
@@ -14823,7 +14856,9 @@ function newRow(id) {
 // says it. Ended is over: a child at its prompt has done what it was run
 // for, and a `claude -p` never waits on anybody.
 function kidsOf(s) {
-  const sessions = state.sessions.filter((one) => one.started_by === s.id).map((one) => ({
+  const children = childIds();
+  const sessions = state.sessions.filter((one) => children.has(one.id)
+                                         && one.started_by === s.id).map((one) => ({
     id: one.id, session: true, what: rowName(one),
     doing: one.reason || one.last_event || "",
     started: one.started_at || one.since,
@@ -14851,6 +14886,9 @@ function fillKids(box, s) {
     box.replaceChildren();
     const ran = kids.filter((one) => one.ended);
     for (const one of kids) if (!one.ended) putKid(box, one);
+    // The one being read stays in sight when it ends: the chosen session is
+    // never hidden from the list it is chosen in.
+    if (!open) for (const one of ran) if (one.id === state.chosen) putKid(box, one);
     // Every one that ended, though the daemon keeps only the last few of
     // the Agent tool's: the count says how many there were.
     const many = (s.agents_ran || 0) + ran.filter((one) => one.session).length;

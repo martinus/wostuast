@@ -269,6 +269,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **A child counts nowhere** (`topSessions`, `childIds`): not in the
     list, the groups, the tab's title and icon, the alerts or the unread
     feed. A child whose parent the page does not hold is a row again.
+  - **Never hide one that may need the reader**: a child with a pane of
+    its own, or one that waits, is a row, and so is one still working
+    under a parent that is over -- its line stood under a folded history.
+    A review found the first: a hidden session's dialog had no row, no
+    title and no alert. **And the chosen child stays in sight when it
+    ends**, folded or not: the chosen session is never hidden from the
+    list it is chosen in.
+  - **What an Agent call asked for is let go at a turn's edge**
+    (`agent_asks`): a call declined in its dialog fires no hook, and one
+    that failed starts nothing, so their descriptions named the next
+    subagent and every one after it. A failed call drops its own.
+    `test_a_call_that_started_nothing_names_no_subagent`.
   - **A child's change must redraw its parent's row**: `drawSessions`
     skips the draw when the listed rows did not change, and a child is in
     none, so the children go into its key. A test of that waits until the

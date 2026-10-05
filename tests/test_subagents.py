@@ -164,3 +164,60 @@ def test_the_hook_names_the_agent_that_ran_a_claude_p(ws, tmp_path):
     assert line["pid"] > 0 and line["pid"] != outer.pid
     assert line["pane"] == ""
     assert line["started_by"] == outer.pid
+
+
+def test_a_child_resumed_at_a_terminal_is_nobody_s_child(ws, monkeypatch):
+    """`claude --continue` takes the newest session of a folder, often a
+    `claude -p` an agent ran. Its events then say `started_by` 0, and it is
+    a row again: linked for good, it stayed hidden under its old parent
+    while its dialog waited. And a pid is looked up once a session, not on
+    every event: a Remote Control worker's parent has no session."""
+    store = folded(ws, event("SessionStart", sid="parent", pid=4242),
+                   child("kid", 4242))
+    assert store.sessions["kid"].started_by == "parent"
+    store.apply(event("SessionStart", sid="kid", source="resume", pane="%9", pid=6000,
+                      started_by=0))
+    assert store.sessions["kid"].started_by == ""
+    asked = []
+    real = ws.Store.parent_of
+    monkeypatch.setattr(ws.Store, "parent_of",
+                        lambda self, one, pid: asked.append(pid) or real(self, one, pid))
+    folded(ws, child("rc", 7777), child("rc", 7777, name="UserPromptSubmit"),
+           child("rc", 7777, name="Stop"))
+    assert asked == [7777]
+
+
+def test_a_call_that_started_nothing_names_no_subagent(ws):
+    """A call declined in its dialog fires no hook, and one that failed
+    starts nothing: their descriptions named the next subagent, and every
+    one after it, for the rest of the session."""
+    store = folded(
+        ws,
+        event("PreToolUse", tool_name="Agent", tool_input={"description": "declined"}),
+        event("Stop"),
+        event("UserPromptSubmit", prompt="again"),
+        event("PreToolUse", tool_name="Agent", tool_input={"description": "failed"}),
+        event("PostToolUseFailure", tool_name="Agent", tool_input={"description": "failed"}),
+        event("PreToolUse", tool_name="Agent", tool_input={"description": "the real one"}),
+        event("SubagentStart", agent_id="a1", agent_type="Explore"),
+    )
+    assert store.sessions["s1"].subagents["a1"].what == "the real one"
+
+
+def test_a_walk_that_raises_loses_no_event(ws, monkeypatch, capsys):
+    """A process name above that is not UTF-8 raised in `read_text`, and the
+    whole event was lost with the link. The walk has a `try` of its own."""
+    import io
+
+    def broken(pid):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(ws, "agent_pid", lambda: 4242)
+    monkeypatch.setattr(ws, "reads_terminal", lambda pid: False)
+    monkeypatch.setattr(ws, "claude_from", broken)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+        {"session_id": "s1", "hook_event_name": "SessionStart"})))
+    assert ws.cmd_hook(None) == 0
+    assert capsys.readouterr() == ("", "")
+    line = json.loads(ws.events_path().read_text())
+    assert (line["session_id"], line["pid"], line["started_by"]) == ("s1", 4242, 0)

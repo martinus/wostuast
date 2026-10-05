@@ -605,6 +605,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     row, because the page draws a child as a line and a line has none. An
     rc worker's `started_by` is `claude rc`, which has no session, so it
     stays a row. `claude_from` is in `HOOK_PARTS`.
+    **Every event that carries the key decides, and a pid is looked up
+    once** (`started_pid`): linked for good, a `claude -p` resumed later
+    at a terminal (`claude --continue` takes the newest session of the
+    folder) stayed hidden under its old parent while its dialog waited;
+    looked up on every event, each event of an rc worker scanned every
+    session. **The walk has a `try` of its own**: a process name above
+    that is not UTF-8 raised in `read_text`, and the event was lost, not
+    only the link. `test_a_child_resumed_at_a_terminal_is_nobody_s_child`,
+    `test_a_walk_that_raises_loses_no_event`.
     `test_the_hook_names_the_agent_that_ran_a_claude_p`,
     `test_a_child_is_linked_only_to_a_session_still_running`,
     `test_a_child_s_child_stands_under_the_first_row`.

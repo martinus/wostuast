@@ -2171,11 +2171,23 @@ def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):
                                    tool_name="Bash", tool_input={"command": "make bench"},
                                    **agent))
     ws.append_event(conftest.event("Stop", **agent))
+    # A child that may need the reader is a row: one waiting on a dialog,
+    # and one still working under a parent that is over.
+    ws.append_event(conftest.event("SessionStart", sid="asks", ts=now, **by))
+    ws.append_event(conftest.event("PermissionRequest", sid="asks", tool_name="Bash",
+                                   tool_input={"command": "rm -r build"}, ts=now, **by))
+    gone = {"cwd": str(tmp_path), "pane": "", "ts": now}
+    ws.append_event(conftest.event("SessionStart", sid="dad", pid=2, **gone))
+    ws.append_event(conftest.event("UserPromptSubmit", sid="orphan", prompt="Go on alone",
+                                   started_by=2, pid=5001, **gone))
+    ws.append_event(conftest.event("SessionEnd", sid="dad", pid=2, **gone))
     daemon.store.refresh()
     with opened(url) as page:
         lines = '.row[data-id="s1"] .kid'
         page.wait_for_function(f"document.querySelectorAll('{lines}.running').length === 2")
-        assert page.locator(".row").count() == 1
+        assert sorted(page.evaluate(
+            "Array.from(document.querySelectorAll('.row')).map((r) => r.dataset.id)")) \
+            == ["asks", "orphan", "s1"]
         running = page.locator(f"{lines}.running").all_inner_texts()
         assert "Summarise the log" in running[0]
         assert "Compare the maps" in running[1] and "make bench" in running[1]
@@ -2183,14 +2195,16 @@ def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):
         # page counts it nowhere. s1 is on screen, so it is read.
         assert page.evaluate("state.sessions.find((s) => s.id === 'over').unread")
         assert page.evaluate("unreadSessions().length") == 0
-        assert "working" not in page.title(), page.title()
+        counted = page.evaluate("""() => { let seen = null; const real = tabTitle;
+          tabTitle = (rows) => { seen = rows.map((r) => r.id); return real(rows); };
+          drawCounts(); tabTitle = real; return seen; }""")
+        assert sorted(counted) == ["asks", "dad", "orphan", "s1"], counted
         fold = page.locator('.row[data-id="s1"] .kidsran')
         assert fold.inner_text() == "▸ 1 subagent ran"
         assert page.locator(lines).count() == 2
         page.locator(f'{lines}[data-kid="kid"]').click()
         page.wait_for_function("state.chosen === 'kid'")
         page.wait_for_selector(f'{lines}.chosen[data-kid="kid"]')
-        assert page.locator(".row").count() == 1
         fold.click()
         page.wait_for_function(f"document.querySelectorAll('{lines}').length === 3")
         assert "Review the diff" in page.locator(lines).nth(2).inner_text()
@@ -2213,3 +2227,8 @@ def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):
         daemon.tick()
         page.wait_for_function(f"document.querySelectorAll('{lines}.running').length === 1")
         assert fold.inner_text() == "▾ 2 subagents ran"
+        # Folded, the one being read stays in sight: the chosen session is
+        # never hidden from the list it is chosen in.
+        fold.click()
+        page.wait_for_function(f"document.querySelectorAll('{lines}').length === 2")
+        assert page.locator(f'{lines}.chosen[data-kid="kid"]').count() == 1
