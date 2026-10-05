@@ -690,7 +690,9 @@ A stream opens with every row. After that, a `sessions` push carries only the
 rows that changed, and the order of the ids when it moved
 (`sessions_change`). The page lays them over the rows it holds
 (`mergeSessions`). With 100 sessions, one push was 112 KB and is now about
-2 KB.
+2 KB. Every session the page holds is frozen, and `patchSession` is the one
+way to change one, by a new object. So the sidebar fills a row again only when
+its session is another object.
 
 A slow client must not make the daemon hold memory without end. Each client
 has a short queue (`CLIENT_BACKLOG`). A client that falls too far behind is

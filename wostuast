@@ -13616,9 +13616,9 @@ async function keepRename(box, id) {
   // second away. This is so the header does not sit on the old one until then.
   const s = state.sessions.find((one) => one.id === id);
   if (s) {
-    s.name = (answer && answer.name) || "";
-    s.mine = Boolean(s.name);
-    s.label = s.name ? s.name + " \u00b7 " + s.place : s.place;
+    const name = (answer && answer.name) || "";
+    patchSession(id, { name, mine: Boolean(name),
+                       label: name ? name + " \u00b7 " + s.place : s.place });
   }
   drawHeader();
   drawSessions();
@@ -14227,9 +14227,7 @@ function readTime(text) {
 async function setReminder(id, at) {
   const answer = await tell(id, "remind", { at });
   if (!answer || answer.error) { said(answer || {}); return; }
-  const s = state.sessions.find((one) => one.id === id);
-  if (s) s.remind_at = answer.remind_at;
-  redrawRows();
+  patchSession(id, { remind_at: answer.remind_at });
   drawSessions();
 }
 
@@ -14355,8 +14353,7 @@ async function toggleSnooze(id) {
   }
   const answer = await tell(id, "snooze", { snooze: !s.snoozed });
   if (answer && answer.error) { said(answer); return; }
-  s.snoozed = !!(answer && answer.snoozed);
-  redrawRows();
+  patchSession(id, { snoozed: !!(answer && answer.snoozed) });
   drawSessions();
 }
 
@@ -14372,25 +14369,22 @@ async function setUnread(id, unread) {
   if (unread && id === state.chosen) state.keptUnread = id;
   if (!unread && state.keptUnread === id) state.keptUnread = null;
   state.seeing = id;
-  s.unread = unread;
-  redrawRows();
+  patchSession(id, { unread });
   drawSessions();
   const answer = await tell(id, "seen", { seen: !unread });
   if (state.seeing === id) state.seeing = null;
   // Found again: a push while the answer was out replaced the list, and
   // the row it drew was built before the mark. The next pass sends one
   // built after it, as it does for a name.
-  const now = state.sessions.find((one) => one.id === id);
   if (!answer || answer.error) {
     // It did not land: the row says what the file holds, not what was
     // asked, or the dot stood for a mark nobody kept.
-    if (now) now.unread = was.unread;
+    patchSession(id, { unread: was.unread });
     state.keptUnread = was.kept;
     said(answer || { error: "the daemon did not answer" });
-  } else if (now) {
-    now.unread = !!answer.unread;
+  } else {
+    patchSession(id, { unread: !!answer.unread });
   }
-  redrawRows();
   drawSessions();
 }
 
@@ -14868,7 +14862,46 @@ function topSessions() {
 // fold of a history or of subagents (#431).
 function redrawRows() {
   $("rows").dataset.drawn = "";
-  for (const row of $("rows").children) delete row.dataset.sig;
+  for (const row of $("rows").children) {
+    delete row.dataset.sig;
+    row.filledWith = null;
+  }
+}
+
+// The one way to change a session on the page (#435): a new object with
+// the fields changed, put where the old one stood. A session is frozen as
+// it arrives, so a write in place throws in this strict script rather than
+// going unseen: four places wrote one in place -- a rename, a reminder, a
+// snooze, an unread mark -- and a row then looked unchanged to the draw
+// that compares sessions by object. Gives the new session, or null.
+function patchSession(id, fields) {
+  const at = state.sessions.findIndex((one) => one.id === id);
+  if (at < 0) return null;
+  // Nothing new is no new object: a row is filled again for a new one.
+  const held = state.sessions[at];
+  if (Object.keys(fields).every((key) => held[key] === fields[key])) return held;
+  const s = Object.freeze(Object.assign({}, held, fields));
+  state.sessions = state.sessions.slice();
+  state.sessions[at] = s;
+  return s;
+}
+
+// What a push leaves the page holding, every session frozen (#435). A
+// stream's opening carries every row, and one unchanged stays the object
+// the page holds, by its text: a new object for each is every row filled
+// again, which every reconnect -- and every choice, which opens a stream
+// -- would cost.
+function takeSessions(body) {
+  if (!body.sessions) return mergeSessions(state.sessions, body);
+  const held = new Map(state.sessions.map((s) => [s.id, s]));
+  return body.sessions.map((s) => sameOrNew(held.get(s.id), s));
+}
+
+// The session the page holds when the one that came reads the same, else
+// the one that came, frozen. The first push after a daemon starts names
+// every row too: it has sent nothing yet to compare with.
+function sameOrNew(old, s) {
+  return old && JSON.stringify(old) === JSON.stringify(s) ? old : Object.freeze(s);
 }
 
 // A push of what changed, laid over the rows the page holds (#431): the
@@ -14877,7 +14910,7 @@ function redrawRows() {
 // not name is the same object as before.
 function mergeSessions(held, body) {
   const byId = new Map(held.map((s) => [s.id, s]));
-  for (const s of body.changed || []) byId.set(s.id, s);
+  for (const s of body.changed || []) byId.set(s.id, sameOrNew(byId.get(s.id), s));
   const order = body.order || held.map((s) => s.id);
   const placed = new Set(order);
   // A new row comes with an order; one that did not is put last, not lost.
@@ -15317,15 +15350,20 @@ function drawSessions() {
       had.delete(s.id);
       // Only a row whose session, or what the page shows beside it, has
       // changed (#431): filling all 500 rows took 34 ms on every push, and
-      // with the layout after it up to 125 ms. By its text, not by the
-      // object: the page changes a session in place for a rename, a
-      // reminder, a snooze and an unread mark.
-      const sig = JSON.stringify([s, s.id === state.chosen, state.linksKey,
+      // with the layout after it up to 125 ms. The session and its
+      // children by object, which only `mergeSessions` and `patchSession`
+      // replace (#435); what the page shows beside them by its text.
+      const kids = kidsBy.get(s.id) || [];
+      const sig = JSON.stringify([s.id === state.chosen, state.linksKey,
                                   reminderDue(s), reminderAt(s), reminderWord(s),
-                                  state.kidsOpen.has(s.id), kidsBy.get(s.id) || null]);
-      if (row.dataset.sig !== sig || row.querySelector(".name input")) {
+                                  state.kidsOpen.has(s.id)]);
+      const same = row.filledWith && row.filledWith[0] === s
+        && row.filledWith[1].length === kids.length
+        && kids.every((kid, at) => row.filledWith[1][at] === kid);
+      if (!same || row.dataset.sig !== sig || row.querySelector(".name input")) {
         fillRow(row, s);
         row.dataset.sig = sig;
+        row.filledWith = [s, kids];
       }
       place(row);
     }
@@ -22020,7 +22058,7 @@ function resubscribe() {
     const waiting = !!state.chosen && !current();
     const first = !state.sessions.length;
     // Every row when a stream opens, then only what changed (#431).
-    state.sessions = body.sessions || mergeSessions(state.sessions, body);
+    state.sessions = takeSessions(body);
     if (typeof body.saved === "number") state.savedCount = body.saved;
     forgetAnswered();
     followClear(first);

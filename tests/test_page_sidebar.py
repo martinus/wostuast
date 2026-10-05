@@ -2331,3 +2331,36 @@ def test_a_push_fills_only_the_rows_it_changed(ws, pair_at):
         renew_stream(page, "state.sessions = state.sessions.slice(1);"
                            " state.stream.close(); state.stream = null; resubscribe()")
         assert page.evaluate(held) == told
+
+
+def test_a_session_is_changed_only_by_patch_session(pair_at):
+    """Four places wrote a session in place -- a rename, a reminder, a
+    snooze, an unread mark -- and the sidebar, which fills a row again only
+    for another session object, could not see it (#435). Every session the
+    page holds is frozen, from a stream's opening, a push and a patch, so a
+    write in place throws in the strict script; `opened` fails any test
+    that reaches one. A patch that changes nothing keeps the object, and
+    so does a row a push names that reads the same."""
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        assert page.evaluate("state.sessions.every(Object.isFrozen)")
+        # Strict, as the page's script is: `evaluate` is not, and there the
+        # write is dropped without a word.
+        threw = page.evaluate("""() => { "use strict"; const was = state.sessions[0].unread;
+          try { state.sessions[0].unread = !was; return 'written';
+          } catch (error) { return error.constructor.name
+                                   + (state.sessions[0].unread === was ? '' : ' and written'); } }""")
+        assert threw == "TypeError"
+        changed = page.evaluate("""() => { const id = state.sessions[0].id;
+          const before = state.sessions[0];
+          const same = patchSession(id, { unread: before.unread }) === before;
+          const after = patchSession(id, { unread: !before.unread });
+          return [same, after !== before, Object.isFrozen(after),
+                  state.sessions[0] === after, before.unread === !after.unread]; }""")
+        assert changed == [True, True, True, True, True]
+        kept = page.evaluate("""() => { const one = state.sessions[1];
+          state.sessions = mergeSessions(state.sessions,
+            {changed: [JSON.parse(JSON.stringify(one))]});
+          return state.sessions[1] === one; }""")
+        assert kept
