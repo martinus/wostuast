@@ -539,7 +539,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/bin/wostuast` | The program. One file. |
 | `~/.local/share/wostuast/hook.py` | The hook. `install` makes it from the program; do not edit it. |
 | `~/.local/share/wostuast/status.py` | The status line. `install` makes it from the program too. |
-| `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. |
+| `~/.local/state/wostuast/events.jsonl` | Every event, one JSON object per line. At 20 MB it moves to `events.1.jsonl`, then `events.2.jsonl`, and so on. No file is deleted: this is your history. A start reads only the files written in the last 30 days, so it stays quick; search reads them all. |
 | `~/.local/state/wostuast/status/<session>.json` | The latest status of one session. |
 | `~/.local/state/wostuast/names.json` | The names you gave sessions on the page. |
 | `~/.local/state/wostuast/snoozed.json` | The sessions you snoozed on the page, until each moves on. |

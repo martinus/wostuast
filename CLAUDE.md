@@ -88,7 +88,7 @@ bullets beside it are the same part's other scars.
 | `resume_command`, `drawResume`, `read_worktree_file`, `is_listed`, `worktree_target`, `inside`, `SHOWN_AS`, the `raw` route, `askFile`, `FileText.stamp` | topics/safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `_clear_attention`, `read_ask`, `place`, `home`, `link_clear`, `followClear`, `Session.pane`, `Session.pid`, `reads_terminal`, `looks_like_claude` | topics/state |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
-| `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
+| `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `HISTORY_FOLDED`, `folded_long_ago`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
 | `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/sidebar: a snooze is a mark on one wait |
 | `Session.unread`, `ended_at`, `seen_at`, `Store.see`, `seen_path`, `read_seen`, `setUnread`, `markSeen`, `keptUnread` | topics/sidebar: unread is a mark on a finished turn |
 | `putNewLine`, `landOnNew`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |

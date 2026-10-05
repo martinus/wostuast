@@ -1755,3 +1755,25 @@ def test_any_other_request_keeps_its_fields(ws):
         event("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"},
               ts=1000.5)).permission
     assert shown["plan"] is False and shown["fields"] == [["command", "ls"]]
+
+
+def test_a_result_reuses_its_calls_summary(ws, monkeypatch):
+    """A result carries the very input its call did, and the call's summary
+    is kept by its id (`calls`): made again for every result, hiding the
+    secrets in it was a fifth of a start's fold (#430). A result whose call
+    is not kept -- after a `Stop`, or with no id -- is summed up itself."""
+    made = []
+    real = ws.tool_summary
+    monkeypatch.setattr(ws, "tool_summary",
+                        lambda *args: made.append(args[0]) or real(*args))
+    given = {"tool_name": "Bash", "tool_input": {"command": "make test"}}
+    session = fold(ws, event("UserPromptSubmit", prompt="go"),
+                   event("PreToolUse", tool_use_id="t1", **given),
+                   event("PostToolUse", tool_use_id="t1", **given))
+    assert made == ["Bash"]
+    assert session.last_tool == "Bash make test"
+    made.clear()
+    fold(ws, event("PreToolUse", tool_use_id="t1", **given), event("Stop"),
+         event("PostToolUse", tool_use_id="t1", **given),
+         event("PostToolUse", **given))
+    assert made == ["Bash", "Bash", "Bash"]

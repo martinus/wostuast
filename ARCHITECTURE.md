@@ -462,8 +462,10 @@ hard cases:
   file had when the read began, in chunks of 1 MiB. Before that limit, a
   400 MB log once held 821 MB of memory.
 
-`EventFollower` sits on top. It reads every archive, oldest first, then the
-live log. It opens the live file *before* it lists the archives. So a log that
+`EventFollower` sits on top. It reads the archives, oldest first, then the
+live log. An archive last written more than 30 days ago (`HISTORY_FOLDED`) is
+left out, so a start does not grow with the whole history. It stays on disk,
+and search still reads it. It opens the live file *before* it lists the archives. So a log that
 becomes an archive between the two steps is handed over with its read position,
 and no line is read twice or lost.
 

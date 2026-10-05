@@ -457,3 +457,35 @@ def test_a_rotation_between_two_reads_does_not_read_the_archive_again(
         seen += [e["n"] for e in follower.new_events()]
         assert written < 500
     assert seen == list(range(written)), "an event was lost or read twice"
+
+
+def test_a_start_leaves_out_the_archives_older_than_the_window(ws, monkeypatch):
+    """Every start folded every archive, because the log is never thrown
+    away, so a start grew with the whole history (#430). An archive last
+    written before `HISTORY_FOLDED` is left out, by its file's time: by the
+    daemon's follower, by `ls` (`read_events`), and said at the start. It
+    stays on disk: `measure_log` still counts it, and search still reads
+    it. A newer archive and the live file are read, in order."""
+    import os
+    import time
+
+    monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
+    n = rotate_once(ws, 0)
+    n = rotate_once(ws, n)
+    old, new = ws.archived_events_paths()
+    long_ago = time.time() - ws.HISTORY_FOLDED - 3600
+    os.utime(old, (long_ago, long_ago))
+    in_old = {json.loads(line)["n"] for line in old.read_text().splitlines()}
+    kept = [one["n"] for one in ws.EventFollower().new_events()]
+    assert kept == sorted(kept) and kept[-1] == n - 1
+    assert not in_old & set(kept) and set(range(n)) - in_old == set(kept)
+    assert [one["n"] for one in ws.read_events()] == kept
+    assert ws.measure_log()[0] == n
+    daemon = ws.Daemon()
+    said = daemon.catch_up()
+    assert said.endswith(f"left out 1 archive older than {ws.HISTORY_FOLDED // 86400} days"), said
+    assert daemon.store.follower.files_read()[0] == 2
+    # A day younger than the window, it is read again.
+    recent = time.time() - ws.HISTORY_FOLDED + 86400
+    os.utime(old, (recent, recent))
+    assert [one["n"] for one in ws.EventFollower().new_events()] == list(range(n))
