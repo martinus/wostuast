@@ -62,9 +62,10 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   you typed and what each agent answered last, in every session, newest
   first. Slack's filters work: `in:name`, `from:me`, `from:claude`,
   `after:2026-10-01`, `before:2026-10-03`, `is:unread`.
-- **You keep an answer for later.** Hover an answer and click the bookmark
-  before "claude". "Saved" over the list shows every saved answer of every
-  session, with "open" to go back to it and "done" to take it off.
+- **You keep an answer or a prompt for later.** Hover it and click the
+  bookmark before "claude" or "you". "Saved" over the list shows every
+  saved turn of every session, with "open" to go back to it and "done" to
+  take it off.
 - **You catch up in one scroll.** "Unread" over the list shows the last
   answer of every unread session, newest first, as Markdown. Each is a
   card in its session's colour: click it to open the session, or point at

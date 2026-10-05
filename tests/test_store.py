@@ -520,6 +520,13 @@ def test_a_saved_entry_is_checked_before_it_is_kept(ws):
     ws.saved_path().parent.mkdir(parents=True, exist_ok=True)
     ws.saved_path().write_text('[{"id": "s1", "seq": 0, "ts": 1, "text": "", "at": 0}, 5]')
     assert [e["id"] for e in ws.read_saved()] == ["s1"]
+    # A prompt of the reader's says so (#403); an answer says nothing, so
+    # every entry kept before prompts could be saved reads as it did.
+    assert ws.saved_entry(dict(good, who="me"))["who"] == "me"
+    assert "who" not in ws.saved_entry(dict(good, who="claude"))
+    assert "who" not in ws.saved_entry(good)
+    for wrong in ("you", "", 1, True):
+        assert ws.saved_entry(dict(good, who=wrong)) is None, wrong
 
 
 # --- search every session (#379) ----------------------------------------------

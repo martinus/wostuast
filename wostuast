@@ -6353,18 +6353,24 @@ SAVED_PREVIEW = 300
 def saved_entry(raw: Any) -> dict[str, Any] | None:
     """One saved turn, checked: a session id, a place, a moment, and the
     start of its words. None for anything else; nothing read from a disk
-    or a POST is trusted blindly."""
+    or a POST is trusted blindly. A prompt the reader typed carries
+    `who: "me"` (#403); an answer carries nothing, so every entry saved
+    before prompts could be is an answer, as it was."""
     if not isinstance(raw, dict):
         return None
     sid, seq, ts = raw.get("id"), raw.get("seq"), raw.get("ts")
-    text, at = raw.get("text", ""), raw.get("at", 0.0)
+    text, at, who = raw.get("text", ""), raw.get("at", 0.0), raw.get("who")
     number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool)
     if (not isinstance(sid, str) or not sid or not isinstance(seq, int)
             or isinstance(seq, bool) or seq < 0 or not number(ts)
-            or not isinstance(text, str) or not number(at)):
+            or not isinstance(text, str) or not number(at)
+            or who not in (None, "me", "claude")):
         return None
-    return {"id": sid, "seq": seq, "ts": float(ts), "text": text[:SAVED_PREVIEW],
-            "at": float(at)}
+    entry = {"id": sid, "seq": seq, "ts": float(ts), "text": text[:SAVED_PREVIEW],
+             "at": float(at)}
+    if who == "me":
+        entry["who"] = "me"
+    return entry
 
 
 def read_saved() -> list[dict[str, Any]]:
@@ -8611,7 +8617,7 @@ class Serving:
             return
         entry = saved_entry({"id": session_id, "seq": body.get("seq"),
                              "ts": body.get("ts"), "text": body.get("text", ""),
-                             "at": time.time()})
+                             "who": body.get("who"), "at": time.time()})
         if entry is None:
             self.refuse(session_id, 400, "a saved turn is a place, a moment and its words")
             return
@@ -11728,6 +11734,10 @@ body.infeed .viewtitle {
 /* As specific as `.find`, which set the width of every find box. */
 .content.feed .searchbox { width: 100%; max-width: 90ch; margin: 4px 0 14px; }
 .feedwho { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+/* Who said it, in the colours the transcript gives the two names. */
+.feedwho.mine { color: var(--mine); font-weight: 600; }
+.feedwho.claude { color: var(--needs); }
+.feedentry .bubble.mine { margin: 4px 0 8px; }
 .searchtext { margin: 2px 0; color: var(--ink); line-height: 1.55; }
 /* A hit, softer than the find box's (issue 395): in its solid colour, a
    page of results was a page of blocks, and the word in one was hard to
@@ -12139,7 +12149,9 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .turn.mine:first-child { margin-top: 0; }
 .turn.mine:first-child::before { display: none; }
 .turn.mine .who { color: var(--mine); font-weight: 600; }
-.turn.mine .bubble {
+/* A saved prompt's card wears it too (issue 403): out of its transcript,
+   a prompt in an answer's face read as an answer. */
+.turn.mine .bubble, .feedentry .bubble.mine {
   background: var(--mine-soft); border-color: transparent;
   border-left: 3px solid var(--mine); border-radius: 6px;
   color: var(--ink-bright);
@@ -14173,7 +14185,9 @@ function putCard(list, id, s, open) {
 // column down before the next, so the newest were all at the left. The
 // cards stay in their order in the page, so the keys and a reader of the
 // page meet them newest first.
-const CARD_MIN = 340;
+// 480, not 340 (#403): at 340 a card held a few words a line, and the
+// reader could see too little of what was saved.
+const CARD_MIN = 480;
 const CARD_GAP = 12;
 
 function putBoard(parent, cls) {
@@ -14286,7 +14300,7 @@ function drawSaved(box) {
   box.dataset.tab = "saved";
   box.replaceChildren();
   if (!saved.length) {
-    put(box, "p", "empty", "Nothing saved. “save” on an answer keeps it here.");
+    put(box, "p", "empty", "Nothing saved. The bookmark on an answer or a prompt keeps it here.");
     return;
   }
   const board = putBoard(box);
@@ -14299,6 +14313,10 @@ function drawSaved(box) {
       showTab("transcript");
     } : null;
     const [entry, top] = putCard(board, one.id, s, go);
+    // Who said it, as a search result says (#403): a prompt of the
+    // reader's reads like an answer, once it is out of its transcript.
+    put(top, "span", one.who === "me" ? "feedwho mine" : "feedwho claude",
+        one.who === "me" ? "you" : "claude");
     put(top, "span", "feedwhen",
         (dayOf(one.ts) ? dayOf(one.ts) + " " : "") + clock(one.ts));
     if (go) put(top, "button", "link", "open").addEventListener("click", go);
@@ -14308,7 +14326,11 @@ function drawSaved(box) {
       if (!answer || answer.error) { said(answer || {}); return; }
       takeSaved(answer.saved);
     });
-    markdown(entry, one.text + (one.text.length >= 300 ? " …" : ""));
+    const text = one.text + (one.text.length >= 300 ? " …" : "");
+    // As the transcript draws it: a prompt in the reader's box, as typed;
+    // an answer as Markdown.
+    if (one.who === "me") put(entry, "div", "bubble mine", text);
+    else markdown(entry, text);
   }
   layoutCards(board);
 }
@@ -14376,7 +14398,8 @@ function drawResults(list) {
       showTab("transcript");
     } : null;
     const [entry, top] = putCard(list, one.id, s, go);
-    put(top, "span", "feedwho", one.who === "me" ? "you" : "claude");
+    put(top, "span", one.who === "me" ? "feedwho mine" : "feedwho claude",
+        one.who === "me" ? "you" : "claude");
     put(top, "span", "feedwhen", (dayOf(one.ts) ? dayOf(one.ts) + " " : "") + clock(one.ts));
     if (go) put(top, "button", "link", "open").addEventListener("click", go);
     // Text, never Markdown: a piece cut from the middle of an answer is
@@ -16661,8 +16684,11 @@ function blockTurn(block, index) {
   name.title = "link to this " + (mine ? "prompt"
                                        : aside ? "message" : plan ? "plan" : "reply");
   // A bookmark beside the name, not a word beside "copy": the column is
-  // 64 px, and the two words pushed "copy" out of it (#377).
-  if (!mine && !aside) putSave(who, block, index);
+  // 64 px, and the two words pushed "copy" out of it (#377). On a prompt
+  // the reader typed too (#403), but not on a `!` command or its output.
+  if (block.kind === "prompt" || (!mine && !aside)) {
+    putSave(who, block, index, block.kind === "prompt");
+  }
   if (block.ts) {
     const day = dayOf(block.ts);
     if (day) put(who, "div", "day", day);
@@ -16849,7 +16875,7 @@ function savedKey(id, ts) {
   return id + "\n" + ts;
 }
 
-function putSave(parent, block, index) {
+function putSave(parent, block, index, mine) {
   // A turn is its moment too: a block with none could not be saved.
   if (!block.text || !block.ts || !state.chosen) return null;
   const id = state.chosen;
@@ -16867,7 +16893,7 @@ function putSave(parent, block, index) {
     const on = !state.savedKeys.has(key);
     const answer = await tell(id, "save", {
       seq: index, ts: block.ts, save: on,
-      text: block.text.slice(0, 300),
+      text: block.text.slice(0, 300), who: mine ? "me" : "claude",
     });
     if (!answer || answer.error) { said(answer || {}); return; }
     takeSaved(answer.saved);
