@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -169,6 +170,22 @@ def written_events(ws, recorded_events, monkeypatch):
     monkeypatch.setattr(ws, "SESSION_MAX_AGE", 10**12)
     monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
     return recorded_events
+
+
+def isolate(home: Path) -> None:
+    """Point every path wostuast and Claude Code write at a throwaway
+    `home`, and tmux at no server: what `tests/stage.py`, `tests/shot.py`
+    and `tests/tour.py` stand in. Each tool's own function that writes calls
+    it, not only its `main`: a script that called `stage.serve` by itself
+    wrote the command fixtures into the real `~/.claude`, and the session's
+    own list of skills showed them. Its session's pane is `%7`, and a click
+    that sends or renames types into that pane -- never the reader's own
+    (#351), as `ws` does. Every path is read when it is used, so setting
+    them here is in time."""
+    os.environ["WOSTUAST_STATE"] = str(home / "state")
+    os.environ["WOSTUAST_CONFIG"] = str(home / "config")
+    os.environ["CLAUDE_CONFIG_DIR"] = str(home / "claude")
+    os.environ["TMUX"] = f"{home}/no-tmux-here,0,0"
 
 
 def event(name, sid="s1", **extra):

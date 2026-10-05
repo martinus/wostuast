@@ -17,6 +17,34 @@ from browser import skip_without_browser
 HERE = Path(__file__).resolve().parent
 
 
+def test_the_tools_write_nothing_outside_their_own_home(tmp_path, monkeypatch):
+    """`stage.serve`, `shot.serve` and `tour.make_sessions`, called by a
+    script rather than by their `main`, keep to the home they are given: a
+    script that called `stage.serve` by itself wrote the command fixtures
+    into the real `~/.claude`. The environment is set through `monkeypatch`
+    first, so this test leaves it as it found it."""
+    import shot
+    import tour
+    from conftest import wostuast as ws
+
+    real = tmp_path / "real"
+    monkeypatch.setattr(ws, "git_facts_many", ws.git_facts_many)
+    monkeypatch.setattr(ws, "pid_alive", ws.pid_alive)
+    for name, write in (
+            ("stage", lambda home: stage.serve(home, commands=True)),
+            ("shot", lambda home: shot.serve("", home)),
+            ("tour", lambda home: tour.make_sessions(ws, home))):
+        # Pointed at "the reader's own" before each tool: the one before it
+        # has pointed them at its own home, which would hide this one.
+        for key, where in (("WOSTUAST_STATE", "state"), ("WOSTUAST_CONFIG", "config"),
+                           ("CLAUDE_CONFIG_DIR", "claude"), ("TMUX", "tmux")):
+            monkeypatch.setenv(key, str(real / where))
+        (tmp_path / name).mkdir()         # as `mkdtemp` gives each `main` one
+        write(tmp_path / name)
+        assert not real.exists(), (name, sorted(str(one) for one in real.rglob("*")))
+    assert (tmp_path / "stage" / "claude" / "skills" / "notes" / "SKILL.md").is_file()
+
+
 def test_the_repository_has_what_the_pictures_need(tmp_path):
     repo = tmp_path / "proj"
     stage.make_repo(repo)
