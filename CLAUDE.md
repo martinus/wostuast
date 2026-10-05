@@ -370,7 +370,11 @@ proven by a test measuring the box around each block, which said 6 px, while
 the reader looked at the text, which stood 39 px from what came next. The
 picture shows that in one look and `--measure` prints both numbers. It is
 done when the new picture looks right, not when a test is green — then pin
-it with a test that measures what the picture showed. **Send the reader the
+it with a test that measures what the picture showed. **The picture before a change is the new tool on the old code**:
+`git worktree add --detach <dir> origin/main`, copy the new `tests/tour.py`
+(or `stage.py`) into it, and run it there. The new state the change
+draws -- children under a row, a finished session -- is in the new tool
+only, so the old tool cannot draw "before" (#422, #427). **Send the reader the
 picture, and wait for their yes, before the pull request.** `SendUserFile`
 the PNG, beside the old one. The spacing fix was merged before the reader
 had looked, and came back as "I'm running the latest pushed branch, and the
@@ -486,6 +490,11 @@ reliable shape when making several edits at once. Three scars on that shape:
   said so. After such an edit, compare the names defined before and after:
   `diff <(git show HEAD:wostuast | grep -o "^\(async \)\?function [a-zA-Z]*" | sort) <(grep -o "^\(async \)\?function [a-zA-Z]*" wostuast | sort)`
   -- every line it prints is a function gone or added.
+- **Take a debug line out with an edit, never with `git checkout <file>`**:
+  that takes every change not committed with it. Two `print`s were taken
+  out of a test file that way, and the new test written beside them went
+  too (#422); it was written a second time from memory. Commit first, or
+  edit the lines out.
 - **Grep for a name before you define it**: a second top-level `def` or
   `function` silently replaces the first. `test_no_name_is_defined_twice`
   holds it now; `load_settings` was written twice in one session. It runs
