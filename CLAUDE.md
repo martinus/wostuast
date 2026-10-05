@@ -615,6 +615,14 @@ before you edit its part:
   never crashes anything.
 - A comment says *why*, especially why the obvious simpler thing is wrong. The
   long comments here are load-bearing; do not tidy them away.
+- **No function past 100 lines, and none already past it grows** (#436,
+  `LONGER_ALREADY` in `tests/test_log.py`). A change to one of those first
+  moves the part it touches into a helper of its own, with that part's
+  comments and with its tests green, and then makes the change there. Not
+  all at once: `drawDiff`, `build_report` and the rest each hold many
+  fixes, and a rewrite of a whole one is how a fix gets lost. The list
+  only shrinks; `test_no_function_grows_past_the_limit` takes off a
+  function once it is under.
 
 ## Status
 
