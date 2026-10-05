@@ -11637,10 +11637,18 @@ body.infeed .viewtitle {
    does; what can be done to it shows on its hover, and is not there at
    all until then. */
 .feedentry {
-  --hue: var(--done); max-width: 90ch; margin: 0 0 12px; padding: 12px 16px 6px;
+  --hue: var(--done); margin: 0 0 12px; padding: 12px 16px 6px;
   background: var(--panel); border: 1px solid var(--edge);
   border-left: 3px solid var(--hue); border-radius: 8px; cursor: pointer;
+  min-width: 0; overflow-wrap: anywhere;
 }
+/* The cards as Google Keep lays out its notes (issue 404): as many columns
+   as fit, and each card under the shortest one (`layoutCards`), so the
+   newest stand along the top. One column of 90ch at the left left most of
+   a wide screen empty. A path with no space in it ran out of the card:
+   `overflow-wrap` breaks it, and a code block scrolls in its own box. */
+.board { position: relative; }
+.board > .feedentry { position: absolute; margin: 0; box-sizing: border-box; }
 .feedentry:hover { border-color: var(--edge-bright); border-left-color: var(--hue); }
 .feedentry.needs { --hue: var(--needs); }
 .feedentry.working { --hue: var(--working); }
@@ -11651,15 +11659,19 @@ body.infeed .viewtitle {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .feedtop { display: flex; align-items: baseline; gap: 12px; margin-bottom: 2px; }
+/* No margin on its links (issue 405): a `.link` carries one on top, and in
+   a line aligned on the baseline it made the line 3 px taller on hover, so
+   the card grew and every card under it moved down. */
+.feedtop .link { margin-top: 0; }
 .feedname { font-weight: 600; color: var(--ink-bright); }
 .feedwhen { font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
   flex-grow: 1; }
 .feedwait, .feedmore { color: var(--ink-faint); font-size: 13px; }
 /* Search (issue 379): the box at the top, a word for who said it. */
 /* As specific as `.find`, which set the width of every find box. */
-.content.feed .searchbox { width: 100%; max-width: 90ch; margin: 4px 0 10px; }
+.content.feed .searchbox { width: 100%; max-width: 90ch; margin: 4px 0 14px; }
 .feedwho { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
-.searchtext { margin: 2px 0; color: var(--ink); }
+.searchtext { margin: 2px 0; color: var(--ink); line-height: 1.55; }
 /* A hit, softer than the find box's (issue 395): in its solid colour, a
    page of results was a page of blocks, and the word in one was hard to
    read. */
@@ -14003,6 +14015,53 @@ function putCard(list, id, s, open) {
   return [entry, top];
 }
 
+// The cards of a view as Google Keep lays out its notes (#404, #408): as
+// many columns as fit, each card under the shortest column, so the newest
+// stand along the top and read across. Placed by hand: CSS columns fill one
+// column down before the next, so the newest were all at the left. The
+// cards stay in their order in the page, so the keys and a reader of the
+// page meet them newest first.
+const CARD_MIN = 340;
+const CARD_GAP = 12;
+
+function putBoard(parent, cls) {
+  const board = put(parent, "div", "board" + (cls ? " " + cls : ""));
+  // A card grows when a code block is painted, and the board when the
+  // window does. Laid out on the next frame: a layout inside the observer
+  // changes what it observes, and the browser calls that a loop.
+  let queued = false;
+  board.watch = new ResizeObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; layoutCards(board); });
+  });
+  board.watch.observe(board);
+  return board;
+}
+
+function layoutCards(board) {
+  const cards = [...board.children].filter((one) => one.classList.contains("feedentry"));
+  const width = board.clientWidth;
+  if (!cards.length || !width) { board.style.height = ""; return; }
+  const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN + CARD_GAP)));
+  const each = (width - (columns - 1) * CARD_GAP) / columns;
+  for (const card of cards) {
+    card.style.width = each + "px";
+    board.watch.observe(card);
+  }
+  // Every width first, then every height, then every place: one layout,
+  // not one a card.
+  const heights = cards.map((card) => card.offsetHeight);
+  const tops = new Array(columns).fill(0);
+  cards.forEach((card, n) => {
+    const column = tops.indexOf(Math.min(...tops));
+    card.style.left = column * (each + CARD_GAP) + "px";
+    card.style.top = tops[column] + "px";
+    tops[column] += heights[n] + CARD_GAP;
+  });
+  board.style.height = Math.max(...tops) - CARD_GAP + "px";
+}
+
 function closeFeed() {
   state.feed = false;
   document.body.classList.remove("infeed");
@@ -14035,9 +14094,10 @@ function drawFeed(box) {
     put(box, "p", "empty", "Nothing unread. Every answer has been read.");
     return;
   }
+  const board = putBoard(box);
   for (const s of shown) {
     askLast(s.id);
-    const [entry, top] = putCard(box, s.id, s, () => choose(s.id));
+    const [entry, top] = putCard(board, s.id, s, () => choose(s.id));
     put(top, "span", "feedwhen",
         (dayOf(s.ended_at) ? dayOf(s.ended_at) + " " : "") + clock(s.ended_at));
     const open = put(top, "button", "link", "open");
@@ -14059,6 +14119,7 @@ function drawFeed(box) {
       if (head || found.cut) put(entry, "p", "feedmore", "… open it to read the rest");
     }
   }
+  layoutCards(board);
 }
 
 // The saved turns of every session, newest first (#377): the start of
@@ -14076,6 +14137,7 @@ function drawSaved(box) {
     put(box, "p", "empty", "Nothing saved. “save” on an answer keeps it here.");
     return;
   }
+  const board = putBoard(box);
   for (const one of saved) {
     const s = state.sessions.find((x) => x.id === one.id);
     const go = s ? () => {
@@ -14084,7 +14146,7 @@ function drawSaved(box) {
       state.turns.goToTs = one.ts;
       showTab("transcript");
     } : null;
-    const [entry, top] = putCard(box, one.id, s, go);
+    const [entry, top] = putCard(board, one.id, s, go);
     put(top, "span", "feedwhen",
         (dayOf(one.ts) ? dayOf(one.ts) + " " : "") + clock(one.ts));
     if (go) put(top, "button", "link", "open").addEventListener("click", go);
@@ -14096,6 +14158,7 @@ function drawSaved(box) {
     });
     markdown(entry, one.text + (one.text.length >= 300 ? " …" : ""));
   }
+  layoutCards(board);
 }
 
 // Search every session (#379): what the reader typed and what the agents
@@ -14120,7 +14183,7 @@ function drawSearch(box) {
       clearTimeout(timer);
       timer = setTimeout(() => runSearch(field.value), 250);
     });
-    put(box, "div", "searchresults");
+    putBoard(box, "searchresults");
     field.focus();
   }
   drawResults(box.querySelector(".searchresults"));
@@ -14143,6 +14206,7 @@ async function runSearch(query) {
 function drawResults(list) {
   if (!list) return;
   list.replaceChildren();
+  list.style.height = "";
   const found = state.searchResults;
   if (!state.searchQuery || !found) return;
   if (found.error) { put(list, "p", "empty", found.error); return; }
@@ -14168,6 +14232,7 @@ function drawResults(list) {
     const said = put(entry, "p", "searchtext", unmarked(one.text));
     for (const word of words) markHits(said, word.toLowerCase());
   }
+  layoutCards(list);
 }
 
 // An excerpt without the Markdown signs that say how to draw it (#395):
