@@ -655,13 +655,22 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
   them by position; a row moves only when its place changed, because
   `appendChild` on an attached node is a remove and an insert.
-  - **And filled only when what it shows changed** (#431, `dataset.sig`):
-    the session's own JSON, and the page facts a row shows -- the choice,
-    the links, the reminder's word, time and due, the fold of its
-    subagents, its children. Filling all 500 rows took 34 ms on every
-    push. **By the text, not by the object**: the page changes a session
-    in place for a rename, a reminder, a snooze and an unread mark, so an
-    object compared by identity looked unchanged. **A choice changes no
+  - **And filled only when what it shows changed** (#431): its session
+    and its children by object (`row.filledWith`), and the page facts a
+    row shows by their text (`dataset.sig`) -- the choice, the links, the
+    reminder's word, time and due, the fold of its subagents. Filling all
+    500 rows took 34 ms on every push. **By object, because a session is
+    never changed in place** (#435): every session the page holds is
+    frozen, and `patchSession` is the one way to change one, by a new
+    object. Four places wrote one in place -- a rename, a reminder, a
+    snooze, an unread mark -- and the first version of this compared each
+    row's JSON to see them. **A session that reads the same stays the same
+    object** (`takeSessions`, `sameOrNew`): a stream's opening carries
+    every row, the first push after a daemon starts names every row, and a
+    patch that changes nothing changes nothing; each made every row new.
+    **`opened` fails any test whose page wrote a frozen session**, so the
+    whole browser suite holds the rule.
+    `test_a_session_is_changed_only_by_patch_session`. **A choice changes no
     session**, and a read row gets no push, so the choice is in the
     signature or the row chosen before kept its look. **A change no row's
     data shows goes through `redrawRows`**, which clears every signature

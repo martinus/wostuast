@@ -106,6 +106,11 @@ Keep the breaks list in the scratchpad; it is about one fix.
   twice, so it went. Ask first whether any input could tell the two
   apart; a break no input can see is the same program (a new call never
   carries an id already kept, #430), and is dropped, not tested.
+- **`page.evaluate` is not strict, and the page's script is.** A write to
+  a frozen session threw in the page and was dropped without a word in an
+  `evaluate`, and the test that was to prove the throw read nothing
+  (#435). A probe of what the page does starts its function with
+  `"use strict";`.
 - **A GREEN on a style read after a click may be the hover's style.** The
   pointer stays on what it clicked, and that element's `:hover` rule then
   stands in for the rule broken: the chosen row's coloured line was taken

@@ -425,6 +425,13 @@ def opened(where, scheme="dark", with_marked=True, wait="transcript", *,
     a test that needs the context before the page uses `own_context` and
     `load`."""
     browser, page = open_page(where, scheme, with_marked, wait)
+    # A session is frozen on the page, and changed only by `patchSession`
+    # (#435): a write in place throws in the strict script. Any test that
+    # reaches one fails here, whatever it was about -- four such writes
+    # made the sidebar's rows look unchanged when they were not.
+    frozen: list[str] = []
+    page.on("pageerror", lambda error: frozen.append(str(error))
+            if "read only" in str(error) or "not extensible" in str(error) else None)
     try:
         if tab == "diff":
             show_tab(page, "diff")
@@ -432,6 +439,7 @@ def opened(where, scheme="dark", with_marked=True, wait="transcript", *,
         elif tab is not None:
             raise ValueError(f"opened() knows no tab {tab!r}")
         yield page
+        assert not frozen, f"a session was written in place: {frozen}"
     finally:
         browser.close()
 
