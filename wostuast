@@ -47,6 +47,7 @@ HOOK_EVENTS: tuple[str, ...] = (
     "Notification",
     "Stop",
     "StopFailure",
+    "SubagentStart",
     "SubagentStop",
     "PreCompact",
     "SessionEnd",
@@ -168,6 +169,14 @@ ARCHIVE_TRIES = 10
 #: call a permission dialog is about. A turn rarely has more than a handful
 #: open at once; a call declined in the terminal never reports back.
 CALLS_HELD = 32
+
+#: How many of the Agent tool's subagents a session keeps (#422): those
+#: still running, and the last of those that ended. An agent can start
+#: hundreds in a day, and the row goes out on every change.
+SUBAGENTS_HELD = 12
+
+#: The tool that starts a subagent: `Agent` on 2.1.289, `Task` before it.
+AGENT_TOOLS = frozenset({"Agent", "Task"})
 LOG_MAX_BYTES = 5 * 1024 * 1024
 SESSION_MAX_AGE = 7 * 24 * 3600
 
@@ -1084,6 +1093,27 @@ class Status:
 
 
 @dataclass
+class Subagent:
+    """One subagent the Agent tool started inside a session (#422).
+
+    It is no session of its own: measured on 2.1.289, `SubagentStart`, its
+    tool calls and `SubagentStop` all come under the session that started
+    it, each with the subagent's `agent_id` and `agent_type`. It can run on
+    after that session's turn has ended.
+    """
+
+    #: Its `agent_type`: "general-purpose", "Explore", a plugin's agent.
+    kind: str = ""
+    #: The `description` its Agent call gave, which no `SubagentStart` carries.
+    what: str = ""
+    #: Its last tool call, as `tool_summary` says it.
+    doing: str = ""
+    started: float = 0.0
+    #: When it ended, or 0 while it runs.
+    ended: float = 0.0
+
+
+@dataclass
 class Session:
     """One Claude Code session, built from its events."""
 
@@ -1153,6 +1183,21 @@ class Session:
     #: `cleared_into`.
     cleared_into: str = ""
     cleared_from: str = ""
+    #: The session whose agent started this one: a `claude -p` it ran from
+    #: its Bash tool (#422). Such a session is no row of its own; the page
+    #: draws it as a line under that one. See `Store.parent_of`.
+    started_by: str = ""
+    #: Its first event: how long a child has run, on its parent's row.
+    started_at: float = 0.0
+    #: The subagents the Agent tool started in this session, by `agent_id`,
+    #: oldest first: those still running, and the last of those that ended,
+    #: up to `SUBAGENTS_HELD`. `agents_ran` counts every one that ended.
+    subagents: dict[str, Subagent] = field(default_factory=dict)
+    agents_ran: int = 0
+    #: What each Agent call that has not started its subagent yet asked
+    #: for, oldest first. `SubagentStart` carries no description, and the
+    #: subagents start in the order of the calls.
+    agent_asks: list[str] = field(default_factory=list)
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -1704,6 +1749,8 @@ class Store:
         # session until real time caught up.
         if ts > session.last_ts:
             session.last_ts = ts
+        if ts and not session.started_at:
+            session.started_at = ts
         for key in ("cwd", "transcript_path"):
             value = event.get(key)
             if value:
@@ -1731,6 +1778,11 @@ class Store:
             session.pane = pane if PANE_PATTERN.match(pane) else ""
         if "pid" in event:
             session.pid = to_int(event.get("pid"))
+        # The agent that ran this one, by its process (#422). Found once,
+        # and only while that agent's session is here to be found.
+        if not session.started_by and to_int(event.get("started_by")) > 0:
+            session.started_by = self.parent_of(session, to_int(event["started_by"]))
+        note_subagent(session, event, name, ts)
 
         handler = _HANDLERS.get(name)
         was = session.state
@@ -1754,6 +1806,29 @@ class Store:
         if name in ("SessionStart", "SessionEnd"):
             self.link_clear(session)
         return session
+
+    def parent_of(self, child: Session, pid: int) -> str:
+        """The session whose agent is process `pid`, which ran `child` from
+        its Bash tool (#422), or "".
+
+        Nothing in a `claude -p`'s payload names the agent that ran it: its
+        `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID` are its own, measured on
+        2.1.289. The process tree does (`claude_from`, in the hook): above
+        it stand the tool's shell and then that agent. A pid is no identity
+        on its own -- the numbers come round again, and a `/clear` keeps
+        its process -- so it is the session of that pid still running, the
+        last heard from. A child's child goes under the same row: the page
+        draws children as lines, and a line has none of its own.
+        """
+        best: Session | None = None
+        for other in self.sessions.values():
+            if other is child or other.pid != pid or other.state in GONE_STATES:
+                continue
+            if best is None or other.last_ts > best.last_ts:
+                best = other
+        if best is None:
+            return ""
+        return best.started_by or best.session_id
 
     def link_clear(self, session: Session) -> None:
         """Join the session a `/clear` ended to the one it started.
@@ -2289,6 +2364,16 @@ def row(session: Session) -> dict[str, Any]:
         # The session a `/clear` turned this one into. The page follows it
         # when the link appears while the reader is watching this one.
         "cleared_into": session.cleared_into,
+        # The agent that ran this one, and the subagents this one runs
+        # (#422): the page draws both as lines under the parent's row.
+        "started_by": session.started_by,
+        "started_at": round(session.started_at, 3),
+        "subagents": [
+            {"id": key, "kind": one.kind, "what": one.what, "doing": one.doing,
+             "started": round(one.started, 3), "ended": round(one.ended, 3)}
+            for key, one in session.subagents.items()
+        ],
+        "agents_ran": session.agents_ran,
     }
 
 
@@ -2645,9 +2730,68 @@ def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None
     session.last_answer = said if isinstance(said, str) else ""
 
 
+def _on_subagent_start(session: Session, event: dict[str, Any], ts: float) -> None:
+    agent = str(event.get("agent_type") or "subagent")
+    session.last_event = f"{agent} started"
+
+
 def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     agent = str(event.get("agent_type") or "subagent")
     session.last_event = f"{agent} finished"
+
+
+def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float) -> None:
+    """Keep what the Agent tool's subagents are doing, for the lines the
+    page draws under the session's row (#422).
+
+    Every event of a subagent carries its `agent_id`, so one that missed
+    its `SubagentStart` -- hooks installed before it was one of ours -- is
+    found by its first tool call. Its description comes from the Agent call
+    that started it: the oldest one still waiting, then the call's result,
+    which names the `agentId` when the subagent runs in the background.
+    """
+    tool = str(event.get("tool_name") or "")
+    agent = str(event.get("agent_id") or "")
+    if not agent:
+        if tool in AGENT_TOOLS and name == "PreToolUse":
+            given = event.get("tool_input")
+            what = given.get("description") if isinstance(given, dict) else ""
+            session.agent_asks = (session.agent_asks
+                                  + [clip(str(what or ""), 120)])[-SUBAGENTS_HELD:]
+        elif tool in AGENT_TOOLS and name == "PostToolUse":
+            said = event.get("tool_response")
+            if isinstance(said, dict) and isinstance(said.get("description"), str):
+                one = session.subagents.get(str(said.get("agentId") or ""))
+                if one is not None:
+                    one.what = clip(said["description"], 120)
+        elif name == "SessionEnd":
+            end_subagents(session, ts)
+        return
+    one = session.subagents.get(agent)
+    if one is None:
+        one = Subagent(started=ts)
+        if session.agent_asks:
+            one.what, session.agent_asks = session.agent_asks[0], session.agent_asks[1:]
+        session.subagents[agent] = one
+        while len(session.subagents) > SUBAGENTS_HELD:
+            ended = [key for key, held in session.subagents.items() if held.ended]
+            del session.subagents[ended[0] if ended else next(iter(session.subagents))]
+    one.kind = str(event.get("agent_type") or one.kind)
+    if name == "SubagentStop":
+        if not one.ended:
+            one.ended = ts or session.last_ts
+            session.agents_ran += 1
+    elif name in ("PreToolUse", "PostToolUse", "PostToolUseFailure") and tool:
+        one.doing = tool_summary(tool, event.get("tool_input"), session.cwd)
+
+
+def end_subagents(session: Session, moment: float) -> None:
+    """A session that is over has no subagent running: one that was gone
+    before its `SubagentStop` would otherwise run on the page for ever."""
+    for one in session.subagents.values():
+        if not one.ended:
+            one.ended = moment
+            session.agents_ran += 1
 
 
 def _on_pre_compact(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -2673,6 +2817,7 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "Notification": _on_notification,
     "Stop": _on_stop,
     "StopFailure": _on_stop_failure,
+    "SubagentStart": _on_subagent_start,
     "SubagentStop": _on_subagent_stop,
     "PreCompact": _on_pre_compact,
     "SessionEnd": _on_session_end,
@@ -2777,7 +2922,17 @@ def agent_pid() -> int:
     Where there is no /proc, this returns 0 and the session is simply never
     reported as killed. Saying nothing beats saying something wrong.
     """
-    pid = os.getppid()
+    return claude_from(os.getppid())
+
+
+def claude_from(pid: int) -> int:
+    """The first Claude Code process from `pid` up, `pid` itself first, or 0.
+
+    `agent_pid` starts at the hook's shell. Started above the agent, it
+    finds the agent that ran it (#422): measured on 2.1.289, a `claude -p`
+    from the Bash tool stands under the tool's `bash`, and that under the
+    agent whose hooks name it as their `pid`.
+    """
     for _ in range(12):
         if pid <= 1:
             return 0
@@ -2875,6 +3030,7 @@ def _bury(session: Session, moment: float, why: str) -> None:
         session.state_since = moment
         _clear_attention(session)
     session.state = "dead"
+    end_subagents(session, moment)
     if not session.end_reason:
         session.end_reason = why
 
@@ -9337,8 +9493,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
             record["pid"] = agent_pid()
             # The pane it inherited is not its own when the agent reads no
             # terminal: an rc session, a `claude -p` (`reads_terminal`).
-            record["pane"] = (os.environ.get("TMUX_PANE", "")
-                              if reads_terminal(record["pid"]) else "")
+            reads = reads_terminal(record["pid"])
+            record["pane"] = os.environ.get("TMUX_PANE", "") if reads else ""
+            # And such an agent may have been run by another one, from its
+            # Bash tool: the page draws it under that one's row (#422).
+            # Only then, so an agent at a terminal pays nothing for it.
+            record["started_by"] = (0 if reads
+                                    else claude_from(parent_pid(record["pid"])))
             record["shell_pid"] = os.getppid()
             append_event(record, stamp=True)    # `ts`, under the log's lock
             stand_down()
@@ -10487,7 +10648,7 @@ HOOK_PARTS = frozenset({
     "events_path", "archived_events_paths", "file_key", "archive_number",
     "log_path", "log", "rotate", "still_the_file", "append_event",
     "archive_log", "to_int", "process_name", "process_args", "parent_pid",
-    "looks_like_claude", "agent_pid", "reads_terminal", "give_up_after", "stand_down",
+    "looks_like_claude", "agent_pid", "claude_from", "reads_terminal", "give_up_after", "stand_down",
     "read_stdin_json", "cmd_hook",
 })
 
@@ -11657,6 +11818,22 @@ body.dragging { cursor: col-resize; user-select: none; }
 }
 .row .said { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row .age { color: var(--ink-faint); flex-shrink: 0; margin-left: auto; font-size: 12px; }
+/* What the session started (issue 422): a line for each child that runs,
+   under the row's own lines and in their size, then "3 subagents ran". The
+   arrow is the working colour while it runs. One line each, cut short: a
+   description can run to a paragraph. */
+.row .kids { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.row .kid {
+  display: flex; gap: 6px; font-size: 12px; color: var(--ink-mute);
+  min-width: 0; white-space: nowrap;
+}
+.row .kid .kidmark { color: var(--ink-faint); flex-shrink: 0; }
+.row .kid.running .kidmark { color: var(--working); }
+.row .kid .kidwhat { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
+.row .kid .kiddoing { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
+.row .kid.opens:hover .kidwhat { color: var(--ink); text-decoration: underline; }
+.row .kid.chosen .kidwhat { color: var(--ink); font-weight: 600; }
+.row .kidsran { margin-top: 0; align-self: flex-start; }
 .dirty { color: var(--needs); }
 /* What git has started and not finished, and its conflicts: the amber of
    waiting, in the narrow face's weight, so it is read before the counts. */
@@ -13198,6 +13375,7 @@ const state = {
   find: "",
   pick: "",             // what the sidebar filter box holds
   history: false,       // whether the finished sessions are unfolded
+  kidsOpen: new Set(),  // the rows whose ended subagents are unfolded (#422)
   skew: 0,              // server clock minus ours
   // The sessions whose `/clear` this page has seen, followed or not. A
   // session is followed into its new id once, when the link appears; a
@@ -14188,7 +14366,7 @@ function landOnNew(pane) {
 // them.
 
 function unreadSessions() {
-  return state.sessions.filter((s) => s.unread)
+  return topSessions().filter((s) => s.unread)
     .sort((a, b) => (b.ended_at || 0) - (a.ended_at || 0));
 }
 
@@ -14540,9 +14718,26 @@ function bandOf(s) {
 // is the same matcher the Files tab uses, so "ofd" finds "oans/fastduck".
 // The counts and the "N of M" line are about this: the filter is what they
 // are narrowed by, not the fold.
+// The sessions another agent ran (#422): a `claude -p` from its Bash tool,
+// whose parent is still in the list. Such a session is no row of its own,
+// and nothing that counts sessions counts it: it is a line under its
+// parent's row (`fillKids`). It came and went in a second as a row, and
+// nothing said whose it was.
+function childIds() {
+  const ids = new Set(state.sessions.map((s) => s.id));
+  return new Set(state.sessions.filter((s) => s.started_by && ids.has(s.started_by))
+    .map((s) => s.id));
+}
+
+// The sessions that are rows: every one but the children.
+function topSessions() {
+  const children = childIds();
+  return state.sessions.filter((s) => !children.has(s.id));
+}
+
 function shownSessions() {
-  if (!state.pick) return state.sessions;
-  return state.sessions.filter((s) => fuzzy(
+  if (!state.pick) return topSessions();
+  return topSessions().filter((s) => fuzzy(
     [s.place, s.name, s.branch].filter(Boolean).join(" "), state.pick));
 }
 
@@ -14619,7 +14814,85 @@ function newRow(id) {
   put(row, "div", "line2");
   const three = put(row, "div", "line3");
   put(three, "span", "said");
+  put(row, "div", "kids").hidden = true;
   return row;
+}
+
+// What a session started (#422), oldest first: the sessions its agent ran
+// from the Bash tool, and the subagents of its Agent tool, each as a line
+// says it. Ended is over: a child at its prompt has done what it was run
+// for, and a `claude -p` never waits on anybody.
+function kidsOf(s) {
+  const sessions = state.sessions.filter((one) => one.started_by === s.id).map((one) => ({
+    id: one.id, session: true, what: rowName(one),
+    doing: one.reason || one.last_event || "",
+    started: one.started_at || one.since,
+    ended: one.state === "working" || one.state === "needs_you" ? 0 : one.since,
+  }));
+  const agents = (s.subagents || []).map((one) => ({
+    id: one.id, session: false, what: one.what || one.kind || "subagent",
+    kind: one.kind, doing: one.doing, started: one.started, ended: one.ended,
+  }));
+  return sessions.concat(agents).sort((a, b) => a.started - b.started);
+}
+
+// The lines under a row: one for each child still running, then "3
+// subagents ran", which unfolds the ones that ended. A child that ended is
+// gone from sight, as the reader chose: they ended in seconds, and as rows
+// they were most of what moved in the list. A child session is opened from
+// its line; a subagent of the Agent tool has no transcript the page reads,
+// and its line chooses the row it stands in.
+function fillKids(box, s) {
+  const kids = kidsOf(s);
+  const open = state.kidsOpen.has(s.id);
+  const chosen = kids.some((one) => one.id === state.chosen);
+  if (fresh(box, "text", JSON.stringify([kids, open, chosen && state.chosen,
+                                         s.agents_ran]))) {
+    box.replaceChildren();
+    const ran = kids.filter((one) => one.ended);
+    for (const one of kids) if (!one.ended) putKid(box, one);
+    // Every one that ended, though the daemon keeps only the last few of
+    // the Agent tool's: the count says how many there were.
+    const many = (s.agents_ran || 0) + ran.filter((one) => one.session).length;
+    if (many) {
+      const fold = put(box, "button", "link kidsran",
+                       (open ? "\u25be " : "\u25b8 ") + counted(many, "subagent ran", "subagents ran"));
+      fold.title = open ? "hide them" : "show the ones that ran";
+      fold.addEventListener("click", (press) => {
+        press.stopPropagation();          // not a choice of the row
+        if (state.kidsOpen.has(s.id)) state.kidsOpen.delete(s.id);
+        else state.kidsOpen.add(s.id);
+        $("rows").dataset.drawn = "";
+        drawSessions();
+      });
+      if (open) for (const one of ran) putKid(box, one);
+    }
+  }
+  box.hidden = !box.children.length;
+  for (const age of box.querySelectorAll(".age")) ages.push([age, Number(age.dataset.since)]);
+}
+
+// One line: what it was asked to do, what it does now while it runs, and
+// how long ago it started, or ended.
+function putKid(box, one) {
+  const line = put(box, "div", "kid" + (one.ended ? "" : " running")
+    + (one.session ? " opens" : "") + (one.id === state.chosen ? " chosen" : ""));
+  line.dataset.kid = one.id;
+  put(line, "span", "kidmark", "\u21b3");
+  put(line, "span", "kidwhat", one.what);
+  if (!one.ended && one.doing) put(line, "span", "kiddoing", one.doing);
+  const since = one.ended || one.started;
+  const age = put(line, "span", "age", ago(since));
+  age.dataset.since = since;
+  if (one.session) {
+    line.title = "open its transcript";
+    line.addEventListener("click", (press) => {
+      press.stopPropagation();
+      choose(one.id);
+    });
+  } else {
+    line.title = (one.kind || "a") + " subagent of this session";
+  }
 }
 
 // A row says what nothing else on the page says: the name you know the
@@ -14633,7 +14906,7 @@ function newRow(id) {
 // a third and a fourth time. The word stays in the history, where "ended"
 // and "killed" share one group and one grey.
 function fillRow(row, s) {
-  const [one, , where, two, three] = row.children;
+  const [one, , where, two, three, kids] = row.children;
   // A reminder not yet come puts a waiting row aside as a snooze does, and
   // one that has come wears the amber of a session that needs you (#375).
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "")
@@ -14710,6 +14983,7 @@ function fillRow(row, s) {
     ? "" : (s.reason || s.last_event || "");
   three.children[0].textContent = said;
   three.hidden = !said;
+  fillKids(kids, s);
   // Beside the name, at the right: "how long has this needed me?" is read
   // with the name, and a ready row has no fourth line to carry it.
   // On a row a reminder brought back too: "later" again, as Slack lets a
@@ -14827,9 +15101,11 @@ function drawSessions() {
   drawCounts();
   const listed = listedSessions();
   const past = shown.filter(isGone);
+  const children = childIds();
   if (!fresh(box, "drawn",
              JSON.stringify([listed, state.chosen, past.length, state.history,
-                             state.linksKey]))) {
+                             state.linksKey,
+                             state.sessions.filter((s) => children.has(s.id))]))) {
     return;
   }
   // A row that is still there is kept and filled in again. A dot can only
@@ -14952,20 +15228,23 @@ function tickAges() {
 // me" from another window. The page itself says it in the sidebar's groups,
 // so the strip of counts that stood over it was gone -- the reader asked.
 function drawCounts() {
+  // Not a child (#422): a `claude -p` that ended a turn a second after it
+  // started was an alert and an unread of its own.
+  const rows = topSessions();
   const tally = new Map();
-  for (const s of state.sessions) {
+  for (const s of rows) {
     const seen = tally.get(s.state) || { word: s.state_word, n: 0 };
     seen.n += 1;
     tally.set(s.state, seen);
   }
-  const needs = state.sessions.filter(needsYou).length;
+  const needs = rows.filter(needsYou).length;
   const working = (tally.get("working") || { n: 0 }).n;
-  document.title = tabTitle(state.sessions);
+  document.title = tabTitle(rows);
   drawIcon(needs ? "needs_you" : working ? "working"
-    : state.sessions.length ? "done" : "gone");
+    : rows.length ? "done" : "gone");
   // About every session, filter or no filter: "who needs me" must not
   // change because you typed in a box.
-  notifyAbout(state.sessions);
+  notifyAbout(rows);
   armReminders();
   drawFeedLink();
 }
@@ -21222,7 +21501,7 @@ function goBack() {
     note("no session was chosen before this one");
   } else if (!state.sessions.some((one) => one.id === id)) {
     note("the session before this one is no longer in the list");
-  } else if (!shownSessions().some((one) => one.id === id)) {
+  } else if (!shownSessions().some((one) => one.id === id) && !childIds().has(id)) {
     note("the session before this one is hidden by the filter");
   } else {
     choose(id);
@@ -21571,7 +21850,7 @@ function resubscribe() {
       // Pick the first one for the reader. It has to go through choose(), or
       // the stream stays on watch="" and this session, the one actually on
       // screen, never receives a transcript update.
-      const first = state.sessions[0].id;
+      const first = (topSessions()[0] || state.sessions[0]).id;
       state.chosen = null;
       choose(first);
     } else if (waiting && current()) {

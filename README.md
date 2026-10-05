@@ -90,6 +90,14 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   not done with it. Every browser sees the same marks. When you open it,
   a blue "new" line stands over the first turn you have not seen, and the
   transcript opens there instead of at its end.
+- **You see what an agent started.** An agent can run `claude -p` from
+  its Bash tool, or start subagents with its Agent tool. Each one that
+  still runs is a line under that agent's card: what it was asked to do,
+  what it does now, and for how long. "3 subagents ran" under them shows
+  the ones that ended. Click the line of a `claude -p` to read its
+  transcript. They are not cards of their own, and they do not count as
+  unread or send an alert. To find the agent that ran a `claude -p`, the
+  hook reads the process tree, so this works on Linux only.
 - **Each session is one card.** It shows the session's name and its age,
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or

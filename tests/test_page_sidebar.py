@@ -21,6 +21,7 @@ from browser import (
     own_context,
     show_tab,
     two_rows,
+    wait_for_watching,
     wait_until,
 )
 
@@ -2144,3 +2145,71 @@ def test_all_unreads_is_one_scroll_through_the_last_answers(ws, pair_at):
         page.wait_for_function("state.chosen === 's2' && !state.feed")
         assert page.is_visible(".tabs .tab")
         page.wait_for_selector('.row[data-id="s2"]:not(.unread)')
+
+
+def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):
+    """A `claude -p` an agent ran, and its Agent tool's subagents, are lines
+    under its row (#422), never rows of their own: they came and went in a
+    second, and nothing said whose they were. One that ended is folded into
+    "1 subagent ran", and counts nowhere -- not in the tab's title, not as
+    unread. A child session's line opens its transcript."""
+    daemon, url = page_at
+    now = time.time()
+    by = {"cwd": str(tmp_path), "pane": "", "pid": 5000, "started_by": 1}
+    ws.append_event(conftest.event("SessionStart", sid="kid", ts=now, **by))
+    ws.append_event(conftest.event("UserPromptSubmit", sid="kid", prompt="Summarise the log",
+                                   ts=now, **by))
+    for name in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"):
+        ws.append_event(conftest.event(name, sid="over", prompt="Review the diff", ts=now, **by))
+    # A subagent runs on after its session's turn has ended (measured).
+    agent = {"cwd": str(tmp_path), "pane": "%7", "pid": 1, "ts": now}
+    ws.append_event(conftest.event("PreToolUse", tool_name="Agent",
+                                   tool_input={"description": "Compare the maps"}, **agent))
+    ws.append_event(conftest.event("SubagentStart", agent_id="a1", agent_type="Explore",
+                                   **agent))
+    ws.append_event(conftest.event("PreToolUse", agent_id="a1", agent_type="Explore",
+                                   tool_name="Bash", tool_input={"command": "make bench"},
+                                   **agent))
+    ws.append_event(conftest.event("Stop", **agent))
+    daemon.store.refresh()
+    with opened(url) as page:
+        lines = '.row[data-id="s1"] .kid'
+        page.wait_for_function(f"document.querySelectorAll('{lines}.running').length === 2")
+        assert page.locator(".row").count() == 1
+        running = page.locator(f"{lines}.running").all_inner_texts()
+        assert "Summarise the log" in running[0]
+        assert "Compare the maps" in running[1] and "make bench" in running[1]
+        # The ended child had a turn end, and is unread to the daemon; the
+        # page counts it nowhere. s1 is on screen, so it is read.
+        assert page.evaluate("state.sessions.find((s) => s.id === 'over').unread")
+        assert page.evaluate("unreadSessions().length") == 0
+        assert "working" not in page.title(), page.title()
+        fold = page.locator('.row[data-id="s1"] .kidsran')
+        assert fold.inner_text() == "▸ 1 subagent ran"
+        assert page.locator(lines).count() == 2
+        page.locator(f'{lines}[data-kid="kid"]').click()
+        page.wait_for_function("state.chosen === 'kid'")
+        page.wait_for_selector(f'{lines}.chosen[data-kid="kid"]')
+        assert page.locator(".row").count() == 1
+        fold.click()
+        page.wait_for_function(f"document.querySelectorAll('{lines}').length === 3")
+        assert "Review the diff" in page.locator(lines).nth(2).inner_text()
+        assert page.evaluate("state.chosen") == "kid", "the fold chose the row"
+        # It ends, and its line goes under the fold. Its parent's row is
+        # still by then -- the page's mark that it read s1 has landed and
+        # come back -- so a push of the child alone is what draws it again.
+        # And pushed once the stream listens to the child: the choice
+        # opened a new one.
+        wait_for_watching(daemon, "kid")
+
+        def still():
+            daemon.tick()
+            row = next(one for one in daemon.store.rows if one["id"] == "s1")
+            return not row["unread"] and page.evaluate(
+                "state.sessions.find((s) => s.id === 's1').seen_at") == row["seen_at"]
+
+        wait_until(page, still)
+        ws.append_event(conftest.event("SessionEnd", sid="kid", ts=time.time(), **by))
+        daemon.tick()
+        page.wait_for_function(f"document.querySelectorAll('{lines}.running').length === 1")
+        assert fold.inner_text() == "▾ 2 subagents ran"

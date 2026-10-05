@@ -594,6 +594,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_an_agent_that_reads_no_terminal_has_no_pane`,
     `test_reads_terminal_says_yes_unless_it_can_tell_no`,
     `test_a_remote_control_worker_is_the_agent_under_its_version_name`.
+  - **Such an agent may have been run by another one, and the hook says
+    which** (#422): `started_by` is the next Claude Code above it
+    (`claude_from(parent_pid(pid))`), and 0 for an agent that reads a
+    terminal, which pays nothing for the walk. Nothing in a `claude -p`'s
+    payload or environment names its agent (topics/payloads). The store
+    turns the pid into a session (`Store.parent_of`): **only one still
+    running, and the last heard from** -- a pid comes round again, and a
+    `/clear` keeps its process -- and a child's child goes under the first
+    row, because the page draws a child as a line and a line has none. An
+    rc worker's `started_by` is `claude rc`, which has no session, so it
+    stays a row. `claude_from` is in `HOOK_PARTS`.
+    `test_the_hook_names_the_agent_that_ran_a_claude_p`,
+    `test_a_child_is_linked_only_to_a_session_still_running`,
+    `test_a_child_s_child_stands_under_the_first_row`.
 - **A session with no pid cannot be checked.** `agent_pid` returns 0 where there
   is no `/proc` — on macOS, always. Such a session is taken for gone after
   `QUIET_MAX`. One with a pid is never buried for being quiet.

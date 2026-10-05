@@ -201,7 +201,7 @@ grep -n "^# --- \|^// --- " wostuast
 
 Claude Code can run a command when something happens in a session. This is a
 *hook*. Claude Code sends the event to the command as JSON on stdin. wostuast
-registers its hook for twelve events (`HOOK_EVENTS`):
+registers its hook for thirteen events (`HOOK_EVENTS`):
 
 | Event | What it tells us |
 | --- | --- |
@@ -214,6 +214,7 @@ registers its hook for twelve events (`HOOK_EVENTS`):
 | `Notification` | Claude Code wants your attention (late, but useful). |
 | `Stop` | The agent finished its turn. |
 | `StopFailure` | The turn ended with an API error. **The agent needs you.** |
+| `SubagentStart` | The Agent tool started a subagent. |
 | `SubagentStop` | A subagent finished. |
 | `PreCompact` | The context is about to be compacted. |
 | `SessionEnd` | The session ended. |
@@ -269,6 +270,12 @@ A few details in this picture carry real weight.
   Code. So `agent_pid` walks up the process tree in `/proc` until it finds
   Claude Code. The daemon uses the pid to learn when an agent dies without a
   goodbye.
+- **The agent that ran this one.** An agent can run `claude -p` from its
+  Bash tool. That is a session of its own, and nothing in its event names
+  the agent that ran it. For an agent that reads no terminal, the hook walks
+  on up the process tree (`claude_from`) to the next Claude Code, and adds
+  its pid as `started_by`. The daemon finds the session of that pid
+  (`Store.parent_of`), and the page draws the child as a line under it.
 - **The time stamp is taken *inside* the lock** (`append_event`, `stamp=True`).
   Before this fix, four hooks that ran at the same moment put about one line in
   120 out of order. Now the order of lines in the file is the order of time.
@@ -789,6 +796,13 @@ The clock on a row's hover sets a **reminder**. The daemon keeps only the moment
 (`reminders.json`); the page compares it with the clock, so a row never
 changes by itself. Until the moment, a waiting session is put aside as if
 snoozed; then it needs you again, whatever it is doing, until you open it.
+
+What an agent starts is **a line under its row**, not a row (`fillKids`):
+a `claude -p` it ran from its Bash tool (`started_by`), and the subagents of
+its Agent tool, which are no sessions at all -- their events come under the
+agent's own session, each with an `agent_id` (`note_subagent`). The lines
+show what runs; "3 subagents ran" folds the ones that ended. A child counts
+in no group, title, alert or unread mark (`topSessions`).
 
 A session whose turn ended after you last had it on screen is **unread**:
 a dot before its name, and a count in the tab's title. Opening it reads

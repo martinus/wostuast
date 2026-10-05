@@ -229,6 +229,10 @@ luck, and on `main` too, to tell whose it is.
   it too**: they serve a session in `%7` without `ws`, and a `--type
   '#say=…'` typed into the reader's own `%7`.
   `test_no_test_reaches_the_tmux_it_runs_under`, `test_it_types_into_no_real_tmux`.
+- **A page hears a change only from `daemon.tick()`; `daemon.store.refresh()`
+  folds it and tells nobody.** A test that appended and refreshed waited out
+  its whole timeout for a push the daemon already held (#422). Refresh before
+  the page opens, tick after.
 - **In a browser test, `wait_for_watching(daemon)` comes before the first
   `daemon.tick()`.** `open_page` and `wait_for_map` prove the fetch
   answered, not that the stream listens: `showTab` fetches and *then*
