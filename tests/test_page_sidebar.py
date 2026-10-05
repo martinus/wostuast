@@ -2232,3 +2232,29 @@ def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):
         fold.click()
         page.wait_for_function(f"document.querySelectorAll('{lines}').length === 2")
         assert page.locator(f'{lines}.chosen[data-kid="kid"]').count() == 1
+
+
+def test_the_views_keep_their_height_when_the_list_scrolls(ws, page_at, tmp_path):
+    """A list longer than the window scrolls, and the four view buttons
+    above it stay whole (#423). The row of views clips what overflows it,
+    and such a flex item may shrink below its content: the column took
+    the list's overflow out of it too, and cut its words in half."""
+    daemon, url = page_at
+    for n in range(40):
+        where = tmp_path.parent / f"many{n}"
+        where.mkdir(exist_ok=True)
+        ws.append_event(conftest.event("SessionStart", sid=f"m{n}", cwd=str(where),
+                                       pane="%9", pid=2, ts=time.time()))
+    daemon.store.refresh()
+    with opened(url) as page:
+        page.set_viewport_size({"width": 1200, "height": 500})
+        page.wait_for_function("document.querySelectorAll('.row').length === 41")
+        size = page.evaluate("""() => { const v = document.querySelector('.views');
+          const b = v.querySelector('.feedlink');
+          return [v.clientHeight, v.scrollHeight, b.offsetHeight]; }""")
+        assert size[0] == size[1] >= size[2] >= 20, size
+        # Nor what stands above it: every part of the column but the list.
+        for part in page.evaluate("""() => Array.from(
+            document.querySelector('.sidebar').children).filter((c) => c.id !== 'rows')
+            .map((c) => [c.className, c.clientHeight, c.scrollHeight])"""):
+            assert part[1] >= part[2], part
