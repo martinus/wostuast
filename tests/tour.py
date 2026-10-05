@@ -155,8 +155,13 @@ def main(argv: list[str]) -> int:
                         help="JS to run before each picture, or a file that holds it")
     args = parser.parse_args(argv)
     code = args.code
-    if code and Path(code).is_file():
-        code = Path(code).read_text()
+    # Code longer than a file's name may be is code: asked whether it is a
+    # file, the disk answered with an error, and the tour stopped there.
+    try:
+        if code and Path(code).is_file():
+            code = Path(code).read_text()
+    except OSError:
+        pass
     wanted = args.view or VIEWS
 
     home = Path(tempfile.mkdtemp(prefix="wostuast-tour-"))
