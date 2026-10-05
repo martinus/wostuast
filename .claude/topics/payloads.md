@@ -76,8 +76,23 @@ the owner's `~/.claude` holds is still the owner's to take**: listing it,
 or the environment, is refused as credential exploration -- and the
 refusal covers every other way to the same answer. Write the probe as a short script into the
 issue, say what its output answers, and leave the issue open for the
-result: #266 holds the shape. Plugin skills (#268) are not read for the
-same reason.
+result: #266 holds the shape. **A layout of `~/.claude` is measured in a
+home of its own instead**: for #413, `ClaudePane(setup=...)` ran `claude
+plugin marketplace add` and `claude plugin install` on a marketplace of one
+plugin written for the purpose, before Claude Code started.
+
+**A plugin, as 2.1.289 installs it** (#413). `plugins/installed_plugins.json`
+is `{"version": 2, "plugins": {"demo@mk": [{"scope": "user", "installPath":
+".../plugins/cache/mk/demo/1.0.0", "version", "installedAt", "lastUpdated"}]}}`;
+one installed with `--scope project` carries `"projectPath"`. The files are
+copied under `installPath`: `commands/hello.md`, `skills/greet/SKILL.md`.
+`settings.json` gets `"enabledPlugins": {"demo@mk": true}`, and `claude
+plugin disable --scope project` writes `false` into the project's
+`.claude/settings.json`. **The names**: the completion list shows
+`/demo:hello  (demo) Say hello`; the transcript records
+`<command-name>/demo:hello</command-name>`; and `/greet`, typed, ran as
+`/demo:greet`, its text opening "Base directory for this skill:" and the
+marketplace's own folder for a marketplace that is a directory.
 
 **A plan's approval is a `PermissionRequest` for `ExitPlanMode`, and the
 plan is in its `tool_input`** (measured on 2.1.288 with
