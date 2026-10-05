@@ -7391,7 +7391,8 @@ def front_matter(text: str) -> dict[str, str]:
 @dataclass
 class Command:
     """One thing the send box can complete. `came` is where it came from:
-    `project`, `yours`, or `used` for one only seen in a transcript."""
+    `project`, `yours`, `plugin`, or `used` for one only seen in a
+    transcript."""
 
     name: str
     about: str = ""
@@ -7497,6 +7498,69 @@ def command_files(base: Path, came: str) -> Iterator[Command]:
                 yield found
 
 
+def enabled_plugins(top: Path | None) -> dict[str, bool]:
+    """Which plugins Claude Code has on, `plugin@marketplace` to True or
+    False: the settings' `enabledPlugins`, yours, then the project's shared
+    ones, then its local ones, the nearer saying last (#413). `claude
+    plugin disable --scope project` wrote `false` into the project's
+    `settings.json`, measured on 2.1.289."""
+    files = [settings_path()]
+    if top is not None:
+        files += [top / ".claude" / "settings.json", top / ".claude" / "settings.local.json"]
+    on: dict[str, bool] = {}
+    for file in files:
+        try:
+            said = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        found = said.get("enabledPlugins") if isinstance(said, dict) else None
+        if isinstance(found, dict):
+            on.update({key: value is True for key, value in found.items()
+                       if isinstance(key, str)})
+    return on
+
+
+def plugin_dirs(cwd: str, root: str) -> list[tuple[str, Path]]:
+    """Each plugin that is on for a session standing in `cwd`, as its name
+    and the folder its `commands` and `skills` are in (#413).
+
+    Measured on 2.1.289 by installing one into a home of its own:
+    `plugins/installed_plugins.json` (version 2) maps `plugin@marketplace`
+    to its installs, each with a `scope` and an `installPath` under
+    `plugins/cache/<marketplace>/<plugin>/<version>`, and one installed for
+    a project only carries that project's `projectPath`. Only a folder
+    under `plugins` is read: the file is Claude Code's, but a path in it is
+    a path a reader of the page did not choose."""
+    base = claude_dir() / "plugins"
+    try:
+        listed = json.loads((base / "installed_plugins.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    plugins = listed.get("plugins") if isinstance(listed, dict) else None
+    if not isinstance(plugins, dict):
+        return []
+    here = root or cwd
+    top = Path(here).resolve() if here else None
+    on = enabled_plugins(top)
+    found: list[tuple[str, Path]] = []
+    for key, installs in plugins.items():
+        if not isinstance(key, str) or not on.get(key) or not isinstance(installs, list):
+            continue
+        for one in installs:
+            if not isinstance(one, dict) or not isinstance(one.get("installPath"), str):
+                continue
+            if one.get("scope") != "user":
+                project = one.get("projectPath")
+                if (not isinstance(project, str) or top is None
+                        or Path(project).resolve() != top):
+                    continue
+            folder = inside(base, one["installPath"])
+            if folder is not None:
+                found.append((key.split("@")[0], folder))
+                break
+    return found
+
+
 def project_dirs(cwd: str, root: str) -> list[Path]:
     """The session's directory and each parent up to the worktree's top,
     nearest first. Only the directory itself when it is in no worktree."""
@@ -7590,6 +7654,14 @@ class Commands:
         for where in project_dirs(cwd, root):
             yield from command_files(where / ".claude", "project")
         yield from command_files(claude_dir(), "yours")
+        # A plugin's command runs as `/plugin:name`, a skill's too: typed
+        # as `/greet`, a plugin's skill ran as `/demo:greet` (#413).
+        for plugin, folder in plugin_dirs(cwd, root):
+            for one in command_files(folder, "plugin"):
+                named = plugin + ":" + one.name
+                if COMMAND_SHAPE.fullmatch(named):
+                    one.name = named
+                    yield one
 
     def of(self, cwd: str, root: str, transcripts: Iterable[Path]) -> list[Command]:
         """Every command for a session standing in `cwd`: the project's,
@@ -20836,6 +20908,7 @@ function useCommand(key) {
 
 // Yours and the built-ins first, then each project under its name.
 const COMMAND_GROUPS = [["yours", "yours, in every project"],
+                        ["plugin", "from your plugins"],
                         ["used", "built in, or no longer on disk"]];
 
 function drawCommands(box) {
@@ -21754,6 +21827,7 @@ const slash = { list: null, shown: [], at: 0, asked: 0, dismissed: false,
 const CAME = {
   project: ["this project", "this project"],
   yours: ["yours", "yours, in every project"],
+  plugin: ["plugins", "from your plugins"],
   used: ["used before", "built in, or no longer on disk"],
 };
 

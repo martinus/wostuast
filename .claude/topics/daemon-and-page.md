@@ -526,10 +526,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     kilobytes (the ssh rule above). The page fetches `commands` when the
     list opens and drops it when it shuts (`closeSlash`), so a skill written
     a minute ago is in the next list.
-  - **What is not known from a real machine is left out**, not guessed:
-    plugin skills, whose place on disk nobody has read, and a command file
-    in a subdirectory of `commands`, whose name nobody has seen formed
-    (topics/payloads). `glob`, not `rglob`.
+  - **What is not known from a real machine is left out**, not guessed: a
+    command file in a subdirectory of `commands`, whose name nobody has
+    seen formed (topics/payloads). `glob`, not `rglob`.
+  - **A plugin's commands are read where Claude Code installed them**
+    (#413, `plugin_dirs`, `enabled_plugins`): they were listed as built
+    in, "no file says what it does", though their files were on the disk.
+    Measured, not guessed: the layout and the names in topics/payloads. A
+    plugin counts only when `enabledPlugins` has it on -- yours, then the
+    project's `settings.json`, then its `settings.local.json`, the nearest
+    last -- and one installed for a project only in that project. **Only a
+    folder under `~/.claude/plugins` is read**, by `inside`: the list is
+    Claude Code's file, but a path in it is one no reader of the page
+    chose. They are `came: "plugin"`, "from your plugins" on the page.
+    `test_a_plugins_commands_are_read_where_claude_code_installed_them`,
+    `test_a_plugin_is_read_only_where_it_is_on`.
   - **The list's keys come first** (`slashKey`). Tab always takes the
     chosen row. **Enter takes only a row the reader chose** (`enterTakes`):
     an arrow pressed (`slash.moved`), or a word that starts the name and is

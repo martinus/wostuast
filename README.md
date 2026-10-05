@@ -284,8 +284,8 @@ session's directory up to the top of the repository, then yours from
 use most come first. Type more letters to narrow the list. <kbd>Tab</kbd> puts
 the chosen command in the box, and so does <kbd>Enter</kbd> after an arrow key
 or while what you typed is the start of the name. Otherwise <kbd>Enter</kbd>
-sends what you typed. <kbd>Esc</kbd> closes the list. Plugin skills, and command files in a
-subdirectory of `commands`, are not in the list yet.
+sends what you typed. <kbd>Esc</kbd> closes the list. Command files in a
+subdirectory of `commands` are not in the list yet.
 
 A `/` after a space, in the middle of a message, opens the list too. There
 it shows only skills and command files. Claude Code does not run a command
@@ -346,8 +346,10 @@ one.
 - **use** puts `/name ` into the send box of a session that can run it,
   on its Transcript tab, with the cursor after it. Add what it needs, and send. Nothing is typed into the
   terminal before you press send.
-- A command in a subfolder of `commands/`, or one from a plugin, is not
-  listed yet: the send box leaves them out too.
+- A plugin's commands and skills are listed as Claude Code names them,
+  `/plugin:name`, when the plugin is on for that project.
+- A command in a subfolder of `commands/` is not listed yet: the send box
+  leaves it out too.
 
 #### Your review
 

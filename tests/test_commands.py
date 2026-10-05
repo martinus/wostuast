@@ -60,6 +60,77 @@ def test_the_project_and_your_own_commands_are_read(ws, tmp_path):
     assert (found["standup"].came, found["standup"].about) == ("yours", "")
 
 
+def installed(ws, scope="user", project=None, where=None, on=True, settings=None):
+    """A plugin `demo` from the marketplace `mk`, with a command and a skill,
+    as `claude plugin install` left it on 2.1.289 (#413): the files under
+    `plugins/cache/mk/demo/1.0.0`, `installed_plugins.json` (version 2)
+    naming that folder, and `enabledPlugins` in a settings file."""
+    base = ws.claude_dir() / "plugins"
+    folder = where or base / "cache" / "mk" / "demo" / "1.0.0"
+    (folder / "commands").mkdir(parents=True)
+    (folder / "commands" / "hello.md").write_text("---\ndescription: Say hello\n---\nSay hello.\n")
+    (folder / "skills" / "greet").mkdir(parents=True)
+    (folder / "skills" / "greet" / "SKILL.md").write_text(
+        "---\nname: greet\ndescription: Greet someone\n---\nGreet.\n")
+    install = {"scope": scope, "installPath": str(folder), "version": "1.0.0",
+               "installedAt": "2026-10-05T06:05:01.928Z"}
+    if project:
+        install["projectPath"] = str(project)
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"demo@mk": [install]}}))
+    settings = settings or ws.settings_path()
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"enabledPlugins": {"demo@mk": on}}))
+
+
+def test_a_plugins_commands_are_read_where_claude_code_installed_them(ws, tmp_path):
+    """A plugin's command and skill, named `/plugin:name` as Claude Code
+    runs them: they were listed as built in, with no file, though they were
+    on the disk (#413). Their text is read like any other's, and what the
+    transcripts counted of them is theirs."""
+    installed(ws)
+    found = by_name(ws.Commands().of(str(tmp_path), "", []))
+    assert {"demo:hello", "demo:greet"} <= set(found), sorted(found)
+    hello = found["demo:hello"]
+    assert (hello.came, hello.about) == ("plugin", "Say hello")
+    assert hello.file.endswith("plugins/cache/mk/demo/1.0.0/commands/hello.md"), hello.file
+    assert found["demo:greet"].about == "Greet someone"
+    assert ws.command_text(hello)[0].strip() == "Say hello."
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(records(command_record("demo:hello")))
+    counted = by_name(ws.Commands().of(str(tmp_path), "", [transcript]))
+    assert (counted["demo:hello"].came, counted["demo:hello"].uses) == ("plugin", 1)
+
+
+def test_a_plugin_is_read_only_where_it_is_on(ws, tmp_path):
+    """Off in the settings, off for a project that turned it off, only in
+    its own project when installed for one, and never from a folder
+    outside Claude Code's `plugins` (#413)."""
+    project = tmp_path / "project"
+    (project / ".claude").mkdir(parents=True)
+    names = lambda where: set(by_name(ws.Commands().of(str(where), "", [])))
+    installed(ws, on=False)
+    assert "demo:hello" not in names(tmp_path)
+    shutil.rmtree(ws.claude_dir() / "plugins")
+    installed(ws)
+    (project / ".claude" / "settings.json").write_text(
+        json.dumps({"enabledPlugins": {"demo@mk": False}}))
+    assert "demo:hello" in names(tmp_path) and "demo:hello" not in names(project)
+    (project / ".claude" / "settings.local.json").write_text(
+        json.dumps({"enabledPlugins": {"demo@mk": True}}))
+    assert "demo:hello" in names(project)
+    shutil.rmtree(ws.claude_dir() / "plugins")
+    (project / ".claude" / "settings.json").unlink()
+    installed(ws, scope="project", project=project)
+    assert "demo:hello" in names(project) and "demo:hello" not in names(tmp_path)
+    shutil.rmtree(ws.claude_dir() / "plugins")
+    installed(ws, where=tmp_path / "elsewhere")
+    assert "demo:hello" not in names(tmp_path)
+    (ws.claude_dir() / "plugins" / "installed_plugins.json").write_text("{not json")
+    assert "demo:hello" not in names(tmp_path)
+
+
 def test_a_session_outside_a_repository_reads_only_its_own_directory(ws, tmp_path):
     project, below = staged(ws, tmp_path)
     assert "deploy" not in by_name(ws.Commands().of(str(below), "", []))
