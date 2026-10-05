@@ -197,6 +197,7 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `--eval JS` runs in the page first: a click, a scroll. `tests/test_shot.py` keeps it working. |
 | `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working. |
 | `tests/tour.py` | Not a test. Six sessions, one in each state a row can be in -- unread with a plan, working with subagents under it, needing you, a reminder, over -- saved turns of each kind, and a status line each; then a PNG of each view: `transcript`, `later` (the remind menu), `unread`, `saved`, `search`, `permission`. `--view` picks, `--light`, `--width`, `--height`, and `--eval JS` (or a file of it) before each picture, which is how a mockup of the sidebar or the views is drawn. `tests/test_tour.py` keeps it working. |
+| `tests/scale.py` | Not a test. Writes a synthetic history of `--sessions` and `--turns` into a throwaway home and prints one line of JSON: the first fold of a start, a quiet tick, a tick after one event, a push and a stream's opening, and with `--page` one push's redraw in Chromium. How #430 and #431 were measured; run it before and after a change to the fold, a row, the stream or the sidebar's draw. `tests/test_scale.py` keeps it working. |
 | `tests/claude_pane.py` | Not a test. A real Claude Code in a tmux pane of its own, against a fake Messages API that keeps every request and can answer once with a tool call: `send`, `paste`, `ask`, `busy` (a turn still running), `turns`, `statuses`, `hooks`, `settings`. How a question about what Claude Code does is measured, not guessed (topics/payloads). `tests/test_claude_pane.py` keeps the fake API working. |
 | `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act, commands. |
@@ -328,6 +329,7 @@ simply not there.
 python3 tests/shot.py case.txt out.png --measure  # a report about the transcript: look first, about 1 s
 python3 tests/stage.py out.png --commit 2 --review  # a report about the Review or Files tab (--tab files --open PATH)
 python3 tests/tour.py out/ --view later --eval mock.js  # the sidebar and the views: every row state, each view a PNG
+python3 tests/scale.py --sessions 500 --page  # how a start, a tick, a push and a redraw scale: before and after
 WOSTUAST_WAIT=5000 python3 -m pytest tests/test_page_review.py -q -k name  # while working: a lost wait fails in 5 s
 python3 -m pytest tests/test_page_review.py -q  # the subject you are changing. Do this first.
 python3 tests/perturb.py breaks.json            # prove the new tests: each break runs only the tests it names
@@ -360,11 +362,11 @@ real page, with its real CSS. A standalone HTML file with the CSS copied by
 hand drifts from the page, and needs the browser path that `browser.py`
 already knows. **Every tool keeps to its own home, through `conftest.isolate(home)`**,
 called by each function that writes -- `stage.serve`, `shot.serve`,
-`tour.make_sessions` -- not only by its `main`: a script that called
+`tour.make_sessions`, `scale.measure` -- not only by its `main`: a script that called
 `stage.serve` by itself wrote the command fixtures into the real
 `~/.claude`, and the session's own skill list showed them. A new tool
 calls it too; `test_the_tools_write_nothing_outside_their_own_home`
-holds the three. It reads the checkout when it starts, so run
+holds the four. It reads the checkout when it starts, so run
 it again after an edit. A spacing report
 went round three times, and three pull requests, because every fix was
 proven by a test measuring the box around each block, which said 6 px, while

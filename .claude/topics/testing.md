@@ -99,6 +99,13 @@ Keep the breaks list in the scratchpad; it is about one fix.
   second, which was red alone (#328). **A GREEN that is red alone is this,
   or a test that leans on another**: run that break by itself before you
   believe either. `test_no_bytecode_of_a_break_is_left_behind`.
+- **A GREEN may be code nothing needs: then delete the code, not add a
+  test.** A break that took the list of gone rows out of a push stayed
+  green under every test, because a row that goes always moves the order,
+  and the page builds its list from the order (#431): `gone` was said
+  twice, so it went. Ask first whether any input could tell the two
+  apart; a break no input can see is the same program (a new call never
+  carries an id already kept, #430), and is dropped, not tested.
 - **A GREEN on a style read after a click may be the hover's style.** The
   pointer stays on what it clicked, and that element's `:hover` rule then
   stands in for the rule broken: the chosen row's coloured line was taken
