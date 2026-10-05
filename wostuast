@@ -8013,6 +8013,10 @@ class Daemon:
         #: tick (`tell_config`).
         self.config_seen = config_stamp()
         self.transcripts: dict[str, Transcript] = {}
+        #: The rows as the last push left them, by id, and their order: what
+        #: `sessions_change` compares with (#431).
+        self.told: dict[str, dict[str, Any]] = {}
+        self.told_order: list[str] = []
         #: The run of a reader `forget_gone` dropped, by session, so the next
         #: reader of that session counts on from it. An int each, not blocks.
         self.runs: dict[str, int] = {}
@@ -8204,6 +8208,33 @@ class Daemon:
             wrote = True
         return wrote
 
+    def sessions_change(self) -> dict[str, Any]:
+        """What changed in the rows since the last push (#431): the rows that
+        are new or differ, and the order of the ids whenever it moved --
+        which a row that went always moves, so it says that too. Every change sent every row -- 111 KB a push at 100 sessions,
+        about once a second while agents work -- and the page filled them
+        all again.
+
+        **Safe because a stream never has a gap**: a push it cannot keep
+        closes it (`Client.put`), and a stream opens with every row
+        (`sessions_payload`). A push says "these rows now read so", so the
+        pushes queued behind an opening, applied in order on top of it, end
+        on the newest rows even when the opening is newer than some of
+        them. Only the tick sends this, and only the tick writes `told`.
+        """
+        rows = self.store.rows
+        order = [one["id"] for one in rows]
+        told = self.told
+        change: dict[str, Any] = {
+            "now": time.time(),
+            "changed": [one for one in rows if told.get(one["id"]) != one],
+            "saved": len(self.store.saved)}
+        if order != self.told_order:
+            change["order"] = order
+        self.told = {one["id"]: one for one in rows}
+        self.told_order = order
+        return change
+
     def sessions_payload(self) -> dict[str, Any]:
         # How many turns are saved, for the sidebar's link (#377): the list
         # itself is asked for when it opens.
@@ -8220,7 +8251,7 @@ class Daemon:
         if self.declined_in_terminal():
             moved = self.store.refresh() or moved
         if moved:
-            self.hub.send("sessions", self.sessions_payload())
+            self.hub.send("sessions", self.sessions_change())
         self.tell_config()
         for session_id in self.hub.watchers():
             self.read_transcript(session_id)
@@ -14070,8 +14101,6 @@ function dayOf(when) {
 
 // --- the sidebar ------------------------------------------------------------
 
-const ages = [];
-
 // A session nobody can talk to any more. The daemon sorts these to the end;
 // the page folds them away under "history".
 function isGone(s) {
@@ -14200,7 +14229,7 @@ async function setReminder(id, at) {
   if (!answer || answer.error) { said(answer || {}); return; }
   const s = state.sessions.find((one) => one.id === id);
   if (s) s.remind_at = answer.remind_at;
-  $("rows").dataset.drawn = "";
+  redrawRows();
   drawSessions();
 }
 
@@ -14310,7 +14339,7 @@ function armReminders() {
   if (!next.length) return;
   const wait = Math.max(0, (Math.min(...next) - serverNow()) * 1000) + 50;
   reminderTimer = setTimeout(() => {
-    $("rows").dataset.drawn = "";
+    redrawRows();
     drawSessions();
   }, Math.min(wait, 2 ** 31 - 1));
 }
@@ -14327,7 +14356,7 @@ async function toggleSnooze(id) {
   const answer = await tell(id, "snooze", { snooze: !s.snoozed });
   if (answer && answer.error) { said(answer); return; }
   s.snoozed = !!(answer && answer.snoozed);
-  $("rows").dataset.drawn = "";
+  redrawRows();
   drawSessions();
 }
 
@@ -14344,7 +14373,7 @@ async function setUnread(id, unread) {
   if (!unread && state.keptUnread === id) state.keptUnread = null;
   state.seeing = id;
   s.unread = unread;
-  $("rows").dataset.drawn = "";
+  redrawRows();
   drawSessions();
   const answer = await tell(id, "seen", { seen: !unread });
   if (state.seeing === id) state.seeing = null;
@@ -14361,7 +14390,7 @@ async function setUnread(id, unread) {
   } else if (now) {
     now.unread = !!answer.unread;
   }
-  $("rows").dataset.drawn = "";
+  redrawRows();
   drawSessions();
 }
 
@@ -14834,6 +14863,28 @@ function topSessions() {
   return state.sessions.filter((s) => !children.has(s.id));
 }
 
+// Every row filled again on the next draw, whatever its signature says:
+// for a change the rows' data does not show -- a closed rename box, the
+// fold of a history or of subagents (#431).
+function redrawRows() {
+  $("rows").dataset.drawn = "";
+  for (const row of $("rows").children) delete row.dataset.sig;
+}
+
+// A push of what changed, laid over the rows the page holds (#431): the
+// rows that are new or differ, and the order of the ids whenever it moved
+// -- a row that went is one the order no longer names. A row the push does
+// not name is the same object as before.
+function mergeSessions(held, body) {
+  const byId = new Map(held.map((s) => [s.id, s]));
+  for (const s of body.changed || []) byId.set(s.id, s);
+  const order = body.order || held.map((s) => s.id);
+  const placed = new Set(order);
+  // A new row comes with an order; one that did not is put last, not lost.
+  for (const s of body.changed || []) if (!placed.has(s.id)) order.push(s.id);
+  return order.filter((id) => byId.has(id)).map((id) => byId.get(id));
+}
+
 function shownSessions() {
   if (!state.pick) return topSessions();
   return topSessions().filter((s) => fuzzy(
@@ -14966,14 +15017,13 @@ function fillKids(box, s) {
         press.stopPropagation();          // not a choice of the row
         if (state.kidsOpen.has(s.id)) state.kidsOpen.delete(s.id);
         else state.kidsOpen.add(s.id);
-        $("rows").dataset.drawn = "";
+        redrawRows();
         drawSessions();
       });
       if (open) for (const one of ran) putKid(box, one);
     }
   }
   box.hidden = !box.children.length;
-  for (const age of box.querySelectorAll(".age")) ages.push([age, Number(age.dataset.since)]);
 }
 
 // One line: what it was asked to do, what it does now while it runs, and
@@ -15104,6 +15154,7 @@ function fillRow(row, s) {
   age.classList.toggle("swap", offers && !reminderSet(s));
   age.classList.toggle("when", reminderSet(s));
   if (reminderSet(s)) {
+    delete age.dataset.since;          // a clock, not an age
     if (fresh(age, "text", reminderAt(s))) {
       age.replaceChildren();
       putIcon(age, "clock");
@@ -15114,7 +15165,7 @@ function fillRow(row, s) {
     delete age.dataset.text;
     age.textContent = ago(s.since);
     age.title = "";
-    ages.push([age, s.since]);
+    age.dataset.since = s.since;
   }
 }
 
@@ -15153,7 +15204,7 @@ function renameRow(row) {
   const close = () => {
     if (!box.isConnected) return;
     box.remove();
-    $("rows").dataset.drawn = "";      // fill the name in again
+    redrawRows();      // fill the name in again
     drawSessions();
   };
   box.addEventListener("keydown", (press) => {
@@ -15230,7 +15281,11 @@ function drawSessions() {
     else if (node.classList.contains("histhead")) bar = node;
     else node.remove();
   }
-  ages.length = 0;
+  // The children of each row, once a draw, for the rows' signatures.
+  const kidsBy = new Map();
+  for (const s of state.sessions) {
+    if (children.has(s.id)) kidsBy.set(s.started_by, (kidsBy.get(s.started_by) || []).concat(s));
+  }
   let at = 0;
   const place = (node) => {
     if (box.children[at] !== node) box.insertBefore(node, box.children[at] || null);
@@ -15260,7 +15315,18 @@ function drawSessions() {
     for (const s of mine) {
       const row = had.get(s.id) || newRow(s.id);
       had.delete(s.id);
-      fillRow(row, s);
+      // Only a row whose session, or what the page shows beside it, has
+      // changed (#431): filling all 500 rows took 34 ms on every push, and
+      // with the layout after it up to 125 ms. By its text, not by the
+      // object: the page changes a session in place for a rename, a
+      // reminder, a snooze and an unread mark.
+      const sig = JSON.stringify([s, s.id === state.chosen, state.linksKey,
+                                  reminderDue(s), reminderAt(s), reminderWord(s),
+                                  state.kidsOpen.has(s.id), kidsBy.get(s.id) || null]);
+      if (row.dataset.sig !== sig || row.querySelector(".name input")) {
+        fillRow(row, s);
+        row.dataset.sig = sig;
+      }
       place(row);
     }
   }
@@ -15323,9 +15389,12 @@ let gripRow = null;
 
 // Only the ages change by themselves. Rebuilding the rows to advance them
 // would restart the needs-you pulse every second, so it never finished a
-// cycle.
+// cycle. Each age carries its moment (`data-since`), so a row a draw left
+// alone (#431) still ticks.
 function tickAges() {
-  for (const [node, since] of ages) node.textContent = ago(since);
+  for (const node of $("rows").querySelectorAll(".age[data-since]")) {
+    node.textContent = ago(Number(node.dataset.since));
+  }
 }
 
 // The browser tab's title and icon, and the alerts: the answer to "who needs
@@ -21950,7 +22019,8 @@ function resubscribe() {
     // state. This is the moment that session becomes a real one.
     const waiting = !!state.chosen && !current();
     const first = !state.sessions.length;
-    state.sessions = body.sessions || [];
+    // Every row when a stream opens, then only what changed (#431).
+    state.sessions = body.sessions || mergeSessions(state.sessions, body);
     if (typeof body.saved === "number") state.savedCount = body.saved;
     forgetAnswered();
     followClear(first);
