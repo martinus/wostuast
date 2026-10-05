@@ -6524,14 +6524,19 @@ def write_snoozed(snoozes: dict[str, float]) -> None:
 #: the words stay in the transcript, and "open" goes there.
 SAVED_MAX = 500
 SAVED_PREVIEW = 300
+#: Who said a saved turn: an answer (None, or "claude", kept as nothing),
+#: the reader's prompt, their `!` or slash command, or the harness (#424).
+SAVED_WHO = (None, "claude", "me", "shell", "system")
 
 
 def saved_entry(raw: Any) -> dict[str, Any] | None:
     """One saved turn, checked: a session id, a place, a moment, and the
     start of its words. None for anything else; nothing read from a disk
     or a POST is trusted blindly. A prompt the reader typed carries
-    `who: "me"` (#403); an answer carries nothing, so every entry saved
-    before prompts could be is an answer, as it was."""
+    `who: "me"` (#403), a `!` or slash command with its output `"shell"`,
+    and a message of the harness `"system"` (#424); an answer carries
+    nothing, so every entry saved before prompts could be is an answer, as
+    it was."""
     if not isinstance(raw, dict):
         return None
     sid, seq, ts = raw.get("id"), raw.get("seq"), raw.get("ts")
@@ -6540,12 +6545,12 @@ def saved_entry(raw: Any) -> dict[str, Any] | None:
     if (not isinstance(sid, str) or not sid or not isinstance(seq, int)
             or isinstance(seq, bool) or seq < 0 or not number(ts)
             or not isinstance(text, str) or not number(at)
-            or who not in (None, "me", "claude")):
+            or who not in SAVED_WHO):
         return None
     entry = {"id": sid, "seq": seq, "ts": float(ts), "text": text[:SAVED_PREVIEW],
              "at": float(at)}
-    if who == "me":
-        entry["who"] = "me"
+    if who and who != "claude":
+        entry["who"] = who
     return entry
 
 
@@ -11938,7 +11943,10 @@ body.dragging { cursor: col-resize; user-select: none; }
    narrows (`fitViews`): first the icons go, then the words, which stay in
    the button's title. Cut with an ellipsis, a word in a list 340 px wide
    was its first letter. */
-.views { display: flex; gap: 4px; margin: 0 6px 10px; overflow: hidden; }
+/* It never gives way to a long list (issue 423): it clips what overflows
+   it, and such a flex item may shrink below its content, so the column
+   took the list's overflow out of it and cut its words in half. */
+.views { display: flex; gap: 4px; margin: 0 6px 10px; overflow: hidden; flex-shrink: 0; }
 .views.bare .feedlink .icon, .views.icons .feedlink .viewname { display: none; }
 .feedlink {
   flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center;
@@ -12018,7 +12026,8 @@ body.infeed .viewtitle {
 /* Who said it, in the colours the transcript gives the two names. */
 .feedwho.mine { color: var(--mine); font-weight: 600; }
 .feedwho.claude { color: var(--needs); }
-.feedentry .bubble.mine { margin: 4px 0 8px; }
+.feedwho.aside { color: var(--ink-faint); }
+.feedentry .bubble.mine, .feedentry .bubble.aside { margin: 4px 0 8px; }
 .searchtext { margin: 2px 0; color: var(--ink); line-height: 1.55; }
 /* A hit, softer than the find box's (issue 395): in its solid colour, a
    page of results was a page of blocks, and the word in one was hard to
@@ -12411,7 +12420,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    another session. It is real news and it is not a prompt, so it gets a quiet
    block rather than your rail and your tint. It was drawn as though you had
    typed it, which is part of what made a transcript read as a wall. */
-.turn.aside .bubble {
+.turn.aside .bubble, .feedentry .bubble.aside {
   background: none; border-style: dashed; color: var(--ink-mute);
 }
 .turn.aside .who { color: var(--ink-faint); }
@@ -12439,7 +12448,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 /* A `!` command: the reader's rail, a terminal's face. The output keeps its
    columns and scrolls sideways rather than folding them. */
-.turn.mine .bubble.shell { font-family: var(--mono); font-size: 13px; }
+.turn.mine .bubble.shell, .feedentry .bubble.shell { font-family: var(--mono); font-size: 13px; }
 .bubble.shell .command { font-weight: 600; }
 .bubble.shell .output {
   margin: 6px 0 0; font: inherit; font-weight: 400; color: var(--ink-soft);
@@ -14583,6 +14592,13 @@ function drawFeed(box) {
 // The saved turns of every session, newest first (#377): the start of
 // each, its session and its moment, "open" to go there and "done" to take
 // it off the list.
+// How a saved card names who said it (#424): the transcript's names, in
+// its colours.
+const SAVED_FACES = {
+  me: ["mine", "you"], shell: ["mine", "you"], system: ["aside", "system"],
+  claude: ["claude", "claude"],
+};
+
 function drawSaved(box) {
   const saved = state.saved || [];
   const key = JSON.stringify([saved, state.sessions.map((s) => [s.id, rowName(s)])]);
@@ -14607,8 +14623,8 @@ function drawSaved(box) {
     const [entry, top] = putCard(board, one.id, s, go);
     // Who said it, as a search result says (#403): a prompt of the
     // reader's reads like an answer, once it is out of its transcript.
-    put(top, "span", one.who === "me" ? "feedwho mine" : "feedwho claude",
-        one.who === "me" ? "you" : "claude");
+    const [whoClass, whoWord] = SAVED_FACES[one.who] || SAVED_FACES.claude;
+    put(top, "span", "feedwho " + whoClass, whoWord);
     put(top, "span", "feedwhen",
         (dayOf(one.ts) ? dayOf(one.ts) + " " : "") + clock(one.ts));
     if (go) put(top, "button", "link", "open").addEventListener("click", go);
@@ -14620,8 +14636,11 @@ function drawSaved(box) {
     });
     const text = one.text + (one.text.length >= 300 ? " …" : "");
     // As the transcript draws it: a prompt in the reader's box, as typed;
-    // an answer as Markdown.
+    // a command in it too, in the fixed face; the harness's words in its
+    // dashed box; an answer as Markdown.
     if (one.who === "me") put(entry, "div", "bubble mine", text);
+    else if (one.who === "shell") put(put(entry, "div", "bubble mine shell"), "pre", "output", text);
+    else if (one.who === "system") put(entry, "div", "bubble aside", text);
     else markdown(entry, text);
   }
   layoutCards(board);
@@ -17108,11 +17127,11 @@ function blockTurn(block, index) {
   name.title = "link to this " + (mine ? "prompt"
                                        : aside ? "message" : plan ? "plan" : "reply");
   // A bookmark beside the name, not a word beside "copy": the column is
-  // 64 px, and the two words pushed "copy" out of it (#377). On a prompt
-  // the reader typed too (#403), but not on a `!` command or its output.
-  if (block.kind === "prompt" || (!mine && !aside)) {
-    putSave(who, block, index, block.kind === "prompt");
-  }
+  // 64 px, and the two words pushed "copy" out of it (#377). On every
+  // block with a link (#424): a prompt the reader typed (#403), a `!` or
+  // slash command with what it printed, and a message of the harness.
+  putSave(who, block, index, shell ? "shell" : aside ? "system"
+          : block.kind === "prompt" ? "me" : "claude");
   if (block.ts) {
     const day = dayOf(block.ts);
     if (day) put(who, "div", "day", day);
@@ -17299,9 +17318,14 @@ function savedKey(id, ts) {
   return id + "\n" + ts;
 }
 
-function putSave(parent, block, index, mine) {
+function putSave(parent, block, index, whose) {
   // A turn is its moment too: a block with none could not be saved.
   if (!block.text || !block.ts || !state.chosen) return null;
+  // A command is kept with what it printed, as the transcript shows it.
+  const words = whose === "shell"
+    ? [(block.kind === "shell" ? "! " : "") + block.text, block.result || ""]
+      .filter(Boolean).join("\n")
+    : block.text;
   const id = state.chosen;
   const key = savedKey(id, block.ts);
   const button = put(parent, "button", "save" + (state.savedKeys.has(key) ? " on" : ""));
@@ -17316,8 +17340,7 @@ function putSave(parent, block, index, mine) {
   button.addEventListener("click", async () => {
     const on = !state.savedKeys.has(key);
     const answer = await tell(id, "save", {
-      seq: index, ts: block.ts, save: on,
-      text: block.text.slice(0, 300), who: mine ? "me" : "claude",
+      seq: index, ts: block.ts, save: on, text: words.slice(0, 300), who: whose,
     });
     if (!answer || answer.error) { said(answer || {}); return; }
     takeSaved(answer.saved);

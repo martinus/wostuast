@@ -85,8 +85,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     "claude" in the two names' colours (`.feedwho.mine`,
     `.feedwho.claude`). The first version had one face for both, and the
     reader asked for this: out of its transcript a prompt read like an
-    answer. Not on a `!` command or its output: the reader asked for
-    prompts.
+    answer.
+  - **Every block with a link has the bookmark** (#424): a `!` or slash
+    command with what it printed (`who: "shell"`, kept as `! cmd` and its
+    output, as the transcript shows them), and a message of the harness
+    (`"system"`). Prompts alone was the first reading of #403, and the
+    reader asked for the rest by name. The card draws each as the
+    transcript does: the command in the reader's box in the fixed face
+    (`.feedentry .bubble.shell`), the harness's words in the dashed box
+    (`.feedentry .bubble.aside`), named by `SAVED_FACES`. `saved_entry`
+    takes only the names in `SAVED_WHO`.
+    `test_a_command_and_a_system_message_are_saved_too`.
   `test_a_saved_turn_is_its_session_and_its_moment`,
   `test_an_answer_is_saved_and_opened_again_from_the_list`.
 - **"All unreads" is the last answer of every unread session, asked for
@@ -110,7 +119,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   reader's fonts'. A fourth button in one row cut each word to its first
   letter ("U…"), and two rows of two were drawn and refused. The four
   share the row equally (`flex: 1 1 0`), and the row stands 6 px in: the
-  reader asked for both.
+  reader asked for both. **The row never shrinks** (`flex-shrink: 0`,
+  #423): it clips what overflows it, and a flex item that does may shrink
+  below its content, so a list long enough to scroll took its overflow
+  out of the row and cut its words in half -- 3 px of 13.
+  `test_the_views_keep_their_height_when_the_list_scrolls`.
   `test_the_four_views_are_one_row_and_always_there`.
   - **A view stands in the tab row** (`drawViewTitle`, `#viewtitle`,
     #392): its name where the tabs were, and `#ctxslot`, `#modelpop` and

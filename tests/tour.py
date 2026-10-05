@@ -109,6 +109,13 @@ def make_sessions(ws, home: Path) -> None:
     s1 += records(
         record("tool", "src/cache.py", tool="Edit", tool_id="t3", ts=stamp(t0 + 320)),
         record("result", "ok", tool_id="t3", ts=stamp(t0 + 321)),
+        # A `!` command and a message of the harness: they have a link and
+        # a bookmark too (#424).
+        record("you", "<bash-input>pytest -q tests/test_cache.py</bash-input>",
+               ts=stamp(t0 + 330)),
+        record("you", "<bash-stdout>14 passed in 0.41s</bash-stdout><bash-stderr></bash-stderr>",
+               ts=stamp(t0 + 335)),
+        record("you", "[Request interrupted by user]", ts=stamp(t0 + 340)),
         record("claude", SAID["s1"], ts=stamp(now - 120)))
     for n, sid in enumerate(NAMES):
         cwd = home / "w" / sid
@@ -172,7 +179,11 @@ def make_sessions(ws, home: Path) -> None:
                  "during a write sees half an update."},
         {"id": "s2", "seq": 1, "ts": int(now - 400), "at": now - 900, "text": "Done."},
         {"id": "s1", "seq": 0, "ts": int(t0), "at": now - 1200, "who": "me",
-         "text": "The cache test fails now and then on CI. Find out why."}]))
+         "text": "The cache test fails now and then on CI. Find out why."},
+        {"id": "s1", "seq": 9, "ts": int(t0 + 330), "at": now - 1300, "who": "shell",
+         "text": "! pytest -q tests/test_cache.py\n14 passed in 0.41s"},
+        {"id": "s1", "seq": 10, "ts": int(t0 + 340), "at": now - 1400, "who": "system",
+         "text": "Interrupted."}]))
 
 
 def main(argv: list[str]) -> int:

@@ -525,7 +525,10 @@ def test_a_saved_entry_is_checked_before_it_is_kept(ws):
     assert ws.saved_entry(dict(good, who="me"))["who"] == "me"
     assert "who" not in ws.saved_entry(dict(good, who="claude"))
     assert "who" not in ws.saved_entry(good)
-    for wrong in ("you", "", 1, True):
+    # A command with its output, and the harness's words (#424).
+    for who in ("shell", "system"):
+        assert ws.saved_entry(dict(good, who=who))["who"] == who
+    for wrong in ("you", "", 1, True, "note", "command"):
         assert ws.saved_entry(dict(good, who=wrong)) is None, wrong
 
 
