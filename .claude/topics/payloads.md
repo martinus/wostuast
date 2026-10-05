@@ -112,3 +112,17 @@ reason typed after it reaches the agent still planning. No `Notification`
 came in the six seconds the dialog was up. `plan_of` reads it, and
 `tests/fixtures/plan_events.jsonl` and `plan_transcript.jsonl` are the
 recording; topics/state says what the page does with it (#372).
+
+**What an agent starts is read off a real run, not the docs** (#422,
+`tests/fixtures/README.md`, "What an agent starts"). A subagent of the
+Agent tool fires its hooks under its agent's session id, with
+`agent_id`: as a session it would have been a row nobody asked for, and
+its tool calls already move the agent's own row. A `claude -p` is a
+session of its own whose payload and environment name only itself:
+`CLAUDE_CODE_SESSION_ID` in the Bash tool is the agent's, and the child
+overwrites it, so a hook that read it got the child's own id. Only the
+process tree joins them, which is why the hook writes `started_by`
+(`claude_from`) and why it is Linux only. Measured on
+`ClaudePane`: `ask("Agent", …)`, then
+`api.next_call` set again once `wait_for_turns` sees the call, so the
+subagent's own first request gets a tool call too.

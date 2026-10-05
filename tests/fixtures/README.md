@@ -21,6 +21,7 @@ Each event adds its own fields:
 | `Notification` | `message`, `title`, `notification_type` |
 | `Stop` | `stop_hook_active` |
 | `StopFailure` | `error`, `last_assistant_message`, `error_details` (optional) |
+| `SubagentStart` | `agent_id`, `agent_type`, `prompt_id` |
 | `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_transcript_path`, `agent_type` |
 | `PreCompact` | `trigger` (manual, auto), `custom_instructions` |
 | `SessionEnd` | `reason` (clear, logout, prompt_input_exit, other, bypass_permissions_disabled) |
@@ -71,7 +72,31 @@ to the base payload, and `permission_mode` reads `auto`. None of them is read,
 and the log keeps them because it keeps whatever arrives: a field from a newer
 Claude Code must never break an older wostuast.
 
-The hook adds three fields of its own: `ts`, `pane` and `pid`.
+The hook adds fields of its own: `ts`, `pane`, `pid`, `shell_pid`, and
+`started_by` -- the pid of the agent that ran this one, for an agent that
+reads no terminal, else 0 (#422).
+
+### What an agent starts
+
+Measured on 2.1.289 with `tests/claude_pane.py` (#422). **A subagent of the
+Agent tool is no session**: `SubagentStart`, the subagent's own
+`PreToolUse` and `PostToolUse`, and `SubagentStop` all carry the session id
+of the agent that started it, and each carries `agent_id` and `agent_type`.
+`SubagentStart` has no description: the Agent call's `tool_input` has it,
+and when the subagent runs in the background, the call's `tool_response`
+names it with `agentId` and `description` (`isAsync: true`,
+`status: "async_launched"`). Such a subagent runs on after the turn: the
+agent's `Stop` came while it ran, with it in `background_tasks`, and its
+end came back as a new `UserPromptSubmit` whose prompt is a
+`<task-notification>`.
+
+**A `claude -p` from the Bash tool is a session of its own**, with its own
+`SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd`, all within a
+second, and nothing in them names the agent that ran it. Its environment
+does not either: the Bash tool has `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID`
+of the agent, but the `claude -p` sets its own, so its hooks see those. The
+process tree does: the hook's shell, then the `claude -p` (stdin a pipe or
+`/dev/null`), then the tool's `bash -c`, then the agent.
 
 ### A question the agent is stopped on
 

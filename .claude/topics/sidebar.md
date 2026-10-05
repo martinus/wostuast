@@ -257,6 +257,40 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_turn_that_ends_after_the_reader_looked_is_unread`,
   `test_turns_that_ended_before_the_file_was_made_are_read`,
   `test_a_turn_that_ends_off_screen_is_unread_until_it_is_opened`.
+- **What an agent starts is a line under its row, never a row** (#422).
+  A `claude -p` an agent ran from its Bash tool was a row of its own: it
+  came and went in a second, counted as working and then unread, and
+  nothing said whose it was. The reader chose lines from pictures.
+  `fillKids` draws one line for each child still running -- a session
+  whose `started_by` is this row (`kidsOf`), or a subagent of the Agent
+  tool in `subagents` -- then "N subagents ran", which unfolds the ended
+  ones (`state.kidsOpen`). The daemon keeps the last `SUBAGENTS_HELD` of
+  the Agent tool's, and `agents_ran` counts them all.
+  - **A child counts nowhere** (`topSessions`, `childIds`): not in the
+    list, the groups, the tab's title and icon, the alerts or the unread
+    feed. A child whose parent the page does not hold is a row again.
+  - **Never hide one that may need the reader**: a child with a pane of
+    its own, or one that waits, is a row, and so is one still working
+    under a parent that is over -- its line stood under a folded history.
+    A review found the first: a hidden session's dialog had no row, no
+    title and no alert. **And the chosen child stays in sight when it
+    ends**, folded or not: the chosen session is never hidden from the
+    list it is chosen in.
+  - **What an Agent call asked for is let go at a turn's edge**
+    (`agent_asks`): a call declined in its dialog fires no hook, and one
+    that failed starts nothing, so their descriptions named the next
+    subagent and every one after it. A failed call drops its own.
+    `test_a_call_that_started_nothing_names_no_subagent`.
+  - **A child's change must redraw its parent's row**: `drawSessions`
+    skips the draw when the listed rows did not change, and a child is in
+    none, so the children go into its key. A test of that waits until the
+    parent's row is still (its unread mark landed and came back): the
+    mark's push redrew the row by chance, and the break went unseen.
+  - **A press on a line or on the fold stops there**: the row chose itself
+    under it. A child session's line opens it (`choose`); the Agent tool's
+    subagents have no transcript the page reads.
+  `test_what_a_session_started_stands_under_its_row`,
+  `tests/test_subagents.py`.
 - **There are four states, not five.** "starting" is gone: it was the first
   few minutes of a session that had said nothing else, which is the same as
   being ready, told in a way that went stale. `SessionStart` sets `done`, and

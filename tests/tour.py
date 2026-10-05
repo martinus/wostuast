@@ -132,6 +132,35 @@ def make_sessions(ws, home: Path) -> None:
     ws.append_event({"session_id": "s4", "hook_event_name": "PermissionRequest",
                      "tool_name": "Bash", "tool_input": {"command": "make release"},
                      "cwd": str(home / "w" / "s4"), "pane": "%4", "pid": 1, "ts": now - 30})
+    # The working one has started others (#422): a `claude -p` from its Bash
+    # tool still running and one that ended, and two subagents of its Agent
+    # tool, one still at work.
+    cwd = str(home / "w" / "s3")
+    agent = {"session_id": "s3", "cwd": cwd, "pane": "%2", "pid": 4242}
+    for n, (what, at) in enumerate((("Compare the two hash maps", now - 400),
+                                    ("Profile the insert path", now - 90))):
+        ws.append_event({**agent, "hook_event_name": "PreToolUse", "tool_name": "Agent",
+                         "tool_input": {"description": what}, "ts": at})
+        ws.append_event({**agent, "hook_event_name": "SubagentStart", "agent_id": f"a{n}",
+                         "agent_type": "general-purpose", "ts": at + 1})
+        ws.append_event({**agent, "hook_event_name": "PreToolUse", "agent_id": f"a{n}",
+                         "agent_type": "general-purpose", "tool_name": "Bash",
+                         "tool_input": {"command": "perf record ./bench insert"}, "ts": at + 5})
+    ws.append_event({**agent, "hook_event_name": "SubagentStop", "agent_id": "a0",
+                     "agent_type": "general-purpose", "ts": now - 200})
+    for sid, prompt, at, ended in (("c1", "Summarise bench.log in one line", now - 700, True),
+                                   ("c2", "Review the diff of table.h", now - 25, False)):
+        child = {"session_id": sid, "cwd": cwd, "pane": "", "pid": 5000 + at % 100,
+                 "started_by": 4242}
+        ws.append_event({**child, "hook_event_name": "SessionStart", "ts": at})
+        ws.append_event({**child, "hook_event_name": "UserPromptSubmit", "prompt": prompt,
+                         "ts": at + 1})
+        ws.append_event({**child, "hook_event_name": "PreToolUse", "tool_name": "Read",
+                         "tool_input": {"file_path": f"{cwd}/include/table.h"}, "ts": at + 3})
+        if ended:
+            ws.append_event({**child, "hook_event_name": "Stop", "ts": at + 9})
+            ws.append_event({**child, "hook_event_name": "SessionEnd", "reason": "other",
+                             "ts": at + 10})
     state = ws.state_dir()
     state.mkdir(parents=True, exist_ok=True)
     (state / "seen.json").write_text(json.dumps(
