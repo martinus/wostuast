@@ -696,6 +696,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     opening makes it fetch (#235).
     `test_a_stream_too_slow_to_keep_up_is_closed_and_never_given_a_gap`,
     `test_a_push_the_stream_could_not_keep_is_fetched_after_it_closes`.
+- **A `sessions` push carries what changed, never every row** (#431,
+  `sessions_change`, `mergeSessions`): the rows new or different since
+  the last push, and the order of the ids whenever it moved -- a row that
+  went moves it, so there is no list of the gone. Every change sent every
+  row: 111 KB a push at 100 sessions, about once a second while agents
+  work, over the tunnel uncompressed. A stream still opens with every row
+  (`sessions_payload`). **Safe only because a stream has no gaps** (the
+  bullet above): a push it cannot keep closes it. And a push says "these
+  rows now read so", so pushes queued behind an opening newer than some of
+  them still end on the newest rows. Only the tick writes `told`.
+  `test_a_push_carries_only_what_changed`,
+  `test_a_push_fills_only_the_rows_it_changed`.
 - **The page is read over an ssh tunnel, so nothing big goes twice.** At
   200 KiB/s the first look at a Files tab of 53,000 files took twenty
   seconds, and the way back to the Transcript tab five. Three causes, three

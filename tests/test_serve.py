@@ -381,7 +381,43 @@ def test_a_change_is_pushed(ws, served):
 
     got = read_events(f"{base}/api/events", 2, then=later)
     assert [kind for kind, _ in got] == ["sessions", "sessions"]
-    assert got[1][1]["sessions"][0]["state"] == "done"
+    assert got[1][1]["changed"][0]["state"] == "done"
+
+
+def test_a_push_carries_only_what_changed(ws, served):
+    """Every change sent every row: 111 KB a push at 100 sessions, about
+    once a second while agents work (#431). A push after one event carries
+    that one row; the order of the ids comes only when it moved, and a
+    session that goes moves it. A stream still opens with every row."""
+    daemon, base = served
+    for sid in ("s1", "s2", "s3"):
+        ws.append_event(event("SessionStart", sid=sid, ts=time.time()))
+    daemon.tick()
+    first = daemon.sessions_change()
+    assert first["changed"] == [] and "order" not in first
+
+    def later():
+        ws.append_event(event("UserPromptSubmit", sid="s2", prompt="go", ts=time.time()))
+        daemon.tick()
+
+    got = read_events(f"{base}/api/events", 2, then=later)
+    opening, change = got[0][1], got[1][1]
+    assert sorted(one["id"] for one in opening["sessions"]) == ["s1", "s2", "s3"]
+    assert [one["id"] for one in change["changed"]] == ["s2"]
+    assert change["changed"][0]["state"] == "working"
+    assert change["order"][0] == "s2"
+    # Nothing moved: the next change of the same row carries no order.
+    ws.append_event(event("PreToolUse", sid="s2", tool_name="Bash",
+                          tool_input={"command": "ls"}, ts=time.time()))
+    daemon.store.refresh()
+    again = daemon.sessions_change()
+    assert [one["id"] for one in again["changed"]] == ["s2"] and "order" not in again
+    # A session the store no longer lists leaves the order, and nothing else.
+    del daemon.store.sessions["s3"]
+    daemon.store.refresh()
+    went = daemon.sessions_change()
+    assert went["changed"] == [] and "s3" not in went["order"]
+    assert went["order"] == [one["id"] for one in daemon.store.rows]
 
 
 def test_a_transcript_change_reaches_only_its_watcher(ws, served, transcript_file):

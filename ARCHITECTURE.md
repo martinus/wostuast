@@ -676,7 +676,7 @@ down it:
 
 | Event | When | What the page does |
 | --- | --- | --- |
-| `sessions` | a row changed | redraw the sidebar and the header |
+| `sessions` | a row changed | lay the changed rows over the ones it holds, and fill only those rows again |
 | `transcript` | the watched transcript changed | merge the new blocks |
 | `settings` | `settings.json` changed | apply the settings |
 
@@ -686,10 +686,18 @@ down it:
 > the new settings come back down the stream, to *every* open page. Two
 > channels for the same state would one day disagree.
 
+A stream opens with every row. After that, a `sessions` push carries only the
+rows that changed, and the order of the ids when it moved
+(`sessions_change`). The page lays them over the rows it holds
+(`mergeSessions`). With 100 sessions, one push was 112 KB and is now about
+2 KB.
+
 A slow client must not make the daemon hold memory without end. Each client
 has a short queue (`CLIENT_BACKLOG`). A client that falls too far behind is
 closed, not given a gap. The browser reconnects and starts fresh. A stream
-with a silent gap would be worse than a stream that restarts.
+with a silent gap would be worse than a stream that restarts. That rule is
+also what makes a push of only the changed rows safe: a page never misses
+one, and a new stream gives it every row again.
 
 ### Asking only for what changed
 

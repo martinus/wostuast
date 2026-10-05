@@ -655,3 +655,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
   them by position; a row moves only when its place changed, because
   `appendChild` on an attached node is a remove and an insert.
+  - **And filled only when what it shows changed** (#431, `dataset.sig`):
+    the session's own JSON, and the page facts a row shows -- the choice,
+    the links, the reminder's word, time and due, the fold of its
+    subagents, its children. Filling all 500 rows took 34 ms on every
+    push. **By the text, not by the object**: the page changes a session
+    in place for a rename, a reminder, a snooze and an unread mark, so an
+    object compared by identity looked unchanged. **A choice changes no
+    session**, and a read row gets no push, so the choice is in the
+    signature or the row chosen before kept its look. **A change no row's
+    data shows goes through `redrawRows`**, which clears every signature
+    -- a closed rename box left its name empty. **The ages are read off
+    the page** (`tickAges` reads `.age[data-since]`), so a row left alone
+    still ticks.
+    `test_a_push_fills_only_the_rows_it_changed`,
+    `test_a_row_is_renamed_where_it_stands`.

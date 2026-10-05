@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from contextlib import contextmanager
 import time
 
@@ -13,6 +14,7 @@ import pytest
 import conftest
 from browser import (
     hold,
+    renew_stream,
     pixels,
     kept,
     spy_on_note,
@@ -2282,3 +2284,50 @@ def test_a_chosen_finished_row_is_as_whole_as_any_chosen_row(past_at):
           const said = getComputedStyle(probe).color; probe.remove(); return said; }""")
         assert look[0] == ["1", "600", bright], look
         assert float(look[1][0]) < 1 and look[1][1] == "500", look
+
+
+def test_a_push_fills_only_the_rows_it_changed(ws, pair_at):
+    """A push carries only the rows that changed (#431), and the page fills
+    only those: filling all 500 rows took 34 ms on every push. What the page
+    holds is still what the daemon holds -- after a push, and after a new
+    stream, which opens with every row. A row left alone still ticks its
+    age (`data-since`)."""
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        wait_for_watching(daemon, page.evaluate("state.chosen"))
+        page.evaluate("""() => { window.__filled = []; const real = fillRow;
+          fillRow = (row, s) => { window.__filled.push(s.id); return real(row, s); }; }""")
+        ws.append_event(conftest.event("UserPromptSubmit", sid="s2", prompt="go",
+                                       cwd=str(Path(daemon.store.sessions["s2"].cwd)),
+                                       pane="%9", pid=2, ts=time.time()))
+        daemon.tick()
+        page.wait_for_selector('.row.working[data-id="s2"]')
+        assert page.evaluate("window.__filled") == ["s2"]
+        held = """() => state.sessions.map((s) => [s.id, s.state])"""
+        told = [[one["id"], one["state"]] for one in daemon.store.rows]
+        assert page.evaluate(held) == told
+        since = page.evaluate("""() => document.querySelector(
+          '.row[data-id="s1"] .age').dataset.since""")
+        assert since and float(since) > 0
+        # A choice changes no session, and no push comes for a row that is
+        # read: the row chosen before and the one chosen now are filled.
+        other = page.evaluate("state.sessions.find((s) => s.id !== state.chosen).id")
+        was = page.evaluate("state.chosen")
+        page.evaluate("window.__filled = []")
+        page.click(f'.row[data-id="{other}"]')
+        page.wait_for_selector(f'.row.chosen[data-id="{other}"]')
+        assert page.locator(f'.row.chosen[data-id="{was}"]').count() == 0
+        assert sorted(page.evaluate("window.__filled")) == sorted([was, other])
+        # A session the daemon no longer lists goes from the page.
+        wait_for_watching(daemon, other)
+        del daemon.store.sessions[was]
+        daemon.tick()
+        page.wait_for_function(f"!document.querySelector('.row[data-id=\"{was}\"]')")
+        told = [[one["id"], one["state"]] for one in daemon.store.rows]
+        assert page.evaluate(held) == told
+        # A new stream opens with every row, and the page takes all of it:
+        # a list spoiled before it is whole again after it.
+        renew_stream(page, "state.sessions = state.sessions.slice(1);"
+                           " state.stream.close(); state.stream = null; resubscribe()")
+        assert page.evaluate(held) == told
