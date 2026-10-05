@@ -11656,23 +11656,28 @@ body.dragging { cursor: col-resize; user-select: none; }
    there, so the list does not move when a count comes to nought. Three
    lines in three styles took a hundred pixels, and "search every session"
    read as a second filter box. Words in the reading face, the counts in
-   the fixed one. */
-.views { display: flex; gap: 6px; margin: 0 10px 10px; }
+   the fixed one. Four since Commands became a view (issue 411), and always
+   in one row, which the reader asked for over two rows of two. The four
+   share the row equally (`flex: 1 1 0`), and what they hold gives way as the list
+   narrows (`fitViews`): first the icons go, then the words, which stay in
+   the button's title. Cut with an ellipsis, a word in a list 340 px wide
+   was its first letter. */
+.views { display: flex; gap: 4px; margin: 0 6px 10px; overflow: hidden; }
+.views.bare .feedlink .icon, .views.icons .feedlink .viewname { display: none; }
 .feedlink {
   flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center;
-  gap: 6px; min-width: 0; padding: 5px 6px; border: none; border-radius: 6px;
+  gap: 5px; padding: 5px 4px; border: none; border-radius: 6px;
   background: none; color: var(--ink-soft); cursor: pointer;
   font-family: var(--sans); font-size: 12.5px; white-space: nowrap;
 }
 .feedlink:hover { background: var(--raised); color: var(--ink-bright); }
 .feedlink.open { background: var(--chosen); color: var(--ink-bright); }
-.feedlink .viewname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .feedlink .icon {
   width: 13px; height: 13px; flex-shrink: 0; fill: none; stroke: currentColor;
   stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
 }
 .feedlink .n {
-  font-family: var(--mono); font-size: 10.5px; line-height: 16px; padding: 0 6px;
+  font-family: var(--mono); font-size: 10.5px; line-height: 16px; padding: 0 5px;
   border-radius: 8px; color: var(--done);
   background: color-mix(in srgb, var(--done) 22%, transparent);
 }
@@ -12492,11 +12497,13 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .filebody, .diffbody, .turnbody, .cmdbody {
   flex-grow: 1; overflow-y: auto; min-width: 0;
 }
-/* The Commands tab (issue 367). A row is a command's name in the face it is
-   typed in, how often it was used at the right, and its description under
-   it on one line. The pane is a skill to read, like a document on the
-   Files tab. */
-.filelist .cmdrow .name { font-family: var(--mono); }
+/* The Commands view (issues 367, 411). A row is a command's name, how often
+   it was used at the right, and its description under it on one line. The
+   pane is a skill to read, like a document on the Files tab. All of it in
+   the reading face, the path too (issue 414): the name was in the fixed
+   face it is typed in, and the reader asked for none. */
+.filelist.commands { font-family: var(--sans); }
+.filelist .cmdrow .name { font-weight: 500; }
 .filelist .cmdrow .cmduses { float: right; margin-left: 8px; font-size: 11px; color: var(--ink-faint); }
 .filelist .cmdrow .cmdabout {
   font-size: 12px; color: var(--ink-faint); margin-top: 2px;
@@ -12506,10 +12513,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .cmdbody > .empty { max-width: 52ch; }
 .cmdhead { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
 .cmdtitle { flex: 1; min-width: 0; }
-.cmdname { font-family: var(--mono); font-size: 16px; font-weight: 600; color: var(--ink-bright); }
-.cmdhint { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); margin-left: 10px; }
+.cmdname { font-family: var(--sans); font-size: 17px; font-weight: 600; color: var(--ink-bright); }
+.cmdhint { font-family: var(--sans); font-size: 13px; color: var(--ink-faint); margin-left: 10px; }
 .cmdfile {
-  font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint);
+  font-family: var(--sans); font-size: 12px; color: var(--ink-faint);
   margin-bottom: 10px; overflow-wrap: anywhere;
 }
 .cmdsays { color: var(--ink-soft); margin: 0 0 14px; }
@@ -13021,6 +13028,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           title="Saved: every answer you kept"></button>
         <button type="button" class="feedlink" id="searchlink"
           title="Search every session: what you typed and what each agent answered"></button>
+        <button type="button" class="feedlink" id="cmdlink"
+          title="Commands: the skills and commands of every project  ·  4"></button>
       </div>
       <div class="rows" id="rows"></div>
     </div>
@@ -13036,8 +13045,6 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           title="Review  ·  3"><span class="tabkey">3</span>Review<span
           class="badge" id="diffcount" hidden></span><span
           class="badge notes" id="reviewcount" hidden></span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="commands"
-          title="Commands  ·  4"><span class="tabkey">4</span>Commands</button>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -13090,7 +13097,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>z</dt><dd>snooze the session that needs you, or wake it</dd>
     <dt>u</dt><dd>mark the session unread, or read</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 4</dt><dd>transcript, files, review, commands</dd>
+    <dt>1 – 3</dt><dd>transcript, files, review</dd>
+    <dt>4</dt><dd>commands, of every project</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>jump to the send box</dd>
     <dt>c</dt><dd>colours: auto, light, dark</dd>
@@ -13597,6 +13605,8 @@ const ICONS = {
   inbox: "M1.8 8.2h3l1 1.6h2.4l1-1.6h3M1.8 8.2l1.6-5h7.2l1.6 5v2.8a1 1 0 0 1-1 1"
          + "H2.8a1 1 0 0 1-1-1z",
   search: "M2 6a4 4 0 1 0 8 0a4 4 0 1 0-8 0zM9 9l3.2 3.2",
+  // A command: a slash in a box, as it is typed (#411).
+  slash: "M2.2 2.2h9.6v9.6H2.2zM8.4 4.2L5.6 9.8",
   // A bookmark: a turn saved for later (#377).
   save: "M4 1.8h6a.6.6 0 0 1 .6.6v9.8L7 9.6l-3.6 2.6V2.4a.6.6 0 0 1 .6-.6z",
   // Settings: three rails, each with its knob somewhere else.
@@ -14114,6 +14124,8 @@ function drawFeedLink() {
   viewLink($("feedlink"), "inbox", "Unread", unreadSessions().length, "unread");
   viewLink($("savedlink"), "save", "Saved", state.savedCount || 0, "saved");
   viewLink($("searchlink"), "search", "Search", null, "search");
+  viewLink($("cmdlink"), "slash", "Commands", null, "commands");
+  fitViews();
   drawViewTitle();
   // A session read elsewhere leaves the feed while it is open.
   if (state.feed) drawFeed($("content"));
@@ -14125,6 +14137,7 @@ function openFeed(kind = "unread") {
   state.feed = kind;
   $("content").dataset.tab = "";
   if (kind === "saved") askSaved();
+  if (kind === "commands") loadCommands();
   state.feedText = new Map();
   document.body.classList.add("infeed");
   homeFind($("findhome"));
@@ -14141,7 +14154,8 @@ function leaveFeed() {
 
 // The view's name in the tab row, in place of the tabs (#392); the heading
 // it had inside the content said it a second time.
-const VIEW_NAMES = { unread: "All unreads", saved: "Saved", search: "Search every session" };
+const VIEW_NAMES = { unread: "All unreads", saved: "Saved", search: "Search every session",
+                     commands: "Commands" };
 
 function drawViewTitle() {
   const title = $("viewtitle");
@@ -14248,6 +14262,7 @@ async function askLast(id) {
 function drawFeed(box) {
   if (state.feed === "saved") { drawSaved(box); return; }
   if (state.feed === "search") { drawSearch(box); return; }
+  if (state.feed === "commands") { drawCommands(box); return; }
   const shown = unreadSessions();
   const key = JSON.stringify([shown.map((s) => [s.id, s.ended_at, rowName(s), s.state]),
                               [...state.feedText.entries()]]);
@@ -14415,6 +14430,21 @@ function drawResults(list) {
 // words stay, and the hits are marked after, on what is shown.
 function unmarked(text) {
   return text.replace(/```+|\*\*|`/g, "").replace(/ {2,}/g, " ");
+}
+
+// The four views in one row, always (#411): the fullest form of them that
+// fits -- icon, word and count; then word and count; then icon and count
+// -- measured, because how wide a word is depends on the reader's fonts.
+// A word that does not fit is in the button's title.
+const VIEW_FITS = ["", "bare", "icons"];
+
+function fitViews() {
+  const row = document.querySelector(".views");
+  if (!row || !row.clientWidth) return;
+  for (const fit of VIEW_FITS) {
+    row.className = "views" + (fit ? " " + fit : "");
+    if (row.scrollWidth <= row.clientWidth) return;
+  }
 }
 
 function viewLink(button, icon, word, count, feed) {
@@ -20681,98 +20711,172 @@ function drawDiffCount() {
   badge.textContent = "+" + added + " \u2212" + removed;
 }
 
-// --- the Commands tab -------------------------------------------------------
+// --- the Commands view --------------------------------------------------------
 
-// The skills and commands a session can run, to read and to use again
-// (#367). The list is the one the send box completes from (#268). A
-// command's text is asked for by its name, never by its path: `~/.claude`
-// is outside every worktree, and a path from the page is input. "use" puts
-// the command in the send box and types nothing; the reader adds what it
-// needs and sends.
+// The skills and commands your sessions can run, to read and to use again
+// (#367). A view, not a tab (#411): a tab belongs to the chosen session,
+// and most commands belong to no session -- yours in `~/.claude`, and the
+// built-ins -- while a project's belong to every session in it. So it lists
+// yours and the built-ins once, then each project's under its name, asked
+// of one session in each. A command's text is asked for by its name, never
+// by its path: `~/.claude` is outside every worktree, and a path from the
+// page is input. "use" puts the command in a send box and types nothing;
+// the reader adds what it needs and sends.
 function blankCommands() {
   return {
-    list: null,     // the daemon's answer; null until the first one
-    picked: "",     // the name chosen, which a session keeps
+    list: null,     // every session's answer, put together; null until then
+    picked: "",     // the key of the one chosen (`commandKey`)
     read: null,     // the chosen one's text, or `{ error }`
   };
 }
 
-function commandOf(name) {
-  return (state.commands.list || []).find((one) => one.name === name) || null;
+// A project's command is that project's: two projects may each have a
+// `/deploy`, and they are two commands.
+function commandKey(one) {
+  return one.came === "project" ? one.via + "/" + one.name : one.name;
+}
+
+function commandOf(key) {
+  return (state.commands.list || []).find((one) => commandKey(one) === key) || null;
+}
+
+// One session for each worktree on the list, the newest: a project's
+// commands are the files under its `.claude`, the same for every session
+// standing in it.
+function projectSessions() {
+  const one = new Map();
+  for (const s of state.sessions) {
+    if (isGone(s)) continue;
+    const where = s.root || s.cwd;
+    if (where && !one.has(where)) one.set(where, s);
+  }
+  return [...one.values()];
+}
+
+function projectName(s) {
+  const named = projectSessions().filter((other) => other.repo === s.repo);
+  return !s.repo ? s.worktree
+    : named.length > 1 ? s.repo + "  ·  " + s.worktree : s.repo;
 }
 
 async function loadCommands() {
-  const want = state.chosen;
-  // Side by side: the name is known before the list comes. The text is
-  // asked again each time, as the file may have been edited.
-  const [body] = await Promise.all([ask(want, "commands"), readCommand(want)]);
-  if (!body || state.chosen !== want) return;
-  state.commands.list = body.commands || [];
+  const asked = projectSessions();
+  const answers = await Promise.all(asked.map((s) => ask(s.id, "commands")));
+  if (state.feed !== "commands") return;
+  const list = [];
+  const seen = new Set();
+  asked.forEach((s, n) => {
+    for (const one of (answers[n] && answers[n].commands) || []) {
+      const entry = Object.assign({}, one, { via: s.id, project: projectName(s) });
+      if (one.came === "project") list.push(entry);
+      else if (!seen.has(one.name)) { seen.add(one.name); list.push(entry); }
+    }
+  });
+  state.commands.list = list;
   draw();
+  if (state.commands.picked && !state.commands.read) readCommand();
 }
 
-async function readCommand(want) {
-  const name = state.commands.picked;
-  const one = commandOf(name);
+async function readCommand() {
+  const key = state.commands.picked;
+  const one = commandOf(key);
   // A built-in has no file: the list says all there is to say of it.
-  if (!name || (one && !one.file)) return;
-  const body = await ask(want, "command", "?name=" + encodeURIComponent(name));
-  // The reader may have chosen another session, or another command, while
-  // this was on its way: it answers a question nobody asks now.
-  if (state.chosen !== want || state.commands.picked !== name) return;
+  if (!one || !one.file) return;
+  const body = await ask(one.via, "command", "?name=" + encodeURIComponent(one.name));
+  // The reader may have chosen another command while this was on its way:
+  // it answers a question nobody asks now.
+  if (state.commands.picked !== key) return;
   state.commands.read = body || { error: "no answer" };
 }
 
-async function pickCommand(name) {
-  state.commands.picked = name;
+async function pickCommand(key) {
+  state.commands.picked = key;
   state.commands.read = null;
   draw();
-  await readCommand(state.chosen);
+  await readCommand();
   draw();
 }
 
-// "use": the command into the send box on the Transcript tab, the cursor
-// after it, as the `/` list puts one (`putCommand`). A session nothing can
-// be typed into says why, and changes no tab.
-function useCommand(name) {
-  const why = whyNotTyped(current());
+// The view, or back to the session it stands over: its button and `4`.
+function toggleCommands() {
+  if (state.feed === "commands") { if (state.chosen) choose(state.chosen); }
+  else openFeed("commands");
+}
+
+// Where "use" types: the chosen session, unless the command is a project's
+// it cannot see -- then the session the view asked for it.
+function useTarget(one) {
+  const chosen = current();
+  if (one.came !== "project" || !chosen) return one.via;
+  const mine = (chosen.root || chosen.cwd) === ((sessionById(one.via) || {}).root
+                                                || (sessionById(one.via) || {}).cwd);
+  return mine ? chosen.id : one.via;
+}
+
+function sessionById(id) {
+  return state.sessions.find((s) => s.id === id) || null;
+}
+
+// "use": the command into that session's send box on the Transcript tab,
+// the cursor after it, as the `/` list puts one (`putCommand`). A session
+// nothing can be typed into says why, and the view stays.
+function useCommand(key) {
+  const one = commandOf(key);
+  if (!one) return;
+  const target = useTarget(one);
+  const why = whyNotTyped(sessionById(target));
   if (why) {
     note(why);
     return;
   }
+  choose(target);
   showTab("transcript");
-  putCommand($("say"), 0, name);
+  putCommand($("say"), 0, one.name);
 }
 
+// Yours and the built-ins first, then each project under its name.
+const COMMAND_GROUPS = [["yours", "yours, in every project"],
+                        ["used", "built in, or no longer on disk"]];
+
 function drawCommands(box) {
+  box.className = "content split";
   const [list, pane, note] = split(box, "commands", "cmdbody");
+  $("find").placeholder = "find a command  /";
   const held = state.commands;
   const all = held.list || [];
   const found = state.find ? hits(all, (one) => one.name)
                            : all.map((one) => ({ one, at: [] }));
   const key = JSON.stringify([!held.list, state.find, held.picked,
-                              found.map((hit) => [hit.one.name, hit.one.uses, hit.at])]);
+                              found.map((hit) => [commandKey(hit.one), hit.one.uses, hit.at])]);
   if (fresh(list, "commands", key)) {
     list.replaceChildren();
     note.textContent = !held.list ? "reading…"
       : state.find ? counted(found.length, "command", "commands") + " of " + all.length
       : counted(all.length, "command", "commands");
-    for (const [came, [, words]] of Object.entries(CAME)) {
-      const these = found.filter((hit) => hit.one.came === came);
+    const groups = COMMAND_GROUPS.map(([came, words]) =>
+      [words, found.filter((hit) => hit.one.came === came)]);
+    const projects = [...new Set(found.filter((hit) => hit.one.came === "project")
+                                      .map((hit) => hit.one.project))];
+    for (const project of projects) {
+      groups.push([project, found.filter((hit) => hit.one.came === "project"
+                                                  && hit.one.project === project)]);
+    }
+    for (const [words, these] of groups) {
       if (!these.length) continue;
       put(list, "div", "head", words);
       for (const { one, at } of these) {
-        const row = put(list, "button", "cmdrow" + (one.name === held.picked ? " chosen" : ""));
+        const name = commandKey(one);
+        const row = put(list, "button", "cmdrow" + (name === held.picked ? " chosen" : ""));
         row.title = one.about || "/" + one.name;
         if (one.uses) put(row, "span", "cmduses", counted(one.uses, "use", "uses"));
         putName(row, "/" + one.name, at.map((where) => where + 1));
         if (one.about) put(row, "div", "cmdabout", one.about);
-        row.addEventListener("click", () => pickCommand(one.name));
+        row.addEventListener("click", () => pickCommand(name));
       }
     }
     if (held.list && !found.length) {
       put(list, "div", "nohits", state.find ? "Nothing here matches."
-                                            : "This session has no commands.");
+                                            : "No session has any commands.");
     }
   }
   drawCommand(pane);
@@ -20786,6 +20890,7 @@ function drawCommands(box) {
 function drawCommand(pane) {
   const held = state.commands;
   const one = commandOf(held.picked);
+  const name = one ? one.name : held.picked.split("/").pop();
   const read = held.read;
   if (!fresh(pane, "command", JSON.stringify([held.picked, !!held.list, one, read]))) return;
   pane.replaceChildren();
@@ -20798,13 +20903,14 @@ function drawCommand(pane) {
   }
   const head = put(pane, "div", "cmdhead");
   const title = put(head, "div", "cmdtitle");
-  put(title, "span", "cmdname", "/" + held.picked);
+  put(title, "span", "cmdname", "/" + name);
   if (one && one.hint) put(title, "span", "cmdhint", one.hint);
   const use = put(head, "button", "verb", "use");
-  use.title = "put it into the send box on the Transcript tab";
+  const target = one ? sessionById(useTarget(one)) : null;
+  use.title = "put it into the send box of " + (target ? rowName(target) : "the session");
   use.addEventListener("click", () => useCommand(held.picked));
   if (held.list && !one) {
-    put(pane, "div", "note", "This session cannot run it any more.");
+    put(pane, "div", "note", "No session can run it any more.");
     return;
   }
   if (one && one.file) put(pane, "div", "cmdfile", one.file);
@@ -20840,10 +20946,6 @@ const TABS = {
            finds: "go to file  /" },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /" },
-  // Asked again now and then: a skill written in another window turns up
-  // without a reload, and the list is small (#367).
-  commands: { draw: drawCommands, load: loadCommands, poll: 10000,
-              finds: "find a command  /" },
 };
 
 // Which tab each number key picks: the order of `TABS`, so a new tab is one
@@ -20925,7 +21027,6 @@ const PLACE_FIELDS = [
   ["diffs", "shut", (value) => new Set(value)],
   ["diffs", "more", (value) => new Map([...value].map(([key, runs]) => [key, runs.slice()]))],
   ["diffs", "loose", asIs],
-  ["commands", "picked", asIs],
 ];
 
 function savePlace(id) {
@@ -21010,7 +21111,6 @@ function choose(id) {
   // added to either must not need a line here to be forgotten from.
   state.turns = blankTurns();
   state.files = blankFiles();
-  state.commands = blankCommands();
   state.diffs = blankDiff();
   state.diff = null;
   recallReview(id);
@@ -21537,6 +21637,8 @@ document.addEventListener("keydown", (press) => {
     case "z": if (state.chosen) toggleSnooze(state.chosen); break;
     case "u": if (state.chosen) toggleUnread(state.chosen); break;
     case "?": help.open ? help.close() : help.showModal(); break;
+    // The Commands view (#411): it was the fourth tab, and its key stays.
+    case "4": toggleCommands(); break;
     default: {
       // A tab per number key, in the order the tabs are drawn. The list is
       // the one in `TAB_KEYS`, so a new tab is an entry there and nothing
@@ -21573,6 +21675,9 @@ $("searchlink").addEventListener("click", () => {
 $("savedlink").addEventListener("click", () => {
   if (state.feed === "saved") { if (state.chosen) choose(state.chosen); } else openFeed("saved");
 });
+$("cmdlink").addEventListener("click", toggleCommands);
+// The list is dragged wider and narrower: the views fit again each time.
+new ResizeObserver(() => fitViews()).observe(document.querySelector(".views"));
 
 for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));

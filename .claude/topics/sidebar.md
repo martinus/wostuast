@@ -97,13 +97,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   cut at `LAST_MAX`, and `askLast` asks once a session while the feed is
   open. The feed stands in place of the tabs (`state.feed`, `body.infeed`),
   newest first by the row's `ended_at`; `drawFeedLink` redraws it on every
-  push, so a session read elsewhere leaves it. **Its way in is one of three
-  equal buttons in a row over the list** -- Unread, Saved, Search, each
-  with an icon, the counts in badges (`viewLink`, `.views`, #391) -- and
-  all three always there: three lines in three styles took a hundred
-  pixels, came and went with their counts and moved the list, and
-  "search every session" read as a second filter box.
-  `test_the_three_views_are_one_row_and_always_there`.
+  push, so a session read elsewhere leaves it. **Its way in is one of four
+  equal buttons in a row over the list** -- Unread, Saved, Search and
+  Commands (#411), each with an icon, the counts in badges (`viewLink`,
+  `.views`, #391) -- and all four always there: three lines in three
+  styles took a hundred pixels, came and went with their counts and moved
+  the list, and "search every session" read as a second filter box.
+  **One row at any width the list is dragged to** (`fitViews`,
+  `VIEW_FITS`): the fullest form that fits -- icon, word and count; then
+  word and count; then icon and count, the word in the title -- measured
+  on every draw and from a `ResizeObserver`, because a word's width is the
+  reader's fonts'. A fourth button in one row cut each word to its first
+  letter ("U…"), and two rows of two were drawn and refused. The four
+  share the row equally (`flex: 1 1 0`), and the row stands 6 px in: the
+  reader asked for both.
+  `test_the_four_views_are_one_row_and_always_there`.
   - **A view stands in the tab row** (`drawViewTitle`, `#viewtitle`,
     #392): its name where the tabs were, and `#ctxslot`, `#modelpop` and
     `#jump` hidden, because the chosen session's model, context, spend and

@@ -555,7 +555,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **An answer for a box the reader left opens nothing.** `followSlash`
     checks the focus after its fetch, as it checks the session: the list
     opened over the transcript with no box to type into.
-  - **The Commands tab shows the same list, and reads one by its name**
+  - **Commands is a view, not a tab** (#411, `toggleCommands`, key `4`):
+    a tab belongs to the chosen session, and most commands belong to no
+    session -- yours in `~/.claude` and the built-ins -- while a project's
+    belong to every session standing in it. So `loadCommands` asks one
+    session of each worktree (`projectSessions`, keyed on the row's
+    `root`) for its list, and lists yours and the built-ins once, then each
+    project's under its name (`projectName`: the repository, and the
+    worktree too when two share one). No route was added: the session
+    routes already answer it. **A project's command is that project's**:
+    two projects may each have a `/deploy`, so a row is picked by
+    `commandKey`, the session asked and the name. **"use" types into the
+    chosen session when it can run the command, and otherwise into the
+    session the view asked** (`useTarget`), which it then chooses. The
+    view is drawn in the reading face, the names too (#414).
+  - **The Commands view shows the same list, and reads one by its name**
     (#367, `drawCommands`, `Serving.command`). The one asked for is
     found among `Commands.defined`, nearest first as the list has them,
     and it sends only the text: the rest the tab shows is the list's

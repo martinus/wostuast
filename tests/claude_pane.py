@@ -23,6 +23,10 @@ nothing each time, in a scratchpad that stays behind on the machine.
         cc.paste(b"\\x1b")                   # a key, as its bytes
         cc.screen()
 
+    # A plugin, or anything else that must be there before it starts:
+    claude_pane.ClaudePane(setup=lambda env: subprocess.run(
+        ["claude", "plugin", "install", "demo@mk"], env=env))
+
 It needs `claude` and `tmux` on the PATH, and nothing of yours: a home of
 its own, a tmux server of its own (`-L`), a fake API key, the API on
 127.0.0.1. The fake API answers "ok" to everything, or, once, the tool call
@@ -42,6 +46,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Callable
 
 
 def stream(model: str, block: dict, delta: dict, stop: str):
@@ -139,7 +144,8 @@ class ClaudePane:
     def __init__(self, manual: bool = True, width: int = 200,
                  events: tuple[str, ...] = ("UserPromptSubmit", "Stop",
                                             "PermissionRequest"),
-                 mode: str = "default") -> None:
+                 mode: str = "default",
+                 setup: "Callable[[dict[str, str]], None] | None" = None) -> None:
         if not shutil.which("claude") or not shutil.which("tmux"):
             raise RuntimeError("claude_pane needs claude and tmux on the PATH")
         self.home = Path(tempfile.mkdtemp(prefix="claude-pane-"))
@@ -177,6 +183,11 @@ class ClaudePane:
                "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                "DISABLE_AUTOUPDATER": "1"}
+        # Anything that must be in the home before Claude Code starts -- a
+        # plugin installed with `claude plugin install` (#413) -- is done
+        # here, with the environment Claude Code will have.
+        if setup:
+            setup(env)
         given = " ".join(f"{k}='{v}'" for k, v in env.items())
         self.tmux("-f", "/dev/null", "new-session", "-d", "-x", str(width),
                   "-y", "50", "-c", str(self.work), f"env -i {given} claude")

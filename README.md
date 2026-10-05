@@ -66,6 +66,11 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   bookmark before "claude" or "you". "Saved" over the list shows every
   saved turn of every session, with "open" to go back to it and "done" to
   take it off.
+- **You find a command.** "Commands" over the list (or <kbd>4</kbd>) shows
+  every skill and command your sessions can run: your own from
+  `~/.claude` and the built-in ones you have run, then each project's
+  under its name. Choose one to read it; **use** puts it into the send
+  box of a session that can run it.
 - **You catch up in one scroll.** "Unread" over the list shows the last
   answer of every unread session, newest first, as Markdown. Each is a
   card in its session's colour: click it to open the session, or point at
@@ -239,7 +244,7 @@ rm -r ~/.local/state/wostuast    # removes the history too, if you want that
 
 ## The page
 
-The page shows one session at a time, in four tabs. Each session remembers
+The page shows one session at a time, in three tabs. Each session remembers
 where you left it: the tab, the open file, and your place in it.
 
 | Tab | What it shows |
@@ -247,7 +252,6 @@ where you left it: the tab, the open file, and your place in it.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
-| **Commands** | Every skill and command the session can run: this project's, your own from `~/.claude`, and the built-in ones you have run. Choose one to read it; **use** puts it into the send box. |
 
 <details>
 <summary><b>More about each tab</b></summary>
@@ -333,13 +337,14 @@ words marked.
 
 A stored prompt is a Claude Code command: a Markdown file in
 `.claude/commands/` (or a skill in `.claude/skills/<name>/SKILL.md`), in
-the project or in `~/.claude`. This tab lists them all for the chosen
-session, with how often you used each one.
+the project or in `~/.claude`. The Commands view lists them all, yours and
+the built-ins first and then each project's, with how often you used each
+one.
 
 - **Choose one** to read its text, drawn as Markdown, with its file and
   what it takes after its name.
-- **use** puts `/name ` into the send box on the Transcript tab, with the
-  cursor after it. Add what it needs, and send. Nothing is typed into the
+- **use** puts `/name ` into the send box of a session that can run it,
+  on its Transcript tab, with the cursor after it. Add what it needs, and send. Nothing is typed into the
   terminal before you press send.
 - A command in a subfolder of `commands/`, or one from a plugin, is not
   listed yet: the send box leaves them out too.
@@ -423,7 +428,8 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>z</kbd> | Snooze the chosen session that needs you, or wake it |
 | <kbd>u</kbd> | Mark the chosen session unread, or read |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
-| <kbd>1</kbd> – <kbd>4</kbd> | Transcript, Files, Review, Commands |
+| <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
+| <kbd>4</kbd> | Commands, the view of every project's skills and commands |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
 | <kbd>s</kbd> | Jump to the send box, which sends what you write to the chosen agent (Transcript tab, while the box is there) |
@@ -609,7 +615,7 @@ The page can type into a terminal, so it is careful about who may use it.
 <details>
 <summary><b>Does it work without tmux?</b></summary>
 
-Reading works: the session list, all four tabs, and alerts. The things that
+Reading works: the session list, all three tabs, the views, and alerts. The things that
 type into a pane (jump, send, answer, no) need tmux. Those controls are
 off for a session with no pane, and the page says why.
 
