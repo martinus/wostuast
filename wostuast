@@ -11460,10 +11460,12 @@ body {
    leave no room for a larger one. The ground inside the curve is the
    content's, so the row widens into it as a tab into its page. Each is a
    layer of the grip's own background: the list scrolls, and clips
-   anything a row draws out of it. `openGrip` sets the colour of the line
-   (`--gap-line`, the row's own) and which corners show: none where the
-   list cuts the row off. */
+   anything a row draws out of it. `openGrip` sets the row's hue
+   (`--gap-hue`, issue 416) and which corners show: none where the list
+   cuts the row off. */
 #grip.open {
+  /* The chosen row's own line, mixed as `.row.chosen` mixes it. */
+  --gap-line: color-mix(in srgb, var(--gap-hue) 55%, transparent);
   --flare: 8px; --mid: calc(var(--grip-w) - var(--flare));
   --corner: var(--edge) calc(var(--flare) - 1.3px), var(--gap-line) calc(var(--flare) - 1px),
     var(--gap-line) calc(var(--flare) - .2px), var(--meet) var(--flare);
@@ -14924,7 +14926,10 @@ function openGrip() {
   grip.classList.toggle("open", bottom > top);
   grip.classList.toggle("flaretop", bottom > top && corners[0]);
   grip.classList.toggle("flarebottom", bottom > top && corners[1]);
-  if (bottom > top) grip.style.setProperty("--gap-line", getComputedStyle(row).borderTopColor);
+  // The row's hue, which no transition touches (#416): its border fades
+  // in over .2 s, and read at a choice it was all but transparent, so the
+  // line stayed so until the next push drew it again.
+  if (bottom > top) grip.style.setProperty("--gap-hue", getComputedStyle(row).getPropertyValue("--hue"));
   if (row !== gripRow) {
     if (gripRow) gripWatch.unobserve(gripRow);
     if (row) gripWatch.observe(row);
