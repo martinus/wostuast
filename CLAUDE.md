@@ -356,11 +356,13 @@ stays behind on the machine, and one lost it when the session restarted.
 **A mockup is drawn the same way**: `--eval` builds the proposal inside the
 real page, with its real CSS. A standalone HTML file with the CSS copied by
 hand drifts from the page, and needs the browser path that `browser.py`
-already knows. **Run them by their command line, never by their functions**:
-`stage.py` points `HOME` and `CLAUDE_CONFIG_DIR` at its throwaway home in
-`main`, so a script that called `stage.serve` itself wrote the command
-fixtures into the real `~/.claude`, and the session's own skill list
-showed them. It reads the checkout when it starts, so run
+already knows. **Every tool keeps to its own home, through `conftest.isolate(home)`**,
+called by each function that writes -- `stage.serve`, `shot.serve`,
+`tour.make_sessions` -- not only by its `main`: a script that called
+`stage.serve` by itself wrote the command fixtures into the real
+`~/.claude`, and the session's own skill list showed them. A new tool
+calls it too; `test_the_tools_write_nothing_outside_their_own_home`
+holds the three. It reads the checkout when it starts, so run
 it again after an edit. A spacing report
 went round three times, and three pull requests, because every fix was
 proven by a test measuring the box around each block, which said 6 px, while

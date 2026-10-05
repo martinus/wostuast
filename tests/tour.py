@@ -76,7 +76,9 @@ def stamp(at: float) -> str:
 def make_sessions(ws, home: Path) -> None:
     """The five sessions, their transcripts, their events, and the marks:
     seen, saved, the reminder."""
-    from conftest import record, records
+    from conftest import isolate, record, records
+
+    isolate(home)
 
     ws.pid_alive = lambda pid: True
     ws.git_facts_many = lambda dirs: {
@@ -165,11 +167,9 @@ def main(argv: list[str]) -> int:
     wanted = args.view or VIEWS
 
     home = Path(tempfile.mkdtemp(prefix="wostuast-tour-"))
-    os.environ["WOSTUAST_STATE"] = str(home / "state")
-    os.environ["WOSTUAST_CONFIG"] = str(home / "config")
-    os.environ["CLAUDE_CONFIG_DIR"] = str(home / "claude")
-    os.environ["TMUX"] = f"{home}/no-tmux-here,0,0"
     sys.path.insert(0, str(HERE))
+    from conftest import isolate
+    isolate(home)          # `make_sessions` does it again, for a script that calls it
     from conftest import wostuast as ws
     from browser import opened
 

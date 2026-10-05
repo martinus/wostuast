@@ -124,8 +124,10 @@ def serve(home: Path, commands: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
     import shutil
 
-    from conftest import FIXTURES, record, records
+    from conftest import FIXTURES, isolate, record, records
     from conftest import wostuast as ws
+
+    isolate(home)
 
     repo = home / "proj"
     make_repo(repo)
@@ -190,14 +192,12 @@ def main(argv: list[str]) -> int:
     said = ask.parse_args(argv)
 
     # Before anything is imported, so nothing can reach the reader's own
-    # state directory or their Claude settings.
+    # state directory or their Claude settings. `serve` does it again, for
+    # a script that calls it by itself.
     home = Path(tempfile.mkdtemp(prefix="wostuast-stage-"))
-    os.environ["WOSTUAST_STATE"] = str(home / "state")
-    os.environ["WOSTUAST_CONFIG"] = str(home / "config")
-    os.environ["CLAUDE_CONFIG_DIR"] = str(home / "claude")
-    # Its session stands in pane `%7`, and a click that sends or renames
-    # types into that pane: never the reader's own (#351), as `ws` does.
-    os.environ["TMUX"] = f"{home}/no-tmux-here,0,0"
+    sys.path.insert(0, str(HERE))
+    from conftest import isolate
+    isolate(home)
     if said.settings:
         (home / "config").mkdir(parents=True)
         (home / "config" / "settings.json").write_text(

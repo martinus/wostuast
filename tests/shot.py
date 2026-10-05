@@ -79,7 +79,10 @@ def parse(text: str) -> list[dict]:
 
 def serve(lines: str, home: Path):
     """A daemon with one session holding `lines`, in the throwaway `home`."""
+    from conftest import isolate
     from conftest import wostuast as ws
+
+    isolate(home)
 
     ws.git_facts_many = lambda dirs: {
         d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
@@ -135,15 +138,12 @@ def main(argv: list[str]) -> int:
     said = ask.parse_args(argv)
 
     # Before anything is imported, so nothing can reach the reader's own
-    # state directory or their Claude settings.
+    # state directory or their Claude settings. `serve` does it again, for
+    # a script that calls it by itself.
     home = Path(tempfile.mkdtemp(prefix="wostuast-shot-"))
-    os.environ["WOSTUAST_STATE"] = str(home / "state")
-    os.environ["WOSTUAST_CONFIG"] = str(home / "config")
-    os.environ["CLAUDE_CONFIG_DIR"] = str(home / "claude")
-    # Its session stands in pane `%7`, and a click that sends or renames
-    # types into that pane: never the reader's own (#351), as `ws` does.
-    os.environ["TMUX"] = f"{home}/no-tmux-here,0,0"
     sys.path.insert(0, str(HERE))
+    from conftest import isolate
+    isolate(home)
     case = Path(said.case)
     if case.suffix == ".jsonl":
         lines = case.read_text()
