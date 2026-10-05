@@ -2258,3 +2258,27 @@ def test_the_views_keep_their_height_when_the_list_scrolls(ws, page_at, tmp_path
             document.querySelector('.sidebar').children).filter((c) => c.id !== 'rows')
             .map((c) => [c.className, c.clientHeight, c.scrollHeight])"""):
             assert part[1] >= part[2], part
+
+
+def test_a_chosen_finished_row_is_as_whole_as_any_chosen_row(past_at):
+    """A finished row is faded (72 %), and was faded when chosen too: its
+    fade into the content then ended on a grey mix of the list's ground,
+    and its edge stood out where it meets the content (#427). Chosen, it is
+    solid and its name bright, as on any chosen row; the others stay
+    faded."""
+    with opened(past_at) as page:
+        page.click(".histhead")
+        page.wait_for_selector('.row[data-id="acorn"]')
+        page.click('.row[data-id="acorn"]')
+        page.wait_for_function("state.chosen === 'acorn'")
+        page.wait_for_selector('.row.chosen[data-id="acorn"]')
+        page.wait_for_function("document.getAnimations().length === 0")
+        look = page.evaluate("""() => ['acorn', 'beetroot'].map((id) => {
+          const row = document.querySelector(`.row[data-id="${id}"]`);
+          const name = getComputedStyle(row.querySelector('.name'));
+          return [getComputedStyle(row).opacity, name.fontWeight, name.color]; })""")
+        bright = page.evaluate("""() => { const probe = document.createElement('div');
+          probe.style.color = 'var(--ink-bright)'; document.body.appendChild(probe);
+          const said = getComputedStyle(probe).color; probe.remove(); return said; }""")
+        assert look[0] == ["1", "600", bright], look
+        assert float(look[1][0]) < 1 and look[1][1] == "500", look

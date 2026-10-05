@@ -11,14 +11,16 @@ they look together. A design review of the sidebar and the views drew this
 from nothing in a scratchpad, and used it five times: the pictures before,
 the mockup, and the pictures after each of three pull requests.
 
-Five sessions, one in each state a row can be in:
+Six sessions, one in each state a row can be in:
 
 - s1 "Fix the cache race": unread, with tool rows, a plan it asked to
   have approved and a final answer in Markdown; it is chosen.
 - s2 "Add substring search": unread, its last answer with a code block.
-- s3 "Speed up the table": working.
+- s3 "Speed up the table": working, with a `claude -p` and two subagents
+  of its Agent tool running under it, and two that ran (#422).
 - s4 "Write the release notes": waiting on a permission.
 - s5 "Update the README": read, with a reminder 50 minutes out.
+- s6 "Try the old allocator": over, in the history (#427).
 
 Two answers and a prompt are saved. Every session has a status line:
 model, context, spend.
@@ -55,7 +57,8 @@ NAMES = {"s1": ("Fix the cache race", "oans", "fix/cache"),
          "s2": ("Add substring search", "oans", "feature/search"),
          "s3": ("Speed up the table", "unordered_dense", "main"),
          "s4": ("Write the release notes", "wostuast", "notes"),
-         "s5": ("Update the README", "wostuast", "docs")}
+         "s5": ("Update the README", "wostuast", "docs"),
+         "s6": ("Try the old allocator", "unordered_dense", "try/alloc")}
 
 SAID = {
     "s1": "The race is gone. `put` now takes the cache's lock, and `get` reads a copy.\n\n"
@@ -74,7 +77,7 @@ def stamp(at: float) -> str:
 
 
 def make_sessions(ws, home: Path) -> None:
-    """The five sessions, their transcripts, their events, and the marks:
+    """The six sessions, their transcripts, their events, and the marks:
     seen, saved, the reminder."""
     from conftest import isolate, record, records
 
@@ -139,6 +142,9 @@ def make_sessions(ws, home: Path) -> None:
     ws.append_event({"session_id": "s4", "hook_event_name": "PermissionRequest",
                      "tool_name": "Bash", "tool_input": {"command": "make release"},
                      "cwd": str(home / "w" / "s4"), "pane": "%4", "pid": 1, "ts": now - 30})
+    # One that is over, for the history and its chosen row (#427).
+    ws.append_event({"session_id": "s6", "hook_event_name": "SessionEnd", "reason": "logout",
+                     "cwd": str(home / "w" / "s6"), "pane": "%5", "pid": 1, "ts": now - 900})
     # The working one has started others (#422): a `claude -p` from its Bash
     # tool still running and one that ended, and two subagents of its Agent
     # tool, one still at work.

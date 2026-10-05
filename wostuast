@@ -11809,8 +11809,14 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* History. A finished session is grey through and through: it kept the colour
    of the state it stopped in, which read as though something were still going
    on there. */
-.row.ended, .row.dead { opacity: .72; }
-.row.ended .name, .row.dead .name { color: var(--ink-mute); font-weight: 500; }
+/* Not the chosen one (issue 427): see-through, its fade into the content
+   ended on a grey mix of the list's ground, and its edge stood out where it
+   meets the content, as no other chosen row's does. Chosen, it is a row
+   like the others, in the grey of its state. */
+.row.ended:not(.chosen), .row.dead:not(.chosen) { opacity: .72; }
+.row.ended:not(.chosen) .name, .row.dead:not(.chosen) .name {
+  color: var(--ink-mute); font-weight: 500;
+}
 .row.ended .branch, .row.dead .branch,
 .row.ended .said, .row.dead .said { color: var(--ink-faint); }
 .row.ended .dirty, .row.dead .dirty,

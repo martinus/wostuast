@@ -581,6 +581,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   whole height, border and all (`openGrip`).
   **Every row runs to the line**, as a tab behind the chosen one: cards with
   four round corners read as buttons.
+  - **A chosen row is never see-through** (#427): a finished row is faded
+    (`opacity: .72`), and was faded when chosen too, so its fade ended on a
+    grey mix of the list's ground and its edge stood out where it meets
+    the content. `.row.ended:not(.chosen)` fades the others only, and the
+    chosen one's name is bright, as on any chosen row.
+    `test_a_chosen_finished_row_is_as_whole_as_any_chosen_row`.
   - **The list wears the grip's colour (`--edge`), and a split tab's own
     list -- the map, a file tree -- wears `--meet`.** The grip then reads
     as the list's edge, which only the chosen row crosses, and the map
