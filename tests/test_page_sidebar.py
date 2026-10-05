@@ -844,8 +844,11 @@ def alerts_page(where):
         page = browser.new_page()
         page.add_init_script("""
           window.__told = [];
+          window.__notes = [];
           window.Notification = function (title, options) {
             window.__told.push([title, (options || {}).body || "", options || {}]);
+            window.__notes.push(this);
+            this.close = () => { this.closed = true; };
           };
           window.Notification.permission = "granted";
           window.Notification.requestPermission = async () => "granted";
@@ -894,6 +897,26 @@ def test_an_agent_that_needs_you_is_said_once(ws, page_at):
         page.wait_for_function(
             "() => state.sessions[0].reason.includes('dist')")
         assert page.evaluate("window.__told.length") == 1
+
+
+def test_a_click_on_an_alert_chooses_its_session(ws, page_at):
+    """A click on the alert opens the session it is about, and closes the
+    alert. No test clicked one until the page script's coverage said that
+    its `onclick` never ran (#439)."""
+    daemon, path = page_at
+    with alerts_page(path) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        ws.append_event(conftest.event("SessionStart", sid="s2", pane="%2",
+                                       cwd="/w/repo/other", ts=time.time()))
+        ws.append_event(conftest.event(
+            "PermissionRequest", sid="s2", pane="%2", cwd="/w/repo/other",
+            tool_name="Bash", tool_input={"command": "rm -rf build"}, ts=time.time()))
+        daemon.tick()
+        page.wait_for_function("window.__notes.length === 1")
+        assert page.evaluate("state.chosen") != "s2"
+        page.evaluate("window.__notes[0].onclick()")
+        page.wait_for_function("state.chosen === 's2'")
+        assert page.evaluate("window.__notes[0].closed") is True
 
 
 def test_an_alert_that_needs_you_says_what_and_where_and_stays(ws, page_at):

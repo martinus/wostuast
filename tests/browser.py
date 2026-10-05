@@ -105,7 +105,115 @@ def fresh_context(scheme="dark", with_marked=True):
     context.route("**/highlight.min.js", lambda route: route.abort())
     context.route("**/fonts.googleapis.com/**", lambda route: route.fulfill(
         status=200, content_type="text/css", body=""))
+    if os.environ.get("WOSTUAST_COVERAGE"):
+        cover(context, Path(os.environ["WOSTUAST_COVERAGE"]))
     return context
+
+# --- what the tests reach of the page script (#439) ---------------------------
+
+#: The page script's coverage in this process: its text, by the hash of it,
+#: with the bytes that ran and the functions it has. One file a process in
+#: the folder, rewritten as each context closes: a pytest-xdist worker is
+#: not sure to run `atexit`, and the whole script, written once a page,
+#: was half a gigabyte a run.
+_reached: dict = {}
+
+def cover(context, folder: Path) -> None:
+    """Record what the page script runs, in every page `context` opens,
+    and add it to `folder` as the context closes (#439).
+    `tests/page_coverage.py` sets `WOSTUAST_COVERAGE` and reads the folder.
+
+    Chromium measures this itself, through the DevTools protocol, so it
+    needs no dependency. It must start before the page's script runs, which
+    is why `new_page` is wrapped rather than the page found later. Nothing
+    here may fail a test: a test that broke because coverage was being
+    taken would say nothing about the page."""
+    pages: list = []
+    new_page, close = context.new_page, context.close
+
+    def new_page_covered(*args, **kwargs):
+        page = new_page(*args, **kwargs)
+        try:
+            session = context.new_cdp_session(page)
+            session.send("Profiler.enable")
+            session.send("Profiler.startPreciseCoverage",
+                         {"callCount": True, "detailed": True})
+            pages.append((page, session))
+        except Exception:
+            pass
+        return page
+
+    def close_covered(*args, **kwargs):
+        for page, session in pages:
+            try:
+                keep_coverage(page, session)
+            except Exception:
+                pass
+        try:
+            write_coverage(folder)
+        except Exception:
+            pass
+        return close(*args, **kwargs)
+
+    context.new_page = new_page_covered
+    context.close = close_covered
+
+def keep_coverage(page, session) -> None:
+    """Add what one page ran of its main script to `_reached`.
+
+    V8 gives each script's functions, each with ranges nested inside its
+    first one, and a count for each: an inner range with count 0 is a block
+    that never ran inside a function that did. So the ranges are painted
+    outer first, and the inner ones over them. A function never run is
+    listed with count 0 (measured, #439). The script is found by its
+    length: an inline script's coverage carries only the page's address."""
+    import hashlib
+
+    taken = session.send("Profiler.takePreciseCoverage")["result"]
+    texts = page.evaluate("() => Array.from(document.scripts, (s) => s.src ? '' : s.text)")
+    text = next((one for one in texts if "\nconst state = {" in one), None)
+    if text is None:
+        return
+    held = _reached.setdefault(hashlib.sha1(text.encode()).hexdigest(), {
+        "text": text, "ran": 0, "functions": {}})
+    for script in taken:
+        functions = script["functions"]
+        if not functions or functions[0]["ranges"][0]["endOffset"] != len(text):
+            continue
+        ran = bytearray(len(text))
+        ranges = sorted((one for function in functions for one in function["ranges"]),
+                        key=lambda one: (one["startOffset"], -one["endOffset"]))
+        for one in ranges:
+            start, end = one["startOffset"], one["endOffset"]
+            ran[start:end] = (b"\x01" if one["count"] else b"\x00") * (end - start)
+        held["ran"] |= int.from_bytes(ran, "big")
+        for function in functions[1:]:
+            first = function["ranges"][0]
+            known = held["functions"].setdefault(
+                first["startOffset"], [function["functionName"], first["endOffset"], False])
+            known[2] = known[2] or first["count"] > 0
+
+def write_coverage(folder: Path) -> None:
+    """`_reached`, as this process's file in `folder`: the text, the runs
+    of bytes that ran as [start, end] pairs, and the functions."""
+    import json
+
+    folder.mkdir(parents=True, exist_ok=True)
+    out = []
+    for held in _reached.values():
+        size = len(held["text"])
+        ran = held["ran"].to_bytes(size, "big") if size else b""
+        runs, at = [], ran.find(1)
+        while at >= 0:
+            end = ran.find(0, at)
+            end = size if end < 0 else end
+            runs.append([at, end])
+            at = ran.find(1, end)
+        out.append({"text": held["text"], "ran": runs,
+                    "functions": [[start, *rest] for start, rest in held["functions"].items()]})
+    temporary = folder / f".{os.getpid()}.json"
+    temporary.write_text(json.dumps(out))
+    temporary.replace(folder / f"{os.getpid()}.json")
 
 @contextmanager
 def own_context(scheme="dark", with_marked=True):
