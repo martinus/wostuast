@@ -18,11 +18,12 @@ HERE = Path(__file__).resolve().parent
 
 
 def test_the_tools_write_nothing_outside_their_own_home(tmp_path, monkeypatch):
-    """`stage.serve`, `shot.serve` and `tour.make_sessions`, called by a
+    """`stage.serve`, `shot.serve`, `tour.make_sessions` and `scale.measure`, called by a
     script rather than by their `main`, keep to the home they are given: a
     script that called `stage.serve` by itself wrote the command fixtures
     into the real `~/.claude`. The environment is set through `monkeypatch`
     first, so this test leaves it as it found it."""
+    import scale
     import shot
     import tour
     from conftest import wostuast as ws
@@ -33,7 +34,8 @@ def test_the_tools_write_nothing_outside_their_own_home(tmp_path, monkeypatch):
     for name, write in (
             ("stage", lambda home: stage.serve(home, commands=True)),
             ("shot", lambda home: shot.serve("", home)),
-            ("tour", lambda home: tour.make_sessions(ws, home))):
+            ("tour", lambda home: tour.make_sessions(ws, home)),
+            ("scale", lambda home: scale.measure(ws, home, 2, 1, 1.0, False))):
         # Pointed at "the reader's own" before each tool: the one before it
         # has pointed them at its own home, which would hide this one.
         for key, where in (("WOSTUAST_STATE", "state"), ("WOSTUAST_CONFIG", "config"),
