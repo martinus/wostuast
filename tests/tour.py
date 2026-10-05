@@ -20,8 +20,8 @@ Five sessions, one in each state a row can be in:
 - s4 "Write the release notes": waiting on a permission.
 - s5 "Update the README": read, with a reminder 50 minutes out.
 
-Two answers are saved. Every session has a status line: model, context,
-spend.
+Two answers and a prompt are saved. Every session has a status line:
+model, context, spend.
 
 Each view is one PNG, `OUTDIR/<scheme>-<width>-<n>-<view>.png`, in this
 order: `transcript` (s1 chosen), `later` (the remind menu of s2 open),
@@ -139,7 +139,9 @@ def make_sessions(ws, home: Path) -> None:
         {"id": "s1", "seq": 6, "ts": int(t0 + 60), "at": now - 100,
          "text": "Found it. `put` and `get` share `entries` with no lock, so a read "
                  "during a write sees half an update."},
-        {"id": "s2", "seq": 1, "ts": int(now - 400), "at": now - 900, "text": "Done."}]))
+        {"id": "s2", "seq": 1, "ts": int(now - 400), "at": now - 900, "text": "Done."},
+        {"id": "s1", "seq": 0, "ts": int(t0), "at": now - 1200, "who": "me",
+         "text": "The cache test fails now and then on CI. Find out why."}]))
 
 
 def main(argv: list[str]) -> int:

@@ -2757,28 +2757,67 @@ def test_the_line_holds_when_marked_comes_late(seen_before):
 def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
     """A bookmark before the name saves the answer; "saved" over the list
     opens every saved turn, and "open" lands on it. The bookmark stays
-    filled, and "done" takes it off the list."""
+    filled, and "done" takes it off the list. A prompt the reader typed
+    is saved the same way (#403), and its card says "you"."""
     daemon, url = page_at
     with opened(url) as page:
         wait_for_map(page)
         reply = ".turn:not(.mine):not(.toolrow)"
         mark = f"{reply} .who .save"
         assert page.locator(mark).count() == 1
-        assert page.locator(".turn.mine .who .save").count() == 0
+        prompt = ".turn.mine"
+        assert page.locator(f"{prompt} .who .save").count() == 1
         page.hover(reply)
         page.click(mark)
         page.wait_for_selector(f"{mark}.on")
         assert daemon.store.saved[0]["id"] == "s1"
+        assert "who" not in daemon.store.saved[0]
         page.wait_for_function(
             "document.querySelector('#savedlink .n').textContent === '1'")
+        page.hover(prompt)
+        page.click(f"{prompt} .who .save")
+        page.wait_for_selector(f"{prompt} .who .save.on")
+        assert daemon.store.saved[0]["who"] == "me"
+        assert daemon.store.saved[0]["text"] == page.evaluate(
+            "state.turns.blocks.find((b) => b.kind === 'prompt').text").strip()[:300]
+        page.wait_for_function(
+            "document.querySelector('#savedlink .n').textContent === '2'")
         page.click("#savedlink")
-        page.wait_for_selector(".feedentry .prose")
-        page.hover(".feedentry")
-        page.click(".feedentry button:text('open')")
+        page.wait_for_function("document.querySelectorAll('.feedentry').length === 2")
+        assert page.eval_on_selector_all(
+            ".feedentry .feedwho", "els => els.map((e) => e.textContent)") == ["you", "claude"]
+        # Each as the transcript draws it: the prompt in the reader's box,
+        # the answer as Markdown, and the two names in their colours.
+        assert page.locator(".feedentry >> nth=0 >> .bubble.mine").count() == 1
+        assert page.locator(".feedentry >> nth=0 >> .prose").count() == 0
+        assert page.locator(".feedentry >> nth=1 >> .prose").count() == 1
+        look = page.evaluate("""() => {
+          const root = getComputedStyle(document.documentElement);
+          const probe = (name, what) => {
+            const one = document.createElement('div');
+            one.style[what] = root.getPropertyValue(name);
+            document.body.appendChild(one);
+            const said = getComputedStyle(one)[what];
+            one.remove();
+            return said;
+          };
+          const style = (sel) => getComputedStyle(document.querySelector(sel));
+          return [style('.feedentry .bubble.mine').backgroundColor, probe('--mine-soft', 'backgroundColor'),
+                  style('.feedwho.mine').color, probe('--mine', 'color'),
+                  style('.feedwho.claude').color, probe('--needs', 'color')];
+        }""")
+        assert look[0] == look[1] and look[2] == look[3] and look[4] == look[5], look
+        page.hover(".feedentry >> nth=0")
+        page.click(".feedentry >> nth=0 >> button:text('open')")
+        page.wait_for_selector(f"{prompt}.linked")
+        page.click("#savedlink")
+        page.hover(".feedentry >> nth=1")
+        page.click(".feedentry >> nth=1 >> button:text('open')")
         page.wait_for_selector(f"{reply}.linked")
         page.click("#savedlink")
-        page.hover(".feedentry")
-        page.click(".feedentry button:text('done')")
+        for _ in range(2):
+            page.hover(".feedentry >> nth=0")
+            page.click(".feedentry >> nth=0 >> button:text('done')")
         page.wait_for_selector(".feed .empty")
         assert daemon.store.saved == []
 
@@ -2800,7 +2839,7 @@ def test_saved_turns_stand_in_columns_and_hold_still_on_hover(ws, page_at):
     columns = ("new Set([...document.querySelectorAll('.feedentry')]"
                ".map((e) => Math.round(e.getBoundingClientRect().left))).size")
     with opened(url) as page:
-        page.set_viewport_size({"width": 1700, "height": 900})
+        page.set_viewport_size({"width": 2000, "height": 900})
         page.click("#savedlink")
         page.wait_for_function("document.querySelectorAll('.feedentry').length === 5")
         page.wait_for_function(f"{columns} === 3")

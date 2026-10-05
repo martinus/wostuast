@@ -76,6 +76,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     64 px and right-aligned. A word beside "copy" pushed "copy" out of it;
     after the name, an invisible bookmark moved "claude" out of line with
     the time; in the gap beside the words, it touched them.
+  - **A prompt the reader typed is saved too** (#403), and its entry
+    carries `who: "me"`; an answer carries no `who`, so every entry kept
+    before prompts could be saved is still an answer, and `saved_entry`
+    refuses any other value. **The card draws it as the transcript
+    does**: a prompt in the reader's bluish box (`.bubble.mine`, one rule
+    with `.turn.mine .bubble`), an answer as Markdown, and "you" or
+    "claude" in the two names' colours (`.feedwho.mine`,
+    `.feedwho.claude`). The first version had one face for both, and the
+    reader asked for this: out of its transcript a prompt read like an
+    answer. Not on a `!` command or its output: the reader asked for
+    prompts.
   `test_a_saved_turn_is_its_session_and_its_moment`,
   `test_an_answer_is_saved_and_opened_again_from_the_list`.
 - **"All unreads" is the last answer of every unread session, asked for
@@ -112,7 +123,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     Playwright waits for a button that is not drawn and never presses it.
   - **The cards stand on a board, as Google Keep's notes** (`putBoard`,
     `layoutCards`, #404, #408): as many columns of at least `CARD_MIN` as
-    fit, each card under the shortest column, so the newest stand along the
+    fit -- 480 px: at 340 a card held a few words a line, and the reader
+    saw too little of it (#403) -- each card under the shortest column, so the newest stand along the
     top and read across. One column of 90ch at the left left most of a wide
     screen empty, in all three views. **Placed by hand, not by CSS
     `columns`**: those fill the first column down before the next, so the
