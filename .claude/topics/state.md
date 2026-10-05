@@ -209,7 +209,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   denial, because saying No fires no hook at all. `PermissionRequest` carries
   no `tool_use_id`, so the pairing goes by `tool_summary`; two runs of the same
   command at the same moment cannot be told apart, and nothing in the payload
-  can.
+  can. **A result reuses its call's summary** (`calls`, by `tool_use_id`):
+  it carries the very input its call did, and making the summary again,
+  secrets hidden, was a fifth of a start's fold (#430). Not lazily, at the
+  row: the pairing above compares summaries as they are folded.
+  `test_a_result_reuses_its_calls_summary`.
 - **A `/clear` is one conversation in two sessions, and the page follows
   it.** Claude Code ends the session (`reason: clear`) and starts another
   (`source: clear`) with a new id and a new transcript, in the same pane and
@@ -349,10 +353,25 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `TAIL_CHUNK` at a time, `fold` calls `forget_quiet` every `FORGET_EVERY` of
   the *log's* clock, and `reload_git` asks only about a directory a shown
   session is in: 28 MB, flat. **Forget by the last event, never the first**:
-  a session that started a year ago and is still going keeps where it
+  a session that started weeks ago and is still going keeps where it
   started, and the test that holds it moves the session's `cwd` after its
   start, because every event carries one and a session forgotten and made
-  again would otherwise look exactly right. **An empty piece is not the end
+  again would otherwise look exactly right.
+  - **A start folds the last `HISTORY_FOLDED` (30 days) of the log, not
+    all of it** (#430): an archive last written before that is left out,
+    by its file's time (`folded_long_ago`), in `EventFollower.new_lines`
+    and in `read_events` (`log_handles(recent=True)`), so the page and
+    `ls` agree. Every start folded every archive and grew with the whole
+    history -- 5.5 s at 240,000 events, about 22 us an event. **So "keeps
+    where it started" holds for 30 days, not a year**: a session that has
+    run longer loses, after a restart, what its start alone said (`home`,
+    `first_prompt`). The reader chose that, and the window, from three
+    options; a snapshot of the folded state was the exact one, and the
+    costlier: a second way to the same state, thrown away by every update.
+    The archives stay: `measure_log` counts them and `search_log` reads
+    them. **Never one already begun, and never the live file**: a tail
+    handed over at a rotation was written just now.
+    `test_a_start_leaves_out_the_archives_older_than_the_window`. **An empty piece is not the end
   of the file**: a line longer than `TAIL_CHUNK` gives nothing until one
   ends it, so the end is the size the file had when the read began.
   **One event that raises costs only itself**: `Tail.lines` counts the
