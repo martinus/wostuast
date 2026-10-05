@@ -283,6 +283,8 @@ into a pane. A runner that records `list(args)` alone has lost the text. `browse
 `tab="diff"`), `own_context` and `load` for a test that needs the context
 before the page, `show_tab`,
 `comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`,
+`pixels` (the colours a `page.screenshot` drew: a gradient's shape is in no
+computed style),
 `spy_on_note`.
 
 **CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a

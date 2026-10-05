@@ -13,6 +13,7 @@ import pytest
 import conftest
 from browser import (
     hold,
+    pixels,
     kept,
     spy_on_note,
     skip_without_browser,
@@ -530,6 +531,83 @@ def test_the_filter_searches_the_history_too(past_at):
 
 
 
+
+
+def test_the_chosen_row_turns_into_the_content_s_edge(rows_at):
+    """Where the chosen row meets the content, its outline turns into the
+    content's edge with a round corner and runs on along that edge (#407):
+    it stopped square at the end of the list. Read from what the page drew,
+    because a gradient's shape is in no computed style. With the row scrolled
+    out of the list, and the grip is the list's colour again."""
+    with open_rows(rows_at) as page:
+        page.set_viewport_size({"width": 1100, "height": 600})
+        page.mouse.move(900, 300)
+        colours = page.evaluate("""() => {
+          const root = getComputedStyle(document.documentElement);
+          const meet = getComputedStyle(document.querySelector('.body'))
+            .getPropertyValue('--meet');
+          return ['--edge', meet].map((value) => {
+            const probe = document.createElement('div');
+            probe.style.background = value.startsWith('--')
+              ? root.getPropertyValue(value) : value;
+            document.body.appendChild(probe);
+            const said = getComputedStyle(probe).backgroundColor;
+            probe.remove();
+            return said.match(/\\d+/g).slice(0, 3).map(Number);
+          });
+        }""")
+        edge, meet = (tuple(one) for one in colours)
+        assert edge != meet
+
+        def grip():
+            at = page.evaluate("""() => {
+              const grip = document.getElementById('grip').getBoundingClientRect();
+              const row = document.querySelector('.row.chosen');
+              const at = row ? row.getBoundingClientRect() : {top: 0, bottom: 0};
+              return [grip.left, grip.width, Math.floor(at.top), Math.ceil(at.bottom)];
+            }""")
+            shot = pixels(page.screenshot(clip={"x": at[0], "y": 0, "width": at[1],
+                                                "height": 600}))
+            return shot, at[2], at[3]
+
+        def near(one, other):
+            return all(abs(a - b) <= 3 for a, b in zip(one, other))
+
+        page.click('.row[data-id="fresh"]', position={"x": 5, "y": 5})
+        page.wait_for_function("state.chosen === 'fresh'")
+        page.mouse.move(900, 300)
+        page.wait_for_function(
+            "document.querySelector('.row.chosen').getAnimations().length === 0")
+        page.evaluate("new Promise((done) => requestAnimationFrame(() => "
+                      "requestAnimationFrame(done)))")
+        shot, top, bottom = grip()
+        last = len(shot[0]) - 1
+        # Open beside the row, as before.
+        assert all(near(dot, meet) for dot in shot[(top + bottom) // 2]), shot[(top + bottom) // 2]
+        # Just over and under it, the corner: the list's colour at the
+        # list's side, the content's ground towards the content.
+        for y in (top - 2, bottom + 1):
+            assert near(shot[y][0], edge), (y, shot[y])
+            assert near(shot[y][last], meet), (y, shot[y])
+        # Far over and under it, a line down the content's edge, in
+        # neither the list's colour nor the content's.
+        for y in (top - 30, bottom + 30):
+            assert near(shot[y][0], edge), (y, shot[y])
+            assert not near(shot[y][last], edge) and not near(shot[y][last], meet), (y, shot[y])
+        # Scrolled out of the list, there is no row to turn, and no line.
+        page.set_viewport_size({"width": 1100, "height": 250})
+        page.evaluate("document.getElementById('rows').scrollTop = 1e6")
+        page.wait_for_function("""() => {
+          const row = document.querySelector('.row.chosen').getBoundingClientRect();
+          const list = document.getElementById('rows').getBoundingClientRect();
+          return row.bottom < list.top || row.top > list.bottom;
+        }""")
+        page.evaluate("new Promise((done) => requestAnimationFrame(() => "
+                      "requestAnimationFrame(done)))")
+        shot = pixels(page.screenshot(clip={"x": page.evaluate(
+            "document.getElementById('grip').getBoundingClientRect().left"), "y": 60,
+            "width": 5, "height": 180}))
+        assert all(near(dot, edge) for line in shot for dot in line), "a line with no row"
 
 
 def test_a_drag_on_an_edge_starts_only_by_hand_and_always_stops(page_at):
