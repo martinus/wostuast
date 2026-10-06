@@ -524,6 +524,32 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **How the diff is drawn is in the settings menu** (`sidebar.md`,
     `putSettings`): the columns, the tab width and long lines. The Review
     bar was cramped on a notebook with the column switch alone in it.
+  - **Whitespace is two settings, and only one asks git** (#449).
+    `diff_space` "hide" is `git diff -w` (`SPACE_ARGS`), sent as
+    `space=hide` on the diff *and* the whole-file route: the lines shown
+    between two changes must come from the same diff as the changes, and
+    the branch's answer kept in `Daemon.diffs` is keyed by it, or the
+    other choice's answer came back. A change asks again at once
+    (`respace`, which drops the tag and the whole files), not at the next
+    poll. `space_marks` asks nobody: `markSpaces` wraps every tab and
+    every space at a line's end in `.ws`, always, and `data-marks` on the
+    root shows a faint mark over it, as the tab width is the cascade's.
+    **It runs wherever a line's text is drawn or painted**, after the word
+    marks: `unifiedRow`, `pairRow`, `paintDiff`, `paintLines`,
+    `paintSlices`. A paint replaces the cell, and the marks went with it.
+    **A tab is never wrapped**: the mark is an empty `.ws.tab` before it.
+    Wrapped in a span of its own, a tab of four columns drew three,
+    measured from elsewhere, and
+    `test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts`
+    went red.
+    `test_a_change_of_whitespace_alone_is_left_out_when_asked`,
+    `test_a_change_of_whitespace_alone_goes_and_comes_back`,
+    `test_a_tab_and_spaces_at_the_end_are_marked_when_asked`.
+  - **A file opens on the Files tab from its header** (`openInFiles`,
+    `.openfile`, #449). Beside the header, not in it: the header is a
+    button, and a button holds no other. `.dfile:has(> .openfile)` is a
+    grid so the button stands in the header's row and sticks with it.
+    `test_a_file_in_the_diff_opens_on_the_files_tab`.
   `test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts`,
   `test_scrolled_sideways_every_line_keeps_its_colour`,
   `test_a_long_line_wraps_under_its_own_text_in_one_column`,

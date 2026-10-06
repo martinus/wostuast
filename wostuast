@@ -6040,7 +6040,7 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
                   of: str = "", base: str = "",
                   ranks: dict[Any, Any] | None = None,
                   held: dict[Any, Any] | None = None,
-                  root: str | None = None) -> DiffReport:
+                  root: str | None = None, space: bool = False) -> DiffReport:
     """What this worktree has changed, in two parts, or one commit of it.
 
     Committed: `git diff <base>...HEAD`, the branch's own work. The three dots
@@ -6075,7 +6075,7 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         # a reader's `diff.context` would otherwise move that line. The `--`
         # says the arguments are revisions: a file named `HEAD` made git
         # refuse `HEAD` as ambiguous, and the tab failed on every poll.
-        return git_diff(root, [*args, f"-U{DIFF_CONTEXT}", "--"], runner)
+        return git_diff(root, [*args, *SPACE_ARGS[space], f"-U{DIFF_CONTEXT}", "--"], runner)
 
     def section(name: str, title: str, about: str, *args: str,
                 answer: tuple[str | None, bool] | None = None,
@@ -6095,7 +6095,7 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     choice = pick_base(root, runner, base, ranks)
     report.base, lost = choice.name, choice.failed
     report.base_auto, report.bases = choice.detected, choice.offered
-    key = ((root, choice.ref, choice.tip, choice.head)
+    key = ((root, choice.ref, choice.tip, choice.head, space)
            if held is not None and choice.ref and choice.tip and choice.head
            and not lost else None)
     kept = held.get(key) if held is not None and key else None
@@ -6203,11 +6203,21 @@ class WholeFile:
     failed: bool = False
 
 
+#: What `git diff` is given for the reader's choice of whitespace (#449):
+#: nothing, or `-w`, which leaves out a change of whitespace alone. One
+#: table for `worktree_diff` and `whole_file_diff`: the lines shown between
+#: two changes must come from the same diff as the changes. The new side's
+#: line numbers do not move with `-w`, so a comment stays on its line; and
+#: `worktree_diff` keeps a branch's answer under its `space` as well.
+SPACE_ARGS: dict[bool, tuple[str, ...]] = {False: (), True: ("-w",)}
+
+
 def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
                     of: str = "",
                     runner: Callable[..., str | None] = run,
                     base: str = "",
-                    ranks: dict[Any, Any] | None = None) -> WholeFile:
+                    ranks: dict[Any, Any] | None = None,
+                    space: bool = False) -> WholeFile:
     """One file's diff in one section, with the whole file as context.
 
     `section`, `path` and `of` come from the page. The section picks the
@@ -6253,7 +6263,7 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
     # Both names of a renamed file, or git sees one added and nothing else.
     names = [path] + ([old_path] if old_path and old_path != path else [])
     text, found.cut = git_diff(
-        root, [*spec, f"-U{WHOLE_CONTEXT}", "--",
+        root, [*spec, *SPACE_ARGS[space], f"-U{WHOLE_CONTEXT}", "--",
                *(":(literal)" + name for name in names)], runner)
     if text is None:
         found.failed = True
@@ -6384,6 +6394,10 @@ SETTING_WORDS: dict[str, tuple[Any, ...]] = {
     "tab_width": (2, 4, 8),
     "long_lines": ("scroll", "wrap"),
     "diff_columns": ("one", "two"),
+    # A change of whitespace alone is shown, or left out (`git diff -w`,
+    # #449); and a tab and a space at a line's end are drawn faintly, or not.
+    "diff_space": ("show", "hide"),
+    "space_marks": ("off", "on"),
 }
 
 #: The most links the file may hold. Each is a pattern run over every block
@@ -9435,7 +9449,8 @@ class Serving:
         base = query.get("base", "")
         report = worktree_diff(session.cwd, of=of, base=base,
                                ranks=self.daemon.ranks, held=self.daemon.diffs,
-                               root=self.daemon.files.root_of(session.cwd, run))
+                               root=self.daemon.files.root_of(session.cwd, run),
+                               space=query.get("space", "") == "hide")
         # The tab asks every five seconds, and the answer is the whole diff:
         # on a slow link the one transfer that never stopped. The page sends
         # back the tag of the answer it holds, and one that still stands is
@@ -9461,7 +9476,8 @@ class Serving:
         found = whole_file_diff(session.cwd, query.get("section", ""),
                                 query.get("path", ""), query.get("old", ""),
                                 query.get("of", ""), base=query.get("base", ""),
-                                ranks=self.daemon.ranks)
+                                ranks=self.daemon.ranks,
+                                space=query.get("space", "") == "hide")
         self.reply_json(dict(asdict(found), id=session_id))
 
     def stream(self, watching: str) -> None:
@@ -13173,6 +13189,32 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   font-family: var(--narrow); font-size: 13px;
 }
 .dfile .why { margin-left: auto; flex-shrink: 0; color: var(--ink-faint); font-size: 11px; }
+/* The file on the Files tab, beside the header (issue 449): a grid, so it stands
+   in the header's row and sticks with it, and everything else runs the
+   card's width. The header is a button already, and a button holds no
+   other. */
+.dfile:has(> .openfile) { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.dfile:has(> .openfile) > * { grid-column: 1 / -1; min-width: 0; }
+.dfile:has(> .openfile) > .name { grid-column: 1; grid-row: 1; }
+.dfile > .openfile {
+  grid-column: 2; grid-row: 1; position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; padding: 0 14px 0 6px; border: 0;
+  border-bottom: 1px solid var(--edge); background: var(--sheet);
+  color: var(--ink-faint); cursor: pointer;
+}
+.dfile > .openfile:hover { color: var(--needs); }
+.dfile > .openfile .icon {
+  width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3;
+}
+/* A tab, and a space at a line's end, drawn faintly when the reader asks
+   (`markSpaces`, issue 449). Over the character and out of the flow, so the tab
+   keeps its width and a copy takes the text as it is. */
+.ws { position: relative; }
+:root[data-marks="on"] .ws::before {
+  position: absolute; left: 0; color: var(--ink-faint); pointer-events: none;
+}
+:root[data-marks="on"] .ws.tab::before { content: "\2192"; }
+:root[data-marks="on"] .ws.sp::before { content: "\00b7"; }
 .hunk {
   padding: 4px 16px; background: var(--hunk-bg); color: var(--ink-faint);
   font-family: var(--mono); font-size: 12px; line-height: 20px;
@@ -13980,7 +14022,10 @@ async function keepSetting(change) {
 // Make the page what the file says. `first` is the page starting: nothing is
 // drawn yet, so nothing is drawn again.
 function takeSettings(body, first) {
+  const hid = spaceHidden();
   state.settings = body;
+  // Another page chose it: this one asks for the other diff too.
+  if (!first && hid !== spaceHidden()) respace();
   const colours = setting("colours");
   showTheme(colours === "light" || colours === "dark" ? colours : "system");
   applyReading(readingWanted());
@@ -14107,6 +14152,8 @@ const ICONS = {
   palette: "M7 1.8a5.2 5.2 0 1 0 0 10.4c.9 0 1.2-.7.9-1.4-.4-.8.1-1.6 1-1.6h1.2"
     + "a2.1 2.1 0 0 0 2.1-2.1A5.2 5.2 0 0 0 7 1.8zM4.4 6.2h.01M6.2 4.2h.01M8.8 4.4h.01",
   tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
+  // A space, as a keyboard's legend draws one (#449).
+  space: "M2.2 7.4v2.6h9.6V7.4",
   // Two links of a chain, for the ticket links.
   link: "M6 8a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.8.8"
         + "M8 6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.8-.8",
@@ -16435,6 +16482,19 @@ function putSettings() {
   label("diff", "twoColumns");
   choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
          keepSides);
+  label("spaces", "space");
+  choice("spacechanges", [
+    [false, "show", null, "a change of whitespace alone is a change"],
+    [true, "hide", null, "leave out a change of whitespace alone, as git diff -w does"]],
+         keepSpace);
+  label("marks", "dot");
+  choice("spacemarks", [
+    [false, "off", null, "draw tabs and spaces as they are"],
+    [true, "on", null, "draw a tab as \u2192 and a space at a line's end as \u00b7, faintly"]],
+         (on) => {
+           keepSetting({ space_marks: on ? "on" : "off" });
+           applyReading(readingWanted());
+         });
   put(pop, "div", "rule");
   label("links", "link");
   const links = put(pop, "div", "linkedit");
@@ -16466,7 +16526,9 @@ function paintSettings() {
   if (!pop || !pop.firstChild) return;
   const reading = readingWanted();
   const now = { colours: themeChoice(), tabwidth: String(reading.tab),
-                wrapping: String(reading.wrap), sides: state.sides };
+                wrapping: String(reading.wrap), sides: state.sides,
+                spacechanges: String(spaceHidden()),
+                spacemarks: String(reading.marks) };
   for (const [name, value] of Object.entries(now)) {
     paintChoice(pop.querySelector("." + name), value);
   }
@@ -17226,7 +17288,12 @@ async function paintLines(box, path, text, sniffed) {
   if (!language || !lib.getLanguage(language)) return;
   const rows = box.querySelectorAll(".dline > .dtext");
   const lines = paintedLines(lib, language, text, rows.length);
-  if (lines) rows.forEach((row, at) => row.replaceChildren(lines[at]));
+  if (lines) {
+    rows.forEach((row, at) => {
+      row.replaceChildren(lines[at]);
+      markSpaces(row);
+    });
+  }
 }
 
 // Some text, highlighted and cut into one fragment per line -- or null when
@@ -19160,6 +19227,7 @@ function applyReading(next) {
   const root = document.documentElement;
   root.style.setProperty("--tab-w", String(next.tab));
   root.dataset.wrap = next.wrap ? "yes" : "no";
+  root.dataset.marks = next.marks ? "on" : "off";
 }
 
 // What the file says. Whatever it did not answer for, the default stands --
@@ -19168,7 +19236,72 @@ function applyReading(next) {
 function readingWanted() {
   const tab = setting("tab_width");
   return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
-           wrap: setting("long_lines") === "wrap" };
+           wrap: setting("long_lines") === "wrap",
+           marks: setting("space_marks") === "on" };
+}
+
+// Whether a change of whitespace alone is left out of the Review tab
+// (`git diff -w`, #449). Unlike the marks it is not the cascade's: the
+// daemon answers another diff, so a change asks again.
+function spaceHidden() {
+  return setting("diff_space") === "hide";
+}
+
+// The held diff and the whole files read for it came from the other
+// answer: the tag would say "the same" for a diff that is not, and lines
+// shown between two changes must come from the same diff as the changes.
+function respace() {
+  state.diffs.tag = "";
+  state.diffs.whole.clear();
+  if (state.tab === "diff") loadDiff();
+}
+
+function keepSpace(hide) {
+  if (spaceHidden() === hide || busyWriting()) return;
+  keepSetting({ diff_space: hide ? "hide" : "show" });
+  respace();
+}
+
+// A space at a line's end as a box of its own, and an empty box before
+// every tab, so the CSS can draw a faint mark there when the reader asks
+// (#449). Always
+// wrapped and only shown by the cascade (`data-marks`), as the tab width
+// is, so a change of the setting rebuilds nothing. Run after the word
+// marks, wherever a line's text is drawn or painted: it counts characters
+// across whatever spans are already in the cell, and a mark draws nothing
+// that a copy takes.
+function markSpaces(cell) {
+  const text = cell.textContent;
+  const trail = text.search(/[ \t]+$/);
+  if (trail < 0 && !text.includes("\t")) return;
+  let at = 0;
+  overText(cell, (data) => {
+    const start = at;
+    at += data.length;
+    if (!/[ \t]/.test(data)) return null;
+    const made = document.createDocumentFragment();
+    let plain = "";
+    for (let i = 0; i < data.length; i += 1) {
+      const char = data[i];
+      const late = trail >= 0 && start + i >= trail;
+      if (char === "\t") {
+        // An empty mark before the tab, and the tab left in the text: a
+        // tab in a span of its own was measured from elsewhere, and a tab
+        // of four columns drew three.
+        if (plain) made.appendChild(document.createTextNode(plain));
+        put(made, "span", "ws tab");
+        plain = char;
+      } else if (char === " " && late) {
+        if (plain) made.appendChild(document.createTextNode(plain));
+        plain = "";
+        put(made, "span", "ws sp", char);
+      } else {
+        plain += char;
+      }
+    }
+    if (plain) made.appendChild(document.createTextNode(plain));
+    return made;
+  });
 }
 
 // How big a file is, in the units a person reads. Bytes on disk, which is not
@@ -19287,6 +19420,13 @@ function forgetFile(path) {
   state.files.stamp = "";
   state.files.read = false;
   state.files.trouble = "";
+}
+
+// The Files tab, at this file, from a diff (#449).
+function openInFiles(path) {
+  forgetFile(path);
+  showTab("files");
+  revealInTree(path);
 }
 
 function chooseFile(path) {
@@ -20087,6 +20227,17 @@ function drawDiffFile(pane, one, atHead = false, section = "") {
   put(head, "span", "path", one.status === "renamed"
     ? one.old_path + " \u2192 " + one.path : one.path);
   putCounts(head, one);
+  // The whole file, on the Files tab (#449): a diff shows the changes and
+  // the lines round them, and a reader wants the rest now and then. Beside
+  // the header and not in it, which is a button already.
+  if (one.status !== "deleted") {
+    const path = atHead ? pathNow(one.path) : one.path;
+    const open = put(node, "button", "openfile");
+    open.title = "open " + path + " on the Files tab";
+    open.setAttribute("aria-label", open.title);
+    putIcon(open, "file");
+    open.addEventListener("click", () => openInFiles(path));
+  }
   const body = put(node, "div", "dbody");
   putReview(put(node, "div", "onFile"),
             anchorOf(atHead ? pathNow(one.path) : one.path, 0), "");
@@ -20306,6 +20457,7 @@ function unifiedRow(lines, one, row, atHead, words, side) {
   if (SIGN[line.kind]) put(node, "span", "sign", SIGN[line.kind]);
   const cell = put(node, "span", "dtext", line.text);
   markWords(cell, words);
+  markSpaces(cell);
   if (side) paints(side, row, cell, words);
   putLineReview(lines, node, one, line, now, atHead);
 }
@@ -20325,6 +20477,7 @@ function pairRow(lines, one, left, right, atHead, words, side) {
                                  : "");
     const text = put(cell, "span", "dtext", held ? held.line.text : "");
     markWords(text, sideWords);
+    markSpaces(text);
     return [cell, text];
   };
   const [, was] = half("was", left, words[0]);
@@ -20496,6 +20649,7 @@ async function paintDiff(body, path, painting) {
         if (!one.cell || !one.cell.isConnected) return;
         one.cell.replaceChildren(lines[at]);
         markWords(one.cell, one.words);
+        markSpaces(one.cell);
       });
     }
   }
@@ -20637,7 +20791,9 @@ async function fetchWhole(one, section) {
     // The base this diff was drawn against, not the pick: with nothing
     // picked the daemon would find one again, and a different answer would
     // be a whole file against another base, drawn between these hunks.
-    base: (state.diff && state.diff.base) || "" }));
+    base: (state.diff && state.diff.base) || "",
+    // The same whitespace as the hunks it goes between.
+    space: spaceHidden() ? "hide" : "" }));
   if (state.chosen !== want || state.diffs.whole.get(key) !== held) return;
   held.asking = false;
   held.file = body && !body.cut && !body.failed ? body.file : null;
@@ -21258,7 +21414,10 @@ async function paintSlices(body, path, read, lines) {
     const at = Number(row.querySelector(".ln").textContent);
     const cell = row.querySelector(".dtext");
     const line = read.painted[at - 1];
-    if (line && cell) cell.replaceChildren(line.cloneNode(true));
+    if (line && cell) {
+      cell.replaceChildren(line.cloneNode(true));
+      markSpaces(cell);
+    }
   }
 }
 
@@ -22119,9 +22278,11 @@ async function loadDiff() {
   const want = state.chosen;
   const of = state.diffs.of;
   const base = recallBase();
+  const space = spaceHidden();
   const query = new URLSearchParams();
   if (of) query.set("of", of);
   if (base) query.set("base", base);
+  if (space) query.set("space", "hide");
   // The tag of the answer held. Only while one is: every place that drops
   // the answer empties `diffTag`, so none of them can send a tag for a diff
   // the page no longer has. The tag is the one comparison: the whole text
@@ -22130,7 +22291,7 @@ async function loadDiff() {
   const raw = await ask(want, "diff",
                         query.toString() ? "?" + query.toString() : "", true);
   if (raw === null || state.chosen !== want || state.diffs.of !== of
-      || recallBase() !== base) return;
+      || recallBase() !== base || spaceHidden() !== space) return;
   let body = null;
   try { body = JSON.parse(raw); } catch (error) { return; }
   // The diff held still stands: nothing to take in and nothing new to draw,

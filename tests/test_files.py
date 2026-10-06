@@ -1794,3 +1794,45 @@ def test_a_pick_stands_when_the_ranking_cannot_be_counted(ws, seeded,
     monkeypatch.setattr(ws, "BASES_OFFERED", 1)
     report = ws.worktree_diff(str(seeded), base="main")
     assert report.bases == ["release", "main"]
+
+
+
+def test_a_change_of_whitespace_alone_is_left_out_when_asked(ws, repo):
+    """The reader's "spaces: hide" is `git diff -w` (#449): a line whose
+    only change is whitespace is not a change, in both halves, between two
+    changes too, and a branch's answer kept for one choice is not handed
+    out for the other."""
+    from conftest import git_in
+    (repo / "a.py").write_text("def f():\n\treturn 1\n\ndef g():\n\treturn 2\n")
+    git_in(repo, "add", ".")
+    git_in(repo, "commit", "-qm", "a")
+    git_in(repo, "checkout", "-qb", "side")
+    (repo / "a.py").write_text("def f():\n    return 1\n\ndef g():\n\treturn 3\n")
+    git_in(repo, "commit", "-qam", "respace and change")
+    (repo / "a.py").write_text("def f():\n  return 1\n\ndef g():\n\treturn 3\n")
+
+    def changed(report, name):
+        files = next(one.files for one in report.sections if one.name == name)
+        return [line.text for one in files for hunk in one.hunks
+                for line in hunk.lines if line.kind == "added"]
+
+    held = {}
+    shown = ws.worktree_diff(str(repo), base="main", held=held)
+    assert changed(shown, "committed") == ["    return 1", "\treturn 3"]
+    assert changed(shown, "uncommitted") == ["  return 1"]
+    hidden = ws.worktree_diff(str(repo), base="main", held=held, space=True)
+    assert changed(hidden, "committed") == ["\treturn 3"]
+    assert changed(hidden, "uncommitted") == []
+    again = ws.worktree_diff(str(repo), base="main", held=held)
+    assert changed(again, "committed") == ["    return 1", "\treturn 3"]
+    whole = ws.whole_file_diff(str(repo), "committed", "a.py", base="main",
+                               space=True)
+    assert [line.text for hunk in whole.file.hunks for line in hunk.lines
+            if line.kind == "added"] == ["\treturn 3"]
+
+
+def test_the_whitespace_settings_take_their_words_only(ws):
+    assert not ws.config_trouble("diff_space", "hide")
+    assert not ws.config_trouble("space_marks", "on")
+    assert ws.config_trouble("diff_space", True)
+    assert ws.config_trouble("space_marks", "yes")
