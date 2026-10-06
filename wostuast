@@ -11569,6 +11569,13 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
    question bar are indented by the column plus this. It was written out
    twice, which is two places to change and one of them to forget. */
 :root { --grip-w: 5px; }
+/* The edge between a split tab's list and its pane (issue 443). It was
+   `--grip-w` wide, a bar of the edge colour that read heavier than anything
+   else on the page; then a line of one pixel, and the reader found the page
+   busy with lines that all looked alike. So it draws nothing: the list's
+   ground and the pane's part them already. The handle is still there, and
+   wider than the column: `.content.split > .grip::after`. */
+:root { --split-grip-w: 1px; }
 
 * { box-sizing: border-box; }
 /* `hidden` hides, whatever else the element sets. A rule that sets
@@ -11810,6 +11817,25 @@ body {
 }
 .grip:hover, .grip.dragging, #grip:hover, #grip.dragging { background: var(--needs); }
 body.dragging { cursor: col-resize; user-select: none; }
+body.dragging.rowdrag { cursor: row-resize; }
+/* A line of one pixel is too thin to find with a mouse, so the handle is a
+   box three pixels wider on each side, laid over the list and the pane, and
+   it shows its colour faintly on a hover, round the line. */
+.content.split > .grip {
+  width: var(--split-grip-w); position: relative; z-index: 3; background: none;
+}
+.content.split > .grip::after, .hgrip {
+  content: ""; position: absolute; inset: 0 -3px; transition: background .15s ease;
+}
+.content.split > .grip:hover::after, .content.split > .grip.dragging::after,
+.hgrip:hover, .hgrip.dragging {
+  background: color-mix(in srgb, var(--needs) 30%, transparent);
+}
+/* The send bar's top edge drags the height of its box (issue 442): the
+   send box, or on the Review tab the review as the agent gets it, which
+   is long. The bar draws no line there (issue 443: its ground parts it from
+   the pane), so this handle shows only under the pointer. */
+.hgrip { inset: -3px 0 auto; height: 7px; cursor: row-resize; z-index: 3; }
 .sidebar-head {
   height: 40px; flex-shrink: 0; display: flex; align-items: baseline;
   gap: 10px; padding: 12px 16px 0; margin-bottom: 8px;
@@ -12193,7 +12219,7 @@ body.infeed .viewtitle {
    nought tall. */
 .main {
   flex-grow: 1; min-width: 0; display: grid;
-  grid-template-columns: var(--side-w, 268px) var(--grip-w) minmax(0, 1fr);
+  grid-template-columns: var(--side-w, 268px) var(--split-grip-w) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
 .main > .tabs, .main > .content { grid-column: 1 / -1; }
@@ -12234,7 +12260,7 @@ body.infeed .viewtitle {
    left the grip stopping short above them. */
 .sendbar {
   flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end;
-  padding: 10px 24px; border-top: 1px solid var(--edge); background: var(--panel);
+  padding: 10px 24px; background: var(--panel);
 }
 /* The line that brings back a session that is over (issue 352), where the send
    box stands for one that is not: the words, then the command whole, in the
@@ -12290,6 +12316,10 @@ body.infeed .viewtitle {
    the reason for a No does, and at `line-height: 1.5` it stood 1.5 px
    taller than its button. */
 .say { line-height: 18px; min-height: 32px; }
+/* A height the reader dragged (`dragHeight`) is the box's height, empty or
+   full: it was a cap only, and a drag on an empty box did nothing. A
+   double-click on the edge gives the box back to `fitSay`. */
+#say { min-height: var(--say-h, 32px); max-height: var(--say-h, 40vh); }
 .say + .verb { height: 32px; }
 /* The send button, and over it the size of what is in the box (`sizeSay`),
    in the room a tall box leaves there. One column, so it widens to fit
@@ -12807,6 +12837,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .findslot { flex-shrink: 0; display: flex; padding: 8px 10px;
   border-bottom: 1px solid var(--edge); }
 .findslot .find { width: 100%; }
+/* The find box and the count under it are one head, and the count's line
+   closes it: a line between them was the second of two 27 px apart, and
+   the reader found the page busy with lines (issue 443). */
+.side > .findslot { border-bottom: 0; }
 .filelist {
   flex-grow: 1; overflow-y: auto; padding: 8px 0;
   font-family: var(--narrow); font-size: 13px; letter-spacing: .01em;
@@ -13304,7 +13338,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .reviewbar .overall {
   font-family: var(--sans); font-size: 14px; max-height: calc(4 * 18px + 14px);
 }
-.reviewbar .reviewsay { font-size: 12px; max-height: calc(5 * 18px + 14px); }
+.reviewbar .reviewsay {
+  font-size: 12px; min-height: var(--reviewsay-h, 32px);
+  max-height: var(--reviewsay-h, calc(5 * 18px + 14px));
+}
 /* The comments on the tab's list: who wrote it, the first line of the note,
    and under it the place, in the list's own face. */
 .filelist.diff .head.said {
@@ -13482,6 +13519,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       <div class="content" id="content"></div>
       <div class="asking" id="asking" hidden></div>
       <form class="sendbar" id="sendbar" hidden>
+        <div class="hgrip" id="saygrip"></div>
         <textarea class="say" id="say" rows="1" autocomplete="off"
                   spellcheck="false"
                   placeholder="type into the terminal  ·  s  ·  shift+enter for a new line"></textarea>
@@ -13493,6 +13531,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       </form>
       <div class="sendbar resumebar" id="resumebar" hidden></div>
       <form class="sendbar reviewbar" id="reviewbar" hidden>
+        <div class="hgrip" id="reviewgrip"></div>
         <div class="saycol">
           <textarea class="say overall" id="overall" rows="1" autocomplete="off"
                     spellcheck="false"
@@ -13793,17 +13832,37 @@ function rememberWidth(name, px) {
 }
 
 function dragWidth(grip, name, least, most) {
+  return dragEdge(grip, name, least, () => most, (at) => at.clientX,
+                  () => grip.previousElementSibling.getBoundingClientRect().width);
+}
+
+// The send bar's top edge, which drags the height of `box` (issue 442). Up
+// is taller, so the distance is the pointer's height turned round. At most
+// most of the window: a box that took all of it left no transcript, and no
+// edge above it to drag back.
+function dragHeight(grip, box, name) {
+  return dragEdge(grip, name, 32, () => Math.max(32, window.innerHeight * 0.7),
+                  (at) => -at.clientY, () => box.getBoundingClientRect().height,
+                  () => fitSay(box));
+}
+
+// One drag, for a width or a height: `where` reads the pointer along the
+// edge's axis, `size` what the dragged thing measures when the press
+// begins, and `after` runs after each step.
+function dragEdge(grip, name, least, most, where, size, after) {
   grip.title = "drag to resize, double-click to reset";
-  // Each handle brings its own width back, so a third one is one call and
+  // Each handle brings its own size back, so a third one is one call and
   // not two. The file column's is built when its tab first opens, which is
   // when it is wanted.
   const saved = stored("wostuast" + name);
   if (saved) rememberWidth(name, Number(saved));
   let from = 0;
   let was = 0;
+  const rows = grip.classList.contains("hgrip");
   const move = (at) => {
     rememberWidth(name,
-                  Math.min(most, Math.max(least, was + at.clientX - from)));
+                  Math.round(Math.min(most(), Math.max(least, was + where(at) - from))));
+    if (after) after();
   };
   // A drag ends on every way a press can end, not on `pointerup` alone. A
   // right-click opens the context menu on Linux and macOS, and the menu took
@@ -13813,16 +13872,17 @@ function dragWidth(grip, name, least, most) {
   // captures the pointer, and losing the capture ends it too.
   const ends = ["pointerup", "pointercancel", "lostpointercapture"];
   const stop = () => {
-    document.body.classList.remove("dragging");
+    document.body.classList.remove("dragging", "rowdrag");
     grip.classList.remove("dragging");
     window.removeEventListener("pointermove", move);
     for (const end of ends) window.removeEventListener(end, stop);
   };
   grip.addEventListener("pointerdown", (at) => {
     if (at.button !== 0) return;
-    from = at.clientX;
-    was = grip.previousElementSibling.getBoundingClientRect().width;
+    from = where(at);
+    was = size();
     document.body.classList.add("dragging");
+    document.body.classList.toggle("rowdrag", rows);
     grip.classList.add("dragging");
     window.addEventListener("pointermove", move);
     for (const end of ends) window.addEventListener(end, stop);
@@ -13833,7 +13893,10 @@ function dragWidth(grip, name, least, most) {
     }
     at.preventDefault();          // no text selection while dragging
   });
-  grip.addEventListener("dblclick", () => rememberWidth(name, 0));
+  grip.addEventListener("dblclick", () => {
+    rememberWidth(name, 0);
+    if (after) after();
+  });
   return grip;
 }
 
@@ -22669,6 +22732,8 @@ $("find").addEventListener("keydown", (press) => {
 });
 takeSettings(state.settings, true);
 dragWidth($("grip"), "--sidebar-w", 200, 760);
+dragHeight($("saygrip"), $("say"), "--say-h");
+dragHeight($("reviewgrip"), $("reviewsay"), "--reviewsay-h");
 
 drawSessions();
 drawHeader();

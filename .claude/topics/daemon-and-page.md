@@ -362,7 +362,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   column you never type into. A `margin-left` fixed that and left the map
   and its grip stopping short above them, with an empty corner under the map
   that nothing could drag. Now `.main` is a grid whose columns are the split
-  tab's own — `--side-w`, `--grip-w`, the rest. `.content` spans every row
+  tab's own — `--side-w`, `--split-grip-w`, the rest. `.content` spans every row
   under the tabs; the two bars take the third column of the last two rows,
   over it; and `.content.split` hands those rows and columns to its children
   with `subgrid`, so the map and the grip span every row and the pane only

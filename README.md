@@ -286,6 +286,10 @@ When the send box is three lines tall or more, it shows how much it holds
 over the send button: the lines and the size, such as "2.4k lines" and
 "112 KB". A message can be up to 1 MiB.
 
+Drag the top edge of the send bar to make the box taller or shorter. The
+page keeps that height. Double-click the edge to let the box grow with its
+text again. On the Review tab, the same edge sets the height of the review.
+
 Type `/` at the start of the send box to see the commands that this session
 has. The list shows the skills and command files of the project, from the
 session's directory up to the top of the repository, then yours from
