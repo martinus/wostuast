@@ -191,6 +191,71 @@ def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
         assert abs(left - send["left"] - 60) <= 2, (send, left)
 
 
+def drag_edge(page, selector, dx, dy, at=None):
+    """Press on an edge, move it by `dx`, `dy` in steps, and let go. `at`
+    is the point pressed, from the edge's top left; its middle by default."""
+    edge = page.locator(selector).bounding_box()
+    x, y = at or (edge["width"] / 2, edge["height"] / 2)
+    page.mouse.move(edge["x"] + x, edge["y"] + y)
+    page.mouse.down()
+    page.mouse.move(edge["x"] + x + dx, edge["y"] + y + dy, steps=4)
+    page.mouse.up()
+
+
+def test_the_maps_edge_draws_no_line_and_drags_from_beside_it(in_pane):
+    """A bar of 5 px in the edge colour, heavier than anything on the page
+    (#443). Then a line of one pixel, and the reader found the page busy
+    with lines: it draws nothing now, and its handle, wider than the
+    column, is found with a mouse all the same."""
+    daemon, base, seen = in_pane
+    with opened((None, base)) as page:
+        wait_for_map(page)
+        grip = "#content > .grip"
+        assert page.locator(grip).bounding_box()["width"] == 1
+        assert page.eval_on_selector(
+            grip, "el => getComputedStyle(el).backgroundColor") in (
+                "rgba(0, 0, 0, 0)", "transparent")
+        before = page.locator("#content > .side").bounding_box()["width"]
+        drag_edge(page, grip, 40, 0, at=(3, 200))       # 2 px beside the line
+        after = page.locator("#content > .side").bounding_box()["width"]
+        assert abs(after - before - 40) <= 2, (before, after)
+
+
+def test_a_line_between_two_grounds_is_not_drawn(in_pane):
+    """The reader found the page busy with lines that all looked alike
+    (#443). The send bar has a ground of its own, and the find box and the
+    count under it are one head with one line under it."""
+    daemon, base, seen = in_pane
+    with opened((None, base)) as page:
+        wait_for_map(page)
+        page.wait_for_selector("#sendbar:not([hidden])")
+        widths = page.evaluate("""() => [
+          getComputedStyle($('sendbar')).borderTopWidth,
+          getComputedStyle(document.querySelector('#content > .side > .findslot'))
+            .borderBottomWidth,
+          getComputedStyle(document.querySelector('#content > .side > .listnote'))
+            .borderBottomWidth]""")
+        assert widths == ["0px", "0px", "1px"], widths
+
+
+def test_the_send_box_is_as_tall_as_its_edge_is_dragged(in_pane):
+    """The send bar's top edge drags the box's height (#442), empty or
+    full; a reload keeps it, and a double-click gives the box back to its
+    text."""
+    daemon, base, seen = in_pane
+    with opened((None, base)) as page:
+        page.wait_for_selector("#sendbar:not([hidden]) #say")
+        height = lambda: page.locator("#say").bounding_box()["height"]
+        assert height() == 32
+        drag_edge(page, "#saygrip", 0, -120)
+        assert abs(height() - 152) <= 2, height()
+        page.reload()
+        page.wait_for_selector("#sendbar:not([hidden]) #say")
+        assert abs(height() - 152) <= 2, height()
+        page.dblclick("#saygrip")
+        assert height() == 32
+
+
 def test_a_question_belongs_to_the_transcript_and_no_other_tab(ws, in_pane):
     """It is not the header bar over every tab that was taken away. The row
     still goes amber wherever you are, which is what the row is for; this is

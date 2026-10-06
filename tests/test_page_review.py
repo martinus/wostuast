@@ -745,6 +745,29 @@ def test_the_send_bar_stays_short_and_scrolls(repo_page):
         assert said <= 5 * 18 + 14 + 1 and said_scrolls, got
 
 
+def test_the_review_is_as_tall_as_the_bars_edge_is_dragged(repo_page):
+    """Five lines of a long review, and then it scrolls: the reader wants to
+    read more of it before it goes (#442). The bar's top edge drags it."""
+    with opened(repo_page, tab="diff") as page:
+        comment_on_first_line(page, "\n".join("line %d" % n for n in range(30)))
+        page.wait_for_selector("#reviewbar:not([hidden]) #reviewsay")
+        height = lambda: page.locator("#reviewsay").bounding_box()["height"]
+        before = height()
+        edge = page.locator("#reviewgrip").bounding_box()
+        page.mouse.move(edge["x"] + 200, edge["y"] + 3)
+        page.mouse.down()
+        page.mouse.move(edge["x"] + 200, edge["y"] - 197, steps=4)
+        page.mouse.up()
+        assert abs(height() - before - 200) <= 2, (before, height())
+        # And smaller than it starts: the five lines were a cap.
+        edge = page.locator("#reviewgrip").bounding_box()
+        page.mouse.move(edge["x"] + 200, edge["y"] + 3)
+        page.mouse.down()
+        page.mouse.move(edge["x"] + 200, edge["y"] + 253, steps=4)
+        page.mouse.up()
+        assert abs(height() - before + 50) <= 2, (before, height())
+
+
 def test_what_is_sent_is_the_word_on_the_whole_over_what_the_bar_shows(
         repo_page):
     """The bar shows the comment on the whole review, which is typed, over

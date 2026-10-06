@@ -656,6 +656,25 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   Playwright sends no lost capture of its own, so the test sends those
   events by hand.
   `test_a_drag_on_an_edge_starts_only_by_hand_and_always_stops`.
+  - **One drag for a width and a height** (`dragEdge`; `dragWidth`, and
+    `dragHeight` for the send bar's top edge, #442): the capture and the
+    ends above are in one place, so a third edge cannot forget them. The
+    height goes on the root as `--say-h` or `--reviewsay-h`, kept like a
+    width, and it is the box's height, empty or full: as a cap only, a drag
+    on an empty send box did nothing. A double-click gives the box back to
+    `fitSay`. `test_the_send_box_is_as_tall_as_its_edge_is_dragged`,
+    `test_the_review_is_as_tall_as_the_bars_edge_is_dragged`.
+  - **An edge between two grounds draws no line, and its handle is wider
+    than it** (#443). A split tab's grip was a bar of 5 px in `--edge`,
+    then a line of one pixel, and the reader found the page busy with
+    lines that all looked alike: the column, the send bar's top, the line
+    under the find box and another 27 px below it. The list's ground and
+    the pane's part them, so the grip is `--split-grip-w` wide and draws
+    nothing, and its `::after`, three pixels wider each side, is the
+    handle, faintly amber under the pointer (`.hgrip` is the send bar's).
+    Before a new line, ask whether a ground already draws it.
+    `test_the_maps_edge_draws_no_line_and_drags_from_beside_it`,
+    `test_a_line_between_two_grounds_is_not_drawn`.
 - **Rows are kept and filled in again, never rebuilt.** A row can only fade
   into its new colour if it is the same row, and the needs-you pulse can
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
