@@ -650,8 +650,8 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/session/ID/files` | The file list of the worktree. |
 | GET | `/api/session/ID/file?path=…` | One file's text. |
 | GET | `/api/session/ID/raw?path=…` | One file's bytes (for images). |
-| GET | `/api/session/ID/diff?of=…&base=…` | The diff. |
-| GET | `/api/session/ID/whole?path=…` | A whole file, for the diff view. |
+| GET | `/api/session/ID/diff?of=…&base=…&space=hide` | The diff. `space=hide` leaves out a change of whitespace alone (`git diff -w`). |
+| GET | `/api/session/ID/whole?path=…&space=hide` | A whole file, for the diff view, with the same whitespace choice as the diff. |
 | GET | `/api/session/ID/commands` | The slash commands the send box can complete. The Commands view asks one session of each worktree. |
 | GET | `/api/session/ID/command?name=N` | One command's text, by its name, for the Commands view. |
 | POST | `/api/settings` | Save our `settings.json`. |

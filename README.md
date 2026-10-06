@@ -366,6 +366,8 @@ one.
 
 #### Your review
 
+- **The file icon** at the right end of a file's header opens the whole
+  file in the Files tab.
 - **Comment** with the `+` beside a line, in this tab or in Files. Each
   comment has **edit** and **delete**.
 - **The tree lists your comments** under the changed files. Click one to go
@@ -423,6 +425,11 @@ the settings:
 - **lines**: long lines scroll or wrap, for the Files tab and the one-column diff.
   A very long file is drawn a part at a time and cannot wrap; it says so.
 - **diff**: one column, or two side by side. Two columns always wrap.
+- **spaces**: show or hide a change of whitespace alone in the Review tab.
+  Hide is `git diff -w`: a line whose only change is its indent is left out.
+- **marks**: draw a tab as a faint → and a space at the end of a line as a
+  faint ·, in the Files and the Review tabs. A copy of the text does not
+  include the marks.
 - **links**: your ticket links. See [Ticket links](#ticket-links).
 
 A change applies at once. The page writes it to

@@ -1402,8 +1402,11 @@ def lead(page, text):
       const cell = [...document.querySelectorAll('.dline .dtext')]
         .find((one) => one.textContent.trim() === text.trim()
                        && one.textContent.startsWith('\\t'));
-      const node = cell.firstChild.nodeType === 3 ? cell.firstChild
-        : document.createTreeWalker(cell, NodeFilter.SHOW_TEXT).nextNode();
+      // The first text that is not a tab: a tab stands in a box of its
+      // own (`markSpaces`), so the text after it is another node.
+      const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      let node = walk.nextNode();
+      while (node && !/[^\\t]/.test(node.textContent)) node = walk.nextNode();
       const at = node.textContent.search(/[^\\t]/);
       const range = document.createRange();
       range.setStart(node, at); range.setEnd(node, at + 1);
@@ -1492,12 +1495,14 @@ def test_the_settings_say_what_is_chosen_and_change_it_in_place(repo_page):
         page.click("#settings")
         pressed = """() => [...document.querySelectorAll(
           '#setpop button[aria-pressed="true"]')].map((b) => b.dataset.value)"""
-        assert page.evaluate(pressed) == ["system", "4", "false", "unified"]
+        assert page.evaluate(pressed) == ["system", "4", "false", "unified",
+                                          "false", "false"]
         drawn = page.evaluate("state.diffs.tag")
         settings(page, "tabwidth", "2")
         settings(page, "sides", "split")
         page.wait_for_selector(".dline.pair")
-        assert page.evaluate(pressed) == ["system", "2", "false", "split"]
+        assert page.evaluate(pressed) == ["system", "2", "false", "split",
+                                          "false", "false"]
         assert page.evaluate("state.diffs.tag") == drawn
 
 
@@ -1564,3 +1569,73 @@ def test_a_worktree_git_has_not_finished_with_says_so(ws, repo_page, served,
         page.wait_for_selector(".row .gitstate .doing:text-is('bisecting')")
         show_tab(page, "diff")
         page.wait_for_selector(".diffscroll > .note:has-text('git is bisecting')")
+
+
+
+def respaced(root):
+    """code.py with a line whose only change is its indent, now a tab,
+    and a changed line that ends in spaces, for the whitespace tests
+    (#449)."""
+    (root / "code.py").write_text("if x:\n    print(1)\nprint(2)\n")
+    conftest.git_in(root, "commit", "-qam", "indent")
+    (root / "code.py").write_text("if x:\n\tprint(1)\nprint(3)  \n")
+
+
+def test_a_change_of_whitespace_alone_goes_and_comes_back(repo_page, ws):
+    """"spaces: hide" in the menu is `git diff -w` (#449): the line whose
+    only change is its indent leaves the diff, and comes back with "show"."""
+    root, _ = repo_page
+    respaced(root)
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        added = ("() => [...document.querySelectorAll("
+                 "'.diffhead.uncommitted ~ .dfile .dline.added .dtext')]"
+                 ".map((one) => one.textContent)")
+        wait_until(page, lambda: page.evaluate(added) == ["\tprint(1)", "print(3)  "])
+        # Asked again at once, not at the next poll five seconds on.
+        with page.expect_request(lambda one: "space=hide" in one.url, timeout=1500):
+            settings(page, "spacechanges", "true")
+        wait_until(page, lambda: page.evaluate(added) == ["print(3)  "])
+        kept(ws, "diff_space", "hide")
+        settings(page, "spacechanges", "false")
+        wait_until(page, lambda: page.evaluate(added) == ["\tprint(1)", "print(3)  "])
+
+
+def test_a_tab_and_spaces_at_the_end_are_marked_when_asked(repo_page, ws):
+    """A tab and a space at a line's end are drawn faintly when the reader
+    asks (#449), over the character, so the text a copy takes is the same."""
+    root, _ = repo_page
+    respaced(root)
+    with opened(repo_page) as page:
+        # Painting replaces a cell's text, so the marks go back on after.
+        page.evaluate(PAINT_EVERY_LINE)
+        show_tab(page, "diff")
+        page.wait_for_selector(
+            ".diffhead.uncommitted ~ .dfile .dline.added .hljs-keyword .ws.tab")
+        marks = ("() => [...document.querySelectorAll("
+                 "'.diffhead.uncommitted ~ .dfile .dline.added .ws')].map("
+                 "(one) => [one.className, getComputedStyle(one, '::before').content])")
+        assert page.evaluate(marks) == [["ws tab", "none"], ["ws sp", "none"],
+                                        ["ws sp", "none"]]
+        settings(page, "spacemarks", "true")
+        assert page.evaluate(marks) == [
+            ["ws tab", '"\u2192"'], ["ws sp", '"\u00b7"'], ["ws sp", '"\u00b7"']]
+        kept(ws, "space_marks", "on")
+        # The marks are not text: the line reads as it is.
+        assert page.evaluate(
+            "() => [...document.querySelectorAll("
+            "'.diffhead.uncommitted ~ .dfile .dline.added .dtext')]"
+            ".map((one) => one.textContent)") == ["\tprint(1)", "print(3)  "]
+        # The Files tab draws its lines through the same marks, painted.
+        page.evaluate("openInFiles('code.py')")
+        page.wait_for_selector(".filebody .dline .hljs-keyword .ws.tab")
+
+
+def test_a_file_in_the_diff_opens_on_the_files_tab(repo_page):
+    """The diff shows the changes and the lines round them; a button beside
+    each file's header opens the whole file on the Files tab (#449)."""
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.click(".diffhead.uncommitted ~ .dfile:has(.path:text-is('README.md')) .openfile")
+        page.wait_for_function("state.tab === 'files' && state.files.path === 'README.md'")
+        page.wait_for_selector(".filebody .prose, .filebody .dline")

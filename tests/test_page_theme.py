@@ -305,7 +305,7 @@ def test_every_settings_label_stands_level_with_what_it_names(page_at):
             (label) => [label.textContent.trim(),
                         mid(label.nextElementSibling) - mid(label)]);
         }""")
-        assert len(gaps) == 6, gaps
+        assert len(gaps) == 8, gaps
         assert all(abs(gap) <= 1 for _, gap in gaps), gaps
 
 
