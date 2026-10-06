@@ -1184,6 +1184,10 @@ class Session:
     prompt_shown: tuple[str, str] = ("", "")
     last_tool: str = ""
     reason: str = ""
+    #: A turn ended with a task still running in the background, and the
+    #: agent waits for it (#447): the row stays working, and `reason` says
+    #: what on. Cleared with the attention, by the next prompt or state.
+    waits_on_tasks: bool = False
     attention_since: float = 0.0
     # True once this session has sent a PermissionRequest. That event is
     # the same news as a permission Notification, up to twelve seconds
@@ -2431,6 +2435,7 @@ def _clear_attention(session: Session) -> None:
     """
     session.attention_since = 0.0
     session.reason = ""
+    session.waits_on_tasks = False
     session.asked_about = ""
     session.asking = None
     session.permission = None
@@ -2473,6 +2478,14 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
     session.calls.clear()          # a new turn: see `_on_stop`
     session.state = "working"
+    # A background task that ended wakes the agent with a prompt of Claude
+    # Code's own (#447). It is not what the reader asked: kept as the last
+    # prompt, the "has finished" alert quoted the notification's tags.
+    note = TASK_ENDED.match(str(event.get("prompt") or ""))
+    if note:
+        session.last_event = clip(" ".join((note.group(1) or "background task ended").split()),
+                                  PROMPT_WIDTH)
+        return
     # Cut it here, once. Keeping the whole of a pasted prompt would put it in
     # every row, to be compared every tick and sent to the browser every time.
     # The paste tags come off first, as the transcript takes them off: the
@@ -2694,6 +2707,10 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
         else:
             kind = "other"
     if kind == "idle_prompt":
+        # The agent waits on its own background task (#447): the prompt is
+        # idle, the agent is not, and the row's line says what it waits on.
+        if session.waits_on_tasks:
+            return
         # An open dialog is the better reason, and it outranks this one.
         if session.state != "needs_you":
             session.reason = "waiting for input"
@@ -2719,17 +2736,55 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
         session.reason = message or "permission"
 
 
+#: The prompt Claude Code wakes an agent with when a background task ends
+#: (#447, measured on 2.1.291, `tests/fixtures/background_task.jsonl`), and
+#: the sentence it carries.
+TASK_ENDED = re.compile(r"\s*<task-notification>(?:.*?<summary>(.*?)</summary>)?", re.S)
+
+
+def running_tasks(event: dict[str, Any]) -> list[str]:
+    """What the background tasks a `Stop` names as running are, in words.
+
+    `background_tasks` is a list of `{id, type, status, description,
+    command}`, measured on 2.1.291 with a Bash call `run_in_background`:
+    `status` was "running", and the task's end came back as a new prompt
+    (`TASK_ENDED`). Only "running" is counted, because it is the only status
+    measured; a list from an older build, or none, is no task.
+    """
+    tasks = event.get("background_tasks")
+    if not isinstance(tasks, list):
+        return []
+    return [str(one.get("description") or one.get("command") or one.get("type") or "task")
+            for one in tasks
+            if isinstance(one, dict) and one.get("status") == "running"]
+
+
 def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
     # A call declined in the terminal never reports back. Left here, it and
     # a later call reading the same would be two matches, and that call's
     # dialog would get no id. Nothing is open once a turn is over.
     session.calls.clear()
+    said = event.get("last_assistant_message")
+    session.last_answer = said if isinstance(said, str) else ""
+    # **A turn that leaves a task running in the background is not over**
+    # (#447). The agent waits for it, and Claude Code wakes it with a new
+    # prompt when it ends: the row went to ready, said "has finished", and
+    # went green again a moment later. So it stays working, says what it
+    # waits on, and the turn ends -- unread, the alert -- when a `Stop`
+    # comes with nothing left running. The reader chose this knowing that a
+    # server started in the background keeps the row green until it ends.
+    waiting = running_tasks(event)
+    if waiting:
+        session.state = "working"
+        more = f" and {counted(len(waiting) - 1, 'more', 'more')}" if len(waiting) > 1 else ""
+        session.reason = f"waiting on: {clip(waiting[0], 80)}{more}"
+        session.last_event = session.reason
+        session.waits_on_tasks = True
+        return
     session.state = "done"
     session.last_event = "stopped"
     session.ended_at = ts
-    said = event.get("last_assistant_message")
-    session.last_answer = said if isinstance(said, str) else ""
 
 
 #: What each `error` of a `StopFailure` means, for when Claude Code sends no
