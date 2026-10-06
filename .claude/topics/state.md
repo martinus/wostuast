@@ -258,6 +258,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   finished", and the row went to ready under a working agent.
   `_on_session_start` keeps "working" for it.
   `test_a_compaction_in_the_middle_of_a_turn_does_not_end_it`.
+  **So is a `Stop` with a task still running in the background** (#447).
+  The agent waits for it, and Claude Code wakes it with a prompt of its own
+  when the task ends (`<task-notification>`, `TASK_ENDED`): the row went to
+  ready, said "has finished", and went green again a moment later.
+  `running_tasks` reads `background_tasks` (measured on 2.1.291, only
+  `status: "running"` counted, `tests/fixtures/background_task.jsonl`);
+  `_on_stop` keeps "working", says "waiting on: …", and sets no `ended_at`,
+  so neither the unread mark nor the alert comes before the real end.
+  `waits_on_tasks` keeps an idle `Notification` off that line, and only
+  there: a turn an interrupt ended sends no `Stop`, and its idle prompt is
+  still news. The notification's prompt is not the reader's, so it is not
+  `last_prompt`, which the alert quotes. **The reader chose this knowing the
+  cost**: a server started in the background keeps the row green until it
+  ends. `test_a_turn_that_leaves_a_task_running_is_not_over`,
+  `test_an_idle_prompt_still_speaks_for_a_row_with_no_task`.
   **And the wait clock only starts when the wait does**: a second
   notification about the same dialog moved it, so a row that had waited a
   minute said it had waited none.

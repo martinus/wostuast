@@ -212,7 +212,7 @@ registers its hook for thirteen events (`HOOK_EVENTS`):
 | `PostToolUseFailure` | A tool call failed. |
 | `PermissionRequest` | A permission dialog appeared. **The agent needs you.** |
 | `Notification` | Claude Code wants your attention (late, but useful). |
-| `Stop` | The agent finished its turn. |
+| `Stop` | The agent finished its turn. If a task still runs in the background, the agent waits for it, and the session stays working. |
 | `StopFailure` | The turn ended with an API error. **The agent needs you.** |
 | `SubagentStart` | The Agent tool started a subagent. |
 | `SubagentStop` | A subagent finished. |
@@ -488,7 +488,7 @@ stateDiagram-v2
         working --> needs_you : PermissionRequest<br/>AskUserQuestion<br/>StopFailure
         needs_you --> working : next PreToolUse<br/>(the agent moved on)
         needs_you --> done : Declined (a No)
-        working --> done : Stop
+        working --> done : Stop<br/>(no background task running)
     }
     [*] --> alive
     alive --> ended : SessionEnd

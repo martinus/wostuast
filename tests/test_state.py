@@ -1777,3 +1777,63 @@ def test_a_result_reuses_its_calls_summary(ws, monkeypatch):
          event("PostToolUse", tool_use_id="t1", **given),
          event("PostToolUse", **given))
     assert made == ["Bash", "Bash", "Bash"]
+
+
+def recorded_background(**changes):
+    """The three events of a turn that left a task in the background, as
+    Claude Code 2.1.291 sent them (#447): its `Stop` naming the task as
+    running, the prompt the task's end woke the agent with, and the `Stop`
+    of that turn, with nothing left running."""
+    import json
+    from conftest import FIXTURES
+
+    out = []
+    for at, line in enumerate((FIXTURES / "background_task.jsonl").read_text().splitlines()):
+        one = json.loads(line)
+        one.update(session_id="s1", pane="%1", pid=4242, ts=2000.0 + at)
+        one.update(changes)
+        out.append(one)
+    return out
+
+
+def test_a_turn_that_leaves_a_task_running_is_not_over(ws):
+    """The row went to ready at the turn's `Stop`, said "has finished", and
+    went green again when the task's end woke the agent (#447)."""
+    stop, woken, last = recorded_background()
+    store = ws.Store()
+    for one in (event("UserPromptSubmit", prompt="build it", ts=1999.0), stop):
+        store.apply(one)
+    session = store.sessions["s1"]
+    assert session.state == "working"
+    assert session.reason == "waiting on: build in the background"
+    assert not session.ended_at and not session.unread
+    # The prompt is idle while it waits, and that is not the reader's.
+    store.apply(event("Notification", notification_type="idle_prompt",
+                      message="Claude is waiting for your input", ts=2000.5))
+    assert session.reason == "waiting on: build in the background"
+    store.apply(woken)
+    assert session.state == "working"
+    assert session.last_prompt == "build it"          # the reader's, still
+    assert session.last_event == ('Background command "build in the background" '
+                                  'completed (exit code 0)')
+    store.apply(last)
+    assert session.state == "done"
+    assert session.ended_at == 2002.0 and session.reason == ""
+
+
+def test_a_task_that_is_not_running_does_not_hold_the_turn(ws):
+    stop = recorded_background()[0]
+    stop["background_tasks"][0]["status"] = "completed"
+    session = fold(ws, event("UserPromptSubmit", prompt="x", ts=1999.0), stop)
+    assert session.state == "done"
+    assert fold(ws, event("UserPromptSubmit", prompt="x", ts=1999.0),
+                dict(stop, background_tasks="nonsense")).state == "done"
+
+
+def test_an_idle_prompt_still_speaks_for_a_row_with_no_task(ws):
+    """Only a wait on a background task silences it: a turn that sent no
+    `Stop` -- an interrupt -- still says the prompt waits."""
+    session = fold(ws, event("UserPromptSubmit", prompt="x"),
+                   event("Notification", notification_type="idle_prompt",
+                         message="Claude is waiting for your input"))
+    assert session.reason == "waiting for input"

@@ -44,6 +44,15 @@ sentence about the error, the one it also writes into the transcript, and
 the agent's last words in the turn, beside `stop_hook_active`,
 `background_tasks` and `session_crons`. The words are invented.
 
+A Bash call with `run_in_background`, measured on 2.1.291
+(`background_task.jsonl`): its `PostToolUse` has `backgroundTaskId` in
+`tool_response`; the turn's `Stop` lists the task in `background_tasks` as
+`{id, type: "shell", status: "running", description, command}`; and its
+end comes back as a `UserPromptSubmit` whose `prompt` is a
+`<task-notification>` holding `task-id`, `tool-use-id`, `output-file`,
+`status` and a `summary` sentence. That turn's `Stop` has an empty list.
+The words and paths are invented.
+
 A plan's approval is a `PermissionRequest` for `ExitPlanMode`, measured on
 2.1.288 in plan mode (`plan_events.jsonl`: its `PreToolUse` and its
 `PermissionRequest`; `plan_transcript.jsonl`: the `plan_mode` attachment,
