@@ -13297,6 +13297,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* Sticky, so a comment stays where it can be read when a wide diff is
    scrolled sideways. `pre` is the diff's business, not the note's. */
 .onLine, .onFile { position: sticky; left: 0; white-space: normal; max-width: 680px; }
+/* In two columns the `+` is on the new half, so its comment stands under
+   that half (issue 446): under the old one it read as a note on the line
+   that went. The note keeps its own inset from there, past the numbers. */
+.dlines.sides > .onLine { margin-left: 50%; max-width: min(680px, 50%); }
 /* A comment is one light line of the reader's own: who wrote it, the note,
    and what can be done to it, side by side. It had a blue bar down its left
    and a box round it, and on the old Review tab a box round that; the reader
@@ -13397,6 +13401,12 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    red was one signal said twice, and it took the syntax colours away. */
 .dline.added, .half.added { background: var(--add-line); }
 .dline.removed, .half.removed { background: var(--cut-line); }
+/* In two columns the tint is the half's, never the row's (issue 444). A
+   line with no counterpart made its row "added" or "removed", the row took
+   the tint, and the hatched empty half wore it too: a bar across the whole
+   width, read as louder than a line that changed. Now it reads as one half
+   of a pair, beside an empty half. */
+.dline.pair.added, .dline.pair.removed { background: none; }
 /* What happened to a file, in the colour of what happened. Modified is blue
    and not amber: amber on this page means an agent is waiting on you. */
 .dfile .what.added, .filelist.diff button.added .icon,
@@ -19527,6 +19537,27 @@ function messageAsText() {
   return stored(MESSAGE_KEY) === "text";
 }
 
+// A half's heading: its title, the commit's short sha and what it is, and
+// for one commit its whole message.
+function putSectionHead(next, section, one, body) {
+  // The title in a box of its own (issue 445): `.diffhead.commit` is a
+  // grid, `linkTickets` cuts a subject into a link and the text after it,
+  // and each became a grid item, whose space at the start is dropped --
+  // "OA-123 this is" read "OA-123this is".
+  const head = put(next, "div", "diffhead " + section.name);
+  put(head, "span", "subject", section.title);
+  if (one) put(head, "span", "sha", one.short);
+  if (section.about) {
+    put(head, "span", "about", section.about
+        + (one && one.when ? ", " + ago(one.when) + " ago" : ""));
+  }
+  // The whole message, not only its subject: the why of a commit is in
+  // the body, and a subject alone is the one line that says least.
+  if (one && body) putMessage(head, body);
+  // The reader's ticket links, in the subject and the message alike.
+  linkTickets(head);
+}
+
 function putMessage(head, body) {
   const box = put(head, "div", "message");
   // In the subject's line, at its right end: `.diffhead.commit` is a grid
@@ -19812,17 +19843,7 @@ function drawDiff(box) {
   const one = found.commit;
   for (const { section, files } of found.sections) {
     shown += files.length;
-    const head = put(next, "div", "diffhead " + section.name, section.title);
-    if (one) put(head, "span", "sha", one.short);
-    if (section.about) {
-      put(head, "span", "about", section.about
-          + (one && one.when ? ", " + ago(one.when) + " ago" : ""));
-    }
-    // The whole message, not only its subject: the why of a commit is in
-    // the body, and a subject alone is the one line that says least.
-    if (one && report.body) putMessage(head, report.body);
-    // The reader's ticket links, in the subject and the message alike.
-    linkTickets(head);
+    putSectionHead(next, section, one, report.body);
     // `at_commit`: the new side is a commit and not the file on disk, so a
     // comment's line is carried through to where it stands now. The daemon
     // says so, because it is the one that knows what each half is a diff of.

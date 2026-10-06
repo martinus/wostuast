@@ -467,6 +467,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   is the meaning; it stays `pre-wrap` in the fixed face for them. The whole
   heading goes through `linkTickets`, so a ticket in the subject is a link
   too. `test_a_commit_message_wraps_at_the_window_and_links_its_tickets`.
+  **The title is a box of its own** (`.subject`, #445): `.diffhead.commit`
+  is a grid, `linkTickets` cut the subject into a link and the text after
+  it, each became a grid item, and a grid item drops the space it starts
+  with -- "OA-123 this" read "OA-123this". Anything put straight into a
+  grid or flex box as text is cut the same way.
+  `test_a_ticket_at_the_start_of_a_subject_keeps_the_space_after_it`.
   **It is drawn as Markdown, and the text is one click away**
   (`putMessage`, `MESSAGE_KEY`): an agent writes its messages in Markdown,
   and the tab drew the source; the reader asked for both. A line `reflow`
@@ -495,6 +501,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   apart, so `.dlines.sides` hides the overflow and the halves wrap. The `+`
   is on the new half only — a comment is about the file as it is — and a
   side with no line is hatched, not closed up, so the columns stay level.
+  - **The tint is the half's, never the row's** (#444). `pairRow` names a
+    row by its kind, so a line with no counterpart made an `added` or
+    `removed` row, the row took the tint, and the hatched empty half wore
+    it too: a bar across the whole width, read as louder than a changed
+    line. `.dline.pair.added` and `.removed` draw no ground.
+    `test_a_line_with_no_counterpart_tints_its_own_half_only`.
+  - **A comment stands under the half its `+` is on** (#446,
+    `.dlines.sides > .onLine`): under the old half it read as a note on
+    the line that went. `test_in_two_columns_a_comment_stands_under_the_new_half`.
   - **The line's text is a box of its own** (`.dline .dtext`, an inline
     block; a flex item when wrapped). In one row with the numbers and the
     sign, a tab was measured from the start of the row: a line indented by

@@ -578,7 +578,7 @@ LINES_MOST = 100
 LONGER_ALREADY = {
     "EventFollower.new_lines": 117, "pick_base": 124, "worktree_diff": 149,
     "build_report": 153, "page:fillRow": 109, "page:drawFiles": 169,
-    "page:drawDiff": 171, "page:resubscribe": 101,
+    "page:drawDiff": 161, "page:resubscribe": 101,
 }
 
 

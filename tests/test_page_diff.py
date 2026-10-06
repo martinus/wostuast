@@ -682,6 +682,23 @@ def test_a_side_with_no_line_stays_empty_so_the_columns_stay_level(repo_page, ws
         assert row.locator(".half.now .dtext").inner_text() == "print(2)"
 
 
+def test_a_line_with_no_counterpart_tints_its_own_half_only(repo_page, ws):
+    """The row of a line with no counterpart took the tint, and its hatched
+    empty half wore it too: a bar across the whole width, louder than a
+    line that changed (#444). The tint is the half's now."""
+    ws.save_config({"diff_columns": "two"})
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_selector(".dline.pair.added")
+        row = ".diffhead.committed ~ .dfile .dline.pair.added"
+        grounds = page.eval_on_selector(row, """(row) => [row,
+            row.querySelector('.half.was'), row.querySelector('.half.now')]
+            .map((one) => getComputedStyle(one).backgroundColor)""")
+        clear = ("rgba(0, 0, 0, 0)", "transparent")
+        assert grounds[0] in clear and grounds[1] in clear, grounds
+        assert grounds[2] not in clear, grounds
+
+
 def test_the_words_that_changed_are_marked_and_a_rewrite_is_not(repo_page):
     root, _ = repo_page
     (root / "code.py").write_text("print(10)\nprint(2)\n")
@@ -1269,6 +1286,37 @@ def test_a_commit_message_wraps_at_the_window_and_links_its_tickets(repo_page, w
             ["OA-12", "https://tickets.example.com/OA-12"],
             ["OA-13", "https://tickets.example.com/OA-13"],
             ["OA-12", "https://tickets.example.com/OA-12"]], links
+
+
+def test_a_ticket_at_the_start_of_a_subject_keeps_the_space_after_it(repo_page, ws):
+    """The heading is a grid, and the link cut the subject into two of its
+    items: the space at the start of the second was dropped, and "OA-123
+    this is a test" read "OA-123this is a test" (#445)."""
+    root, _ = repo_page
+    ws.save_config({"links": [
+        {"match": "OA-(\\d+)", "url": "https://tickets.example.com/OA-$1"}]})
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+    conftest.git_in(root, "commit", "-qam", "OA-123 this is a test")
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_function("(state.diff || {}).commits?.length === 2")
+        page.wait_for_function("state.links.length === 1")
+        pick(page, page.evaluate("state.diff.commits[0].sha"))
+        page.wait_for_selector(".diffhead.commit a")
+        gap = page.evaluate("""() => {
+          const link = document.querySelector('.diffhead.commit a');
+          // The first letter after the space, not the space itself.
+          const words = document.createRange();
+          const after = link.nextSibling;
+          const first = after.textContent.search(/\\S/);
+          words.setStart(after, first);
+          words.setEnd(after, first + 1);
+          const space = link.getBoundingClientRect().height / 6;
+          return [words.getBoundingClientRect().left
+                  - link.getBoundingClientRect().right, space];
+        }""")
+        # The words start a space after the link, not at its end.
+        assert gap[0] >= gap[1], gap
 
 
 def test_the_pickers_say_how_many_commits_and_stand_apart_from_against(repo_page):
