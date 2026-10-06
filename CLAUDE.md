@@ -388,7 +388,12 @@ it with a test that measures what the picture showed. **The picture before a cha
 draws -- children under a row, a finished session -- is in the new tool
 only, so the old tool cannot draw "before" (#422, #427). **Send the reader the
 picture, and wait for their yes, before the pull request.** `SendUserFile`
-the PNG, beside the old one. The spacing fix was merged before the reader
+the PNG, beside the old one, **from `pictures/` in the checkout**, kept out
+of git by `.git/info/exclude`: the app opens files in the working
+directory, and pictures sent from the scratchpad after the session
+restarted reached the reader as nothing ("I do not see any pictures").
+Put before and after in one PNG, each labelled, so one look compares
+them. The spacing fix was merged before the reader
 had looked, and came back as "I'm running the latest pushed branch, and the
 spacing is still not ok": a round of review, CI and merge for a question
 one picture answers. **While you wait, the stop hook asks for a commit and a

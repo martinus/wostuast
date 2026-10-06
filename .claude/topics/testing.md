@@ -106,6 +106,12 @@ Keep the breaks list in the scratchpad; it is about one fix.
   twice, so it went. Ask first whether any input could tell the two
   apart; a break no input can see is the same program (a new call never
   carries an id already kept, #430), and is dropped, not tested.
+  - **Code that only makes a thing come sooner is tested inside a window
+    shorter than what it shortcuts.** `respace` asks for the diff again at
+    once when the whitespace setting changes; without it the Review tab's
+    poll asks within five seconds, so a wait for the new diff stayed green
+    (#449). `page.expect_request` with a 1.5 s timeout around the click
+    tells the two apart.
   - **`tests/page_coverage.py` asks the same question of the whole page
     script, before any break does** (#439): it runs the browser tests
     with `WOSTUAST_COVERAGE` set, and `cover` in `tests/browser.py` has
@@ -242,6 +248,11 @@ luck, and on `main` too, to tell whose it is.
     tab's names was cut with `| head`, and the two tests it would have
     shown -- `test_page_tabs.py` counting four tabs -- failed in the
     whole suite instead (#411). `grep -c` or `-l` first, then each file.
+    **A setting added to the menu is such a count**: two settings for
+    #449 broke `test_the_settings_say_what_is_chosen_and_change_it_in_place`
+    (the pressed choices, listed) and
+    `test_every_settings_label_stands_level_with_what_it_names` (`len(gaps)`),
+    found only by the whole suite. Run both after a change to `putSettings`.
 - **No test reaches the tmux it runs under.** `ws` points `TMUX` at a
   socket in the test's own folder, where no server runs: a plain `tmux`
   talks to the server `TMUX` names. Not `TMUX_TMPDIR`: a socket under
