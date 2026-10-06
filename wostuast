@@ -2537,7 +2537,15 @@ def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
     # question with it, and the row went amber over no bar to answer it.
     ask = session.asking
     shown = bool(session.asked_about)
-    if starting or not session.asked_about or session.asked_about == summary:
+    # **A subagent's call is not the agent moving on.** A subagent of the
+    # Agent tool fires its hooks under its agent's session id, with an
+    # `agent_id` (#422), and one still running started a `Read` while the
+    # agent's own question was up: the clear took the question off the page
+    # and the row went green, with the dialog still up in the terminal.
+    # Only the agent's own call answers its dialog.
+    mine_alone = not event.get("agent_id")
+    if mine_alone and (starting or not session.asked_about
+                       or session.asked_about == summary):
         # The state goes with the attention. A row that stays amber because
         # the dialog is still up must not also say it is working.
         _clear_attention(session)
@@ -2551,7 +2559,9 @@ def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
             session.calls.pop(next(iter(session.calls)))
     elif call:
         session.calls.pop(call, None)
-    if starting:
+    if not mine_alone:
+        session.asking = ask
+    elif starting:
         # After the clear above, or the ask would be wiped by its own call
         # starting. It is None for every tool but this one -- and another
         # call starting before the ask's dialog is up is the same batch, not
@@ -2583,7 +2593,9 @@ def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
     # nor to the ask whose dialog is not up yet, which the clear would take.
     ask = session.asking
     session.calls.pop(str(event.get("tool_use_id") or ""), None)
-    if not session.asked_about or session.asked_about == summary:
+    # A subagent's failure answers nothing of its agent's: see `_on_pre_tool`.
+    if not event.get("agent_id") and (not session.asked_about
+                                      or session.asked_about == summary):
         _clear_attention(session)
         session.state = "working"
         if ask and str(event.get("tool_use_id") or "") != ask["id"]:

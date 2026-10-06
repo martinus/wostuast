@@ -486,7 +486,7 @@ stateDiagram-v2
         [*] --> done : SessionStart
         done --> working : UserPromptSubmit
         working --> needs_you : PermissionRequest<br/>AskUserQuestion<br/>StopFailure
-        needs_you --> working : next PreToolUse<br/>(the agent moved on)
+        needs_you --> working : next PreToolUse<br/>(the agent moved on;<br/>a subagent's is not that)
         needs_you --> done : Declined (a No)
         working --> done : Stop<br/>(no background task running)
     }
