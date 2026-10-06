@@ -426,16 +426,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   condensed sans, so the thin end sets it — a number reasoned out from
   monospace character widths came to 120 and would have clipped a line of
   narrow letters, which is the bug being fixed. Measure it; do not divide.
-  The map now wears the transcript's face at 14 px, which is wider in every
-  glyph, so the measurement still holds; a narrower face would not.
-- **The map is set like the transcript beside it.** The same face, size and
-  line height as `.prose`, and 1 px above and below a row, so a row comes
-  about every line. It had the file lists' condensed face at 13 px and a row
-  every 29 px, and read as a different page. The file lists keep the
-  condensed face, because a path wants the width.
-  `test_the_map_is_set_like_the_transcript_and_a_prompt_is_round` compares
-  the computed styles, not the numbers, so a change to the transcript's type
-  carries the map with it or fails.
+  The map wears the lists' condensed face again (#448), the face this was
+  measured in, so 200 still clears the 176 narrowest; a narrower face would
+  not.
+- **The map wears the lists' face, and its rows stay close.** Every list
+  down the left -- the map, the file trees, the comments -- is `--narrow`
+  at 13 px, the one face (#448): set like the transcript at 14 px, it read
+  as a different page beside the Files and the Review tabs' lists, and the
+  reader asked for one. That reversed an older rule, which had set it like
+  the transcript because the lists' 29 px rows read as another page: the
+  rows keep 1 px above and below, so a row still comes about every line.
+  `test_the_map_wears_the_lists_face_and_a_prompt_is_round` compares the
+  map's computed face with a bare `.filelist`'s, so the lists move together.
 - **A round on the map folds from its chevron, and only from its chevron.**
   The row has two jobs: the whole of it goes to that place in the transcript,
   which is what the map is for, and the chevron alone folds. Folding on any
