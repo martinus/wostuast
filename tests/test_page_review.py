@@ -768,6 +768,23 @@ def test_the_review_is_as_tall_as_the_bars_edge_is_dragged(repo_page):
         assert abs(height() - before + 50) <= 2, (before, height())
 
 
+def test_in_two_columns_a_comment_stands_under_the_new_half(repo_page, ws):
+    """The `+` is on the new half, and the comment it made stood under the
+    old one, as if it were about the line that went (#446)."""
+    ws.save_config({"diff_columns": "two"})
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_selector(".dline.pair")
+        comment_on_first_line(page, "about the new line")
+        page.wait_for_selector(".dlines.sides > .onLine .comment")
+        where = page.evaluate("""() => {
+          const note = document.querySelector('.dlines.sides > .onLine .comment');
+          const half = note.closest('.dlines').querySelector('.half.now');
+          return [note.getBoundingClientRect().left,
+                  half.getBoundingClientRect().left];
+        }""")
+        assert where[0] >= where[1], where
+
+
 def test_what_is_sent_is_the_word_on_the_whole_over_what_the_bar_shows(
         repo_page):
     """The bar shows the comment on the whole review, which is typed, over
