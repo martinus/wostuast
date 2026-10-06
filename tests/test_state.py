@@ -1837,3 +1837,67 @@ def test_an_idle_prompt_still_speaks_for_a_row_with_no_task(ws):
                    event("Notification", notification_type="idle_prompt",
                          message="Claude is waiting for your input"))
     assert session.reason == "waiting for input"
+
+
+
+ONE_QUESTION = {"questions": [{"question": "Which?", "header": "Q", "multiSelect": False,
+                        "options": [{"label": "A", "description": "a"},
+                                    {"label": "B", "description": "b"}]}]}
+
+
+def by_subagent(name, **extra):
+    """An event of a subagent of the Agent tool: under its agent's session id,
+    with an `agent_id` (#422)."""
+    return event(name, agent_id="agent-7", agent_type="general-purpose", **extra)
+
+
+def test_a_subagents_call_does_not_take_the_question_away(ws):
+    """A subagent still running started a call while its agent asked a
+    question: the question went off the page a second after it came, and
+    the row went green, with the dialog still up in the terminal."""
+    store = ws.Store()
+    for one in (event("UserPromptSubmit", prompt="go", ts=1000.0),
+                event("PreToolUse", tool_name="AskUserQuestion", tool_input=ONE_QUESTION,
+                      tool_use_id="ask1", ts=1001.0),
+                event("PermissionRequest", tool_name="AskUserQuestion",
+                      tool_input=ONE_QUESTION, ts=1001.1),
+                by_subagent("PreToolUse", tool_name="Read", tool_input={"file_path": "/x"},
+                            tool_use_id="sub1", ts=1002.0),
+                by_subagent("PostToolUse", tool_name="Read", tool_input={"file_path": "/x"},
+                            tool_use_id="sub1", ts=1002.5),
+                by_subagent("PostToolUseFailure", tool_name="Bash",
+                            tool_input={"command": "false"}, tool_use_id="sub2",
+                            ts=1003.0)):
+        store.apply(one)
+    session = store.sessions["s1"]
+    assert session.state == "needs_you"
+    assert session.asking and session.asking["id"] == "ask1"
+    assert session.reason == "asks: Q"
+    # The subagent's line still follows what it does.
+    assert session.subagents["agent-7"].doing
+    # The agent's own answer still ends it.
+    store.apply(event("PostToolUse", tool_name="AskUserQuestion", tool_input=ONE_QUESTION,
+                      tool_use_id="ask1", ts=1004.0))
+    assert session.state == "working" and session.asking is None
+
+
+def test_a_subagents_call_does_not_close_a_permission_dialog(ws):
+    """The same for a dialog: the No button went with it."""
+    command = {"command": "make release"}
+    session = fold(ws, event("UserPromptSubmit", prompt="go", ts=1000.0),
+                   event("PreToolUse", tool_name="Bash", tool_input=command,
+                         tool_use_id="b1", ts=1001.0),
+                   event("PermissionRequest", tool_name="Bash", tool_input=command,
+                         ts=1001.1),
+                   by_subagent("PreToolUse", tool_name="Grep",
+                               tool_input={"pattern": "x"}, tool_use_id="sub1",
+                               ts=1002.0),
+                   # The very command the dialog is about, run and failed by
+                   # the subagent: the pairing by summary would take it for
+                   # the dialog's own call.
+                   by_subagent("PostToolUseFailure", tool_name="Bash",
+                               tool_input=command, tool_use_id="sub2", ts=1003.0),
+                   by_subagent("PostToolUse", tool_name="Bash",
+                               tool_input=command, tool_use_id="sub3", ts=1003.5))
+    assert session.state == "needs_you"
+    assert session.permission and session.reason.startswith("permission: ")

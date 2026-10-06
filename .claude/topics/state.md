@@ -214,6 +214,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   secrets hidden, was a fifth of a start's fold (#430). Not lazily, at the
   row: the pairing above compares summaries as they are folded.
   `test_a_result_reuses_its_calls_summary`.
+  - **A subagent's call is not the agent moving on** (`mine_alone`, in
+    `_on_pre_tool` and `_on_tool_failed`). A subagent of the Agent tool
+    fires its hooks under its agent's session id, with an `agent_id`
+    (#422, topics/payloads). One still running started a `Read` while its
+    agent's question was up: the question left the page a second after it
+    came, and the row went green over a dialog still up in the terminal. A
+    dialog's No went the same way. Its calls still feed its line under the
+    row (`note_subagent`); they no longer touch the agent's attention, not
+    even a result of the dialog's very command, which the pairing by
+    summary would take for the dialog's own.
+    `test_a_subagents_call_does_not_take_the_question_away`,
+    `test_a_subagents_call_does_not_close_a_permission_dialog`.
 - **A `/clear` is one conversation in two sessions, and the page follows
   it.** Claude Code ends the session (`reason: clear`) and starts another
   (`source: clear`) with a new id and a new transcript, in the same pane and
