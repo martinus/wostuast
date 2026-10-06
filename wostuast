@@ -12332,10 +12332,13 @@ body.infeed .viewtitle {
    the reason for a No does, and at `line-height: 1.5` it stood 1.5 px
    taller than its button. */
 .say { line-height: 18px; min-height: 32px; }
-/* A height the reader dragged (`dragHeight`) is the box's height, empty or
-   full: it was a cap only, and a drag on an empty box did nothing. A
-   double-click on the edge gives the box back to `fitSay`. */
-#say { min-height: var(--say-h, 32px); max-height: var(--say-h, 40vh); }
+/* A height the reader dragged (`dragHeight`) is the least the box is,
+   empty or full: as a cap only, a drag on an empty box did nothing. And it
+   is not the most (issue 453): the box still grows with what is typed, up
+   to 40vh or the dragged height, whichever is taller. As both, a Shift and
+   Enter added a line the box did not grow for. A double-click on the edge
+   gives the box back to `fitSay`. */
+#say { min-height: var(--say-h, 32px); max-height: max(var(--say-h, 0px), 40vh); }
 .say + .verb { height: 32px; }
 /* The send button, and over it the size of what is in the box (`sizeSay`),
    in the room a tall box leaves there. One column, so it widens to fit

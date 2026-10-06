@@ -240,14 +240,23 @@ def test_a_line_between_two_grounds_is_not_drawn(in_pane):
 
 def test_the_send_box_is_as_tall_as_its_edge_is_dragged(in_pane):
     """The send bar's top edge drags the box's height (#442), empty or
-    full; a reload keeps it, and a double-click gives the box back to its
-    text."""
+    full, and the box still grows past it as lines are typed (#453); a
+    reload keeps it, and a double-click gives the box back to its text."""
     daemon, base, seen = in_pane
     with opened((None, base)) as page:
         page.wait_for_selector("#sendbar:not([hidden]) #say")
         height = lambda: page.locator("#say").bounding_box()["height"]
         assert height() == 32
         drag_edge(page, "#saygrip", 0, -120)
+        assert abs(height() - 152) <= 2, height()
+        # Still grows as lines are typed past it (#453).
+        page.click("#say")
+        for _ in range(10):
+            page.keyboard.press("Shift+Enter")
+        page.keyboard.type("the last line")
+        assert height() > 200, height()
+        page.fill("#say", "")
+        page.evaluate("fitSay()")
         assert abs(height() - 152) <= 2, height()
         page.reload()
         page.wait_for_selector("#sendbar:not([hidden]) #say")
