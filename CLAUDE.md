@@ -306,6 +306,12 @@ and a `:root` block is the only place a colour may be a number —
 It reads an issue number in a CSS comment as a colour too: `(#333)` failed
 it, so a comment in the CSS says `issue 333`.
 Derive a tint or a ring with `color-mix`, never by copying an rgb triple.
+**The fixed face is for machine text only** (#448): code, a diff, a file,
+a command, the send and find boxes, a sha, a key. A time, a count, a name,
+a button, a tab's title, a note is `--sans`, with `tabular-nums` where
+digits must not dance; every list on the left is `--narrow`. The reader
+found it random and named six places; the `:root` comment by `--narrow`
+says it once, and `test_the_fixed_face_is_for_machine_text_only` holds it.
 **A control that shows on hover is `display: none` until then, or out of
 the flow -- never `opacity: 0` in it**: invisible, it keeps its room. The
 "unread" link cut long names short and the bookmark moved "claude" out of

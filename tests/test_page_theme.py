@@ -416,3 +416,43 @@ def test_the_c_key_steps_through_the_colours(page_at):
             page.wait_for_function("w => window.__took.at(-1) === w", arg=word)
             seen.append(page.evaluate("themeChoice()"))
     assert seen == ["system", "light", "dark", "system"]
+
+
+
+
+def faces(page, selectors):
+    """Each selector's face, or 'missing' when nothing matches it."""
+    return page.evaluate("""(selectors) => selectors.map((sel) => {
+      const one = document.querySelector(sel);
+      return [sel, one ? getComputedStyle(one).fontFamily : 'missing'];
+    })""", selectors)
+
+
+def fixed_only_for(seen, machine):
+    for sel, face in seen:
+        assert face != "missing", (sel, seen)
+        fixed = "Mono" in face or "monospace" in face
+        assert fixed == (sel in machine), (sel, face)
+
+
+def test_the_fixed_face_is_for_machine_text_only(page_at):
+    """Which face says what was random (#448). The fixed face is for text a
+    machine reads or the reader types; a time, a count, a name and a tab's
+    title are words. The reader named six places it was wrong: the time of
+    a session and of a turn, "claude", the tabs among them."""
+    with opened(page_at) as page:
+        wait_for_map(page)
+        page.wait_for_selector(".who")
+        machine = ["#say"]
+        fixed_only_for(faces(page, [".row .age", ".who", ".tabs .tab", ".listnote",
+                                    ".band", "#sendbar .verb"] + machine), machine)
+
+
+def test_the_review_bar_reads_in_words(repo_page):
+    """"against", "older", "newer" and "3 / 3" are words, and the diff is
+    code (#448)."""
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_selector(".diffbar .baseword")
+        machine = [".dlines", ".hunk"]
+        fixed_only_for(faces(page, [".diffbar .baseword", ".diffbar .stepat",
+                                    ".diffbar .pickof"] + machine), machine)

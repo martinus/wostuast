@@ -11523,6 +11523,14 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
      air. A condensed one shows the end of the path, which is the part you
      were looking for. */
   --narrow: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+  /* Which face says what (issue 448). `--mono` is for text a machine reads
+     or the reader types: code, a diff, a file, a command, the send box, a
+     commit's sha, a key. Everything a person reads as words is `--sans`:
+     a time, a count, a name, "claude", a button, a tab's title, a note.
+     Every list down the left -- turns, files, comments -- is `--narrow`,
+     the one face. A digit that must not dance is `tabular-nums`, not the
+     fixed face. It was random, and the reader named six places it was
+     wrong. */
 }
 /* A scrollbar is painted by the browser, not by this stylesheet, so it has to
    be told which way round the page is -- without `color-scheme` it stays at
@@ -11906,11 +11914,12 @@ body.dragging.rowdrag { cursor: row-resize; }
 }
 .row .line1 {
   display: flex; align-items: center; gap: 8px;
-  font-family: var(--mono); font-size: 13px; min-width: 0;
+  font-size: 13px; min-width: 0; font-variant-numeric: tabular-nums;
 }
 /* The name in the face the lines under it wear. The fixed face made it
    half as wide again, and a name is read, not lined up; the age beside it
-   keeps the fixed face, so its digits do not dance. */
+   is a time, read as words, and its digits do not dance because they are
+   `tabular-nums` (issue 448). */
 .row .name {
   font-family: var(--sans); font-size: 14px;
   color: var(--ink); font-weight: 500; overflow: hidden;
@@ -11996,7 +12005,7 @@ body.dragging.rowdrag { cursor: row-resize; }
   display: block; width: 100%; margin: 10px 0 6px; padding: 5px 12px;
   border: none; border-top: 1px solid var(--edge); border-radius: 0;
   background: none; text-align: left;
-  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
   letter-spacing: .06em; text-transform: uppercase;
 }
 .histhead { cursor: pointer; }
@@ -12098,7 +12107,7 @@ body.dragging.rowdrag { cursor: row-resize; }
 .row .remindmenu input:focus, .row .remindmenu select:focus {
   outline: none; border-color: var(--needs);
 }
-.row .remindmenu .remindtime { font-family: var(--mono); }
+.row .remindmenu .remindtime { font-variant-numeric: tabular-nums; }
 .row .remindmenu .remindwhy { padding: 2px 10px; font-size: 12px; color: var(--needs); }
 .row .remindmenu .remindwhy:empty { display: none; }
 .row .remindmenu button.remindset {
@@ -12136,7 +12145,7 @@ body.dragging.rowdrag { cursor: row-resize; }
   stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
 }
 .feedlink .n {
-  font-family: var(--mono); font-size: 10.5px; line-height: 16px; padding: 0 5px;
+  font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 10.5px; line-height: 16px; padding: 0 5px;
   border-radius: 8px; color: var(--done);
   background: color-mix(in srgb, var(--done) 22%, transparent);
 }
@@ -12155,7 +12164,7 @@ body.infeed .viewtitle {
   font-size: 14px; font-weight: 600; color: var(--ink-bright);
 }
 .viewtitle .link {
-  font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink-faint);
+  font-family: var(--sans); font-size: 11px; font-weight: 400; color: var(--ink-faint);
 }
 .content.feed { overflow: auto; padding: 16px 28px; }
 /* An entry is a card that reads like its session's row (issue 393): its
@@ -12182,7 +12191,7 @@ body.infeed .viewtitle {
 .feedentry.gone { --hue: var(--gone); }
 .feedentry:not(:hover):not(:focus-within) .feedtop .link { display: none; }
 .feedwhere {
-  margin: 0 0 6px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint);
+  margin: 0 0 6px; font-family: var(--sans); font-size: 11.5px; color: var(--ink-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .feedtop { display: flex; align-items: baseline; gap: 12px; margin-bottom: 2px; }
@@ -12191,13 +12200,13 @@ body.infeed .viewtitle {
    the card grew and every card under it moved down. */
 .feedtop .link { margin-top: 0; }
 .feedname { font-weight: 600; color: var(--ink-bright); }
-.feedwhen { font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+.feedwhen { font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
   flex-grow: 1; }
 .feedwait, .feedmore { color: var(--ink-faint); font-size: 13px; }
 /* Search (issue 379): the box at the top, a word for who said it. */
 /* As specific as `.find`, which set the width of every find box. */
 .content.feed .searchbox { width: 100%; max-width: 90ch; margin: 4px 0 14px; }
-.feedwho { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+.feedwho { font-family: var(--sans); font-size: 11px; color: var(--ink-soft); }
 /* Who said it, in the colours the transcript gives the two names. */
 .feedwho.mine { color: var(--mine); font-weight: 600; }
 .feedwho.claude { color: var(--needs); }
@@ -12254,7 +12263,7 @@ body.infeed .viewtitle {
 .verb {
   flex-shrink: 0; height: 26px; padding: 0 12px; border-radius: 5px;
   border: 1px solid var(--edge-bright); background: var(--raised);
-  color: var(--ink-bright); font-family: var(--mono); font-size: 12px;
+  color: var(--ink-bright); font-family: var(--sans); font-size: 12px;
   cursor: pointer;
 }
 .verb:hover { border-color: var(--needs); color: var(--needs); }
@@ -12367,7 +12376,7 @@ body.infeed .viewtitle {
 .tabs {
   height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
   padding: 0 24px; border-bottom: 1px solid var(--edge);
-  font-family: var(--mono); font-size: 13px; container-type: inline-size;
+  font-family: var(--sans); font-size: 13px; container-type: inline-size;
 }
 /* A name on one line (issue 397): at 1024 px "1 Transcript" broke over two,
    and the row looked broken. */
@@ -12457,7 +12466,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .fresh { animation: slide .15s ease-out; }
 @keyframes slide { from { transform: translateY(4px); opacity: 0; } }
 .who {
-  width: 64px; flex-shrink: 0; padding-top: 2px; font-family: var(--mono);
+  width: 64px; flex-shrink: 0; padding-top: 2px; font-family: var(--sans);
   font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.5;
 }
 .who.claude { color: var(--needs); }
@@ -12486,7 +12495,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    too, or it could not be reached without a mouse. */
 .who .copy {
   margin-top: 5px; padding: 0; border: none; background: none; cursor: pointer;
-  font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
+  font-family: var(--sans); font-size: 10px; color: var(--ink-faint);
   opacity: 0; transition: opacity .1s ease;
 }
 .turn:hover .copy, .copy:focus { opacity: 1; }
@@ -12571,7 +12580,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   flex: 1 1 260px; min-width: min(100%, calc(var(--fits, 0ch) + 24px));
 }
 .permsend .asksays { flex-basis: 100%; }
-.asksays { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+.asksays { font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
 .asknum {
   flex-shrink: 0; min-width: 18px; text-align: center;
   font-family: var(--mono); font-size: 11px; color: var(--needs);
@@ -12777,7 +12786,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .divider {
   display: flex; align-items: center; gap: 10px; margin: 14px 0;
-  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
   letter-spacing: .06em; text-transform: uppercase;
 }
 .divider::before, .divider::after {
@@ -12788,7 +12797,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    done, which is the colour of the row's unread dot. */
 .newline {
   display: flex; align-items: center; gap: 10px; margin: 0 0 18px;
-  font-family: var(--mono); font-size: 11px; color: var(--done);
+  font-family: var(--sans); font-size: 11px; color: var(--done);
   letter-spacing: .06em; text-transform: uppercase;
 }
 .newline::after { content: ""; flex-grow: 1; height: 1px; background: var(--done); }
@@ -12906,7 +12915,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .filelist button.dir { color: var(--ink); }
 .listnote {
   flex-shrink: 0; padding: 7px 14px; border-bottom: 1px solid var(--edge);
-  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .filelist button:hover { background: var(--raised); color: var(--ink-bright); }
@@ -12930,7 +12939,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    about a build directory and not a warning about anything. */
 .toobig {
   margin-left: auto; padding-left: 8px; flex-shrink: 0;
-  font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
+  font-family: var(--sans); font-size: 10px; color: var(--ink-faint);
 }
 .filelist .lit { color: var(--needs-warm); font-weight: 600; }
 .filelist button.chosen .lit { color: var(--needs); }
@@ -13015,15 +13024,12 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 /* The map of the conversation. Same rows as the file tree, because they are
    the same thing: a list on the left that names what is on the right. */
-/* The map names what stands beside it, so it is set like it: the same face,
-   size and line height as the transcript's text. It had the lists' condensed
-   face at 13 px and 7 px above and below each row, 29 px a row, and read as
-   a different page. 1 px keeps a hover from touching the text. The file
-   lists keep the condensed face: a path wants the width. */
-.filelist.transcript {
-  font-family: var(--sans); font-size: 14px; letter-spacing: normal;
-  line-height: 1.55;
-}
+/* The map wears the lists' face, the one every list on the left wears
+   (issue 448): it was set in the transcript's face and size, and beside the
+   Files and the Review tabs' lists it read as a different page. It keeps
+   its own rows: 1 px above and below, where the file lists have 7, so a
+   hover does not touch the text. */
+.filelist.transcript { line-height: 1.55; }
 .filelist.transcript button { padding-top: 1px; padding-bottom: 1px; }
 /* A round is yours, so its person takes the one colour that means that.
    The chevron stays quiet, and turns down while the round is open. */
@@ -13081,14 +13087,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: var(--raised); color: var(--ink); font-family: var(--narrow);
   font-size: 13px; cursor: pointer;
 }
-.baseword { color: var(--ink-faint); font-family: var(--mono); font-size: 12px; }
+.baseword { color: var(--ink-faint); font-family: var(--sans); font-size: 12px; }
 .pickof:focus, .pickbase:focus { outline: none; border-color: var(--needs); }
 /* What the branch's work is measured against: a name, short, and read
    whole -- so it does not shrink, and the commit picker, whose subject can
    be cut and still be known, takes what room is left. */
 .pickbase { max-width: 36ch; flex-shrink: 0; }
 .diffbar .stepat {
-  flex-shrink: 0; font-family: var(--mono); font-size: 12px;
+  flex-shrink: 0; font-family: var(--sans); font-size: 12px;
   color: var(--ink-mute); font-variant-numeric: tabular-nums;
 }
 
@@ -13422,7 +13428,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .link {
   margin-top: 6px; padding: 0; border: none; background: none; cursor: pointer;
-  color: var(--ink-faint); font-family: var(--mono); font-size: 11px;
+  color: var(--ink-faint); font-family: var(--sans); font-size: 11px;
 }
 .link:hover { color: var(--needs); }
 .commentbox { margin: 6px 20px; max-width: 680px; }
@@ -13467,8 +13473,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .filelist.diff button { padding-top: 4px; padding-bottom: 4px; }
 .filelist.diff .counts { margin: 0 0 0 8px; flex-shrink: 0; }
 .note {
-  padding: 14px 20px; font-family: var(--mono); font-size: 12px;
-  line-height: 1.7; color: var(--ink-mute);
+  padding: 14px 20px; font-family: var(--sans); font-size: 13px;
+  line-height: 1.6; color: var(--ink-mute);
 }
 .note b { color: var(--ink-soft); font-weight: 500; }
 .tab .badge {
@@ -13494,7 +13500,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    word `body` also wears. */
 .lost, .stale {
   display: none; padding: 6px 16px; background: var(--cut-bg);
-  color: var(--cut-ink); font-family: var(--mono); font-size: 12px;
+  color: var(--cut-ink); font-family: var(--sans); font-size: 12px;
   border-bottom: 1px solid var(--edge);
 }
 body.offline .lost { display: block; }
@@ -13502,7 +13508,7 @@ body.outdated .stale { display: block; }
 
 dialog.help {
   border: 1px solid var(--edge-bright); border-radius: 8px; background: var(--panel);
-  color: var(--ink); padding: 18px 22px; font-family: var(--mono); font-size: 13px;
+  color: var(--ink); padding: 18px 22px; font-family: var(--sans); font-size: 13px;
 }
 dialog.help::backdrop { background: var(--veil); }
 dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
@@ -13512,7 +13518,7 @@ dialog.help h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink-bright); }
 }
 .verb:disabled { opacity: .5; cursor: default; border-color: var(--edge); }
 dialog.help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
-dialog.help dt { color: var(--needs); }
+dialog.help dt { color: var(--needs); font-family: var(--mono); }
 dialog.help dd { margin: 0; color: var(--ink-mute); }
 </style>
 </head>
