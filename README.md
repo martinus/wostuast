@@ -40,7 +40,7 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 | run more than one Claude Code session at a time | run one agent and watch it in its terminal |
 | run those sessions in tmux | do not use tmux, and want to answer and send from the page (reading works without it) |
 | want to know from another window, or another room, which agent is waiting | want a hosted dashboard for a team |
-| read diffs and plans more than you type prompts | want to approve permission prompts from a browser (wostuast can only decline them) |
+| read diffs and plans more than you type prompts | want permission prompts approved without you (wostuast never says Yes by itself) |
 | want one file, no install step, and nothing leaving your machine | want a desktop app |
 
 ## What you get
@@ -112,11 +112,14 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   Pick one answer, or several where the question allows it. Change your mind
   if you want. Nothing goes to the terminal until you press submit, and the
   button says which keys it will press.
-- **You can say No to a permission request.** The page shows the whole
-  request: every field, not a clipped line. Press **no**, and add what the
-  agent should do instead if you want to. It never offers **yes**: approving
-  stays in the terminal, one click away. While the dialog is up, the send
-  box is gone, because its Enter would say yes. A plan that asks to start
+- **You can say Yes or No to a permission request.** The page shows the
+  whole request: every field, not a clipped line. Press **yes** to allow
+  this one call, once. Press **no**, and add what the agent should do
+  instead if you want to. Yes is there only while the dialog's own hook
+  waits for it, so it can never land on another dialog; if the terminal
+  answered first, Yes goes away. "Yes, and don't ask again" stays in the
+  terminal. While the dialog is up, the send box is gone, because its
+  Enter would say yes. A plan that asks to start
   is in the transcript, drawn as a document, and the dialog points at it.
 - **You review its work like a pull request.** Click the `+` beside a line in
   the diff or in a file, and write what you want changed. The comments collect
@@ -135,7 +138,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 > **wostuast never owns your agents.** tmux does. wostuast reads files, and it
 > sends only a few things to a terminal, always through tmux into the agent's
 > own pane: **jump** to the pane, **send** a message, the **answer** to a
-> question the agent asked, and **no** to a permission request. It never approves a permission request.
+> question the agent asked, and **no** to a permission request. A **yes**
+> to a permission request is no key at all: it goes to the dialog's own hook.
 > A message goes in as one paste, so it can be long: a log of up to 1 MiB.
 
 ## How it works
@@ -676,9 +680,15 @@ text, and code shows without colour.
 <details>
 <summary><b>Can it approve a permission prompt for me?</b></summary>
 
-No, and it never will. Approving without seeing the pane is how directories get
-deleted, and a dialog carries no id, so the page cannot prove which one a click
-would land on. The row goes amber and waits for you.
+Only when you press **yes** on the page. It never says Yes by itself: the row
+goes amber and waits for you. The page shows the whole request, and **yes**
+allows that one call, once.
+
+The Yes is not a key typed into the pane. A dialog carries no id, so a key
+could land on another dialog that came up meanwhile. Instead, wostuast's hook
+for the dialog waits for your Yes, and Claude Code takes its answer for that
+dialog only. If you answer in the terminal first, the hook stops, and **yes**
+goes away. It is not offered for a plan or a question.
 
 It can **decline** one. The page shows the whole request, and **no** presses
 Escape in the agent's pane. If you write what the agent should do instead,

@@ -94,7 +94,7 @@ feature out.
 | --- | --- |
 | **Own the agent process** | tmux owns the terminal. wostuast never starts, wraps or kills an agent. Typing into a pane is allowed; a signal is not. |
 | **Be a terminal emulator** | The tmux window is always one keystroke away. A "Peek" tab once showed a copy of the pane. It was removed. |
-| **Approve a permission prompt from the browser** | An approval you cannot see is how directories get deleted. Saying **No** is allowed: a wrong No is easy to undo, a wrong Yes is not. |
+| **A Yes you did not give, or one carried by keys** | Keys land on whichever dialog is up, and a wrong Yes cannot be undone. Your **yes** goes to the dialog's own hook, which answers for that dialog only. |
 | **Orchestrate agents** | No agent-to-agent messages, no teams, no spend limits. wostuast watches; it does not steer. |
 | **Know your worktree layout** | A session is an agent standing in a directory. Nothing more. |
 | **Need a build step or a dependency** | No Electron, no React, no npm, no pip. |
@@ -225,11 +225,13 @@ The hook runs inside Claude Code's own loop, many times a minute. So it lives by
 two hard rules.
 
 > [!CAUTION]
-> **Rule 1: the hook never prints.** Claude Code reads the hook's stdout as an
-> *answer*. For `PermissionRequest` and `PreToolUse`, some answers mean
-> "allow". One stray `print` could approve a command that nobody saw. So
-> `cmd_hook` writes nothing to stdout, ever. Errors go to a private text log,
-> `wostuast.log`.
+> **Rule 1: the hook prints one thing only.** Claude Code reads the hook's
+> stdout as an *answer*. For `PermissionRequest` and `PreToolUse`, some
+> answers mean "allow". One stray `print` could approve a command that
+> nobody saw. So `cmd_hook` writes nothing to stdout, with one exception:
+> `ALLOW`, for the dialog it was called for, after you pressed **yes** on the
+> page ([Saying Yes, safely](#saying-yes-safely)). Errors go to a private
+> text log, `wostuast.log`.
 
 > [!CAUTION]
 > **Rule 2: the hook never blocks.** If the hook hangs, the agent hangs.
@@ -494,6 +496,7 @@ stateDiagram-v2
         working --> needs_you : PermissionRequest<br/>AskUserQuestion<br/>StopFailure
         needs_you --> working : next PreToolUse<br/>(the agent moved on;<br/>a subagent's is not that)
         needs_you --> done : Declined (a No)
+        needs_you --> working : Approved (a Yes)
         working --> done : Stop<br/>(no background task running)
     }
     [*] --> alive
@@ -673,6 +676,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | POST | `/api/session/ID/send` | Type text into the pane. |
 | POST | `/api/session/ID/answer` | Press the keys that answer a question. |
 | POST | `/api/session/ID/decline` | Say **No** to a permission dialog. |
+| POST | `/api/session/ID/approve` | Say **Yes** to a permission dialog, through its waiting hook. Touches no terminal. |
 | POST | `/api/session/ID/name` | Give the session a name, and type `/rename` with it where that is safe. |
 | POST | `/api/session/ID/snooze` | Snooze a session that needs you, or wake it. Touches no terminal. |
 | POST | `/api/session/ID/seen` | Mark a session read, or unread. Touches no terminal. |
@@ -975,8 +979,35 @@ dialog you read is still the one on screen. The *reason* is a prompt, and a
 prompt typed into the wrong place does harm. So the reason is typed only after
 the daemon has seen proof that the dialog closed with No.
 
-There is no **Yes** button, and there will not be one. See
-[Chapter 1](#chapter-1-what-we-build-and-what-we-do-not).
+### Saying Yes, safely
+
+A Yes is never a key. Keys land on whichever dialog is up when they arrive,
+and a wrong Yes cannot be undone. But Claude Code calls our
+`PermissionRequest` hook for one dialog, and takes the hook's answer for that
+dialog only. So the hook waits for your Yes:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Claude Code
+    participant H as Hook
+    participant D as Daemon
+    participant P as Page
+    C->>H: PermissionRequest (and the dialog shows in the terminal)
+    H->>H: append the event, with a fresh ask_id
+    H->>H: lock approvals/ASK.wait, and wait
+    D->>D: the lock is held: the row says Yes may be pressed
+    P->>D: POST approve (key of the dialog)
+    D->>D: same dialog? hook still waiting? no No on its way?
+    D->>H: write approvals/ASK.yes, holding ASK
+    H->>C: print ALLOW
+    C->>C: the dialog closes, and the call runs
+    D->>D: append an "Approved" event
+```
+
+The hook waits only while a daemon runs, at most `APPROVE_WAIT`, and never
+for a plan or a question. If you answer in the terminal first, Claude Code
+stops the hook, its lock goes with it, and **yes** goes away from the page.
 
 ### One write at a time
 
@@ -1157,7 +1188,7 @@ ones, and why.
 | --- | --- |
 | used the **Agent SDK** or `stream-json` | They need wostuast to start and own the agent. They cannot attach to an interactive session in tmux. |
 | used an **`http` hook** | It records nothing while the daemon is down. |
-| used **decision hooks** | A hook that can say "allow" can approve something nobody saw. |
+| used **decision hooks** for anything but your Yes | A hook that says "allow" by itself approves something nobody saw. The one it says waits for your click, for its own dialog. |
 | used **inotify** | It is a dependency, and the scale is tens of files. A poll once a second is enough. |
 | used **SQLite** | It costs 2 ms per write in the hook, and much more under contention. A plain scan of 400 MB takes 0.38 s. |
 | used **OpenTelemetry** | Its settings belong to the company that sets up Claude Code, not to you. |

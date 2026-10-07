@@ -81,7 +81,8 @@ it. The reason is the part to weigh before undoing one.
   work and "send" would change meaning; `AskUserQuestion` is not relayed,
   so its keys stay; it is a new way into the terminal beyond the four tmux
   verbs, so topics/safety's ask-first applies; and the relay can also say
-  allow, which the page must never send. Look again when the preview ends;
+  allow, which the page once was never to send; a Yes now goes through the hook
+  (topics/safety). Look again when the preview ends;
   a prototype behind the flag is then the first step.
 - **The hook stays a command that appends to the log.** An `http` hook
   (#266) would save a process per event, but records nothing while the
@@ -96,19 +97,19 @@ it. The reason is the part to weigh before undoing one.
   the interpreter, about 12 is `json`, `pathlib` and `re`, and 3 is
   compiling the file. A shell hook would be 4 ms, but it needs `jq` for
   the JSON and `flock` for the lock, and macOS has neither `flock` nor
-  `/proc` for the agent's pid; the owner chose the file. **A decision hook is not adopted either**: an `allow`
-  from `PreToolUse` or `PermissionRequest` is the approve button the
-  non-goals forbid, though a `deny` bound to the hook's own call would be
-  an id for a No. **A waiting `PermissionRequest` hook does not hold the
-  terminal** -- measured by the owner on Claude Code 2.1.286 (#266, the
+  `/proc` for the agent's pid; the owner chose the file. **A `PermissionRequest` hook that waits for the reader's Yes is
+  adopted** (topics/safety, its first bullet): its `allow` is bound to its
+  own dialog, which keys never are, and the reader asked for Yes once the
+  page showed the whole request. A `deny` the same way would be an id for
+  a No, and is not built: Escape has its proof already. **A waiting
+  `PermissionRequest` hook does not hold the terminal** -- measured by the owner on Claude Code 2.1.286 (#266, the
   script is in the issue), with a hook that slept 30 s. The dialog was on
   screen 5 s and 15 s into the wait, as without the hook. An Escape in
   the terminal 15 s in answered it at once ("User rejected write"). And
   the hook was stopped then: its log has `start` and no `end`, read 38 s
   after the start. So the first answer wins, and a hook still waiting for
-  the page dies when the terminal answers. That is what a page-driven
-  `deny` would need; it is not built, because it means a hook that
-  prints, which topics/safety's first bullet forbids today -- ask first.
+  the page dies when the terminal answers. Measured again on 2.1.292 with an
+  allow after the wait: the dialog closed and the call ran.
 
 **For a script**
 

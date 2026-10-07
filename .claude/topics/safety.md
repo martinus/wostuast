@@ -4,10 +4,31 @@ Each rule is a bug that already happened: the assertion in bold, why the
 obvious alternative is wrong, then the symbols and the test that holds it.
 `CLAUDE.md` is the map; its header says how to add a rule. What may reach a terminal, what may be read, and who may ask.
 
-- **Never approve a permission prompt.** Claude Code reads a hook's stdout as
-  its answer, and we register `PermissionRequest`. One `print()` in `cmd_hook`
-  answers a permission dialog for the user. Logging goes to the log file. Tests
-  assert the silence by event name; never weaken them.
+- **The hook prints one thing only: `ALLOW`, for the dialog it was called
+  for, after the reader's Yes on the page.** Claude Code reads a hook's
+  stdout as its answer, and we register `PermissionRequest`. One stray
+  `print()` in `cmd_hook` answers every permission dialog for the user.
+  Logging goes to the log file. Tests assert the silence by event name;
+  never weaken them (`test_the_hook_says_nothing_to_a_permission_request`).
+  **The Yes is bound to its dialog by the hook, never by keys** (`approve`,
+  `wait_for_yes`): keys land on whichever dialog is up when they arrive,
+  so a Yes typed for `git status` could approve an `rm -rf` that came up
+  meanwhile. The hook writes a nonce of its own into its line of the log
+  (`ask_id`, `ASK_SHAPE`), and waits holding a lock on
+  `approvals/<ask>.wait`, taken under a name of its own and renamed, so
+  the daemon never sees it unlocked. The daemon writes `<ask>.yes` holding
+  the nonce, only for the dialog on the row (`key`), only while the hook
+  holds its lock (`hook_waits`), never while a No is on its way
+  (`holding(no=True)`), and takes it back if the hook did not take it in
+  `APPROVE_SEEN`. Measured on 2.1.292 (`tests/fixtures/README.md`): the
+  allow closes the terminal's dialog and the call runs; an Escape in the
+  terminal first stops the hook, whose lock goes with it.
+  **It waits only while a daemon runs** (`daemon_running`), for at most
+  `APPROVE_WAIT`, and **never for a question or a plan** (`NOT_APPROVED`):
+  each costs a process held for nothing.
+  **A Yes's own record clears the amber** (`Approved`, `_on_approved`): no
+  hook fires for a Yes. `tests/test_approve.py`,
+  `test_yes_shows_while_the_hook_waits_and_goes_to_it`.
 - **The hook must never block Claude Code.** try/except around everything,
   `give_up_after` deadline, always exit 0. Keep all three. The deadline covers
   every wait at once, including a stdin that never closes — **and it stays
