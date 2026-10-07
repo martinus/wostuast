@@ -2882,6 +2882,8 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
             # boundary is where what it asked for is let go: its subagent
             # started at once, or never.
             session.agent_asks = []
+            if name == "Stop":
+                end_unlisted_subagents(session, event, ts)
         elif tool in AGENT_TOOLS and name == "PostToolUse":
             said = event.get("tool_response")
             if isinstance(said, dict) and isinstance(said.get("description"), str):
@@ -2911,13 +2913,34 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
         one.doing = tool_summary(tool, event.get("tool_input"), session.cwd)
 
 
-def end_subagents(session: Session, moment: float) -> None:
+def end_subagents(session: Session, moment: float,
+                  keep: frozenset[str] = frozenset()) -> None:
     """A session that is over has no subagent running: one that was gone
-    before its `SubagentStop` would otherwise run on the page for ever."""
-    for one in session.subagents.values():
-        if not one.ended:
+    before its `SubagentStop` would otherwise run on the page for ever.
+    `keep` names the ones that still run."""
+    for key, one in session.subagents.items():
+        if not one.ended and key not in keep:
             one.ended = moment
             session.agents_ran += 1
+
+
+def end_unlisted_subagents(session: Session, event: dict[str, Any], moment: float) -> None:
+    """The agent's `Stop` lists every subagent still running in
+    `background_tasks`, by its `agent_id`; one it does not list is over.
+
+    A subagent the reader stops sends no `SubagentStop` (measured on
+    2.1.292, `subagent_killed.jsonl`): its end comes back as a
+    `<task-notification>` prompt, and the `Stop` of that turn lists it no
+    more. It ran on the page for days under a session that lived on. Any
+    entry keeps one, whatever its status: only "running" was measured, and
+    a line that runs a turn too long costs less than one that ends too
+    soon. A `Stop` with no list -- an older build -- says nothing.
+    """
+    tasks = event.get("background_tasks")
+    if not isinstance(tasks, list):
+        return
+    end_subagents(session, moment, frozenset(
+        str(one.get("id")) for one in tasks if isinstance(one, dict)))
 
 
 def _on_pre_compact(session: Session, event: dict[str, Any], ts: float) -> None:

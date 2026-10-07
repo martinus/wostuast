@@ -813,7 +813,9 @@ What an agent starts is **a line under its row**, not a row (`fillKids`):
 a `claude -p` it ran from its Bash tool (`started_by`), and the subagents of
 its Agent tool, which are no sessions at all -- their events come under the
 agent's own session, each with an `agent_id` (`note_subagent`). The lines
-show what runs; "3 subagents ran" folds the ones that ended. A child counts
+show what runs; "3 subagents ran" folds the ones that ended. A subagent ends
+at its `SubagentStop`, or at the agent's next `Stop` that no longer lists it
+in `background_tasks`: one the reader stops sends no `SubagentStop`. A child counts
 in no group, title, alert or unread mark (`topSessions`).
 
 A session whose turn ended after you last had it on screen is **unread**:
