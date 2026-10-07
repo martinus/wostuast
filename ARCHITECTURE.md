@@ -276,6 +276,12 @@ A few details in this picture carry real weight.
   on up the process tree (`claude_from`) to the next Claude Code, and adds
   its pid as `started_by`. The daemon finds the session of that pid
   (`Store.parent_of`), and the page draws the child as a line under it.
+- **A session in Claude Code's background daemon.** On `SessionStart` only,
+  the hook asks whether the agent's parent is the daemon's `bg-pty-host`
+  (`background_start`), and writes `background`. For such a session that
+  the agents view moved there, the agent's command line says
+  `--fork-session --resume <old transcript>`, and the hook writes that old
+  session's id as `moved_from`.
 - **The time stamp is taken *inside* the lock** (`append_event`, `stamp=True`).
   Before this fix, four hooks that ran at the same moment put about one line in
   120 out of order. Now the order of lines in the file is the order of time.
@@ -547,6 +553,14 @@ a new id. To you, it is the same agent in the same pane. `link_clear` joins the
 two halves: a `SessionEnd` with reason `clear`, and a `SessionStart` with
 source `clear`, from the same process, a moment apart. The name you gave the
 session moves to the new id, and the page follows you there.
+
+The agents view does the same with a new id: `←` on an empty prompt moves
+the conversation to the background, where Claude Code runs it again as a
+fork, and the old session gets no end. `link_move` joins the fork to the
+session that its `moved_from` names, ends that one, and the page follows.
+The agents view keeps a session of its own in the background, which is
+asked nothing until you give it a task. It has no row until then
+(`untasked`).
 
 ### Forgetting
 
