@@ -47,6 +47,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_yes_and_dont_ask_again_is_a_choice_of_its_own`.
   - **Yes is green and No is red** (`.permyes`, `.permno`): they looked
     alike, and the reader asked for them told apart at a glance.
+  - **A click picks, and submit answers** (`state.permPick`,
+    `permissionPick`, `submitPermission`), as on a question. A click
+    that went straight to the hook was a Yes nobody could take back -- a
+    slip of the hand, or a page on a phone in a pocket -- and the reader
+    asked for every prompt to work one way. The pick is kept by the
+    dialog's key across a rebuild, as the reason is, and a Yes picked
+    while the hook waited is no pick once it stops. The reason box shows
+    only while No is picked. `test_yes_shows_while_the_hook_waits_and_goes_to_it`,
+    `test_a_reason_half_written_survives_a_look_at_another_tab`.
 - **The hook must never block Claude Code.** try/except around everything,
   `give_up_after` deadline, always exit 0. Keep all three. The deadline covers
   every wait at once, including a stdin that never closes — **and it stays

@@ -113,10 +113,11 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   if you want. Nothing goes to the terminal until you press submit, and the
   button says which keys it will press.
 - **You can say Yes or No to a permission request.** The page shows the
-  whole request: every field, not a clipped line. Press **yes** to allow
-  this one call, once, or **yes, and don't ask again for npm test \*** to
-  keep the rule Claude Code suggests, as its own dialog does. Press **no**,
-  and add what the agent should do instead if you want to. Yes is there
+  whole request: every field, not a clipped line. Pick **Yes** to allow
+  this one call, once, or **Yes, and don't ask again for npm test \*** to
+  keep the rule Claude Code suggests, as its own dialog does. Pick **No**,
+  and add what the agent should do instead if you want to. Then press
+  submit: as on a question, a click only picks. Yes is there
   only while the dialog's own hook waits for it, so it can never land on
   another dialog; if the terminal answered first, Yes goes away. While the dialog is up, the send box is gone, because its
   Enter would say yes. A plan that asks to start
@@ -680,9 +681,9 @@ text, and code shows without colour.
 <details>
 <summary><b>Can it approve a permission prompt for me?</b></summary>
 
-Only when you press **yes** on the page. It never says Yes by itself: the row
-goes amber and waits for you. The page shows the whole request, and **yes**
-allows that one call, once. The CLI's "Yes, and don't ask again" is there
+Only when you pick **Yes** on the page and press submit. It never says Yes
+by itself: the row goes amber and waits for you. The page shows the whole
+request, and **Yes** allows that one call, once. The CLI's "Yes, and don't ask again" is there
 too, with the rule Claude Code itself suggests for that dialog.
 
 The Yes is not a key typed into the pane. A dialog carries no id, so a key
