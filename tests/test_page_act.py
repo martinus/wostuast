@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 
+import threading
 import time
 
 import pytest
@@ -1094,15 +1095,16 @@ def test_an_empty_name_gives_the_session_its_place_back(in_pane):
             ".includes('for a moment')")
 
 
-# --- a permission request: read whole, declined from here, never approved ----
+# --- a permission request: read whole, declined from here, approved by its hook --
 
 BUILD = ("cmake --build build -j && "
          + " && ".join(f"ctest -R case{n} --output-on-failure" for n in range(12)))
 
 
-def now_permission(ws, daemon, calls=("toolu_b1",), pane="%7"):
+def now_permission(ws, daemon, calls=("toolu_b1",), pane="%7", ask=""):
     """A real dialog's events: its call starting, then the request 90 ms on.
-    Two calls reading the same leave the dialog with no call of its own."""
+    Two calls reading the same leave the dialog with no call of its own.
+    `ask` is the nonce a hook that waits for a Yes writes."""
     at = time.time()
     shown = {"command": BUILD, "description": "Build and test"}
     cwd = daemon.store.sessions["s1"].cwd
@@ -1110,17 +1112,18 @@ def now_permission(ws, daemon, calls=("toolu_b1",), pane="%7"):
         ws.append_event(conftest.event("PreToolUse", tool_name="Bash",
                                        tool_input=shown, pane=pane, cwd=cwd,
                                        tool_use_id=call, ts=at))
+    extra = {"ask_id": ask} if ask else {}
     ws.append_event(conftest.event("PermissionRequest", tool_name="Bash",
                                    tool_input=shown, pane=pane, cwd=cwd,
-                                   ts=at + 0.09))
+                                   ts=at + 0.09, **extra))
     daemon.store.refresh()
 
 
 def test_a_permission_is_read_whole_and_declined_with_a_reason(
         ws, in_pane, monkeypatch):
     """The row said the request in one clipped line. Here it stands whole,
-    field by field, with no way to approve it: that is the terminal's, which
-    the first button opens. No presses Escape; the reason is typed once the
+    field by field. With no hook waiting there is no Yes: that is the
+    terminal's, which the first button opens. No presses Escape; the reason is typed once the
     transcript shows the dialog closed, and the bar goes with the daemon's
     own record of the decline."""
     daemon, base, seen = in_pane
@@ -1162,6 +1165,35 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
         keys = conftest.pressed(seen)
         assert keys[0] == "Escape", keys
         assert conftest.typed(seen) == ["Use the ninja build instead"], seen
+        daemon.tick()
+        page.wait_for_selector("#asking", state="hidden")
+
+
+def test_yes_shows_while_the_hook_waits_and_goes_to_it(ws, in_pane, monkeypatch):
+    """Yes is there only while the dialog's own hook waits for it, and it
+    goes to that hook, never into the pane: keys could land on another
+    dialog. The hook here is the real `wait_for_yes`, in a thread."""
+    daemon, base, seen = in_pane
+    monkeypatch.setattr(ws, "APPROVE_WAIT", 30)
+    ask = "00aa11bb22cc33dd"
+    now_permission(ws, daemon, ask=ask)
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .permno")
+        assert page.locator("#asking .permyes").is_hidden(), "a Yes nothing waits for"
+        took = []
+        hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ask)),
+                                daemon=True)
+        hook.start()
+        wait_until(page, lambda: ws.hook_waits(ask))
+        daemon.tick()                    # the pass that sees the hook wait
+        page.wait_for_selector("#asking .permyes:not([hidden])")
+        page.evaluate("""() => { window.words = []; const was = note;
+          note = (word) => { window.words.push(word); was(word); }; }""")
+        page.click("#asking .permyes")
+        page.wait_for_function("window.words.includes('allowed, once')")
+        hook.join(10)
+        assert took == [True]
+        assert seen == [], "a Yes pressed keys"
         daemon.tick()
         page.wait_for_selector("#asking", state="hidden")
 

@@ -81,6 +81,7 @@ bullets beside it are the same part's other scars.
 | `tmux_send`, `SEND_MAX`, `POST_MAX`, `typing_trouble`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked`, `state.answered`, `forgetAnswered` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Session.dialog`, `cannot_type`, `whyNotTyped`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
+| `approve`, `give_yes`, `wait_for_yes`, `hook_waits`, `lock_held`, `daemon_running`, `approvals_dir`, `ALLOW`, `NOT_APPROVED`, `APPROVE_WAIT`, `ASK_SHAPE`, `submitApprove`, `Approved` | topics/safety, its first bullet: the hook says allow only for its own dialog, after the reader's Yes |
 | `plan_of`, `lastPlan`, a block of kind `plan`, `ExitPlanMode` | topics/state, the plan under `Session.permission`; topics/payloads for what the request carries |
 | the Markdown scrub (`scrub`, `KEPT`, `textFor`, `safeLinks`), `linkTickets`, `linkOne`, `nextMatch`, anything that inserts what an agent wrote | topics/safety: the page never trusts what an agent wrote |
 | `remote_url`, `config_entries`, `config_section`, `config_value`, `CONFIG_MAX`, `hide_secrets`, `clip_hidden`, `SECRET_SHAPES`, `tool_target` | topics/safety: a remote URL and a command reach the page without their secrets, and a long one costs no time |
@@ -129,8 +130,9 @@ Search, and Commands, the skills and commands your sessions can run (#411).
 Four things go back to the terminal, all through tmux: jump, send, the
 keys that answer a question, and a No to a permission dialog, which is an
 Escape and then a send. A rename on the page is a send of `/rename` (#351).
-Nothing else writes to a
-terminal. Nothing owns the agent process —
+A Yes to a permission dialog is no key at all: the dialog's own hook waits
+for it and answers allow for that dialog alone (`approve`). Nothing else
+writes to a terminal. Nothing owns the agent process —
 interrupt is a keystroke, not a signal.
 
 ## Goals and non-goals
@@ -164,15 +166,19 @@ building anything. A goal that bends is rewritten here in the same PR.
 - **A terminal emulator** (no xterm.js). A Peek tab showed a still capture of
   the pane for two milestones and was removed: the tmux window it copied was
   always one keystroke away. `capture-pane` went with it.
-- **Approving a permission prompt from the browser.** No approve button, ever:
-  approving without seeing the pane is how directories get deleted. And a
-  dialog carries no id, so nothing can prove which one a press lands on.
-  **Saying No is allowed, and nothing else is**: a wrong No is undone by
-  saying what to do instead, a wrong Yes is not. The reader asked for this
-  in so many words, with the options laid out, and this bullet was
-  rewritten in the same PR. Answering an `AskUserQuestion` is not this: it
-  is the agent's own question, and the page types nothing until the reader
-  submits.
+- **A Yes the reader did not give, or one that keys carry.** The page
+  says Yes to a permission dialog only as the reader's own click, and only
+  through that dialog's hook (`approve`, `wait_for_yes`): keys land on
+  whichever dialog is up when they arrive, and a Yes typed for `git
+  status` could approve an `rm -rf` that came up meanwhile. The hook is
+  called for one dialog and Claude Code takes its allow for that one only,
+  so the Yes cannot land elsewhere. It was a non-goal -- "no approve
+  button, ever" -- while keys were the only way; the reader asked for Yes
+  once the page showed the whole request, and chose the hook, and this
+  bullet was rewritten in the same PR. No "Yes, and don't ask again" (it
+  writes a lasting rule into Claude Code's settings), no plan, no
+  question. Answering an `AskUserQuestion` is the agent's own question, and
+  the page types nothing until the reader submits.
 - **Agent-to-agent messaging, teams, orchestration, cache telemetry.** Showing
   the spend the status line sends is in; accounting is out. **So is a spend
   limit**: one shipped, the one thing here that typed into a terminal with

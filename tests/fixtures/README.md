@@ -81,12 +81,22 @@ to the base payload, and `permission_mode` reads `auto`. None of them is read,
 and the log keeps them because it keeps whatever arrives: a field from a newer
 Claude Code must never break an older wostuast.
 
+A `PermissionRequest` hook that waits and then prints
+`{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision":
+{"behavior": "allow"}}}` -- the shape read off 2.1.292's own schema -- was
+measured on 2.1.292 with `tests/claude_pane.py`: an allow after 5 s closed the
+terminal's dialog and the call ran; an Escape in the terminal 5 s in
+interrupted the call and stopped the hook (its log has a start and no end);
+and a hook with no `timeout` of its own was still waited for at 90 s, and its
+allow then worked.
+
 The hook adds fields of its own: `ts`, `pane`, `pid`, `shell_pid`, and
 `started_by` -- the pid of the agent that ran this one, for an agent that
 reads no terminal, else 0 (#422). On `SessionStart` only, also
 `background` -- the agent runs in Claude Code's background daemon -- and
 `moved_from`, the session such an agent carries on, or "" (see "A
-conversation moved to the background").
+conversation moved to the background"). On a `PermissionRequest` the page
+may say Yes to, `ask_id`: the nonce its hook waits on (`wait_for_yes`).
 
 ### What an agent starts
 
