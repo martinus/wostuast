@@ -116,8 +116,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   whole request: every field, not a clipped line. Pick **Yes** to allow
   this one call, once, or **Yes, and don't ask again for npm test \*** to
   keep the rule Claude Code suggests, as its own dialog does. Pick **No**,
-  and add what the agent should do instead if you want to. Then press
-  submit: as on a question, a click only picks. Yes is there
+  and write what the agent should do instead in the box that opens under
+  it. Then press submit: as on a question, a click only picks. Yes is there
   only while the dialog's own hook waits for it, so it can never land on
   another dialog; if the terminal answered first, Yes goes away. While the dialog is up, the send box is gone, because its
   Enter would say yes. A plan that asks to start
@@ -693,8 +693,9 @@ dialog only. If you answer in the terminal first, the hook stops, and **yes**
 goes away. It is not offered for a plan or a question.
 
 It can **decline** one. The page shows the whole request, and **no** presses
-Escape in the agent's pane. If you write what the agent should do instead,
+Escape in the agent's pane. You write what the agent should do instead, and
 wostuast types it only after it has seen the dialog close, in the transcript.
+A No with no words is given in the terminal.
 Until then a reason could land in the dialog itself, where a digit picks an
 option. A wrong No is easy to undo, and a wrong Yes is not.
 

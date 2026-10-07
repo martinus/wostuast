@@ -13029,6 +13029,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: var(--needs); border-color: var(--needs); color: var(--panel);
 }
 .asksend { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.asksend > .asksays { flex: 1; min-width: 0; }
 /* A permission request: each field of it, whole, in the preview's box. */
 .permfield + .permfield { margin-top: 8px; }
 .asksend.permsend { display: block; }
@@ -13038,7 +13039,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* The reason is a box of its own under the answers, as wide as they are:
    one row high, it grows with what is typed (`fitSay`). */
-.permsend .permwhy { display: block; width: 100%; margin-bottom: 8px; }
+/* Inside No's own edge, under its label: 39 px is the option's border,
+   padding, number and gap, so the box starts where the label does. */
+.permnogroup { border-radius: 6px; }
+.permnogroup .permwhy {
+  display: block; width: calc(100% - 49px); margin: 0 10px 10px 39px;
+}
+.permnogroup.chosen {
+  border: 1px solid var(--hot); box-shadow: inset 3px 0 0 var(--hot);
+  background: color-mix(in srgb, var(--hot) 10%, var(--panel));
+}
 .permfoot { display: flex; align-items: center; gap: 10px; }
 .permfoot .asksays { flex: 1; min-width: 0; }
 /* Yes in the working colour, No in the colour of a cut: the two answers
@@ -13066,6 +13076,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .askopt.permno.chosen .asknum {
   background: var(--hot); border-color: var(--hot); color: var(--panel);
+}
+.permnogroup.chosen .askopt.permno,
+.permnogroup.chosen .askopt.permno:hover:not(:disabled) {
+  border-color: transparent; background: transparent; box-shadow: none;
 }
 .asksays { font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
 .asknum {
@@ -16248,9 +16262,9 @@ function drawAsking() {
     }
   });
   const foot = put(box, "div", "asksend");
+  put(foot, "span", "asksays");
   const send = put(foot, "button", "verb");
   send.addEventListener("click", () => submitAsk(s.id, ask, box));
-  put(foot, "span", "asksays");
   paintPicks(box, ask);
 }
 
@@ -16317,8 +16331,8 @@ function drawPermission(box, s, permission) {
 // submit for that reason all along; the reader asked for one way for all.
 function putAnswers(foot, s, permission, box) {
   const list = put(foot, "div", "askopts permopts");
-  const option = (cls, label, why, pick) => {
-    const button = put(list, "button", "askopt " + cls);
+  const option = (cls, label, why, pick, parent = list) => {
+    const button = put(parent, "button", "askopt " + cls);
     button.dataset.pick = pick;
     put(button, "span", "asknum");
     const text = put(button, "span", "asktext");
@@ -16345,11 +16359,14 @@ function putAnswers(foot, s, permission, box) {
              "as Claude Code suggests it", "always:" + one.at);
     }
   }
-  option("permno", "No", "and tell it what to do instead", "no");
-  // Under the answers, and only while No is picked: it is No's alone.
-  const why = put(foot, "textarea", "say permwhy");
+  // No and its reason are one answer, so one edge goes round both: the box
+  // stood under the list, apart from the No it belongs to. It shows only
+  // while No is picked.
+  const group = put(list, "div", "permnogroup");
+  option("permno", "No", "and tell it what to do instead", "no", group);
+  const why = put(group, "textarea", "say permwhy");
   why.rows = 1;
-  why.placeholder = "what it should do instead (optional)";
+  why.placeholder = "what it should do instead";
   why.style.setProperty("--fits", why.placeholder.length + "ch");
   // Kept for this dialog across a look at another tab, which builds the
   // bar again: half a reason lost that way is the question bar's scar.
@@ -16359,11 +16376,11 @@ function putAnswers(foot, s, permission, box) {
   why.addEventListener("input", () => {
     state.declineWhy = { key: permission.key, text: why.value };
     fitSay(why);
+    paintDecline(box, current(), permission);   // submit waits for words
   });
+  // What submit does on the left, and submit at the right edge, where a
+  // form ends: the question bar's foot is laid out the same way.
   const end = put(foot, "div", "permfoot");
-  const submit = put(end, "button", "verb permsubmit", "submit");
-  submit.addEventListener("click", () => submitPermission(s.id, permission, box));
-  submitOnCtrlEnter(why, submit);
   put(end, "span", "asksays");
   // Absent with no pane, like jump everywhere else: there is nothing to open.
   if (s.pane) {
@@ -16371,6 +16388,9 @@ function putAnswers(foot, s, permission, box) {
     open.textContent = "open the terminal";
     open.addEventListener("click", jumpToPane);
   }
+  const submit = put(end, "button", "verb permsubmit", "submit");
+  submit.addEventListener("click", () => submitPermission(s.id, permission, box));
+  submitOnCtrlEnter(why, submit);
   paintDecline(box, s, permission);
   fitSay(why);   // a reason kept from before, or a placeholder on a narrow bar
 }
@@ -16429,14 +16449,20 @@ function paintDecline(box, s, permission) {
   }
   const was = why.hidden;
   why.hidden = pick !== "no";
+  why.parentElement.classList.toggle("chosen", pick === "no");
   if (was && !why.hidden) fitSay(why);   // measured only once it shows
-  submit.disabled = !pick || !!cannot || mine || busy;
+  // A No waits for its reason, as the reader asked: what the agent should
+  // do instead is the point of saying No from here. Not where no reason
+  // can be typed, or that No could never be given at all.
+  const wordless = pick === "no" && reasons && !why.value.trim();
+  submit.disabled = !pick || wordless || !!cannot || mine || busy;
   // Said in both cases: a Yes given in the terminal fires no hook, so the
   // row stays amber while the approved call runs, and Escape then stops it.
   const already = " If you already answered in the terminal, Escape stops the agent.";
   says.textContent = cannot ? cannot
     : busy ? "waiting for what is on its way to this session"
     : !pick ? "pick an answer"
+    : wordless ? "write what it should do instead"
     : pick === "yes" ? "allows this one call, once"
     : pick !== "no" ? "allows this call, and keeps the rule Claude Code suggests"
     : !reasons

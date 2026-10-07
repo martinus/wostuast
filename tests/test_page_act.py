@@ -327,6 +327,10 @@ def test_submit_waits_until_every_question_is_answered(ws, in_pane):
         # keystrokes into a live terminal.
         assert page.inner_text("#asking .asksays") == \
             "presses 2, then 1, then Enter"
+        # Submit at the right edge, after what it does, as on a permission.
+        lefts = page.evaluate("""() => ['.asksays', '.asksend .verb'].map((one) =>
+          document.querySelector('#asking ' + one).getBoundingClientRect().left)""")
+        assert lefts[0] < lefts[1], lefts
 
 
 def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
@@ -1152,11 +1156,22 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
         buttons = page.eval_on_selector_all(
             "#asking button", "els => els.map((one) =>"
             " (one.querySelector('.asklabel') || one).textContent)")
-        assert buttons == ["No", "submit", "open the terminal"], buttons
-        # The reason is No's alone: it shows once No is picked.
+        assert buttons == ["No", "open the terminal", "submit"], buttons
+        # The reason is No's alone: it shows once No is picked, inside the
+        # one edge that goes round No and its box.
         assert page.locator("#asking .permwhy").is_hidden()
         page.click("#asking .permno")
+        assert page.locator("#asking .permnogroup.chosen .permwhy").is_visible()
+        # A No waits for what the agent should do instead.
+        assert page.locator("#asking .permsubmit").is_disabled()
+        assert page.inner_text("#asking .permsend .asksays") == \
+            "write what it should do instead"
         page.fill("#asking .permwhy", "Use the ninja build instead")
+        assert not page.locator("#asking .permsubmit").is_disabled()
+        # Submit at the right edge of the bar, after what it does.
+        lefts = page.evaluate("""() => ['.permsend .asksays', '.permsubmit'].map((one) =>
+          document.querySelector('#asking ' + one).getBoundingClientRect().left)""")
+        assert lefts[0] < lefts[1], lefts
         # What the page says, kept: the slot is repainted on every push.
         page.evaluate("""() => { window.words = []; const was = note;
           note = (word) => { window.words.push(word); was(word); }; }""")
@@ -1309,6 +1324,7 @@ def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
     with opened((None, base)) as page:
         page.wait_for_selector("#asking:not([hidden]) .permno")
         page.click("#asking .permno")
+        page.fill("#asking .permwhy", "Use the ninja build")
         page.evaluate("startSending(state.chosen)")
         assert page.locator("#asking .permsubmit").is_disabled()
         assert page.inner_text("#asking .permsend .asksays") == \
@@ -1859,7 +1875,7 @@ def test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it(ws, in_pane):
         buttons = page.eval_on_selector_all(
             "#asking button", "els => els.map((one) =>"
             " (one.querySelector('.asklabel') || one).textContent)")
-        assert buttons == ["read the plan", "No", "submit", "open the terminal"], buttons
+        assert buttons == ["read the plan", "No", "open the terminal", "submit"], buttons
         # Its top away from the top of the pane first -- at the head of the
         # transcript -- so the click is what brings it there.
         top = """() => document.querySelector('.turn.plan').getBoundingClientRect().top
