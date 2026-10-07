@@ -13016,17 +13016,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: var(--panel); color: var(--ink);
   border: 1px solid var(--edge-bright); border-radius: 6px; font: inherit;
 }
-.askopt:hover:not(:disabled) {
-  background: var(--raised); color: var(--ink-bright);
-  border-color: var(--needs);
-}
+.askopt:hover:not(:disabled) { color: var(--ink-bright); border-color: var(--needs); }
 .askopt:disabled { opacity: .55; cursor: default; }
 /* What you picked, and what submit will press. It wears the needs-you
    colour, like the row this question came from. */
 .askopt.chosen {
-  background: var(--raised); color: var(--ink-bright);
+  background: color-mix(in srgb, var(--needs) 10%, var(--panel)); color: var(--ink-bright);
   border-color: var(--needs);
-  box-shadow: inset 2px 0 0 var(--needs);
+  box-shadow: inset 3px 0 0 var(--needs);
 }
 .askopt.chosen .asknum {
   background: var(--needs); border-color: var(--needs); color: var(--panel);
@@ -13041,27 +13038,34 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* The reason is a box of its own under the answers, as wide as they are:
    one row high, it grows with what is typed (`fitSay`). */
-.permsend .permwhy { display: block; width: 100%; }
-.permfoot { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.permsend .permwhy { display: block; width: 100%; margin-bottom: 8px; }
+.permfoot { display: flex; align-items: center; gap: 10px; }
 .permfoot .asksays { flex: 1; min-width: 0; }
 /* Yes in the working colour, No in the colour of a cut: the two answers
-   read apart at a glance, as the CLI's do. The colour is on the number and
-   the edge, and the label stays the ink every option has. */
-.askopt.permyes { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--working) 70%, transparent); }
-.askopt.permno { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--hot) 70%, transparent); }
+   read apart at a glance, as the CLI's do. The colour is on the number,
+   and picked, on the edge too, as a question's pick wears amber; the label
+   stays the ink every option has. */
 .askopt.permyes .asknum {
   color: var(--working); border-color: color-mix(in srgb, var(--working) 55%, transparent);
 }
 .askopt.permno .asknum {
   color: var(--cut-ink); border-color: color-mix(in srgb, var(--hot) 55%, transparent);
 }
-.askopt.permyes:hover:not(:disabled) {
-  border-color: var(--working); background: var(--working-soft);
-  box-shadow: inset 3px 0 0 var(--working);
+.askopt.permyes:hover:not(:disabled) { border-color: var(--working); }
+.askopt.permno:hover:not(:disabled) { border-color: var(--hot); }
+.askopt.permyes.chosen {
+  background: color-mix(in srgb, var(--working) 10%, var(--panel));
+  border-color: var(--working); box-shadow: inset 3px 0 0 var(--working);
 }
-.askopt.permno:hover:not(:disabled) {
-  border-color: var(--hot); background: color-mix(in srgb, var(--hot) 12%, transparent);
-  box-shadow: inset 3px 0 0 var(--hot);
+.askopt.permno.chosen {
+  background: color-mix(in srgb, var(--hot) 10%, var(--panel));
+  border-color: var(--hot); box-shadow: inset 3px 0 0 var(--hot);
+}
+.askopt.permyes.chosen .asknum {
+  background: var(--working); border-color: var(--working); color: var(--panel);
+}
+.askopt.permno.chosen .asknum {
+  background: var(--hot); border-color: var(--hot); color: var(--panel);
 }
 .asksays { font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
 .asknum {
@@ -14170,6 +14174,9 @@ const state = {
   answered: new Set(),
   // A reason half written for a No, with the dialog it is for (`key`).
   declineWhy: { key: "", text: "" },
+  // The answer picked on a permission dialog, by the dialog's key: "yes",
+  // "no" or "always:N". Kept across a rebuild, as the reason is.
+  permPick: { key: "", pick: "" },
   // Where each session was left, by id. The choices only -- see `savePlace`.
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
@@ -16303,33 +16310,43 @@ function drawPermission(box, s, permission) {
 // working colour, No in the colour of a cut. They were small buttons in one
 // line with the reason box between them, and a long "don't ask again" label
 // broke it apart; the reader found it unreadable.
+//
+// A click picks, and submit answers, as on a question. A click that went
+// straight to the dialog was a Yes nobody could take back -- a slip of the
+// hand, or a page on a phone in a pocket -- and the question bar had had
+// submit for that reason all along; the reader asked for one way for all.
 function putAnswers(foot, s, permission, box) {
   const list = put(foot, "div", "askopts permopts");
-  const option = (cls, label, why) => {
+  const option = (cls, label, why, pick) => {
     const button = put(list, "button", "askopt " + cls);
+    button.dataset.pick = pick;
     put(button, "span", "asknum");
     const text = put(button, "span", "asktext");
     put(text, "span", "asklabel", label);
     if (why) put(text, "span", "askwhy", why);
+    // `current()`, not `s`: the session's rows move on under a bar that is
+    // painted, not built, and `s.approvable` with them.
+    button.addEventListener("click", () => {
+      state.permPick = { key: permission.key, pick };
+      paintDecline(box, current(), permission);
+      if (pick === "no" && !why.disabled) why.focus();
+    });
     return button;
   };
   // Yes goes to the dialog's own hook, never through keys (`approve`):
   // built only for a dialog whose hook waits on a nonce, and shown only
   // while it still waits (`s.approvable`, in `paintDecline`).
   if (permission.ask) {
-    const yes = option("permyes", "Yes", "this call, once");
-    yes.addEventListener("click", () => submitApprove(s.id, permission, box, yes, null));
+    option("permyes", "Yes", "this call, once", "yes");
     // The CLI's "Yes, and ...": each of Claude Code's own suggestions, as
     // its own choice (`always_offered`).
     for (const one of permission.always || []) {
-      const always = option("permyes permalways", "Yes, and " + one.label,
-                            "as Claude Code suggests it");
-      always.addEventListener("click",
-        () => submitApprove(s.id, permission, box, always, one.at));
+      option("permyes permalways", "Yes, and " + one.label,
+             "as Claude Code suggests it", "always:" + one.at);
     }
   }
-  const no = option("permno", "No", "and tell it what to do instead, below");
-  no.addEventListener("click", () => submitDecline(s.id, permission, box));
+  option("permno", "No", "and tell it what to do instead", "no");
+  // Under the answers, and only while No is picked: it is No's alone.
   const why = put(foot, "textarea", "say permwhy");
   why.rows = 1;
   why.placeholder = "what it should do instead (optional)";
@@ -16343,8 +16360,10 @@ function putAnswers(foot, s, permission, box) {
     state.declineWhy = { key: permission.key, text: why.value };
     fitSay(why);
   });
-  submitOnCtrlEnter(why, no);
   const end = put(foot, "div", "permfoot");
+  const submit = put(end, "button", "verb permsubmit", "submit");
+  submit.addEventListener("click", () => submitPermission(s.id, permission, box));
+  submitOnCtrlEnter(why, submit);
   put(end, "span", "asksays");
   // Absent with no pane, like jump everywhere else: there is nothing to open.
   if (s.pane) {
@@ -16368,42 +16387,58 @@ function lastPlan(call) {
   return null;
 }
 
-// What pressing no would do, said before it is pressed; and whether yes
-// may be pressed at all.
+// The answer picked on this dialog, if it is still one the bar shows: a
+// Yes picked while the hook waited is no pick once the hook stops waiting.
+function permissionPick(box, permission) {
+  if (state.permPick.key !== permission.key) return "";
+  const pick = state.permPick.pick;
+  const button = [...box.querySelectorAll(".permopts .askopt")]
+    .find((one) => one.dataset.pick === pick);
+  return button && !button.hidden ? pick : "";
+}
+
+// What submit would do, said before it is pressed; which answers show; and
+// whether submit may be pressed at all.
 function paintDecline(box, s, permission) {
-  const no = box.querySelector(".permno");
+  const submit = box.querySelector(".permsubmit");
   const why = box.querySelector(".permwhy");
   const says = box.querySelector(".permsend .asksays");
-  if (!no || !why || !says) return;
+  if (!submit || !why || !says) return;
   const cannot = whyNotTyped(s, true);
   // Without its call nothing can prove the dialog closed, so no reason is
   // typed -- and a box that takes one and then drops it is worse than none.
   const reasons = !cannot && !!permission.call;
   why.disabled = !reasons;
   // Off while something else is on its way to the session, as submit on a
-  // question is: `submitDecline` refuses then, and a No that could be
-  // pressed and did nothing, with no word why, read as a broken button.
-  // Its own No is on its way too, and says what it does, not that it waits.
-  const yeses = [...box.querySelectorAll(".permyes")];
-  const mine = no.dataset.busy === "1" || yeses.some((yes) => yes.dataset.busy === "1");
+  // question is: `submitPermission` refuses then, and a submit that could
+  // be pressed and did nothing, with no word why, read as a broken button.
+  // Its own answer is on its way too, and says what it does, not that it
+  // waits.
+  const mine = submit.dataset.busy === "1";
   const busy = sending.has(s.id) && !mine;
-  no.disabled = !!cannot || mine || busy;
   // Only while the dialog's hook waits for it: the terminal may have
   // answered, or the hook given up, and then there is nothing to say Yes to.
-  for (const yes of yeses) {
-    yes.hidden = !s.approvable;
-    yes.disabled = !!cannot || mine || busy;
-  }
+  for (const yes of box.querySelectorAll(".permyes")) yes.hidden = !s.approvable;
+  const pick = permissionPick(box, permission);
   // Numbered as the CLI numbers its options, counting only those shown.
   let at = 0;
   for (const one of box.querySelectorAll(".permopts .askopt")) {
+    one.disabled = !!cannot || mine;
+    one.classList.toggle("chosen", one.dataset.pick === pick);
     if (!one.hidden) setText(one.querySelector(".asknum"), String(++at));
   }
+  const was = why.hidden;
+  why.hidden = pick !== "no";
+  if (was && !why.hidden) fitSay(why);   // measured only once it shows
+  submit.disabled = !pick || !!cannot || mine || busy;
   // Said in both cases: a Yes given in the terminal fires no hook, so the
   // row stays amber while the approved call runs, and Escape then stops it.
   const already = " If you already answered in the terminal, Escape stops the agent.";
   says.textContent = cannot ? cannot
     : busy ? "waiting for what is on its way to this session"
+    : !pick ? "pick an answer"
+    : pick === "yes" ? "allows this one call, once"
+    : pick !== "no" ? "allows this call, and keeps the rule Claude Code suggests"
     : !reasons
     ? "presses Escape. A reason cannot be typed for this one: send it after."
       + already
@@ -16411,36 +16446,45 @@ function paintDecline(box, s, permission) {
       + already;
 }
 
-async function submitApprove(id, permission, box, yes, always) {
+// Submit: the picked answer, to the hook for a Yes and as keys for a No.
+function submitPermission(id, permission, box) {
+  const pick = permissionPick(box, permission);
+  if (pick === "no") submitDecline(id, permission, box);
+  else if (pick === "yes") submitApprove(id, permission, box, null);
+  else if (pick) submitApprove(id, permission, box, Number(pick.slice("always:".length)));
+}
+
+async function submitApprove(id, permission, box, always) {
+  const submit = box.querySelector(".permsubmit");
   // The same guard as a No: one answer to a dialog at a time.
-  if (yes.disabled) return;
-  yes.dataset.busy = "1";
-  if (!startSending(id)) { yes.dataset.busy = ""; return; }
-  yes.disabled = true;
+  if (!submit || submit.disabled) return;
+  submit.dataset.busy = "1";
+  if (!startSending(id)) { submit.dataset.busy = ""; return; }
+  submit.disabled = true;
   let answer;
   try {
     answer = await tell(id, "approve", { key: permission.key, always });
   } finally {
     doneSending(id);
   }
-  yes.dataset.busy = "";
+  submit.dataset.busy = "";
   said(answer);
   if (answer && answer.done) note(always === null ? "allowed, once" : "allowed, and kept");
-  else yes.disabled = false;
+  else submit.disabled = false;
 }
 
 async function submitDecline(id, permission, box) {
-  const no = box.querySelector(".permno");
+  const submit = box.querySelector(".permsubmit");
   const why = box.querySelector(".permwhy");
   // One thing typed into a session at a time: the send box and a No share
   // the guard, because a send landing between the Escape and the proof
   // would be typed into a dialog that may still be up.
   // Marked as its own before the guard is taken, which paints the bar: the
   // mark is what keeps the bar from saying it waits for this very No.
-  if (!no || no.disabled) return;
-  no.dataset.busy = "1";
-  if (!startSending(id)) { no.dataset.busy = ""; return; }
-  no.disabled = true;
+  if (!submit || submit.disabled) return;
+  submit.dataset.busy = "1";
+  if (!startSending(id)) { submit.dataset.busy = ""; return; }
+  submit.disabled = true;
   const reason = why && !why.disabled ? why.value : "";
   let answer;
   try {
@@ -16448,10 +16492,10 @@ async function submitDecline(id, permission, box) {
   } finally {
     doneSending(id);
   }
-  no.dataset.busy = "";
+  submit.dataset.busy = "";
   if (!answer || !answer.done) {
     said(answer);
-    no.disabled = false;
+    submit.disabled = false;
     return;
   }
   // Declined, and maybe the reason held back: that is said, and stays.
