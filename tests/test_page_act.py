@@ -1213,8 +1213,11 @@ def test_yes_shows_while_the_hook_waits_and_goes_to_it(ws, in_pane, monkeypatch)
         page.click("#asking .permyes")
         assert page.locator("#asking .permyes.chosen").count() == 1
         page.click("#asking .permno")
-        assert page.locator("#asking .askopt.chosen").count() == 1
+        assert page.locator("#asking .chosen").count() == 1
         assert page.locator("#asking .permwhy").is_visible()
+        # Picking No takes you to its box: the click threw before it got
+        # there, while the note's name hid the box's.
+        assert page.evaluate("document.activeElement.classList.contains('permwhy')")
         page.click("#asking .permyes")
         assert page.locator("#asking .permwhy").is_hidden()
         assert page.inner_text("#asking .permsend .asksays") == "allows this one call, once"
@@ -1259,6 +1262,16 @@ def test_yes_and_dont_ask_again_is_a_choice_of_its_own(ws, in_pane, monkeypatch)
         colours = page.evaluate("""() => ['.permyes', '.permalways', '.permno'].map((one) =>
           getComputedStyle(document.querySelector('#asking ' + one + ' .asknum')).color)""")
         assert colours[0] == colours[1] != colours[2], colours
+        # Each in its own colour, not merely apart: No's number fell back to
+        # the question's amber once, still unlike Yes's green.
+        ink = page.evaluate("""() => ['--working', '--cut-ink'].map((name) => {
+          const probe = document.createElement('span');
+          probe.style.color = `var(${name})`;
+          document.body.append(probe);
+          const seen = getComputedStyle(probe).color;
+          probe.remove();
+          return seen; })""")
+        assert [colours[0], colours[2]] == ink, (colours, ink)
         page.click("#asking .permalways")
         page.click("#asking .permsubmit")
         hook.join(10)
@@ -1309,7 +1322,7 @@ def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
         show_tab(page, "diff")
         show_tab(page, "transcript")
         # The pick is kept as the reason is, so the box still shows.
-        page.wait_for_selector("#asking:not([hidden]) .permno.chosen")
+        page.wait_for_selector("#asking:not([hidden]) .permnogroup.chosen")
         assert page.locator("#asking .permwhy").is_visible()
         assert page.input_value("#asking .permwhy") == "Use the ninja build"
 

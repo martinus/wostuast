@@ -106,7 +106,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   of the name. `test_a_rename_waits_for_nothing_already_being_typed`,
   `test_a_rename_is_typed_on_one_line`, `test_a_name_ending_in_a_backslash_loses_it`.
   `sending` holds the sessions a send is on its way to, and `submitReview`,
-  `sendTyped`, `submitAsk` and `submitDecline` all go through it
+  `sendTyped`, `submitAsk` and `submitPermission` all go through it
   (`startSending`, `doneSending`). **Not "`submitAsk` disables its button",
   which this rule said until #226**: the button did not stay disabled. A
   click on an option ran `paintPicks`, which turned submit back on while
@@ -591,7 +591,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   **One decline at a time**: the page's `sending` guard, which the send box
   shares, and `Daemon.claim`, which sets `Daemon.declining`, for a second tab.
   **No is off while something else is on its way, and says so**
-  (`paintDecline`), as submit on a question is: `submitDecline` refused
+  (`paintDecline`), as submit on a question is: `submitPermission` refused
   then, and a No that could be pressed did nothing, with no word why. A
   No of its own is marked (`dataset.busy`) before it takes the guard, so
   the bar does not say it waits for itself. A reason half written is

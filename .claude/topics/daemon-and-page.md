@@ -492,11 +492,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `fitSay` sizes it now, as it sizes the send box and the review's two
     boxes, and Chromium counts an empty box's placeholder in
     `scrollHeight`. `fitSay` asks `getClientRects()`, not the box's form,
-    because this box stands in none. And `.permsend .permwhy` is at least
-    as wide as its placeholder (`--fits`, set from the placeholder's
-    length), so the box takes a row of its own rather than wrap it.
-    Narrower than about 900 px, the reading column itself is narrower
-    than the placeholder; that is the layout's limit, not the box's.
+    because this box stands in none. The box is as wide as No's group
+    (`.permnogroup .permwhy`), on a row of its own; it was at least as
+    wide as its placeholder (`--fits`) while it stood in a line of
+    buttons, and that went with the line.
     `test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole`.
   - **The Enter that ends an IME composition is the input method's**
     (`composing`). In Japanese or Chinese, Enter picks the word; the send
