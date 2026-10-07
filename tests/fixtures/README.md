@@ -99,6 +99,17 @@ agent's `Stop` came while it ran, with it in `background_tasks`, and its
 end came back as a new `UserPromptSubmit` whose prompt is a
 `<task-notification>`.
 
+**A subagent the reader stops sends no `SubagentStop`** (measured on
+2.1.292, `subagent_killed.jsonl`). On 2.1.292 the Agent tool runs its
+subagent in the background with no `run_in_background`, and every `Stop`
+of the agent lists it in `background_tasks` as `{id, type: "subagent",
+status: "running", description, agent_type}`, where `id` is its
+`agent_id`. Stopped with `x` in the agents panel, it sent nothing of its
+own: the next event was a `UserPromptSubmit` whose `<task-notification>`
+says `<status>killed</status>`, and the `Stop` of that turn had an empty
+list. A `SubagentStop` carries `background_tasks` too, with the subagent
+that stops still in it. The paths are invented.
+
 **A `claude -p` from the Bash tool is a session of its own**, with its own
 `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd`, all within a
 second, and nothing in them names the agent that ran it. Its environment

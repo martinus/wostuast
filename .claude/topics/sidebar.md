@@ -294,6 +294,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     that failed starts nothing, so their descriptions named the next
     subagent and every one after it. A failed call drops its own.
     `test_a_call_that_started_nothing_names_no_subagent`.
+  - **A subagent is over when the agent's `Stop` no longer lists it**
+    (`end_unlisted_subagents`). Waiting for `SubagentStop` alone left a
+    line running for days: a subagent the reader stops with `x` in the
+    agents panel sends none (measured on 2.1.292,
+    `tests/fixtures/subagent_killed.jsonl`). Its end comes back as a
+    `<task-notification>` prompt with `<status>killed</status>`, and the
+    `Stop` of that turn lists it no more. Every `Stop` of the agent lists
+    each subagent still running in `background_tasks`, with the
+    subagent's `agent_id` as `id`, so a subagent that `Stop` does not
+    list is over, however it ended. Any entry keeps one, whatever its
+    status. Only the agent's own `Stop`: a `SubagentStop` carries a list
+    too, and the subagent that stops is still in it. A `Stop` with no list
+    (an older build) ends nothing.
+    `test_a_subagent_the_reader_stopped_is_over_at_the_next_stop`.
   - **A child's change must redraw its parent's row**: `drawSessions`
     skips the draw when the listed rows did not change, and a child is in
     none, so the children go into its key. A test of that waits until the

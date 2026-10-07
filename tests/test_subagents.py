@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from conftest import ROOT, as_claude, event
+from conftest import FIXTURES, ROOT, as_claude, event
 
 
 def folded(ws, *events):
@@ -134,6 +134,30 @@ def test_a_session_that_is_over_has_no_subagent_running(ws):
     session = folded(ws, event("SubagentStart", agent_id="a1")).sessions["s1"]
     ws.mark_dead(session, alive=lambda pid: False, now=1200.0)
     assert (session.subagents["a1"].ended, session.agents_ran) == (1200.0, 1)
+
+
+def test_a_subagent_the_reader_stopped_is_over_at_the_next_stop(ws):
+    """Stopped with `x` in the agents panel, a subagent sends no
+    `SubagentStop` (measured on 2.1.292, `subagent_killed.jsonl`): its end
+    comes back as a `<task-notification>` prompt, and that turn's `Stop`
+    no longer lists it in `background_tasks`. It ran on the page for days.
+    A `Stop` that lists it as running keeps it; one from a build with no
+    list says nothing; a `SubagentStop`'s list holds the one stopping."""
+    lines = (FIXTURES / "subagent_killed.jsonl").read_text().splitlines()
+    events = [dict(json.loads(line), session_id="s1", pane="%1", pid=4242,
+                   ts=2000.0 + at) for at, line in enumerate(lines)]
+    agent = events[3]["agent_id"]
+    store = folded(ws, *events[:6])
+    one = store.sessions["s1"].subagents[agent]
+    assert (one.what, one.ended) == ("look around", 0), "listed as running"
+    store.apply(dict(events[7], background_tasks=None))
+    assert one.ended == 0, "a Stop with no list is no news"
+    store.apply(dict(events[7], hook_event_name="SubagentStop", agent_id="other"))
+    assert one.ended == 0, "a subagent's own Stop is not the agent's"
+    store = folded(ws, *events)
+    session = store.sessions["s1"]
+    assert (session.subagents[agent].ended, session.agents_ran) == (2007.0, 1)
+    assert ws.row(session)["subagents"][0]["ended"] == 2007.0
 
 
 def test_the_hook_names_the_agent_that_ran_a_claude_p(ws, tmp_path):
