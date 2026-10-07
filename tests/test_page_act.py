@@ -1430,9 +1430,10 @@ def test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole(ws, in_pan
 def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
     """Ctrl+Enter presses the box's own button: the send box left it out on
     purpose and sent nothing, and the reason for a No had only its button.
-    And a button beside one of these boxes is as tall as its first line --
-    it was 26 px beside a box of 32, bottoms aligned, and the tops read as a
-    mistake."""
+    And the send button beside its box is as tall as its first line -- it
+    was 26 px beside a box of 32, bottoms aligned, and the tops read as a
+    mistake. The reason for a No stands under the answers, with no button
+    beside it, so only its Ctrl+Enter is asked of it."""
     daemon, base, seen = in_pane
     # A dialog whose call the page can name, or it offers no reason.
     path = daemon.store.sessions["s1"].transcript_path
@@ -1463,7 +1464,6 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
         now_permission(ws, daemon)
         daemon.hub.send("sessions", daemon.sessions_payload())
         page.wait_for_selector("#asking:not([hidden]) .permwhy")
-        assert max(page.evaluate(level, "#asking .permwhy")) < 1
         page.fill("#asking .permwhy", "no thanks")
         page.press("#asking .permwhy", "Control+Enter")
         assert pressed(lambda: "Escape" in conftest.pressed(seen)), seen
