@@ -1150,8 +1150,7 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
               one.querySelector('.askprevbody').textContent])""")
         assert fields == [["command", BUILD], ["description", "Build and test"]]
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.filter((one) => !one.hidden)"
-            ".map((one) => one.textContent)")
+            "#asking button", "els => els.map((one) => one.textContent)")
         assert buttons == ["open the terminal", "no"], buttons
         page.fill("#asking .permwhy", "Use the ninja build instead")
         # What the page says, kept: the slot is repainted on every push.
@@ -1185,9 +1184,7 @@ def test_yes_shows_while_the_hook_waits_and_goes_to_it(ws, in_pane, monkeypatch)
         hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ask)),
                                 daemon=True)
         hook.start()
-        deadline = time.time() + 10
-        while not ws.hook_waits(ask) and time.time() < deadline:
-            time.sleep(0.02)
+        wait_until(page, lambda: ws.hook_waits(ask))
         daemon.tick()                    # the pass that sees the hook wait
         page.wait_for_selector("#asking .permyes:not([hidden])")
         page.evaluate("""() => { window.words = []; const was = note;
@@ -1225,8 +1222,7 @@ def test_a_permission_can_be_read_without_tmux_but_not_declined(ws, no_pane):
         assert "not in tmux" in page.locator("#asking .asksays").inner_text()
         # Nothing to open: absent, like jump everywhere else.
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.filter((one) => !one.hidden)"
-            ".map((one) => one.textContent)")
+            "#asking button", "els => els.map((one) => one.textContent)")
         assert buttons == ["no"], buttons
 
 
@@ -1799,9 +1795,7 @@ def test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it(ws, in_pane):
         assert page.locator("#asking .askhead").inner_text().lower() == "plan"
         assert page.locator("#asking .permfield").count() == 0
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.filter((one) => !one.hidden)"
-            ".map((one) => one.textContent)")
-        # No Yes for a plan: its hook does not wait (`NOT_APPROVED`).
+            "#asking button", "els => els.map((one) => one.textContent)")
         assert buttons == ["read the plan", "open the terminal", "no"], buttons
         # Its top away from the top of the pane first -- at the head of the
         # transcript -- so the click is what brings it there.

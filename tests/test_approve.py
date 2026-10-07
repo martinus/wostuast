@@ -179,8 +179,8 @@ def finish(child: subprocess.Popen) -> tuple[int, str, str]:
 
 
 def logged_ask(ws) -> str:
-    lines = ws.events_path().read_text().splitlines() if ws.events_path().exists() else []
-    return json.loads(lines[-1]).get("ask_id", "") if lines else ""
+    events = list(ws.read_events())
+    return str(events[-1].get("ask_id") or "") if events else ""
 
 
 def test_the_hook_says_allow_for_its_own_yes_and_nothing_else(ws, hook_at):

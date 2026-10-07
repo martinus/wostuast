@@ -382,11 +382,12 @@ def approvals_dir() -> Path:
     return state_dir() / "approvals"
 
 
-def daemon_running() -> bool:
-    """Whether a daemon holds its lock (`one_daemon`): only then can a Yes
-    come, so only then does a `PermissionRequest` hook wait for one."""
+def lock_held(path: Path) -> bool:
+    """Whether another process holds a `flock` on this file. Only a lock
+    that refuses ours says yes: no file, or a file system with no locks,
+    says no, as in `one_daemon`."""
     try:
-        held = os.open(daemon_lock_path(), os.O_RDONLY)
+        held = os.open(path, os.O_RDONLY)
     except OSError:
         return False
     try:
@@ -398,6 +399,12 @@ def daemon_running() -> bool:
     finally:
         os.close(held)
     return False
+
+
+def daemon_running() -> bool:
+    """Whether a daemon holds its lock (`one_daemon`): only then can a Yes
+    come, so only then does a `PermissionRequest` hook wait for one."""
+    return lock_held(daemon_lock_path())
 
 
 def wait_for_yes(ask: str) -> bool:
@@ -435,10 +442,7 @@ def wait_for_yes(ask: str) -> bool:
         return False
     finally:
         for one in (yes, waiting, taking):
-            try:
-                one.unlink()
-            except OSError:
-                pass
+            one.unlink(missing_ok=True)
         os.close(held)
 
 
@@ -2791,20 +2795,10 @@ def hook_waits(ask: str) -> bool:
     if not ASK_SHAPE.fullmatch(ask):
         return False
     path = approvals_dir() / f"{ask}.wait"
-    try:
-        held = os.open(path, os.O_RDONLY)
-    except OSError:
-        return False
-    try:
-        fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BlockingIOError:
+    if lock_held(path):
         return True
-    except OSError:
-        return False
-    finally:
-        os.close(held)
     try:
-        path.unlink()
+        path.unlink(missing_ok=True)
     except OSError:
         pass
     return False
@@ -8400,7 +8394,7 @@ class Daemon:
         """
         with self.lock:
             if session_id in self.declining:
-                return "a No is already on its way to this session"
+                return "an answer to this dialog is already on its way"
             if session_id in self.typing:
                 return ("something is already being typed into this session;"
                         " wait for it to land")
@@ -9460,14 +9454,15 @@ class Serving:
         """Write the Yes, and wait for the hook to take it."""
         yes = approvals_dir() / f"{ask}.yes"
         write_atomic(yes, ask, private=True)
+        # The hook takes it by removing it.
         deadline = time.monotonic() + APPROVE_SEEN
-        while hook_waits(ask) and time.monotonic() < deadline:
+        while yes.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         if yes.exists():
             # Not taken: the hook stopped as the Yes went in. Taken back, so
             # nothing lies there that a hook could read later.
             try:
-                yes.unlink()
+                yes.unlink(missing_ok=True)
             except OSError:
                 pass
             self.reply_json({"id": session_id, "done": False,
@@ -11191,7 +11186,8 @@ HOOK_PARTS = frozenset({
     "background_start", "parent_pid",
     "looks_like_claude", "agent_pid", "claude_from", "reads_terminal", "give_up_after", "stand_down",
     "read_stdin_json", "cmd_hook", "APPROVE_WAIT", "APPROVE_POLL", "NOT_APPROVED",
-    "ALLOW", "approvals_dir", "daemon_lock_path", "daemon_running", "wait_for_yes",
+    "ALLOW", "approvals_dir", "daemon_lock_path", "lock_held", "daemon_running",
+    "wait_for_yes",
 })
 
 HOOK_HEAD = '''#!/usr/bin/env python3
@@ -16183,12 +16179,15 @@ function drawPermission(box, s, permission) {
     open.textContent = "open the terminal";
     open.addEventListener("click", jumpToPane);
   }
-  // Yes goes to the dialog's own hook, never through keys (`approve`), and
-  // is shown only while that hook waits for it (`s.approvable`).
-  const yes = put(foot, "button", "verb permyes");
-  yes.textContent = "yes";
-  yes.title = "allows this one call, once, as Yes in the terminal would";
-  yes.addEventListener("click", () => submitApprove(s.id, permission, box));
+  // Yes goes to the dialog's own hook, never through keys (`approve`):
+  // built only for a dialog whose hook waits on a nonce, and shown only
+  // while it still waits (`s.approvable`, in `paintDecline`).
+  if (permission.ask) {
+    const yes = put(foot, "button", "verb permyes");
+    yes.textContent = "yes";
+    yes.title = "allows this one call, once, as Yes in the terminal would";
+    yes.addEventListener("click", () => submitApprove(s.id, permission, box));
+  }
   const why = put(foot, "textarea", "say permwhy");
   why.rows = 1;
   why.placeholder = "what it should do instead (optional)";
@@ -16223,7 +16222,8 @@ function lastPlan(call) {
   return null;
 }
 
-// What pressing no would do, said before it is pressed.
+// What pressing no would do, said before it is pressed; and whether yes
+// may be pressed at all.
 function paintDecline(box, s, permission) {
   const no = box.querySelector(".permno");
   const why = box.querySelector(".permwhy");
@@ -16263,7 +16263,7 @@ function paintDecline(box, s, permission) {
 async function submitApprove(id, permission, box) {
   const yes = box.querySelector(".permyes");
   // The same guard as a No: one answer to a dialog at a time.
-  if (!yes || yes.disabled || yes.hidden) return;
+  if (!yes || yes.disabled) return;
   yes.dataset.busy = "1";
   if (!startSending(id)) { yes.dataset.busy = ""; return; }
   yes.disabled = true;

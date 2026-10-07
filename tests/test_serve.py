@@ -2179,7 +2179,7 @@ def test_no_send_goes_in_while_a_no_is_on_its_way(ws, in_tmux):
     daemon.declining.add("s1")
     status, body = post(base + "/api/session/s1/send", {"text": "go on"},
                         token=daemon.token)
-    assert status == 409 and "No is already on its way" in body["error"], body
+    assert status == 409 and "answer to this dialog is already on its way" in body["error"], body
     assert seen == []
 
 
