@@ -1542,6 +1542,20 @@ def test_every_colour_outside_the_palette_is_named(ws):
     assert not loose, f"write these as a variable in the palette: {loose}"
 
 
+def test_every_variable_the_css_reads_is_defined(ws):
+    """A `var()` of a name nobody defined is no colour at all, and nothing
+    says so: the question bar's options read `--sunken`, which the palette
+    never had, so they stood with no ground on the bar's amber, and did not
+    look like things to press. A name the script sets (`setProperty`) counts
+    as defined, and a `var()` with a fallback reads none."""
+    css = ws.PAGE[ws.PAGE.index("<style>"):ws.PAGE.index("</style>")]
+    read = set(re.findall(r"var\(\s*(--[\w-]+)\s*\)", css))
+    defined = set(re.findall(r"(--[\w-]+)\s*:", css))
+    from_script = set(re.findall(r"""setProperty\(\s*["'](--[\w-]+)["']""", ws.PAGE))
+    assert "--needs" in read and "--needs" in defined
+    assert not read - defined - from_script, sorted(read - defined - from_script)
+
+
 def test_hidden_is_one_rule(ws):
     """`[hidden] { display: none !important; }` once, and no `X[hidden]` of
     a control's own. Twelve of those were each added after a control that

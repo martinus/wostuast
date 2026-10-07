@@ -13006,11 +13006,15 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* Not `.verb`: a verb is a small control, and this is a paragraph you press.
    The number is what it types, and it is drawn because a button that types
    into your terminal should say what it types. */
+/* Its ground is `--panel`, and its edge the bright one: they were
+   `--sunken`, which the palette never defined, and `--edge`, which the
+   bar's amber ground swallowed -- so an option was text with nothing
+   round it, and did not read as something to press. */
 .askopt {
-  display: flex; gap: 10px; align-items: baseline; width: 100%;
-  padding: 8px 10px; text-align: left; cursor: pointer;
-  background: var(--sunken); color: var(--ink);
-  border: 1px solid var(--edge); border-radius: 6px; font: inherit;
+  display: flex; gap: 10px; align-items: center; width: 100%;
+  padding: 7px 10px; text-align: left; cursor: pointer;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--edge-bright); border-radius: 6px; font: inherit;
 }
 .askopt:hover:not(:disabled) {
   background: var(--raised); color: var(--ink-bright);
@@ -13025,20 +13029,13 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   box-shadow: inset 2px 0 0 var(--needs);
 }
 .askopt.chosen .asknum {
-  background: var(--needs); border-color: var(--needs); color: var(--sunken);
+  background: var(--needs); border-color: var(--needs); color: var(--panel);
 }
 .asksend { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 /* A permission request: each field of it, whole, in the preview's box. */
 .permfield + .permfield { margin-top: 8px; }
 .asksend.permsend { display: block; }
 .permopts { margin-bottom: 8px; }
-/* One line an option where it fits: the note beside the label, not under
-   it. Two lines each pushed the reason box out of a bar that is capped at
-   40vh. */
-.permopts .askopt { align-items: center; padding: 6px 10px; }
-.permopts .asktext { flex-direction: row; flex-wrap: wrap; align-items: baseline;
-                     column-gap: 10px; }
-.permopts .askwhy { font-size: 11px; color: var(--ink-faint); }
 /* A request is read whole, so a long command wraps rather than running off
    the side: a preview keeps its layout, and this has none to keep. */
 .permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -13070,9 +13067,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .asknum {
   flex-shrink: 0; min-width: 18px; text-align: center;
   font-family: var(--mono); font-size: 11px; color: var(--needs);
-  border: 1px solid var(--edge); border-radius: 4px; padding: 1px 0;
+  border: 1px solid color-mix(in srgb, var(--needs) 55%, transparent);
+  border-radius: 4px; padding: 1px 0;
 }
-.asktext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* One line an option where it fits, the note beside the label, as the
+   permission dialog drew it first: two lines each pushed what came after
+   out of a bar that is capped at 40vh. A long note wraps under the label. */
+.asktext {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  column-gap: 10px; row-gap: 2px; min-width: 0;
+}
 .asklabel { font-size: 13px; font-weight: 600; }
 .askwhy { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 .asknote { margin-top: 8px; font-size: 11px; color: var(--ink-faint); }
@@ -16243,13 +16247,13 @@ function drawAsking() {
   paintPicks(box, ask);
 }
 
-// The permission dialog, whole, and the one answer this page gives it: No.
+// The permission dialog, whole, and the answers this page gives it.
 //
-// **Never Yes.** A dialog carries no id, so nothing here can prove which one
-// a press lands on; a wrong No is undone by saying what to do instead, and a
-// wrong Yes is not. So the request is shown field by field -- `textContent`,
-// every one, because an agent wrote them -- and approving is left to the
-// terminal, which the first button opens.
+// **Never a Yes through keys.** Keys carry no id, so nothing could prove
+// which dialog a press lands on; a wrong No is undone by saying what to do
+// instead, and a wrong Yes is not. So the request is shown field by field --
+// `textContent`, every one, because an agent wrote them -- and a Yes goes
+// only to this dialog's own hook (`putAnswers`, `approve`).
 //
 // No is Escape, and the reason is typed after it only once the daemon has
 // seen the dialog close (`decline`). The box keeps what is typed across the
@@ -16324,7 +16328,7 @@ function putAnswers(foot, s, permission, box) {
         () => submitApprove(s.id, permission, box, always, one.at));
     }
   }
-  const no = option("permno", "No", "presses Escape, then types what you write below");
+  const no = option("permno", "No", "and tell it what to do instead, below");
   no.addEventListener("click", () => submitDecline(s.id, permission, box));
   const why = put(foot, "textarea", "say permwhy");
   why.rows = 1;
