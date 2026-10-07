@@ -632,7 +632,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
       custom property does not transition. A test that reads a colour
       after a choice waits for `getAnimations()` to be empty, and reads
       nothing a push could have refreshed.
-      `test_the_outline_keeps_its_colour_when_another_row_is_chosen`. The reader chose it from a picture over
+      `test_the_outline_keeps_its_colour_when_another_row_is_chosen`.
+    - **Only the grip's colour fades, never its layers**
+      (`transition: background-color` on `.grip`): with `transition:
+      background`, a custom property still does not transition, but the
+      `background-position` computed from it does. A pointer that left
+      the grip slid the corners and the line down from its top to the
+      row, and the reader saw the row's outline flicker; every scroll
+      moved them a step behind the row.
+      `test_the_opening_in_the_grip_never_slides_into_place` asks
+      `getAnimations()` in the same frame as the change, so a loaded
+      runner cannot end the transition before it reads. The reader chose it from a picture over
     the corners alone. **All of it is the grip's own background**, layers
     under `#grip.open`: the list scrolls and clips whatever a row draws
     outside it. The circle's middle stands 3 px into the list, so the

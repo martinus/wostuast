@@ -11800,11 +11800,14 @@ body {
 }
 /* Paths are long and no width chosen here is right for every repository, so
    both column edges are draggable. The alternative is a config option, which
-   goal 4 in CLAUDE.md rules out. */
+   goal 4 in CLAUDE.md rules out. Only its colour fades: `#grip.open`
+   draws the chosen row's opening as layers, and `transition: background`
+   moved them too, so a pointer that left the grip slid the corners and
+   the line down from its top to the row, and the row's outline flickered. */
 .grip {
   flex-shrink: 0; width: var(--grip-w); cursor: col-resize;
   background: var(--edge);
-  border: 0; padding: 0; transition: background .15s ease;
+  border: 0; padding: 0; transition: background-color .15s ease;
 }
 /* Open where the chosen row meets it; `openGrip` says where that is. */
 #grip {

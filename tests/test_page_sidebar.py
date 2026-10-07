@@ -644,6 +644,39 @@ def test_the_outline_keeps_its_colour_when_another_row_is_chosen(rows_at):
             assert seen[0] == seen[1], (other, seen)
 
 
+def test_the_opening_in_the_grip_never_slides_into_place(rows_at):
+    """Only the grip's colour fades, never where its layers stand. With
+    `transition: background`, a pointer that left the grip slid the
+    corners and the line down from its top to the chosen row, and the
+    reader saw the row's outline flicker; a scroll moved them a step
+    behind the row. Asked in the same frame as the change, so a loaded
+    runner cannot let the transition end before it is read: `dragging`
+    paints the grip as a hover does, and a new `--gap-top` is a scroll."""
+    with open_rows(rows_at) as page:
+        page.set_viewport_size({"width": 1100, "height": 600})
+        page.click('.row[data-id="fresh"]', position={"x": 5, "y": 5})
+        page.wait_for_function("state.chosen === 'fresh'")
+        page.mouse.move(900, 300)
+        page.wait_for_function("document.getElementById('grip').classList.contains('open')")
+        moved = page.evaluate("""() => {
+          const grip = document.getElementById('grip');
+          const seen = [];
+          const now = () => {
+            getComputedStyle(grip).backgroundPosition;
+            for (const one of grip.getAnimations()) seen.push(one.transitionProperty);
+          };
+          grip.classList.add('dragging');
+          now();
+          grip.classList.remove('dragging');
+          now();
+          grip.style.setProperty('--gap-top',
+            (parseFloat(grip.style.getPropertyValue('--gap-top')) - 4) + 'px');
+          now();
+          return seen;
+        }""")
+        assert moved and all(one == "background-color" for one in moved), moved
+
+
 def test_a_drag_on_an_edge_starts_only_by_hand_and_always_stops(page_at):
     """A drag started on any button, held no capture, and stopped only on
     `pointerup`. A right-click on the grip opens the context menu on Linux
