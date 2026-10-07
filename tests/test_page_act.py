@@ -327,6 +327,10 @@ def test_submit_waits_until_every_question_is_answered(ws, in_pane):
         # keystrokes into a live terminal.
         assert page.inner_text("#asking .asksays") == \
             "presses 2, then 1, then Enter"
+        # Submit at the right edge, after what it does, as on a permission.
+        lefts = page.evaluate("""() => ['.asksays', '.asksend .verb'].map((one) =>
+          document.querySelector('#asking ' + one).getBoundingClientRect().left)""")
+        assert lefts[0] < lefts[1], lefts
 
 
 def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
@@ -1150,13 +1154,28 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
               one.querySelector('.askprevbody').textContent])""")
         assert fields == [["command", BUILD], ["description", "Build and test"]]
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.map((one) => one.textContent)")
-        assert buttons == ["open the terminal", "no"], buttons
+            "#asking button", "els => els.map((one) =>"
+            " (one.querySelector('.asklabel') || one).textContent)")
+        assert buttons == ["No", "open the terminal", "submit"], buttons
+        # The reason is No's alone: it shows once No is picked, inside the
+        # one edge that goes round No and its box.
+        assert page.locator("#asking .permwhy").is_hidden()
+        page.click("#asking .permno")
+        assert page.locator("#asking .permnogroup.chosen .permwhy").is_visible()
+        # A No waits for what the agent should do instead.
+        assert page.locator("#asking .permsubmit").is_disabled()
+        assert page.inner_text("#asking .permsend .asksays") == \
+            "write what it should do instead"
         page.fill("#asking .permwhy", "Use the ninja build instead")
+        assert not page.locator("#asking .permsubmit").is_disabled()
+        # Submit at the right edge of the bar, after what it does.
+        lefts = page.evaluate("""() => ['.permsend .asksays', '.permsubmit'].map((one) =>
+          document.querySelector('#asking ' + one).getBoundingClientRect().left)""")
+        assert lefts[0] < lefts[1], lefts
         # What the page says, kept: the slot is repainted on every push.
         page.evaluate("""() => { window.words = []; const was = note;
           note = (word) => { window.words.push(word); was(word); }; }""")
-        page.click("#asking .permno")
+        page.click("#asking .permsubmit")
         page.wait_for_function(
             "window.words.includes('declined, and your reason was typed')")
         deadline = time.time() + 15
@@ -1189,13 +1208,75 @@ def test_yes_shows_while_the_hook_waits_and_goes_to_it(ws, in_pane, monkeypatch)
         page.wait_for_selector("#asking .permyes:not([hidden])")
         page.evaluate("""() => { window.words = []; const was = note;
           note = (word) => { window.words.push(word); was(word); }; }""")
+        # A click picks, and says nothing to the dialog: submit does.
+        assert page.locator("#asking .permsubmit").is_disabled()
         page.click("#asking .permyes")
+        assert page.locator("#asking .permyes.chosen").count() == 1
+        page.click("#asking .permno")
+        assert page.locator("#asking .chosen").count() == 1
+        assert page.locator("#asking .permwhy").is_visible()
+        # Picking No takes you to its box: the click threw before it got
+        # there, while the note's name hid the box's.
+        assert page.evaluate("document.activeElement.classList.contains('permwhy')")
+        page.click("#asking .permyes")
+        assert page.locator("#asking .permwhy").is_hidden()
+        assert page.inner_text("#asking .permsend .asksays") == "allows this one call, once"
+        page.wait_for_timeout(300)        # proving nothing was said yet
+        assert hook.is_alive() and not took and seen == []
+        page.click("#asking .permsubmit")
         page.wait_for_function("window.words.includes('allowed, once')")
         hook.join(10)
-        assert took == [True]
+        assert took == [ask]
         assert seen == [], "a Yes pressed keys"
         daemon.tick()
         page.wait_for_selector("#asking", state="hidden")
+
+
+def test_yes_and_dont_ask_again_is_a_choice_of_its_own(ws, in_pane, monkeypatch):
+    """The CLI's "Yes, and don't ask again for: npm test *" is a button too,
+    in the colour of yes, and it sends which choice it is. No is in another
+    colour, so the two answers read apart."""
+    daemon, base, seen = in_pane
+    monkeypatch.setattr(ws, "APPROVE_WAIT", 30)
+    ask = "00aa11bb22cc33ee"
+    cwd = daemon.store.sessions["s1"].cwd
+    ws.append_event(conftest.event(
+        "PermissionRequest", tool_name="Bash", pane="%7", cwd=cwd, ask_id=ask,
+        tool_input={"command": "npm test -- --watch=false"},
+        permission_suggestions=[{"type": "addRules", "behavior": "allow",
+                                 "destination": "localSettings",
+                                 "rules": [{"toolName": "Bash", "ruleContent": "npm test *"}]}]))
+    took = []
+    hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ask)), daemon=True)
+    hook.start()
+    with opened((None, base)) as page:
+        wait_until(page, lambda: ws.hook_waits(ask))
+        daemon.tick()
+        page.wait_for_selector("#asking .permalways:not([hidden])")
+        assert page.inner_text("#asking .permalways .asklabel") == \
+            "Yes, and don't ask again for npm test * in this project"
+        # The CLI's numbers, counting only the options shown.
+        assert page.eval_on_selector_all(
+            "#asking .permopts .asknum", "els => els.map((one) => one.textContent)") \
+            == ["1", "2", "3"]
+        colours = page.evaluate("""() => ['.permyes', '.permalways', '.permno'].map((one) =>
+          getComputedStyle(document.querySelector('#asking ' + one + ' .asknum')).color)""")
+        assert colours[0] == colours[1] != colours[2], colours
+        # Each in its own colour, not merely apart: No's number fell back to
+        # the question's amber once, still unlike Yes's green.
+        ink = page.evaluate("""() => ['--working', '--cut-ink'].map((name) => {
+          const probe = document.createElement('span');
+          probe.style.color = `var(${name})`;
+          document.body.append(probe);
+          const seen = getComputedStyle(probe).color;
+          probe.remove();
+          return seen; })""")
+        assert [colours[0], colours[2]] == ink, (colours, ink)
+        page.click("#asking .permalways")
+        page.click("#asking .permsubmit")
+        hook.join(10)
+        assert took == [ask + ":0"]
+        assert seen == [], "a Yes pressed keys"
 
 
 def test_a_dialog_with_no_call_of_its_own_takes_no_reason(ws, in_pane):
@@ -1205,8 +1286,9 @@ def test_a_dialog_with_no_call_of_its_own_takes_no_reason(ws, in_pane):
     now_permission(ws, daemon, calls=("toolu_b1", "toolu_b2"))
     with opened((None, base)) as page:
         page.wait_for_selector("#asking:not([hidden]) .permfield")
+        page.click("#asking .permno")
         assert page.locator("#asking .permwhy").is_disabled()
-        assert not page.locator("#asking .permno").is_disabled()
+        assert not page.locator("#asking .permsubmit").is_disabled()
         says = page.locator("#asking .asksays").inner_text()
         assert "cannot be typed" in says
         # A Yes in the terminal fires no hook: the warning holds here too.
@@ -1219,11 +1301,13 @@ def test_a_permission_can_be_read_without_tmux_but_not_declined(ws, no_pane):
     with opened((None, base)) as page:
         page.wait_for_selector("#asking:not([hidden]) .permfield")
         assert page.locator("#asking .permno").is_disabled()
+        assert page.locator("#asking .permsubmit").is_disabled()
         assert "not in tmux" in page.locator("#asking .asksays").inner_text()
         # Nothing to open: absent, like jump everywhere else.
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.map((one) => one.textContent)")
-        assert buttons == ["no"], buttons
+            "#asking button", "els => els.map((one) =>"
+            " (one.querySelector('.asklabel') || one).textContent)")
+        assert buttons == ["No", "submit"], buttons
 
 
 def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
@@ -1232,11 +1316,14 @@ def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
     daemon, base, seen = in_pane
     now_permission(ws, daemon)
     with opened((None, base)) as page:
-        page.wait_for_selector("#asking:not([hidden]) .permwhy")
+        page.wait_for_selector("#asking:not([hidden]) .permno")
+        page.click("#asking .permno")
         page.fill("#asking .permwhy", "Use the ninja build")
         show_tab(page, "diff")
         show_tab(page, "transcript")
-        page.wait_for_selector("#asking:not([hidden]) .permwhy")
+        # The pick is kept as the reason is, so the box still shows.
+        page.wait_for_selector("#asking:not([hidden]) .permnogroup.chosen")
+        assert page.locator("#asking .permwhy").is_visible()
         assert page.input_value("#asking .permwhy") == "Use the ninja build"
 
 
@@ -1249,22 +1336,24 @@ def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
     now_permission(ws, daemon)
     with opened((None, base)) as page:
         page.wait_for_selector("#asking:not([hidden]) .permno")
+        page.click("#asking .permno")
+        page.fill("#asking .permwhy", "Use the ninja build")
         page.evaluate("startSending(state.chosen)")
-        assert page.locator("#asking .permno").is_disabled()
+        assert page.locator("#asking .permsubmit").is_disabled()
         assert page.inner_text("#asking .permsend .asksays") == \
             "waiting for what is on its way to this session"
-        page.click("#asking .permno", force=True)
+        page.click("#asking .permsubmit", force=True)
         page.wait_for_timeout(500)        # proving nothing was pressed
         assert "Escape" not in conftest.pressed(seen), seen
         page.evaluate("doneSending(state.chosen)")
-        assert not page.locator("#asking .permno").is_disabled()
+        assert not page.locator("#asking .permsubmit").is_disabled()
         assert page.inner_text("#asking .permsend .asksays") \
             .startswith("presses Escape")
         # Its own No is on its way too, and does not wait for itself.
         held = hold(page, "**/decline")
-        page.click("#asking .permno")
+        page.click("#asking .permsubmit")
         wait_until(page, lambda: held)
-        assert page.locator("#asking .permno").is_disabled()
+        assert page.locator("#asking .permsubmit").is_disabled()
         assert page.inner_text("#asking .permsend .asksays") \
             .startswith("presses Escape")
 
@@ -1376,7 +1465,8 @@ def test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole(ws, in_pan
       return [box.clientHeight, box.scrollHeight]; }"""
     with opened((None, base)) as page:
         page.set_viewport_size({"width": 1100, "height": 700})
-        page.wait_for_selector("#asking:not([hidden]) .permwhy")
+        page.wait_for_selector("#asking:not([hidden]) .permno")
+        page.click("#asking .permno")
         page.evaluate("""() => { const box = document.querySelector('#asking .permwhy');
           box.value = box.placeholder; }""")
         shown, needed = page.evaluate(rows)
@@ -1392,9 +1482,10 @@ def test_the_reason_box_shows_its_placeholder_and_what_is_typed_whole(ws, in_pan
 def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
     """Ctrl+Enter presses the box's own button: the send box left it out on
     purpose and sent nothing, and the reason for a No had only its button.
-    And a button beside one of these boxes is as tall as its first line --
-    it was 26 px beside a box of 32, bottoms aligned, and the tops read as a
-    mistake."""
+    And the send button beside its box is as tall as its first line -- it
+    was 26 px beside a box of 32, bottoms aligned, and the tops read as a
+    mistake. The reason for a No stands under the answers, with no button
+    beside it, so only its Ctrl+Enter is asked of it."""
     daemon, base, seen = in_pane
     # A dialog whose call the page can name, or it offers no reason.
     path = daemon.store.sessions["s1"].transcript_path
@@ -1424,8 +1515,8 @@ def test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level(ws, in_pane):
         # after it has anything new to push; this pushes the rows.
         now_permission(ws, daemon)
         daemon.hub.send("sessions", daemon.sessions_payload())
-        page.wait_for_selector("#asking:not([hidden]) .permwhy")
-        assert max(page.evaluate(level, "#asking .permwhy")) < 1
+        page.wait_for_selector("#asking:not([hidden]) .permno")
+        page.click("#asking .permno")
         page.fill("#asking .permwhy", "no thanks")
         page.press("#asking .permwhy", "Control+Enter")
         assert pressed(lambda: "Escape" in conftest.pressed(seen)), seen
@@ -1795,8 +1886,9 @@ def test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it(ws, in_pane):
         assert page.locator("#asking .askhead").inner_text().lower() == "plan"
         assert page.locator("#asking .permfield").count() == 0
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.map((one) => one.textContent)")
-        assert buttons == ["read the plan", "open the terminal", "no"], buttons
+            "#asking button", "els => els.map((one) =>"
+            " (one.querySelector('.asklabel') || one).textContent)")
+        assert buttons == ["read the plan", "No", "open the terminal", "submit"], buttons
         # Its top away from the top of the pane first -- at the head of the
         # transcript -- so the click is what brings it there.
         top = """() => document.querySelector('.turn.plan').getBoundingClientRect().top

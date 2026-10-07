@@ -90,6 +90,18 @@ interrupted the call and stopped the hook (its log has a start and no end);
 and a hook with no `timeout` of its own was still waited for at 90 s, and its
 allow then worked.
 
+A `PermissionRequest` carries `permission_suggestions`, which are the CLI's
+"Yes, and ..." options (`permission_suggestions.json`, measured on 2.1.292,
+the paths invented): `npm test -- --watch=false` suggests `addRules`
+`Bash(npm test *)` for `localSettings` ("Yes, and don't ask again for: npm
+test *"); a fetch, a `domain:` rule; a new file, `setMode acceptEdits` for the
+session; `rm -rf build`, `addDirectories` and `setMode acceptEdits`, which the
+CLI shows as one option and applied only the folder of. A hook's allow with a
+suggestion as `updatedPermissions` did what option 2 does: it wrote
+`Bash(npm test *)` to the project's `.claude/settings.local.json`, and the
+next `npm test` was not asked. The CLI's "Yes, and switch to auto mode" is no
+suggestion.
+
 The hook adds fields of its own: `ts`, `pane`, `pid`, `shell_pid`, and
 `started_by` -- the pid of the agent that ran this one, for an agent that
 reads no terminal, else 0 (#422). On `SessionStart` only, also

@@ -81,7 +81,7 @@ bullets beside it are the same part's other scars.
 | `tmux_send`, `SEND_MAX`, `POST_MAX`, `typing_trouble`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked`, `state.answered`, `forgetAnswered` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Session.dialog`, `cannot_type`, `whyNotTyped`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
-| `approve`, `give_yes`, `wait_for_yes`, `hook_waits`, `lock_held`, `daemon_running`, `approvals_dir`, `ALLOW`, `NOT_APPROVED`, `APPROVE_WAIT`, `ASK_SHAPE`, `submitApprove`, `Approved` | topics/safety, its first bullet: the hook says allow only for its own dialog, after the reader's Yes |
+| `approve`, `give_yes`, `wait_for_yes`, `hook_waits`, `lock_held`, `daemon_running`, `always_offered`, `allow_for`, `always_label`, `ALWAYS_MODES`, `approvals_dir`, `ALLOW`, `NOT_APPROVED`, `APPROVE_WAIT`, `ASK_SHAPE`, `submitPermission`, `permissionPick`, `Approved` | topics/safety, its first bullet: the hook says allow only for its own dialog, after the reader's Yes |
 | `plan_of`, `lastPlan`, a block of kind `plan`, `ExitPlanMode` | topics/state, the plan under `Session.permission`; topics/payloads for what the request carries |
 | the Markdown scrub (`scrub`, `KEPT`, `textFor`, `safeLinks`), `linkTickets`, `linkOne`, `nextMatch`, anything that inserts what an agent wrote | topics/safety: the page never trusts what an agent wrote |
 | `remote_url`, `config_entries`, `config_section`, `config_value`, `CONFIG_MAX`, `hide_secrets`, `clip_hidden`, `SECRET_SHAPES`, `tool_target` | topics/safety: a remote URL and a command reach the page without their secrets, and a long one costs no time |
@@ -175,9 +175,12 @@ building anything. A goal that bends is rewritten here in the same PR.
   so the Yes cannot land elsewhere. It was a non-goal -- "no approve
   button, ever" -- while keys were the only way; the reader asked for Yes
   once the page showed the whole request, and chose the hook, and this
-  bullet was rewritten in the same PR. No "Yes, and don't ask again" (it
-  writes a lasting rule into Claude Code's settings), no plan, no
-  question. Answering an `AskUserQuestion` is the agent's own question, and
+  bullet was rewritten in the same PR. **"Yes, and don't ask again" is
+  Claude Code's own suggestion, never a rule of ours** (`always_offered`,
+  `allow_for`): the reader asked for the CLI's choices, and each
+  `permission_suggestions` entry that allows something is one button; the
+  page sends only which, and the hook takes the rule from its own payload.
+  No mode that turns every prompt off, no plan, no question. Answering an `AskUserQuestion` is the agent's own question, and
   the page types nothing until the reader submits.
 - **Agent-to-agent messaging, teams, orchestration, cache telemetry.** Showing
   the spend the status line sends is in; accounting is out. **So is a spend

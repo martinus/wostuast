@@ -1005,6 +1005,11 @@ sequenceDiagram
     D->>D: append an "Approved" event
 ```
 
+"Yes, and don't ask again" works the same way. The page sends which of the
+dialog's choices you pressed, by its place. The daemon writes `ASK:n`, and the
+hook answers allow with suggestion `n` from its own payload, as Claude Code
+sent it. No rule is ever written by the page or the daemon.
+
 The hook waits only while a daemon runs, at most `APPROVE_WAIT`, and never
 for a plan or a question. If you answer in the terminal first, Claude Code
 stops the hook, its lock goes with it, and **yes** goes away from the page.

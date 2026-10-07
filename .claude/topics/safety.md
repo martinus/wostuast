@@ -4,7 +4,7 @@ Each rule is a bug that already happened: the assertion in bold, why the
 obvious alternative is wrong, then the symbols and the test that holds it.
 `CLAUDE.md` is the map; its header says how to add a rule. What may reach a terminal, what may be read, and who may ask.
 
-- **The hook prints one thing only: `ALLOW`, for the dialog it was called
+- **The hook prints one thing only: an allow for the dialog it was called
   for, after the reader's Yes on the page.** Claude Code reads a hook's
   stdout as its answer, and we register `PermissionRequest`. One stray
   `print()` in `cmd_hook` answers every permission dialog for the user.
@@ -26,9 +26,41 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   **It waits only while a daemon runs** (`daemon_running`), for at most
   `APPROVE_WAIT`, and **never for a question or a plan** (`NOT_APPROVED`):
   each costs a process held for nothing.
+  **"Yes, and don't ask again" carries Claude Code's own suggestion, chosen
+  by its place, never a rule the page or the daemon wrote** (`always_offered`,
+  `allow_for`, `always_label`). The reader asked for the CLI's choices. The
+  page sends `always: n`; the daemon checks `n` is one this dialog offered
+  and writes `<ask>:<n>`; the hook takes suggestion `n` from its own
+  `permission_suggestions` and answers allow with it as
+  `updatedPermissions`. Only suggestions that allow -- `addRules` with
+  `behavior: allow`, `addDirectories`, `setMode` to `ALWAYS_MODES` -- are
+  offered; a choice the dialog was not offered gets no answer at all, not
+  a plain Yes. Measured on 2.1.292: the allow with `Bash(npm test *)`
+  wrote the same line to the project's `.claude/settings.local.json` as
+  the CLI's option 2, and the next `npm test` was not asked. The CLI shows
+  one option for several suggestions (`rm -rf build`: a folder and a
+  mode) and applies only some of them, by a rule too long to copy; here
+  each is a choice of its own.
   **A Yes's own record clears the amber** (`Approved`, `_on_approved`): no
   hook fires for a Yes. `tests/test_approve.py`,
-  `test_yes_shows_while_the_hook_waits_and_goes_to_it`.
+  `test_yes_shows_while_the_hook_waits_and_goes_to_it`,
+  `test_yes_and_dont_ask_again_is_a_choice_of_its_own`.
+  - **Yes is green and No is red** (`.permyes`, `.permno`): they looked
+    alike, and the reader asked for them told apart at a glance.
+  - **A click picks, and submit answers** (`state.permPick`,
+    `permissionPick`, `submitPermission`), as on a question. A click
+    that went straight to the hook was a Yes nobody could take back -- a
+    slip of the hand, or a page on a phone in a pocket -- and the reader
+    asked for every prompt to work one way. The pick is kept by the
+    dialog's key across a rebuild, as the reason is, and a Yes picked
+    while the hook waited is no pick once it stops. The reason box shows
+    only while No is picked, inside one edge with No (`.permnogroup`): it
+    stood under the list, apart from the No it belongs to. **A No waits
+    for its reason** (`wordless`), as the reader asked; not where no
+    reason can be typed, or that No could never be given. Submit stands
+    at the right of the foot, after what it does, on the question bar
+    too. `test_yes_shows_while_the_hook_waits_and_goes_to_it`,
+    `test_a_reason_half_written_survives_a_look_at_another_tab`.
 - **The hook must never block Claude Code.** try/except around everything,
   `give_up_after` deadline, always exit 0. Keep all three. The deadline covers
   every wait at once, including a stdin that never closes — **and it stays
@@ -74,7 +106,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   of the name. `test_a_rename_waits_for_nothing_already_being_typed`,
   `test_a_rename_is_typed_on_one_line`, `test_a_name_ending_in_a_backslash_loses_it`.
   `sending` holds the sessions a send is on its way to, and `submitReview`,
-  `sendTyped`, `submitAsk` and `submitDecline` all go through it
+  `sendTyped`, `submitAsk` and `submitPermission` all go through it
   (`startSending`, `doneSending`). **Not "`submitAsk` disables its button",
   which this rule said until #226**: the button did not stay disabled. A
   click on an option ran `paintPicks`, which turned submit back on while
@@ -559,7 +591,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   **One decline at a time**: the page's `sending` guard, which the send box
   shares, and `Daemon.claim`, which sets `Daemon.declining`, for a second tab.
   **No is off while something else is on its way, and says so**
-  (`paintDecline`), as submit on a question is: `submitDecline` refused
+  (`paintDecline`), as submit on a question is: `submitPermission` refused
   then, and a No that could be pressed did nothing, with no word why. A
   No of its own is marked (`dataset.busy`) before it takes the guard, so
   the bar does not say it waits for itself. A reason half written is

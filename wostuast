@@ -97,6 +97,11 @@ NOT_APPROVED = frozenset({"AskUserQuestion", "ExitPlanMode"})
 ALLOW = ('{"hookSpecificOutput": {"hookEventName": "PermissionRequest",'
          ' "decision": {"behavior": "allow"}}}\n')
 
+#: The modes a suggestion may switch to from the page. Measured on 2.1.292,
+#: Claude Code suggests `acceptEdits` for a file and nothing else; a mode
+#: that turns every prompt off is not offered from here.
+ALWAYS_MODES = frozenset({"acceptEdits"})
+
 #: A directory's git facts are read again when an event asks for it, but never
 #: more often than this. git status on a large worktree is not cheap.
 GIT_MIN_INTERVAL = 10.0
@@ -407,8 +412,59 @@ def daemon_running() -> bool:
     return lock_held(daemon_lock_path())
 
 
-def wait_for_yes(ask: str) -> bool:
-    """Wait for the page's Yes to this one dialog: True when it came.
+def always_offered(suggestions: Any) -> list[tuple[int, dict[str, Any]]]:
+    """The "Yes, and ..." choices the page may offer for a dialog: each of
+    Claude Code's own `permission_suggestions`, by its place in the list,
+    that allows something -- a rule, a folder, `acceptEdits`.
+
+    Measured on 2.1.292: a command suggests `addRules` (`Bash(npm test *)`,
+    kept in the project's `.claude/settings.local.json`), a fetch a domain
+    rule, a file `setMode acceptEdits`, and `rm -rf build` a folder and the
+    mode. An allow that carries one of them as `updatedPermissions` does
+    what the CLI's option does (`tests/fixtures/README.md`). Only these are
+    offered: the page never makes a rule of its own, and never one that
+    asks, denies, removes or replaces.
+    """
+    if not isinstance(suggestions, list):
+        return []
+    out = []
+    for at, one in enumerate(suggestions):
+        if not isinstance(one, dict):
+            continue
+        kind = one.get("type")
+        rules = one.get("rules")
+        if kind == "addRules" and one.get("behavior") == "allow" and isinstance(rules, list) \
+                and rules and all(isinstance(rule, dict) and rule.get("toolName")
+                                  for rule in rules):
+            out.append((at, one))
+        elif kind == "addDirectories" and isinstance(one.get("directories"), list) \
+                and one["directories"]:
+            out.append((at, one))
+        elif kind == "setMode" and one.get("mode") in ALWAYS_MODES:
+            out.append((at, one))
+    return out
+
+
+def allow_for(record: dict[str, Any], said: str) -> str:
+    """The allow to print for the Yes the page wrote: once, or with the one
+    suggestion it chose, taken from this hook's own payload -- never from
+    the page. A choice this dialog was not offered gets no answer at all:
+    the reader asked for something else than a plain Yes."""
+    pick = said.partition(":")[2]
+    if not pick:
+        return ALLOW
+    chosen = dict(always_offered(record.get("permission_suggestions"))).get(int(pick))
+    if chosen is None:
+        return ""
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PermissionRequest",
+        "decision": {"behavior": "allow", "updatedPermissions": [chosen]}}}) + "\n"
+
+
+def wait_for_yes(ask: str) -> str:
+    """Wait for the page's Yes to this one dialog: what it said, or "".
+    `<ask>` is a Yes once; `<ask>:<n>` a Yes with the n-th suggestion
+    (`allow_for`).
 
     **The Yes is bound to the dialog by the hook itself.** Claude Code calls
     this hook for one dialog and takes its answer for that dialog only, so
@@ -436,10 +492,11 @@ def wait_for_yes(ask: str) -> bool:
                 said = yes.read_text(encoding="utf-8")
             except OSError:
                 said = ""
-            if said == ask:
-                return True
+            head, colon, pick = said.partition(":")
+            if head == ask and (not colon or pick.isdigit()):
+                return said
             time.sleep(APPROVE_POLL)
-        return False
+        return ""
     finally:
         for one in (yes, waiting, taking):
             one.unlink(missing_ok=True)
@@ -2804,6 +2861,30 @@ def hook_waits(ask: str) -> bool:
     return False
 
 
+#: Where a suggestion keeps what it allows, as the page says it.
+WHERE_KEPT = {"localSettings": "in this project", "projectSettings": "in this project, for everyone",
+              "userSettings": "everywhere", "session": "for this session"}
+
+
+def always_label(one: dict[str, Any]) -> str:
+    """A suggestion as the "Yes, and ..." the page shows, in the CLI's words
+    where they are plain: "don't ask again for npm test *"."""
+    where = WHERE_KEPT.get(str(one.get("destination") or ""), "")
+    if one.get("type") == "addRules":
+        named = []
+        for rule in one["rules"]:
+            tool, content = str(rule.get("toolName")), str(rule.get("ruleContent") or "")
+            named.append(content.removeprefix("domain:") if tool in ("Bash", "WebFetch") and content
+                         else f"{tool}({content})" if content else tool)
+        said = "don't ask again for " + ", ".join(named)
+    elif one.get("type") == "addDirectories":
+        said = "always allow access to " + ", ".join(str(path) for path in one["directories"])
+    else:
+        said = "accept edits"
+    # Hidden as a command on the row is: a rule's content is a command.
+    return clip_hidden(f"{said} {where}".strip(), 200)
+
+
 def read_permission(event: dict[str, Any], calls: dict[str, str], summary: str,
                     ts: float) -> dict[str, Any]:
     """The permission request as the page shows it, for the reader to decline.
@@ -2836,8 +2917,11 @@ def read_permission(event: dict[str, Any], calls: dict[str, str], summary: str,
     withheld = sum(len(key) + len(text) for key, text in fields) > PERMISSION_SHOWN
     matches = [one for one, said in calls.items() if said == summary]
     ask = str(event.get("ask_id") or "")
-    return {"key": f"{ts:.6f}", "tool": tool,
-            "ask": ask if ASK_SHAPE.fullmatch(ask) else "",
+    ask = ask if ASK_SHAPE.fullmatch(ask) else ""
+    # The "Yes, and ..." choices: only where a hook waits to carry one.
+    always = [{"at": at, "label": always_label(one)}
+              for at, one in always_offered(event.get("permission_suggestions"))] if ask else []
+    return {"key": f"{ts:.6f}", "tool": tool, "ask": ask, "always": always,
             "call": matches[0] if len(matches) == 1 else "",
             "fields": [] if withheld else fields, "withheld": withheld,
             "plan": plan}
@@ -2872,7 +2956,9 @@ def _on_approved(session: Session, event: dict[str, Any], ts: float) -> None:
         return
     _clear_attention(session)
     session.state = "working"
-    session.last_event = "allowed from the page"
+    always = str(event.get("always") or "")
+    session.last_event = (f"allowed from the page, and {always}" if always
+                          else "allowed from the page")
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -9442,18 +9528,27 @@ class Serving:
         if self.daemon.call_answered(session_id, str(shown.get("call") or "")):
             self.refuse(session_id, 409, "that request was answered in the terminal already")
             return
+        # "Yes, and ..." names one of the choices this dialog offered, by its
+        # place; the hook takes the suggestion itself from its own payload.
+        always = body.get("always")
+        offered = {one["at"]: one["label"] for one in shown.get("always") or []}
+        if always is not None and (type(always) is not int or always not in offered):
+            self.refuse(session_id, 400, "this dialog offers no such choice")
+            return
+        said = ask if always is None else f"{ask}:{always}"
         # One answer at a time: a No on its way and a Yes would race for the
         # same dialog.
         with self.daemon.holding(session_id, "", no=True) as busy:
             if busy:
                 self.refuse(session_id, 409, busy)
                 return
-            self.give_yes(session_id, shown, ask)
+            self.give_yes(session_id, shown, ask, said, offered.get(always, ""))
 
-    def give_yes(self, session_id: str, shown: dict[str, Any], ask: str) -> None:
+    def give_yes(self, session_id: str, shown: dict[str, Any], ask: str, said: str,
+                 always: str) -> None:
         """Write the Yes, and wait for the hook to take it."""
         yes = approvals_dir() / f"{ask}.yes"
-        write_atomic(yes, ask, private=True)
+        write_atomic(yes, said, private=True)
         # The hook takes it by removing it.
         deadline = time.monotonic() + APPROVE_SEEN
         while yes.exists() and time.monotonic() < deadline:
@@ -9470,7 +9565,7 @@ class Serving:
                                       " the terminal"}, 409)
             return
         append_event({"session_id": session_id, "hook_event_name": "Approved",
-                      "ts": time.time(), "key": shown["key"]})
+                      "ts": time.time(), "key": shown["key"], "always": always})
         self.reply_json({"id": session_id, "done": True})
 
     def press_decline(self, session_id: str, pane: str, shown: dict[str, Any],
@@ -9980,8 +10075,9 @@ def cmd_hook(args: argparse.Namespace) -> int:
     to allow or deny outright. Printing nothing means "no opinion", and the
     dialog behaves as if we were not here.
 
-    **The one exception is `ALLOW`, for the dialog this hook was called for,
-    and only once the reader said Yes on the page** (`wait_for_yes`). Never
+    **The one exception is an allow for the dialog this hook was called
+    for, and only once the reader said Yes on the page** (`wait_for_yes`,
+    `allow_for`): once, or with one of Claude Code's own suggestions. Never
     print anything else, in this function or in anything it calls: one
     `print()` here approves every dialog. Exit 0 whatever happens, and say
     anything worth saying in the log file.
@@ -10032,8 +10128,9 @@ def cmd_hook(args: argparse.Namespace) -> int:
             # waits; and only while a daemon runs, which alone can say Yes.
             if asks and daemon_running():
                 give_up_after(APPROVE_WAIT + 30)
-                if wait_for_yes(record["ask_id"]):
-                    sys.stdout.write(ALLOW)
+                said = wait_for_yes(record["ask_id"])
+                if said:
+                    sys.stdout.write(allow_for(record, said))
                     sys.stdout.flush()
                 stand_down()
         except BaseException as error:  # a hook must never block Claude Code
@@ -11187,7 +11284,7 @@ HOOK_PARTS = frozenset({
     "looks_like_claude", "agent_pid", "claude_from", "reads_terminal", "give_up_after", "stand_down",
     "read_stdin_json", "cmd_hook", "APPROVE_WAIT", "APPROVE_POLL", "NOT_APPROVED",
     "ALLOW", "approvals_dir", "daemon_lock_path", "lock_held", "daemon_running",
-    "wait_for_yes",
+    "wait_for_yes", "ALWAYS_MODES", "always_offered", "allow_for",
 })
 
 HOOK_HEAD = '''#!/usr/bin/env python3
@@ -12909,52 +13006,74 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* Not `.verb`: a verb is a small control, and this is a paragraph you press.
    The number is what it types, and it is drawn because a button that types
    into your terminal should say what it types. */
+/* Its ground is `--panel`, and its edge the bright one: they were
+   `--sunken`, which the palette never defined, and `--edge`, which the
+   bar's amber ground swallowed -- so an option was text with nothing
+   round it, and did not read as something to press.
+   `--tone` is the one colour an option wears: on its number, on its edge
+   under the pointer, and all over once picked. A question's is the
+   needs-you amber, like the row it came from; a permission's Yes and No
+   set their own. Each colour was a copy of every rule, and a change to
+   the picked look was made three times. */
+.askopt, .permnogroup { --tone: var(--needs); --tone-ink: var(--tone); }
 .askopt {
-  display: flex; gap: 10px; align-items: baseline; width: 100%;
-  padding: 8px 10px; text-align: left; cursor: pointer;
-  background: var(--sunken); color: var(--ink);
-  border: 1px solid var(--edge); border-radius: 6px; font: inherit;
+  display: flex; gap: 10px; align-items: center; width: 100%;
+  padding: 7px 10px; text-align: left; cursor: pointer;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--edge-bright); border-radius: 6px; font: inherit;
 }
-.askopt:hover:not(:disabled) {
-  background: var(--raised); color: var(--ink-bright);
-  border-color: var(--needs);
-}
+.askopt:hover:not(:disabled) { color: var(--ink-bright); border-color: var(--tone); }
 .askopt:disabled { opacity: .55; cursor: default; }
-/* What you picked, and what submit will press. It wears the needs-you
-   colour, like the row this question came from. */
-.askopt.chosen {
-  background: var(--raised); color: var(--ink-bright);
-  border-color: var(--needs);
-  box-shadow: inset 2px 0 0 var(--needs);
+/* What you picked, and what submit will do. */
+.askopt.chosen, .permnogroup.chosen {
+  background: color-mix(in srgb, var(--tone) 10%, var(--panel)); color: var(--ink-bright);
+  border-color: var(--tone);
+  box-shadow: inset 3px 0 0 var(--tone);
 }
-.askopt.chosen .asknum {
-  background: var(--needs); border-color: var(--needs); color: var(--sunken);
+.askopt.chosen .asknum, .permnogroup.chosen .asknum {
+  background: var(--tone); border-color: var(--tone); color: var(--panel);
 }
 .asksend { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.asksend > .asksays { flex: 1; min-width: 0; }
 /* A permission request: each field of it, whole, in the preview's box. */
 .permfield + .permfield { margin-top: 8px; }
-.permsend { flex-wrap: wrap; align-items: flex-end; }
 /* A request is read whole, so a long command wraps rather than running off
    the side: a preview keeps its layout, and this has none to keep. */
 .permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
-/* At least as wide as its placeholder, when the row has room: the box is
-   one row high, and a placeholder wider than the box wrapped onto a second
-   row that did not show -- "(optional)" stood cut in half under the first.
-   `--fits` is the placeholder's length, set where the placeholder is, so
-   new words cannot outgrow it; `ch` is one character of this mono font, and
-   24 px is the padding and the border. Wider than it fits, the box takes a
-   row of its own rather than shrinking. */
-.permsend .permwhy {
-  flex: 1 1 260px; min-width: min(100%, calc(var(--fits, 0ch) + 24px));
+/* Yes in the working colour, No in the colour of a cut: the two answers
+   read apart at a glance, as the CLI's do. The label stays the ink every
+   option has; No's number is the cut's ink, which reads on the panel. */
+.askopt.permyes { --tone: var(--working); }
+/* On the group, for its edge; on the button too, which is an option and
+   would otherwise take the question's amber back. */
+.permnogroup, .askopt.permno { --tone: var(--hot); --tone-ink: var(--cut-ink); }
+/* No and its reason are one answer, so the edge is the group's, and No's
+   button inside it has none of its own: it is picked by the group's mark. */
+.permnogroup {
+  border: 1px solid var(--edge-bright); border-radius: 6px; background: var(--panel);
 }
-.permsend .asksays { flex-basis: 100%; }
+.permnogroup:has(.permno:hover:not(:disabled)) { border-color: var(--tone); }
+.permnogroup .askopt.permno { border: 0; background: transparent; }
+/* Under No's label, one row high, and it grows with what is typed
+   (`fitSay`): 38 px is the button's padding, number and gap, so the box
+   starts where the label does. */
+.permnogroup .permwhy {
+  display: block; width: calc(100% - 48px); margin: 0 10px 10px 38px;
+}
 .asksays { font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
 .asknum {
   flex-shrink: 0; min-width: 18px; text-align: center;
-  font-family: var(--mono); font-size: 11px; color: var(--needs);
-  border: 1px solid var(--edge); border-radius: 4px; padding: 1px 0;
+  font-family: var(--mono); font-size: 11px; color: var(--tone-ink);
+  border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
+  border-radius: 4px; padding: 1px 0;
 }
-.asktext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* One line an option where it fits, the note beside the label, as the
+   permission dialog drew it first: two lines each pushed what came after
+   out of a bar that is capped at 40vh. A long note wraps under the label. */
+.asktext {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  column-gap: 10px; row-gap: 2px; min-width: 0;
+}
 .asklabel { font-size: 13px; font-weight: 600; }
 .askwhy { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 .asknote { margin-top: 8px; font-size: 11px; color: var(--ink-faint); }
@@ -14048,6 +14167,9 @@ const state = {
   answered: new Set(),
   // A reason half written for a No, with the dialog it is for (`key`).
   declineWhy: { key: "", text: "" },
+  // The answer picked on a permission dialog, by the dialog's key: "yes",
+  // "no" or "always:N". Kept across a rebuild, as the reason is.
+  permPick: { key: "", pick: "" },
   // Where each session was left, by id. The choices only -- see `savePlace`.
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
@@ -16087,13 +16209,9 @@ function drawAsking() {
     const body = one.preview ? put(block, "div", "askbeside") : block;
     const list = put(body, "div", "askopts");
     one.options.forEach((option, at) => {
-      const button = put(list, "button", "askopt");
       // The number it will press, shown. What reaches your terminal should
       // not be a thing you have to trust.
-      put(button, "span", "asknum", String(at + 1));
-      const text = put(button, "span", "asktext");
-      put(text, "span", "asklabel", option.label);
-      if (option.description) put(text, "span", "askwhy", option.description);
+      const button = putOption(list, "", String(at + 1), option.label, option.description);
       // Picking types nothing. It marks, and it can be changed: a click that
       // went straight into a terminal was a click you could not take back,
       // on a page you may have opened on a phone in a pocket.
@@ -16119,19 +16237,19 @@ function drawAsking() {
     }
   });
   const foot = put(box, "div", "asksend");
+  put(foot, "span", "asksays");
   const send = put(foot, "button", "verb");
   send.addEventListener("click", () => submitAsk(s.id, ask, box));
-  put(foot, "span", "asksays");
   paintPicks(box, ask);
 }
 
-// The permission dialog, whole, and the one answer this page gives it: No.
+// The permission dialog, whole, and the answers this page gives it.
 //
-// **Never Yes.** A dialog carries no id, so nothing here can prove which one
-// a press lands on; a wrong No is undone by saying what to do instead, and a
-// wrong Yes is not. So the request is shown field by field -- `textContent`,
-// every one, because an agent wrote them -- and approving is left to the
-// terminal, which the first button opens.
+// **Never a Yes through keys.** Keys carry no id, so nothing could prove
+// which dialog a press lands on; a wrong No is undone by saying what to do
+// instead, and a wrong Yes is not. So the request is shown field by field --
+// `textContent`, every one, because an agent wrote them -- and a Yes goes
+// only to this dialog's own hook (`putAnswers`, `approve`).
 //
 // No is Escape, and the reason is typed after it only once the daemon has
 // seen the dialog close (`decline`). The box keeps what is typed across the
@@ -16172,26 +16290,67 @@ function drawPermission(box, s, permission) {
     put(block, "p", "asknote",
         "The send box is back when this dialog closes: its Enter would say Yes.");
   }
-  const foot = put(box, "div", "asksend permsend");
-  // Absent with no pane, like jump everywhere else: there is nothing to open.
-  if (s.pane) {
-    const open = put(foot, "button", "verb");
-    open.textContent = "open the terminal";
-    open.addEventListener("click", jumpToPane);
-  }
+  putAnswers(s, permission, box);
+}
+
+// One option of a prompt, as both bars draw it: the number it stands for,
+// its label, and the note beside it.
+function putOption(list, cls, number, label, note) {
+  const button = put(list, "button", cls ? "askopt " + cls : "askopt");
+  put(button, "span", "asknum", number);
+  const text = put(button, "span", "asktext");
+  put(text, "span", "asklabel", label);
+  if (note) put(text, "span", "askwhy", note);
+  return button;
+}
+
+// The answers, as the CLI lists them and as the question bar draws its
+// options: one numbered row each, Yes and its "Yes, and ..." in the
+// working colour, No in the colour of a cut. They were small buttons in one
+// line with the reason box between them, and a long "don't ask again" label
+// broke it apart; the reader found it unreadable.
+//
+// A click picks, and submit answers, as on a question. A click that went
+// straight to the dialog was a Yes nobody could take back -- a slip of the
+// hand, or a page on a phone in a pocket -- and the question bar had had
+// submit for that reason all along; the reader asked for one way for all.
+function putAnswers(s, permission, box) {
+  const list = put(box, "div", "askopts permopts");
+  // The note is `note`, not `why`: as `why` it hid the reason box below,
+  // and a click on No threw on the string's `focus`.
+  const option = (cls, label, note, pick, parent = list) => {
+    // Numbered in `paintDecline`, which counts only the options shown.
+    const button = putOption(parent, cls, "", label, note);
+    button.dataset.pick = pick;
+    // `current()`, not `s`: the session's rows move on under a bar that is
+    // painted, not built, and `s.approvable` with them.
+    button.addEventListener("click", () => {
+      state.permPick = { key: permission.key, pick };
+      paintDecline(box, current(), permission);
+      if (pick === "no" && !why.disabled) why.focus();
+    });
+    return button;
+  };
   // Yes goes to the dialog's own hook, never through keys (`approve`):
   // built only for a dialog whose hook waits on a nonce, and shown only
   // while it still waits (`s.approvable`, in `paintDecline`).
   if (permission.ask) {
-    const yes = put(foot, "button", "verb permyes");
-    yes.textContent = "yes";
-    yes.title = "allows this one call, once, as Yes in the terminal would";
-    yes.addEventListener("click", () => submitApprove(s.id, permission, box));
+    option("permyes", "Yes", "this call, once", "yes");
+    // The CLI's "Yes, and ...": each of Claude Code's own suggestions, as
+    // its own choice (`always_offered`).
+    for (const one of permission.always || []) {
+      option("permyes permalways", "Yes, and " + one.label,
+             "as Claude Code suggests it", "always:" + one.at);
+    }
   }
-  const why = put(foot, "textarea", "say permwhy");
+  // No and its reason are one answer, so one edge goes round both: the box
+  // stood under the list, apart from the No it belongs to. It shows only
+  // while No is picked.
+  const group = put(list, "div", "permnogroup");
+  option("permno", "No", "and tell it what to do instead", "no", group);
+  const why = put(group, "textarea", "say permwhy");
   why.rows = 1;
-  why.placeholder = "what it should do instead (optional)";
-  why.style.setProperty("--fits", why.placeholder.length + "ch");
+  why.placeholder = "what it should do instead";
   // Kept for this dialog across a look at another tab, which builds the
   // bar again: half a reason lost that way is the question bar's scar.
   if (state.declineWhy.key === permission.key) why.value = state.declineWhy.text;
@@ -16200,12 +16359,21 @@ function drawPermission(box, s, permission) {
   why.addEventListener("input", () => {
     state.declineWhy = { key: permission.key, text: why.value };
     fitSay(why);
+    paintDecline(box, current(), permission);   // submit waits for words
   });
-  const no = put(foot, "button", "verb permno");
-  no.textContent = "no";
-  no.addEventListener("click", () => submitDecline(s.id, permission, box));
-  submitOnCtrlEnter(why, no);
+  // What submit does on the left, and submit at the right edge, where a
+  // form ends: the question bar's foot, with the same class.
+  const foot = put(box, "div", "asksend permsend");
   put(foot, "span", "asksays");
+  // Absent with no pane, like jump everywhere else: there is nothing to open.
+  if (s.pane) {
+    const open = put(foot, "button", "verb quiet");
+    open.textContent = "open the terminal";
+    open.addEventListener("click", jumpToPane);
+  }
+  const submit = put(foot, "button", "verb permsubmit", "submit");
+  submit.addEventListener("click", () => submitPermission(s.id, permission, box));
+  submitOnCtrlEnter(why, submit);
   paintDecline(box, s, permission);
   fitSay(why);   // a reason kept from before, or a placeholder on a narrow bar
 }
@@ -16222,91 +16390,104 @@ function lastPlan(call) {
   return null;
 }
 
-// What pressing no would do, said before it is pressed; and whether yes
-// may be pressed at all.
+// The answer picked on this dialog, if it is still one the bar shows: a
+// Yes picked while the hook waited is no pick once the hook stops waiting.
+function permissionPick(box, permission) {
+  if (state.permPick.key !== permission.key) return "";
+  const pick = state.permPick.pick;
+  const button = [...box.querySelectorAll(".permopts .askopt")]
+    .find((one) => one.dataset.pick === pick);
+  return button && !button.hidden ? pick : "";
+}
+
+// What submit would do, said before it is pressed; which answers show; and
+// whether submit may be pressed at all.
 function paintDecline(box, s, permission) {
-  const no = box.querySelector(".permno");
+  const submit = box.querySelector(".permsubmit");
   const why = box.querySelector(".permwhy");
   const says = box.querySelector(".permsend .asksays");
-  if (!no || !why || !says) return;
+  if (!submit || !why || !says) return;
   const cannot = whyNotTyped(s, true);
   // Without its call nothing can prove the dialog closed, so no reason is
   // typed -- and a box that takes one and then drops it is worse than none.
   const reasons = !cannot && !!permission.call;
   why.disabled = !reasons;
   // Off while something else is on its way to the session, as submit on a
-  // question is: `submitDecline` refuses then, and a No that could be
-  // pressed and did nothing, with no word why, read as a broken button.
-  // Its own No is on its way too, and says what it does, not that it waits.
-  const yes = box.querySelector(".permyes");
-  const mine = no.dataset.busy === "1" || (!!yes && yes.dataset.busy === "1");
+  // question is: `submitPermission` refuses then, and a submit that could
+  // be pressed and did nothing, with no word why, read as a broken button.
+  // Its own answer is on its way too, and says what it does, not that it
+  // waits.
+  const mine = submit.dataset.busy === "1";
   const busy = sending.has(s.id) && !mine;
-  no.disabled = !!cannot || mine || busy;
   // Only while the dialog's hook waits for it: the terminal may have
   // answered, or the hook given up, and then there is nothing to say Yes to.
-  if (yes) {
-    yes.hidden = !s.approvable;
-    yes.disabled = !!cannot || mine || busy;
+  for (const yes of box.querySelectorAll(".permyes")) yes.hidden = !s.approvable;
+  const pick = permissionPick(box, permission);
+  // Numbered as the CLI numbers its options, counting only those shown.
+  let at = 0;
+  for (const one of box.querySelectorAll(".permopts .askopt")) {
+    one.disabled = !!cannot || mine;
+    const mark = one.dataset.pick === "no" ? one.parentElement : one;
+    mark.classList.toggle("chosen", one.dataset.pick === pick);
+    if (!one.hidden) setText(one.querySelector(".asknum"), String(++at));
   }
+  const was = why.hidden;
+  why.hidden = pick !== "no";
+  if (was && !why.hidden) fitSay(why);   // measured only once it shows
+  // A No waits for its reason, as the reader asked: what the agent should
+  // do instead is the point of saying No from here. Not where no reason
+  // can be typed, or that No could never be given at all.
+  const wordless = pick === "no" && reasons && !why.value.trim();
+  submit.disabled = !pick || wordless || !!cannot || mine || busy;
   // Said in both cases: a Yes given in the terminal fires no hook, so the
   // row stays amber while the approved call runs, and Escape then stops it.
   const already = " If you already answered in the terminal, Escape stops the agent.";
-  says.textContent = cannot ? cannot
+  setText(says, cannot ? cannot
     : busy ? "waiting for what is on its way to this session"
+    : !pick ? "pick an answer"
+    : wordless ? "write what it should do instead"
+    : pick === "yes" ? "allows this one call, once"
+    : pick !== "no" ? "allows this call, and keeps the rule Claude Code suggests"
     : !reasons
     ? "presses Escape. A reason cannot be typed for this one: send it after."
       + already
     : "presses Escape, then types your reason once the dialog has closed."
-      + already;
+      + already);
 }
 
-async function submitApprove(id, permission, box) {
-  const yes = box.querySelector(".permyes");
-  // The same guard as a No: one answer to a dialog at a time.
-  if (!yes || yes.disabled) return;
-  yes.dataset.busy = "1";
-  if (!startSending(id)) { yes.dataset.busy = ""; return; }
-  yes.disabled = true;
-  let answer;
-  try {
-    answer = await tell(id, "approve", { key: permission.key });
-  } finally {
-    doneSending(id);
-  }
-  yes.dataset.busy = "";
-  said(answer);
-  if (answer && answer.done) note("allowed, once");
-  else yes.disabled = false;
-}
-
-async function submitDecline(id, permission, box) {
-  const no = box.querySelector(".permno");
+// Submit: the picked answer, to the hook for a Yes and as keys for a No.
+async function submitPermission(id, permission, box) {
+  const pick = permissionPick(box, permission);
+  const submit = box.querySelector(".permsubmit");
   const why = box.querySelector(".permwhy");
-  // One thing typed into a session at a time: the send box and a No share
-  // the guard, because a send landing between the Escape and the proof
-  // would be typed into a dialog that may still be up.
+  // One answer to a dialog at a time, and one thing typed into a session at
+  // a time: the send box and a No share the guard, because a send landing
+  // between the Escape and the proof would be typed into a dialog that may
+  // still be up, and a Yes on its way would race a No for the same dialog.
   // Marked as its own before the guard is taken, which paints the bar: the
-  // mark is what keeps the bar from saying it waits for this very No.
-  if (!no || no.disabled) return;
-  no.dataset.busy = "1";
-  if (!startSending(id)) { no.dataset.busy = ""; return; }
-  no.disabled = true;
-  const reason = why && !why.disabled ? why.value : "";
+  // mark is what keeps the bar from saying it waits for this very answer.
+  if (!pick || !submit || submit.disabled) return;
+  submit.dataset.busy = "1";
+  if (!startSending(id)) { submit.dataset.busy = ""; return; }
+  submit.disabled = true;
+  const always = pick.startsWith("always:") ? Number(pick.slice("always:".length)) : null;
   let answer;
   try {
-    answer = await tell(id, "decline", { key: permission.key, reason });
+    answer = pick === "no"
+      ? await tell(id, "decline", { key: permission.key,
+                                    reason: why && !why.disabled ? why.value : "" })
+      : await tell(id, "approve", { key: permission.key, always });
   } finally {
     doneSending(id);
   }
-  no.dataset.busy = "";
-  if (!answer || !answer.done) {
-    said(answer);
-    no.disabled = false;
-    return;
-  }
+  submit.dataset.busy = "";
   // Declined, and maybe the reason held back: that is said, and stays.
   said(answer);
-  if (!answer.error) {
+  if (!answer || !answer.done) {
+    submit.disabled = false;
+  } else if (pick !== "no") {
+    note(always === null ? "allowed, once" : "allowed, and kept");
+  } else if (!answer.error) {
     if (why) why.value = "";
     state.declineWhy = { key: "", text: "" };
     note(answer.sent ? "declined, and your reason was typed" : "declined");
