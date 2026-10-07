@@ -1799,7 +1799,9 @@ def test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it(ws, in_pane):
         assert page.locator("#asking .askhead").inner_text().lower() == "plan"
         assert page.locator("#asking .permfield").count() == 0
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.map((one) => one.textContent)")
+            "#asking button", "els => els.filter((one) => !one.hidden)"
+            ".map((one) => one.textContent)")
+        # No Yes for a plan: its hook does not wait (`NOT_APPROVED`).
         assert buttons == ["read the plan", "open the terminal", "no"], buttons
         # Its top away from the top of the pane first -- at the head of the
         # transcript -- so the click is what brings it there.
