@@ -83,7 +83,10 @@ Claude Code must never break an older wostuast.
 
 The hook adds fields of its own: `ts`, `pane`, `pid`, `shell_pid`, and
 `started_by` -- the pid of the agent that ran this one, for an agent that
-reads no terminal, else 0 (#422).
+reads no terminal, else 0 (#422). On `SessionStart` only, also
+`background` -- the agent runs in Claude Code's background daemon -- and
+`moved_from`, the session such an agent carries on, or "" (see "A
+conversation moved to the background").
 
 ### What an agent starts
 
@@ -117,6 +120,31 @@ does not either: the Bash tool has `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID`
 of the agent, but the `claude -p` sets its own, so its hooks see those. The
 process tree does: the hook's shell, then the `claude -p` (stdin a pipe or
 `/dev/null`), then the tool's `bash -c`, then the agent.
+
+### A conversation moved to the background
+
+Measured on 2.1.292 with `tests/claude_pane.py` and wostuast's own hook
+(`background_move.jsonl`, the paths invented). `←` on an empty prompt
+opens the agents view and says "Your conversation moved to the
+background"; with a subagent running, it asks first ("Background anyway
+(tasks will be stopped)"). Three things happen, and the hooks say only two
+of them:
+
+- The old session gets no `SessionEnd`. Its process lives on, and shows
+  the agents view in the pane.
+- A `SessionStart` with `source: "fork"` and a new id. Claude Code's
+  daemon runs it as `claude --session-id <new> --fork-session --resume
+  <old transcript>`, under `claude bg-pty-host --bg-pty-host <socket> …`,
+  with a pty for its stdin and no `TMUX_PANE`. Its transcript is the old
+  one copied, each record with the new id, and nothing in it or in the
+  payload names the old session. A subagent of the old one starts again
+  under it (`SubagentStart` with the same `agent_id`).
+- A `SessionStart` with `source: "startup"` and `agent_type: "claude"`,
+  from `claude --session-id <id> --agent claude` under the same daemon. It
+  sent nothing else.
+
+A fork typed at a terminal, `claude --resume <id> --fork-session`, sends
+`source: "fork"` too, and the old session goes on in its own pane.
 
 ### A question the agent is stopped on
 

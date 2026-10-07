@@ -254,6 +254,33 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_the_name_goes_with_a_clear_and_moves_once`,
   `test_a_clear_is_followed_and_a_reload_stays_on_it`,
   `test_a_reader_who_goes_back_to_a_cleared_session_stays_there`.
+  - **A conversation the agents view moves to the background is joined
+    the same way, by what the hook read** (`link_move`). `←` on an empty
+    prompt runs the conversation again in Claude Code's daemon as a fork,
+    with a new id (topics/payloads, `tests/fixtures/README.md`). The old
+    session gets no `SessionEnd`, and its process lives on as the agents
+    view, so `mark_dead` never buried it: the reader saw three rows for one
+    conversation -- the old one, ready for ever; the fork, with the same
+    transcript up to the move; and the agents view's own session.
+    **Nothing in a payload or a transcript names the old session**: only
+    the fork's command line, `--fork-session --resume <old transcript>`.
+    So the hook reads it, on `SessionStart` only, and writes `moved_from`
+    (`background_start`). **Only under the daemon's `bg-pty-host`**,
+    written as `background`: a fork typed at a terminal sends `source:
+    "fork"` too, and its old session lives on in its own pane. The old
+    session ends ("background"), its subagents with it -- the fork starts
+    again those that go on -- the page follows `cleared_into`, and the name
+    moves (`_move_name`, shared with `link_clear`). Linux only, as
+    `started_by` is. The old row's pane now shows the agents view, and an
+    ended row is never typed into; the fork has no pane.
+    **The agents view's own session has no row until it is given a task**
+    (`untasked`, in `Store.visible`): `background`, no `moved_from`, and no
+    prompt yet (`prompted`). The reader chose this. A line written before
+    the hook wrote the key is a session at a terminal, as it was.
+    `test_a_conversation_moved_to_the_background_is_one_row`,
+    `test_a_fork_typed_at_a_terminal_ends_nothing`,
+    `test_the_hook_says_which_session_a_background_fork_carries_on`,
+    `tests/test_background.py`.
 - **A state change clears the attention with it.** Every handler that sets a
   state calls `_clear_attention` — `SessionStart` did not, so a session killed
   at its dialog and resumed came back "ready" with the old permission question

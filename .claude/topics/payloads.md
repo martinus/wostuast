@@ -113,6 +113,16 @@ came in the six seconds the dialog was up. `plan_of` reads it, and
 `tests/fixtures/plan_events.jsonl` and `plan_transcript.jsonl` are the
 recording; topics/state says what the page does with it (#372).
 
+**A conversation the agents view moves to the background is read off a
+real run** (`tests/fixtures/README.md`, "A conversation moved to the
+background"; 2.1.292). The fork's `SessionStart` says `source: "fork"` and
+nothing that names the session it carries on, and the old one gets no
+`SessionEnd`. Only the process does: the fork runs under the daemon's
+`bg-pty-host` as `--fork-session --resume <old transcript>`, which is why
+the hook writes `background` and `moved_from` (`background_start`).
+Measured with `ClaudePane(setup=…)` running `wostuast install` into its
+home, and `send-keys Left` on the empty prompt.
+
 **What an agent starts is read off a real run, not the docs** (#422,
 `tests/fixtures/README.md`, "What an agent starts"). A subagent of the
 Agent tool fires its hooks under its agent's session id, with

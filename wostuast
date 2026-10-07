@@ -1221,6 +1221,17 @@ class Session:
     #: `cleared_into`.
     cleared_into: str = ""
     cleared_from: str = ""
+    #: It runs in Claude Code's own background daemon, in a terminal no
+    #: pane shows, and `moved_from` is the session it carries on when the
+    #: agents view moved that one there: see `background_start`. The
+    #: hook writes both on `SessionStart`; `link_move` joins the two as
+    #: `link_clear` joins a `/clear`.
+    background: bool = False
+    moved_from: str = ""
+    #: A prompt has reached it, of any kind. The agents view keeps a
+    #: session of its own in the background that is asked nothing until
+    #: the reader gives it a task: see `untasked`.
+    prompted: bool = False
     #: The session whose agent started this one: a `claude -p` it ran from
     #: its Bash tool (#422). Such a session is no row of its own; the page
     #: draws it as a line under that one. See `Store.parent_of`.
@@ -1312,6 +1323,15 @@ class Session:
         the same wait."""
         return (self.state == "needs_you" and self.snoozed_at > 0
                 and self.snoozed_at == self.attention_since)
+
+    def untasked(self) -> bool:
+        """A session the agents view keeps in the background that nothing has
+        been asked of yet: no row (measured on 2.1.292, `claude --agent
+        claude` under its daemon, which sent a `SessionStart` and nothing
+        else). It was a third row, ready for ever. Given a task, it is a
+        session like any other; and one that carries a conversation on is
+        that conversation."""
+        return self.background and not self.moved_from and not self.prompted
 
     @property
     def title(self) -> str:
@@ -1831,6 +1851,9 @@ class Store:
             elif by != session.started_pid:
                 session.started_pid = by
                 session.started_by = self.parent_of(session, by)
+        if name == "SessionStart" and "background" in event:
+            session.background = bool(event.get("background"))
+            session.moved_from = str(event.get("moved_from") or "")
         handler = _HANDLERS.get(name)
         was = session.state
         if handler is not None:
@@ -1854,6 +1877,8 @@ class Store:
             self.git_wanted.add(session.cwd)
         if name in ("SessionStart", "SessionEnd"):
             self.link_clear(session)
+        if name == "SessionStart" and session.moved_from:
+            self.link_move(session, ts)
         return session
 
     def parent_of(self, child: Session, pid: int) -> str:
@@ -1905,6 +1930,35 @@ class Store:
             return
         old.cleared_into = new.session_id
         new.cleared_from = old.session_id
+        self._move_name(old, new)
+
+    def link_move(self, new: Session, moment: float) -> None:
+        """Join a conversation the agents view moved to the background to
+        the session it was, as `link_clear` joins a `/clear`.
+
+        The old session sends no `SessionEnd` (measured on 2.1.292), and its
+        process lives on as the agents view, so `mark_dead` never buries it:
+        it was a second row of the same conversation, ready for ever, beside
+        the fork's. So it ends here, and its subagents with it -- the fork
+        starts again those that go on. The page follows `cleared_into`, and
+        the reader's name for it moves.
+        """
+        old = self.sessions.get(new.moved_from)
+        if old is None or old is new or old.cleared_into:
+            return
+        old.cleared_into = new.session_id
+        new.cleared_from = old.session_id
+        if old.state not in GONE_STATES:
+            _clear_attention(old)
+            old.state = "ended"
+            old.state_since = moment or old.last_ts
+            old.end_reason = "background"
+            old.last_event = "moved to the background"
+        end_subagents(old, moment or old.last_ts)
+        self._move_name(old, new)
+
+    def _move_name(self, old: Session, new: Session) -> None:
+        """The reader's name for a conversation goes where it went on."""
         with self.naming:
             if old.session_id not in self.names or new.session_id in self.names:
                 return
@@ -1976,7 +2030,7 @@ class Store:
         not merely hidden: the daemon runs for days and everything hung off a
         session id, transcript readers included, would be kept with it."""
         self.forget_quiet(now)
-        return list(self.sessions.values())
+        return [one for one in self.sessions.values() if not one.untasked()]
 
     def forget_quiet(self, now: float) -> None:
         """Forget every session that has said nothing for `SESSION_MAX_AGE`."""
@@ -2476,6 +2530,7 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
 
 def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
+    session.prompted = True
     session.calls.clear()          # a new turn: see `_on_stop`
     session.state = "working"
     # A background task that ended wakes the agent with a prompt of Claude
@@ -3021,6 +3076,48 @@ def process_args(pid: int) -> str:
             "utf-8", "replace")
     except OSError:
         return ""
+
+
+def process_argv(pid: int) -> list[str]:
+    """The command line of a process, one argument an item: a path in it
+    may hold a space, which `process_args` cannot tell from a separator."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return []
+    return raw.decode("utf-8", "replace").rstrip("\0").split("\0")
+
+
+def background_start(pid: int) -> tuple[bool, str]:
+    """Whether this agent runs in Claude Code's own background daemon, and,
+    for one the agents view moved there, the session it carries on.
+
+    Measured on 2.1.292: `←` on an empty prompt opens the agents view and
+    moves the conversation to the background. Claude Code runs it again
+    under its daemon as `claude --session-id <new> --fork-session --resume
+    <old transcript>`, under a `claude bg-pty-host --bg-pty-host …`, and
+    sends `SessionStart` with `source: "fork"` and nothing that names the
+    old session; the old one gets no `SessionEnd`. Only this command line
+    joins them. A fork typed at a terminal sends `source: "fork"` as well,
+    but the old session lives on in its own pane, so only a fork in the
+    background is a move.
+    """
+    if pid <= 0 or "--bg-pty-host" not in process_argv(parent_pid(pid)):
+        return False, ""
+    args = process_argv(pid)
+    if "--fork-session" not in args:
+        return True, ""
+    given = ""
+    for at, one in enumerate(args):
+        if one in ("--resume", "-r") and at + 1 < len(args):
+            given = args[at + 1]
+        elif one.startswith("--resume="):
+            given = one.partition("=")[2]
+    # A transcript's path, or an id: either way the id is its last part.
+    sid = given.rpartition("/")[2].removesuffix(".jsonl")
+    if 0 < len(sid) <= 64 and all(c.isalnum() or c == "-" for c in sid):
+        return True, sid
+    return True, ""
 
 
 def parent_pid(pid: int) -> int:
@@ -9708,6 +9805,15 @@ def cmd_hook(args: argparse.Namespace) -> int:
                                         else claude_from(parent_pid(record["pid"])))
             except Exception:
                 record["started_by"] = 0
+            # A session the agents view moved to the background, and the
+            # one it was (`background_start`). Only where a session starts,
+            # so no other event pays for the two reads.
+            if record.get("hook_event_name") == "SessionStart":
+                try:
+                    record["background"], record["moved_from"] = \
+                        background_start(record["pid"])
+                except Exception:
+                    record["background"], record["moved_from"] = False, ""
             record["shell_pid"] = os.getppid()
             append_event(record, stamp=True)    # `ts`, under the log's lock
             stand_down()
@@ -10855,7 +10961,8 @@ HOOK_PARTS = frozenset({
     "ARCHIVE_NAME", "AGENT_NAMES", "state_dir", "private_dir", "open_private",
     "events_path", "archived_events_paths", "file_key", "archive_number",
     "log_path", "log", "rotate", "still_the_file", "append_event",
-    "archive_log", "to_int", "process_name", "process_args", "parent_pid",
+    "archive_log", "to_int", "process_name", "process_args", "process_argv",
+    "background_start", "parent_pid",
     "looks_like_claude", "agent_pid", "claude_from", "reads_terminal", "give_up_after", "stand_down",
     "read_stdin_json", "cmd_hook",
 })
