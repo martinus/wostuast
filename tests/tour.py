@@ -141,6 +141,13 @@ def make_sessions(ws, home: Path) -> None:
                          "ts": at, "last_assistant_message": SAID[sid]})
     ws.append_event({"session_id": "s4", "hook_event_name": "PermissionRequest",
                      "tool_name": "Bash", "tool_input": {"command": "make release"},
+                     # As the hook writes it, and as Claude Code suggests a
+                     # rule for a command (measured on 2.1.292).
+                     "ask_id": "0123456789abcdef",
+                     "permission_suggestions": [
+                         {"type": "addRules", "behavior": "allow",
+                          "destination": "localSettings",
+                          "rules": [{"toolName": "Bash", "ruleContent": "make release *"}]}],
                      "cwd": str(home / "w" / "s4"), "pane": "%4", "pid": 1, "ts": now - 30})
     # One that is over, for the history and its chosen row (#427).
     ws.append_event({"session_id": "s6", "hook_event_name": "SessionEnd", "reason": "logout",

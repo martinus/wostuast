@@ -1192,10 +1192,42 @@ def test_yes_shows_while_the_hook_waits_and_goes_to_it(ws, in_pane, monkeypatch)
         page.click("#asking .permyes")
         page.wait_for_function("window.words.includes('allowed, once')")
         hook.join(10)
-        assert took == [True]
+        assert took == [ask]
         assert seen == [], "a Yes pressed keys"
         daemon.tick()
         page.wait_for_selector("#asking", state="hidden")
+
+
+def test_yes_and_dont_ask_again_is_a_choice_of_its_own(ws, in_pane, monkeypatch):
+    """The CLI's "Yes, and don't ask again for: npm test *" is a button too,
+    in the colour of yes, and it sends which choice it is. No is in another
+    colour, so the two answers read apart."""
+    daemon, base, seen = in_pane
+    monkeypatch.setattr(ws, "APPROVE_WAIT", 30)
+    ask = "00aa11bb22cc33ee"
+    cwd = daemon.store.sessions["s1"].cwd
+    ws.append_event(conftest.event(
+        "PermissionRequest", tool_name="Bash", pane="%7", cwd=cwd, ask_id=ask,
+        tool_input={"command": "npm test -- --watch=false"},
+        permission_suggestions=[{"type": "addRules", "behavior": "allow",
+                                 "destination": "localSettings",
+                                 "rules": [{"toolName": "Bash", "ruleContent": "npm test *"}]}]))
+    took = []
+    hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ask)), daemon=True)
+    hook.start()
+    with opened((None, base)) as page:
+        wait_until(page, lambda: ws.hook_waits(ask))
+        daemon.tick()
+        page.wait_for_selector("#asking .permalways:not([hidden])")
+        assert page.inner_text("#asking .permalways") == \
+            "yes, and don't ask again for npm test * in this project"
+        colours = page.evaluate("""() => ['.permyes', '.permalways', '.permno'].map((one) =>
+          getComputedStyle(document.querySelector('#asking ' + one)).color)""")
+        assert colours[0] == colours[1] != colours[2], colours
+        page.click("#asking .permalways")
+        hook.join(10)
+        assert took == [ask + ":0"]
+        assert seen == [], "a Yes pressed keys"
 
 
 def test_a_dialog_with_no_call_of_its_own_takes_no_reason(ws, in_pane):

@@ -1,0 +1,17 @@
+{
+  "npm test -- --watch=false": [
+    {"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "npm test *"}],
+     "behavior": "allow", "destination": "localSettings"}
+  ],
+  "Write notes.md": [
+    {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
+  ],
+  "rm -rf build": [
+    {"type": "addDirectories", "directories": ["/w/repo/dir"], "destination": "session"},
+    {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
+  ],
+  "WebFetch https://example.com/doc": [
+    {"type": "addRules", "destination": "localSettings",
+     "rules": [{"toolName": "WebFetch", "ruleContent": "domain:example.com"}], "behavior": "allow"}
+  ]
+}

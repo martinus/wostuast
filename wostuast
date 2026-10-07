@@ -97,6 +97,11 @@ NOT_APPROVED = frozenset({"AskUserQuestion", "ExitPlanMode"})
 ALLOW = ('{"hookSpecificOutput": {"hookEventName": "PermissionRequest",'
          ' "decision": {"behavior": "allow"}}}\n')
 
+#: The modes a suggestion may switch to from the page. Measured on 2.1.292,
+#: Claude Code suggests `acceptEdits` for a file and nothing else; a mode
+#: that turns every prompt off is not offered from here.
+ALWAYS_MODES = frozenset({"acceptEdits"})
+
 #: A directory's git facts are read again when an event asks for it, but never
 #: more often than this. git status on a large worktree is not cheap.
 GIT_MIN_INTERVAL = 10.0
@@ -407,8 +412,59 @@ def daemon_running() -> bool:
     return lock_held(daemon_lock_path())
 
 
-def wait_for_yes(ask: str) -> bool:
-    """Wait for the page's Yes to this one dialog: True when it came.
+def always_offered(suggestions: Any) -> list[tuple[int, dict[str, Any]]]:
+    """The "Yes, and ..." choices the page may offer for a dialog: each of
+    Claude Code's own `permission_suggestions`, by its place in the list,
+    that allows something -- a rule, a folder, `acceptEdits`.
+
+    Measured on 2.1.292: a command suggests `addRules` (`Bash(npm test *)`,
+    kept in the project's `.claude/settings.local.json`), a fetch a domain
+    rule, a file `setMode acceptEdits`, and `rm -rf build` a folder and the
+    mode. An allow that carries one of them as `updatedPermissions` does
+    what the CLI's option does (`tests/fixtures/README.md`). Only these are
+    offered: the page never makes a rule of its own, and never one that
+    asks, denies, removes or replaces.
+    """
+    if not isinstance(suggestions, list):
+        return []
+    out = []
+    for at, one in enumerate(suggestions):
+        if not isinstance(one, dict):
+            continue
+        kind = one.get("type")
+        rules = one.get("rules")
+        if kind == "addRules" and one.get("behavior") == "allow" and isinstance(rules, list) \
+                and rules and all(isinstance(rule, dict) and rule.get("toolName")
+                                  for rule in rules):
+            out.append((at, one))
+        elif kind == "addDirectories" and isinstance(one.get("directories"), list) \
+                and one["directories"]:
+            out.append((at, one))
+        elif kind == "setMode" and one.get("mode") in ALWAYS_MODES:
+            out.append((at, one))
+    return out
+
+
+def allow_for(record: dict[str, Any], said: str) -> str:
+    """The allow to print for the Yes the page wrote: once, or with the one
+    suggestion it chose, taken from this hook's own payload -- never from
+    the page. A choice this dialog was not offered gets no answer at all:
+    the reader asked for something else than a plain Yes."""
+    pick = said.partition(":")[2]
+    if not pick:
+        return ALLOW
+    chosen = dict(always_offered(record.get("permission_suggestions"))).get(int(pick))
+    if chosen is None:
+        return ""
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PermissionRequest",
+        "decision": {"behavior": "allow", "updatedPermissions": [chosen]}}}) + "\n"
+
+
+def wait_for_yes(ask: str) -> str:
+    """Wait for the page's Yes to this one dialog: what it said, or "".
+    `<ask>` is a Yes once; `<ask>:<n>` a Yes with the n-th suggestion
+    (`allow_for`).
 
     **The Yes is bound to the dialog by the hook itself.** Claude Code calls
     this hook for one dialog and takes its answer for that dialog only, so
@@ -436,10 +492,11 @@ def wait_for_yes(ask: str) -> bool:
                 said = yes.read_text(encoding="utf-8")
             except OSError:
                 said = ""
-            if said == ask:
-                return True
+            if said == ask or (said.startswith(ask + ":")
+                               and said[len(ask) + 1:].isdigit()):
+                return said
             time.sleep(APPROVE_POLL)
-        return False
+        return ""
     finally:
         for one in (yes, waiting, taking):
             one.unlink(missing_ok=True)
@@ -2804,6 +2861,29 @@ def hook_waits(ask: str) -> bool:
     return False
 
 
+#: Where a suggestion keeps what it allows, as the page says it.
+WHERE_KEPT = {"localSettings": "in this project", "projectSettings": "in this project, for everyone",
+              "userSettings": "everywhere", "session": "for this session"}
+
+
+def always_label(one: dict[str, Any]) -> str:
+    """A suggestion as the "Yes, and ..." the page shows, in the CLI's words
+    where they are plain: "don't ask again for npm test *"."""
+    where = WHERE_KEPT.get(str(one.get("destination") or ""), "")
+    if one.get("type") == "addRules":
+        named = []
+        for rule in one["rules"]:
+            tool, content = str(rule.get("toolName")), str(rule.get("ruleContent") or "")
+            named.append(content.removeprefix("domain:") if tool in ("Bash", "WebFetch") and content
+                         else f"{tool}({content})" if content else tool)
+        said = "don't ask again for " + ", ".join(named)
+    elif one.get("type") == "addDirectories":
+        said = "always allow access to " + ", ".join(str(path) for path in one["directories"])
+    else:
+        said = "accept edits"
+    return clip(f"{said} {where}".strip(), 200)
+
+
 def read_permission(event: dict[str, Any], calls: dict[str, str], summary: str,
                     ts: float) -> dict[str, Any]:
     """The permission request as the page shows it, for the reader to decline.
@@ -2836,8 +2916,11 @@ def read_permission(event: dict[str, Any], calls: dict[str, str], summary: str,
     withheld = sum(len(key) + len(text) for key, text in fields) > PERMISSION_SHOWN
     matches = [one for one, said in calls.items() if said == summary]
     ask = str(event.get("ask_id") or "")
-    return {"key": f"{ts:.6f}", "tool": tool,
-            "ask": ask if ASK_SHAPE.fullmatch(ask) else "",
+    ask = ask if ASK_SHAPE.fullmatch(ask) else ""
+    # The "Yes, and ..." choices: only where a hook waits to carry one.
+    always = [{"at": at, "label": always_label(one)}
+              for at, one in always_offered(event.get("permission_suggestions"))] if ask else []
+    return {"key": f"{ts:.6f}", "tool": tool, "ask": ask, "always": always,
             "call": matches[0] if len(matches) == 1 else "",
             "fields": [] if withheld else fields, "withheld": withheld,
             "plan": plan}
@@ -2872,7 +2955,9 @@ def _on_approved(session: Session, event: dict[str, Any], ts: float) -> None:
         return
     _clear_attention(session)
     session.state = "working"
-    session.last_event = "allowed from the page"
+    always = str(event.get("always") or "")
+    session.last_event = (f"allowed from the page, and {always}" if always
+                          else "allowed from the page")
 
 
 def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None:
@@ -9442,18 +9527,28 @@ class Serving:
         if self.daemon.call_answered(session_id, str(shown.get("call") or "")):
             self.refuse(session_id, 409, "that request was answered in the terminal already")
             return
+        # "Yes, and ..." names one of the choices this dialog offered, by its
+        # place; the hook takes the suggestion itself from its own payload.
+        always = body.get("always")
+        offered = {one["at"]: one["label"] for one in shown.get("always") or []}
+        if always is not None and (type(always) is not int or always not in offered):
+            self.refuse(session_id, 400, "this dialog offers no such choice")
+            return
+        said = ask if always is None else f"{ask}:{always}"
         # One answer at a time: a No on its way and a Yes would race for the
         # same dialog.
         with self.daemon.holding(session_id, "", no=True) as busy:
             if busy:
                 self.refuse(session_id, 409, busy)
                 return
-            self.give_yes(session_id, shown, ask)
+            self.give_yes(session_id, shown, said, offered.get(always, ""))
 
-    def give_yes(self, session_id: str, shown: dict[str, Any], ask: str) -> None:
+    def give_yes(self, session_id: str, shown: dict[str, Any], said: str,
+                 always: str) -> None:
         """Write the Yes, and wait for the hook to take it."""
+        ask = said.partition(":")[0]
         yes = approvals_dir() / f"{ask}.yes"
-        write_atomic(yes, ask, private=True)
+        write_atomic(yes, said, private=True)
         # The hook takes it by removing it.
         deadline = time.monotonic() + APPROVE_SEEN
         while yes.exists() and time.monotonic() < deadline:
@@ -9470,7 +9565,7 @@ class Serving:
                                       " the terminal"}, 409)
             return
         append_event({"session_id": session_id, "hook_event_name": "Approved",
-                      "ts": time.time(), "key": shown["key"]})
+                      "ts": time.time(), "key": shown["key"], "always": always})
         self.reply_json({"id": session_id, "done": True})
 
     def press_decline(self, session_id: str, pane: str, shown: dict[str, Any],
@@ -9980,8 +10075,9 @@ def cmd_hook(args: argparse.Namespace) -> int:
     to allow or deny outright. Printing nothing means "no opinion", and the
     dialog behaves as if we were not here.
 
-    **The one exception is `ALLOW`, for the dialog this hook was called for,
-    and only once the reader said Yes on the page** (`wait_for_yes`). Never
+    **The one exception is an allow for the dialog this hook was called
+    for, and only once the reader said Yes on the page** (`wait_for_yes`,
+    `allow_for`): once, or with one of Claude Code's own suggestions. Never
     print anything else, in this function or in anything it calls: one
     `print()` here approves every dialog. Exit 0 whatever happens, and say
     anything worth saying in the log file.
@@ -10032,8 +10128,9 @@ def cmd_hook(args: argparse.Namespace) -> int:
             # waits; and only while a daemon runs, which alone can say Yes.
             if asks and daemon_running():
                 give_up_after(APPROVE_WAIT + 30)
-                if wait_for_yes(record["ask_id"]):
-                    sys.stdout.write(ALLOW)
+                said = wait_for_yes(record["ask_id"])
+                if said:
+                    sys.stdout.write(allow_for(record, said))
                     sys.stdout.flush()
                 stand_down()
         except BaseException as error:  # a hook must never block Claude Code
@@ -11187,7 +11284,7 @@ HOOK_PARTS = frozenset({
     "looks_like_claude", "agent_pid", "claude_from", "reads_terminal", "give_up_after", "stand_down",
     "read_stdin_json", "cmd_hook", "APPROVE_WAIT", "APPROVE_POLL", "NOT_APPROVED",
     "ALLOW", "approvals_dir", "daemon_lock_path", "lock_held", "daemon_running",
-    "wait_for_yes",
+    "wait_for_yes", "ALWAYS_MODES", "always_offered", "allow_for",
 })
 
 HOOK_HEAD = '''#!/usr/bin/env python3
@@ -12948,6 +13045,22 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   flex: 1 1 260px; min-width: min(100%, calc(var(--fits, 0ch) + 24px));
 }
 .permsend .asksays { flex-basis: 100%; }
+/* Yes in the working colour, No in the colour of a cut: the two answers
+   read apart at a glance, as the CLI's do. */
+.permsend .permyes {
+  color: var(--working); background: var(--working-soft);
+  border-color: color-mix(in srgb, var(--working) 55%, transparent);
+}
+.permsend .permno {
+  color: var(--cut-ink); background: color-mix(in srgb, var(--hot) 14%, transparent);
+  border-color: color-mix(in srgb, var(--hot) 55%, transparent);
+}
+.permsend .permyes:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--working) 28%, transparent);
+}
+.permsend .permno:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--hot) 26%, transparent);
+}
 .asksays { font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
 .asknum {
   flex-shrink: 0; min-width: 18px; text-align: center;
@@ -16186,7 +16299,15 @@ function drawPermission(box, s, permission) {
     const yes = put(foot, "button", "verb permyes");
     yes.textContent = "yes";
     yes.title = "allows this one call, once, as Yes in the terminal would";
-    yes.addEventListener("click", () => submitApprove(s.id, permission, box));
+    yes.addEventListener("click", () => submitApprove(s.id, permission, box, yes, null));
+    // The CLI's "Yes, and ...": each of Claude Code's own suggestions, as
+    // its own choice (`always_offered`).
+    for (const one of permission.always || []) {
+      const always = put(foot, "button", "verb permyes permalways", "yes, and " + one.label);
+      always.title = "allows this call, and keeps this rule as Claude Code suggests it";
+      always.addEventListener("click",
+        () => submitApprove(s.id, permission, box, always, one.at));
+    }
   }
   const why = put(foot, "textarea", "say permwhy");
   why.rows = 1;
@@ -16238,13 +16359,13 @@ function paintDecline(box, s, permission) {
   // question is: `submitDecline` refuses then, and a No that could be
   // pressed and did nothing, with no word why, read as a broken button.
   // Its own No is on its way too, and says what it does, not that it waits.
-  const yes = box.querySelector(".permyes");
-  const mine = no.dataset.busy === "1" || (!!yes && yes.dataset.busy === "1");
+  const yeses = [...box.querySelectorAll(".permyes")];
+  const mine = no.dataset.busy === "1" || yeses.some((yes) => yes.dataset.busy === "1");
   const busy = sending.has(s.id) && !mine;
   no.disabled = !!cannot || mine || busy;
   // Only while the dialog's hook waits for it: the terminal may have
   // answered, or the hook given up, and then there is nothing to say Yes to.
-  if (yes) {
+  for (const yes of yeses) {
     yes.hidden = !s.approvable;
     yes.disabled = !!cannot || mine || busy;
   }
@@ -16260,22 +16381,21 @@ function paintDecline(box, s, permission) {
       + already;
 }
 
-async function submitApprove(id, permission, box) {
-  const yes = box.querySelector(".permyes");
+async function submitApprove(id, permission, box, yes, always) {
   // The same guard as a No: one answer to a dialog at a time.
-  if (!yes || yes.disabled) return;
+  if (yes.disabled) return;
   yes.dataset.busy = "1";
   if (!startSending(id)) { yes.dataset.busy = ""; return; }
   yes.disabled = true;
   let answer;
   try {
-    answer = await tell(id, "approve", { key: permission.key });
+    answer = await tell(id, "approve", { key: permission.key, always });
   } finally {
     doneSending(id);
   }
   yes.dataset.busy = "";
   said(answer);
-  if (answer && answer.done) note("allowed, once");
+  if (answer && answer.done) note(always === null ? "allowed, once" : "allowed, and kept");
   else yes.disabled = false;
 }
 

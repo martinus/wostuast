@@ -72,7 +72,7 @@ def test_a_yes_goes_to_the_dialogs_own_hook_and_never_to_the_pane(ws, asking):
                         token=daemon.token)
     assert status == 200 and body["done"], body
     hook.join(5)
-    assert took == [True]
+    assert took == [ASK]
     assert seen == [], "a Yes pressed keys"
     assert not list(ws.approvals_dir().iterdir()), "the Yes was left lying there"
     daemon.store.refresh()
@@ -124,6 +124,79 @@ def test_no_yes_once_the_hook_has_stopped(ws, served):
     assert not (ws.approvals_dir() / f"{ASK}.yes").exists()
 
 
+SUGGESTED = json.loads((conftest.FIXTURES / "permission_suggestions.json").read_text())
+
+
+def test_the_choices_are_claude_codes_own_suggestions(ws):
+    """Measured on 2.1.292 (`permission_suggestions.json`): each suggestion
+    is a "Yes, and ..." of its own, in the CLI's words where they are plain,
+    and nothing that asks, denies, removes, or turns every prompt off."""
+    def offered(suggestions):
+        shown = ws.read_permission(event("PermissionRequest", tool_name="Bash", ask_id=ASK,
+                                         permission_suggestions=suggestions), {}, "", 1.0)
+        return [(one["at"], one["label"]) for one in shown["always"]]
+
+    assert offered(SUGGESTED["npm test -- --watch=false"]) == [
+        (0, "don't ask again for npm test * in this project")]
+    assert offered(SUGGESTED["WebFetch https://example.com/doc"]) == [
+        (0, "don't ask again for example.com in this project")]
+    assert offered(SUGGESTED["Write notes.md"]) == [(0, "accept edits for this session")]
+    assert offered(SUGGESTED["rm -rf build"]) == [
+        (0, "always allow access to /w/repo/dir for this session"),
+        (1, "accept edits for this session")]
+    assert offered([
+        {"type": "addRules", "behavior": "deny", "destination": "localSettings",
+         "rules": [{"toolName": "Bash", "ruleContent": "npm test *"}]},
+        {"type": "removeRules", "behavior": "allow", "destination": "localSettings",
+         "rules": [{"toolName": "Bash"}]},
+        {"type": "setMode", "mode": "bypassPermissions", "destination": "session"},
+        "nonsense"]) == []
+    # No hook waits to carry one: no choice.
+    shown = ws.read_permission(event("PermissionRequest", tool_name="Bash",
+                                     permission_suggestions=SUGGESTED["Write notes.md"]),
+                               {}, "", 1.0)
+    assert shown["always"] == []
+
+
+@pytest.fixture
+def asking_always(ws, served, monkeypatch):
+    """`asking`, with a suggestion to keep."""
+    daemon, base = served
+    monkeypatch.setattr(ws, "APPROVE_WAIT", 20)
+    ws.append_event(event("SessionStart", pane="%7", pid=1, ts=time.time() - 10))
+    ws.append_event(event("PermissionRequest", tool_name="Bash", ask_id=ASK, pane="%7",
+                          tool_input={"command": "npm test -- --watch=false"},
+                          permission_suggestions=SUGGESTED["npm test -- --watch=false"],
+                          ts=time.time() - 4.9))
+    took = []
+    hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ASK)), daemon=True)
+    hook.start()
+    assert until(lambda: ws.hook_waits(ASK))
+    daemon.store.refresh()
+    return daemon, base, daemon.store.sessions["s1"].permission["key"], hook, took
+
+
+def test_yes_and_dont_ask_again_names_the_choice_by_its_place(ws, asking_always):
+    """The page sends which choice, never a rule: the hook takes the rule
+    from its own payload (`allow_for`)."""
+    daemon, base, key, hook, took = asking_always
+    status, body = post(base + "/api/session/s1/approve", {"key": key, "always": 3},
+                        token=daemon.token)
+    assert status == 400 and "no such choice" in body["error"]
+    status, body = post(base + "/api/session/s1/approve",
+                        {"key": key, "always": "npm *"}, token=daemon.token)
+    assert status == 400
+    assert hook.is_alive() and took == []
+    status, body = post(base + "/api/session/s1/approve", {"key": key, "always": 0},
+                        token=daemon.token)
+    assert status == 200 and body["done"], body
+    hook.join(5)
+    assert took == [f"{ASK}:0"]
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].last_event == \
+        "allowed from the page, and don't ask again for npm test * in this project"
+
+
 def test_a_nonce_of_another_shape_is_no_path(ws):
     """The daemon makes a path of it: nothing but the hook's shape is one."""
     shown = ws.read_permission(event("PermissionRequest", tool_name="Bash",
@@ -155,9 +228,10 @@ def hook_at(ws, tmp_path):
         fcntl.flock(lock, fcntl.LOCK_EX)
         held.append(lock)
 
-    def start(tool: str = "Bash") -> subprocess.Popen:
+    def start(tool: str = "Bash", suggestions=None) -> subprocess.Popen:
         payload = json.dumps({"session_id": "s1", "hook_event_name": "PermissionRequest",
-                              "tool_name": tool, "tool_input": {"command": "rm -rf build"}})
+                              "tool_name": tool, "tool_input": {"command": "rm -rf build"},
+                              "permission_suggestions": suggestions or []})
         child = subprocess.Popen([str(folder / "claude"), str(folder / "stand_in.py"),
                                   "terminal", str(path)], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -203,6 +277,29 @@ def test_the_hook_says_allow_for_its_own_yes_and_nothing_else(ws, hook_at):
     assert (code, out, err) == (0, ws.ALLOW, "")
     assert json.loads(out)["hookSpecificOutput"]["decision"] == {"behavior": "allow"}
     assert not (folder / f"{ask}.wait").exists()
+
+
+def test_the_hook_keeps_the_suggestion_it_was_given_and_no_other(ws, hook_at):
+    """`<ask>:0` is an allow with this dialog's own first suggestion, as
+    Claude Code sent it -- what the CLI's option 2 does, measured. A choice
+    the dialog was not offered -- a deny rule here -- gets no answer."""
+    daemon, start = hook_at
+    daemon()
+    suggestions = SUGGESTED["npm test -- --watch=false"] + [
+        {"type": "addRules", "behavior": "deny", "destination": "localSettings",
+         "rules": [{"toolName": "Bash", "ruleContent": "*"}]}]
+    for pick, expected in ((0, [suggestions[0]]), (1, None)):
+        child = start(suggestions=suggestions)
+        assert until(lambda: logged_ask(ws) and ws.hook_waits(logged_ask(ws)))
+        ask = logged_ask(ws)
+        ws.write_atomic(ws.approvals_dir() / f"{ask}.yes", f"{ask}:{pick}", private=True)
+        code, out, err = finish(child)
+        assert (code, err) == (0, "")
+        if expected is None:
+            assert out == "", "an allow for a choice nobody was offered"
+        else:
+            decision = json.loads(out)["hookSpecificOutput"]["decision"]
+            assert decision == {"behavior": "allow", "updatedPermissions": expected}
 
 
 @pytest.mark.parametrize("tool", ["AskUserQuestion", "ExitPlanMode"])

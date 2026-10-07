@@ -4,7 +4,7 @@ Each rule is a bug that already happened: the assertion in bold, why the
 obvious alternative is wrong, then the symbols and the test that holds it.
 `CLAUDE.md` is the map; its header says how to add a rule. What may reach a terminal, what may be read, and who may ask.
 
-- **The hook prints one thing only: `ALLOW`, for the dialog it was called
+- **The hook prints one thing only: an allow for the dialog it was called
   for, after the reader's Yes on the page.** Claude Code reads a hook's
   stdout as its answer, and we register `PermissionRequest`. One stray
   `print()` in `cmd_hook` answers every permission dialog for the user.
@@ -26,9 +26,27 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   **It waits only while a daemon runs** (`daemon_running`), for at most
   `APPROVE_WAIT`, and **never for a question or a plan** (`NOT_APPROVED`):
   each costs a process held for nothing.
+  **"Yes, and don't ask again" carries Claude Code's own suggestion, chosen
+  by its place, never a rule the page or the daemon wrote** (`always_offered`,
+  `allow_for`, `always_label`). The reader asked for the CLI's choices. The
+  page sends `always: n`; the daemon checks `n` is one this dialog offered
+  and writes `<ask>:<n>`; the hook takes suggestion `n` from its own
+  `permission_suggestions` and answers allow with it as
+  `updatedPermissions`. Only suggestions that allow -- `addRules` with
+  `behavior: allow`, `addDirectories`, `setMode` to `ALWAYS_MODES` -- are
+  offered; a choice the dialog was not offered gets no answer at all, not
+  a plain Yes. Measured on 2.1.292: the allow with `Bash(npm test *)`
+  wrote the same line to the project's `.claude/settings.local.json` as
+  the CLI's option 2, and the next `npm test` was not asked. The CLI shows
+  one option for several suggestions (`rm -rf build`: a folder and a
+  mode) and applies only some of them, by a rule too long to copy; here
+  each is a choice of its own.
   **A Yes's own record clears the amber** (`Approved`, `_on_approved`): no
   hook fires for a Yes. `tests/test_approve.py`,
-  `test_yes_shows_while_the_hook_waits_and_goes_to_it`.
+  `test_yes_shows_while_the_hook_waits_and_goes_to_it`,
+  `test_yes_and_dont_ask_again_is_a_choice_of_its_own`.
+  - **Yes is green and No is red** (`.permyes`, `.permno`): they looked
+    alike, and the reader asked for them told apart at a glance.
 - **The hook must never block Claude Code.** try/except around everything,
   `give_up_after` deadline, always exit 0. Keep all three. The deadline covers
   every wait at once, including a stdin that never closes — **and it stays

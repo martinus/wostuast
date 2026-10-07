@@ -114,11 +114,11 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   button says which keys it will press.
 - **You can say Yes or No to a permission request.** The page shows the
   whole request: every field, not a clipped line. Press **yes** to allow
-  this one call, once. Press **no**, and add what the agent should do
-  instead if you want to. Yes is there only while the dialog's own hook
-  waits for it, so it can never land on another dialog; if the terminal
-  answered first, Yes goes away. "Yes, and don't ask again" stays in the
-  terminal. While the dialog is up, the send box is gone, because its
+  this one call, once, or **yes, and don't ask again for npm test \*** to
+  keep the rule Claude Code suggests, as its own dialog does. Press **no**,
+  and add what the agent should do instead if you want to. Yes is there
+  only while the dialog's own hook waits for it, so it can never land on
+  another dialog; if the terminal answered first, Yes goes away. While the dialog is up, the send box is gone, because its
   Enter would say yes. A plan that asks to start
   is in the transcript, drawn as a document, and the dialog points at it.
 - **You review its work like a pull request.** Click the `+` beside a line in
@@ -682,7 +682,8 @@ text, and code shows without colour.
 
 Only when you press **yes** on the page. It never says Yes by itself: the row
 goes amber and waits for you. The page shows the whole request, and **yes**
-allows that one call, once.
+allows that one call, once. The CLI's "Yes, and don't ask again" is there
+too, with the rule Claude Code itself suggests for that dialog.
 
 The Yes is not a key typed into the pane. A dialog carries no id, so a key
 could land on another dialog that came up meanwhile. Instead, wostuast's hook
