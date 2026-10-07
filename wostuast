@@ -13030,36 +13030,41 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .asksend { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 /* A permission request: each field of it, whole, in the preview's box. */
 .permfield + .permfield { margin-top: 8px; }
-.permsend { flex-wrap: wrap; align-items: flex-end; }
+.asksend.permsend { display: block; }
+.permopts { margin-bottom: 8px; }
+/* One line an option where it fits: the note beside the label, not under
+   it. Two lines each pushed the reason box out of a bar that is capped at
+   40vh. */
+.permopts .askopt { align-items: center; padding: 6px 10px; }
+.permopts .asktext { flex-direction: row; flex-wrap: wrap; align-items: baseline;
+                     column-gap: 10px; }
+.permopts .askwhy { font-size: 11px; color: var(--ink-faint); }
 /* A request is read whole, so a long command wraps rather than running off
    the side: a preview keeps its layout, and this has none to keep. */
 .permfield .askprevbody { white-space: pre-wrap; overflow-wrap: anywhere; }
-/* At least as wide as its placeholder, when the row has room: the box is
-   one row high, and a placeholder wider than the box wrapped onto a second
-   row that did not show -- "(optional)" stood cut in half under the first.
-   `--fits` is the placeholder's length, set where the placeholder is, so
-   new words cannot outgrow it; `ch` is one character of this mono font, and
-   24 px is the padding and the border. Wider than it fits, the box takes a
-   row of its own rather than shrinking. */
-.permsend .permwhy {
-  flex: 1 1 260px; min-width: min(100%, calc(var(--fits, 0ch) + 24px));
-}
-.permsend .asksays { flex-basis: 100%; }
+/* The reason is a box of its own under the answers, as wide as they are:
+   one row high, it grows with what is typed (`fitSay`). */
+.permsend .permwhy { display: block; width: 100%; }
+.permfoot { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.permfoot .asksays { flex: 1; min-width: 0; }
 /* Yes in the working colour, No in the colour of a cut: the two answers
-   read apart at a glance, as the CLI's do. */
-.permsend .permyes {
-  color: var(--working); background: var(--working-soft);
-  border-color: color-mix(in srgb, var(--working) 55%, transparent);
+   read apart at a glance, as the CLI's do. The colour is on the number and
+   the edge, and the label stays the ink every option has. */
+.askopt.permyes { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--working) 70%, transparent); }
+.askopt.permno { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--hot) 70%, transparent); }
+.askopt.permyes .asknum {
+  color: var(--working); border-color: color-mix(in srgb, var(--working) 55%, transparent);
 }
-.permsend .permno {
-  color: var(--cut-ink); background: color-mix(in srgb, var(--hot) 14%, transparent);
-  border-color: color-mix(in srgb, var(--hot) 55%, transparent);
+.askopt.permno .asknum {
+  color: var(--cut-ink); border-color: color-mix(in srgb, var(--hot) 55%, transparent);
 }
-.permsend .permyes:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--working) 28%, transparent);
+.askopt.permyes:hover:not(:disabled) {
+  border-color: var(--working); background: var(--working-soft);
+  box-shadow: inset 3px 0 0 var(--working);
 }
-.permsend .permno:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--hot) 26%, transparent);
+.askopt.permno:hover:not(:disabled) {
+  border-color: var(--hot); background: color-mix(in srgb, var(--hot) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--hot);
 }
 .asksays { font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
 .asknum {
@@ -16286,29 +16291,41 @@ function drawPermission(box, s, permission) {
         "The send box is back when this dialog closes: its Enter would say Yes.");
   }
   const foot = put(box, "div", "asksend permsend");
-  // Absent with no pane, like jump everywhere else: there is nothing to open.
-  if (s.pane) {
-    const open = put(foot, "button", "verb");
-    open.textContent = "open the terminal";
-    open.addEventListener("click", jumpToPane);
-  }
+  putAnswers(foot, s, permission, box);
+}
+
+// The answers, as the CLI lists them and as the question bar draws its
+// options: one numbered row each, Yes and its "Yes, and ..." in the
+// working colour, No in the colour of a cut. They were small buttons in one
+// line with the reason box between them, and a long "don't ask again" label
+// broke it apart; the reader found it unreadable.
+function putAnswers(foot, s, permission, box) {
+  const list = put(foot, "div", "askopts permopts");
+  const option = (cls, label, why) => {
+    const button = put(list, "button", "askopt " + cls);
+    put(button, "span", "asknum");
+    const text = put(button, "span", "asktext");
+    put(text, "span", "asklabel", label);
+    if (why) put(text, "span", "askwhy", why);
+    return button;
+  };
   // Yes goes to the dialog's own hook, never through keys (`approve`):
   // built only for a dialog whose hook waits on a nonce, and shown only
   // while it still waits (`s.approvable`, in `paintDecline`).
   if (permission.ask) {
-    const yes = put(foot, "button", "verb permyes");
-    yes.textContent = "yes";
-    yes.title = "allows this one call, once, as Yes in the terminal would";
+    const yes = option("permyes", "Yes", "this call, once");
     yes.addEventListener("click", () => submitApprove(s.id, permission, box, yes, null));
     // The CLI's "Yes, and ...": each of Claude Code's own suggestions, as
     // its own choice (`always_offered`).
     for (const one of permission.always || []) {
-      const always = put(foot, "button", "verb permyes permalways", "yes, and " + one.label);
-      always.title = "allows this call, and keeps this rule as Claude Code suggests it";
+      const always = option("permyes permalways", "Yes, and " + one.label,
+                            "as Claude Code suggests it");
       always.addEventListener("click",
         () => submitApprove(s.id, permission, box, always, one.at));
     }
   }
+  const no = option("permno", "No", "presses Escape, then types what you write below");
+  no.addEventListener("click", () => submitDecline(s.id, permission, box));
   const why = put(foot, "textarea", "say permwhy");
   why.rows = 1;
   why.placeholder = "what it should do instead (optional)";
@@ -16322,11 +16339,15 @@ function drawPermission(box, s, permission) {
     state.declineWhy = { key: permission.key, text: why.value };
     fitSay(why);
   });
-  const no = put(foot, "button", "verb permno");
-  no.textContent = "no";
-  no.addEventListener("click", () => submitDecline(s.id, permission, box));
   submitOnCtrlEnter(why, no);
-  put(foot, "span", "asksays");
+  const end = put(foot, "div", "permfoot");
+  put(end, "span", "asksays");
+  // Absent with no pane, like jump everywhere else: there is nothing to open.
+  if (s.pane) {
+    const open = put(end, "button", "verb quiet");
+    open.textContent = "open the terminal";
+    open.addEventListener("click", jumpToPane);
+  }
   paintDecline(box, s, permission);
   fitSay(why);   // a reason kept from before, or a placeholder on a narrow bar
 }
@@ -16368,6 +16389,11 @@ function paintDecline(box, s, permission) {
   for (const yes of yeses) {
     yes.hidden = !s.approvable;
     yes.disabled = !!cannot || mine || busy;
+  }
+  // Numbered as the CLI numbers its options, counting only those shown.
+  let at = 0;
+  for (const one of box.querySelectorAll(".permopts .askopt")) {
+    if (!one.hidden) setText(one.querySelector(".asknum"), String(++at));
   }
   // Said in both cases: a Yes given in the terminal fires no hook, so the
   // row stays amber while the approved call runs, and Escape then stops it.

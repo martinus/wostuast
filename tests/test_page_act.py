@@ -1150,8 +1150,9 @@ def test_a_permission_is_read_whole_and_declined_with_a_reason(
               one.querySelector('.askprevbody').textContent])""")
         assert fields == [["command", BUILD], ["description", "Build and test"]]
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.map((one) => one.textContent)")
-        assert buttons == ["open the terminal", "no"], buttons
+            "#asking button", "els => els.map((one) =>"
+            " (one.querySelector('.asklabel') || one).textContent)")
+        assert buttons == ["No", "open the terminal"], buttons
         page.fill("#asking .permwhy", "Use the ninja build instead")
         # What the page says, kept: the slot is repainted on every push.
         page.evaluate("""() => { window.words = []; const was = note;
@@ -1219,10 +1220,14 @@ def test_yes_and_dont_ask_again_is_a_choice_of_its_own(ws, in_pane, monkeypatch)
         wait_until(page, lambda: ws.hook_waits(ask))
         daemon.tick()
         page.wait_for_selector("#asking .permalways:not([hidden])")
-        assert page.inner_text("#asking .permalways") == \
-            "yes, and don't ask again for npm test * in this project"
+        assert page.inner_text("#asking .permalways .asklabel") == \
+            "Yes, and don't ask again for npm test * in this project"
+        # The CLI's numbers, counting only the options shown.
+        assert page.eval_on_selector_all(
+            "#asking .permopts .asknum", "els => els.map((one) => one.textContent)") \
+            == ["1", "2", "3"]
         colours = page.evaluate("""() => ['.permyes', '.permalways', '.permno'].map((one) =>
-          getComputedStyle(document.querySelector('#asking ' + one)).color)""")
+          getComputedStyle(document.querySelector('#asking ' + one + ' .asknum')).color)""")
         assert colours[0] == colours[1] != colours[2], colours
         page.click("#asking .permalways")
         hook.join(10)
@@ -1254,8 +1259,9 @@ def test_a_permission_can_be_read_without_tmux_but_not_declined(ws, no_pane):
         assert "not in tmux" in page.locator("#asking .asksays").inner_text()
         # Nothing to open: absent, like jump everywhere else.
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.map((one) => one.textContent)")
-        assert buttons == ["no"], buttons
+            "#asking button", "els => els.map((one) =>"
+            " (one.querySelector('.asklabel') || one).textContent)")
+        assert buttons == ["No"], buttons
 
 
 def test_a_reason_half_written_survives_a_look_at_another_tab(ws, in_pane):
@@ -1827,8 +1833,9 @@ def test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it(ws, in_pane):
         assert page.locator("#asking .askhead").inner_text().lower() == "plan"
         assert page.locator("#asking .permfield").count() == 0
         buttons = page.eval_on_selector_all(
-            "#asking button", "els => els.map((one) => one.textContent)")
-        assert buttons == ["read the plan", "open the terminal", "no"], buttons
+            "#asking button", "els => els.map((one) =>"
+            " (one.querySelector('.asklabel') || one).textContent)")
+        assert buttons == ["read the plan", "No", "open the terminal"], buttons
         # Its top away from the top of the pane first -- at the head of the
         # transcript -- so the click is what brings it there.
         top = """() => document.querySelector('.turn.plan').getBoundingClientRect().top
