@@ -140,9 +140,10 @@ def test_a_document_is_read_as_markdown_or_text_from_the_right_of_its_path(repo_
         show_tab(page, "files")
         page.click(".filelist button:has-text('PLAN.md')")
         page.wait_for_selector(".filebody .prose h1")
-        pressed = """() => [...document.querySelectorAll(
-          '.filebody .where .readas button')].map((b) => b.getAttribute('aria-pressed'))"""
-        assert page.evaluate(pressed) == ["true", "false"]
+        # One button, lit while the text is shown as written.
+        pressed = """() => document.querySelector('.filebody .where .readas')
+          .getAttribute('aria-pressed')"""
+        assert page.evaluate(pressed) == "false"
         got = page.evaluate("""() => {
           const where = document.querySelector('.filebody .where');
           const box = where.getBoundingClientRect();
@@ -152,11 +153,12 @@ def test_a_document_is_read_as_markdown_or_text_from_the_right_of_its_path(repo_
                   path.bottom > choice.top && path.top < choice.bottom];
         }""")
         assert got[0] < 40 and got[1], got
-        page.click(".filebody .where .readas button[data-value='true']")
+        page.click(".filebody .where .readas")
         page.wait_for_selector(".filebody .code .dline")
-        assert page.evaluate(pressed) == ["false", "true"]
-        page.click(".filebody .where .readas button[data-value='false']")
+        assert page.evaluate(pressed) == "true"
+        page.click(".filebody .where .readas")
         page.wait_for_selector(".filebody .prose h1")
+        assert page.evaluate(pressed) == "false"
 
 
 def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):

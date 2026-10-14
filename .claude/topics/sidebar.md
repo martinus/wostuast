@@ -496,7 +496,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
       the pane keeps for its bar (`scrollbar-gutter: stable` on
       `.diffscroll`, measured by `measureScrollbar` the same way: an empty
       `overflow: scroll` box said 0 px in Chromium while the pane kept
-      15). The read-as words are md and txt, which the reader asked for.
+      15). The read-as control is one button, "txt", which the reader
+      asked for, lit as the buttons beside the code are.
       `test_every_right_hand_control_ends_on_one_line`,
       `test_the_file_line_ends_where_the_tab_row_ends`.
     **The labels are one word** -- "tab", "lines", "diff", "links", not "tab

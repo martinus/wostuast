@@ -582,9 +582,9 @@ def test_a_commit_message_is_markdown_and_its_text_is_one_click_away(repo_page):
         assert message.locator("li").count() == 2
         assert message.locator("code").inner_text() == "one"
         assert "Reviewed-by: someone\nRefs: OA-12" in message.inner_text()
-        pressed = """() => [...document.querySelectorAll(
-          '.diffhead .readas button')].map((b) => b.getAttribute('aria-pressed'))"""
-        assert page.evaluate(pressed) == ["true", "false"]
+        pressed = """() => document.querySelector('.diffhead .readas')
+          .getAttribute('aria-pressed')"""
+        assert page.evaluate(pressed) == "false"
         # In the subject's line, at its right end.
         got = page.evaluate("""() => {
           const head = document.querySelector('.diffhead.commit');
@@ -599,11 +599,11 @@ def test_a_commit_message_is_markdown_and_its_text_is_one_click_away(repo_page):
         }""")
         assert got[0] and got[1] < 40 and got[2], got
         page.evaluate("document.querySelector('.dfile').dataset.kept = 'yes'")
-        page.click(".diffhead .readas button[data-value='true']")
+        page.click(".diffhead .readas")
         assert message.evaluate("e => e.textContent") == (
             "It **refuses** a push:\n\n- `one`\n- two\n\n"
             "Reviewed-by: someone\nRefs: OA-12")
-        assert page.evaluate(pressed) == ["false", "true"]
+        assert page.evaluate(pressed) == "true"
         assert page.evaluate("document.querySelector('.dfile').dataset.kept") == "yes"
         # Kept in this browser: the next commit drawn is text too.
         page.reload()
@@ -926,7 +926,7 @@ def test_one_commit_shows_its_whole_message(repo_page):
         assert head.evaluate("e => e.firstChild.textContent") == "Print three"
         # As it was written, a click away: the lines and the blank line
         # between them.
-        page.click(".diffhead .readas button[data-value='true']")
+        page.click(".diffhead .readas")
         assert head.locator(".message").evaluate("e => e.textContent") == \
             "Two was not enough.\n\n- one\n- two"
         assert head.locator(".message").evaluate(
@@ -1281,7 +1281,7 @@ def test_a_commit_message_wraps_at_the_window_and_links_its_tickets(repo_page, w
         pick(page, page.evaluate("state.diff.commits[0].sha"))
         head = page.locator(".diffhead.commit")
         # The lines as they were joined, which the text shows.
-        page.click(".diffhead .readas button[data-value='true']")
+        page.click(".diffhead .readas")
         message = head.locator(".message")
         assert message.evaluate("e => e.textContent") == (
             "Two was not enough, and the reader asked for a third one,"
@@ -1540,7 +1540,9 @@ def test_every_right_hand_control_ends_on_one_line(repo_page):
           ['message', '.diffhead .readas'], ['card', '.dfile']].map(([name, sel]) =>
           [name, document.querySelector(sel).getBoundingClientRect().right]))""")
         assert max(edges.values()) - min(edges.values()) < 1, edges
-        assert page.locator(".diffhead .readas button").all_inner_texts() == ["md", "txt"]
+        readas = page.locator(".diffhead .readas")
+        assert readas.inner_text() == "txt"
+        assert readas.get_attribute("title") == "show the message as it was written: off"
 
 
 def test_scrolled_sideways_every_line_keeps_its_colour(repo_page):

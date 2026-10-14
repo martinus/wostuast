@@ -34,7 +34,7 @@ Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
 Enter, `--keys SELECTOR=TEXT` types into a box key by key and presses
 nothing after, `--eval JS` (or a file of it) runs in the page.
-`.diffhead .readas button[data-value='true']` shows a commit message as
+`.diffhead .readas` shows a commit message as
 text; `--click '#settings' --part '#setpop'` is the settings menu. **A mockup is drawn
 here too**: `--eval` builds the proposal inside the real page, with its real
 CSS, where a copy of the CSS in a file of its own drifts from the page.

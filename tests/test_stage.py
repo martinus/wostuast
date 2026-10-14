@@ -77,7 +77,7 @@ def test_it_draws_a_commit_with_a_review_and_a_click(tmp_path):
     out = tmp_path / "out.png"
     done = subprocess.run(
         [sys.executable, str(HERE / "stage.py"), str(out), "--commit", "2",
-         "--review", "--click", ".diffhead .readas button[data-value='true']",
+         "--review", "--click", ".diffhead .readas",
          "--part", ".diffhead.commit"],
         capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr

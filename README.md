@@ -347,8 +347,8 @@ Every file git knows about, as a tree. Pictures show as pictures. Go to a file
 by typing scattered letters of its name: `mbldr` finds `MetricBuilder.h`. An
 ignored directory that an agent generated files into is in the tree too. A
 folder with thousands of files in it is one row that says it is not listed.
-A Markdown file is drawn as Markdown. **Markdown | text** at the right of its
-path shows its lines, so you can comment on one.
+A Markdown file is drawn as Markdown. The **txt** button at the right of its
+path shows its lines, so you can comment on one; it is lit while it does.
 
 #### Review
 
@@ -357,7 +357,7 @@ words marked.
 
 - **Pick what to show:** all changes (the picker says how many commits they
   hold), only what is not committed, or one commit with its whole message.
-  The message is drawn as Markdown, and **md | txt** at the right of
+  The message is drawn as Markdown, and the **txt** button at the right of
   its subject shows it as it was written; this browser keeps your choice. It wraps at the edge of the
   window, and your ticket links work in it and in its subject. Step through
   the commits with the arrows **‹** (older) and **›** (newer); between them,

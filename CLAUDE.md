@@ -265,7 +265,8 @@ This list exists because each entry was re-implemented once already.
 | a binary file the browser can show | `putMedia(parent, path, found)` — `found.shown` is the daemon's answer |
 | a folder or a page icon | `putIcon(parent, "dir" \| "dirOpen" \| "file")` — SVG, so not `put` |
 | a choice of a few, one in force | `putChoice(parent, name, options, pick)`, then `paintChoice(group, value)` |
-| Markdown or text, over what is read | `putReadAs(parent, asText, pick, textTitle)` |
+| Markdown or text, over what is read | `putReadAs(parent, asText, pick, textTitle)` — a "txt" toggle |
+| one button lit while what it says is on | `paintToggle(button, on)` — the title says on or off |
 | the places a reader can go | `state.files.places` — the names and the directories |
 | bytes, or a date a person reads | `sizeOf(bytes)`, `whenOf(seconds)` |
 | a count read at a glance, "2.4k" | `roughly(n)`; the lines of a text without splitting it, `lineCount(text)` |
@@ -305,7 +306,8 @@ computed style),
 **CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a
 button that only changes what is on screen), `.choice` (one control in
 parts, the part in force pressed: `putChoice` and `paintChoice` build and
-paint it, the settings menu and `putReadAs` use it), `.link` (small text
+paint it, the settings menu uses it), `.toggle` (one button lit while what
+it says is on: `paintToggle`; `putQuick` and `putReadAs` use it), `.link` (small text
 button),
 `.acts` (what you can do to a comment,
 at its right edge), `.find`/`.findslot`,
