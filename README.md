@@ -75,7 +75,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
 - **You catch up in one scroll.** "Unread" over the list shows the last
   answer of every unread session, newest first, as Markdown. Each is a
   card in its session's colour: click it to open the session, or point at
-  it for "mark read". <kbd>Esc</kbd> goes back to the session.
+  it for "mark read". To go back to the session, click **← back to** and
+  its name at the top, or the **×** at the right, or press <kbd>Esc</kbd>.
 - **You can say "later".** Point at a card, click the clock and pick: in
   30 minutes, in an hour, in three hours, tomorrow at 08:00, Monday at
   08:00, or "Custom…" for a day and a time of your own. Until then

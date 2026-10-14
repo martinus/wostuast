@@ -133,6 +133,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     or "done" is said there. **Escape leaves a view** (`leaveFeed`), unless
     it closed a dialog or a menu first, or the filter box took it; there
     was no key for it, though the title says "esc".
+    - **A view is marked as one, and says how to leave** (#471, `.back`,
+      `#viewclose`, `body.infeed`). "esc · back to the session", faint
+      beside the name, was the one way out, and the reader did not see
+      that a view stood over the tabs. The bar wears the list's ground, a
+      button names the session back goes to (`rowName(current())`, in
+      `fresh`'s key so a rename redraws it), and a cross at the bar's end
+      closes the view. **The chosen row looks as any row while a view
+      stands there, and the grip does not open beside it**: the view is
+      not that row's. `openGrip` asks `state.feed`, and `openFeed` and
+      `closeFeed` call it at once -- the row's `gripWatch` fires a frame
+      later, and a break of the call in `openFeed` stayed green by that
+      chance once. A popup over the dimmed page was drawn and turned down:
+      it hid the list, and "who needs me" with it.
+      `test_a_view_says_where_back_goes_and_closes_like_a_window`.
   - **Every entry is a card, drawn by one helper** (`putCard`, #393): the
     edge in its session's colour (`--hue`, as the row's), the repository,
     worktree and branch under the name (`.feedwhere`), the actions only

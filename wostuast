@@ -12704,12 +12704,34 @@ body.infeed #resumebar, body.infeed .findhome, body.infeed #ctxslot,
 body.infeed #modelpop, body.infeed #jump { display: none; }
 .viewtitle { display: none; }
 body.infeed .viewtitle {
-  display: inline-flex; align-items: baseline; gap: 12px; align-self: center;
+  display: inline-flex; align-items: center; gap: 12px; align-self: center;
   padding: 0 16px; white-space: nowrap; font-family: var(--sans);
   font-size: 14px; font-weight: 600; color: var(--ink-bright);
 }
-.viewtitle .link {
-  font-family: var(--sans); font-size: 11px; font-weight: 400; color: var(--ink-faint);
+/* A view is marked as one (issue 471): the bar wears the list's ground, a
+   way back names the session it goes to, and a cross at the end closes it.
+   The chosen row looks as any row while the view stands where its tabs
+   were, and the grip does not open beside it (`openGrip`). */
+body.infeed .tabs { background: var(--panel); }
+.viewtitle .back {
+  padding: 3px 10px; border-radius: 6px; border: 1px solid var(--edge-bright);
+  background: none; color: var(--ink-soft); font: 400 12px var(--sans); cursor: pointer;
+  max-width: 280px; overflow: hidden; text-overflow: ellipsis; align-self: center;
+}
+.viewtitle .back:hover { color: var(--ink-bright); background: var(--raised); }
+#viewclose { display: none; }
+body.infeed #viewclose { display: inline-flex; border-color: transparent; }
+body.infeed #viewclose:hover { border-color: var(--edge-bright); }
+body.infeed:not(.foldsessions) #rows .row.chosen {
+  margin-left: 4px; padding-left: 11px; border-color: transparent;
+  border-left: 4px solid var(--hue); background: var(--soft, transparent);
+}
+body.infeed:not(.foldsessions) #rows .row.chosen:hover {
+  border-color: var(--edge-bright); border-left-color: var(--hue);
+}
+body.infeed.foldsessions #rows .row.chosen {
+  width: 26px; border: 0; border-radius: 6px;
+  background: color-mix(in srgb, var(--hue) 28%, transparent);
 }
 .content.feed { overflow: auto; padding: 16px 28px; }
 /* An entry is a card that reads like its session's row (issue 393): its
@@ -14154,6 +14176,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <div class="live" id="live"></div>
         <button type="button" class="theme" id="jump" hidden
                 aria-label="jump to its tmux pane"></button>
+        <button type="button" class="theme" id="viewclose"
+                title="close the view  ·  esc" aria-label="close the view"></button>
         <div class="setslot">
           <button type="button" class="theme" id="settings"
                   aria-haspopup="true" aria-expanded="false"></button>
@@ -14766,6 +14790,8 @@ const ICONS = {
   // is the second target on a round's row, and a shape of its own, so the
   // icon that says who spoke is not also a button.
   chevron: "M5.4 3.6L8.8 7l-3.4 3.4",
+  // A cross: the view's close (#471).
+  close: "M3.6 3.6l6.8 6.8M10.4 3.6l-6.8 6.8",
   // A panel with a column at its left, and an arrow that folds the column
   // away or brings it back (#464).
   foldIn: "M1.8 2.2h10.4v9.6H1.8zM5 2.2v9.6M9.6 5L7.8 7l1.8 2",
@@ -15337,6 +15363,10 @@ function openFeed(kind = "unread") {
   homeFind($("findhome"));
   draw();
   drawFeedLink();
+  // Now, not on the row's observer: that fires a frame later, and the grip
+  // stood open beside a view until it did -- by chance, often enough that
+  // a break of this call once stayed green (#471).
+  openGrip();
 }
 
 // Back to the session the view stands over, by Escape or the title's link.
@@ -15351,14 +15381,21 @@ function leaveFeed() {
 const VIEW_NAMES = { unread: "All unreads", saved: "Saved", search: "Search every session",
                      commands: "Commands" };
 
+// The reader did not see that a view stands over the tabs, nor how to
+// leave it: "esc · back to the session", faint beside the name, was the one
+// way and read as a hint (#471). So the bar says where back goes, by the
+// session's name, and a cross at its end closes the view, as a window's.
 function drawViewTitle() {
   const title = $("viewtitle");
-  if (!fresh(title, "text", String(state.feed))) return;
+  const s = current();
+  const back = s ? "← back to " + rowName(s) : "← back";
+  if (!fresh(title, "text", String(state.feed) + "\n" + back)) return;
   title.replaceChildren();
   if (!state.feed) return;
+  const button = put(title, "button", "back", back);
+  button.title = "back to the session  ·  esc";
+  button.addEventListener("click", leaveFeed);
   put(title, "span", "viewname", VIEW_NAMES[state.feed]);
-  put(title, "button", "link", "esc  ·  back to the session")
-    .addEventListener("click", leaveFeed);
 }
 
 // A view's entry as a card that reads like its session's row (#393): the
@@ -15441,6 +15478,7 @@ function closeFeed() {
   document.body.classList.remove("infeed");
   $("content").dataset.tab = "";        // the tab is built again
   drawFeedLink();
+  openGrip();
 }
 
 async function askLast(id) {
@@ -16239,7 +16277,8 @@ function drawSessions() {
 function openGrip() {
   const grip = $("grip");
   const list = $("rows");
-  const row = list.querySelector(".row.chosen");
+  // No opening while a view stands there (#471): the view is not the row's.
+  const row = state.feed ? null : list.querySelector(".row.chosen");
   let top = 0;
   let bottom = 0;
   let corners = [false, false];
@@ -23478,6 +23517,8 @@ putSettings();
 // error that stops the page.
 const JUMP_TITLE = "jump to its tmux pane  ⏎";
 putIcon($("jump"), "terminal");
+putIcon($("viewclose"), "close");
+$("viewclose").addEventListener("click", leaveFeed);
 $("jump").title = JUMP_TITLE;
 $("jump").addEventListener("click", jumpToPane);
 $("settings").addEventListener("click", (press) => {
