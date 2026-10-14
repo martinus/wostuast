@@ -338,7 +338,9 @@ animation for four milestones while a second one was added on top of it;
 `.plus`, which was already the green "+3" beside a changed file — so every
 count on the page became an invisible 18×18 box, and a file that had gained
 lines read as if it had only lost them. Nothing looked broken; the number was
-simply not there.
+simply not there. The empty mark before a tab in code was given `.tab`, the
+tab row's button, and its 24 px of padding hid inside a stop of four columns
+until a narrower face showed every first tab twice as wide.
 
 ## How to work here
 

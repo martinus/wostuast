@@ -6760,6 +6760,10 @@ SETTING_WORDS: dict[str, tuple[Any, ...]] = {
     # #449); and a tab and a space at a line's end are drawn faintly, or not.
     "diff_space": ("show", "hide"),
     "space_marks": ("off", "on"),
+    # How wide code is drawn on the Files and Review tabs: Noto Sans Mono
+    # at its normal width, or condensed, which fits more of a line in a
+    # column.
+    "code_width": ("normal", "narrow"),
 }
 
 #: The most links the file may hold. Each is a pattern run over every block
@@ -11929,7 +11933,7 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
 })();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Noto+Sans+Mono:wdth,wght@62.5,400;62.5,600;100,400;100,600&display=swap">
 <style>
 :root {
   --bg: var(--dark-bg); --panel: #191a20; --raised: #1f2129; --chosen: #262834;
@@ -11986,6 +11990,12 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --syn-com: #6f7385; --syn-fn: #7fb3e0; --syn-meta: #8b8f9e;
   --syn-attr: #c6a2d8;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* The face of code on the Files and Review tabs, and its sizes. Noto
+     Sans Mono, not Plex Mono: the reader asked for one face in a normal
+     and a narrow width (`code_width`), and Plex Mono has no narrow one.
+     12 px stands as tall as Plex Mono's 12.5. Not `--code`: that is the
+     colour of a code block's ground, and a face of that name took it. */
+  --code-face: 'Noto Sans Mono', var(--mono); --code-size: 12px; --code-small: 11.5px;
   --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   /* File names are long and a monospace face spends a third of the column on
      air. A condensed one shows the end of the path, which is the part you
@@ -13836,11 +13846,11 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 :root[data-marks="on"] .ws::before {
   position: absolute; left: 0; color: var(--ink-faint); pointer-events: none;
 }
-:root[data-marks="on"] .ws.tab::before { content: "\2192"; }
-:root[data-marks="on"] .ws.sp::before { content: "\00b7"; }
+:root[data-marks="on"] .ws.tabmark::before { content: "\2192"; }
+:root[data-marks="on"] .ws.spacemark::before { content: "\00b7"; }
 .hunk {
   padding: 4px 16px; background: var(--hunk-bg); color: var(--ink-faint);
-  font-family: var(--mono); font-size: 12px; line-height: 20px;
+  font-family: var(--code-face); font-size: var(--code-small); line-height: 20px;
   white-space: pre; overflow-x: auto;
 }
 .hunk .ctx { margin-left: 14px; color: var(--ink-soft); }
@@ -13859,9 +13869,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    container: it used to sit on `.diffbody`, so the moment the Files tab drew
    the same rows they came out in the proportional face, with the gutter's
    space padding no longer lining up. A component carries its own typography. */
+/* Narrow: the same face at its narrowest width, as tall. A character is
+   6.0 px against 7.2, so a column holds a fifth more of a line. On the
+   root, as the tab width is, so the cascade obeys the menu and nothing is
+   drawn again. */
+:root[data-code="narrow"] :is(.dlines, .hunk) { font-stretch: 62.5%; }
 .dlines {
   padding: 5px 0; overflow-x: auto; color: var(--code-ink);
-  font-family: var(--mono); font-size: 12.5px; line-height: 21px;
+  font-family: var(--code-face); font-size: var(--code-size); line-height: 21px;
   /* How wide a tab is drawn. The reader picks it; see `readingWanted`. */
   tab-size: var(--tab-w, 4);
 }
@@ -14853,6 +14868,9 @@ const ICONS = {
   tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
   // A space, as a keyboard's legend draws one (#449).
   space: "M2.2 7.4v2.6h9.6V7.4",
+  // Two arrows pressing in on a bar: how wide code is drawn. A letter and
+  // a bar read as "AI".
+  font: "M1.2 7h3.6M3.4 5.4L5 7 3.4 8.6M12.8 7H9.2M10.6 5.4L9 7l1.6 1.6M7 3v8",
   // Two links of a chain, for the ticket links.
   link: "M6 8a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.8.8"
         + "M8 6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.8-.8",
@@ -17341,6 +17359,14 @@ function putSettings() {
            keepSetting({ space_marks: on ? "on" : "off" });
            applyReading(readingWanted());
          });
+  label("code", "font");
+  choice("codewidth", [
+    [false, "normal", null, "code at its normal width"],
+    [true, "narrow", null, "code condensed: more of a line fits in a column"]],
+         (narrow) => {
+           keepSetting({ code_width: narrow ? "narrow" : "normal" });
+           applyReading(readingWanted());
+         });
   put(pop, "div", "rule");
   label("links", "link");
   const links = put(pop, "div", "linkedit");
@@ -17374,7 +17400,8 @@ function paintSettings() {
   const now = { colours: themeChoice(), tabwidth: String(reading.tab),
                 wrapping: String(reading.wrap), sides: state.sides,
                 spacechanges: String(spaceHidden()),
-                spacemarks: String(reading.marks) };
+                spacemarks: String(reading.marks),
+                codewidth: String(reading.narrow) };
   for (const [name, value] of Object.entries(now)) {
     paintChoice(pop.querySelector("." + name), value);
   }
@@ -20198,6 +20225,7 @@ function applyReading(next) {
   root.style.setProperty("--tab-w", String(next.tab));
   root.dataset.wrap = next.wrap ? "yes" : "no";
   root.dataset.marks = next.marks ? "on" : "off";
+  root.dataset.code = next.narrow ? "narrow" : "normal";
 }
 
 // What the file says. Whatever it did not answer for, the default stands --
@@ -20207,7 +20235,8 @@ function readingWanted() {
   const tab = setting("tab_width");
   return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
            wrap: setting("long_lines") === "wrap",
-           marks: setting("space_marks") === "on" };
+           marks: setting("space_marks") === "on",
+           narrow: setting("code_width") === "narrow" };
 }
 
 // Whether a change of whitespace alone is left out of the Review tab
@@ -20257,14 +20286,16 @@ function markSpaces(cell) {
       if (char === "\t") {
         // An empty mark before the tab, and the tab left in the text: a
         // tab in a span of its own was measured from elsewhere, and a tab
-        // of four columns drew three.
+        // of four columns drew three. Not `.tab`: that is a tab of the tab
+        // row, whose padding made the empty mark 24 px wide, so a tab of
+        // two columns, or one in a narrower face, ran to the next stop.
         if (plain) made.appendChild(document.createTextNode(plain));
-        put(made, "span", "ws tab");
+        put(made, "span", "ws tabmark");
         plain = char;
       } else if (char === " " && late) {
         if (plain) made.appendChild(document.createTextNode(plain));
         plain = "";
-        put(made, "span", "ws sp", char);
+        put(made, "span", "ws spacemark", char);
       } else {
         plain += char;
       }
