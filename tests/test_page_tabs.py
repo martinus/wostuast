@@ -528,3 +528,40 @@ def test_esc_leaves_a_box_and_a_number_then_picks_a_tab(page_at):
             if box == "#say":
                 assert page.input_value("#say") == "hello"
         assert "1 – 3 work again" in page.text_content("#help")
+
+
+HOLD_FILES = """() => { window.__held = new Promise((done) => { window.__release = done; });
+  const real = window.fetch;
+  window.fetch = async (url, options) => {
+    if (String(url).includes('/files')) await window.__held;
+    return real(url, options);
+  }; }"""
+
+
+def test_a_slow_switch_says_it_is_loading_and_a_quick_one_says_nothing(page_at):
+    """The last session's or tab's drawing stood in the box until the new
+    one was fetched, and over a slow ssh tunnel the reader took it for the
+    switch done, until it changed under their eyes. A switch not drawn
+    within `SWITCH_SHOWN` dims what stands there and says what is coming;
+    one quicker shows nothing, or every switch would flicker."""
+    with opened(page_at) as page:
+        wait_for_map(page)
+        page.evaluate(HOLD_FILES)
+        # Not at once, and not within half of `SWITCH_SHOWN` either: a quick
+        # switch draws in that time and must never have flickered.
+        early = page.evaluate("""async () => { showTab('files');
+          const now = document.body.classList.contains('switching');
+          await new Promise((done) => setTimeout(done, 60));
+          return [now, document.body.classList.contains('switching')]; }""")
+        assert early == [False, False], early
+        page.wait_for_function("document.body.classList.contains('switching')")
+        page.wait_for_function("!document.getAnimations().length")   # the fade ends
+        seen = page.evaluate("""() => ({
+          says: getComputedStyle(document.getElementById('content'), '::after').content,
+          dim: getComputedStyle(document.querySelector('#content > *')).opacity,
+          click: getComputedStyle(document.querySelector('#content > *')).pointerEvents })""")
+        assert seen["says"] == '"loading A session  ·  Files…"', seen
+        assert float(seen["dim"]) < 0.5 and seen["click"] == "none", seen
+        page.evaluate("window.__release()")
+        page.wait_for_function("!document.body.classList.contains('switching')")
+        page.wait_for_function("document.getElementById('content').dataset.tab === 'files'")

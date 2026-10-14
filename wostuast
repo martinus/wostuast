@@ -12734,6 +12734,17 @@ body.infeed.foldsessions #rows .row.chosen {
   background: color-mix(in srgb, var(--hue) 28%, transparent);
 }
 .content.feed { overflow: auto; padding: 16px 28px; }
+/* A switch that has not been drawn yet (`beginSwitch`): what stands in the
+   box is the last session's or tab's, so it is dimmed and does not take a
+   click, and a label says what is coming. */
+body.switching #content { position: relative; }
+body.switching #content > * { opacity: .35; pointer-events: none; transition: opacity .15s ease; }
+body.switching #content::after {
+  content: attr(data-loading); position: absolute; top: 14px; left: 50%;
+  transform: translateX(-50%); z-index: 5; padding: 4px 12px; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--edge-bright);
+  color: var(--ink-soft); font: 12px var(--sans); white-space: nowrap;
+}
 /* An entry is a card that reads like its session's row (issue 393): its
    edge in the state's colour, and where it stands under its name, so the
    eye goes from the card to the row. A press on it opens it, as "open"
@@ -22767,18 +22778,50 @@ function drawCommand(pane) {
 // three tabs, so the two it did not name got whatever the last arm said.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0,
-                finds: "find a turn  /" },
+                finds: "find a turn  /", name: "Transcript" },
   files: { draw: drawFiles, load: loadFiles, poll: 2000,
-           finds: "go to file  /" },
+           finds: "go to file  /", name: "Files" },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000,
-          finds: "find a file  /" },
+          finds: "find a file  /", name: "Review" },
 };
+
+// --- a switch that takes a while --------------------------------------------
+
+// A switch to another session or tab leaves the last one's drawing in the
+// box until the new one is fetched and drawn, because the box is built by
+// what comes back. Over a slow link that was a second of the old content
+// under the new name, and the reader took it for the switch done, until
+// the content changed under their eyes. So a switch that is not drawn
+// within `SWITCH_SHOWN` dims what stands there and says what is coming;
+// one that is quicker shows nothing, or every switch would flicker.
+
+//: How long a switch may take before the old content says it is old.
+const SWITCH_SHOWN = 120;
+
+function beginSwitch() {
+  clearTimeout(state.switchTimer);
+  state.switchTimer = setTimeout(() => {
+    const s = current();
+    if (!s || state.feed) return;
+    $("content").dataset.loading = "loading " + rowName(s) + "  \u00b7  "
+      + TABS[state.tab].name + "\u2026";
+    document.body.classList.add("switching");
+  }, SWITCH_SHOWN);
+}
+
+// What `draw` says: the box holds what was asked for now.
+function endSwitch() {
+  clearTimeout(state.switchTimer);
+  state.switchTimer = 0;
+  document.body.classList.remove("switching");
+}
 
 // Which tab each number key picks: the order of `TABS`, so a new tab is one
 // entry there and nothing else.
 const TAB_KEYS = Object.keys(TABS);
 
 function draw() {
+  endSwitch();
   const box = $("content");
   if (state.feed) { drawFeed(box); return; }
   box.className = "content split";
@@ -22809,6 +22852,7 @@ function showTab(name) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
   $("find").placeholder = TABS[name].finds;
+  beginSwitch();
   load();
   resubscribe();
 }
