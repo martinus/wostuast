@@ -2852,6 +2852,12 @@ def hook_waits(ask: str) -> bool:
     if not ASK_SHAPE.fullmatch(ask):
         return False
     path = approvals_dir() / f"{ask}.wait"
+    # No file yet is not a file left behind: the hook may rename its locked
+    # file into place between the look and the unlink, and the unlink then
+    # took a live hook's file, so the page could never say Yes to it. Only
+    # a file that was there before the look is taken away.
+    if not path.exists():
+        return False
     if lock_held(path):
         return True
     try:

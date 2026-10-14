@@ -18,7 +18,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `approvals/<ask>.wait`, taken under a name of its own and renamed, so
   the daemon never sees it unlocked. The daemon writes `<ask>.yes` holding
   the nonce, only for the dialog on the row (`key`), only while the hook
-  holds its lock (`hook_waits`), never while a No is on its way
+  holds its lock (`hook_waits`; a `.wait` that is not there yet is not
+  one left behind, or the hook's rename between the look and the unlink
+  lost it, `test_a_file_that_appears_while_the_daemon_looks_is_never_taken`),
+  never while a No is on its way
   (`holding(no=True)`), and takes it back if the hook did not take it in
   `APPROVE_SEEN`. Measured on 2.1.292 (`tests/fixtures/README.md`): the
   allow closes the terminal's dialog and the call runs; an Escape in the
