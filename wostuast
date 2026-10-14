@@ -13744,13 +13744,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* The settings beside the code (`putQuick`): icons only, at the right end of
    the line they stand on. */
 .quick { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
-.quick .toggle { padding: 0 6px; }
-.quick .toggle .icon { vertical-align: middle; margin: -2px 0 0; }
+.verb.toggle { padding: 0 6px; }
+.verb.toggle.readas { padding: 0 8px; }
+.toggle .icon { vertical-align: middle; margin: -2px 0 0; }
 /* Lit while its setting is on: the look of the part of a choice in force.
    Here, after `.verb.quiet`, and not in the choices' rule above it: there
    `.verb.quiet`, as strong and later, won the look back, and a lit button
    looked like any other. */
-.quick .toggle[aria-pressed="true"] {
+.verb.toggle[aria-pressed="true"] {
   background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
 }
 .filebody .where .quick ~ .readas { margin-left: 0; }
@@ -17483,10 +17484,8 @@ function paintSettings() {
   // The buttons beside the code (`putQuick`), so a pick in either place
   // shows in both.
   for (const button of document.querySelectorAll(".quick .toggle")) {
-    const [on, , , words] = QUICK[button.dataset.name];
-    const lit = now[button.dataset.name] === String(on);
-    button.setAttribute("aria-pressed", String(lit));
-    button.title = words + (lit ? ": on" : ": off");
+    const [on] = QUICK[button.dataset.name];
+    paintToggle(button, now[button.dataset.name] === String(on));
   }
   $("settingspath").textContent = setting("path") || "";
 }
@@ -17690,13 +17689,25 @@ function paintChoice(group, value) {
 // Markdown or the text as it was written, at the right end of the line that
 // names what is read: a document's path on the Files tab, a commit's subject
 // on the Review tab. The reader asked for the two to look and feel the same.
+// One button, "txt", lit while the text is shown as written, as the buttons
+// beside the code are (`putQuick`): it was "md | txt", two buttons, and the
+// reader asked for one click. Markdown is what is drawn when it is not lit.
 function putReadAs(parent, asText, pick, textTitle) {
-  const group = putChoice(parent, "readas", [
-    [false, "md", "markdown", "draw it as Markdown"],
-    [true, "txt", "plain", textTitle]], (value) => pick(value === true));
-  group.setAttribute("aria-label", "read as");
-  paintChoice(group, asText);
-  return group;
+  const button = put(parent, "button", "verb quiet toggle readas", "txt");
+  button.setAttribute("aria-label", textTitle);
+  paintToggle(button, asText);
+  button.addEventListener("click", () => {
+    const next = button.getAttribute("aria-pressed") !== "true";
+    paintToggle(button, next);
+    pick(next);
+  });
+  return button;
+}
+
+// One button lit while what it says is on, and its title saying which.
+function paintToggle(button, on) {
+  button.setAttribute("aria-pressed", String(on));
+  button.title = button.getAttribute("aria-label") + (on ? ": on" : ": off");
 }
 
 function notifyAbout(sessions) {
@@ -20870,7 +20881,6 @@ function putMessage(head, body) {
     toggle.hidden = !window.marked;
     const asText = messageAsText() || !window.marked;
     box.classList.toggle("astext", asText);
-    paintChoice(toggle, asText);
     const text = reflow(body);
     box.replaceChildren();
     if (asText) box.textContent = text;

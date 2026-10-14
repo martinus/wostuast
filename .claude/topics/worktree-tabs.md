@@ -485,7 +485,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   rebuild takes a comment half written. Without `marked` it is the text,
   and the control is not there.
   - **The control is the Files tab's, and stands where that one does**
-    (`putReadAs`): "Markdown | text", with icons, at the right end of the
+    (`putReadAs`): one button, "txt", lit while the text is shown as
+    written (`paintToggle`) -- it was "Markdown | text", then "md | txt",
+    and the reader asked for one click -- at the right end of the
     line that names what is read -- the subject here, the path there. The
     reader asked for the two to look and feel the same, and chose the place.
     `.diffhead.commit` is a grid so the control can stand in the subject's
