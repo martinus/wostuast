@@ -445,7 +445,12 @@ hidden, because an alert can show on a locked screen.
 ### Settings
 
 The **settings** button (the sliders, at the end of the tab row) holds all
-the settings:
+the settings, in four groups: page, code, review and links.
+
+Three of them are also small buttons beside the code they change. The
+Review tab has the columns and the code width at the right end of its bar.
+The Files tab has the code width and long lines at the right end of the
+file's line. A click there and a click in the menu change the same setting.
 
 - **colours**: auto, light or dark. Each button shows the colours it gives.
 - **alerts**: see above.
@@ -458,7 +463,7 @@ the settings:
 - **marks**: draw a tab as a faint → and a space at the end of a line as a
   faint ·, in the Files and the Review tabs. A copy of the text does not
   include the marks.
-- **code**: how wide code is drawn in the Files and the Review tabs, in
+- **width**: how wide code is drawn in the Files and the Review tabs, in
   Noto Sans Mono: normal, or narrow. Narrow fits about a fifth more of a
   line in a column, which helps most in the two-column diff.
 - **links**: your ticket links. See [Ticket links](#ticket-links).

@@ -523,7 +523,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     is sticky and 680 px at most.
   - **How the diff is drawn is in the settings menu** (`sidebar.md`,
     `putSettings`): the columns, the tab width and long lines. The Review
-    bar was cramped on a notebook with the column switch alone in it.
+    bar was cramped on a notebook with the column switch alone in it, in
+    words. The columns and the code's width are back on the bar as two
+    icon pairs (`putQuick`), which fit at 1366 px; they set the menu's own
+    settings.
   - **Whitespace is two settings, and only one asks git** (#449).
     `diff_space` "hide" is `git diff -w` (`SPACE_ARGS`), sent as
     `space=hide` on the diff *and* the whole-file route: the lines shown

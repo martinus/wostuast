@@ -12158,7 +12158,18 @@ body {
   font-size: 12.5px; color: var(--ink-mute);
 }
 .setpop .setlabel .icon { align-self: center; }
-.setpop .rule { align-self: center; grid-column: 1 / -1; border-top: 1px solid var(--edge); margin: 0 -16px; }
+/* A group of settings: a soft card with a bold title, which the reader
+   chose from pictures. A subgrid, so every label of every group stands in
+   the menu's one column of labels. */
+.setpop .setgroup {
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid;
+  gap: 10px 16px; align-items: baseline; padding: 8px 12px 12px; margin: 0 -6px;
+  border-radius: 8px; background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.setpop .settitle {
+  grid-column: 1 / -1; margin-bottom: -2px;
+  font-size: 12px; font-weight: 600; color: var(--ink-soft);
+}
 /* One control in parts, so it reads as a choice and not as actions. */
 .choice { display: flex; }
 /* Its words on a line box, not flex: a flex button takes its baseline from
@@ -12246,7 +12257,7 @@ body {
 .setpop .linkadd { align-self: flex-start; border-style: dashed; }
 /* Where all of it is kept, across both columns, so a person can open it. */
 .setpop .where {
-  grid-column: 1 / -1; display: flex; align-items: center; gap: 6px;
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; margin-top: 2px;
   font-size: 11.5px; color: var(--ink-faint); max-width: 470px;
 }
 .setpop .where .wherepath { color: var(--ink-soft); overflow-wrap: anywhere; }
@@ -13717,6 +13728,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    whole -- so it does not shrink, and the commit picker, whose subject can
    be cut and still be known, takes what room is left. */
 .pickbase { max-width: 36ch; flex-shrink: 0; }
+/* The settings beside the code (`putQuick`): icons only, at the right end of
+   the line they stand on. */
+.quick { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.quick .choice .verb { padding: 0 6px; }
+.quick .choice .verb .icon { margin: -2px 0 0; }
+.quick .choice .verb span:empty { display: none; }
+.quick .quicksep { width: 1px; height: 18px; background: var(--edge-bright); }
+.filebody .where .quick ~ .readas { margin-left: 0; }
 .diffbar .stepat {
   flex-shrink: 0; font-family: var(--sans); font-size: 12px;
   color: var(--ink-mute); font-variant-numeric: tabular-nums;
@@ -14868,6 +14887,8 @@ const ICONS = {
   tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
   // A space, as a keyboard's legend draws one (#449).
   space: "M2.2 7.4v2.6h9.6V7.4",
+  // Two arrows pointing out from a bar: code at its normal width.
+  codeNormal: "M5 7H1.2M2.8 5.4L1.2 7l1.6 1.6M9 7h3.8M11.2 5.4L12.8 7l-1.6 1.6M7 3v8",
   // Two arrows pressing in on a bar: how wide code is drawn. A letter and
   // a bar read as "AI".
   font: "M1.2 7h3.6M3.4 5.4L5 7 3.4 8.6M12.8 7H9.2M10.6 5.4L9 7l1.6 1.6M7 3v8",
@@ -17300,28 +17321,37 @@ function showSettings(open) {
   }
 }
 
-// The settings menu, built once: the colours, the two alerts, and how code
-// is drawn -- the tab width and long lines (the Files tab and the Review
-// tab, on the root, so nothing is rebuilt: a rebuild would take an open
-// comment box with it), and the diff's columns, through `keepSides`, which
-// refuses while a comment is being written. Then the ticket links, and
-// where the file is that holds all of it. The alert boxes keep their ids,
-// so `drawBell` and `setAlert` work as they did under the bell.
+// The settings menu, built once, in four groups, each a card with a bold
+// title -- the reader chose it from pictures once the menu had grown long:
+// the page (the colours, the two alerts); code (the tab width, long lines,
+// how wide code is drawn, the marks -- on the root, so nothing is rebuilt:
+// a rebuild would take an open comment box with it); the review (the diff's
+// columns, through `keepSides`, which refuses while a comment is being
+// written, and whitespace); the ticket links. Then where the file is that
+// holds all of it. The alert boxes keep their ids, so `drawBell` and
+// `setAlert` work as they did under the bell. A group is a subgrid, so
+// every label still stands in one column with every other.
 function putSettings() {
   const pop = $("setpop");
+  let into = pop;
+  const group = (title) => {
+    into = put(pop, "div", "setgroup");
+    put(into, "div", "settitle", title);
+  };
   const label = (text, icon) => {
-    const one = put(pop, "span", "setlabel");
+    const one = put(into, "span", "setlabel");
     putIcon(one, icon);
     put(one, "span", null, text);
   };
   const choice = (name, options, pick) => putChoice(
-    pop, name, options, (value) => { pick(value); paintSettings(); });
+    into, name, options, (value) => { pick(value); paintSettings(); });
+  group("Page");
   label("colours", "palette");
   choice("colours", [["system", "auto", "themeAuto"], ["light", "light", "sun"],
                      ["dark", "dark", "moon"]], applyTheme)
     .setAttribute("aria-label", "colours");
   label("alerts", "bell");
-  const checks = put(pop, "div", "checks");
+  const checks = put(into, "div", "checks");
   for (const [id, word, icon, cls] of [
     ["alertneeds", "an agent needs you", "person", "needs"],
     ["alertdone", "an agent has finished", "check", "done"]]) {
@@ -17333,24 +17363,16 @@ function putSettings() {
     put(one, "span", null, word);
   }
   put(checks, "span", "alertnote").id = "alertnote";
-  put(pop, "div", "rule");
+  group("Code");
   label("tab", "tabWidth");
   choice("tabwidth", TAB_WIDTHS.map((width) => [width, String(width)]),
          (tab) => { keepSetting({ tab_width: tab }); applyReading(readingWanted()); });
   label("lines", "wrap");
-  choice("wrapping", [[false, "scroll", "scroll"], [true, "wrap", "wrap"]],
-         (wrap) => {
-           keepSetting({ long_lines: wrap ? "wrap" : "scroll" });
-           applyReading(readingWanted());
-         });
-  label("diff", "twoColumns");
-  choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
-         keepSides);
-  label("spaces", "space");
-  choice("spacechanges", [
-    [false, "show", null, "a change of whitespace alone is a change"],
-    [true, "hide", null, "leave out a change of whitespace alone, as git diff -w does"]],
-         keepSpace);
+  choice("wrapping", [[false, "scroll", "scroll"], [true, "wrap", "wrap"]], keepWrap);
+  label("width", "font");
+  choice("codewidth", [
+    [false, "normal", null, "code at its normal width"],
+    [true, "narrow", null, "code condensed: more of a line fits in a column"]], keepWidth);
   label("marks", "dot");
   choice("spacemarks", [
     [false, "off", null, "draw tabs and spaces as they are"],
@@ -17359,24 +17381,33 @@ function putSettings() {
            keepSetting({ space_marks: on ? "on" : "off" });
            applyReading(readingWanted());
          });
-  label("code", "font");
-  choice("codewidth", [
-    [false, "normal", null, "code at its normal width"],
-    [true, "narrow", null, "code condensed: more of a line fits in a column"]],
-         (narrow) => {
-           keepSetting({ code_width: narrow ? "narrow" : "normal" });
-           applyReading(readingWanted());
-         });
-  put(pop, "div", "rule");
+  group("Review");
+  label("diff", "twoColumns");
+  choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
+         keepSides);
+  label("spaces", "space");
+  choice("spacechanges", [
+    [false, "show", null, "a change of whitespace alone is a change"],
+    [true, "hide", null, "leave out a change of whitespace alone, as git diff -w does"]],
+         keepSpace);
+  group("Links");
   label("links", "link");
-  const links = put(pop, "div", "linkedit");
+  const links = put(into, "div", "linkedit");
   put(links, "div", "linklist").id = "linklist";
   const add = put(links, "button", "verb quiet linkadd", "+ add a link");
   add.addEventListener("click", () => {
     putLinkRow($("linklist"), { match: "", url: "", trouble: "" })
       .querySelector("input").focus();
   });
-  put(pop, "div", "rule");
+  putSettingsPath(pop);
+  const button = $("settings");
+  putIcon(button, "sliders");
+  putIcon(put(button, "span", "offmark"), "bellOff");
+}
+
+// Where the file is that keeps every setting, at the menu's foot, and a
+// button that copies its path.
+function putSettingsPath(pop) {
   const where = put(pop, "div", "where");
   putIcon(where, "file");
   const words = put(where, "span", null, "saved to ");
@@ -17388,9 +17419,6 @@ function putSettings() {
   copy.addEventListener("click", async () => {
     if (await copyToClipboard(setting("path") || "")) note("path copied");
   });
-  const button = $("settings");
-  putIcon(button, "sliders");
-  putIcon(put(button, "span", "offmark"), "bellOff");
 }
 
 function paintSettings() {
@@ -17402,10 +17430,50 @@ function paintSettings() {
                 spacechanges: String(spaceHidden()),
                 spacemarks: String(reading.marks),
                 codewidth: String(reading.narrow) };
+  // Every choice of that name: the menu's, and the one beside the code
+  // (`putQuick`), so a pick in either shows in both.
   for (const [name, value] of Object.entries(now)) {
-    paintChoice(pop.querySelector("." + name), value);
+    for (const group of document.querySelectorAll(".choice." + name)) {
+      paintChoice(group, value);
+    }
   }
   $("settingspath").textContent = setting("path") || "";
+}
+
+// --- the settings beside the code ---------------------------------------------
+//
+// Three settings are changed while reading, not once: the diff's columns,
+// how wide code is drawn, and whether long lines wrap. Each is also a pair of
+// icons at the right end of the line over the code they change -- the
+// Review bar, the open file's line on the Files tab -- and stays in the
+// menu. Icons, no words: the reader asked for the menu's size and chose the
+// icons from pictures, and with words the Review bar ran out of room on a
+// notebook, which is why the columns moved into the menu once. A button's
+// words are its `title` and its `aria-label`. Both places are one setting,
+// painted from it by `paintSettings`.
+
+const QUICK = {
+  sides: [["unified", "oneColumn", "one column"],
+          ["split", "twoColumns", "two columns, side by side"]],
+  codewidth: [[false, "codeNormal", "code at its normal width"],
+              [true, "font", "code condensed: more of a line fits in a column"]],
+  wrapping: [[false, "scroll", "long lines scroll"], [true, "wrap", "long lines wrap"]],
+};
+
+function putQuick(parent, names) {
+  const box = put(parent, "span", "quick");
+  const picks = { sides: keepSides, codewidth: keepWidth, wrapping: keepWrap };
+  names.forEach((name, at) => {
+    if (at) put(box, "span", "quicksep");
+    const group = putChoice(box, name, QUICK[name].map(
+      ([value, icon, title]) => [value, "", icon, title]),
+                            (value) => { picks[name](value); paintSettings(); });
+    for (const button of group.querySelectorAll("button")) {
+      button.setAttribute("aria-label", button.title);
+    }
+  });
+  paintSettings();
+  return box;
 }
 
 // --- the ticket links, in the settings menu ---------------------------------
@@ -19965,9 +20033,7 @@ function drawFiles(box) {
   const rows = asCode ? linesOf(body) : null;
   const windowed = !!rows && rows.length > CODE_WHOLE;
   const plain = !!rows && !windowed && tooDenseToPaint(body);
-  const where = putWhere(pane, state.files.path);
-  putAbout(where, windowed);
-  if (isDoc) putAsText(where);          // last, so it stands at the right end
+  putFileHead(pane, windowed, asCode, isDoc);
   // Everything below the header, and the only thing that scrolls. It is built
   // with the file, so the listener a windowed file needs goes on with it.
   const view = put(pane, "div", "filescroll");
@@ -20239,6 +20305,19 @@ function readingWanted() {
            narrow: setting("code_width") === "narrow" };
 }
 
+// How wide code is drawn, and whether a long line wraps: the menu's
+// choices and the buttons beside the code (`putQuick`) both pick through
+// these. On the root, so nothing is drawn again.
+function keepWidth(narrow) {
+  keepSetting({ code_width: narrow ? "narrow" : "normal" });
+  applyReading(readingWanted());
+}
+
+function keepWrap(wrap) {
+  keepSetting({ long_lines: wrap ? "wrap" : "scroll" });
+  applyReading(readingWanted());
+}
+
 // Whether a change of whitespace alone is left out of the Review tab
 // (`git diff -w`, #449). Unlike the marks it is not the cascade's: the
 // daemon answers another diff, so a change asks again.
@@ -20362,6 +20441,16 @@ function putAbout(where, windowed) {
   // scrollbar is read against. The CSS shows the note, so turning wrap on or
   // off rebuilds nothing.
   if (windowed) put(where, "span", "nowrap", "too long to wrap");
+}
+
+// The open file's line: where it is, what it is, how its code is drawn when
+// it is drawn as code (`putQuick`), and for a document, Markdown or text --
+// last, so it stands at the right end.
+function putFileHead(pane, windowed, asCode, isDoc) {
+  const where = putWhere(pane, state.files.path);
+  putAbout(where, windowed);
+  if (asCode) putQuick(where, ["codewidth", "wrapping"]);
+  if (isDoc) putAsText(where);
 }
 
 // Open the tree down to a path, and ask the list to move to it. A filter hides
@@ -20550,6 +20639,7 @@ function putDiffBar(pane) {
   // is 1: stepping through a review, "5 / 9" says how far there is to go.
   put(bar, "span", "stepat");
   step("newer \u203a", "the commit after this one", -1);
+  putQuick(bar, ["sides", "codewidth"]);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
   // long pull request keeps its place in the list beside it. Once a frame at

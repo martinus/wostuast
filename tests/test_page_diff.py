@@ -1469,6 +1469,32 @@ def test_code_is_drawn_narrow_when_the_reader_asks(repo_page, ws):
             ".fontStretch") == "62.5%"
 
 
+def test_the_review_bar_carries_the_columns_and_the_width(ws, repo_page):
+    """The columns and how wide code is drawn are changed while reading a
+    change, so they are icons at the right end of the Review bar as well as
+    in the menu: one setting, shown in both, and kept."""
+    root, _ = repo_page
+    tabbed_change(root)
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_selector(".dline .dtext:has-text('z = 2')")
+        quick = ".diffbar .quick"
+        assert page.locator(f"{quick} .choice").evaluate_all(
+            "(all) => all.map((one) => one.classList[1])") == ["sides", "codewidth"]
+        page.click(f"{quick} .sides button[data-value='split']")
+        page.wait_for_selector(".dlines.sides")
+        page.click(f"{quick} .codewidth button[data-value='true']")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.dlines')).fontStretch === '62.5%'")
+        kept(ws, "diff_columns", "two")
+        kept(ws, "code_width", "narrow")
+        for name, want in (("sides", "split"), ("codewidth", "true")):
+            for where in ("#setpop", quick):
+                assert page.locator(
+                    f"{where} .{name} button[aria-pressed='true']").get_attribute(
+                        "data-value") == want, (where, name)
+
+
 def test_scrolled_sideways_every_line_keeps_its_colour(repo_page):
     """A row was only as wide as the pane unless its own text was longer, so
     scrolled sideways a short added line's green stopped at the pane's edge
@@ -1530,14 +1556,14 @@ def test_the_settings_say_what_is_chosen_and_change_it_in_place(repo_page):
         page.click("#settings")
         pressed = """() => [...document.querySelectorAll(
           '#setpop button[aria-pressed="true"]')].map((b) => b.dataset.value)"""
-        assert page.evaluate(pressed) == ["system", "4", "false", "unified",
-                                          "false", "false", "false"]
+        assert page.evaluate(pressed) == ["system", "4", "false", "false",
+                                          "false", "unified", "false"]
         drawn = page.evaluate("state.diffs.tag")
         settings(page, "tabwidth", "2")
         settings(page, "sides", "split")
         page.wait_for_selector(".dline.pair")
-        assert page.evaluate(pressed) == ["system", "2", "false", "split",
-                                          "false", "false", "false"]
+        assert page.evaluate(pressed) == ["system", "2", "false", "false",
+                                          "false", "split", "false"]
         assert page.evaluate("state.diffs.tag") == drawn
 
 

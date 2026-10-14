@@ -304,6 +304,28 @@ def test_the_robot_stands_before_the_name_and_in_the_folded_strip(page_at):
         assert folded["shown"] and not folded["name"] and not folded["version"], folded
 
 
+def test_the_settings_stand_in_four_titled_groups(page_at):
+    """The menu had grown long. The reader chose its settings in four groups
+    from pictures, each a soft card with a bold title, and every label in
+    one column across all four (a subgrid)."""
+    with opened(page_at) as page:
+        page.click("#settings")
+        page.wait_for_selector("#setpop:not([hidden]) .setgroup")
+        groups = page.evaluate("""() => [...document.querySelectorAll(
+          '#setpop .setgroup')].map((group) => [
+            group.querySelector('.settitle').textContent,
+            [...group.querySelectorAll('.setlabel')].map((one) => one.textContent),
+            getComputedStyle(group.querySelector('.settitle')).fontWeight])""")
+        assert groups == [
+            ["Page", ["colours", "alerts"], "600"],
+            ["Code", ["tab", "lines", "width", "marks"], "600"],
+            ["Review", ["diff", "spaces"], "600"],
+            ["Links", ["links"], "600"]]
+        lefts = page.evaluate("""() => [...document.querySelectorAll(
+          '#setpop .setlabel + *')].map((one) => one.getBoundingClientRect().left)""")
+        assert max(lefts) - min(lefts) < 1, lefts
+
+
 def test_every_settings_label_stands_level_with_what_it_names(page_at):
     """A label is read along the line it stands on. With a padding to line
     it up with a button, "alerts" stood 5 px under its first checkbox, and

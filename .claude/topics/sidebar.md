@@ -456,8 +456,26 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     diff's columns and the ticket links, with the path of the file that
     keeps them at its foot (`#settingspath`, and a button that copies it).
     It was a bell, a colours button, a menu on the Review bar and two links
-    over every file, and the reader chose one menu from pictures. **The
-    labels are one word** -- "tab", "lines", "diff", "links", not "tab
+    over every file, and the reader chose one menu from pictures. **It
+    stands in four groups** -- Page, Code, Review, Links -- each a soft
+    card with a bold title (`.setgroup`, `.settitle`), chosen from pictures
+    once the menu had grown long, over capital headings, names in a column
+    of their own, tabs, and bare lines. A group is a subgrid, so every
+    label still stands in one column.
+    `test_the_settings_stand_in_four_titled_groups`.
+    **Three settings are also beside the code they change** (`putQuick`,
+    `QUICK`): the diff's columns and the code's width at the Review bar's
+    right end, the code's width and long lines on the open file's line.
+    Icons only, their words in `title` and `aria-label`: with words the
+    Review bar ran out of room on a notebook, which is why the columns
+    went into the menu at first. They are the menu's settings, not copies:
+    `paintSettings` paints every `.choice` of a name, and a pick paints at
+    once (`keepWidth`, `keepWrap`, `keepSides`), not when the push comes,
+    which over the ssh tunnel is a second later.
+    `test_the_review_bar_carries_the_columns_and_the_width`,
+    `test_the_file_line_carries_the_width_and_wrap_beside_the_code`,
+    `test_a_button_beside_the_code_shows_its_choice_before_the_file_answers`.
+    **The labels are one word** -- "tab", "lines", "diff", "links", not "tab
     width", "long lines", "diff columns", "ticket links" -- because the
     reader asked for the room. **It is
     one proportional face, `--sans`, labels and buttons too**: the reader

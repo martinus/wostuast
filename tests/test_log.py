@@ -577,7 +577,7 @@ def test_no_name_is_defined_twice():
 LINES_MOST = 100
 LONGER_ALREADY = {
     "EventFollower.new_lines": 117, "pick_base": 124, "worktree_diff": 149,
-    "build_report": 153, "page:fillRow": 109, "page:drawFiles": 169,
+    "build_report": 153, "page:fillRow": 109, "page:drawFiles": 167,
     "page:drawDiff": 161, "page:resubscribe": 101,
 }
 
