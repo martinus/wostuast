@@ -537,11 +537,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     **It runs wherever a line's text is drawn or painted**, after the word
     marks: `unifiedRow`, `pairRow`, `paintDiff`, `paintLines`,
     `paintSlices`. A paint replaces the cell, and the marks went with it.
-    **A tab is never wrapped**: the mark is an empty `.ws.tab` before it.
-    Wrapped in a span of its own, a tab of four columns drew three,
+    **A tab is never wrapped**: the mark is an empty `.ws.tabmark` before
+    it. Wrapped in a span of its own, a tab of four columns drew three,
     measured from elsewhere, and
     `test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts`
-    went red.
+    went red. **The mark is not `.tab`**: it was, and the tab row's `.tab`
+    rule gave the empty mark 24 px of padding. A stop of four columns in
+    Plex Mono is 30 px, so nothing showed; a tab width of 2, or the narrow
+    face (`code_font`, 24.3 px for four), ran each first tab to the next
+    stop. The same test asserts a width of 2 now; a test that waits for
+    the mark waits for it `attached`, since an empty mark is not visible.
     `test_a_change_of_whitespace_alone_is_left_out_when_asked`,
     `test_a_change_of_whitespace_alone_goes_and_comes_back`,
     `test_a_tab_and_spaces_at_the_end_are_marked_when_asked`.

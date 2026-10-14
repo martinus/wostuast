@@ -33,9 +33,9 @@ it opens the list.
 Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
 Enter, `--keys SELECTOR=TEXT` types into a box key by key and presses
-nothing after, `--eval JS` runs in the page. `.diffhead .readas
-button[data-value='true']` shows a commit message as text; `--click
-'#settings' --part '#setpop'` is the settings menu. **A mockup is drawn
+nothing after, `--eval JS` (or a file of it) runs in the page.
+`.diffhead .readas button[data-value='true']` shows a commit message as
+text; `--click '#settings' --part '#setpop'` is the settings menu. **A mockup is drawn
 here too**: `--eval` builds the proposal inside the real page, with its real
 CSS, where a copy of the CSS in a file of its own drifts from the page.
 `--part` is what the picture is of; the whole window by default. The window
@@ -250,7 +250,10 @@ def main(argv: list[str]) -> int:
                 selector, _, text = value.partition("=")
                 page.type(selector, text)
             else:
-                page.evaluate(value)
+                # A file of it, as tour.py takes: a mockup that carries a
+                # font is longer than a command line may be.
+                page.evaluate(Path(value).read_text() if Path(value).is_file()
+                              else value)
         # Only an animation that ends: a row that needs you pulses for ever,
         # and a wait for no animation at all never ended on one.
         page.wait_for_function(

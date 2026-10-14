@@ -534,8 +534,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   courtesy on top of that.
 - **How a file is drawn is the reader's, and is kept in our `settings.json`.**
   Tab width and wrap are about these eyes, not about a session, so they are
-  the menu's, like the theme (`tab_width`, `long_lines`). Both live on the
-  root element, so the cascade obeys them and **neither
+  the menu's, like the theme (`tab_width`, `long_lines`), and so is the
+  face of code (`code_font`: `data-code` on the root swaps `--code` and
+  `--code-size`, which `.dlines` and `.hunk` wear; nothing else of the
+  page changes face). They live on the
+  root element, so the cascade obeys them and **no
   control rebuilds anything** — `redrawCode` clears the key that guards an
   open comment box, so a preference that redrew took half a written comment
   with it. `readingWanted` falls back to the default for anything the file

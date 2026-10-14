@@ -1432,6 +1432,37 @@ def test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts(
         assert page.evaluate(
             "document.documentElement.style.getPropertyValue('--tab-w')") == "8"
         assert abs(lead(page, "\ty = 1") - 8) < 0.2
+        # The empty mark before a tab was a `.tab` of the tab row, 24 px of
+        # padding: past a stop of two columns, so one tab drew as two.
+        settings(page, "tabwidth", "2")
+        assert abs(lead(page, "\ty = 1") - 2) < 0.2
+        assert abs(lead(page, "\t\tz = 2") - 4) < 0.2
+
+
+def test_code_is_drawn_narrow_when_the_reader_asks(repo_page, ws):
+    """Plex Mono is wide: a column of the two-column diff held little of a
+    line. The reader may pick Inconsolata instead, for every line of code
+    on the Files and Review tabs, and it is kept in `settings.json`. A tab
+    still stands where its stop is."""
+    root, _ = repo_page
+    tabbed_change(root)
+    face = ("() => [getComputedStyle(document.querySelector('.dlines')).fontFamily,"
+            " getComputedStyle(document.querySelector('.dlines')).fontStretch]")
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_selector(".dline .dtext:has-text('z = 2')")
+        family, stretch = page.evaluate(face)
+        assert family.startswith('"IBM Plex Mono"') and stretch == "100%"
+        settings(page, "codefont", "true")
+        family, stretch = page.evaluate(face)
+        assert family.startswith("Inconsolata") and stretch == "87.5%"
+        assert abs(lead(page, "\ty = 1") - 4) < 0.2
+        kept(ws, "code_font", "narrow")
+        page.evaluate("openInFiles('code.py')")
+        page.wait_for_selector(".filebody .dline .dtext")
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('.filebody .dlines'))"
+            ".fontFamily").startswith("Inconsolata")
 
 
 def test_scrolled_sideways_every_line_keeps_its_colour(repo_page):
@@ -1610,16 +1641,21 @@ def test_a_tab_and_spaces_at_the_end_are_marked_when_asked(repo_page, ws):
         # Painting replaces a cell's text, so the marks go back on after.
         page.evaluate(PAINT_EVERY_LINE)
         show_tab(page, "diff")
+        # Attached, not visible: the mark is empty and no wider than nothing.
+        # It was 24 px wide once, a `.tab` of the tab row, and so it showed.
         page.wait_for_selector(
-            ".diffhead.uncommitted ~ .dfile .dline.added .hljs-keyword .ws.tab")
+            ".diffhead.uncommitted ~ .dfile .dline.added .hljs-keyword .ws.tabmark",
+            state="attached")
         marks = ("() => [...document.querySelectorAll("
                  "'.diffhead.uncommitted ~ .dfile .dline.added .ws')].map("
                  "(one) => [one.className, getComputedStyle(one, '::before').content])")
-        assert page.evaluate(marks) == [["ws tab", "none"], ["ws sp", "none"],
-                                        ["ws sp", "none"]]
+        assert page.evaluate(marks) == [["ws tabmark", "none"],
+                                        ["ws spacemark", "none"],
+                                        ["ws spacemark", "none"]]
         settings(page, "spacemarks", "true")
         assert page.evaluate(marks) == [
-            ["ws tab", '"\u2192"'], ["ws sp", '"\u00b7"'], ["ws sp", '"\u00b7"']]
+            ["ws tabmark", '"\u2192"'], ["ws spacemark", '"\u00b7"'],
+            ["ws spacemark", '"\u00b7"']]
         kept(ws, "space_marks", "on")
         # The marks are not text: the line reads as it is.
         assert page.evaluate(
@@ -1628,7 +1664,8 @@ def test_a_tab_and_spaces_at_the_end_are_marked_when_asked(repo_page, ws):
             ".map((one) => one.textContent)") == ["\tprint(1)", "print(3)  "]
         # The Files tab draws its lines through the same marks, painted.
         page.evaluate("openInFiles('code.py')")
-        page.wait_for_selector(".filebody .dline .hljs-keyword .ws.tab")
+        page.wait_for_selector(".filebody .dline .hljs-keyword .ws.tabmark",
+                               state="attached")
 
 
 def test_a_file_in_the_diff_opens_on_the_files_tab(repo_page):

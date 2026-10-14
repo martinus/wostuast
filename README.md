@@ -458,6 +458,9 @@ the settings:
 - **marks**: draw a tab as a faint → and a space at the end of a line as a
   faint ·, in the Files and the Review tabs. A copy of the text does not
   include the marks.
+- **font**: the face of code in the Files and the Review tabs. Wide is IBM
+  Plex Mono. Narrow is Inconsolata, semi-condensed: about a fifth more of a
+  line fits in a column, which helps most in the two-column diff.
 - **links**: your ticket links. See [Ticket links](#ticket-links).
 
 A change applies at once. The page writes it to
