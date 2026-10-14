@@ -447,8 +447,9 @@ hidden, because an alert can show on a locked screen.
 The **settings** button (the sliders, at the end of the tab row) holds all
 the settings, in four groups: page, code, review and links.
 
-Three of them are also small buttons beside the code they change. The
-Review tab has the columns and the code width at the right end of its bar.
+Four of them are also small buttons beside the code they change. The
+Review tab has the columns, whitespace and the code width at the right end
+of its bar.
 The Files tab has the code width and long lines at the right end of the
 file's line. A click there and a click in the menu change the same setting.
 

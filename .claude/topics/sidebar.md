@@ -463,9 +463,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     of their own, tabs, and bare lines. A group is a subgrid, so every
     label still stands in one column.
     `test_the_settings_stand_in_four_titled_groups`.
-    **Three settings are also beside the code they change** (`putQuick`,
-    `QUICK`): the diff's columns and the code's width at the Review bar's
-    right end, the code's width and long lines on the open file's line.
+    **Four settings are also beside the code they change** (`putQuick`,
+    `QUICK`): the diff's columns, whitespace and the code's width at the
+    Review bar's right end, the code's width and long lines on the open
+    file's line -- the ones the reader changes while reading. The menu
+    still holds every setting: the reader weighed taking them out of it and
+    kept one place where all of them are.
     Icons only, their words in `title` and `aria-label`: with words the
     Review bar ran out of room on a notebook, which is why the columns
     went into the menu at first. They are the menu's settings, not copies:

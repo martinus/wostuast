@@ -14887,6 +14887,8 @@ const ICONS = {
   tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
   // A space, as a keyboard's legend draws one (#449).
   space: "M2.2 7.4v2.6h9.6V7.4",
+  // The same, struck through: a change of whitespace alone left out.
+  spaceHide: "M2.2 7.4v2.6h9.6V7.4M2.4 11.8L11.6 2.2",
   // Two arrows pointing out from a bar: code at its normal width.
   codeNormal: "M5 7H1.2M2.8 5.4L1.2 7l1.6 1.6M9 7h3.8M11.2 5.4L12.8 7l-1.6 1.6M7 3v8",
   // Two arrows pressing in on a bar: how wide code is drawn. A letter and
@@ -17442,8 +17444,9 @@ function paintSettings() {
 
 // --- the settings beside the code ---------------------------------------------
 //
-// Three settings are changed while reading, not once: the diff's columns,
-// how wide code is drawn, and whether long lines wrap. Each is also a pair of
+// Four settings are changed while reading, not once: the diff's columns,
+// whitespace in a diff, how wide code is drawn, and whether long lines wrap.
+// Each is also a pair of
 // icons at the right end of the line over the code they change -- the
 // Review bar, the open file's line on the Files tab -- and stays in the
 // menu. Icons, no words: the reader asked for the menu's size and chose the
@@ -17458,11 +17461,15 @@ const QUICK = {
   codewidth: [[false, "codeNormal", "code at its normal width"],
               [true, "font", "code condensed: more of a line fits in a column"]],
   wrapping: [[false, "scroll", "long lines scroll"], [true, "wrap", "long lines wrap"]],
+  spacechanges: [[false, "space", "a change of whitespace alone is a change"],
+                 [true, "spaceHide",
+                  "leave out a change of whitespace alone, as git diff -w does"]],
 };
 
 function putQuick(parent, names) {
   const box = put(parent, "span", "quick");
-  const picks = { sides: keepSides, codewidth: keepWidth, wrapping: keepWrap };
+  const picks = { sides: keepSides, codewidth: keepWidth, wrapping: keepWrap,
+                  spacechanges: keepSpace };
   names.forEach((name, at) => {
     if (at) put(box, "span", "quicksep");
     const group = putChoice(box, name, QUICK[name].map(
@@ -20639,7 +20646,7 @@ function putDiffBar(pane) {
   // is 1: stepping through a review, "5 / 9" says how far there is to go.
   put(bar, "span", "stepat");
   step("newer \u203a", "the commit after this one", -1);
-  putQuick(bar, ["sides", "codewidth"]);
+  putQuick(bar, ["sides", "spacechanges", "codewidth"]);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
   // long pull request keeps its place in the list beside it. Once a frame at

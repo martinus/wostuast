@@ -1470,9 +1470,9 @@ def test_code_is_drawn_narrow_when_the_reader_asks(repo_page, ws):
 
 
 def test_the_review_bar_carries_the_columns_and_the_width(ws, repo_page):
-    """The columns and how wide code is drawn are changed while reading a
-    change, so they are icons at the right end of the Review bar as well as
-    in the menu: one setting, shown in both, and kept."""
+    """The columns, whitespace and how wide code is drawn are changed while
+    reading a change, so they are icons at the right end of the Review bar
+    as well as in the menu: one setting, shown in both, and kept."""
     root, _ = repo_page
     tabbed_change(root)
     with opened(repo_page) as page:
@@ -1480,15 +1480,19 @@ def test_the_review_bar_carries_the_columns_and_the_width(ws, repo_page):
         page.wait_for_selector(".dline .dtext:has-text('z = 2')")
         quick = ".diffbar .quick"
         assert page.locator(f"{quick} .choice").evaluate_all(
-            "(all) => all.map((one) => one.classList[1])") == ["sides", "codewidth"]
+            "(all) => all.map((one) => one.classList[1])") == [
+                "sides", "spacechanges", "codewidth"]
         page.click(f"{quick} .sides button[data-value='split']")
         page.wait_for_selector(".dlines.sides")
         page.click(f"{quick} .codewidth button[data-value='true']")
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.dlines')).fontStretch === '62.5%'")
+        page.click(f"{quick} .spacechanges button[data-value='true']")
         kept(ws, "diff_columns", "two")
         kept(ws, "code_width", "narrow")
-        for name, want in (("sides", "split"), ("codewidth", "true")):
+        kept(ws, "diff_space", "hide")
+        for name, want in (("sides", "split"), ("codewidth", "true"),
+                           ("spacechanges", "true")):
             for where in ("#setpop", quick):
                 assert page.locator(
                     f"{where} .{name} button[aria-pressed='true']").get_attribute(
