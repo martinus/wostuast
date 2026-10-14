@@ -476,3 +476,31 @@ def test_the_review_bar_reads_in_words(repo_page):
         machine = [".dlines", ".hunk"]
         fixed_only_for(faces(page, [".diffbar .baseword", ".diffbar .stepat",
                                     ".diffbar .pickof"] + machine), machine)
+
+
+def test_the_find_boxes_stand_on_one_line_and_the_fold_is_a_bare_icon(page_at):
+    """The filter box and the find box looked alike but not quite (#469):
+    the filter box stood 8 px lower, and its edge was the colour of the
+    list it stands on, so it had none. The fold buttons were boxes of the
+    same height with an edge, the boxes' twins. The boxes now stand on one
+    line, each with an edge its ground shows, and a fold button is a bare
+    icon, a size up, with a ring only on the hover."""
+    look = """() => {
+      const css = (sel) => getComputedStyle(document.querySelector(sel));
+      const top = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().top);
+      const ground = (sel) => getComputedStyle(document.querySelector(sel).closest('.sidebar, .side')).backgroundColor;
+      return {tops: [top('#pick'), top('#find')],
+              edges: ['#pick', '#find'].map((sel) => css(sel).borderTopColor !== ground(sel)),
+              folds: ['#sessionfold', '.side .fold'].map((sel) => [css(sel).borderTopColor, css(sel).backgroundColor,
+                Math.round(document.querySelector(sel + ' .icon').getBoundingClientRect().width)])};
+    }"""
+    for scheme in ("dark", "light"):
+        with opened(page_at, scheme=scheme) as page:
+            wait_for_map(page)
+            seen = page.evaluate(look)
+            assert seen["tops"][0] == seen["tops"][1], seen
+            assert seen["edges"] == [True, True], seen
+            for edge, ground, icon in seen["folds"]:
+                assert edge == ground == "rgba(0, 0, 0, 0)" and icon == 17, seen
+            page.hover("#sessionfold")
+            assert page.evaluate("getComputedStyle(document.getElementById('sessionfold')).borderTopColor") != "rgba(0, 0, 0, 0)"
