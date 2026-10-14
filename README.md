@@ -281,6 +281,13 @@ Click **show all** under it to read all of it, and **fold** to make it short
 again. While you search, a message that holds what you search for shows all
 of it.
 
+Two or more tool calls in a row show as one line, such as
+"▸ 10 calls Read 5 · Grep 3 · Bash 2 +12 −4". The line gives the number of
+calls, the tools most used first, the lines that edits added and removed,
+and how many calls failed. Click it to see each call, and click it again to
+fold them. While you search, a group that holds what you search for shows
+all its calls.
+
 A command you run in Claude Code shows with its answer, in a fixed-width font:
 a `!` command with what it printed, and a slash command such as `/model opus`
 with what Claude Code answered. You can send a slash command from the send box

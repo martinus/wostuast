@@ -13251,15 +13251,26 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .tools { flex-grow: 1; display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono); font-size: 12px; color: var(--ink-mute); min-width: 0; }
-.tool { display: flex; gap: 8px; align-items: baseline; cursor: pointer;
+.tool, .callsum { display: flex; gap: 8px; align-items: baseline; cursor: pointer;
   background: none; border: 0; font: inherit; color: inherit; padding: 0;
   text-align: left; width: 100%; }
-.tool .caret { color: var(--edge-bright); width: 10px; flex-shrink: 0; }
+.tool .caret, .callsum .caret { color: var(--edge-bright); width: 10px; flex-shrink: 0; }
 .tool .target { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
-.tool .plus { color: var(--working); }
-.tool .minus { color: var(--cut-ink); }
+.tool .plus, .callsum .plus { color: var(--working); }
+.tool .minus, .callsum .minus { color: var(--cut-ink); }
 .tool.failed .name { color: var(--cut-ink); }
+/* A run of calls folded into one line (issue 465): a count is words, a
+   tool's name is machine text (issue 448). */
+.callsum { font-family: var(--sans); }
+.callsum .count { color: var(--ink-soft); flex-shrink: 0; }
+.callsum .kinds { display: flex; gap: 6px; align-items: baseline; min-width: 0;
+  overflow: hidden; white-space: nowrap; }
+.callsum .kinds .name { font-family: var(--mono); }
+.callsum .times, .callsum .sep { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.callsum .times { margin-left: -3px; }
+.callsum .failed { color: var(--cut-ink); flex-shrink: 0; }
+.callsum .plus, .callsum .minus { font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* An edit's change under its call: the diff card, at the result's inset. */
 .dfile.tooldiff { margin: 2px 0 6px 18px; }
 .tooldiff .toolmore {
@@ -15110,10 +15121,14 @@ function putNewLine(pane) {
     if (!node || node.parentNode !== pane) continue;
     const line = document.createElement("div");
     line.className = "newline";
+    // A call in a folded run is not on screen: the line goes over the
+    // run's own line, or it would stand under it with nothing to point at.
+    const run = node.hidden ? runOf(at) : null;
+    const over = run && state.turns.heads.get(run[0]);
     // Since when (#398): "new" alone did not say how much was missed.
     line.textContent = "new since " + (dayOf(since) ? dayOf(since) + ", " : "")
       + clock(since);
-    pane.insertBefore(line, node);
+    pane.insertBefore(line, over || node);
     return line;
   }
   return null;
@@ -18023,6 +18038,11 @@ function landOnBlock(box) {
   }
   const node = state.turns.nodes[state.turns.goTo];
   if (!node || node.parentNode !== box) return false;
+  if (node.hidden) {
+    const run = runOf(state.turns.goTo);
+    state.turns.open.add(runKey(run[0]));
+    foldRun(box, run[0], run[1]);
+  }
   state.turns.goTo = null;
   node.scrollIntoView({ block: "center" });
   node.classList.add("linked");
@@ -18607,6 +18627,7 @@ function drawTranscript(box) {
   }
   pane.replaceChildren();
   state.turns.nodes = [];
+  state.turns.heads = new Map();
   if (!state.turns.blocks.length) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, state.turns.failed
@@ -18621,6 +18642,7 @@ function drawTranscript(box) {
       markHits(node, state.find);
       pane.appendChild(node);
     }
+    foldRuns(pane);
     // Where the reader was, or the foot of it. A transcript is read from the
     // bottom -- the last thing the agent said is the thing you came for --
     // so that is where a session with no kept place lands.
@@ -18690,6 +18712,11 @@ function patchTranscript(indexes) {
       pane.appendChild(node);
     }
   }
+  const touched = new Set();
+  for (const index of indexes) {
+    const run = runOf(index);
+    if (run && !touched.has(run[0])) { touched.add(run[0]); foldRun(pane, run[0], run[1]); }
+  }
   // The first blocks after the reader's last look may come in a push of
   // their own, after the draw that found none.
   if (!pane.querySelector(":scope > .newline") && putNewLine(pane)) landOnNew(pane);
@@ -18745,6 +18772,117 @@ function putToolDiff(parent, block) {
     put(box, "div", "toolmore", "… " + counted(block.patch_more, "more line", "more lines")
         + " · the Diff tab has the whole change");
   }
+}
+
+// --- runs of calls (#465) ----------------------------------------------------
+
+// The agent says a line and then makes ten calls, says a line and makes nine:
+// drawn one row a call, the words were islands in a list nobody reads. Two
+// calls or more in a row are one line that counts them, and one click shows
+// them all. A run of one stays as it is: its line is no taller than the call.
+//
+// The calls stay flat siblings and the line is one more `.turn.toolrow` in
+// front of them, not a box round them: `patchTranscript` appends a block by
+// its index, and the gaps around a group of calls rest on `+` between turns
+// (the comment over `.turn.toolrow`). A folded call is only `hidden`.
+//
+// Which runs are open lives in `state.turns.open`, beside the calls and the
+// long messages the reader opened, under `runKey`, so a session keeps it and
+// a rewritten transcript forgets it with the rest.
+
+//: Calls in a row that fold into one line. One would fold into a line as tall.
+const RUN_FOLDS = 2;
+
+function runKey(start) { return "calls" + start; }
+
+// The first and last index of the calls in a row around `at`, or null when
+// the block at `at` is not a call.
+function runOf(at) {
+  const blocks = state.turns.blocks;
+  const call = (one) => one && one.kind === "tool";
+  if (!call(blocks[at])) return null;
+  let start = at;
+  let end = at;
+  while (start > 0 && call(blocks[start - 1])) start -= 1;
+  while (end + 1 < blocks.length && call(blocks[end + 1])) end += 1;
+  return [start, end];
+}
+
+// Every run, in one walk: a whole draw.
+function foldRuns(pane) {
+  const blocks = state.turns.blocks;
+  for (let at = 0; at < blocks.length; at += 1) {
+    const run = runOf(at);
+    if (!run) continue;
+    foldRun(pane, run[0], run[1]);
+    at = run[1];
+  }
+}
+
+// Draw one run's line, or take it away, and show or hide its calls.
+function foldRun(pane, start, end) {
+  const nodes = state.turns.nodes;
+  let head = state.turns.heads.get(start);
+  if (end - start + 1 < RUN_FOLDS || !nodes[start] || nodes[start].parentNode !== pane) {
+    if (head) { head.remove(); state.turns.heads.delete(start); }
+    for (let at = start; at <= end; at += 1) if (nodes[at]) nodes[at].hidden = false;
+    return;
+  }
+  const calls = nodes.slice(start, end + 1).filter(Boolean);
+  // A find that matches a call shows the run, or the hit is marked where
+  // nobody can see it: the folded message's scar.
+  const hit = !!state.find && calls.some((node) => node.querySelector("mark"));
+  const open = hit || state.turns.open.has(runKey(start));
+  if (!head) {
+    head = document.createElement("div");
+    head.className = "turn toolrow callrun";
+    put(head, "div", "who");
+    const button = put(put(head, "div", "tools"), "button", "callsum");
+    button.addEventListener("click", () => {
+      const key = runKey(start);
+      if (state.turns.open.has(key)) state.turns.open.delete(key); else state.turns.open.add(key);
+      const run = runOf(start);
+      if (run) foldRun(pane, run[0], run[1]);
+    });
+    state.turns.heads.set(start, head);
+  }
+  if (head.nextSibling !== nodes[start]) pane.insertBefore(head, nodes[start]);
+  fillCallSum(head.querySelector(".callsum"), state.turns.blocks.slice(start, end + 1), open);
+  for (const node of calls) {
+    node.hidden = !open;
+    // A call that arrived folded has arrived: shown later, it would slide in
+    // then, and a run opened would be ten calls having a fit.
+    if (!open) node.classList.remove("fresh");
+  }
+}
+
+// "▸ 12 calls  Read 5 · Grep 4 · Bash 3  +3 −1  1 failed": what happened,
+// most used first, and what it changed. Filled in place, so a run that grows
+// while the agent works keeps the button, and the focus on it.
+function fillCallSum(button, blocks, open) {
+  button.replaceChildren();
+  button.title = open ? "fold these calls into one line" : "show each call";
+  put(button, "span", "caret", open ? "▾" : "▸");
+  put(button, "span", "count", counted(blocks.length, "call", "calls"));
+  const uses = new Map();
+  let added = 0;
+  let removed = 0;
+  let failed = 0;
+  for (const one of blocks) {
+    uses.set(one.tool, (uses.get(one.tool) || 0) + 1);
+    added += one.added || 0;
+    removed += one.removed || 0;
+    if (one.failed) failed += 1;
+  }
+  // Most used first; a tie keeps the order they were first used in.
+  const kinds = put(button, "span", "kinds");
+  [...uses].sort((a, b) => b[1] - a[1]).forEach(([tool, n], at) => {
+    if (at) put(kinds, "span", "sep", "·");
+    put(kinds, "span", "name", tool);
+    if (n > 1) put(kinds, "span", "times", String(n));
+  });
+  putCounts(button, { added, removed });
+  if (failed) put(button, "span", "failed", failed + " failed");
 }
 
 // --- the Files tab ----------------------------------------------------------
@@ -19697,6 +19835,7 @@ function blankTurns() {
   return {
     blocks: [],         // what the daemon has pushed, by seq
     nodes: [],          // the node drawn for each one, so one can be redrawn
+    heads: new Map(),   // the one line over each run of calls, by its first
     run: -1,            // which reading of this transcript those are from
     open: new Set(),    // blocks the reader opened: a tool, a long message
     shut: new Set(),    // rounds the reader folded shut on the map

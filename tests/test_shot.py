@@ -63,11 +63,12 @@ def test_it_draws_the_case_and_measures_from_the_text(tmp_path):
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     rows = [line.split() for line in done.stdout.splitlines()[1:-1]]
     # box, shows, gap, then the block. The reply shows one line and its box
-    # is taller, which is the whole reason this measures both.
-    words, first, second, reply = rows
+    # is taller, which is the whole reason this measures both. The two calls
+    # are one line until opened (#465).
+    words, calls, reply = rows
     assert int(reply[1]) < int(reply[0]), done.stdout
     # The group sits under the words that announced it.
-    assert int(words[2]) < int(second[2]), done.stdout
+    assert int(words[2]) < int(calls[2]), done.stdout
 
 
 @skip_without_browser
