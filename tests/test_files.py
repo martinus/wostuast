@@ -1836,5 +1836,5 @@ def test_the_whitespace_settings_take_their_words_only(ws):
     assert not ws.config_trouble("space_marks", "on")
     assert ws.config_trouble("diff_space", True)
     assert ws.config_trouble("space_marks", "yes")
-    assert not ws.config_trouble("code_font", "narrow")
-    assert ws.config_trouble("code_font", "Inconsolata")
+    assert not ws.config_trouble("code_width", "narrow")
+    assert ws.config_trouble("code_width", "wide")

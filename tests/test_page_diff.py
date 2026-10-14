@@ -1441,9 +1441,9 @@ def test_a_tab_in_a_diff_line_is_a_whole_tab_from_where_the_text_starts(
 
 def test_code_is_drawn_narrow_when_the_reader_asks(repo_page, ws):
     """Plex Mono is wide: a column of the two-column diff held little of a
-    line. The reader may pick Inconsolata instead, for every line of code
-    on the Files and Review tabs, and it is kept in `settings.json`. A tab
-    still stands where its stop is."""
+    line. Code is Noto Sans Mono, which has a narrow width too; the reader
+    picks it for every line of code on the Files and Review tabs, and it is
+    kept in `settings.json`. A tab still stands where its stop is."""
     root, _ = repo_page
     tabbed_change(root)
     face = ("() => [getComputedStyle(document.querySelector('.dlines')).fontFamily,"
@@ -1452,17 +1452,21 @@ def test_code_is_drawn_narrow_when_the_reader_asks(repo_page, ws):
         show_tab(page, "diff")
         page.wait_for_selector(".dline .dtext:has-text('z = 2')")
         family, stretch = page.evaluate(face)
-        assert family.startswith('"IBM Plex Mono"') and stretch == "100%"
-        settings(page, "codefont", "true")
+        assert family.startswith('"Noto Sans Mono"') and stretch == "100%"
+        # The face's variable was once `--code`, which is the colour of a
+        # code block's ground: every block lost its ground to a font name.
+        assert page.evaluate("getComputedStyle(document.documentElement)"
+                             ".getPropertyValue('--code').trim()").startswith("#")
+        settings(page, "codewidth", "true")
         family, stretch = page.evaluate(face)
-        assert family.startswith("Inconsolata") and stretch == "87.5%"
+        assert family.startswith('"Noto Sans Mono"') and stretch == "62.5%"
         assert abs(lead(page, "\ty = 1") - 4) < 0.2
-        kept(ws, "code_font", "narrow")
+        kept(ws, "code_width", "narrow")
         page.evaluate("openInFiles('code.py')")
         page.wait_for_selector(".filebody .dline .dtext")
         assert page.evaluate(
             "getComputedStyle(document.querySelector('.filebody .dlines'))"
-            ".fontFamily").startswith("Inconsolata")
+            ".fontStretch") == "62.5%"
 
 
 def test_scrolled_sideways_every_line_keeps_its_colour(repo_page):

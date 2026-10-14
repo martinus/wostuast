@@ -6760,9 +6760,10 @@ SETTING_WORDS: dict[str, tuple[Any, ...]] = {
     # #449); and a tab and a space at a line's end are drawn faintly, or not.
     "diff_space": ("show", "hide"),
     "space_marks": ("off", "on"),
-    # The face of code on the Files and Review tabs: IBM Plex Mono, or the
-    # narrower Inconsolata, which fits more of a line in a column.
-    "code_font": ("wide", "narrow"),
+    # How wide code is drawn on the Files and Review tabs: Noto Sans Mono
+    # at its normal width, or condensed, which fits more of a line in a
+    # column.
+    "code_width": ("normal", "narrow"),
 }
 
 #: The most links the file may hold. Each is a pattern run over every block
@@ -11932,7 +11933,7 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
 })();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Inconsolata:wdth,wght@87.5,400;87.5,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Noto+Sans+Mono:wdth,wght@62.5,400;62.5,600;100,400;100,600&display=swap">
 <style>
 :root {
   --bg: var(--dark-bg); --panel: #191a20; --raised: #1f2129; --chosen: #262834;
@@ -11989,9 +11990,12 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --syn-com: #6f7385; --syn-fn: #7fb3e0; --syn-meta: #8b8f9e;
   --syn-attr: #c6a2d8;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* The face of code on the Files and Review tabs, and its size: the
-     reader picks wide or narrow (`code_font`). */
-  --code: var(--mono); --code-size: 12.5px; --code-small: 12px;
+  /* The face of code on the Files and Review tabs, and its sizes. Noto
+     Sans Mono, not Plex Mono: the reader asked for one face in a normal
+     and a narrow width (`code_width`), and Plex Mono has no narrow one.
+     12 px stands as tall as Plex Mono's 12.5. Not `--code`: that is the
+     colour of a code block's ground, and a face of that name took it. */
+  --code-face: 'Noto Sans Mono', var(--mono); --code-size: 12px; --code-small: 11.5px;
   --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   /* File names are long and a monospace face spends a third of the column on
      air. A condensed one shows the end of the path, which is the part you
@@ -13846,7 +13850,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 :root[data-marks="on"] .ws.spacemark::before { content: "\00b7"; }
 .hunk {
   padding: 4px 16px; background: var(--hunk-bg); color: var(--ink-faint);
-  font-family: var(--code); font-size: var(--code-small); line-height: 20px;
+  font-family: var(--code-face); font-size: var(--code-small); line-height: 20px;
   white-space: pre; overflow-x: auto;
 }
 .hunk .ctx { margin-left: 14px; color: var(--ink-soft); }
@@ -13865,17 +13869,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    container: it used to sit on `.diffbody`, so the moment the Files tab drew
    the same rows they came out in the proportional face, with the gutter's
    space padding no longer lining up. A component carries its own typography. */
-/* Narrow: Inconsolata, semi-condensed, a size up so its letters stand as
-   tall as Plex Mono's. A character is 6.1 px against 7.5, so a column
-   holds a fifth more of a line. On the root, as the tab width is, so the
-   cascade obeys the menu and nothing is drawn again. */
-:root[data-code="narrow"] {
-  --code: 'Inconsolata', var(--mono); --code-size: 13.5px; --code-small: 13px;
-}
-:root[data-code="narrow"] :is(.dlines, .hunk) { font-stretch: 87.5%; }
+/* Narrow: the same face at its narrowest width, as tall. A character is
+   6.0 px against 7.2, so a column holds a fifth more of a line. On the
+   root, as the tab width is, so the cascade obeys the menu and nothing is
+   drawn again. */
+:root[data-code="narrow"] :is(.dlines, .hunk) { font-stretch: 62.5%; }
 .dlines {
   padding: 5px 0; overflow-x: auto; color: var(--code-ink);
-  font-family: var(--code); font-size: var(--code-size); line-height: 21px;
+  font-family: var(--code-face); font-size: var(--code-size); line-height: 21px;
   /* How wide a tab is drawn. The reader picks it; see `readingWanted`. */
   tab-size: var(--tab-w, 4);
 }
@@ -17358,12 +17359,12 @@ function putSettings() {
            keepSetting({ space_marks: on ? "on" : "off" });
            applyReading(readingWanted());
          });
-  label("font", "font");
-  choice("codefont", [
-    [false, "wide", null, "code in IBM Plex Mono"],
-    [true, "narrow", null, "code in Inconsolata, narrower: more of a line in a column"]],
+  label("code", "font");
+  choice("codewidth", [
+    [false, "normal", null, "code at its normal width"],
+    [true, "narrow", null, "code condensed: more of a line fits in a column"]],
          (narrow) => {
-           keepSetting({ code_font: narrow ? "narrow" : "wide" });
+           keepSetting({ code_width: narrow ? "narrow" : "normal" });
            applyReading(readingWanted());
          });
   put(pop, "div", "rule");
@@ -17400,7 +17401,7 @@ function paintSettings() {
                 wrapping: String(reading.wrap), sides: state.sides,
                 spacechanges: String(spaceHidden()),
                 spacemarks: String(reading.marks),
-                codefont: String(reading.narrow) };
+                codewidth: String(reading.narrow) };
   for (const [name, value] of Object.entries(now)) {
     paintChoice(pop.querySelector("." + name), value);
   }
@@ -20224,7 +20225,7 @@ function applyReading(next) {
   root.style.setProperty("--tab-w", String(next.tab));
   root.dataset.wrap = next.wrap ? "yes" : "no";
   root.dataset.marks = next.marks ? "on" : "off";
-  root.dataset.code = next.narrow ? "narrow" : "wide";
+  root.dataset.code = next.narrow ? "narrow" : "normal";
 }
 
 // What the file says. Whatever it did not answer for, the default stands --
@@ -20235,7 +20236,7 @@ function readingWanted() {
   return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
            wrap: setting("long_lines") === "wrap",
            marks: setting("space_marks") === "on",
-           narrow: setting("code_font") === "narrow" };
+           narrow: setting("code_width") === "narrow" };
 }
 
 // Whether a change of whitespace alone is left out of the Review tab

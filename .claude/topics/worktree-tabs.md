@@ -544,7 +544,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     went red. **The mark is not `.tab`**: it was, and the tab row's `.tab`
     rule gave the empty mark 24 px of padding. A stop of four columns in
     Plex Mono is 30 px, so nothing showed; a tab width of 2, or the narrow
-    face (`code_font`, 24.3 px for four), ran each first tab to the next
+    width (`code_width`, 24 px for four), ran each first tab to the next
     stop. The same test asserts a width of 2 now; a test that waits for
     the mark waits for it `attached`, since an empty mark is not visible.
     `test_a_change_of_whitespace_alone_is_left_out_when_asked`,
