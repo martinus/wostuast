@@ -12734,6 +12734,17 @@ body.infeed.foldsessions #rows .row.chosen {
   background: color-mix(in srgb, var(--hue) 28%, transparent);
 }
 .content.feed { overflow: auto; padding: 16px 28px; }
+/* A switch that has not been drawn yet (`beginSwitch`): what stands in the
+   box is the last session's or tab's, so it is dimmed and does not take a
+   click, and a label says what is coming. */
+body.switching #content { position: relative; }
+body.switching #content > * { opacity: .35; pointer-events: none; transition: opacity .15s ease; }
+body.switching #content::after {
+  content: attr(data-loading); position: absolute; top: 14px; left: 50%;
+  transform: translateX(-50%); z-index: 5; padding: 4px 12px; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--edge-bright);
+  color: var(--ink-soft); font: 12px var(--sans); white-space: nowrap;
+}
 /* An entry is a card that reads like its session's row (issue 393): its
    edge in the state's colour, and where it stands under its name, so the
    eye goes from the card to the row. A press on it opens it, as "open"
@@ -14294,6 +14305,9 @@ const state = {
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
   visits: new Map(),
+  // The transcripts of the last sessions left, by id, the oldest first --
+  // see `keepTurns`.
+  heldTurns: new Map(),
   stream: null,
   // Everything the Files tab holds, and nothing another tab reads. A tab's
   // state arrives and leaves with the tab: the flat bag this came out of meant
@@ -22767,18 +22781,50 @@ function drawCommand(pane) {
 // three tabs, so the two it did not name got whatever the last arm said.
 const TABS = {
   transcript: { draw: drawTranscript, load: loadTranscript, poll: 0,
-                finds: "find a turn  /" },
+                finds: "find a turn  /", name: "Transcript" },
   files: { draw: drawFiles, load: loadFiles, poll: 2000,
-           finds: "go to file  /" },
+           finds: "go to file  /", name: "Files" },
   diff: { draw: drawDiff, load: loadDiff, poll: 5000,
-          finds: "find a file  /" },
+          finds: "find a file  /", name: "Review" },
 };
+
+// --- a switch that takes a while --------------------------------------------
+
+// A switch to another session or tab leaves the last one's drawing in the
+// box until the new one is fetched and drawn, because the box is built by
+// what comes back. Over a slow link that was a second of the old content
+// under the new name, and the reader took it for the switch done, until
+// the content changed under their eyes. So a switch that is not drawn
+// within `SWITCH_SHOWN` dims what stands there and says what is coming;
+// one that is quicker shows nothing, or every switch would flicker.
+
+//: How long a switch may take before the old content says it is old.
+const SWITCH_SHOWN = 120;
+
+function beginSwitch() {
+  clearTimeout(state.switchTimer);
+  state.switchTimer = setTimeout(() => {
+    const s = current();
+    if (!s || state.feed) return;
+    $("content").dataset.loading = "loading " + rowName(s) + "  \u00b7  "
+      + TABS[state.tab].name + "\u2026";
+    document.body.classList.add("switching");
+  }, SWITCH_SHOWN);
+}
+
+// What `draw` says: the box holds what was asked for now.
+function endSwitch() {
+  clearTimeout(state.switchTimer);
+  state.switchTimer = 0;
+  document.body.classList.remove("switching");
+}
 
 // Which tab each number key picks: the order of `TABS`, so a new tab is one
 // entry there and nothing else.
 const TAB_KEYS = Object.keys(TABS);
 
 function draw() {
+  endSwitch();
   const box = $("content");
   if (state.feed) { drawFeed(box); return; }
   box.className = "content split";
@@ -22809,6 +22855,7 @@ function showTab(name) {
     button.setAttribute("aria-selected", String(button.dataset.tab === name));
   }
   $("find").placeholder = TABS[name].finds;
+  beginSwitch();
   load();
   resubscribe();
 }
@@ -22916,6 +22963,9 @@ function choose(id) {
     catch (error) { /* a tab that keeps nothing still goes back until a reload */ }
   }
   savePlace(state.chosen);
+  // Before `chosen` moves on: kept under the new id, the last session's
+  // transcript was drawn at once under the new session's name.
+  keepTurns(state.chosen);
   state.chosen = id;
   state.keptUnread = null;        // a mark made while looking holds till now
   // The address names the session on screen, so a reload comes back to it.
@@ -22936,6 +22986,7 @@ function choose(id) {
   // and the worktree of the last session are not this one's, and a field
   // added to either must not need a line here to be forgotten from.
   state.turns = blankTurns();
+  takeTurns(id);
   state.files = blankFiles();
   state.diffs = blankDiff();
   state.diff = null;
@@ -22951,6 +23002,38 @@ function choose(id) {
   // and resubscribes, which was this function's own tail.
   showTab(back && TABS[back.tab] ? back.tab : state.tab);
   markSeen();
+}
+
+//: How many sessions' transcripts the page keeps after the reader leaves
+//: them. A transcript of seven hundred blocks is under a megabyte here.
+const TRANSCRIPTS_KEPT = 8;
+
+// The transcript of a session the reader leaves, kept in the page. Over a
+// slow ssh tunnel every return fetched the whole of it again -- 869 KB for
+// 704 blocks, measured -- and two sessions read in turns were that, both
+// ways, every time. A session kept is drawn at once when it is chosen again
+// (`loadTranscript`), and the fetch asks only whether it moved (`have`):
+// the daemon answers `same` and nothing more when it did not. Only a whole
+// reading is kept: pieces pushed before any fetch would pass for the lot.
+function keepTurns(id) {
+  const turns = state.turns;
+  if (!id || !turns.whole) return;
+  state.heldTurns.delete(id);
+  state.heldTurns.set(id, { blocks: turns.blocks, run: turns.run, version: turns.version });
+  const live = new Set(state.sessions.map((one) => one.id));
+  for (const kept of [...state.heldTurns.keys()]) {
+    if (!live.has(kept) || state.heldTurns.size > TRANSCRIPTS_KEPT) state.heldTurns.delete(kept);
+  }
+}
+
+// Put back a kept transcript onto a state just blanked; it leaves the
+// keeping, so pushes to it are this page's only.
+function takeTurns(id) {
+  const held = state.heldTurns.get(id);
+  if (!held) return;
+  state.heldTurns.delete(id);
+  Object.assign(state.turns, { blocks: held.blocks, run: held.run,
+                               version: held.version, whole: true });
 }
 
 // `b`: back to the session chosen before this one, and pressed again, back
@@ -23062,6 +23145,14 @@ async function loadTranscript() {
   // push of a new reading starts over from nothing -- and their version
   // would pass for the lot.
   const turns = state.turns;
+  // What is held and not on screen is drawn now, not after the answer: a
+  // session kept from an earlier visit (`takeTurns`), or this tab come back
+  // to. The answer then only says whether it moved.
+  const pane = $("content").querySelector(".turnbody");
+  const onScreen = $("content").dataset.tab === "transcript" && pane
+    && pane.dataset.session === want;
+  const drewHeld = turns.whole && turns.blocks.length > 0 && !onScreen;
+  if (drewHeld) draw();
   const body = await ask(want, "transcript",
                          turns.whole ? `?have=${turns.run}.${turns.version}` : "");
   if (state.chosen !== want) return;        // the reader moved on while we waited
@@ -23104,7 +23195,9 @@ async function loadTranscript() {
   state.turns.version = version;
   state.turns.whole = true;
   state.turns.landed = true;
-  draw();
+  // Drawn already from what was held, and nothing moved: a second draw
+  // would build every block again for nothing.
+  if (!(drewHeld && body.same && !early.length)) draw();
   // The stream opened while this was on its way, and said what it holds.
   const told = state.turns.told;
   state.turns.told = null;

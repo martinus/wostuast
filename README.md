@@ -268,6 +268,11 @@ where you left it: the tab, the open file, and your place in it.
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
 
+When a switch to another session or tab takes a moment, for example over a
+slow ssh tunnel, the old content dims and a label says what is loading. The
+page keeps the transcripts of the last eight sessions you looked at, so going
+back to one shows it at once.
+
 On a small screen, fold the columns away. The button beside the box at the
 top of a column folds it to a thin strip, and the same button brings it
 back. The session list folds on its own. Folded, it shows a narrow tab

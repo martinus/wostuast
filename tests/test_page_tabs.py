@@ -528,3 +528,97 @@ def test_esc_leaves_a_box_and_a_number_then_picks_a_tab(page_at):
             if box == "#say":
                 assert page.input_value("#say") == "hello"
         assert "1 – 3 work again" in page.text_content("#help")
+
+
+HOLD_FILES = """() => { window.__held = new Promise((done) => { window.__release = done; });
+  const real = window.fetch;
+  window.fetch = async (url, options) => {
+    if (String(url).includes('/files')) await window.__held;
+    return real(url, options);
+  }; }"""
+
+
+def test_a_slow_switch_says_it_is_loading_and_a_quick_one_says_nothing(page_at):
+    """The last session's or tab's drawing stood in the box until the new
+    one was fetched, and over a slow ssh tunnel the reader took it for the
+    switch done, until it changed under their eyes. A switch not drawn
+    within `SWITCH_SHOWN` dims what stands there and says what is coming;
+    one quicker shows nothing, or every switch would flicker."""
+    with opened(page_at) as page:
+        wait_for_map(page)
+        page.evaluate(HOLD_FILES)
+        # Not at once, and not within half of `SWITCH_SHOWN` either: a quick
+        # switch draws in that time and must never have flickered.
+        early = page.evaluate("""async () => { showTab('files');
+          const now = document.body.classList.contains('switching');
+          await new Promise((done) => setTimeout(done, 60));
+          return [now, document.body.classList.contains('switching')]; }""")
+        assert early == [False, False], early
+        page.wait_for_function("document.body.classList.contains('switching')")
+        page.wait_for_function("!document.getAnimations().length")   # the fade ends
+        seen = page.evaluate("""() => ({
+          says: getComputedStyle(document.getElementById('content'), '::after').content,
+          dim: getComputedStyle(document.querySelector('#content > *')).opacity,
+          click: getComputedStyle(document.querySelector('#content > *')).pointerEvents })""")
+        assert seen["says"] == '"loading A session  ·  Files…"', seen
+        assert float(seen["dim"]) < 0.5 and seen["click"] == "none", seen
+        page.evaluate("window.__release()")
+        page.wait_for_function("!document.body.classList.contains('switching')")
+        page.wait_for_function("document.getElementById('content').dataset.tab === 'files'")
+
+
+def test_a_session_gone_back_to_is_drawn_from_what_the_page_kept(pair_at):
+    """Over a slow ssh tunnel every return to a session fetched its whole
+    transcript again: 869 KB for 704 blocks, measured. The page keeps the
+    last sessions' transcripts (`keepTurns`), draws a kept one at once, and
+    asks the daemon only whether it moved -- `have`, answered `same`."""
+    with opened(pair_at) as page:
+        page.wait_for_function("document.querySelectorAll('#rows .row').length === 2")
+        first, other = "s1", "s2"            # s2 has no transcript at all
+        page.evaluate("(id) => choose(id)", first)
+        page.wait_for_function("(id) => document.querySelector('.turnbody') && "
+                               "document.querySelector('.turnbody').dataset.session === id", arg=first)
+        # Only a whole reading is kept, and the stream's opening may ask for
+        # the transcript again just after the first fetch: wait for it.
+        page.wait_for_function("state.turns.whole && state.turns.landed && !state.turns.early")
+        page.evaluate("(id) => choose(id)", other)
+        page.wait_for_function("(id) => state.heldTurns.has(id)", arg=first)
+        page.wait_for_function("(id) => state.chosen === id && state.turns.landed", arg=other)
+        # Never another session's transcript under this one's name.
+        assert page.evaluate("state.turns.blocks.length") == 0
+        page.evaluate("""() => { window.__asked = []; window.__held = new Promise((done) => { window.__release = done; });
+          const real = window.fetch;
+          window.fetch = async (url, options) => {
+            if (String(url).includes('/transcript')) { window.__asked.push(String(url)); await window.__held; }
+            return real(url, options);
+          }; }""")
+        page.evaluate("""() => { window.__draws = 0; const real = TABS.transcript.draw;
+          TABS.transcript.draw = (box) => { window.__draws += 1; return real(box); }; }""")
+        drawn = page.evaluate("""(id) => { choose(id);
+          const pane = document.querySelector('.turnbody');
+          return [pane.dataset.session, pane.querySelectorAll('.turn').length]; }""", first)
+        assert drawn[0] == first and drawn[1] >= 2, drawn
+        asked = page.evaluate("window.__asked")
+        assert len(asked) == 1 and "have=" in asked[0], asked
+        page.evaluate("window.__release()")
+        page.wait_for_function("state.turns.landed")
+        assert page.evaluate("state.turns.blocks.length") >= 2
+        # The answer was `same`: drawn once, from what was kept, and not
+        # built again -- 70 to 90 ms for seven hundred blocks, measured.
+        assert page.evaluate("window.__draws") == 1
+
+
+def test_the_page_keeps_the_last_transcripts_and_no_more(page_at):
+    """Eight, the newest: each is up to a megabyte, and a page stays open
+    for days."""
+    with opened(page_at) as page:
+        wait_for_map(page)
+        kept = page.evaluate("""() => {
+          const ids = Array.from({length: 12}, (_, at) => 'x' + at);
+          state.sessions = state.sessions.concat(ids.map((id) => Object.freeze({id})));
+          for (const id of ids) {
+            state.turns = Object.assign(blankTurns(), {whole: true, blocks: [{seq: 0}]});
+            keepTurns(id);
+          }
+          return [...state.heldTurns.keys()]; }""")
+        assert kept == ["x" + str(at) for at in range(4, 12)], kept
