@@ -11996,6 +11996,14 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
      12 px stands as tall as Plex Mono's 12.5. Not `--code`: that is the
      colour of a code block's ground, and a face of that name took it. */
   --code-face: 'Noto Sans Mono', var(--mono); --code-size: 12px; --code-small: 11.5px;
+  /* Where every line's right-hand controls end, measured from the window's
+     edge: the tab row's buttons, the Review bar's, the commit message's
+     md / txt, a file's card, the Files tab's file line. They stood 16, 20,
+     24 and 26 px in, and the reader saw four edges where one was meant.
+     Inside a scroller the scrollbar's room is taken off (`--scrollbar`,
+     measured by `measureScrollbar`), so the edge holds with one or none. */
+  --line-end: 24px;
+  --line-end-in: max(0px, calc(var(--line-end) - var(--scrollbar, 0px)));
   --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   /* File names are long and a monospace face spends a third of the column on
      air. A condensed one shows the end of the path, which is the part you
@@ -12974,7 +12982,7 @@ body.switching #content::after {
    the sidebar's width as well as the window's, so the row asks itself. */
 .tabs {
   height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
-  padding: 0 24px; border-bottom: 1px solid var(--edge);
+  padding: 0 var(--line-end) 0 24px; border-bottom: 1px solid var(--edge);
   font-family: var(--sans); font-size: 13px; container-type: inline-size;
 }
 /* A name on one line (issue 397): at 1024 px "1 Transcript" broke over two,
@@ -13709,10 +13717,15 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .diffscroll {
   flex-grow: 1; min-height: 0; overflow-y: auto; position: relative;
   padding-bottom: 24px;
+  /* The scrollbar's room is kept whether a diff is long or short, so the
+     right edge (`--line-end-in`) does not move when one more file makes
+     the pane scroll. */
+  scrollbar-gutter: stable;
 }
 .diffbar {
   flex-shrink: 0; display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--edge);
+  padding: 8px var(--line-end) 8px 16px; background: var(--bg);
+  border-bottom: 1px solid var(--edge);
 }
 /* The narrow face, as file names wear: branch names and commit subjects
    are long, and a picker that shows more of one is read, not opened. */
@@ -13750,7 +13763,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    how it is drawn. It is outside the scroller, so it stays in view in both
    directions without being sticky in either. */
 .filebody > .where {
-  flex-shrink: 0; padding: 12px 26px; gap: 14px;
+  flex-shrink: 0; padding: 12px var(--line-end) 12px 26px; gap: 14px;
   display: flex; align-items: baseline; flex-wrap: wrap;
   background: var(--bg); border-bottom: 1px solid var(--edge);
 }
@@ -13768,7 +13781,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    scroller stand on each other. Which file you are in is the question a
    long diff asks; which half of it is answered once, where the half starts. */
 .diffhead {
-  padding: 14px 20px 4px;
+  padding: 14px var(--line-end-in) 4px 20px;
   font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
   color: var(--ink-faint);
 }
@@ -13818,7 +13831,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    a scroller of the card and the header inside it would stop being sticky
    against the pane. */
 .dfile {
-  margin: 10px 16px 0; border: 1px solid var(--edge); border-radius: 8px;
+  margin: 10px var(--line-end-in) 0 16px; border: 1px solid var(--edge); border-radius: 8px;
   overflow: clip; background: var(--sheet);
 }
 /* Sticky, so a file three screens long still says which file it is. */
@@ -17407,6 +17420,21 @@ function putSettings() {
   putIcon(put(button, "span", "offmark"), "bellOff");
 }
 
+// How much room a scroller keeps for its bar: none where scrollbars lie
+// over the page (macOS, a phone), about 15 px on most desktops.
+// `--line-end-in` takes it off, so what stands in a scroller ends where
+// the bars above it end. Measured the way `.diffscroll` keeps it, with
+// `scrollbar-gutter`: `overflow: scroll` on an empty box said 0 in
+// Chromium while the pane beside it kept 15.
+function measureScrollbar() {
+  const probe = put(document.body, "div");
+  probe.style.cssText = "position:absolute;top:-200px;width:100px;height:100px;"
+    + "overflow:auto;scrollbar-gutter:stable";
+  document.documentElement.style.setProperty(
+    "--scrollbar", (probe.offsetWidth - probe.clientWidth) + "px");
+  probe.remove();
+}
+
 // Where the file is that keeps every setting, at the menu's foot, and a
 // button that copies its path.
 function putSettingsPath(pop) {
@@ -17640,8 +17668,8 @@ function paintChoice(group, value) {
 // on the Review tab. The reader asked for the two to look and feel the same.
 function putReadAs(parent, asText, pick, textTitle) {
   const group = putChoice(parent, "readas", [
-    [false, "Markdown", "markdown", "draw it as Markdown"],
-    [true, "text", "plain", textTitle]], (value) => pick(value === true));
+    [false, "md", "markdown", "draw it as Markdown"],
+    [true, "txt", "plain", textTitle]], (value) => pick(value === true));
   group.setAttribute("aria-label", "read as");
   paintChoice(group, asText);
   return group;
@@ -23734,6 +23762,7 @@ for (const button of document.querySelectorAll(".tab")) {
   button.addEventListener("click", () => showTab(button.dataset.tab));
 }
 putSettings();
+measureScrollbar();
 // Defined before the first line that reads it: a `const` read earlier is an
 // error that stops the page.
 const JUMP_TITLE = "jump to its tmux pane  ⏎";

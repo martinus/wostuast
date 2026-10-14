@@ -1006,6 +1006,19 @@ def test_a_button_beside_the_code_shows_its_choice_before_the_file_answers(
         ).get_attribute("aria-pressed") == "true"
 
 
+def test_the_file_line_ends_where_the_tab_row_ends(repo_page):
+    """The open file's line stood 26 px in from the window's edge, the tab
+    row's buttons 24: two edges, one over the other. One line now."""
+    repo, _ = repo_page
+    repo.joinpath("tabs.py").write_text("def a():\n\treturn 1\n")
+    with opened(repo_page) as page:
+        open_file(page, "tabs.py")
+        page.wait_for_selector(".filebody > .where .quick")
+        edges = page.evaluate("""() => ['#settings', '.filebody > .where .quick'].map(
+          (sel) => document.querySelector(sel).getBoundingClientRect().right)""")
+        assert abs(edges[0] - edges[1]) < 1, edges
+
+
 def test_a_windowed_file_says_it_cannot_wrap(long_page):
     """A windowed file's rows are a grid the scrollbar is read against, and a
     wrapped row is not one row tall. A control that quietly did nothing would

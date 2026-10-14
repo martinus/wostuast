@@ -478,6 +478,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_the_review_bar_carries_the_columns_and_the_width`,
     `test_the_file_line_carries_the_width_and_wrap_beside_the_code`,
     `test_a_button_beside_the_code_shows_its_choice_before_the_file_answers`.
+    - **Every line's right-hand controls end on one line** (`--line-end`,
+      24 px, the tab row's own): the Review bar, the commit message's
+      md / txt, a file's card, the Files tab's file line. They stood 16,
+      20, 24 and 26 px in, and the reader saw it at once. What stands in
+      the scrolling pane uses `--line-end-in`, which takes off the room
+      the pane keeps for its bar (`scrollbar-gutter: stable` on
+      `.diffscroll`, measured by `measureScrollbar` the same way: an empty
+      `overflow: scroll` box said 0 px in Chromium while the pane kept
+      15). The read-as words are md and txt, which the reader asked for.
+      `test_every_right_hand_control_ends_on_one_line`,
+      `test_the_file_line_ends_where_the_tab_row_ends`.
     **The labels are one word** -- "tab", "lines", "diff", "links", not "tab
     width", "long lines", "diff columns", "ticket links" -- because the
     reader asked for the room. **It is

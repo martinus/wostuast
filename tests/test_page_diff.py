@@ -1499,6 +1499,29 @@ def test_the_review_bar_carries_the_columns_and_the_width(ws, repo_page):
                         "data-value") == want, (where, name)
 
 
+def test_every_right_hand_control_ends_on_one_line(repo_page):
+    """The tab row's buttons stood 24 px from the window's edge, the Review
+    bar's 16, the commit message's md / txt 20, and the reader saw edges
+    where one was meant. They end on one line now (`--line-end`), and what
+    stands in the scrolling pane takes the scrollbar's room off, so it
+    holds with a scrollbar or without. The read-as words are md and txt."""
+    root, _ = repo_page
+    tabbed_change(root)
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "Tabs", "-m", "A body, so it has md and txt.")
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_function("(state.diff || {}).commits?.length === 2")
+        pick(page, page.evaluate("state.diff.commits[0].sha"))
+        page.wait_for_selector(".diffhead .readas")
+        edges = page.evaluate("""() => Object.fromEntries([
+          ['settings', '#settings'], ['bar', '.diffbar .quick'],
+          ['message', '.diffhead .readas'], ['card', '.dfile']].map(([name, sel]) =>
+          [name, document.querySelector(sel).getBoundingClientRect().right]))""")
+        assert max(edges.values()) - min(edges.values()) < 1, edges
+        assert page.locator(".diffhead .readas button").all_inner_texts() == ["md", "txt"]
+
+
 def test_scrolled_sideways_every_line_keeps_its_colour(repo_page):
     """A row was only as wide as the pane unless its own text was longer, so
     scrolled sideways a short added line's green stopped at the pane's edge
