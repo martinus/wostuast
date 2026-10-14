@@ -509,3 +509,22 @@ def test_a_folded_session_list_is_a_tile_for_each_session(ws, pair_at, tmp_path)
         rows = page.evaluate(TILES)
         assert all(one["lines"] >= 2 and not one["title"] for one in rows), rows
 
+
+
+def test_esc_leaves_a_box_and_a_number_then_picks_a_tab(page_at):
+    """In a box a number is a letter typed, so `1` `2` `3` did nothing from
+    the send box, and the reader asked for another way (#470). Esc leaves
+    every box on the bar and the lists -- the send box keeps its text --
+    and the number keys work again; the key help says so."""
+    with opened(page_at) as page:
+        wait_for_map(page)
+        for box, tab in (("#say", "files"), ("#find", "diff"), ("#pick", "transcript")):
+            page.click(box)
+            page.keyboard.type("hello")
+            page.keyboard.press("Escape")
+            page.keyboard.press(str(["transcript", "files", "diff"].index(tab) + 1))
+            page.wait_for_function("(tab) => state.tab === tab", arg=tab)
+            assert page.evaluate("document.activeElement === document.body"), box
+            if box == "#say":
+                assert page.input_value("#say") == "hello"
+        assert "1 – 3 work again" in page.text_content("#help")

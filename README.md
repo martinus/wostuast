@@ -478,7 +478,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
 | <kbd>s</kbd> | Jump to the send box, which sends what you write to the chosen agent (Transcript tab, while the box is there) |
 | <kbd>c</kbd> | Colours: auto, light, dark (also in the settings menu) |
-| <kbd>Esc</kbd> | Clear a box, or close the help |
+| <kbd>Esc</kbd> | Leave the box you type in, so the keys above work again: <kbd>Esc</kbd> <kbd>2</kbd> goes to Files from the send box, which keeps its text. A find box is cleared. Also closes the help |
 
 **Jump** puts the cursor in the agent's pane. To also raise your terminal
 window, set `WOSTUAST_FOCUS` to a command that does that. Which command that
