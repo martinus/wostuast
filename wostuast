@@ -2852,6 +2852,12 @@ def hook_waits(ask: str) -> bool:
     if not ASK_SHAPE.fullmatch(ask):
         return False
     path = approvals_dir() / f"{ask}.wait"
+    # No file yet is not a file left behind: the hook may rename its locked
+    # file into place between the look and the unlink, and the unlink then
+    # took a live hook's file, so the page could never say Yes to it. Only
+    # a file that was there before the look is taken away.
+    if not path.exists():
+        return False
     if lock_held(path):
         return True
     try:
@@ -12305,6 +12311,25 @@ body {
   --line-bottom: calc(var(--gap-bottom) + var(--flare) - 1px);
 }
 .grip:hover, .grip.dragging, #grip:hover, #grip.dragging { background: var(--needs); }
+/* A column folded away (issue 464) is a strip as wide as its button, and
+   the button stands where it stood. Its edge drags nothing while it is
+   folded: a drag would set a width nobody can see. */
+:root { --fold-w: 34px; }
+.findslot > .fold { order: 1; margin-left: 6px; align-self: center; }
+.foldsessions .sidebar { width: var(--fold-w); }
+.foldsessions .sidebar > :not(.findslot, .sidebar-head),
+.foldsessions .sidebar-head > *, .foldsessions .sidebar .findslot > :not(.fold),
+.foldlist .content.split > .side > :not(.findslot),
+.foldlist .content.split > .side > .findslot > :not(.fold) { display: none; }
+.foldsessions .sidebar .findslot, .foldlist .content.split > .side > .findslot {
+  padding-left: 0; padding-right: 0; justify-content: center;
+}
+.foldsessions .findslot > .fold, .foldlist .findslot > .fold { margin-left: 0; }
+.foldsessions #grip, .foldlist .content.split > .grip { pointer-events: none; }
+.foldlist .main {
+  grid-template-columns: var(--fold-w) var(--split-grip-w) minmax(0, 1fr);
+}
+.foldlist .content.split > .side { width: var(--fold-w); }
 body.dragging { cursor: col-resize; user-select: none; }
 body.dragging.rowdrag { cursor: row-resize; }
 /* A line of one pixel is too thin to find with a mouse, so the handle is a
@@ -14034,6 +14059,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       <div class="findslot">
         <input class="find" id="pick" type="search" placeholder="filter sessions  f"
                autocomplete="off" spellcheck="false">
+        <button type="button" class="theme fold" id="sessionfold"></button>
       </div>
       <div class="views">
         <button type="button" class="feedlink" id="feedlink"
@@ -14398,6 +14424,64 @@ function dragWidth(grip, name, least, most) {
                   () => grip.previousElementSibling.getBoundingClientRect().width);
 }
 
+// --- folding a column away (#464) -------------------------------------------
+
+// On a laptop the session list and a split tab's list took 615 of 1366 px,
+// and the diff beside them the rest. Each folds to a strip that holds only
+// the button that brings it back, and this browser keeps which, as it keeps
+// the widths: what is not in the settings menu stays in `localStorage`.
+//
+// A split tab's list is one column for all three tabs, as its width is: the
+// map, the file tree and the review's list fold together.
+//
+// It is a class on `body`, not on the column: `split` builds the list column
+// again on every tab switch, and the sidebar's grip and `.main`'s grid have
+// to know too. The class is never one an element wears (daemon-and-page).
+const FOLDS = {
+  sessions: { cls: "foldsessions", what: "the session list" },
+  list: { cls: "foldlist", what: "this list" },
+};
+
+function folded(which) { return stored("wostuast-fold-" + which) === "1"; }
+
+// The button, beside the column's find box: the find box is moved in and
+// out of a split tab's slot, so the button is ordered after it by CSS.
+function putFold(slot, which, button) {
+  const fold = button || put(slot, "button", "theme fold");
+  fold.dataset.fold = which;
+  fold.addEventListener("click", () => {
+    store("wostuast-fold-" + which, folded(which) ? "" : "1");
+    paintFold(which);
+  });
+  paintButton(fold, which);
+  return fold;
+}
+
+function paintButton(fold, which) {
+  const shut = folded(fold.dataset.fold || which);
+  fold.replaceChildren();
+  putIcon(fold, shut ? "foldOut" : "foldIn");
+  fold.title = (shut ? "show " : "fold away ") + FOLDS[which].what;
+  fold.setAttribute("aria-expanded", String(!shut));
+}
+
+function paintFold(which) {
+  document.body.classList.toggle(FOLDS[which].cls, folded(which));
+  for (const fold of document.querySelectorAll(`.fold[data-fold="${which}"]`)) {
+    paintButton(fold, which);
+  }
+  // No `openGrip` here: the chosen row goes and comes back with its list,
+  // and the observer on it (`gripWatch`) redraws the opening then.
+}
+
+// A key that puts the cursor into a folded column: nothing can be focused
+// in a column that is not drawn, so the key did nothing at all.
+function unfold(which) {
+  if (!folded(which)) return;
+  store("wostuast-fold-" + which, "");
+  paintFold(which);
+}
+
 // The send bar's top edge, which drags the height of `box` (issue 442). Up
 // is taller, so the distance is the pointer's height turned round. At most
 // most of the window: a box that took all of it left no transcript, and no
@@ -14621,6 +14705,10 @@ const ICONS = {
   // is the second target on a round's row, and a shape of its own, so the
   // icon that says who spoke is not also a button.
   chevron: "M5.4 3.6L8.8 7l-3.4 3.4",
+  // A panel with a column at its left, and an arrow that folds the column
+  // away or brings it back (#464).
+  foldIn: "M1.8 2.2h10.4v9.6H1.8zM5 2.2v9.6M9.6 5L7.8 7l1.8 2",
+  foldOut: "M1.8 2.2h10.4v9.6H1.8zM5 2.2v9.6M7.8 5l1.8 2-1.8 2",
   // The two buttons at the end of the tab row. A bell, and the same bell
   // struck through; a sun, a moon, and a circle half and half for "follow
   // the system".
@@ -18909,7 +18997,7 @@ function split(box, tab, bodyClass) {
     box.dataset.listKey = "";
     box.dataset.bodyKey = "";
     const side = put(box, "div", "side");
-    put(side, "div", "findslot");
+    putFold(put(side, "div", "findslot"), "list");
     put(side, "div", "listnote");    // how many, or why there are none
     // Only the Files tab's list is windowed, and it is the only one whose
     // rows are all one height. A diff row carries a second line of counts, so
@@ -23223,9 +23311,10 @@ document.addEventListener("keydown", (press) => {
   }
   switch (press.key) {
     case "/":
+      unfold("list");
       $("find").focus();
       break;
-    case "f": $("pick").focus(); break;
+    case "f": unfold("sessions"); $("pick").focus(); break;
     case "e": {
       const row = document.querySelector(".row.chosen");
       if (!row) return;
@@ -23647,6 +23736,8 @@ $("find").addEventListener("keydown", (press) => {
 });
 takeSettings(state.settings, true);
 dragWidth($("grip"), "--sidebar-w", 200, 760);
+putFold($("sessionfold").parentNode, "sessions", $("sessionfold"));
+for (const which of Object.keys(FOLDS)) paintFold(which);
 dragHeight($("saygrip"), $("say"), "--say-h");
 dragHeight($("reviewgrip"), $("reviewsay"), "--reviewsay-h");
 

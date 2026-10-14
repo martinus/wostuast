@@ -197,6 +197,39 @@ def test_yes_and_dont_ask_again_names_the_choice_by_its_place(ws, asking_always)
         "allowed from the page, and don't ask again for npm test * in this project"
 
 
+def test_a_file_that_appears_while_the_daemon_looks_is_never_taken(ws, monkeypatch):
+    """The hook takes its lock on `<ask>.take` and renames it to
+    `<ask>.wait`. When the rename came between the daemon's look (no file:
+    no lock) and its unlink, the daemon took the live hook's file away, and
+    the page could never say Yes to that dialog: CI hit it once, as "the
+    hook never took its lock"."""
+    folder = ws.approvals_dir()
+    ws.private_dir(folder)
+    take, wait = folder / f"{ASK}.take", folder / f"{ASK}.wait"
+    held = os.open(take, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        real = ws.lock_held
+
+        def racing(path):
+            said = real(path)
+            if take.exists():
+                os.rename(take, wait)     # the hook, right after the look
+            return said
+
+        monkeypatch.setattr(ws, "lock_held", racing)
+        assert not ws.hook_waits(ASK)
+        if take.exists():
+            os.rename(take, wait)         # no lock asked: right after the look
+        assert wait.exists()
+        monkeypatch.setattr(ws, "lock_held", real)
+        assert ws.hook_waits(ASK)
+    finally:
+        os.close(held)
+    # And a file nobody holds is still taken away.
+    assert not ws.hook_waits(ASK) and not wait.exists()
+
+
 def test_a_nonce_of_another_shape_is_no_path(ws):
     """The daemon makes a path of it: nothing but the hook's shape is one."""
     shown = ws.read_permission(event("PermissionRequest", tool_name="Bash",

@@ -380,3 +380,79 @@ def test_the_tab_names_stay_on_one_line_in_a_narrow_window(page_at):
         assert page.evaluate(names) == [1, 1, 1]
         assert page.evaluate(look)[0]["right"] <= 860
 
+
+
+# --- folding a column away (#464) ---------------------------------------------
+
+WIDTHS = """() => ({
+  sessions: document.querySelector('.sidebar').getBoundingClientRect().width,
+  list: document.querySelector('.content.split > .side').getBoundingClientRect().width,
+  rows: !!document.querySelector('#rows').getClientRects().length,
+  find: !!document.querySelector('#find').getClientRects().length,
+  open: document.getElementById('grip').classList.contains('open'),
+})"""
+
+
+def test_each_column_folds_away_and_comes_back(repo_page):
+    """On a laptop the session list and the review's list took 615 of 1366
+    px (#464). Each folds to a strip that holds only its button, the
+    browser keeps it through a reload, and a second click brings it back.
+    The chosen row's opening in the grip goes with the list, and comes back
+    with it."""
+    with opened(repo_page, tab="diff") as page:
+        page.set_viewport_size({"width": 1366, "height": 768})
+        page.wait_for_function("document.getElementById('grip').classList.contains('open')")
+        was = page.evaluate(WIDTHS)
+        assert was["sessions"] > 200 and was["list"] > 150, was
+        pane = page.evaluate("document.querySelector('.content.split > :nth-child(3)').getBoundingClientRect().width")
+
+        page.click("#sessionfold")
+        page.click(".side .fold")
+        shut = page.evaluate(WIDTHS)
+        assert shut == {"sessions": 34, "list": 34, "rows": False, "find": False,
+                        "open": False}, shut
+        wider = page.evaluate("document.querySelector('.content.split > :nth-child(3)').getBoundingClientRect().width")
+        assert wider > pane + 400, (pane, wider)
+        # A folded column's edge drags nothing: a width nobody can see.
+        assert page.evaluate("getComputedStyle(document.getElementById('grip')).pointerEvents") == "none"
+
+        page.reload()
+        page.wait_for_selector(".side .fold")
+        assert page.evaluate(WIDTHS) == shut
+
+        page.click("#sessionfold")
+        page.click(".side .fold")
+        page.wait_for_function("document.getElementById('grip').classList.contains('open')")
+        back = page.evaluate(WIDTHS)
+        assert back == was, (was, back)
+
+
+def test_the_list_column_folds_on_every_split_tab(repo_page):
+    """It is one column for the three tabs, as its width is: folded on the
+    Review tab, it is folded on the Files tab and the Transcript tab, whose
+    list `split` builds again on every switch."""
+    with opened(repo_page, tab="diff") as page:
+        page.click(".side .fold")
+        for tab in ("files", "transcript"):
+            show_tab(page, tab)
+            page.wait_for_function(
+                "(tab) => document.getElementById('content').dataset.tab === tab", arg=tab)
+            assert page.evaluate(WIDTHS)["list"] == 34, tab
+            assert page.get_attribute(".side .fold", "aria-expanded") == "false"
+
+
+def test_a_key_into_a_folded_column_brings_it_back(repo_page):
+    """`f` and `/` put the cursor into a column's find box, and nothing can
+    be focused in a column that is not drawn: the key did nothing."""
+    with opened(repo_page, tab="diff") as page:
+        page.click("#sessionfold")
+        page.click(".side .fold")
+        page.evaluate("document.activeElement.blur()")
+        page.keyboard.press("f")
+        page.wait_for_function("document.activeElement.id === 'pick'")
+        assert page.evaluate(WIDTHS)["sessions"] > 200
+        page.keyboard.press("Escape")
+        page.evaluate("document.activeElement.blur()")
+        page.keyboard.press("/")
+        page.wait_for_function("document.activeElement.id === 'find'")
+        assert page.evaluate(WIDTHS)["list"] > 150

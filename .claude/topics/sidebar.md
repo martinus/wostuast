@@ -701,6 +701,30 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     Before a new line, ask whether a ground already draws it.
     `test_the_maps_edge_draws_no_line_and_drags_from_beside_it`,
     `test_a_line_between_two_grounds_is_not_drawn`.
+- **A column folds to a strip that holds only its button** (#464, `FOLDS`,
+  `putFold`, `paintFold`, `unfold`, `folded`, `#sessionfold`, `.fold`,
+  `body.foldsessions`, `body.foldlist`, `--fold-w`). On a laptop the session
+  list and a split tab's list took 615 of 1366 px. The reader chose a button
+  on each column over one for both and over folding by width alone.
+  - **It is a class on `body`, never on the column**: `split` builds a
+    split tab's list again on every switch, and the sidebar's grip and
+    `.main`'s grid columns must know too. The list column is one for the
+    three tabs, as `--side-w` is, so it folds on all three.
+  - **The button stands in the column's `.findslot`, ordered after the
+    find box by CSS** (`order: 1`): `homeFind` appends `#find` to the slot,
+    so in the markup the box comes after the button.
+  - **A folded column's edge drags nothing** (`pointer-events: none`): a
+    drag set a width nobody could see.
+  - **`f` and `/` unfold the column they type into**: nothing is focused
+    in a column with `display: none`, so the key did nothing.
+  - **No `openGrip` on a fold**: the chosen row hides and comes back with
+    its list, and `gripWatch` observes it. A call there stayed green under
+    `tests/perturb.py` and was taken out.
+  - Kept in `localStorage` (`wostuast-fold-sessions`, `wostuast-fold-list`)
+    as a width is: it is not a setting in the menu.
+  `test_each_column_folds_away_and_comes_back`,
+  `test_the_list_column_folds_on_every_split_tab`,
+  `test_a_key_into_a_folded_column_brings_it_back`.
 - **Rows are kept and filled in again, never rebuilt.** A row can only fade
   into its new colour if it is the same row, and the needs-you pulse can
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
