@@ -507,11 +507,19 @@ def test_the_older_and_newer_buttons_step_through_the_commits(repo_page):
         show_tab(page, "diff")
         page.wait_for_function("(state.diff || {}).commits?.length === 2")
         older, newer = page.locator(".diffbar .step").all()
+        # One control, in the style of the choices beside it: an arrow, the
+        # count, an arrow. The arrows' words are their labels.
+        assert page.locator(".diffbar .stepper > *").evaluate_all(
+            "(all) => all.map((one) => one.getAttribute('aria-label')"
+            " || one.className)") == [
+                "older: the commit before this one", "stepat",
+                "newer: the commit after this one"]
         # Nothing to step from while everything is shown.
         assert older.is_disabled() and newer.is_disabled()
         where = page.locator(".diffbar .stepat")
         # Hidden, and not only empty: an empty span still takes a gap.
         assert where.evaluate("e => e.hidden") is True
+        assert not where.is_visible()     # its `display` does not undo `hidden`
         pick(page, page.evaluate("state.diff.commits[0].sha"))
         assert page.locator(".diffhead").first.inner_text().startswith("third")
         assert newer.is_disabled() and not older.is_disabled()
@@ -1469,6 +1477,62 @@ def test_code_is_drawn_narrow_when_the_reader_asks(repo_page, ws):
             ".fontStretch") == "62.5%"
 
 
+def test_the_review_bar_carries_the_columns_and_the_width(ws, repo_page):
+    """The columns, whitespace and how wide code is drawn are changed while
+    reading a change, so they are icons at the right end of the Review bar
+    as well as in the menu: one setting, shown in both, and kept."""
+    root, _ = repo_page
+    tabbed_change(root)
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_selector(".dline .dtext:has-text('z = 2')")
+        quick = ".diffbar .quick"
+        assert page.locator(f"{quick} .choice").evaluate_all(
+            "(all) => all.map((one) => one.classList[1])") == [
+                "sides", "spacechanges", "codewidth"]
+        page.click(f"{quick} .sides button[data-value='split']")
+        page.wait_for_selector(".dlines.sides")
+        page.click(f"{quick} .codewidth button[data-value='true']")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.dlines')).fontStretch === '62.5%'")
+        page.click(f"{quick} .spacechanges button[data-value='true']")
+        kept(ws, "diff_columns", "two")
+        kept(ws, "code_width", "narrow")
+        kept(ws, "diff_space", "hide")
+        # The groups stand apart by their gap alone: the reader asked for no
+        # bar between them.
+        assert page.locator(f"{quick} > :not(.choice)").count() == 0
+        for name, want in (("sides", "split"), ("codewidth", "true"),
+                           ("spacechanges", "true")):
+            for where in ("#setpop", quick):
+                assert page.locator(
+                    f"{where} .{name} button[aria-pressed='true']").get_attribute(
+                        "data-value") == want, (where, name)
+
+
+def test_every_right_hand_control_ends_on_one_line(repo_page):
+    """The tab row's buttons stood 24 px from the window's edge, the Review
+    bar's 16, the commit message's md / txt 20, and the reader saw edges
+    where one was meant. They end on one line now (`--line-end`), and what
+    stands in the scrolling pane takes the scrollbar's room off, so it
+    holds with a scrollbar or without. The read-as words are md and txt."""
+    root, _ = repo_page
+    tabbed_change(root)
+    conftest.git_in(root, "add", "-A")
+    conftest.git_in(root, "commit", "-qm", "Tabs", "-m", "A body, so it has md and txt.")
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_function("(state.diff || {}).commits?.length === 2")
+        pick(page, page.evaluate("state.diff.commits[0].sha"))
+        page.wait_for_selector(".diffhead .readas")
+        edges = page.evaluate("""() => Object.fromEntries([
+          ['settings', '#settings'], ['bar', '.diffbar .quick'],
+          ['message', '.diffhead .readas'], ['card', '.dfile']].map(([name, sel]) =>
+          [name, document.querySelector(sel).getBoundingClientRect().right]))""")
+        assert max(edges.values()) - min(edges.values()) < 1, edges
+        assert page.locator(".diffhead .readas button").all_inner_texts() == ["md", "txt"]
+
+
 def test_scrolled_sideways_every_line_keeps_its_colour(repo_page):
     """A row was only as wide as the pane unless its own text was longer, so
     scrolled sideways a short added line's green stopped at the pane's edge
@@ -1530,14 +1594,14 @@ def test_the_settings_say_what_is_chosen_and_change_it_in_place(repo_page):
         page.click("#settings")
         pressed = """() => [...document.querySelectorAll(
           '#setpop button[aria-pressed="true"]')].map((b) => b.dataset.value)"""
-        assert page.evaluate(pressed) == ["system", "4", "false", "unified",
-                                          "false", "false", "false"]
+        assert page.evaluate(pressed) == ["system", "4", "false", "false",
+                                          "false", "unified", "false"]
         drawn = page.evaluate("state.diffs.tag")
         settings(page, "tabwidth", "2")
         settings(page, "sides", "split")
         page.wait_for_selector(".dline.pair")
-        assert page.evaluate(pressed) == ["system", "2", "false", "split",
-                                          "false", "false", "false"]
+        assert page.evaluate(pressed) == ["system", "2", "false", "false",
+                                          "false", "split", "false"]
         assert page.evaluate("state.diffs.tag") == drawn
 
 

@@ -374,7 +374,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   while a comment box is open and say so (`busyWriting`) — a rebuild takes
   what is typed, and a switch that silently did nothing reads as broken.
   **Between older and newer, "5 / 9"** (`.stepat`): which commit, oldest
-  first, so the branch's first commit is 1. **And another commit is read
+  first, so the branch's first commit is 1. The three are one control
+  (`.choice.stepper`): two arrows, their words in `title` and
+  `aria-label`, the count a part between them with no button -- the
+  reader chose it from pictures over two buttons of words, which matched
+  nothing else on the bar. **And another commit is read
   from its top**: `drawDiff` keeps the place only when `scroll.dataset.of`
   says the same diff is drawn again, and says nought otherwise -- a pane
   emptied and refilled in one task keeps its offset, so the next commit
@@ -523,7 +527,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     is sticky and 680 px at most.
   - **How the diff is drawn is in the settings menu** (`sidebar.md`,
     `putSettings`): the columns, the tab width and long lines. The Review
-    bar was cramped on a notebook with the column switch alone in it.
+    bar was cramped on a notebook with the column switch alone in it, in
+    words. The columns, whitespace and the code's width are back on the
+    bar as three icon pairs (`putQuick`), which fit at 1366 px; they set
+    the menu's own settings.
   - **Whitespace is two settings, and only one asks git** (#449).
     `diff_space` "hide" is `git diff -w` (`SPACE_ARGS`), sent as
     `space=hide` on the diff *and* the whole-file route: the lines shown

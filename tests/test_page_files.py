@@ -955,6 +955,70 @@ def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(ws, repo_page
             "getComputedStyle(document.querySelector('.dlines')).tabSize") == "8"
 
 
+def test_the_file_line_carries_the_width_and_wrap_beside_the_code(ws, repo_page):
+    """The settings menu had grown long, and two of its choices are changed
+    while reading a file: how wide code is drawn, and whether long lines
+    wrap. They are icons at the right end of the open file's line too, one
+    setting with the menu's: a click there shows in the menu and is kept."""
+    repo, _ = repo_page
+    repo.joinpath("tabs.py").write_text("def a():\n\treturn 1\n")
+    with opened(repo_page) as page:
+        open_file(page, "tabs.py")
+        quick = ".filebody > .where .quick"
+        assert page.locator(f"{quick} button").evaluate_all(
+            "(all) => all.map((b) => [b.dataset.value, b.getAttribute('aria-pressed'),"
+            " !!b.getAttribute('aria-label')])") == [
+                ["false", "true", True], ["true", "false", True],
+                ["false", "true", True], ["true", "false", True]]
+        page.click(f"{quick} .codewidth button[data-value='true']")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.dlines')).fontStretch === '62.5%'")
+        page.click(f"{quick} .wrapping button[data-value='true']")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.filebody .dline'))"
+            ".whiteSpace === 'pre-wrap'")
+        kept(ws, "code_width", "narrow")
+        kept(ws, "long_lines", "wrap")
+        pressed = ("(name) => document.querySelector("
+                   "'#setpop .' + name + ' button[aria-pressed=\"true\"]').dataset.value")
+        assert page.evaluate(pressed, "codewidth") == "true"
+        assert page.evaluate(pressed, "wrapping") == "true"
+        # And the other way: the menu's pick shows beside the code.
+        settings(page, "codewidth", "false")
+        assert page.locator(
+            f"{quick} .codewidth button[aria-pressed='true']").get_attribute(
+                "data-value") == "false"
+
+
+def test_a_button_beside_the_code_shows_its_choice_before_the_file_answers(
+        repo_page):
+    """Over a slow ssh tunnel the push that says what `settings.json` holds
+    comes a second after the click. The button shows the choice at once, as
+    the menu does, and does not wait for it: here the save never arrives."""
+    repo, _ = repo_page
+    repo.joinpath("tabs.py").write_text("def a():\n\treturn 1\n")
+    with opened(repo_page) as page:
+        open_file(page, "tabs.py")
+        page.route("**/api/settings", lambda route: route.abort())
+        page.click(".filebody > .where .quick .codewidth button[data-value='true']")
+        assert page.locator(
+            ".filebody > .where .quick .codewidth button[data-value='true']"
+        ).get_attribute("aria-pressed") == "true"
+
+
+def test_the_file_line_ends_where_the_tab_row_ends(repo_page):
+    """The open file's line stood 26 px in from the window's edge, the tab
+    row's buttons 24: two edges, one over the other. One line now."""
+    repo, _ = repo_page
+    repo.joinpath("tabs.py").write_text("def a():\n\treturn 1\n")
+    with opened(repo_page) as page:
+        open_file(page, "tabs.py")
+        page.wait_for_selector(".filebody > .where .quick")
+        edges = page.evaluate("""() => ['#settings', '.filebody > .where .quick'].map(
+          (sel) => document.querySelector(sel).getBoundingClientRect().right)""")
+        assert abs(edges[0] - edges[1]) < 1, edges
+
+
 def test_a_windowed_file_says_it_cannot_wrap(long_page):
     """A windowed file's rows are a grid the scrollbar is read against, and a
     wrapped row is not one row tall. A control that quietly did nothing would
