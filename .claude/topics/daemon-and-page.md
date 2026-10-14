@@ -658,6 +658,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     reads as the key doing nothing.
     `test_b_goes_back_to_the_session_before_and_again_returns`,
     `test_b_says_why_it_cannot_go_back`.
+  - **From a box, Esc and then the number: no Alt+number** (#470). In a
+    box a number is a letter typed, and the reader asked for Alt+1, 2, 3.
+    Chrome and Firefox on Linux take Alt+1-8 for their own tabs, and on a
+    Mac Alt+number types a symbol, so the reader chose Esc. Every box
+    already left on Esc (`#say` keeps its text; `#find` and `#pick` are
+    cleared), so the fix was to say so: `?` and the README.
+    `test_esc_leaves_a_box_and_a_number_then_picks_a_tab`.
 - **A row of a list is one line, and `.filelist button` is a block.** A
   list whose rows are one line says so in the one rule that groups them —
   `.fixed` for the file tree, `.diff` for the Diff tab's tree, `.transcript`
