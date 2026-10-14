@@ -267,6 +267,13 @@ where you left it: the tab, the open file, and your place in it.
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
 
+On a small screen, fold the columns away. The button beside the box at the
+top of a column folds it to a thin strip, and the same button brings it
+back. The session list folds on its own. The list beside a tab (the map,
+the files, the changed files) is one column for all three tabs, so it folds
+on all three. The browser remembers what you folded. Press <kbd>f</kbd> or
+<kbd>/</kbd> to bring back the column you type into.
+
 <details>
 <summary><b>More about each tab</b></summary>
 
