@@ -428,6 +428,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `install_behind` compares. `--version` prints the same (#344).
   `test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list`,
   `test_the_page_says_which_copy_is_running`.
+  - **The two find boxes stand on one line, and a fold button is a bare
+    icon** (issue 469, `.find`, `.findslot > .fold`, `.sidebar-head`).
+    They looked alike but not quite: the head's 8 px margin put the filter
+    box lower, and `.find`'s edge was `--edge`, the session list's own
+    ground, so on the list it had none. The edge is `--edge-bright` now,
+    which both grounds show. The fold buttons were boxes the height of the
+    find box, its twins with another edge; the reader chose them clearly
+    different -- no box, a ring on the hover, the icon 17 px.
+    `test_the_find_boxes_stand_on_one_line_and_the_fold_is_a_bare_icon`.
   - **Every setting is one menu** (`putSettings`, `paintSettings`,
     `#setpop`): the colours, the two alerts, the tab width, long lines, the
     diff's columns and the ticket links, with the path of the file that
