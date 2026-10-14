@@ -119,6 +119,14 @@ Keep the breaks list in the scratchpad; it is about one fix.
     poll asks within five seconds, so a wait for the new diff stayed green
     (#449). `page.expect_request` with a 1.5 s timeout around the click
     tells the two apart.
+    - **An observer is such a later path, and its green is chance.** A
+      `ResizeObserver` (`gripWatch`) redraws the grip a frame after a row
+      changes size, so a break of `openGrip` in `openFeed` stayed green
+      once, the call was deleted as dead, and the test went red on the
+      next run (#471): it reads the grip at once, the observer had not
+      fired yet. Before deleting a call perturb calls dead, ask whether
+      something async does the same thing later, and run the break three
+      times; a green that holds once is not a proof.
   - **`tests/page_coverage.py` asks the same question of the whole page
     script, before any break does** (#439): it runs the browser tests
     with `WOSTUAST_COVERAGE` set, and `cover` in `tests/browser.py` has
