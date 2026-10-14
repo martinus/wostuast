@@ -720,11 +720,32 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **No `openGrip` on a fold**: the chosen row hides and comes back with
     its list, and `gripWatch` observes it. A call there stayed green under
     `tests/perturb.py` and was taken out.
+  - **Folded, every session is a tile, and the tiles are the rows**
+    (`markRow`, `tileTitle`, `data-name`, `.foldsessions #rows`). A
+    strip with one button hid who needs you and every other session; the
+    reader asked for them, clickable. CSS draws each row as a tile as tall
+    as a row, its name turned up it (`writing-mode: vertical-rl`, then
+    `rotate(180deg)`, read bottom to top) on its state's colour, the unread
+    dot, and the name in `title` while folded and never while open. Two
+    letters across the tile told two sessions of one repository apart only
+    by colour; the reader asked for the name turned, a row tall. **A name
+    too long fades out at its end (`mask-image`), never an ellipsis**:
+    "…" took three letters' room, and the reader asked for the fade. The
+    name's box is the tile's whole length, so the fade covers its last
+    16 px and a short name never reaches it. A click
+    chooses, `j` `k` move, and every push fills a tile as it fills a row.
+    A second list would need its own clicks, order and pushes. The
+    chosen tile wears the chosen row's gradient, edge and line (the
+    reader asked), runs to the grip, and the grip opens beside it.
+    **The rules are anchored on `#rows`**: a class-only rule lost to
+    `.row .line1` and `.row.chosen`, later in the file at the same
+    weight, and the folded strip drew every row's text over the content.
   - Kept in `localStorage` (`wostuast-fold-sessions`, `wostuast-fold-list`)
     as a width is: it is not a setting in the menu.
   `test_each_column_folds_away_and_comes_back`,
   `test_the_list_column_folds_on_every_split_tab`,
-  `test_a_key_into_a_folded_column_brings_it_back`.
+  `test_a_key_into_a_folded_column_brings_it_back`,
+  `test_a_folded_session_list_is_a_tile_for_each_session`.
 - **Rows are kept and filled in again, never rebuilt.** A row can only fade
   into its new colour if it is the same row, and the needs-you pulse can
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches

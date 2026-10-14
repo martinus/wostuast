@@ -12317,7 +12317,7 @@ body {
 :root { --fold-w: 34px; }
 .findslot > .fold { order: 1; margin-left: 6px; align-self: center; }
 .foldsessions .sidebar { width: var(--fold-w); }
-.foldsessions .sidebar > :not(.findslot, .sidebar-head),
+.foldsessions .sidebar > :not(.findslot, .sidebar-head, .rows),
 .foldsessions .sidebar-head > *, .foldsessions .sidebar .findslot > :not(.fold),
 .foldlist .content.split > .side > :not(.findslot),
 .foldlist .content.split > .side > .findslot > :not(.fold) { display: none; }
@@ -12326,6 +12326,47 @@ body {
 }
 .foldsessions .findslot > .fold, .foldlist .findslot > .fold { margin-left: 0; }
 .foldsessions #grip, .foldlist .content.split > .grip { pointer-events: none; }
+/* Folded, every row is a tile in the strip (issue 464): the first letters
+   of its name on its state's colour, a dot when it is unread, and the
+   chosen one runs to the grip as the chosen row does, so the grip opens
+   beside it. The rows themselves, not a second list: a click chooses as
+   it always did, and every push that fills a row fills its tile. The
+   group heads and the lines under a row are not drawn. */
+.foldsessions #rows { padding: 2px 0 8px; }
+.foldsessions #rows > :not(.row), .foldsessions #rows .row > * { display: none; }
+.foldsessions #rows .row, .foldsessions #rows .row:hover, .foldsessions #rows .row.chosen {
+  width: 26px; height: 76px; margin: 0 0 6px 4px; padding: 0; border: 0;
+  border-radius: 6px; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--hue) 28%, transparent);
+}
+/* The name runs up the tile, as on a book's spine: turned, a tile as tall
+   as a row holds a dozen letters, where across its width it held two. A
+   name too long fades out at the top: an ellipsis took three letters'
+   room, and the reader asked for the fade. The box is the tile's whole
+   length, so only a name that reaches its end is faded; the mask reads
+   only the alpha, so the colour in it is any opaque one. */
+.foldsessions #rows .row::before {
+  content: attr(data-name); font: 600 11.5px var(--sans); color: var(--ink);
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  height: 68px; overflow: hidden; white-space: nowrap;
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 16px), transparent);
+}
+.foldsessions #rows .row:hover { box-shadow: inset 0 0 0 1px var(--edge-bright); }
+/* The chosen tile wears the chosen row's gradient, edge and line, so it
+   flows into the grip's opening as the row flows into the content. */
+.foldsessions #rows .row.chosen {
+  width: 30px; border-radius: 6px 0 0 6px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--hue) 50%, var(--meet)) 35%, var(--meet));
+  border: 1px solid color-mix(in srgb, var(--hue) 55%, transparent);
+  border-left: 3px solid var(--hue); border-right: 0;
+}
+.foldsessions #rows .row.chosen::before, .foldsessions #rows .row.unread::before,
+.foldsessions #rows .row.needs_you:not(.snoozed)::before { color: var(--ink-bright); }
+.foldsessions #rows .row.unread::after {
+  content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--done);
+}
 .foldlist .main {
   grid-template-columns: var(--fold-w) var(--split-grip-w) minmax(0, 1fr);
 }
@@ -14472,6 +14513,7 @@ function paintFold(which) {
   }
   // No `openGrip` here: the chosen row goes and comes back with its list,
   // and the observer on it (`gripWatch`) redraws the opening then.
+  if (which === "sessions") document.querySelectorAll("#rows .row").forEach(tileTitle);
 }
 
 // A key that puts the cursor into a folded column: nothing can be focused
@@ -15869,13 +15911,20 @@ function putKid(box, one) {
 // already, and a word at the top and "waiting for input" at the foot said it
 // a third and a fourth time. The word stays in the history, where "ended"
 // and "killed" share one group and one grey.
-function fillRow(row, s) {
-  const [one, , where, two, three, kids] = row.children;
+// What a row is, as classes, and the name its folded tile shows (#464).
+function markRow(row, s) {
   // A reminder not yet come puts a waiting row aside as a snooze does, and
   // one that has come wears the amber of a session that needs you (#375).
   row.className = "row " + s.state + (s.id === state.chosen ? " chosen" : "")
     + (s.snoozed || (reminderSet(s) && s.state === "needs_you") ? " snoozed" : "")
     + (s.unread ? " unread" : "") + (reminderDue(s) ? " reminded" : "");
+  row.dataset.name = rowName(s);
+  tileTitle(row);
+}
+
+function fillRow(row, s) {
+  const [one, , where, two, three, kids] = row.children;
+  markRow(row, s);
   // Not while it is being renamed: the box is in there, and this runs on
   // every push.
   // Each part is written again only when what it says has changed. This
@@ -15982,6 +16031,12 @@ function fillRow(row, s) {
 // The name Claude Code shows for the session, or the reader's from the page
 // while that is the newer one: the daemon works out which (`title`, #351).
 // Its place when it has none, which the next line says as well.
+// A tile shows no name, so its hover does; an open row shows its name and
+// carries no title, or every hover over a row would cover the row below.
+function tileTitle(row) {
+  row.title = document.body.classList.contains("foldsessions") ? row.dataset.name || "" : "";
+}
+
 function rowName(s) {
   return s.name || s.place || s.id.slice(0, 8);
 }
