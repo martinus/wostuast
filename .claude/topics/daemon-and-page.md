@@ -290,6 +290,32 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   read. They are 6 and 22 now. **The numbers in the CSS are not the gaps**:
   the margins collapse against `.turn`'s own 22, so above is 22 + (−16) and
   below is max(5, 22). Change one and measure it; do not read it off.
+  - **Two calls or more in a row are one line until the reader opens them**
+    (#465, `foldRun`, `foldRuns`, `runOf`, `fillCallSum`, `.callrun`,
+    `.callsum`, `RUN_FOLDS`). One sentence, ten calls, one sentence, nine:
+    the words were islands in a list nobody reads. The line counts the
+    calls, names the tools most used first, adds up the edits' `+`/`−` and
+    says how many failed. **The calls stay flat siblings and the line is
+    one more `.turn.toolrow` in front of them**, never a box round them:
+    `patchTranscript` appends a block by its index, and the gaps above rest
+    on `+` between turns. A folded call is `hidden`; the rules for its gaps
+    hold for the line, shut or open, and the gap tests measure both.
+    - **Which runs are open is `state.turns.open`, under `runKey`**, beside
+      the opened calls, so a session keeps it and a rewrite forgets it. A
+      mark on the node was lost on the next draw, and a keystroke in the
+      find box is one. `test_a_run_opened_stays_open_through_a_redraw`.
+    - **Everything that reaches a call opens its run, or points at its
+      line**: a find that matches one (the folded message's scar),
+      `landOnBlock` (a hidden node has no place to scroll to), and the
+      "new" line, which goes over the run's line, not under it.
+    - **A call folded on arrival loses `fresh`**: shown later, it slid in
+      then, and the gap test measured it 4 px off mid-slide.
+    - A run of one is not folded: its line would be as tall as the call.
+    `test_calls_in_a_row_are_one_line_until_the_reader_opens_them`,
+    `test_a_run_grows_as_its_calls_arrive`,
+    `test_a_find_that_matches_a_folded_call_shows_its_run`,
+    `test_landing_on_a_folded_call_opens_its_run`,
+    `test_the_new_line_over_a_folded_call_stands_over_its_run`.
 - **A message too long to read is drawn folded** (`foldedHead`,
   `putFoldBar`, issue 329). A log pasted into a prompt ran to 140 KB, and the
   transcript drew all of it: fifty screens between the question and its

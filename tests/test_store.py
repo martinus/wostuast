@@ -547,7 +547,9 @@ def searched(ws, store):
                               tool_input={"command": "grep cache *.py"}))
         ws.append_event(event("Stop", sid=sid, ts=at + 3,
                               last_assistant_message=f"The cache in {sid} takes a lock now. Über."))
-    store.refresh(alive=lambda p: True)
+    # On the day of the log, not today: a fixed date ages past
+    # `SESSION_MAX_AGE`, and the store forgot both sessions on 14 October.
+    store.refresh(now=day + 2 * 86400, alive=lambda p: True)
     store.sessions["s2"].mine = "the search one"
     return day
 

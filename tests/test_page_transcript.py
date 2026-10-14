@@ -1242,14 +1242,23 @@ def test_a_group_of_tool_calls_belongs_to_the_words_above_it(page_at):
         page.wait_for_function(
             """() => [...document.querySelectorAll('.turnbody .turn')]
                 .some((t) => t.innerText.includes('Now I know'))""")
-        seen = page.evaluate("""() => {
-          const all = [...document.querySelectorAll('.turnbody .turn')];
-          const at = all.findIndex((t) => t.innerText.includes('ls dir0'));
+        # The group is one line until it is opened (#465), and either way
+        # it stands under the words and apart from the reply.
+        gaps = """() => {
+          const all = [...document.querySelectorAll('.turnbody .turn')]
+            .filter((t) => t.getClientRects().length);
+          const first = all.findIndex((t) => t.innerText.includes('look around')) + 1;
+          const reply = all.findIndex((t) => t.innerText.includes('Now I know'));
           const box = (n) => all[n].getBoundingClientRect();
-          return {above: box(at).top - box(at - 1).bottom,
-                  below: box(at + 3).top - box(at + 2).bottom};
-        }""")
-        assert seen["above"] < seen["below"], seen
+          return {above: box(first).top - box(first - 1).bottom,
+                  below: box(reply).top - box(reply - 1).bottom,
+                  rows: reply - first};
+        }"""
+        seen = page.evaluate(gaps)
+        assert seen["rows"] == 1 and seen["above"] < seen["below"], seen
+        page.click(".callsum")
+        seen = page.evaluate(gaps)
+        assert seen["rows"] == 4 and seen["above"] < seen["below"], seen
 
 
 def test_a_thought_between_two_tool_calls_leaves_no_trace(page_at):
@@ -1283,12 +1292,13 @@ def test_a_thought_between_two_tool_calls_leaves_no_trace(page_at):
         }"""
         assert page.locator(".turnbody .thinking").count() == 0
         assert "Now dir" not in page.inner_text(".turnbody")
+        page.click(".callsum")          # the run, opened (#465)
         seen = page.evaluate(gaps)
         assert min(seen) >= 0, seen
-        # The words, the three calls, the reply: the group sits under
-        # the words that said what it would do, and apart from the reply
-        # below it -- the same gaps as with no thought between them.
-        above, *between, below = seen[-4:]
+        # The words, the run's line, the three calls, the reply: the group
+        # sits under the words that said what it would do, and apart from
+        # the reply below it -- the same gaps as with no thought between.
+        above, *between, below = seen[-5:]
         assert above < below, seen
         assert max(between) < below, seen
 
@@ -1344,9 +1354,11 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
           const box = (one) => one.getBoundingClientRect();
           const at = shown.findIndex((t) => t.innerText.includes('the split'));
           const words = shown[at];
-          const calls = shown.slice(at + 1).filter(
-            (t) => t.classList.contains('toolrow')).slice(0, 3);
           const reply = shown.find((t) => t.innerText.includes('all pass'));
+          // The run's one line when it is shut (#465), and its line and
+          // its calls when it is open.
+          const calls = shown.slice(at + 1, shown.indexOf(reply)).filter(
+            (t) => t.classList.contains('toolrow'));
           // What each name column shows, top to bottom, and where the
           // next one starts. The copy button is part of it, because a
           // hover shows it.
@@ -1366,19 +1378,20 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
           const over = shown[shown.indexOf(calls[0]) - 1];
           return {
             above: box(calls[0]).top - box(over.lastElementChild).bottom,
-            below: box(reply).top - box(calls[2]).bottom,
+            below: box(reply).top - box(calls[calls.length - 1]).bottom,
+            rows: calls.length,
             clash, copyHit: hit,
           };
         }"""
-        hidden = page.evaluate(seen)
-        assert hidden["above"] <= 8, hidden
-        assert hidden["below"] >= 20, hidden
-        assert min(hidden["clash"]) >= 0, hidden
-        assert hidden["copyHit"], hidden
-        page.evaluate("document.body.classList.add('show-thinking')")
-        shown = page.evaluate(seen)
-        assert shown["above"] <= 8, shown
-        assert min(shown["clash"]) >= 0, shown
+        for rows in (1, 4):
+            measured = page.evaluate(seen)
+            assert measured["rows"] == rows, measured
+            assert measured["above"] <= 8, measured
+            assert measured["below"] >= 20, measured
+            assert min(measured["clash"]) >= 0, measured
+            assert measured["copyHit"], measured
+            if rows == 1:
+                page.click(".callsum")
 
 
 
@@ -2958,3 +2971,174 @@ def test_search_every_session_and_open_a_result(ws, page_at):
         assert page.evaluate("state.turns.nodes.indexOf("
                              "document.querySelector('.turn.linked'))") == 1
         assert page.is_visible(".tabs .tab")
+
+
+# --- runs of calls (#465) -------------------------------------------------
+
+def run_of_calls(daemon):
+    """Words, five calls -- two `Read`s, an `Edit` that changed a line, two
+    `Bash`es, one failed -- words, one call, and words."""
+    def at(second):
+        return f"2026-09-18T14:20:{second:02d}.000Z"
+    edit = conftest.record("result", "updated", ts=at(5), tool_id="r3")
+    edit["toolUseResult"] = {"type": "update", "structuredPatch": [
+        {"oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": 1,
+         "lines": ["-old line", "+new line"]}]}
+    failed = conftest.record("result", "exit 1", ts=at(8), tool_id="r5")
+    failed["message"]["content"][0]["is_error"] = True
+    write_records(
+        daemon,
+        conftest.record("claude", "First I will look around.", ts=at(1)),
+        conftest.record("tool", "alpha.py", ts=at(2), tool="Read", tool_id="r1"),
+        conftest.record("tool", "beta.py", ts=at(3), tool="Read", tool_id="r2"),
+        conftest.record("tool", "gamma.py", ts=at(4), tool="Edit", tool_id="r3"),
+        edit,
+        conftest.record("tool", "ls delta", ts=at(6), tool_id="r4"),
+        conftest.record("tool", "make epsilon", ts=at(7), tool_id="r5"),
+        failed,
+        conftest.record("claude", "One more look.", ts=at(9)),
+        conftest.record("tool", "ls zeta", ts=at(10), tool_id="r6"),
+        conftest.record("claude", "Now I know what is there.", ts=at(11)))
+    daemon.tick()
+
+
+SHOWN = """(words) => [...document.querySelectorAll('.turnbody .turn.toolrow')]
+  .filter((t) => t.innerText.includes(words))
+  .map((t) => !!t.getClientRects().length)"""
+
+
+def test_calls_in_a_row_are_one_line_until_the_reader_opens_them(page_at):
+    """One sentence, ten calls, one sentence, nine calls: the words were
+    islands in a list nobody reads (#465). Two calls or more in a row are
+    one line that says what happened, and one click shows every call. A
+    single call stays as it was: its line would be as tall."""
+    daemon, path = page_at
+    run_of_calls(daemon)
+    with opened(path) as page:
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.turnbody .turn')]
+                .some((t) => t.innerText.includes('Now I know'))""")
+        line = page.locator(".callrun").filter(has_text="5 calls")
+        assert line.count() == 1
+        said = line.inner_text().split()
+        # The count, the tools most used first, what the edit changed,
+        # and the call that failed.
+        assert said[:2] == ["▸", "5"], said
+        assert " ".join(said[3:]) == "Read 2 · Bash 2 · Edit +1 −1 1 failed", said
+        assert page.evaluate(SHOWN, "alpha.py") == [False]
+        assert page.evaluate(SHOWN, "make epsilon") == [False]
+        # The single call has no line of its own and is not folded.
+        assert page.evaluate(SHOWN, "ls zeta") == [True]
+        assert page.locator(".callrun").filter(has_text="1 call").count() == 0
+
+        line.locator(".callsum").click()
+        assert page.evaluate(SHOWN, "alpha.py") == [True]
+        assert page.evaluate(SHOWN, "make epsilon") == [True]
+        assert line.locator(".caret").inner_text() == "▾"
+        # A call in an open run still opens onto what it said.
+        page.locator(".tool", has_text="make epsilon").click()
+        page.wait_for_selector(".tool-result")
+        assert page.evaluate(SHOWN, "make epsilon") == [True]
+
+        line.locator(".callsum").click()
+        assert page.evaluate(SHOWN, "alpha.py") == [False]
+        assert page.evaluate(SHOWN, "make epsilon") == [False]
+
+
+def test_a_run_opened_stays_open_through_a_redraw(page_at):
+    """Which runs are open is the reader's choice, kept with the session's
+    other choices (`state.turns.open`), and not a mark on a node that the
+    next draw throws away: a keystroke in the find box draws the whole
+    transcript again."""
+    daemon, path = page_at
+    run_of_calls(daemon)
+    with opened(path) as page:
+        page.wait_for_selector(".callrun")
+        page.locator(".callrun .callsum").first.click()
+        page.fill("#find", "nothing matches this")
+        page.fill("#find", "")
+        page.wait_for_function("!document.querySelector('mark')")
+        assert page.evaluate(SHOWN, "alpha.py") == [True]
+
+
+def test_a_find_that_matches_a_folded_call_shows_its_run(page_at):
+    """A hit marked inside a folded run is a hit nobody can see: the folded
+    message's scar. The run shows while the find box matches it."""
+    daemon, path = page_at
+    run_of_calls(daemon)
+    with opened(path) as page:
+        page.wait_for_selector(".callrun")
+        assert page.evaluate(SHOWN, "beta.py") == [False]
+        page.fill("#find", "beta.py")
+        page.wait_for_function(f"({SHOWN})('beta.py')[0] === true")
+        assert page.locator(".turnbody mark").first.is_visible()
+        page.fill("#find", "")
+        page.wait_for_function(f"({SHOWN})('beta.py')[0] === false")
+
+
+def test_a_run_grows_as_its_calls_arrive(page_at):
+    """A live session sends one call at a time. The first stands alone, the
+    second folds both into a line, and the next ones count on it -- shown
+    when the reader has opened the run, folded when not."""
+    daemon, path = page_at
+
+    def call(target, n):
+        write_records(daemon, conftest.record(
+            "tool", target, ts=f"2026-09-18T14:30:0{n}.000Z", tool_id=f"g{n}"))
+        daemon.tick()
+
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        write_records(daemon, conftest.record(
+            "claude", "Now the live part.", ts="2026-09-18T14:30:00.000Z"))
+        call("ls one", 1)
+        page.wait_for_function(f"({SHOWN})('ls one')[0] === true")
+        assert page.locator(".callrun").filter(has_text="Bash").count() == 0
+        call("ls two", 2)
+        page.wait_for_function(f"({SHOWN})('ls one')[0] === false")
+        line = page.locator(".callrun").filter(has_text="2 calls")
+        assert line.count() == 1
+        assert page.evaluate(SHOWN, "ls two") == [False]
+        line.locator(".callsum").click()
+        call("ls three", 3)
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.callrun')]
+                .some((t) => t.innerText.includes('3 calls'))""")
+        assert page.evaluate(SHOWN, "ls three") == [True]
+        assert page.evaluate(SHOWN, "ls one") == [True]
+
+
+def test_landing_on_a_folded_call_opens_its_run(page_at):
+    """A search result lands on the block nearest its moment, and that can
+    be a call (#379). A hidden node has no place to scroll to: its run
+    opens first."""
+    daemon, path = page_at
+    run_of_calls(daemon)
+    with opened(path) as page:
+        page.wait_for_selector(".callrun")
+        shown = page.evaluate("""() => {
+          const at = state.turns.blocks.findIndex((one) => one && one.target === 'beta.py');
+          state.turns.goTo = at;
+          drawTranscript($('content'));
+          return [state.turns.goTo, !!state.turns.nodes[at].getClientRects().length];
+        }""")
+        assert shown == [None, True]
+
+
+def test_the_new_line_over_a_folded_call_stands_over_its_run(page_at):
+    """The first block not seen can be a call in a folded run. The line goes
+    over the run's own line: over the hidden call, it stood under the run
+    with nothing beside it to point at."""
+    daemon, path = page_at
+    run_of_calls(daemon)
+    with opened(path) as page:
+        page.wait_for_selector(".callrun")
+        over = page.evaluate("""() => {
+          const pane = document.querySelector('.turnbody');
+          const at = state.turns.blocks.findIndex((one) => one && one.target === 'beta.py');
+          state.turns.newSince = state.turns.blocks[at].ts - 0.5;
+          const line = putNewLine(pane);
+          return line && line.nextElementSibling.className;
+        }""")
+        assert over == "turn toolrow callrun"

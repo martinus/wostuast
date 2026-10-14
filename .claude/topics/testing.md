@@ -34,6 +34,13 @@ and passes on any desk that has one. Run the suite once with
 `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1` when a test commits
 somewhere new.
 
+**A test that writes a fixed date hands the store that day as `now`.**
+`store.refresh()` reads the clock, and `forget_quiet` drops a session quiet
+for `SESSION_MAX_AGE`: `searched` in `tests/test_store.py` wrote events of
+1 October, and on 14 October all three search tests failed with `KeyError:
+'s2'`, on `main` as on every branch. `store.refresh(now=day + ...)` keeps
+the test on its own day, whatever day it runs.
+
 **A hook test runs the hook under a stand-in `claude`** (`as_claude` in
 `conftest.py`; `run_installed(["hook"], …)` does it). `agent_pid` walks up
 the process tree to the first process that looks like Claude Code, and a
