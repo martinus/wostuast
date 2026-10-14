@@ -2426,3 +2426,31 @@ def test_a_session_is_changed_only_by_patch_session(pair_at):
             {changed: [JSON.parse(JSON.stringify(one))]});
           return state.sessions[1] === one; }""")
         assert kept
+
+
+def test_a_view_says_where_back_goes_and_closes_like_a_window(pair_at):
+    """A view stood over the tabs, and the one way out was Escape, said
+    faintly beside its name (#471). Its bar now names the session back goes
+    to, a cross at its end closes it, and the chosen row does not look open
+    while the view, not its tabs, stands beside the list."""
+    look = """() => { const row = document.querySelector('#rows .row.chosen');
+      return {open: document.getElementById('grip').classList.contains('open'),
+              fade: getComputedStyle(row).backgroundImage !== 'none',
+              back: (document.querySelector('#viewtitle .back') || {}).textContent || '',
+              close: !!document.getElementById('viewclose').getClientRects().length}; }"""
+    with opened(pair_at) as page:
+        page.wait_for_function("document.querySelectorAll('#rows .row').length === 2")
+        page.wait_for_function("document.getElementById('grip').classList.contains('open')")
+        shut = page.evaluate(look)
+        assert shut["open"] and shut["fade"] and not shut["close"], shut
+        name = page.evaluate("rowName(current())")
+        for leave in ("#viewclose", "#viewtitle .back"):
+            page.click("#feedlink")
+            page.wait_for_function("state.feed === 'unread'")
+            seen = page.evaluate(look)
+            assert seen == {"open": False, "fade": False,
+                            "back": "← back to " + name, "close": True}, seen
+            page.click(leave)
+            page.wait_for_function("!state.feed")
+            page.wait_for_function("document.getElementById('grip').classList.contains('open')")
+            assert page.evaluate(look)["fade"], leave
