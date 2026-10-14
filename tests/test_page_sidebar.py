@@ -917,6 +917,12 @@ def test_an_agent_that_needs_you_is_said_once(ws, page_at):
         page.wait_for_function("window.__told.length === 1")
         told = page.evaluate("window.__told")
         assert "needs you" in told[0][0], told
+        # The robot is drawn large: the system shows it at 64 px or more,
+        # and the tab's 32 was blown up into a blur.
+        size = page.evaluate("""(src) => new Promise((done) => {
+          const shown = new Image(); shown.onload = () => done(shown.naturalWidth);
+          shown.src = src; })""", told[0][2]["icon"])
+        assert size == 192, size
 
         # A second pass over the same amber row says nothing more. It has
         # to be a pass that really happens: the daemon pushes only when a

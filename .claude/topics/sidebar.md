@@ -359,7 +359,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     a finished session, the prompt it finished (`shown_prompt`).
   - **Where**: the folder and the branch, the row's second line.
   - **The tab's robot** (`iconPicture`, the one drawing `drawIcon` uses),
-    amber for needs-you, grey for finished.
+    amber for needs-you, grey for finished. **Drawn at `ALERT_ICON`, 192
+    px, never the tab's 32**: the system shows an alert's picture at 64
+    px or more, and the reader saw the 32 blown up into a blur.
+    `robotPicture` draws the one drawing on 32 and scales it to any size.
   - **Needs-you stays until it is clicked or closed**
     (`requireInteraction`): one that went while the reader was in another
     room said nothing to them. Finished goes on its own: nothing waits.
@@ -408,6 +411,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_the_tab_icon_is_a_robot_in_the_states_colour`,
   `test_the_tab_icon_says_the_state_in_the_bar_it_stands_in`,
   `test_the_tab_icon_follows_the_browser_and_not_the_page`.
+  - **The same robot stands before the name, in the name's amber**
+    (`drawLogo`, `.brand .logo`, `.brandname`): the reader asked for it,
+    and chose the brand's colour over the state's -- the tab icon already
+    says the state. It reads the name's colour, so `showTheme` draws it
+    again; it is drawn at 64, three times its size, to be sharp. Folded,
+    it is all the head shows (`.foldsessions .sidebar-head`).
+    `test_the_robot_stands_before_the_name_and_in_the_folded_strip`.
 - **There is no bar across the top.** The name and the version head the
   session list (`.sidebar-head`, as tall as `.tabs`, so the two rules under
   them are one line), and the settings are one icon at the end of the tab

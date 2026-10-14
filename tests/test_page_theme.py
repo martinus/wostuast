@@ -284,6 +284,26 @@ def test_the_name_links_to_the_project(page_at):
         assert set(brand.get_attribute("rel").split()) >= {"noopener", "noreferrer"}
 
 
+def test_the_robot_stands_before_the_name_and_in_the_folded_strip(page_at):
+    """The tab's robot, before "wostuast" in the name's colour: drawn three
+    times its size, so it is sharp; drawn again when the theme changes the
+    name's colour. Folded, it is all the head shows."""
+    logo = """() => { const one = document.querySelector('.brand .logo');
+      return {shown: !!one.getClientRects().length, src: one.src, wide: one.naturalWidth,
+              name: !!document.querySelector('.brandname').getClientRects().length,
+              version: !!document.querySelector('.version').getClientRects().length}; }"""
+    with opened(page_at) as page:
+        page.wait_for_function("document.querySelector('.brand .logo').naturalWidth > 0")
+        dark = page.evaluate(logo)
+        assert dark["shown"] and dark["wide"] == 64 and dark["name"] and dark["version"], dark
+        assert dark["src"].startswith("data:image/png"), dark["src"][:40]
+        page.evaluate("showTheme('light')")
+        assert page.evaluate(logo)["src"] != dark["src"]
+        page.click("#sessionfold")
+        folded = page.evaluate(logo)
+        assert folded["shown"] and not folded["name"] and not folded["version"], folded
+
+
 def test_every_settings_label_stands_level_with_what_it_names(page_at):
     """A label is read along the line it stands on. With a padding to line
     it up with a button, "alerts" stood 5 px under its first checkbox, and

@@ -12092,6 +12092,9 @@ body {
 /* The name is a link to the project (issue 333), in a tab of its own. It reads
    as the name it always was until the pointer is on it. */
 .brand:hover { text-decoration: underline; }
+/* The robot of the tab's icon before the name, in the name's colour. */
+.brand { display: inline-flex; align-items: center; gap: 7px; }
+.brand .logo { width: 18px; height: 18px; flex: none; }
 .version { color: var(--ink-faint); font-size: 11px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
 /* Jump and the settings, as icons at the end of the tab row. */
@@ -12318,9 +12321,12 @@ body {
 .findslot > .fold { order: 1; margin-left: 6px; align-self: center; }
 .foldsessions .sidebar { width: var(--fold-w); }
 .foldsessions .sidebar > :not(.findslot, .sidebar-head, .rows),
-.foldsessions .sidebar-head > *, .foldsessions .sidebar .findslot > :not(.fold),
+.foldsessions .sidebar-head > :not(.brand), .foldsessions .brandname,
+.foldsessions .sidebar .findslot > :not(.fold),
 .foldlist .content.split > .side > :not(.findslot),
 .foldlist .content.split > .side > .findslot > :not(.fold) { display: none; }
+/* Folded, the head holds the logo alone, in the middle of the strip. */
+.foldsessions .sidebar-head { padding: 0; justify-content: center; align-items: center; }
 .foldsessions .sidebar .findslot, .foldlist .content.split > .side > .findslot {
   padding-left: 0; padding-right: 0; justify-content: center;
 }
@@ -12392,8 +12398,8 @@ body.dragging.rowdrag { cursor: row-resize; }
    the pane), so this handle shows only under the pointer. */
 .hgrip { inset: -3px 0 auto; height: 7px; cursor: row-resize; z-index: 3; }
 .sidebar-head {
-  height: 40px; flex-shrink: 0; display: flex; align-items: baseline;
-  gap: 10px; padding: 12px 16px 0; margin-bottom: 8px;
+  height: 40px; flex-shrink: 0; display: flex; align-items: center;
+  gap: 10px; padding: 0 16px; margin-bottom: 8px;
   border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13px;
 }
 .rows { flex-grow: 1; overflow-y: auto; padding: 0 8px 8px; scrollbar-width: none; }
@@ -14094,7 +14100,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
   <div class="body">
     <div class="sidebar">
       <div class="sidebar-head"><a class="brand" href="https://github.com/martinus/wostuast"
-        target="_blank" rel="noopener noreferrer" title="wostuast on GitHub">wostuast</a><span
+        target="_blank" rel="noopener noreferrer" title="wostuast on GitHub"><img
+        class="logo" id="logo" alt=""><span class="brandname">wostuast</span></a><span
         class="version" title="the day this copy was made, and the start of its SHA-256"
         >__WOSTUAST_VERSION__</span></div>
       <div class="findslot">
@@ -14693,6 +14700,7 @@ function themeChoice() {
 function showTheme(choice) {
   document.documentElement.dataset.themeChoice = choice;
   document.documentElement.dataset.theme = choice === "system" ? systemTheme() : choice;
+  drawLogo();            // the name's colour is the theme's
 }
 
 // The reader's pick: shown, and kept.
@@ -17082,19 +17090,41 @@ function drawIcon(state_) {
   link.href = picture;
 }
 
-// The robot of the tab's icon as a picture: in the colour of `shown` --
-// "needs", "working" or "ready" -- for the system's own light or dark.
-// The tab's icon and an alert's are the one drawing. "" where a canvas
-// cannot be had.
-function iconPicture(shown) {
+// The robot as a picture `size` pixels square, in `colour`. Drawn on 32
+// and scaled, so the tab's icon, an alert's and the logo are one drawing.
+// "" where a canvas cannot be had.
+function robotPicture(colour, size) {
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 32;
+  canvas.width = canvas.height = size;
   const pen = canvas.getContext("2d");
   if (!pen) return "";
-  const palette = getComputedStyle(document.documentElement);
-  paintIcon(pen, palette.getPropertyValue(
-    "--tab-" + shown + (tabBarIsDark() ? "-dark" : "-light")).trim());
+  pen.scale(size / 32, size / 32);
+  paintIcon(pen, colour);
   return canvas.toDataURL("image/png");
+}
+
+// The robot of the tab's icon: in the colour of `shown` -- "needs",
+// "working" or "ready" -- for the system's own light or dark.
+function iconPicture(shown, size = 32) {
+  const palette = getComputedStyle(document.documentElement);
+  return robotPicture(palette.getPropertyValue(
+    "--tab-" + shown + (tabBarIsDark() ? "-dark" : "-light")).trim(), size);
+}
+
+//: How large an alert's robot is drawn. The system shows it at 64 px or
+//: more, and the tab's 32 was scaled up into a blur.
+const ALERT_ICON = 192;
+
+// The robot before the name, in the name's colour, which each theme sets.
+// Drawn at 64, three times its size on the page, so it is sharp on a screen
+// of any density the reader is likely to have.
+function drawLogo() {
+  const logo = $("logo");
+  if (!logo) return;
+  const colour = getComputedStyle(logo.parentNode).color;
+  if (logo.dataset.colour === colour) return;
+  logo.dataset.colour = colour;
+  logo.src = robotPicture(colour, 64);
 }
 
 // --- telling you when an agent wants you ------------------------------------
@@ -17524,7 +17554,7 @@ function tellAbout(session, title, body, urgent = false) {
   try {
     const note = new Notification(title, {
       body: where ? body + "\n" + where : body,
-      icon: iconPicture(urgent ? "needs" : "ready"),
+      icon: iconPicture(urgent ? "needs" : "ready", ALERT_ICON),
       tag: "wostuast-" + session.id,
       // One tag per session, so a second alert replaces the first -- and a
       // replacement makes no sound and shows no banner unless it says so.
