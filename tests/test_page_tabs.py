@@ -397,8 +397,7 @@ def test_each_column_folds_away_and_comes_back(repo_page):
     """On a laptop the session list and the review's list took 615 of 1366
     px (#464). Each folds to a strip that holds only its button, the
     browser keeps it through a reload, and a second click brings it back.
-    The chosen row's opening in the grip goes with the list, and comes back
-    with it."""
+    The chosen row's opening in the grip stands beside its tile, folded."""
     with opened(repo_page, tab="diff") as page:
         page.set_viewport_size({"width": 1366, "height": 768})
         page.wait_for_function("document.getElementById('grip').classList.contains('open')")
@@ -409,8 +408,9 @@ def test_each_column_folds_away_and_comes_back(repo_page):
         page.click("#sessionfold")
         page.click(".side .fold")
         shut = page.evaluate(WIDTHS)
-        assert shut == {"sessions": 34, "list": 34, "rows": False, "find": False,
-                        "open": False}, shut
+        # The rows stay, as tiles, and the grip opens beside the chosen one.
+        assert shut == {"sessions": 34, "list": 34, "rows": True, "find": False,
+                        "open": True}, shut
         wider = page.evaluate("document.querySelector('.content.split > :nth-child(3)').getBoundingClientRect().width")
         assert wider > pane + 400, (pane, wider)
         # A folded column's edge drags nothing: a width nobody can see.
@@ -456,3 +456,56 @@ def test_a_key_into_a_folded_column_brings_it_back(repo_page):
         page.keyboard.press("/")
         page.wait_for_function("document.activeElement.id === 'find'")
         assert page.evaluate(WIDTHS)["list"] > 150
+
+
+TILES = """() => [...document.querySelectorAll('#rows .row')]
+  .filter((row) => row.getClientRects().length)
+  .map((row) => { const box = row.getBoundingClientRect();
+    return {id: row.dataset.id, says: getComputedStyle(row, '::before').content,
+            title: row.title, chosen: row.classList.contains('chosen'),
+            width: Math.round(box.width), height: Math.round(box.height),
+            lines: [...row.children].filter((one) => one.getClientRects().length).length}; })"""
+
+
+def test_a_folded_session_list_is_a_tile_for_each_session(ws, pair_at, tmp_path):
+    """Folded, the session list was a strip with one button, and the reader
+    could not see who needs them or go to another session without opening
+    it again. Each row is a tile now: the first letters of its name, its
+    state's colour, the name on the hover, and a click chooses it. They are
+    the rows themselves, so a push fills them as it fills a row."""
+    with opened(pair_at) as page:
+        page.wait_for_function("document.querySelectorAll('#rows .row').length === 2")
+        page.click("#sessionfold")
+        tiles = page.evaluate(TILES)
+        assert len(tiles) == 2, tiles
+        for one in tiles:
+            assert one["height"] == 76 and one["lines"] == 0, one
+            assert one["says"] not in ("none", "normal", '""'), one
+            assert one["title"], one
+        chosen = [one for one in tiles if one["chosen"]]
+        other = [one for one in tiles if not one["chosen"]][0]
+        assert len(chosen) == 1 and chosen[0]["width"] > other["width"], tiles
+        # The name runs up the tile, turned, and the hover says it whole.
+        says = {one["id"]: (one["says"], one["title"]) for one in tiles}
+        assert says["s1"] == ('"A session"', "A session"), says
+        turned = page.evaluate("""() => { const css = getComputedStyle(
+            document.querySelector('#rows .row'), '::before');
+          return [css.writingMode, css.textOverflow, css.maskImage.includes('gradient')]; }""")
+        # Turned, and a long name fades at its end rather than "…".
+        assert turned == ["vertical-rl", "clip", True], turned
+        page.click(f'#rows .row[data-id="{other["id"]}"]')
+        page.wait_for_function("(id) => state.chosen === id", arg=other["id"])
+        assert [one["id"] for one in page.evaluate(TILES) if one["chosen"]] == [other["id"]]
+        # A session that starts while the list is folded comes as a tile,
+        # with its name on the hover.
+        daemon = pair_at[0]
+        ws.append_event(conftest.event("SessionStart", sid="s3", cwd=str(tmp_path),
+                                       pane="%8", pid=3, ts=time.time()))
+        daemon.tick()
+        page.wait_for_function("document.querySelectorAll('#rows .row').length === 3")
+        assert page.get_attribute('#rows .row[data-id="s3"]', "title")
+        # Open again, a row is a row: no tile, and no title over it.
+        page.click("#sessionfold")
+        rows = page.evaluate(TILES)
+        assert all(one["lines"] >= 2 and not one["title"] for one in rows), rows
+
