@@ -958,22 +958,23 @@ def test_the_tab_width_and_wrap_are_the_readers_and_are_remembered(ws, repo_page
 def test_the_file_line_carries_the_width_and_wrap_beside_the_code(ws, repo_page):
     """The settings menu had grown long, and two of its choices are changed
     while reading a file: how wide code is drawn, and whether long lines
-    wrap. They are icons at the right end of the open file's line too, one
-    setting with the menu's: a click there shows in the menu and is kept."""
+    wrap. They are buttons at the right end of the open file's line too, one
+    setting with the menu's: a click there shows in the menu and is kept.
+    One button each, lit while it is on; its words are its label."""
     repo, _ = repo_page
     repo.joinpath("tabs.py").write_text("def a():\n\treturn 1\n")
     with opened(repo_page) as page:
         open_file(page, "tabs.py")
         quick = ".filebody > .where .quick"
-        assert page.locator(f"{quick} button").evaluate_all(
-            "(all) => all.map((b) => [b.dataset.value, b.getAttribute('aria-pressed'),"
-            " !!b.getAttribute('aria-label')])") == [
-                ["false", "true", True], ["true", "false", True],
-                ["false", "true", True], ["true", "false", True]]
-        page.click(f"{quick} .codewidth button[data-value='true']")
+        assert page.locator(f"{quick} > *").evaluate_all(
+            "(all) => all.map((b) => [b.dataset.name, b.getAttribute('aria-pressed'),"
+            " b.getAttribute('aria-label')])") == [
+                ["codewidth", "false", "narrow code: more of a line fits in a column"],
+                ["wrapping", "false", "wrap long lines"]]
+        page.click(f"{quick} .toggle[data-name='codewidth']")
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.dlines')).fontStretch === '62.5%'")
-        page.click(f"{quick} .wrapping button[data-value='true']")
+        page.click(f"{quick} .toggle[data-name='wrapping']")
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.filebody .dline'))"
             ".whiteSpace === 'pre-wrap'")
@@ -985,9 +986,8 @@ def test_the_file_line_carries_the_width_and_wrap_beside_the_code(ws, repo_page)
         assert page.evaluate(pressed, "wrapping") == "true"
         # And the other way: the menu's pick shows beside the code.
         settings(page, "codewidth", "false")
-        assert page.locator(
-            f"{quick} .codewidth button[aria-pressed='true']").get_attribute(
-                "data-value") == "false"
+        assert page.locator(f"{quick} .toggle[data-name='codewidth']").get_attribute(
+            "aria-pressed") == "false"
 
 
 def test_a_button_beside_the_code_shows_its_choice_before_the_file_answers(
@@ -1000,10 +1000,9 @@ def test_a_button_beside_the_code_shows_its_choice_before_the_file_answers(
     with opened(repo_page) as page:
         open_file(page, "tabs.py")
         page.route("**/api/settings", lambda route: route.abort())
-        page.click(".filebody > .where .quick .codewidth button[data-value='true']")
-        assert page.locator(
-            ".filebody > .where .quick .codewidth button[data-value='true']"
-        ).get_attribute("aria-pressed") == "true"
+        button = ".filebody > .where .quick .toggle[data-name='codewidth']"
+        page.click(button)
+        assert page.locator(button).get_attribute("aria-pressed") == "true"
 
 
 def test_the_file_line_ends_where_the_tab_row_ends(repo_page):

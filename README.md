@@ -449,10 +449,11 @@ The **settings** button (the sliders, at the end of the tab row) holds all
 the settings, in four groups: page, code, review and links.
 
 Four of them are also small buttons beside the code they change. The
-Review tab has the columns, whitespace and the code width at the right end
-of its bar.
-The Files tab has the code width and long lines at the right end of the
-file's line. A click there and a click in the menu change the same setting.
+Review tab has two columns, hide whitespace and narrow code at the right end
+of its bar. The Files tab has narrow code and wrap long lines at the right
+end of the file's line. A button is lit while its setting is on, and one
+click switches it. A click there and a click in the menu change the same
+setting.
 
 - **colours**: auto, light or dark. Each button shows the colours it gives.
 - **alerts**: see above.

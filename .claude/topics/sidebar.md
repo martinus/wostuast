@@ -469,12 +469,22 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     file's line -- the ones the reader changes while reading. The menu
     still holds every setting: the reader weighed taking them out of it and
     kept one place where all of them are.
-    Icons only, their words in `title` and `aria-label`: with words the
-    Review bar ran out of room on a notebook, which is why the columns
-    went into the menu at first. They are the menu's settings, not copies:
-    `paintSettings` paints every `.choice` of a name, and a pick paints at
-    once (`keepWidth`, `keepWrap`, `keepSides`), not when the push comes,
-    which over the ssh tunnel is a second later.
+    **One button each, lit while its setting is on** (`.toggle`,
+    `aria-pressed`), so one click switches it: it was a pair, one icon a
+    side, and the reader asked for one click, and chose this from pictures
+    over an icon that shows the state -- that one cannot say whether it is
+    the state now or the one a click gives. The menu keeps its parts with
+    words. Icons only, the words in `aria-label` and, with ": on" or
+    ": off", in `title`: with words the Review bar ran out of room on a
+    notebook, which is why the columns went into the menu at first. They
+    are the menu's settings, not copies: `paintSettings` paints the menu's
+    `.choice` and every `.toggle` from `settingsNow`, and a click paints
+    at once (`keepWidth`, `keepWrap`, `keepSides`, `keepSpace`), not when
+    the push comes, which over the ssh tunnel is a second later. **The
+    lit look is a rule of its own after `.verb.quiet`**: added to the
+    choices' rule above it, `.verb.quiet` -- as strong, and later -- won
+    it back, and a lit button looked like any other; the test compares
+    the two grounds.
     `test_the_review_bar_carries_the_columns_and_the_width`,
     `test_the_file_line_carries_the_width_and_wrap_beside_the_code`,
     `test_a_button_beside_the_code_shows_its_choice_before_the_file_answers`.

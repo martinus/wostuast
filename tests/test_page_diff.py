@@ -1479,35 +1479,45 @@ def test_code_is_drawn_narrow_when_the_reader_asks(repo_page, ws):
 
 def test_the_review_bar_carries_the_columns_and_the_width(ws, repo_page):
     """The columns, whitespace and how wide code is drawn are changed while
-    reading a change, so they are icons at the right end of the Review bar
-    as well as in the menu: one setting, shown in both, and kept."""
+    reading a change, so they are buttons at the right end of the Review bar
+    as well as in the menu: one setting, shown in both, and kept. Each is one
+    button, lit while its setting is on, so one click switches it -- a pair,
+    one icon a side, took two (the reader asked for one)."""
     root, _ = repo_page
     tabbed_change(root)
     with opened(repo_page) as page:
         show_tab(page, "diff")
         page.wait_for_selector(".dline .dtext:has-text('z = 2')")
         quick = ".diffbar .quick"
-        assert page.locator(f"{quick} .choice").evaluate_all(
-            "(all) => all.map((one) => one.classList[1])") == [
-                "sides", "spacechanges", "codewidth"]
-        page.click(f"{quick} .sides button[data-value='split']")
+        lit = (f"() => [...document.querySelectorAll('{quick} > *')].map("
+               "(one) => [one.dataset.name, one.getAttribute('aria-pressed')])")
+        assert page.evaluate(lit) == [
+            ["sides", "false"], ["spacechanges", "false"], ["codewidth", "false"]]
+        for name in ("sides", "codewidth", "spacechanges"):
+            page.click(f"{quick} .toggle[data-name='{name}']")
         page.wait_for_selector(".dlines.sides")
-        page.click(f"{quick} .codewidth button[data-value='true']")
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.dlines')).fontStretch === '62.5%'")
-        page.click(f"{quick} .spacechanges button[data-value='true']")
         kept(ws, "diff_columns", "two")
         kept(ws, "code_width", "narrow")
         kept(ws, "diff_space", "hide")
-        # The groups stand apart by their gap alone: the reader asked for no
-        # bar between them.
-        assert page.locator(f"{quick} > :not(.choice)").count() == 0
+        assert page.evaluate(lit) == [
+            ["sides", "true"], ["spacechanges", "true"], ["codewidth", "true"]]
+        assert page.locator(f"{quick} .toggle[data-name='sides']").get_attribute(
+            "title") == "two columns, side by side: on"
         for name, want in (("sides", "split"), ("codewidth", "true"),
                            ("spacechanges", "true")):
-            for where in ("#setpop", quick):
-                assert page.locator(
-                    f"{where} .{name} button[aria-pressed='true']").get_attribute(
-                        "data-value") == want, (where, name)
+            assert page.locator(
+                f"#setpop .{name} button[aria-pressed='true']").get_attribute(
+                    "data-value") == want, name
+        # A second click puts it back.
+        page.click(f"{quick} .toggle[data-name='sides']")
+        kept(ws, "diff_columns", "one")
+        assert page.evaluate(lit)[0] == ["sides", "false"]
+        # Lit is seen, not only said: `.verb.quiet` won the look back once.
+        ground = ("(name) => getComputedStyle(document.querySelector("
+                  f"\"{quick} .toggle[data-name='\" + name + \"']\")).backgroundColor")
+        assert page.evaluate(ground, "sides") != page.evaluate(ground, "codewidth")
 
 
 def test_every_right_hand_control_ends_on_one_line(repo_page):

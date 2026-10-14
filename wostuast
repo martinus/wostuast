@@ -12123,7 +12123,7 @@ body {
   border: 1px solid var(--edge); background: none; color: var(--ink-mute);
   cursor: pointer;
 }
-.theme .icon, .setpop .icon, .choice .icon {
+.theme .icon, .setpop .icon, .choice .icon, .toggle .icon {
   width: 14px; height: 14px; fill: none; stroke: currentColor; flex: none;
   stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round;
 }
@@ -13743,10 +13743,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .pickbase { max-width: 36ch; flex-shrink: 0; }
 /* The settings beside the code (`putQuick`): icons only, at the right end of
    the line they stand on. */
-.quick { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
-.quick .choice .verb { padding: 0 6px; }
-.quick .choice .verb .icon { margin: -2px 0 0; }
-.quick .choice .verb span:empty { display: none; }
+.quick { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
+.quick .toggle { padding: 0 6px; }
+.quick .toggle .icon { vertical-align: middle; margin: -2px 0 0; }
+/* Lit while its setting is on: the look of the part of a choice in force.
+   Here, after `.verb.quiet`, and not in the choices' rule above it: there
+   `.verb.quiet`, as strong and later, won the look back, and a lit button
+   looked like any other. */
+.quick .toggle[aria-pressed="true"] {
+  background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
+}
 .filebody .where .quick ~ .readas { margin-left: 0; }
 /* Older, which of how many, newer: one control (`putDiffBar`). The count
    is a part of it with the parts' edge and height, and no button. */
@@ -14910,7 +14916,6 @@ const ICONS = {
   // The same, struck through: a change of whitespace alone left out.
   spaceHide: "M2.2 7.4v2.6h9.6V7.4M2.4 11.8L11.6 2.2",
   // Two arrows pointing out from a bar: code at its normal width.
-  codeNormal: "M5 7H1.2M2.8 5.4L1.2 7l1.6 1.6M9 7h3.8M11.2 5.4L12.8 7l-1.6 1.6M7 3v8",
   // Two arrows pressing in on a bar: how wide code is drawn. A letter and
   // a bar read as "AI".
   font: "M1.2 7h3.6M3.4 5.4L5 7 3.4 8.6M12.8 7H9.2M10.6 5.4L9 7l1.6 1.6M7 3v8",
@@ -17458,21 +17463,30 @@ function putSettingsPath(pop) {
   });
 }
 
+// What each choice of the menu holds now, as the words its buttons carry.
+function settingsNow() {
+  const reading = readingWanted();
+  return { colours: themeChoice(), tabwidth: String(reading.tab),
+           wrapping: String(reading.wrap), sides: state.sides,
+           spacechanges: String(spaceHidden()),
+           spacemarks: String(reading.marks),
+           codewidth: String(reading.narrow) };
+}
+
 function paintSettings() {
   const pop = $("setpop");
   if (!pop || !pop.firstChild) return;
-  const reading = readingWanted();
-  const now = { colours: themeChoice(), tabwidth: String(reading.tab),
-                wrapping: String(reading.wrap), sides: state.sides,
-                spacechanges: String(spaceHidden()),
-                spacemarks: String(reading.marks),
-                codewidth: String(reading.narrow) };
-  // Every choice of that name: the menu's, and the one beside the code
-  // (`putQuick`), so a pick in either shows in both.
+  const now = settingsNow();
   for (const [name, value] of Object.entries(now)) {
-    for (const group of document.querySelectorAll(".choice." + name)) {
-      paintChoice(group, value);
-    }
+    paintChoice(pop.querySelector(".choice." + name), value);
+  }
+  // The buttons beside the code (`putQuick`), so a pick in either place
+  // shows in both.
+  for (const button of document.querySelectorAll(".quick .toggle")) {
+    const [on, , , words] = QUICK[button.dataset.name];
+    const lit = now[button.dataset.name] === String(on);
+    button.setAttribute("aria-pressed", String(lit));
+    button.title = words + (lit ? ": on" : ": off");
   }
   $("settingspath").textContent = setting("path") || "";
 }
@@ -17481,38 +17495,42 @@ function paintSettings() {
 //
 // Four settings are changed while reading, not once: the diff's columns,
 // whitespace in a diff, how wide code is drawn, and whether long lines wrap.
-// Each is also a pair of
-// icons at the right end of the line over the code they change -- the
-// Review bar, the open file's line on the Files tab -- and stays in the
-// menu. Icons, no words: the reader asked for the menu's size and chose the
-// icons from pictures, and with words the Review bar ran out of room on a
+// Each is also one button at the right end of the line over the code they
+// change -- the Review bar, the open file's line on the Files tab -- and
+// stays in the menu. One button that is lit while its setting is on, so one
+// click switches it: it was a pair, one icon a side, and the reader asked
+// for one click and chose this from pictures over an icon that shows the
+// state, which cannot say whether it is the state now or the one a click
+// gives. Icons, no words: with words the Review bar ran out of room on a
 // notebook, which is why the columns moved into the menu once. A button's
-// words are its `title` and its `aria-label`. Both places are one setting,
-// painted from it by `paintSettings`.
+// words are its `aria-label`, its state `aria-pressed`, and both are its
+// `title`. Both places are one setting, painted from it by `paintSettings`.
 
+//: Each button: the value that lights it, the value it puts back, its icon,
+//: and what it does when lit.
 const QUICK = {
-  sides: [["unified", "oneColumn", "one column"],
-          ["split", "twoColumns", "two columns, side by side"]],
-  codewidth: [[false, "codeNormal", "code at its normal width"],
-              [true, "font", "code condensed: more of a line fits in a column"]],
-  wrapping: [[false, "scroll", "long lines scroll"], [true, "wrap", "long lines wrap"]],
-  spacechanges: [[false, "space", "a change of whitespace alone is a change"],
-                 [true, "spaceHide",
-                  "leave out a change of whitespace alone, as git diff -w does"]],
+  sides: ["split", "unified", "twoColumns", "two columns, side by side"],
+  spacechanges: [true, false, "spaceHide",
+                 "hide a change of whitespace alone, as git diff -w does"],
+  codewidth: [true, false, "font", "narrow code: more of a line fits in a column"],
+  wrapping: [true, false, "wrap", "wrap long lines"],
 };
 
 function putQuick(parent, names) {
   const box = put(parent, "span", "quick");
   const picks = { sides: keepSides, codewidth: keepWidth, wrapping: keepWrap,
                   spacechanges: keepSpace };
-  names.forEach((name) => {
-    const group = putChoice(box, name, QUICK[name].map(
-      ([value, icon, title]) => [value, "", icon, title]),
-                            (value) => { picks[name](value); paintSettings(); });
-    for (const button of group.querySelectorAll("button")) {
-      button.setAttribute("aria-label", button.title);
-    }
-  });
+  for (const name of names) {
+    const [on, off, icon, words] = QUICK[name];
+    const button = put(box, "button", "verb quiet toggle");
+    button.dataset.name = name;
+    button.setAttribute("aria-label", words);
+    putIcon(button, icon);
+    button.addEventListener("click", () => {
+      picks[name](settingsNow()[name] === String(on) ? off : on);
+      paintSettings();
+    });
+  }
   paintSettings();
   return box;
 }
