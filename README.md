@@ -357,11 +357,12 @@ words marked.
 
 - **Pick what to show:** all changes (the picker says how many commits they
   hold), only what is not committed, or one commit with its whole message.
-  The message is drawn as Markdown, and **Markdown | text** at the right of
+  The message is drawn as Markdown, and **md | txt** at the right of
   its subject shows it as it was written; this browser keeps your choice. It wraps at the edge of the
   window, and your ticket links work in it and in its subject. Step through
-  the commits with **older** and **newer**; between them, "5 / 9" says which
-  commit you read, counted from the oldest. Each commit starts at its top.
+  the commits with the arrows **‹** (older) and **›** (newer); between them,
+  "5 / 9" says which commit you read, counted from the oldest. Each commit
+  starts at its top.
 - **All changes has two halves**, and each half says what it is a diff of:
   what this branch committed that its base branch does not have, and what the
   files on disk hold that the last commit does not.

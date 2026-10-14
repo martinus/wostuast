@@ -507,11 +507,19 @@ def test_the_older_and_newer_buttons_step_through_the_commits(repo_page):
         show_tab(page, "diff")
         page.wait_for_function("(state.diff || {}).commits?.length === 2")
         older, newer = page.locator(".diffbar .step").all()
+        # One control, in the style of the choices beside it: an arrow, the
+        # count, an arrow. The arrows' words are their labels.
+        assert page.locator(".diffbar .stepper > *").evaluate_all(
+            "(all) => all.map((one) => one.getAttribute('aria-label')"
+            " || one.className)") == [
+                "older: the commit before this one", "stepat",
+                "newer: the commit after this one"]
         # Nothing to step from while everything is shown.
         assert older.is_disabled() and newer.is_disabled()
         where = page.locator(".diffbar .stepat")
         # Hidden, and not only empty: an empty span still takes a gap.
         assert where.evaluate("e => e.hidden") is True
+        assert not where.is_visible()     # its `display` does not undo `hidden`
         pick(page, page.evaluate("state.diff.commits[0].sha"))
         assert page.locator(".diffhead").first.inner_text().startswith("third")
         assert newer.is_disabled() and not older.is_disabled()
@@ -1491,6 +1499,9 @@ def test_the_review_bar_carries_the_columns_and_the_width(ws, repo_page):
         kept(ws, "diff_columns", "two")
         kept(ws, "code_width", "narrow")
         kept(ws, "diff_space", "hide")
+        # The groups stand apart by their gap alone: the reader asked for no
+        # bar between them.
+        assert page.locator(f"{quick} > :not(.choice)").count() == 0
         for name, want in (("sides", "split"), ("codewidth", "true"),
                            ("spacechanges", "true")):
             for where in ("#setpop", quick):

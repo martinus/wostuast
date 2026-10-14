@@ -374,7 +374,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   while a comment box is open and say so (`busyWriting`) — a rebuild takes
   what is typed, and a switch that silently did nothing reads as broken.
   **Between older and newer, "5 / 9"** (`.stepat`): which commit, oldest
-  first, so the branch's first commit is 1. **And another commit is read
+  first, so the branch's first commit is 1. The three are one control
+  (`.choice.stepper`): two arrows, their words in `title` and
+  `aria-label`, the count a part between them with no button -- the
+  reader chose it from pictures over two buttons of words, which matched
+  nothing else on the bar. **And another commit is read
   from its top**: `drawDiff` keeps the place only when `scroll.dataset.of`
   says the same diff is drawn again, and says nought otherwise -- a pane
   emptied and refilled in one task keeps its offset, so the next commit

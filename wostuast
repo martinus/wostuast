@@ -13747,10 +13747,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .quick .choice .verb { padding: 0 6px; }
 .quick .choice .verb .icon { margin: -2px 0 0; }
 .quick .choice .verb span:empty { display: none; }
-.quick .quicksep { width: 1px; height: 18px; background: var(--edge-bright); }
 .filebody .where .quick ~ .readas { margin-left: 0; }
+/* Older, which of how many, newer: one control (`putDiffBar`). The count
+   is a part of it with the parts' edge and height, and no button. */
+.stepper { flex-shrink: 0; }
+.stepper .verb { padding: 0 5px; }
+.stepper .verb .icon { margin: -2px 0 0; }
 .diffbar .stepat {
-  flex-shrink: 0; font-family: var(--sans); font-size: 12px;
+  display: inline-flex; align-items: center; flex-shrink: 0;
+  height: 22px; padding: 0 8px; margin-left: -1px; box-sizing: border-box;
+  border: 1px solid var(--edge); font: 11px var(--sans);
   color: var(--ink-mute); font-variant-numeric: tabular-nums;
 }
 
@@ -14851,6 +14857,7 @@ const ICONS = {
   // is the second target on a round's row, and a shape of its own, so the
   // icon that says who spoke is not also a button.
   chevron: "M5.4 3.6L8.8 7l-3.4 3.4",
+  chevronLeft: "M8.6 3.6L5.2 7l3.4 3.4",
   // A cross: the view's close (#471).
   close: "M3.6 3.6l6.8 6.8M10.4 3.6l-6.8 6.8",
   // A panel with a column at its left, and an arrow that folds the column
@@ -17498,8 +17505,7 @@ function putQuick(parent, names) {
   const box = put(parent, "span", "quick");
   const picks = { sides: keepSides, codewidth: keepWidth, wrapping: keepWrap,
                   spacechanges: keepSpace };
-  names.forEach((name, at) => {
-    if (at) put(box, "span", "quicksep");
+  names.forEach((name) => {
     const group = putChoice(box, name, QUICK[name].map(
       ([value, icon, title]) => [value, "", icon, title]),
                             (value) => { picks[name](value); paintSettings(); });
@@ -20664,16 +20670,23 @@ function putDiffBar(pane) {
   const base = put(bar, "select", "pickbase");
   base.title = "what this branch's work is measured against";
   base.addEventListener("change", () => keepBase(base.value));
-  const step = (word, title, by) => {
-    const button = put(bar, "button", "verb quiet step", word);
+  // Older and newer, and which of how many between them: one control in
+  // the style of the choices beside it (`.choice`), which the reader chose
+  // from pictures over two buttons of words. An arrow's words are its
+  // `title` and its `aria-label`.
+  const stepper = put(bar, "span", "choice stepper");
+  const step = (icon, title, by) => {
+    const button = put(stepper, "button", "verb quiet step");
     button.title = title;
+    button.setAttribute("aria-label", title);
+    putIcon(button, icon);
     button.addEventListener("click", () => stepCommit(by));
   };
-  step("\u2039 older", "the commit before this one", 1);
+  step("chevronLeft", "older: the commit before this one", 1);
   // Which commit of how many, oldest first, so the first commit of a branch
   // is 1: stepping through a review, "5 / 9" says how far there is to go.
-  put(bar, "span", "stepat");
-  step("newer \u203a", "the commit after this one", -1);
+  put(stepper, "span", "stepat");
+  step("chevron", "newer: the commit after this one", -1);
   putQuick(bar, ["sides", "spacechanges", "codewidth"]);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
