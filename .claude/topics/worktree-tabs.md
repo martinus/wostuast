@@ -529,7 +529,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `putSettings`): the columns, the tab width and long lines. The Review
     bar was cramped on a notebook with the column switch alone in it, in
     words. The columns, whitespace and the code's width are back on the
-    bar as three icon pairs (`putQuick`), which fit at 1366 px; they set
+    bar as three buttons, each lit while on (`putQuick`), which fit at 1366 px; they set
     the menu's own settings.
   - **Whitespace is two settings, and only one asks git** (#449).
     `diff_space` "hide" is `git diff -w` (`SPACE_ARGS`), sent as
