@@ -790,6 +790,19 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     (`keepListing`, `adoptListing`, `state.listings`, by `worktree_path`):
     a session choice blanked them, so every switch -- to another session in
     the same worktree, or back -- fetched every name again.
+  - **The transcripts of the last sessions are kept too** (`keepTurns`,
+    `takeTurns`, `state.heldTurns`, `TRANSCRIPTS_KEPT`): every return to a
+    session fetched its whole transcript, 869 KB for 704 blocks, measured;
+    now it is drawn at once from what is kept (`drewHeld` in
+    `loadTranscript`) and the fetch carries `have`, answered `same` in 51
+    bytes. A `same` after that draw draws nothing again: it rebuilt every
+    block, 70 to 90 ms. Only a `whole` reading is kept, as only it may
+    send `have`. **`keepTurns` runs before `state.chosen` moves**: after
+    it, the last session's transcript was kept under the new id and drawn
+    at once under the new session's name -- and the daemon answered `same`,
+    because two sessions are both at run 0, version 1 often enough.
+    `test_a_session_gone_back_to_is_drawn_from_what_the_page_kept`,
+    `test_the_page_keeps_the_last_transcripts_and_no_more`.
   - **`load` clears the last tab's poll timer first**, and re-arms one
     only for the tab it loaded. Only `repoll` cleared it, after the load:
     the Files tab's two-second poll fired into the Transcript tab while its
@@ -809,6 +822,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_diff_the_page_holds_is_not_sent_again`,
   `test_a_poll_of_a_diff_that_stands_is_answered_short`,
   `test_another_session_in_the_worktree_does_not_fetch_its_names_again`.
+- **A switch not drawn within `SWITCH_SHOWN` says it is loading**
+  (`beginSwitch`, `endSwitch`, `body.switching`, `data-loading`). The box
+  is built from what comes back, so it held the last session's or tab's
+  drawing until then, and over a slow tunnel the reader took that for the
+  switch done. `showTab` begins it, `draw` ends it, and in between the old
+  content is dimmed, takes no click, and a label says "loading <session>
+  · <tab>…". **Not at once**: a switch drawn sooner shows nothing, or every
+  switch would flicker; the test checks at half the delay.
+  `test_a_slow_switch_says_it_is_loading_and_a_quick_one_says_nothing`.
 - **A failed transcript fetch is not an empty transcript.** `ask` gives
   null, and the page drew "Nothing in this transcript yet.", forgot the
   reader's places, and asked no more, because the tab polls nothing. Now

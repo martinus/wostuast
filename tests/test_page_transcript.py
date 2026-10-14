@@ -2008,7 +2008,9 @@ def test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole(pair_at):
         count = page.evaluate("state.turns.blocks.length")
         assert count > 0
         show_tab(page, "files")
-        renew_stream(page, "choose('s2'); choose('s1')")
+        # Nothing kept from the visit before (`keepTurns`): a kept reading is
+        # whole, and the pieces are what this is about.
+        renew_stream(page, "choose('s2'); state.heldTurns.clear(); choose('s1')")
         page.wait_for_function(
             "state.chosen === 's1' && state.tab === 'files'")
         append_blocks(daemon, ["A piece, pushed alone."])
