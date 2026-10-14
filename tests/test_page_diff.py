@@ -1527,13 +1527,13 @@ def test_the_settings_say_what_is_chosen_and_change_it_in_place(repo_page):
         pressed = """() => [...document.querySelectorAll(
           '#setpop button[aria-pressed="true"]')].map((b) => b.dataset.value)"""
         assert page.evaluate(pressed) == ["system", "4", "false", "unified",
-                                          "false", "false"]
+                                          "false", "false", "false"]
         drawn = page.evaluate("state.diffs.tag")
         settings(page, "tabwidth", "2")
         settings(page, "sides", "split")
         page.wait_for_selector(".dline.pair")
         assert page.evaluate(pressed) == ["system", "2", "false", "split",
-                                          "false", "false"]
+                                          "false", "false", "false"]
         assert page.evaluate("state.diffs.tag") == drawn
 
 
