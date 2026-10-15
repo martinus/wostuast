@@ -533,7 +533,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     (`putLinkRow`, `saveLinks`, `putLinkRows`): the reader chose that over a
     save button and over saving each keystroke, which linked half a
     pattern for a moment. Each row is "find", a regular expression, and
-    "link to"; under it, the first match on the page and where it goes
+    "link"; under it, the first match on the page and where it goes
     (`paintExamples`, when the menu opens and after a save, never on a
     push, because it reads the text of the whole page), or why it is not
     saved, in red, with the box it is about (`sayLink`, `data-bad`, the
@@ -551,6 +551,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     after an answer), the last was red one run in three at `-n 12`, and
     the guards still missed the empty row.
     `test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept`.
+    **The rows span the whole Links group, and both boxes reach the
+    row's right edge** (`.linkedit`, `.linkrow`, `.linkdrop`): the reader
+    asked for more room to write a pattern and a url in. So the group has
+    no label in the column of labels -- its title names it -- the button
+    that takes a row out is "remove", on the line under the boxes, where an
+    × beside the first box took its room, and the second box's word is
+    "link", not "link to". The menu has a set width (`width` on
+    `.setpop`) and its columns are `max-content 1fr`: with two
+    `max-content` columns the wide rows spread their width over both, and
+    every other setting stood far from its label. With `minmax(0, 1fr)`
+    and no width, the menu, placed absolutely and shrunk to fit, folded
+    the controls to one word a line.
+    `test_the_link_boxes_take_the_whole_width_of_the_links_group`,
+    `test_the_settings_stand_in_four_titled_groups`.
     **The outside click is read from the click's path**
     (`composedPath`), not from where its target is now: × takes its own
     row out, its target then had no place on the page, and the menu shut. **The colours

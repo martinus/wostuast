@@ -604,19 +604,19 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 ### Ticket links
 
 If your work has ticket ids in it, they can become links. Open the settings
-menu, go to **links**, and click **+ add a link**. Each link has two
+menu, go to **Links**, and click **+ add a link**. Each link has two
 fields:
 
 - **find** is a regular expression, for example `(OA|QSP)-(\d+)`.
-- **link to** is where a match links to, for example
+- **link** is where a match links to, for example
   `https://tickets.example.com/browse/$1-$2`. `$1` to `$9` are the groups of
   the match, and `$0` is all of it. It must start with `http://` or
   `https://`.
 
 The page saves a link when you leave a field or press Enter. Under each
 link, the menu shows the first match on the page and where it goes. A link
-that cannot be used is red, says why, and is not saved. Click **×** to
-remove a link.
+that cannot be used is red, says why, and is not saved. Click **remove**
+to remove a link.
 
 The links work in the transcript, in commit messages, and in the session
 list: in a session's name, its worktree and its branch.
