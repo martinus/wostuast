@@ -320,7 +320,7 @@ def test_the_settings_stand_in_four_titled_groups(page_at):
             ["Page", ["colours", "alerts"], "600"],
             ["Code", ["tab", "lines", "width", "marks"], "600"],
             ["Review", ["diff", "spaces"], "600"],
-            ["Links", ["links"], "600"]]
+            ["Links", [], "600"]]
         lefts = page.evaluate("""() => [...document.querySelectorAll(
           '#setpop .setlabel + *')].map((one) => one.getBoundingClientRect().left)""")
         assert max(lefts) - min(lefts) < 1, lefts
@@ -347,8 +347,42 @@ def test_every_settings_label_stands_level_with_what_it_names(page_at):
             (label) => [label.textContent.trim(),
                         mid(label.nextElementSibling) - mid(label)]);
         }""")
-        assert len(gaps) == 9, gaps
+        assert len(gaps) == 8, gaps
         assert all(abs(gap) <= 1 for _, gap in gaps), gaps
+
+
+def test_the_link_boxes_take_the_whole_width_of_the_links_group(ws, page_at):
+    """The reader asked for more room to write a pattern and a url in. The
+    rows span the whole group, with no label in the column of labels, and
+    both boxes reach the row's right edge: "remove" stands on the line
+    under them, where a cross beside the first box took its room. The
+    other settings keep their column, by their labels."""
+    ws.config_path().parent.mkdir(parents=True, exist_ok=True)
+    ws.config_path().write_text(json.dumps({"links": [
+        {"match": r"OA-(\d+)", "url": "https://t.example/$1"}]}), encoding="utf-8")
+    with opened(page_at) as page:
+        page.click("#settings")
+        page.wait_for_selector("#linklist .linkrow")
+        seen = page.evaluate("""() => {
+          const box = (one) => one.getBoundingClientRect();
+          const group = box(document.querySelector('#linklist').closest('.setgroup'));
+          const row = document.querySelector('#linklist .linkrow');
+          const inner = box(row), pad = parseFloat(getComputedStyle(row).paddingRight);
+          const [match, url] = [...row.querySelectorAll('input')].map(box);
+          const drop = box(row.querySelector('.linkdrop'));
+          const control = box(document.querySelector('#setpop .setlabel + *'));
+          return {groupWide: group.width, rowWide: inner.width,
+                  rightGap: [inner.right - pad - match.right, inner.right - pad - url.right],
+                  dropUnder: drop.top - url.bottom, dropText: row.querySelector('.linkdrop').textContent,
+                  controlStart: control.left, matchStart: match.left,
+                  words: [...row.querySelectorAll('.linkword')].map((one) => one.textContent)};
+        }""")
+    assert seen["rowWide"] > seen["groupWide"] - 30, seen
+    assert all(abs(gap) <= 1 for gap in seen["rightGap"]), seen
+    assert seen["dropUnder"] >= 0 and seen["dropText"] == "remove", seen
+    assert seen["words"] == ["find", "link"], seen
+    # The boxes start left of the controls' column: the row took its room.
+    assert seen["matchStart"] < seen["controlStart"], seen
 
 
 # --- the settings, kept in one file -------------------------------------------

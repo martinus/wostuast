@@ -2432,7 +2432,7 @@ def test_a_ticket_link_is_added_in_the_menu(ws, page_at):
         assert link_rows(page) == [[
             r"OA-(\d+)", "https://tickets.example/OA-$1",
             "OA-73219 → tickets.example/OA-73219", ""]]
-        # Taken out with ×, and the menu stays open while it goes.
+        # Taken out with remove, and the menu stays open while it goes.
         page.click("#linklist .linkdrop")
         kept(ws, "links", [])
         assert page.locator("#setpop").is_visible()
@@ -2484,7 +2484,7 @@ def test_a_link_that_cannot_be_used_is_red_and_the_others_are_kept(ws, page_at):
         }""")
         page.wait_for_function("""() => document.querySelector(
           '#linklist .linkrow:last-child').dataset.bad === 'url'""")
-        assert "“link to”" in link_rows(page)[1][2]
+        assert "“link”" in link_rows(page)[1][2]
         # A push of the file as it is leaves the red row standing.
         daemon.tell_config(force=True)
         page.wait_for_function("state.settings.links.length === 1")
