@@ -1945,3 +1945,21 @@ def test_a_send_claude_code_did_not_take_comes_back_and_up_recalls_one(in_pane):
         page.fill("#say", "mine")
         page.press("#say", "ArrowUp")
         assert page.input_value("#say") == "mine"
+
+
+def test_the_page_asks_the_daemon_one_way(page_at):
+    """`getJson` is the one place the page calls `fetch` (#541), and what
+    it gives back says which of three things happened: an answer, an
+    error answer, or one the reader no longer wants, which gives nothing
+    so that nothing is drawn. `post` keeps its `{error}` on top of it."""
+    with opened(page_at) as page:
+        got = page.evaluate("""async () => ({
+            fine: await getJson("/api/sessions"),
+            late: await getJson("/api/sessions", { wanted: () => false }),
+            none: await getJson("/api/no-such-thing"),
+            posted: await post("/api/no-such-thing", {}),
+        })""")
+    assert got["fine"]["ok"] is True and "sessions" in got["fine"]["body"]
+    assert got["late"] is None
+    assert got["none"]["ok"] is False and got["none"]["body"]["error"]
+    assert got["posted"]["error"]

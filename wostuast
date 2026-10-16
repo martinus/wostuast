@@ -14878,18 +14878,35 @@ async function tell(id, verb, body) {
   return post(apiUrl(id, verb), body);
 }
 
-async function post(where, body) {
+// The one place the page calls `fetch` (#541): `{ok, body}` for an answer,
+// `{ok: false, body: null, why}` when the daemon did not answer or sent
+// what is not JSON. It was four ways: `ask` gave null, `post` an `{error}`,
+// and `runSearch` and `askSaved` each a try of their own. `ask` and `post`
+// keep their own answers on top of it, because many callers read them.
+// `wanted`, when given, is asked once the answer is in: false means the
+// reader has moved on, and nothing comes back (null), so the caller draws
+// nothing. A loader's check stays its own when it reads its own state --
+// the session, the base, a ticket -- because a null from `ask` must keep
+// meaning "no answer", not also "too late".
+async function getJson(where, { posted, raw, wanted } = {}) {
+  let got;
   try {
-    const answer = await fetch(where, {
+    const answer = await fetch(where, posted === undefined ? undefined : {
       method: "POST",
       headers: { "Content-Type": "application/json",
                  "X-Wostuast-Token": TOKEN },
-      body: JSON.stringify(body || {}),
+      body: JSON.stringify(posted),
     });
-    return await answer.json();
+    got = { ok: answer.ok, body: raw ? await answer.text() : await answer.json() };
   } catch (error) {
-    return { error: "the daemon did not answer" };   // it went away; say so
+    got = { ok: false, body: null, why: "the daemon did not answer" };
   }
+  return wanted && !wanted() ? null : got;
+}
+
+async function post(where, body) {
+  const got = await getJson(where, { posted: body || {} });
+  return got.body || { error: got.why };            // it went away; say so
 }
 
 // What came back, on the one line the page keeps for saying things.
@@ -16179,14 +16196,10 @@ function drawSearch(box) {
 async function runSearch(query) {
   state.searchQuery = query;
   const asked = query;
-  let found = null;
-  try {
-    found = await (await fetch("/api/search?q=" + encodeURIComponent(query))).json();
-  } catch (error) {
-    found = { error: "the daemon did not answer" };
-  }
-  if (state.searchQuery !== asked || state.feed !== "search") return;  // typed on
-  state.searchResults = found;
+  const got = await getJson("/api/search?q=" + encodeURIComponent(query), {
+    wanted: () => state.searchQuery === asked && state.feed === "search" });
+  if (!got) return;                                     // typed on
+  state.searchResults = got.body || { error: got.why };
   drawResults($("content").querySelector(".searchresults"));
 }
 
@@ -19288,12 +19301,9 @@ function takeSaved(saved) {
 }
 
 async function askSaved() {
-  try {
-    const answer = await (await fetch("/api/saved")).json();
-    takeSaved(answer.saved);
-  } catch (error) {
-    // The daemon went away; the list stays as it was.
-  }
+  // The daemon went away: the list stays as it was.
+  const got = await getJson("/api/saved");
+  if (got.body) takeSaved(got.body.saved);
 }
 
 function nearBottom(box) {
@@ -23916,12 +23926,8 @@ function repoll() {
 }
 
 async function ask(id, what, query, raw) {
-  try {
-    const answer = await fetch(apiUrl(id, what, query));
-    return raw ? await answer.text() : await answer.json();
-  } catch (error) {
-    return null;                            // the daemon went away; try later
-  }
+  // null when the daemon went away; try later.
+  return (await getJson(apiUrl(id, what, query), { raw })).body;
 }
 
 async function load() {

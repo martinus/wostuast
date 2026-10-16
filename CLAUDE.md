@@ -79,6 +79,7 @@ bullets beside it are the same part's other scars.
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `session_json`, `cmd_wait`, `pick_session`, `wait_states`, `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite, the Agent SDK, stream-json, channels, an `http` hook, a hook decision, OpenTelemetry | topics/decisions |
+| `getJson`, `ask`, `post`, a fetch of the page | topics/daemon-and-page: the page asks the daemon one way |
 | `tmux_send`, `SEND_MAX`, `POST_MAX`, `typing_trouble`, `prompt_landed`, `whyNoText`, `recallSent`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `typing_lock`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked`, `state.answered`, `forgetAnswered` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Session.dialog`, `cannot_type`, `whyNotTyped`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
@@ -232,8 +233,9 @@ request, and name the principle.
    The views and the routes get theirs with #543 and #545.
 5. **One reader for each fact.** Where two parts of the program read the
    same fact, they call one function: `prompt_said` for a prompt,
-   `git_status` for `git status`, `apply_git_facts` for a reading of git.
-   `test_search_reads_a_prompt_as_the_fold_does`,
+   `git_status` for `git status`, `apply_git_facts` for a reading of git,
+   `getJson` for an answer of the daemon.
+   `test_search_reads_a_prompt_as_the_fold_does`, `test_only_get_json_calls_fetch`,
    `test_the_row_counts_the_changed_files_the_files_tab_marks`,
    `test_only_one_function_runs_git_status`.
 
