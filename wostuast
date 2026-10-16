@@ -20905,28 +20905,7 @@ function drawFiles(box) {
   }
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
-  if (!state.files.path) {
-    const empty = put(pane, "div", "empty");
-    put(empty, "p", null, state.files.failed
-      ? "git did not answer, so there is no list yet. It is tried again in a"
-        + " few seconds."
-      : state.files.names.length
-      ? "Pick a file on the left, or type to find one."
-      : "This worktree holds no file that git knows about.");
-    return;
-  }
-  // Nothing read yet: the header says where the file is, and the body says
-  // it is reading, or why it could not. Before the line asked for is taken
-  // below -- it is for the text, which has not come yet.
-  if (!state.files.read) {
-    putWhere(pane, state.files.path);
-    const empty = put(put(pane, "div", "filescroll"), "div", "empty");
-    put(empty, "p", null, state.files.trouble
-      ? "Could not read " + state.files.path + ": " + state.files.trouble
-        + ". It is asked for again in a few seconds."
-      : "reading…");
-    return;
-  }
+  if (putNoFile(pane)) return;
   // Where the reader is in this file, whether they scrolled there a moment
   // ago or left it on their last visit to this session. `forgetFile` puts it
   // back to nought, which is what makes a different file open at its top.
@@ -20967,42 +20946,7 @@ function drawFiles(box) {
   } else if (isDoc && !state.files.asText) {
     markdown(view, state.files.text);
   } else {
-    // One row per line, through the same renderer the diff uses, so a file
-    // gets the numbers, the `+` and the comments the diff already had — and a
-    // comment on line 42 lands on the same anchor whichever tab wrote it.
-    //
-    // The rows and the highlighter are given the very same text, so the two
-    // can never disagree about how many lines there are. Both were worked out
-    // above, because the header asks the same question.
-    if (windowed) {
-      // Only for a file that really is too long to draw. Said plainly,
-      // because both of these are things the reader would otherwise go
-      // looking for and not find.
-      put(view, "div", "note", rows.length + " lines — too many to draw at"
-          + " once. Only the ones on screen are here, so this file has no"
-          + " colour and your browser's own find will not see the rest.");
-    }
-    if (plain) {
-      put(view, "div", "note", "Lines of more than "
-          + LONG_LINE.toLocaleString("en") + " characters are too slow to"
-          + " colour. Colouring them would stop this page each time the file"
-          + " changes, so this file has no colour.");
-    }
-    const code = put(view, "div", "code" + (windowed ? " windowed" : "")
-                     + (state.files.hex ? " hexdump" : ""));
-    code.dataset.path = state.files.path;
-    if (windowed) {
-      code.lines = rows;
-      code.path = state.files.path;
-      code.tall = new Map();
-      // Where the reader will be once `place` is put back, not where an
-      // emptied pane says they are: the rows have to be there before the
-      // scrollbar can reach them.
-      fillCode(view, place);
-    } else {
-      fillDiffFile(code, asLines(state.files.path, rows));
-      if (!state.files.hex) paintLines(code, state.files.path, body, state.files.lang);
-    }
+    putFileCode(view, body, rows, windowed, plain, place);
   }
   // Said outright, rather than only when there is a place to go back to.
   // `view` is built with the file, so a different file already starts at
@@ -21015,6 +20959,75 @@ function drawFiles(box) {
     if (place && view.scrollHeight <= view.clientHeight) return;
     view.scrollTop = place;
   });
+}
+
+// The pane when there is no text to draw: no file is picked, or the one
+// picked is not read yet. Gives back true when it drew one of them.
+function putNoFile(pane) {
+  if (!state.files.path) {
+    const empty = put(pane, "div", "empty");
+    put(empty, "p", null, state.files.failed
+      ? "git did not answer, so there is no list yet. It is tried again in a"
+        + " few seconds."
+      : state.files.names.length
+      ? "Pick a file on the left, or type to find one."
+      : "This worktree holds no file that git knows about.");
+    return true;
+  }
+  // Nothing read yet: the header says where the file is, and the body says
+  // it is reading, or why it could not. Before the line asked for is taken
+  // below -- it is for the text, which has not come yet.
+  if (!state.files.read) {
+    putWhere(pane, state.files.path);
+    const empty = put(put(pane, "div", "filescroll"), "div", "empty");
+    put(empty, "p", null, state.files.trouble
+      ? "Could not read " + state.files.path + ": " + state.files.trouble
+        + ". It is asked for again in a few seconds."
+      : "reading…");
+    return true;
+  }
+  return false;
+}
+
+// A file drawn as rows of code, as the diff draws them, with a note when
+// it is too long to draw whole or too dense to colour.
+function putFileCode(view, body, rows, windowed, plain, place) {
+  // One row per line, through the same renderer the diff uses, so a file
+  // gets the numbers, the `+` and the comments the diff already had — and a
+  // comment on line 42 lands on the same anchor whichever tab wrote it.
+  //
+  // The rows and the highlighter are given the very same text, so the two
+  // can never disagree about how many lines there are. `drawFiles` works
+  // both out, because the header asks the same question.
+  if (windowed) {
+    // Only for a file that really is too long to draw. Said plainly,
+    // because both of these are things the reader would otherwise go
+    // looking for and not find.
+    put(view, "div", "note", rows.length + " lines — too many to draw at"
+        + " once. Only the ones on screen are here, so this file has no"
+        + " colour and your browser's own find will not see the rest.");
+  }
+  if (plain) {
+    put(view, "div", "note", "Lines of more than "
+        + LONG_LINE.toLocaleString("en") + " characters are too slow to"
+        + " colour. Colouring them would stop this page each time the file"
+        + " changes, so this file has no colour.");
+  }
+  const code = put(view, "div", "code" + (windowed ? " windowed" : "")
+                   + (state.files.hex ? " hexdump" : ""));
+  code.dataset.path = state.files.path;
+  if (windowed) {
+    code.lines = rows;
+    code.path = state.files.path;
+    code.tall = new Map();
+    // Where the reader will be once `place` is put back, not where an
+    // emptied pane says they are: the rows have to be there before the
+    // scrollbar can reach them.
+    fillCode(view, place);
+  } else {
+    fillDiffFile(code, asLines(state.files.path, rows));
+    if (!state.files.hex) paintLines(code, state.files.path, body, state.files.lang);
+  }
 }
 
 // A file with no text in it. A picture, a video or a sound is shown as it is;
@@ -21951,7 +21964,6 @@ function drawDiff(box) {
   // session, so the next one opened where the last was read to.
   const of = state.chosen + "\n" + (report.of || "");
   const same = !fresh(scroll, "of", of);
-  drawDiffList(list, found);
   // The agent saves one file and the answer changes, and every file was
   // built again from nothing: as plain text, then painted a file at a time
   // behind the highlighter and a timer. The file being read lost its colour
@@ -21965,13 +21977,36 @@ function drawDiff(box) {
   if (again) scroll.replaceChildren();
   const reading = again || !same ? null : readerAt(scroll);
   const next = document.createDocumentFragment();
-  const order = [];
   const kept = new Map();
   scroll.drawn = new Map();
   // Every block by the key its row in the list carries, in the order they
   // stand, which is what `markDiffFile` walks.
   scroll.blocks = new Map();
+  putDiffNotesAbove(next);
+  const shown = putDiffBlocks(next, scroll, found, report.body, had, kept);
+  const loose = found.loose;
+  let picked = null;
+  if (state.diffs.loose) {
+    picked = drawLooseFile(next, state.diffs.loose);
+    scroll.blocks.set("untracked\n" + state.diffs.loose, picked);
+  } else if (loose.length) {
+    put(next, "div", "note", loose.length + " untracked file" +
+        (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
+        " diff for a file it does not track, so pick one to read it.");
+  }
+  putDiffNotesBelow(next, report, shown + loose.length);
+  settle(scroll, [...next.childNodes].map((node) => kept.get(node) || node));
+  drawDiffList(list, found);
+  putDiffPlace(scroll, picked, same, reading, place);
+  putElsewhere(scroll, report);
+  note.replaceChildren();
+  countNote(note, shown + loose.length);
+  drawDiffCount();
+}
 
+// What stands above the blocks: git is in the middle of something, or the
+// commit picked has gone.
+function putDiffNotesAbove(next) {
   // git has started something here and not finished it: the branch, what
   // is committed and what is not all read differently until it ends (#357).
   const here = current();
@@ -21986,11 +22021,18 @@ function drawDiff(box) {
         + " branch. It was probably amended or rebased away, so this shows"
         + " all changes.");
   }
+}
+
+// Each changed file's block, under its section's head, into `next`. A
+// file whose block in `had` was drawn from the same `blockSig` keeps
+// that block: a stand-in goes where it stands, and `kept` says which.
+// Gives back how many files it drew.
+function putDiffBlocks(next, scroll, found, message, had, kept) {
   let shown = 0;
   const one = found.commit;
   for (const { section, files } of found.sections) {
     shown += files.length;
-    putSectionHead(next, section, one, report.body);
+    putSectionHead(next, section, one, message);
     // `at_commit`: the new side is a commit and not the file on disk, so a
     // comment's line is carried through to where it stands now. The daemon
     // says so, because it is the one that knows what each half is a diff of.
@@ -22010,16 +22052,12 @@ function drawDiff(box) {
       scroll.drawn.set(key, { node, sig });
     }
   }
-  const loose = found.loose;
-  let picked = null;
-  if (state.diffs.loose) {
-    picked = drawLooseFile(next, state.diffs.loose);
-    scroll.blocks.set("untracked\n" + state.diffs.loose, picked);
-  } else if (loose.length) {
-    put(next, "div", "note", loose.length + " untracked file" +
-        (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
-        " diff for a file it does not track, so pick one to read it.");
-  }
+  return shown;
+}
+
+// What stands below the blocks: why a half is missing, why nothing is
+// shown, and that the diff was cut. `files` is how many are listed.
+function putDiffNotesBelow(next, report, files) {
   // Two sections or one, and which is which, is the whole of what this tab
   // was unclear about. When there is no base the committed half is missing
   // altogether, and nothing used to say so -- the tab simply showed less.
@@ -22040,7 +22078,7 @@ function drawDiff(box) {
   if (report.failed) {
     put(next, "div", "note", "git did not answer here, so this may not be the"
         + " whole diff. It is tried again in a few seconds.");
-  } else if (!shown && !loose.length) {
+  } else if (!files) {
     const empty = put(next, "div", "empty");
     put(empty, "p", null, state.find ? "No changed file matches."
       : report.of === "uncommitted" ? "Nothing is waiting to be committed."
@@ -22052,8 +22090,11 @@ function drawDiff(box) {
   if (report.cut) {
     put(next, "div", "note", "This diff is long, so the rest is left out.");
   }
-  settle(scroll, [...next.childNodes].map((node) => kept.get(node) || node));
-  drawDiffList(list);
+}
+
+// Where the pane is left once it is built: at the file picked, at the
+// top of another diff, or where the reader was.
+function putDiffPlace(scroll, picked, same, reading, place) {
   // Picking a file moves the pane to it; anything else leaves the reader
   // where they were. Restoring the old place whatever happened is what made a
   // click on an untracked name look like it had done nothing: the block was
@@ -22078,10 +22119,6 @@ function drawDiff(box) {
   } else if (place) {
     requestAnimationFrame(() => { scroll.scrollTop = place; });
   }
-  putElsewhere(scroll, report);
-  note.replaceChildren();
-  countNote(note, shown + loose.length);
-  drawDiffCount();
 }
 
 // What a file's block is drawn from, besides what every block shares: when

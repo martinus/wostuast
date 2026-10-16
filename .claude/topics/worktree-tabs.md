@@ -216,7 +216,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     row of 16k bytes is 56k + 11 characters, the gutter about 110 px). The
     pane's width is the page's to know, not the daemon's. The short last
     row is padded, so its text stands under the others; the note after
-    the rows is not a row and stands alone. `drawFiles` is past 100
+    the rows is not a row and stands alone. `drawFiles` was past 100
     lines, so the call took the place of the line that read the text.
     `test_a_hex_row_is_as_wide_as_the_pane_has_room_for`.
 - **A folder row carries no triangle.** It stood where nothing stood on a

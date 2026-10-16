@@ -513,7 +513,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     5,000 lines in the standard library are over 100 KB, and they would
     have lost their colour -- the scar `CODE_WHOLE` carries from 2,000.
     `paintedLines` asks, so the Files tab, a diff and a slice all keep to
-    it, and `drawFiles` says so in the note a windowed file shows.
+    it, and `putFileCode` says so in the note a windowed file shows.
     `test_a_bundle_on_one_line_is_not_coloured_and_says_so`.
 - **On the Files tab the pane scrolls sideways, not the rows.** A scroller on
   `.dlines` put the horizontal bar under the last line of the file, where in a

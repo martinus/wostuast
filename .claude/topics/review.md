@@ -22,7 +22,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     the transcript's map lists rounds: the note's first line and its
     `path:line`, and a click goes to it (`goToComment`), opening its file
     first when it is shut. **It scrolls a frame after the draw** that
-    opened the file: `drawDiff` puts the reader's place back in a frame,
+    opened the file: `putDiffPlace` puts the reader's place back in a frame,
     so a scroll at once was undone, and from anywhere but the top only a
     second click went to the comment.
     `test_a_comment_in_a_shut_file_is_gone_to_from_anywhere_in_the_pane`.

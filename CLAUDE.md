@@ -743,10 +743,15 @@ before you edit its part:
   `LONGER_ALREADY` in `tests/test_log.py`). A change to one of those first
   moves the part it touches into a helper of its own, with that part's
   comments and with its tests green, and then makes the change there. Not
-  all at once: `drawDiff`, `build_report` and the rest each hold many
-  fixes, and a rewrite of a whole one is how a fix gets lost. The list
-  only shrinks; `test_no_function_grows_past_the_limit` takes off a
-  function once it is under.
+  all at once: `worktree_diff`, `build_report` and the rest each hold
+  many fixes, and a rewrite of a whole one is how a fix gets lost. The
+  list only shrinks; `test_no_function_grows_past_the_limit` takes off a
+  function once it is under. **A split is by job, not by length** (#548):
+  `drawDiff` became the notes above and below (`putDiffNotesAbove`,
+  `putDiffNotesBelow`), the blocks (`putDiffBlocks`) and where the pane
+  is left (`putDiffPlace`); `drawFiles` gave its empty states to
+  `putNoFile` and its code to `putFileCode`. A part cut only to be under
+  100 lines is the same five jobs in two places.
 
 ## Status
 
