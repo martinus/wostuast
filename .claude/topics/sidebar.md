@@ -120,6 +120,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `.views`, #391) -- and all four always there: three lines in three
   styles took a hundred pixels, came and went with their counts and moved
   the list, and "search every session" read as a second filter box.
+  **Each view is one entry of `VIEWS`** (#543): its link, icon, word and
+  count, its name in the tab row, what it asks for as it opens, and its
+  draw. `drawFeed`, `openFeed`, `drawFeedLink`, `drawViewTitle` and
+  `toggleView` read the table; `state.feed` was asked in 25 places and
+  the toggle written four times, so a fifth view meant ten edits.
+  `test_every_view_opens_draws_and_gives_the_session_back` walks it.
   **One row at any width the list is dragged to** (`fitViews`,
   `VIEW_FITS`): the fullest form that fits -- icon, word and count; then
   word and count; then icon and count, the word in the title -- measured
