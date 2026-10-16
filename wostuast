@@ -12824,6 +12824,16 @@ body.dragging.rowdrag { cursor: row-resize; }
    over the rows below rather than pushing them, in whole words. Four grey
    abbreviations in a line of their own were missed. */
 .row { position: relative; }
+/* A tile's row whole, beside the folded strip, on the hover (issue 491):
+   on the list's own ground, as wide as the open list, and above the page.
+   The row is the open list's, so its margins into the grip go. */
+.tilecard {
+  position: fixed; z-index: 30; width: var(--sidebar-w, 340px);
+  padding: 6px 8px 0 4px; background: var(--edge); border-radius: 0 8px 8px 0;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 70%, transparent);
+  pointer-events: none;
+}
+.tilecard .row { margin: 0 0 6px; border-radius: 6px; }
 .row .remindmenu {
   position: absolute; right: 12px; top: 30px; z-index: 5;
   display: flex; flex-direction: column; min-width: 150px; padding: 4px;
@@ -14824,7 +14834,10 @@ function paintFold(which) {
   }
   // No `openGrip` here: the chosen row goes and comes back with its list,
   // and the observer on it (`gripWatch`) redraws the opening then.
-  if (which === "sessions") document.querySelectorAll("#rows .row").forEach(tileTitle);
+  if (which === "sessions") {
+    document.querySelectorAll("#rows .row").forEach(tileTitle);
+    tileCard(null);
+  }
 }
 
 // A key that puts the cursor into a folded column: nothing can be focused
@@ -16379,10 +16392,37 @@ function fillRow(row, s) {
 // The name Claude Code shows for the session, or the reader's from the page
 // while that is the newer one: the daemon works out which (`title`, #351).
 // Its place when it has none, which the next line says as well.
-// A tile shows no name, so its hover does; an open row shows its name and
-// carries no title, or every hover over a row would cover the row below.
+// No row carries a title. An open row shows its name, and a title would
+// cover the row below on every hover; a tile has its card (`tileCard`,
+// #491), which says more than a name did, and a title would stand on it.
 function tileTitle(row) {
-  row.title = document.body.classList.contains("foldsessions") ? row.dataset.name || "" : "";
+  row.title = "";
+}
+
+// A folded list's tile, on the hover (#491): the row whole, as the open list
+// draws it -- its name, where it stands, its state and its line -- in a
+// card beside the strip, at the tile's height, over the page. The tile held
+// the start of a name turned up its side, and its title the name alone,
+// after a wait. A copy of the row and not a second drawing of it: a row
+// is drawn in one place (`fillRow`), and a card drawn its own way would
+// say less, or otherwise. Nothing on it is pressed: the tile is.
+function tileCard(row) {
+  const card = $("tilecard");
+  if (!row || !document.body.classList.contains("foldsessions")) {
+    card.hidden = true;
+    card.replaceChildren();
+    return;
+  }
+  const copy = row.cloneNode(true);
+  copy.classList.remove("chosen");
+  card.replaceChildren(copy);
+  card.hidden = false;
+  const at = row.getBoundingClientRect();
+  const strip = document.querySelector(".sidebar").getBoundingClientRect();
+  card.style.left = strip.right + 6 + "px";
+  // As high as the tile, and all of it on the screen.
+  card.style.top = Math.max(4, Math.min(at.top, window.innerHeight - card.offsetHeight - 4))
+    + "px";
 }
 
 function rowName(s) {
@@ -24486,6 +24526,11 @@ drawBell();
 state.history = stored("wostuast-history") === "open";
 // The opening in the line follows the chosen row: `openGrip`.
 $("rows").addEventListener("scroll", openGrip, { passive: true });
+put(document.body, "div", "tilecard").id = "tilecard";
+$("tilecard").hidden = true;
+$("rows").addEventListener("mouseover", (at) => tileCard(at.target.closest(".row")));
+$("rows").addEventListener("mouseleave", () => tileCard(null));
+$("rows").addEventListener("scroll", () => tileCard(null), { passive: true });
 window.addEventListener("resize", openGrip);
 gripWatch.observe($("rows"));
 $("find").addEventListener("input", (typed) => {

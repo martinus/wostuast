@@ -32,7 +32,9 @@ order: `transcript` (s1 chosen), `later` (the remind menu of s2 open),
 each picture -- a file's path or the code itself -- and **is how a mockup
 is drawn**: its CSS and its DOM changes over the real page, as `stage.py`'s
 `--eval` does. It must be safe to run again, because it runs once for each
-picture.
+picture. `--hover SELECTOR` puts the pointer on it after that, for what only
+a hover shows: a synthetic `mouseover` from `--eval` drew nothing, because
+the tour moves the pointer on its own (#491).
 """
 
 from __future__ import annotations
@@ -208,6 +210,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--view", action="append", choices=VIEWS)
     parser.add_argument("--eval", dest="code", default="",
                         help="JS to run before each picture, or a file that holds it")
+    parser.add_argument("--hover", default="",
+                        help="a selector the pointer stands on for each picture,"
+                             " after the JS: what shows only on a hover")
     args = parser.parse_args(argv)
     code = args.code
     # Code longer than a file's name may be is code: asked whether it is a
@@ -259,6 +264,9 @@ def main(argv: list[str]) -> int:
             page.wait_for_timeout(500)
             if code:
                 page.evaluate(code)
+                page.wait_for_timeout(200)
+            if args.hover:
+                page.hover(args.hover)
                 page.wait_for_timeout(200)
             path = args.out / f"{scheme}-{args.width}-{VIEWS.index(view) + 1}-{view}.png"
             page.screenshot(path=str(path))

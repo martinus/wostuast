@@ -837,8 +837,15 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     strip with one button hid who needs you and every other session; the
     reader asked for them, clickable. CSS draws each row as a tile as tall
     as a row, its name turned up it (`writing-mode: vertical-rl`, then
-    `rotate(180deg)`, read bottom to top) on its state's colour, the unread
-    dot, and the name in `title` while folded and never while open. Two
+    `rotate(180deg)`, read bottom to top) on its state's colour, and the
+    unread dot. **On the hover, the row whole, in a card beside the strip**
+    (`tileCard`, `#tilecard`, #491): the name, where it stands, its state
+    and its line, as the open list draws them, at the tile's height and
+    over the page. It was the name alone in `title`, after a wait, and the
+    reader asked for the whole row; the card is a copy of the row
+    (`cloneNode`), so it says what the row says and is drawn in one place,
+    and no row carries a title any more (`tileTitle`), or the browser's
+    would stand on the card. Nothing on it is pressed: the tile is. Two
     letters across the tile told two sessions of one repository apart only
     by colour; the reader asked for the name turned, a row tall. **A name
     too long fades out at its end (`mask-image`), never an ellipsis**:
@@ -857,7 +864,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_each_column_folds_away_and_comes_back`,
   `test_the_list_column_folds_on_every_split_tab`,
   `test_a_key_into_a_folded_column_brings_it_back`,
-  `test_a_folded_session_list_is_a_tile_for_each_session`.
+  `test_a_folded_session_list_is_a_tile_for_each_session`, which holds
+  the card too.
 - **Rows are kept and filled in again, never rebuilt.** A row can only fade
   into its new colour if it is the same row, and the needs-you pulse can
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
