@@ -2837,3 +2837,26 @@ def test_a_send_to_a_busy_agent_is_not_watched(ws, watched):
                         token=daemon.token)
     assert status == 200 and body.get("seen") is None, body
     assert time.monotonic() - started < 0.5
+
+
+def test_a_folder_that_ignores_itself_counts_what_was_written_in_it(
+        ws, served, repo, monkeypatch):
+    """A folder that ignores itself with its own `.gitignore` -- `*`, then
+    `!.gitignore` -- is not one ignored folder to git: git names every file
+    in it, so the walk never saw them, and only the `.gitignore` was marked,
+    as new (#506). Those files' times are read too, up to `IGNORED_MAX`."""
+    daemon, base = served
+    (repo / ".oa-implement").mkdir()
+    (repo / ".oa-implement" / ".gitignore").write_text("*\n!.gitignore\n")
+    for name in ("plan.md", "notes.md", "report.md"):
+        (repo / ".oa-implement" / name).write_text("# " + name + "\n")
+    ws.append_event(event("SessionStart", cwd=str(repo), ts=time.time() - 600))
+    daemon.store.refresh()
+    _, body = get(f"{base}/api/session/s1/files")
+    assert sorted(one for one in body["changed"] if one.startswith(".oa")) == [
+        ".oa-implement/.gitignore", ".oa-implement/notes.md",
+        ".oa-implement/plan.md", ".oa-implement/report.md"]
+    # No more of them than the budget: their times cost a stat each.
+    monkeypatch.setattr(ws, "IGNORED_MAX", 1)
+    tree = ws.worktree_files(str(repo))
+    assert [one.path for one in tree.files if one.walked] == [".oa-implement/notes.md"]

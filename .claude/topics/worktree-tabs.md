@@ -117,8 +117,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     out. A walked file is stat'ed -- the budget bounds them -- and the
     route, not the listing, picks the ones at or after the asking
     session's `started_at`: one listing serves every session in the
-    worktree. An ignored file git lists by itself, beside tracked ones, is
-    not stat'ed: nothing bounds how many there are.
+    worktree. **An ignored file git names by itself is stat'ed too, up to
+    `IGNORED_MAX` of them** (#506, `loose` in `worktree_files`): a folder
+    that ignores itself with its own `.gitignore` (`*`, `!.gitignore`) is
+    not one ignored folder to git, because that file is not ignored, so git
+    names every file in it, the walk never saw them, and only the
+    `.gitignore` was marked, as new. The budget is because a build's
+    objects beside their sources can be tens of thousands.
+    `test_a_folder_that_ignores_itself_counts_what_was_written_in_it`.
     `test_a_file_written_in_an_ignored_folder_since_the_session_began_is_changed`.
   A link to a directory is neither followed nor listed: following it is a way
   round the budget and into a loop, and it is not a file.
