@@ -1893,6 +1893,7 @@ def test_a_binary_file_is_drawn_as_hex(repo_page):
     root, _ = repo_page
     (root / "blob.bin").write_bytes(b"\0\x01<a>" + bytes(range(65, 91)))
     with opened(repo_page) as page:
+        page.set_viewport_size({"width": 1000, "height": 800})   # 16 a row
         open_file(page, "blob.bin")
         assert code_text(page).split("\n")[0] == (
             "00000000: 0001 3c61 3e41 4243 4445 4647 4849 4a4b  ..<a>ABCDEFGHIJK")
@@ -1900,3 +1901,30 @@ def test_a_binary_file_is_drawn_as_hex(repo_page):
         assert "binary, as hex" in page.inner_text(".filebody .whatis")
         page.hover(".filebody .code .dline >> nth=0")
         assert not page.is_visible(".filebody .code .addnote >> nth=0")
+
+
+def test_a_hex_row_is_as_wide_as_the_pane_has_room_for(repo_page):
+    """16 bytes a row was a narrow column down the left of a wide pane
+    (#524). The page joins two or four of the daemon's rows into one when
+    they fit without a sideways scroll, and a narrow pane keeps 16."""
+    root, _ = repo_page
+    (root / "blob.bin").write_bytes(bytes(range(256)) + b"\0tail")
+    with opened(repo_page) as page:
+        page.set_viewport_size({"width": 3000, "height": 800})
+        open_file(page, "blob.bin")
+        rows = code_text(page).split("\n")
+        assert rows[0].startswith("00000000: 0001 0203"), rows[0]
+        per = {"00000020": 32, "00000040": 64}[rows[1][:8]]
+        assert rows[0].endswith("." * 32 + " !\"#$%&'()*+,-./0123456789:;<=>?"
+                                if per == 64 else "." * 32), rows[0]
+        # The short last row is padded, so its text stands under the others.
+        last = rows[-1]
+        assert last.rindex(".tail") == rows[0].rindex("  ") + 2, (last, rows[0])
+        wide = page.evaluate("""() => { const one = document.querySelector('.filebody .dlines');
+                                        return one.scrollWidth <= one.clientWidth + 1; }""")
+        assert wide, "it scrolls sideways"
+        page.set_viewport_size({"width": 1000, "height": 800})
+        open_file(page, "code.py")         # a file drawn again is drawn for the new width
+        open_file(page, "blob.bin")
+        page.wait_for_selector(".filebody .code.hexdump")
+        assert code_text(page).split("\n")[1].startswith("00000010:"), code_text(page)

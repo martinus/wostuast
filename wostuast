@@ -20497,6 +20497,42 @@ function drawFileList(box, list, note) {
   goToInList(list);
 }
 
+// A binary file's hex as wide as the pane has room for (#524): 16 bytes a
+// row was a narrow column down the left of a wide pane. The daemon sends
+// `xxd`'s 16 a row (`hex_dump`), and the page joins two or four of them
+// into one when 32 or 64 fit without a sideways scroll -- the pane's width
+// is the page's to know, not the daemon's. A line that is not a row (the
+// note at the end) stands on its own. Anything but hex passes through.
+function hexWide(pane, text) {
+  if (!state.files.hex) return text;
+  const probe = put(put(pane, "div", "dlines"), "span", null, "0".repeat(100));
+  probe.parentNode.style.cssText = "position: absolute; visibility: hidden; white-space: pre";
+  const ch = probe.getBoundingClientRect().width / 100;
+  probe.parentNode.remove();
+  // A row of k times 16 bytes is 56k + 11 characters; the line numbers,
+  // the `+` column and the padding take about 110 px beside it.
+  const room = pane.clientWidth - 110;
+  const per = [4, 2].find((k) => (56 * k + 11) * ch <= room) || 1;
+  if (per === 1) return text;
+  const out = [];
+  let group = [];
+  const flush = () => {
+    if (!group.length) return;
+    const pairs = group.map((one) => one[2].trimEnd()).join(" ");
+    out.push(group[0][1] + ": " + pairs.padEnd(40 * per - 1) + "  "
+             + group.map((one) => one[3]).join(""));
+    group = [];
+  };
+  for (const line of text.split("\n")) {
+    const row = /^([0-9a-f]{8}): (.{39})  (.*)$/.exec(line);
+    if (!row) { flush(); out.push(line); continue; }
+    group.push(row);
+    if (group.length === per) flush();
+  }
+  flush();
+  return out.join("\n");
+}
+
 function drawFiles(box) {
   const [list, pane, note] = split(box, "files", "filebody");
   drawGoTo($("find").parentNode);
@@ -20559,7 +20595,7 @@ function drawFiles(box) {
   // body, and two copies of that arithmetic are two copies that can drift —
   // the one that says a file is too long to wrap, and the one that windows it.
   const asCode = !state.files.binary && !(isDoc && !state.files.asText);
-  const body = asCode ? state.files.text.replace(/\n$/, "") : "";
+  const body = asCode ? hexWide(pane, state.files.text).replace(/\n$/, "") : "";
   const rows = asCode ? linesOf(body) : null;
   const windowed = !!rows && rows.length > CODE_WHOLE;
   const plain = !!rows && !windowed && tooDenseToPaint(body);
