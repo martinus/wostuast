@@ -84,7 +84,7 @@ def serve(lines: str, home: Path):
 
     isolate(home)
 
-    ws.git_facts_many = lambda dirs: {
+    ws.git_facts_many = lambda dirs, timeout=None: {
         d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
     ws.pid_alive = lambda pid: True
     folder = ws.settings_path().parent / "projects" / "-w-repo-dir"
@@ -101,6 +101,9 @@ def serve(lines: str, home: Path):
                                     model="Opus 5", context_pct=41.0,
                                     cost_usd=1.8342))
     daemon = ws.Daemon()
+    # Ticked by hand, so git is read at once: behind the tick (#550) its
+    # facts would wait for a tick that nothing here runs.
+    daemon.store.git = ws.GitReader()
     server = ws.make_server(daemon, 0)
     threading.Thread(target=server.serve_forever,
                      kwargs={"poll_interval": 0.05}, daemon=True).start()

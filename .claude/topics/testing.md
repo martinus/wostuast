@@ -299,6 +299,15 @@ luck, and on `main` too, to tell whose it is.
   folds it and tells nobody.** A test that appended and refreshed waited out
   its whole timeout for a push the daemon already held (#422). Refresh before
   the page opens, tick after.
+- **A deadline in the code under test starts after the page is open.**
+  `test_yes_and_dont_ask_again_is_a_choice_of_its_own` started the hook
+  (`wait_for_yes`) before `opened`, so the hook's `APPROVE_WAIT` paid for
+  opening the page too. A loaded runner spent it there, the hook stopped
+  before anybody looked, and `wait_until(page, lambda: ws.hook_waits(ask))`
+  was never true -- red on `main` and on #569, green on every local run.
+  Its sibling `test_yes_shows_while_the_hook_waits_and_goes_to_it` started
+  the hook inside the `with`, and was never red. Start a thread with a
+  deadline of its own inside `opened`, never before it.
 - **In a browser test, `wait_for_watching(daemon)` comes before the first
   `daemon.tick()`.** `open_page` and `wait_for_map` prove the fetch
   answered, not that the stream listens: `showTab` fetches and *then*

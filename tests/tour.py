@@ -86,7 +86,7 @@ def make_sessions(ws, home: Path) -> None:
     isolate(home)
 
     ws.pid_alive = lambda pid: True
-    ws.git_facts_many = lambda dirs: {
+    ws.git_facts_many = lambda dirs, timeout=None: {
         d: ws.GitFacts(repo=NAMES[Path(d).name][1], branch=NAMES[Path(d).name][2],
                        root=d, ahead=1 if Path(d).name == "s1" else 0,
                        dirty=3 if Path(d).name in ("s1", "s2") else 0) for d in dirs}
@@ -233,6 +233,9 @@ def main(argv: list[str]) -> int:
 
     make_sessions(ws, home)
     daemon = ws.Daemon()
+    # Ticked by hand, so git is read at once: behind the tick (#550) its
+    # facts would wait for a tick that nothing here runs.
+    daemon.store.git = ws.GitReader()
     server = ws.make_server(daemon, 0)
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05},
                      daemon=True).start()
