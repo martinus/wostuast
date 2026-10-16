@@ -364,7 +364,8 @@ A **changed** file has a dot after its name and is bold, and so is each
 folder that holds one. Changed means one of two things:
 
 - git sees it as changed: modified, added, or new and not ignored;
-- git ignores it, and it was written after the session began. This is how
+- git ignores it, and it was written after the first session in this
+  worktree began (as far back as wostuast keeps sessions: a month). This is how
   the files an agent writes into an ignored folder such as `.oa-implement`
   count, even when that folder ignores itself with a `.gitignore` of its
   own.

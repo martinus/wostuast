@@ -5380,7 +5380,8 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
 
 def written_since(held: "Listing", since: float) -> dict[str, float]:
     """What git says changed, and every file of an ignored directory we
-    walked that was written since the session began (#492).
+    walked that was written since `since`: when the first session in the
+    worktree began (#492, #506; `Serving.first_here`).
 
     git says nothing about a file it ignores, and `.oa-implement` -- where
     an agent writes its plan -- is ignored: its files carried no dot, its
@@ -9968,6 +9969,21 @@ class Serving:
         self.reply_json({"id": session_id, "name": name,
                          "text": read[0], "cut": read[1]})
 
+    def first_here(self, root: str, session: Session) -> float:
+        """When the first session in this worktree began, of those the
+        daemon holds -- a month of them, `SESSION_MAX_AGE` -- for what in
+        an ignored folder counts as changed (#506). The asking session's
+        own start was the line, and the reader's `.oa-implement` showed one
+        file of four as changed: the other three were written the day
+        before, by an earlier session in the same worktree. The reader
+        chose the worktree's first session over the branch's first commit.
+        """
+        starts = [one.started_at for one in list(self.daemon.store.sessions.values())
+                  if one.started_at
+                  and (one.git.root or one.home or one.cwd) == root]
+        return min(starts + [session.started_at] if session.started_at else starts,
+                   default=0.0)
+
     def files(self, session_id: str, session: Session,
               query: dict[str, str]) -> None:
         held = self.daemon.files.of(session.cwd)
@@ -9981,7 +9997,7 @@ class Serving:
             "skipped": tree.skipped, "ignored_max": IGNORED_MAX,
             # Name to modification time, for the few files that moved. The
             # page needs the time to put the newest change first.
-            "changed": written_since(held, session.started_at),
+            "changed": written_since(held, self.first_here(tree.root, session)),
         }
         # The browser sends back the tag it already holds. Names change
         # when a file is added or removed, which is rare; which files have
