@@ -1262,9 +1262,14 @@ def test_yes_and_dont_ask_again_is_a_choice_of_its_own(ws, in_pane, monkeypatch)
                                  "destination": "localSettings",
                                  "rules": [{"toolName": "Bash", "ruleContent": "npm test *"}]}]))
     took = []
-    hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ask)), daemon=True)
-    hook.start()
     with opened((None, base)) as page:
+        # The hook starts once the page is open, as in the test above: its
+        # `APPROVE_WAIT` paid for opening the page as well, and a loaded
+        # runner spent it there, so the hook had stopped before anybody
+        # looked (red on main and on #569, `wait_until` never true).
+        hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ask)),
+                                daemon=True)
+        hook.start()
         wait_until(page, lambda: ws.hook_waits(ask))
         daemon.tick()
         page.wait_for_selector("#asking .permalways:not([hidden])")
