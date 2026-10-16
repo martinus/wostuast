@@ -13104,6 +13104,25 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   width: 64px; flex-shrink: 0; padding-top: 2px; font-family: var(--sans);
   font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.5;
 }
+/* Markdown or the text as written (issue 493): the Files tab's "txt", at
+   the block's top right, out of the flow. Not in the name's column: under
+   the time it stood on the next turn's name after a reply of one line, and
+   on the time's line it ran out of the column's 64 px and was cut by the
+   pane's edge. There on the hover, over the end of the first line, as a
+   code block's copy button is; and always while lit, inside the box of the
+   text, which keeps a margin for it. */
+.turn > .readas { position: absolute; top: 0; right: 0; display: none;
+  background: var(--bg); }
+.turn:hover > .readas, .turn > .readas:focus,
+.turn > .readas[aria-pressed="true"] { display: block; }
+.turn > .readas[aria-pressed="true"] { top: 6px; right: 6px; }
+/* What the agent wrote, as it wrote it: to select and copy, Markdown and
+   all. */
+.bubble.source { margin: 0; padding-right: 48px; font-family: var(--mono);
+  font-size: 13px; color: var(--ink); }
+/* The harness's words as Markdown, in its box: `.bubble` keeps the text's
+   own line breaks, which between the blocks Markdown makes are blank lines. */
+.bubble.prosebox { white-space: normal; padding-top: 2px; padding-bottom: 2px; }
 .who.claude { color: var(--needs); }
 /* The name is a link to this block. It reads as the name it always was; the
    browser's own "open in a new tab" is what it is there for. */
@@ -15689,10 +15708,10 @@ function drawSaved(box) {
     const text = one.text + (one.text.length >= 300 ? " …" : "");
     // As the transcript draws it: a prompt in the reader's box, as typed;
     // a command in it too, in the fixed face; the harness's words in its
-    // dashed box; an answer as Markdown.
+    // dashed box, as Markdown (#490); an answer as Markdown.
     if (one.who === "me") put(entry, "div", "bubble mine", text);
     else if (one.who === "shell") put(put(entry, "div", "bubble mine shell"), "pre", "output", text);
-    else if (one.who === "system") put(entry, "div", "bubble aside", text);
+    else if (one.who === "system") markdown(put(entry, "div", "bubble aside prosebox"), text);
     else markdown(entry, text);
   }
   layoutCards(board);
@@ -18527,6 +18546,19 @@ function blockTurn(block, index) {
   // The copy button shares the time's line: see `.who .stamp`.
   const stamp = block.ts ? put(who, "div", "stamp", clock(block.ts)) : who;
   putCopy(stamp, block, mine);
+  // Markdown, or the text as it was written (#493): the reader wants to
+  // select and copy what the agent wrote, Markdown and all. The Files
+  // tab's "txt", at the block's top right. Every block drawn as Markdown
+  // has one: an answer, a plan, a message of the harness.
+  const md = !mine && !!block.text;
+  const asText = md && state.turns.open.has(textKey(index));
+  if (md) {
+    putReadAs(node, asText, (on) => {
+      if (on) state.turns.open.add(textKey(index));
+      else state.turns.open.delete(textKey(index));
+      redrawBlock(index);
+    }, "show the text as written, not as Markdown");
+  }
   // A message too long to show whole is drawn in a box of its own, with the
   // bar that opens and folds it under it: see `foldedHead`.
   const whole = String((shell ? block.result : block.text) || "");
@@ -18538,9 +18570,16 @@ function blockTurn(block, index) {
   let shown;
   if (shell) {
     shown = putShell(box, block, drawn);
-  } else if (mine || aside) {
+  } else if (mine) {
     shown = put(box, "div", "bubble", drawn);
     linkTickets(shown);
+  } else if (asText) {
+    shown = put(box, "pre", "bubble source", drawn);
+  } else if (aside) {
+    // The harness's words are Markdown too (#490): a subagent's report
+    // came as a wall of `##` and `|`. In its dashed box, as before.
+    shown = put(box, "div", "bubble prosebox");
+    markdown(shown, drawn);
   } else {
     shown = markdown(box, drawn);
   }
@@ -18603,6 +18642,11 @@ function lineCount(text) {
 // message is on screen (`.foldbar.open`), so the reader can fold it from
 // wherever they are in it, not only from its end, 2,000 lines down. It uses
 // the set a tool call opens with, so a session keeps it as it keeps those.
+// Where a block shown as written is kept: in `state.turns.open`, beside
+// the long messages the reader opened, so `forgetPlaces` forgets it with
+// them when the transcript is read again from nought.
+function textKey(index) { return "text" + index; }
+
 function putFoldBar(box, whole, index, open) {
   const bar = put(box, "button", "foldbar" + (open ? " open" : ""));
   putIcon(bar, "chevron");

@@ -275,6 +275,21 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the agent's text and nothing else, so the map stays a map of the
   conversation. **A `plan` is a reply** (#372): it is the agent's words, and
   the map names it by its title.
+- **What the agent or the harness wrote is Markdown, and its text is one
+  click away; what the reader typed is drawn as typed.** A `note` was text
+  in its dashed box, and a subagent's report read as a wall of `##` and
+  `|` (#490): it is `markdown` inside `.bubble.prosebox`, whose `white-space`
+  is normal, because `.bubble`'s `pre-wrap` made the newlines between the
+  blocks blank lines. Every block drawn as Markdown has the Files tab's
+  "txt" (`putReadAs`, #493), kept in `state.turns.open` under `textKey`, so
+  `forgetPlaces` forgets it with the rest; lit, the block is
+  `.bubble.source`. **It stands at the block's top right, out of the flow**
+  (`.turn > .readas`): under the time it stood on the next turn's name
+  after a one-line reply, and on the time's line it ran past `.who`'s 64 px
+  into the pane's edge, which cut it. A prompt stays as typed: a pasted log
+  is not Markdown.
+  `test_a_message_of_the_harness_is_markdown`,
+  `test_a_block_shows_its_text_as_written_from_txt`.
 - **A `.turn` lays out from the top, not stretched.** `.who` carries a name,
   a day, a time and a copy button — 71 px of them, measured — and a flex item
   stretches to its row by default, so a one-line bubble was 71 px tall with

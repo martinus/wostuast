@@ -3144,3 +3144,59 @@ def test_the_new_line_over_a_folded_call_stands_over_its_run(page_at):
           return line && line.nextElementSibling.className;
         }""")
         assert over == "turn toolrow callrun"
+
+
+def test_a_message_of_the_harness_is_markdown(ws, page_at):
+    """A subagent's report came back as a wall of `##`, `-` and `**` in its
+    dashed box (#490): the harness's words are Markdown, as an answer's
+    are. Still in its box, and still not a prompt."""
+    daemon, path = page_at
+    write_records(daemon, conftest.record(
+        "you", "Another Claude session sent a message:\n"
+        '<agent-message from="a1">\n## What I found\n\n- `put` takes **no lock**\n'
+        "</agent-message>", ts="2026-09-18T14:20:00.000Z"))
+    daemon.tick()
+    with opened(path) as page:
+        page.wait_for_selector(".turn.aside .bubble h2")
+        seen = page.evaluate("""() => {
+          const note = document.querySelector('.turn.aside .bubble');
+          return {head: note.querySelector('h2').textContent,
+                  strong: note.querySelector('li strong').textContent,
+                  code: note.querySelector('li code').textContent,
+                  border: getComputedStyle(note).borderTopStyle};
+        }""")
+        assert seen == {"head": "What I found", "strong": "no lock", "code": "put",
+                        "border": "dashed"}, seen
+
+
+def test_a_block_shows_its_text_as_written_from_txt(ws, page_at):
+    """The reader wanted to select and copy what the agent wrote, Markdown
+    and all (#493): "txt", as on the Files tab, under the time of every
+    block drawn as Markdown. Lit, the block is its source; again, Markdown.
+    A prompt is drawn as typed already and has none."""
+    daemon, path = page_at
+    said = "Found it. `put` takes **no lock**.\n\n- one\n- two"
+    write_records(daemon,
+                  conftest.record("you", "why?", ts="2026-09-18T14:20:00.000Z"),
+                  conftest.record("claude", said, ts="2026-09-18T14:21:00.000Z"))
+    daemon.tick()
+    with opened(path) as page:
+        turn = page.locator(".turn:not(.mine)", has_text="Found it")
+        turn.locator(".prose strong").wait_for()
+        assert page.locator(".turn.mine .readas").count() == 0
+        button = turn.locator(":scope > .readas")
+        assert not button.is_visible()
+        turn.locator(".prose").hover()
+        button.click()
+        turn = page.locator(".turn:not(.mine)", has_text="Found it")
+        turn.locator(".bubble.source").wait_for()
+        assert turn.locator(".bubble.source").inner_text() == said
+        button = turn.locator(":scope > .readas")
+        assert button.get_attribute("aria-pressed") == "true"
+        # Lit, it stays in sight with the pointer gone.
+        page.mouse.move(5, 5)
+        assert button.is_visible()
+        button.click()
+        page.locator(".turn:not(.mine)", has_text="Found it").locator(
+            ".prose strong").wait_for()
+        assert page.locator(".bubble.source").count() == 0
