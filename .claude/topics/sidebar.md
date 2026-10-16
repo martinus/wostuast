@@ -567,7 +567,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_the_settings_stand_in_four_titled_groups`.
     **The outside click is read from the click's path**
     (`composedPath`), not from where its target is now: × takes its own
-    row out, its target then had no place on the page, and the menu shut. **The colours
+    row out, its target then had no place on the page, and the menu shut.
+    **And from where the press began** (`pressedOn`, #485): a text
+    selected in a link box and let go outside the menu is a click on
+    `body`, and the menu shut under the reader. A press that began inside
+    is inside, for the model menu too.
+    `test_a_selection_that_ends_outside_the_menu_keeps_it_open`. **The colours
     buttons wear the colours they give** (`--light-bg`, `--dark-ink` and
     the rest, in the first `:root`, which the theme blocks read for `--bg`
     and `--ink`), so they read the same in either theme. **Each label

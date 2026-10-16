@@ -1189,6 +1189,25 @@ def test_the_alert_panel_shuts_from_anywhere(page_at):
             assert page.get_attribute("#settings", "aria-expanded") == "false", shut
 
 
+def test_a_selection_that_ends_outside_the_menu_keeps_it_open(page_at):
+    """A text selected in a link box, with the button let go outside the
+    menu, is a click on `body` -- and the menu shut under the reader
+    (#485). A press that began inside is inside; one that began outside
+    still shuts it."""
+    with opened(page_at) as page:
+        page.click("#settings")
+        page.click("#setpop .linkadd")
+        page.fill("#linklist .linkmatch", "PROJ-(\\d+)")
+        box = page.locator("#linklist .linkmatch").bounding_box()
+        page.mouse.move(box["x"] + box["width"] - 4, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(700, 600, steps=5)
+        page.mouse.up()
+        assert page.is_visible("#setpop")
+        page.mouse.click(700, 600)
+        page.wait_for_selector("#setpop", state="hidden")
+
+
 def test_every_alert_makes_itself_heard(page_at):
     """One tag per session, so a second alert replaces the first -- and with
     `renotify` left false a replacement makes no sound and shows no banner.

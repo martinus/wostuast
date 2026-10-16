@@ -23832,18 +23832,28 @@ $("alertdone").addEventListener("change", (press) => {
 });
 // A panel that only its own button can close is a panel you have to go back
 // to. Anywhere else on the page, and Escape, shut it.
+//
+// Where the press began counts as much as where it ended (#485). A text
+// selected in a box of the menu, with the button let go outside it, ends
+// in a click on what the two have in common -- `body` -- and the menu shut
+// under the reader's hands. So a click that began inside is inside.
+let pressedOn = [];
+document.addEventListener("pointerdown", (press) => {
+  pressedOn = press.composedPath();
+}, true);
 document.addEventListener("click", (press) => {
   // The path the click took, not where its target is now: a button that
   // takes itself out (a link row's ×) has no place left on the page, and
   // its click read as one from outside the menu.
+  const inside = (test) => press.composedPath().some(test) || pressedOn.some(test);
   if (!$("setpop").hidden
-      && !press.composedPath().some((one) => one.classList && one.classList.contains("setslot"))) {
+      && !inside((one) => one.classList && one.classList.contains("setslot"))) {
     showSettings(false);
   }
-  if (!$("modelpop").hidden
-      && !press.composedPath().some((one) => one.id === "modelpop")) {
+  if (!$("modelpop").hidden && !inside((one) => one.id === "modelpop")) {
     showModels(false);
   }
+  pressedOn = [];
 });
 
 // The jump happens in another window, often on another screen, so the page
