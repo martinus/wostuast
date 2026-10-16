@@ -308,7 +308,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `waits_on_tasks` keeps an idle `Notification` off that line, and only
   there: a turn an interrupt ended sends no `Stop`, and its idle prompt is
   still news. The notification's prompt is not the reader's, so it is not
-  `last_prompt`, which the alert quotes. **The reader chose this knowing the
+  `last_prompt`, which the alert quotes. **Nor is another session's
+  message** (`AGENT_SENT`, #482): a subagent's hand-back wakes the agent
+  with `<agent-message from=…>` as its prompt, and as `first_prompt` it
+  named the session, tag and all, in the row, the tab's title and the
+  "needs you" alert. It is the latest event and nothing more.
+  `test_another_sessions_message_does_not_name_the_session`. **The reader chose this knowing the
   cost**: a server started in the background keeps the row green until it
   ends. `test_a_turn_that_leaves_a_task_running_is_not_over`,
   `test_an_idle_prompt_still_speaks_for_a_row_with_no_task`.

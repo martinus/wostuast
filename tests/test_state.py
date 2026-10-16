@@ -1901,3 +1901,24 @@ def test_a_subagents_call_does_not_close_a_permission_dialog(ws):
                                tool_input=command, tool_use_id="sub3", ts=1003.5))
     assert session.state == "needs_you"
     assert session.permission and session.reason.startswith("permission: ")
+
+
+def test_another_sessions_message_does_not_name_the_session(ws):
+    """A subagent's hand-back woke the agent with `<agent-message from=…>`
+    as its prompt, and the session was named after it, tag and all, in the
+    row and in the alert that it needs you (#482). It is not the reader's
+    prompt: not the name, not the prompt the "has finished" alert quotes."""
+    said = ('<agent-message from="a1a006d041bcfb154"> [Subagent hand-back] The text'
+            ' below is the final report.\n</agent-message>\n\nThis message came from'
+            ' another Claude session.')
+    session = fold(ws, event("UserPromptSubmit", prompt=said, ts=1.0))
+    assert session.first_prompt == "" and session.last_prompt == ""
+    assert session.state == "working"
+    assert session.last_event == ("from another session: [Subagent hand-back] The text"
+                                  " below is the final report.")
+    assert session.title == ""
+    # With its header, as a `user` record has it, and after the reader's own.
+    session = fold(ws, event("UserPromptSubmit", prompt="fix it", ts=1.0),
+                   event("UserPromptSubmit", ts=2.0,
+                         prompt="Another Claude session sent a message:\n" + said))
+    assert session.first_prompt == "fix it" and session.last_prompt == "fix it"
