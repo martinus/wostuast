@@ -645,6 +645,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   a new directory read as "1 file" beside five dots. The cheap call is on the
   tick thread under a two second timeout, and the thorough one is not — that
   is the reason, and it is worth more than the two numbers agreeing.
+  **But both read through one parser, `git_status`, and only its
+  `untracked` mode differs** (#537): the row parsed lines with no `-z` and
+  counted a rename's two names as one, the tab parsed records, and nothing
+  held them to one meaning. Measured: 50,000 untracked files, 4 ms in
+  "normal", 55 in "all". Make the count the same once git is read off the
+  tick thread (#550). A failed reading is applied by `apply_git_facts`
+  alone, never written over what a session had: `add_git_facts` (for `ls`
+  and `wait`) wrote it, `reload_git` did not.
+  `test_the_row_counts_the_changed_files_the_files_tab_marks`,
+  `test_only_one_function_runs_git_status`.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once, `fresh()` decides what changed, both reading the DOM. One key
   over the whole tab re-rendered the file you were reading every two seconds.
