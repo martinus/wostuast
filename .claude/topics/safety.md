@@ -881,6 +881,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version`,
   `test_a_start_with_nothing_behind_writes_nothing`,
   `test_a_start_stops_on_a_settings_file_it_cannot_read`.
+  - **`doctor`, the start and `report` read one table of checks**
+    (`SETUP_CHECKS`, `setup_checks`, `Check`, #549). The checks were
+    written twice, in `doctor_checks` and in the start, and the words had
+    drifted: "tmux not found;" in one and "tmux not found:" in the other,
+    the state directory with its full path and with `~`, one settings line
+    a problem or one for all. A check is a function of `SetupFacts`, which
+    reads Claude Code's `settings.json` once -- one `doctor` loaded it
+    three times -- and gives a `Check` or None. A start makes the ones in
+    `START_FIRST` before it writes anything and `START_AFTER` once the
+    hooks are up to date, and prints each that is not ok with its `start`
+    mark; it does not make the others, because `bring_up_to_date` mends
+    what they would find. A new check is a row, and the start's lists name
+    it if a start should say it.
+    `test_every_check_says_the_same_in_doctor_and_at_a_start`.
   - **The hooks run a file made from the program, never a copy kept by
     hand** (#271). `hook_source` takes the definitions named in
     `HOOK_PARTS` out of the program's source with `ast`, between
