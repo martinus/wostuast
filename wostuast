@@ -18816,6 +18816,37 @@ function landOnBlock(box) {
 // Rebuilding the lot re-ran marked over the whole history on every update, and
 // restarted the slide-in of every turn each time one line arrived.
 
+// What a turn can do, at its top right, in one row (#520, #522): save it,
+// copy it, and read it as written. The left column held the bookmark and
+// the "copy" word beside the name and the time, and was 64 px wide for
+// them; on a small screen that was room the text needed. One place for
+// all of them, the place the "txt" already stood, so the reader looks in
+// one corner. The save is on every block with a link (#424): a prompt
+// the reader typed (#403), a `!` or slash command with what it printed,
+// and a message of the harness. Whether the block is shown as written.
+function putTurnActs(node, block, index, shell, aside, mine) {
+  const acts = put(node, "div", "turnacts");
+  putSave(acts, block, index, shell ? "shell" : aside ? "system"
+          : block.kind === "prompt" ? "me" : "claude");
+  putCopy(acts, block, mine);
+  // Markdown, or the text as it was written (#493): the reader wants to
+  // select and copy what the agent wrote, Markdown and all. The Files
+  // tab's "txt". Every block drawn as Markdown has one: an answer, a
+  // plan, a message of the harness, and a prompt the reader typed (#500).
+  // A `!` or slash command is not Markdown. Last in the row, so a lit one
+  // never moves when the others come and go (#510).
+  const md = !shell && !!block.text;
+  const asText = md && state.turns.open.has(textKey(index));
+  if (md) {
+    putReadAs(acts, asText, (on) => {
+      if (on) state.turns.open.add(textKey(index));
+      else state.turns.open.delete(textKey(index));
+      redrawBlock(index);
+    }, "show the text as written, not as Markdown");
+  }
+  return asText;
+}
+
 function blockTurn(block, index) {
   if (block.kind === "divider") {
     const node = document.createElement("div");
@@ -18860,33 +18891,7 @@ function blockTurn(block, index) {
     if (day) put(who, "div", "day", day);
     put(who, "div", "stamp", clock(block.ts));
   }
-  // What a turn can do, at its top right, in one row (#520, #522): save it,
-  // copy it, and read it as written. The left column held the bookmark and
-  // the "copy" word beside the name and the time, and was 64 px wide for
-  // them; on a small screen that was room the text needed. One place for
-  // all of them, the place the "txt" already stood, so the reader looks in
-  // one corner. The save is on every block with a link (#424): a prompt
-  // the reader typed (#403), a `!` or slash command with what it printed,
-  // and a message of the harness.
-  const acts = put(node, "div", "turnacts");
-  putSave(acts, block, index, shell ? "shell" : aside ? "system"
-          : block.kind === "prompt" ? "me" : "claude");
-  putCopy(acts, block, mine);
-  // Markdown, or the text as it was written (#493): the reader wants to
-  // select and copy what the agent wrote, Markdown and all. The Files
-  // tab's "txt". Every block drawn as Markdown has one: an answer, a
-  // plan, a message of the harness, and a prompt the reader typed (#500).
-  // A `!` or slash command is not Markdown. Last in the row, so a lit one
-  // never moves when the others come and go (#510).
-  const md = !shell && !!block.text;
-  const asText = md && state.turns.open.has(textKey(index));
-  if (md) {
-    putReadAs(acts, asText, (on) => {
-      if (on) state.turns.open.add(textKey(index));
-      else state.turns.open.delete(textKey(index));
-      redrawBlock(index);
-    }, "show the text as written, not as Markdown");
-  }
+  const asText = putTurnActs(node, block, index, shell, aside, mine);
   // A message too long to show whole is drawn in a box of its own, with the
   // bar that opens and folds it under it: see `foldedHead`.
   const whole = String((shell ? block.result : block.text) || "");
