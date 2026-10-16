@@ -8712,7 +8712,13 @@ class Daemon:
         #: and a send to each at once interleaved their pastes and Enters into
         #: one prompt, 20 times of 20 (#331). So a pane is taken as well.
         self.typing_panes: dict[str, str] = {}
-        self.lock = threading.Lock()
+        #: Two locks, for two jobs that no method needs at once (#538).
+        #: `typing_lock` guards `typing`, `typing_panes` and `declining`;
+        #: `reading` guards `transcripts` and `runs`. They were one lock, and
+        #: `read_transcript` reads the file while it holds it: the first read
+        #: of a long transcript held back every send, answer and No.
+        self.typing_lock = threading.Lock()
+        self.reading = threading.Lock()
         self.stopping = threading.Event()
         self.started = time.time()
 
@@ -8731,7 +8737,7 @@ class Daemon:
         read here again, a `SessionStart` between the two reads would have
         the verb type into a pane nobody holds.
         """
-        with self.lock:
+        with self.typing_lock:
             if session_id in self.declining:
                 return "an answer to this dialog is already on its way"
             if session_id in self.typing:
@@ -8762,7 +8768,7 @@ class Daemon:
 
     def release(self, session_id: str) -> None:
         """Give back what `claim` took. Only its holder may hold `declining`."""
-        with self.lock:
+        with self.typing_lock:
             self.typing.discard(session_id)
             self.typing_panes.pop(session_id, None)
             self.declining.discard(session_id)
@@ -8795,12 +8801,12 @@ class Daemon:
         """Read whatever is new, tell the watchers, and hand back every block.
 
         Both the tick and a request for the tab come through here, under one
-        lock. Two threads calling `read_new` at once moved the byte offset
+        lock, `reading`. Two threads calling `read_new` at once moved the byte offset
         twice, which then looked like a shrinking file and re-read the whole
         transcript from the top. Reading in a request and not telling the
         watchers lost those blocks for every other tab.
         """
-        with self.lock:
+        with self.reading:
             reader = self.transcript(session_id)
             if reader is None:
                 return None
@@ -8834,7 +8840,7 @@ class Daemon:
         closed and the hub has not yet noticed. Told a version it does not
         hold, the page asks for the whole again.
         """
-        with self.lock:
+        with self.reading:
             reader = self.transcripts.get(session_id)
             return None if reader is None else (reader.run, reader.version)
 
@@ -8875,7 +8881,7 @@ class Daemon:
         nothing, and its dialog has closed all the same."""
         if not call or self.read_transcript(session_id) is None:
             return None
-        with self.lock:
+        with self.reading:
             reader = self.transcripts.get(session_id)
             held = reader.by_tool_use.get(call) if reader is not None else None
             return held.result if held is not None and held.answered else None
@@ -8990,7 +8996,7 @@ class Daemon:
         """
         watched = self.hub.watchers()
         now = time.monotonic()
-        with self.lock:
+        with self.reading:
             for session_id, reader in list(self.transcripts.items()):
                 session = self.store.sessions.get(session_id)
                 if session is None:

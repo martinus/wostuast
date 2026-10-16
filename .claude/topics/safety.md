@@ -142,6 +142,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     refused while a No is on its way.
     `test_two_sends_at_once_do_not_mix_in_the_pane`,
     `test_nothing_else_is_typed_while_an_answer_or_a_no_goes_in`.
+    **The claims have a lock of their own, `typing_lock`, and the
+    transcript readers another, `reading`** (#538). They were one
+    `Daemon.lock`, and `read_transcript` reads the file while it holds
+    it: the first read of a long transcript held back every send, answer
+    and No. No method takes both. `test_a_slow_transcript_read_holds_back_no_send`.
 - **The daemon answers on localhost only, and only to its own user and
   root.** Binding to 127.0.0.1 is not enough — a site can point its own
   name at 127.0.0.1. `Serving.ours()` checks Host, and a request without

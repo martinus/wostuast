@@ -432,7 +432,9 @@ There are two small exceptions, and each one has a lock:
   and so does `POST seen`, which writes `Store.seen`, and `POST remind`,
   which writes `Store.reminders`.
 - **Transcript readers** are shared between the worker and the request
-  threads, under `Daemon.lock`.
+  threads, under `Daemon.reading`. The claims of a send, an answer or a No
+  have a lock of their own, `Daemon.typing_lock`, so a slow read never
+  holds back what is typed.
 
 ### The tick
 
