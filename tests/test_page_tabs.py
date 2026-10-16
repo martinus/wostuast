@@ -471,8 +471,9 @@ def test_a_folded_session_list_is_a_tile_for_each_session(ws, pair_at, tmp_path)
     """Folded, the session list was a strip with one button, and the reader
     could not see who needs them or go to another session without opening
     it again. Each row is a tile now: the first letters of its name, its
-    state's colour, the name on the hover, and a click chooses it. They are
-    the rows themselves, so a push fills them as it fills a row."""
+    state's colour, the whole row in a card on the hover (#491), and a
+    click chooses it. They are the rows themselves, so a push fills them as
+    it fills a row."""
     with opened(pair_at) as page:
         page.wait_for_function("document.querySelectorAll('#rows .row').length === 2")
         page.click("#sessionfold")
@@ -481,13 +482,32 @@ def test_a_folded_session_list_is_a_tile_for_each_session(ws, pair_at, tmp_path)
         for one in tiles:
             assert one["height"] == 76 and one["lines"] == 0, one
             assert one["says"] not in ("none", "normal", '""'), one
-            assert one["title"], one
+            assert not one["title"], one          # the card says it now
         chosen = [one for one in tiles if one["chosen"]]
         other = [one for one in tiles if not one["chosen"]][0]
         assert len(chosen) == 1 and chosen[0]["width"] > other["width"], tiles
-        # The name runs up the tile, turned, and the hover says it whole.
-        says = {one["id"]: (one["says"], one["title"]) for one in tiles}
-        assert says["s1"] == ('"A session"', "A session"), says
+        # The name runs up the tile, turned, and the hover shows the row
+        # whole in the tile's own place: one tab opened out, not a second
+        # one beside it.
+        says = {one["id"]: one["says"] for one in tiles}
+        assert says["s1"] == '"A session"', says
+        page.hover('#rows .row[data-id="s1"]')
+        page.wait_for_selector("#tilecard:not([hidden]) .row .name")
+        card = page.evaluate("""() => {
+          const card = document.getElementById('tilecard').getBoundingClientRect();
+          const tile = document.querySelector('#rows .row[data-id="s1"]').getBoundingClientRect();
+          const strip = document.querySelector('.sidebar').getBoundingClientRect();
+          return {name: document.querySelector('#tilecard .row .name').textContent,
+                  lines: document.querySelectorAll('#tilecard .row > [class^="line"]').length,
+                  top: Math.round(card.top - tile.top),
+                  left: Math.round(document.querySelector('#tilecard .row')
+                                   .getBoundingClientRect().left - tile.left),
+                  wide: card.width >= 300};
+        }""")
+        assert card == {"name": "A session", "lines": card["lines"], "top": 0,
+                        "left": 0, "wide": True} and card["lines"] >= 2, card
+        page.mouse.move(700, 500)
+        page.wait_for_selector("#tilecard", state="hidden")
         turned = page.evaluate("""() => { const css = getComputedStyle(
             document.querySelector('#rows .row'), '::before');
           return [css.writingMode, css.textOverflow, css.maskImage.includes('gradient')]; }""")
@@ -497,17 +517,20 @@ def test_a_folded_session_list_is_a_tile_for_each_session(ws, pair_at, tmp_path)
         page.wait_for_function("(id) => state.chosen === id", arg=other["id"])
         assert [one["id"] for one in page.evaluate(TILES) if one["chosen"]] == [other["id"]]
         # A session that starts while the list is folded comes as a tile,
-        # with its name on the hover.
+        # with its card on the hover.
         daemon = pair_at[0]
         ws.append_event(conftest.event("SessionStart", sid="s3", cwd=str(tmp_path),
                                        pane="%8", pid=3, ts=time.time()))
         daemon.tick()
         page.wait_for_function("document.querySelectorAll('#rows .row').length === 3")
-        assert page.get_attribute('#rows .row[data-id="s3"]', "title")
-        # Open again, a row is a row: no tile, and no title over it.
+        page.hover('#rows .row[data-id="s3"]')
+        page.wait_for_selector("#tilecard:not([hidden]) .row[data-id='s3']")
+        # Open again, a row is a row: no tile, no title over it, no card.
         page.click("#sessionfold")
         rows = page.evaluate(TILES)
         assert all(one["lines"] >= 2 and not one["title"] for one in rows), rows
+        page.hover('#rows .row[data-id="s1"]')
+        assert page.locator("#tilecard").is_hidden()
 
 
 

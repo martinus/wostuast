@@ -824,6 +824,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     it is pressed to fold and again to unfold, and the pointer has not
     moved. The open slot's padding is taken back by the button's margin;
     the strip no longer centres it. Its middle is the box's middle.
+    **Each fold's rule names its own column** (#504): `.foldlist
+    .findslot > .fold` matched the session list's slot too, so folding the
+    list beside the transcript moved the session list's button and
+    narrowed its filter box. `.foldlist .content.split > .side > .findslot`.
     `test_a_fold_button_stays_where_it_was_pressed`.
   - **A folded column's edge drags nothing** (`pointer-events: none`): a
     drag set a width nobody could see.
@@ -837,8 +841,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     strip with one button hid who needs you and every other session; the
     reader asked for them, clickable. CSS draws each row as a tile as tall
     as a row, its name turned up it (`writing-mode: vertical-rl`, then
-    `rotate(180deg)`, read bottom to top) on its state's colour, the unread
-    dot, and the name in `title` while folded and never while open. Two
+    `rotate(180deg)`, read bottom to top) on its state's colour, and the
+    unread dot. **On the hover, the row whole, in the tile's own place**
+    (`tileCard`, `#tilecard`, #491): the name, where it stands, its state
+    and its line, as the open list draws them, over the tile and the page,
+    and at least as tall as the tile. Beside the strip it was a second tab
+    next to the first, and the reader asked for the one tab opened out. It was the name alone in `title`, after a wait, and the
+    reader asked for the whole row; the card is a copy of the row
+    (`cloneNode`), so it says what the row says and is drawn in one place,
+    and no row carries a title any more (`tileTitle`), or the browser's
+    would stand on the card. Nothing on it is pressed: the tile is. Two
     letters across the tile told two sessions of one repository apart only
     by colour; the reader asked for the name turned, a row tall. **A name
     too long fades out at its end (`mask-image`), never an ellipsis**:
@@ -857,7 +869,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_each_column_folds_away_and_comes_back`,
   `test_the_list_column_folds_on_every_split_tab`,
   `test_a_key_into_a_folded_column_brings_it_back`,
-  `test_a_folded_session_list_is_a_tile_for_each_session`.
+  `test_a_folded_session_list_is_a_tile_for_each_session`, which holds
+  the card too.
 - **Rows are kept and filled in again, never rebuilt.** A row can only fade
   into its new colour if it is the same row, and the needs-you pulse can
   only finish a cycle if its row outlives the change. `newRow` builds every part once, empty; `fillRow` reaches
