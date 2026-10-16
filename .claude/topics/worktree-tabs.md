@@ -115,9 +115,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     nothing about a file it ignores, so `.oa-implement`'s plan had no dot,
     its folder never opened itself, and the "changed only" filter left it
     out. A walked file is stat'ed -- the budget bounds them -- and the
-    route, not the listing, picks the ones at or after the asking
-    session's `started_at`: one listing serves every session in the
-    worktree. **An ignored file git names by itself is stat'ed too, up to
+    route, not the listing, picks the ones at or after the start of the
+    **first session in the worktree** the daemon holds
+    (`Serving.first_here`, #506): one listing serves every session in the
+    worktree. It was the asking session's own start, and the reader's
+    `.oa-implement` showed one file of four: the other three were written
+    the day before, by an earlier session there. The reader chose this
+    over the branch's first commit, which would need a git call a listing. **An ignored file git names by itself is stat'ed too, up to
     `IGNORED_MAX` of them** (#506, `loose` in `worktree_files`): a folder
     that ignores itself with its own `.gitignore` (`*`, `!.gitignore`) is
     not one ignored folder to git, because that file is not ignored, so git
@@ -125,7 +129,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `.gitignore` was marked, as new. The budget is because a build's
     objects beside their sources can be tens of thousands.
     `test_a_folder_that_ignores_itself_counts_what_was_written_in_it`.
-    `test_a_file_written_in_an_ignored_folder_since_the_session_began_is_changed`.
+    `test_a_file_written_in_an_ignored_folder_since_the_worktree_began_is_changed`.
   A link to a directory is neither followed nor listed: following it is a way
   round the budget and into a loop, and it is not a file.
 - **`skipped` is not in the listing's tag.** The tag is a hash of the names,
