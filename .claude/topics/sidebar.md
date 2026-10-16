@@ -824,6 +824,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     it is pressed to fold and again to unfold, and the pointer has not
     moved. The open slot's padding is taken back by the button's margin;
     the strip no longer centres it. Its middle is the box's middle.
+    **Each fold's rule names its own column** (#504): `.foldlist
+    .findslot > .fold` matched the session list's slot too, so folding the
+    list beside the transcript moved the session list's button and
+    narrowed its filter box. `.foldlist .content.split > .side > .findslot`.
     `test_a_fold_button_stays_where_it_was_pressed`.
   - **A folded column's edge drags nothing** (`pointer-events: none`): a
     drag set a width nobody could see.

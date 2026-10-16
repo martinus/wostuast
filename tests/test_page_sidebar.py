@@ -2484,7 +2484,11 @@ def test_a_fold_button_stays_where_it_was_pressed(repo_page):
         page.wait_for_selector(".side .fold")
         at = """(sel) => { const r = document.querySelector(sel).getBoundingClientRect();
                           return [Math.round(r.left), Math.round(r.top)]; }"""
+        wide = "(sel) => Math.round(document.querySelector(sel).getBoundingClientRect().width)"
         for button in (".side .fold", "#sessionfold"):
+            other = "#sessionfold" if button != "#sessionfold" else ".side .fold"
+            before_other = page.evaluate(at, other)
+            width_other = page.evaluate(wide, "#pick" if other == "#sessionfold" else "#find")
             before = page.evaluate(at, button)
             page.click(button)
             page.wait_for_function(
@@ -2496,6 +2500,21 @@ def test_a_fold_button_stays_where_it_was_pressed(repo_page):
                 "(sel) => document.querySelector(sel).getAttribute('aria-expanded') === 'true'",
                 arg=button)
             assert (button, before, shut) == (button, page.evaluate(at, button), before)
+            # Folding the list beside the transcript leaves the session
+            # list's button and filter box where they stood (#504): its
+            # rule matched the session list's slot too. Folding the session
+            # list moves the whole list column, rightly, so not that way.
+            if button == ".side .fold":
+                page.click(button)
+                page.wait_for_function(
+                    "(sel) => document.querySelector(sel).getAttribute('aria-expanded') === 'false'",
+                    arg=button)
+                assert page.evaluate(at, other) == before_other, (button, other)
+                assert page.evaluate(wide, "#pick") == width_other, button
+                page.click(button)
+                page.wait_for_function(
+                    "(sel) => document.querySelector(sel).getAttribute('aria-expanded') === 'true'",
+                    arg=button)
             # At the column's left, before the find box, in the middle of
             # the box's line and of the room left of it: as far from the
             # column's edge as from the box.

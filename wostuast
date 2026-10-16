@@ -12531,7 +12531,11 @@ body {
    more. The open slot's 10 px of padding are taken back by its margin,
    and the box stands as far after it, so it is in the middle of the room
    left of the box as well as of the box's line. */
-.foldsessions .findslot > .fold, .foldlist .findslot > .fold {
+/* Each to its own column (issue 504): `.foldlist .findslot` matched the
+   session list's slot too, so folding the list beside the transcript moved
+   the session list's button and narrowed its filter box. */
+.foldsessions .sidebar .findslot > .fold,
+.foldlist .content.split > .side > .findslot > .fold {
   margin: 0 0 0 var(--fold-in); }
 .foldsessions #grip, .foldlist .content.split > .grip { pointer-events: none; }
 /* Folded, every row is a tile in the strip (issue 464): the first letters
