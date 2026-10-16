@@ -145,7 +145,9 @@ def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
     """The send box and the question bar stand under the transcript, not
     under the whole tab. The grip that sizes the map stopped where they
     began, so it read as a bar that ends for no reason -- and the corner
-    under the map was empty space you could not drag."""
+    under the map was empty space you could not drag. With a question up,
+    the send box is away (#483) and the question bar is the one at the
+    foot."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
     with opened((None, base)) as page:
@@ -160,12 +162,12 @@ def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
                   asking: box(document.getElementById('asking')),
                   send: box(document.getElementById('sendbar'))};
         }""")
-        grip, side, send = where["grip"], where["side"], where["send"]
+        grip, side, send = where["grip"], where["side"], where["asking"]
+        assert where["send"]["height"] == 0, where
         assert abs(grip["bottom"] - send["bottom"]) <= 1, where
         assert abs(side["bottom"] - send["bottom"]) <= 1, where
-        # And neither bar runs under the map or over the transcript.
+        # And the bar runs neither under the map nor over the transcript.
         assert send["left"] >= grip["right"] - 1, where
-        assert where["asking"]["left"] >= grip["right"] - 1, where
         assert where["pane"]["bottom"] <= where["asking"]["top"] + 1, where
         # The box runs down under both bars now, and the way back to the
         # foot of the transcript is measured from the pane, not the box:
@@ -189,7 +191,7 @@ def test_the_map_and_its_grip_run_down_beside_the_send_box(ws, in_pane):
             '#content > .side').getBoundingClientRect().width""")
         assert abs(after - before - 60) <= 2, (before, after)
         left = page.evaluate(
-            "() => document.getElementById('sendbar')"
+            "() => document.getElementById('asking')"
             ".getBoundingClientRect().left")
         assert abs(left - send["left"] - 60) <= 2, (send, left)
 
@@ -344,14 +346,17 @@ def test_what_you_picked_survives_a_look_at_another_tab(ws, in_pane):
     """The bar is built again when it comes back, and a pick belongs to the
     question it was made for — not to the draw it was made on. Half-answering
     a question, glancing at the diff, and finding the marks gone is a page
-    that cannot be trusted with the other half."""
+    that cannot be trusted with the other half. The bar stands on every
+    tab now (#483), and holds the pick there too."""
     daemon, base, seen = in_pane
     now_asking(ws, daemon)
     with opened((None, base)) as page:
         page.wait_for_selector("#asking .askopt")
         page.click(option(1, 3))
         show_tab(page, "diff")
-        assert page.locator("#asking .askopt").count() == 0
+        page.wait_for_selector("#asking .askopt")
+        assert page.locator(option(1, 3)).evaluate(
+            "one => one.classList.contains('chosen')")
         show_tab(page, "transcript")
         page.wait_for_selector("#asking .askopt")
         assert page.locator(option(1, 3)).evaluate(
@@ -673,18 +678,20 @@ def test_submit_waits_for_a_message_on_its_way_and_comes_back(ws, in_pane):
     """A message from the send box landing between the answer's keys is
     typed into the dialog, so submit is held while one is on its way -- and
     painted back on when it has landed, although nothing else is pushed: an
-    agent waiting on a question sends no events."""
+    agent waiting on a question sends no events. The send box is away while
+    a question is up (#483), so the message left before the question came."""
     daemon, base, seen = in_pane
-    now_asking(ws, daemon)
     with opened((None, base)) as page:
-        page.wait_for_selector("#asking .askopt")
-        page.click(option(1, 1))
-        page.click(option(2, 1))
-        assert not page.locator(SUBMIT).is_disabled()
         held = hold(page, "**/send")
         page.fill("#say", "one more thing")
         page.press("#say", "Enter")
         wait_until(page, lambda: held)
+        now_asking(ws, daemon)
+        # The page is open, and `now_asking` folded it already: say so.
+        daemon.hub.send("sessions", daemon.sessions_payload())
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 1))
+        page.click(option(2, 1))
         assert page.locator(SUBMIT).is_disabled()
         assert page.inner_text("#asking .asksays") == \
             "waiting for what is on its way to this session"
@@ -708,9 +715,10 @@ def test_a_question_with_no_id_does_not_stop_the_page(ws, in_pane):
     daemon.store.refresh()
     with opened((None, base)) as page:
         page.wait_for_selector("#asking .askopt")
-        # Drawn once, and nothing pushed since: the agent is waiting.
+        # Drawn once, and nothing pushed since: the agent is waiting. The
+        # send box is away under a question (#483), so jump says it ran.
         assert page.locator("#jump").is_visible()
-        assert page.locator("#sendbar").is_visible()
+        assert page.locator("#sendbar").is_hidden()
         blew_up = []
         page.on("pageerror", lambda error: blew_up.append(str(error)))
         page.click(option(1, 2))
@@ -1388,7 +1396,7 @@ def test_the_send_box_is_away_while_a_permission_dialog_is_up(ws, in_pane):
 
 def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
     """The review goes through `send` too, and ends in the same Enter. Its
-    button is off while the dialog is up, and says why where it stands."""
+    button is away while the dialog is up (#483), and off, and says why."""
     daemon, base, seen = in_pane
     now_permission(ws, daemon)
     with opened((None, base)) as page:
@@ -1396,7 +1404,8 @@ def test_the_review_is_not_sent_into_a_permission_dialog(ws, in_pane):
         page.evaluate("""([one]) => { state.review.comments.push(one);
           keepReview(); }""",
           [{"anchor": "code.py\n1", "quoted": "x", "note": "later"}])
-        page.wait_for_selector("#reviewbar:not([hidden]) #sendreview")
+        page.wait_for_selector("#reviewbar:not([hidden]) #sendreview", state="attached")
+        assert page.locator("#sendreview").is_hidden()
         assert page.locator("#sendreview").is_disabled()
         assert "permission dialog" in page.get_attribute(
             "#sendreview", "title")
