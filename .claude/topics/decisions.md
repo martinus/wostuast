@@ -48,7 +48,9 @@ it. The reason is the part to weigh before undoing one.
   after the transcript's, so "open" lands on the nearest block within a
   minute (`goToNear`), never on block 0 by default.
   `test_search_takes_slacks_filters`, `test_search_reads_the_archives_too`,
-  `test_search_every_session_and_open_a_result`.
+  `test_search_every_session_and_open_a_result`. **A prompt is what
+  `prompt_said` says it is**, as the fold reads it: only the reader's own
+  is found, without its paste tags (#536).
 - **The status line writes one small file per session, and never the log.**
   It runs on every redraw, so an append would flood the log with nothing
   new. `install` never replaces a status line the user already has: it

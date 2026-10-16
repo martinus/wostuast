@@ -2702,35 +2702,52 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     session.last_event = f"started ({source})" if source else "started"
 
 
+def prompt_said(prompt: Any) -> tuple[str, str]:
+    """Who a `UserPromptSubmit`'s `prompt` is from, and its words: "me"
+    and the prompt as typed, "task" and the summary of a background task
+    that ended, or "agent" and the words of another session's message.
+
+    The one reader of a prompt (#536): the fold and the search both ask it.
+    Search read `prompt` by itself, so a task's notification and another
+    session's message were found as the reader's own words, tags and all.
+
+    A background task that ended wakes the agent with a prompt of Claude
+    Code's own (#447). It is not what the reader asked: kept as the last
+    prompt, the "has finished" alert quoted the notification's tags. Nor is
+    a message from another session (#482): a subagent's hand-back wakes the
+    agent with `<agent-message from=…>` as its prompt. Kept as the first
+    prompt, it named the session, tag and all, in the row, the tab's title
+    and the alert that it needs you. The paste tags come off a typed prompt,
+    as the transcript takes them off: the hook hands over the prompt as
+    Claude Code wrote it, and a pasted prompt read `prompt: <pasted_content
+    id="3400"> I got...` on the row.
+    """
+    text = str(prompt or "")
+    note = TASK_ENDED.match(text)
+    if note:
+        return "task", " ".join((note.group(1) or "background task ended").split())
+    sent = AGENT_SENT.match(text)
+    if sent:
+        return "agent", " ".join(sent.group(1).split("</agent-message>")[0].split())
+    return "me", unwrap_pastes(text)
+
+
 def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     _clear_attention(session)
     session.prompted = True
     session.calls.clear()          # a new turn: see `_on_stop`
     session.state = "working"
-    # A background task that ended wakes the agent with a prompt of Claude
-    # Code's own (#447). It is not what the reader asked: kept as the last
-    # prompt, the "has finished" alert quoted the notification's tags.
-    note = TASK_ENDED.match(str(event.get("prompt") or ""))
-    if note:
-        session.last_event = clip(" ".join((note.group(1) or "background task ended").split()),
-                                  PROMPT_WIDTH)
+    by, prompt = prompt_said(event.get("prompt"))
+    if by == "task":
+        session.last_event = clip(prompt, PROMPT_WIDTH)
         return
-    # Nor is a message from another session (#482): a subagent's hand-back
-    # wakes the agent with `<agent-message from=…>` as its prompt. Kept as
-    # the first prompt, it named the session, tag and all, in the row, the
-    # tab's title and the alert that it needs you. The transcript shows its
-    # words as a note (`AGENT_MESSAGE`); here it is only the latest event.
-    sent = AGENT_SENT.match(str(event.get("prompt") or ""))
-    if sent:
-        words = " ".join(sent.group(1).split("</agent-message>")[0].split())
-        session.last_event = clip("from another session: " + words, PROMPT_WIDTH)
+    # The transcript shows another session's words as a note
+    # (`AGENT_MESSAGE`); here they are only the latest event.
+    if by == "agent":
+        session.last_event = clip("from another session: " + prompt, PROMPT_WIDTH)
         return
     # Cut it here, once. Keeping the whole of a pasted prompt would put it in
     # every row, to be compared every tick and sent to the browser every time.
-    # The paste tags come off first, as the transcript takes them off: the
-    # hook hands over the prompt as Claude Code wrote it, and a pasted prompt
-    # read `prompt: <pasted_content id="3400"> I got...` on the row.
-    prompt = unwrap_pastes(str(event.get("prompt") or ""))
     session.last_prompt = clip(prompt, PROMPT_WIDTH)
     session.last_event = f"prompt: {session.last_prompt}"
     if not session.first_prompt and not prompt.lstrip().startswith("/"):
@@ -7309,7 +7326,11 @@ def search_log(query: str, sessions: dict[str, Session]) -> list[dict[str, Any]]
                     continue
                 name = event.get("hook_event_name")
                 if name == "UserPromptSubmit":
-                    said, by = event.get("prompt"), "me"
+                    # Only what the reader typed: a task's notification
+                    # and another session's message are not theirs.
+                    by, said = prompt_said(event.get("prompt"))
+                    if by != "me":
+                        continue
                 elif name in ("Stop", "StopFailure"):
                     said, by = event.get("last_assistant_message"), "claude"
                 else:

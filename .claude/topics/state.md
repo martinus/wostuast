@@ -319,7 +319,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   with `<agent-message from=…>` as its prompt, and as `first_prompt` it
   named the session, tag and all, in the row, the tab's title and the
   "needs you" alert. It is the latest event and nothing more.
-  `test_another_sessions_message_does_not_name_the_session`. **But only
+  `test_another_sessions_message_does_not_name_the_session`. **Both are
+  told apart in one place, `prompt_said`**, which the search asks too
+  (#536): search read `prompt` by itself, and found a task's notification
+  and an agent's message as the reader's words, paste tags and all.
+  `test_search_reads_a_prompt_as_the_fold_does`. **But only
   until Claude Code says the prompt is idle, when all it waits on is a
   command** (#488, `waits_on_agents`): the reader chose "green until it
   ends" in #447, and then a server or a watch loop held a row green for
