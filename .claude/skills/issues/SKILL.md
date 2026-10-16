@@ -90,6 +90,13 @@ scrub protects, and any choice where two readings lead to different work.
 
 Decide everything else yourself and say what you decided.
 
+**Before you ask about a look, grep for the rule it would reverse**, in
+`.claude/topics/` and in the tests, and put its reason in the question.
+#525 put a file's header on the raised ground; a test and a rule said it
+stood on the code's own ground, because a bar of its own "read as a bar".
+The gate found it after the reader's yes, and the reader chose without
+the one fact that argued the other way.
+
 ### 4. Build it
 
 `CLAUDE.md` **Where to look** routes from what you are about to touch to the
@@ -191,6 +198,14 @@ after the first had merged.
   markers merged by hand in a file of five figures of lines are how a hunk
   is lost. So keep each pull request's edit script in the scratchpad until
   it merges.
+- **When one pull request moves text to a new file and another edits it
+  in the old one, put the edit where the text went.** #521 moved the
+  README's detail into `docs/GUIDE.md`, built from `main` before #528
+  changed a paragraph of it; the cherry-pick conflicted in `README.md`.
+  Take the new `README.md` whole, make #528's change in the guide, and
+  check with a script that every moved section is now the same text as
+  on `main`: a hand merge of a moved file is how an edit is lost without
+  a conflict to say so.
 
 ### 8. Merge, reset, and read the list again
 

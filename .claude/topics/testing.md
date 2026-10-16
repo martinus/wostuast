@@ -98,6 +98,12 @@ Keep the breaks list in the scratchpad; it is about one fix.
   does -- so that the break turns it red, here and in CI.
   `test_a_break_that_hangs_a_test_is_put_back_and_said`,
   `test_a_kill_puts_the_file_back`.
+- **`perturb.py` proves red, never green: run a test green again after
+  any edit to it.** The hex test of #524 passed, was then tidied -- a
+  line that went back to the file read its text before the hex was drawn
+  -- and perturb said 4 of 4 red, which a broken test says too. Only the
+  gate, three runs of three failures, showed it. Edit, run it green,
+  then perturb; never the other way round.
 - **It deletes the file's bytecode after every write** (`forget_bytecode`),
   the break and the file put back. Python runs a cached `.pyc` while the
   source's mtime in whole seconds and its size match, and two breaks in
