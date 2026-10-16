@@ -2306,10 +2306,7 @@ class Store:
             if one.raised and directory not in self.git_raised:
                 self.git_raised.add(directory)
                 log(f"git facts raised for {directory}: {one.raised}")
-        for session in sessions:
-            one = facts.get(session.cwd)
-            if one is not None and not one.failed:
-                session.git = one
+        apply_git_facts(sessions, facts)
 
     def snooze(self, session_id: str, on: bool) -> bool:
         """Snooze a session that needs you, or wake it. Returns whether it is
@@ -4790,7 +4787,8 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         git_dir = common if len(found) > 1 else os.path.join(common, ".git")
         facts.remote = remote_url(git_dir)
 
-    status = git("status", "--porcelain", "--branch")
+    # The cheap mode, on purpose: see `git_status`.
+    status = git_status(cwd, runner, untracked="normal")
     if not found:
         # Neither `rev-parse` answered. Outside a repository that is the
         # answer; on a stalled machine it is not one, and taken for one it
@@ -4804,14 +4802,10 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         # timeout, and `status` on a very large worktree can pass it.
         facts.failed = True
         return facts
-    lines = status.splitlines()
-    if lines and lines[0].startswith("## "):
-        facts.branch, facts.ahead, facts.behind = parse_status_branch(lines[0])
-        lines = lines[1:]
-    changed = [line for line in lines if line.strip()]
-    facts.touched_files = len(changed)
-    facts.dirty = bool(changed)
-    facts.conflicts = sum(1 for line in changed if line[:2] in UNMERGED)
+    facts.branch, facts.ahead, facts.behind = parse_status_branch(status.head)
+    facts.touched_files = len(status.entries)
+    facts.dirty = bool(status.entries)
+    facts.conflicts = sum(1 for xy, _, _ in status.entries if xy in UNMERGED)
     facts.doing, rebasing = worktree_doing(own_git_dir(facts.root))
     facts.branch = facts.branch or rebasing
     return facts
@@ -4854,8 +4848,19 @@ def add_git_facts(sessions: Sequence[Session]) -> None:
     facts = git_facts_many([session.cwd for session in sessions])
     for one in {one.raised for one in facts.values() if one.raised}:
         log(f"git facts raised: {one}")
+    apply_git_facts(sessions, facts)
+
+
+def apply_git_facts(sessions: Sequence[Session],
+                    facts: dict[str, GitFacts]) -> None:
+    """Give each session the facts read for its directory. A failure is
+    never written over what it had (#537): `reload_git` kept the old facts,
+    and `add_git_facts` wrote the failed reading over them -- two answers
+    to one question, depending on who asked."""
     for session in sessions:
-        session.git = facts.get(session.cwd, GitFacts())
+        one = facts.get(session.cwd)
+        if one is not None and not one.failed:
+            session.git = one
 
 
 # --- files and diffs: what the worktree holds --------------------------------
@@ -5282,26 +5287,65 @@ def status_names(
     file is `??`, and its name is the one `ls-files --others
     --exclude-standard` gives, a nested repository's `sub/` included.
     """
-    out = runner(["git", "-C", cwd, "status", "--porcelain", "-z",
-                  "--untracked-files=all"], timeout=LIST_TIMEOUT)
-    if out is None:
+    status = git_status(cwd, runner, timeout=LIST_TIMEOUT)
+    if status is None:
         return None
     names: set[str] = set()
     untracked: set[str] = set()
-    bare = False
-    for record in out.split("\0"):
-        if not record:
-            continue
-        if bare:
-            names.add(record)           # the old name of the rename before it
-            bare = False
-            continue
-        if len(record) > 3:
-            names.add(record[3:])
-            if record.startswith("?? "):
-                untracked.add(record[3:])
-        bare = "R" in record[:2] or "C" in record[:2]
+    for xy, name, old in status.entries:
+        names.add(name)
+        if old:
+            names.add(old)
+        if xy == "??":
+            untracked.add(name)
     return names, untracked
+
+
+@dataclass
+class GitStatus:
+    """What one `git status` said: the `## ` line, and one entry a file --
+    its two status letters, its name, and the old name of a rename or a
+    copy ("" otherwise)."""
+    head: str = ""
+    entries: list[tuple[str, str, str]] = field(default_factory=list)
+
+
+def git_status(cwd: str, runner: Callable[..., str | None] = run,
+               timeout: float = RUN_TIMEOUT,
+               untracked: str = "all") -> GitStatus | None:
+    """The one reader of `git status` (#537). None when git did not answer.
+
+    The row and the Files tab parsed it each in a way of their own. Only the
+    untracked mode differs now, and on purpose: the row (`git_facts`) asks
+    for "normal", which folds a wholly untracked folder into one entry, and
+    the Files tab for "all", one entry a file. The row's read is on the tick
+    thread under a two second timeout. Measured on 50,000 untracked files,
+    "normal" took 4 ms and "all" 55; a tree of a million, an un-ignored
+    virtualenv, would come near the timeout. The count is to be the same
+    once git is read off the tick thread (#550).
+
+    `-z` gives one NUL-terminated record per file: two status letters, a
+    space, then the name. A rename or a copy is followed by one more record
+    holding the old name on its own, with no status in front of it — so which
+    record is which has to be counted, not guessed at from its length. An
+    untracked file is `??`, and its name is the one `ls-files --others
+    --exclude-standard` gives, a nested repository's `sub/` included.
+    `--branch` puts the `## ` line first; no file record starts with `#`.
+    """
+    out = runner(["git", "-C", cwd, "status", "--porcelain", "-z", "--branch",
+                  f"--untracked-files={untracked}"], timeout=timeout)
+    if out is None:
+        return None
+    status = GitStatus()
+    records = iter(out.split("\0"))
+    for record in records:
+        if record.startswith("## ") and not status.head and not status.entries:
+            status.head = record
+        elif len(record) > 3:
+            xy = record[:2]
+            old = next(records, "") if "R" in xy or "C" in xy else ""
+            status.entries.append((xy, record[3:], old))
+    return status
 
 
 def git_names(

@@ -27,6 +27,38 @@ def test_a_dirty_repository_counts_its_files(ws, repo):
     assert facts.touched_files == 2
 
 
+def test_the_row_counts_the_changed_files_the_files_tab_marks(ws, repo):
+    """The row's count and the Files tab's marks come from one reader of
+    `git status` (#537), so they agree: a change, a rename (one change to
+    both, not two), a new file. They differ in one named way only: the row
+    reads git's cheap untracked mode, which folds a wholly untracked
+    folder into one entry (`git_status` says why)."""
+    (repo / "README.md").write_text("changed\n")
+    git(repo, "mv", "README.md", "READ.md")
+    (repo / "new.txt").write_text("new\n")
+    marked = lambda: sorted(one.path for one in
+                            ws.worktree_files(str(repo)).files if one.changed)
+    assert marked() == ["READ.md", "new.txt"]
+    assert ws.git_facts(str(repo)).touched_files == len(marked())
+    (repo / "fresh").mkdir()
+    for name in "xyz":
+        (repo / "fresh" / f"{name}.txt").write_text(name)
+    assert len(marked()) == 5
+    assert ws.git_facts(str(repo)).touched_files == 3
+
+
+def test_only_one_function_runs_git_status(ws):
+    """One reader for each fact (#535, principle 5): every `git status` goes
+    through `git_status`, so no two parts of the program can read one
+    worktree in two ways again."""
+    import inspect
+    import re
+    source = inspect.getsource(ws)
+    calls = [hit.start() for hit in re.finditer(r'"status",\s*"--porcelain', source)]
+    assert len(calls) == 1
+    assert source.rfind("def git_status(", 0, calls[0]) > source.rfind("\ndef ", 0, calls[0]) - 1
+
+
 def test_ahead_and_behind_come_from_the_upstream(ws, repo, tmp_path):
     clone = tmp_path / "clone"
     subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True,
@@ -1114,8 +1146,11 @@ def test_one_directory_that_raises_stops_no_other(ws, repo, tmp_path, monkeypatc
 
     sessions = [ws.Session(session_id="a", cwd=str(bad)),
                 ws.Session(session_id="b", cwd=str(repo))]
+    sessions[0].git = ws.GitFacts(branch="known")
     ws.add_git_facts(sessions)
-    assert sessions[0].git.failed and sessions[1].git.branch == "main"
+    # A failure is not written over what the session had, as in
+    # `reload_git` (#537): both apply through `apply_git_facts`.
+    assert sessions[0].git.branch == "known" and sessions[1].git.branch == "main"
 
 
 def test_a_link_loop_is_not_inside_and_is_not_an_error(ws, repo):
