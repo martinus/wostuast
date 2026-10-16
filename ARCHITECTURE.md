@@ -640,7 +640,8 @@ The Files tab can show any file in the worktree. That is a door into your
 disk, so `read_worktree_file` guards it:
 
 - `inside` resolves the path and checks that it stays inside the worktree. A
-  `../../` or a symlink out is refused.
+  `../../` or a symlink out is refused. For a link, `why_unread` then
+  tells the page where it goes, and opens nothing.
 - `is_listed` asks git about this one exact name. A name git does not offer
   is refused.
 - A file larger than `FILE_MAX_BYTES` is cut at that size, and the page says so.
