@@ -2971,3 +2971,31 @@ def test_no_verb_is_an_attribute_of_the_handler(ws):
     taken = set(dir(http.server.BaseHTTPRequestHandler)) | set(dir(ws.Serving))
     assert not {f"verb_{name}" for t in (ws.GET_VERBS, ws.POST_VERBS)
                 for name in t} & taken
+
+
+def test_every_verb_says_whose_answer_it_is(ws, in_tmux, monkeypatch):
+    """A verb gives back what it answers and `dispatch` sends it with the
+    session's `id` (#545): every answer of every verb, walked from
+    `GET_VERBS` and `POST_VERBS`, says whose it is, refusals as well. Only
+    `refuse` added the `id` before, and one refusal went round it. `raw`
+    and `diff` send bytes."""
+    import http.client
+    from urllib.parse import urlparse
+
+    daemon, base, _ = in_tmux
+    where = urlparse(base)
+    for method, table in (("GET", ws.GET_VERBS), ("POST", ws.POST_VERBS)):
+        for name in table:
+            if name in ("raw", "diff"):
+                continue
+            link = http.client.HTTPConnection(where.hostname, where.port, timeout=10)
+            try:
+                body = b"{}" if method == "POST" else None
+                headers = {"X-Wostuast-Token": daemon.token,
+                           "Content-Type": "application/json"} if body else {}
+                link.request(method, f"/api/session/s1/{name}", body=body,
+                             headers=headers)
+                answer = json.loads(link.getresponse().read())
+            finally:
+                link.close()
+            assert answer.get("id") == "s1", (method, name, answer)

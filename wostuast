@@ -9939,7 +9939,13 @@ class Serving:
                 else self.known(session_id)
             if session is None:
                 return
-        verb(self, session_id, session, given)
+        answer = verb(self, session_id, session, given)
+        if answer is not None:
+            # A verb gives back what it answers, and this replies (#545):
+            # every answer says whose, refusals as well, which `refuse`
+            # alone did. `raw` and `diff` send bytes and reply themselves.
+            code, payload = answer
+            self.reply_json({"id": session_id, **payload}, code)
 
 
 
@@ -10014,6 +10020,11 @@ class Serving:
 
 # --- the verbs: what one session's routes do ---------------------------------
 
+#: What a verb answers: a status and a payload, which `Serving.dispatch`
+#: sends with the session's `id`; None for `raw` and `diff`, which send
+#: bytes themselves.
+Answer = tuple[int, dict[str, Any]] | None
+
 # Not methods of `Serving` (#545): `http.server` sets attributes on the
 # handler for each request -- `command`, `path`, `headers`, `request` -- and
 # one of them hid the verb `verb_command` on the instance. It worked only
@@ -10024,19 +10035,19 @@ class Serving:
 
 
 def verb_last(serving: Serving, session_id: str, session: Session,
-         query: dict[str, str]) -> None:
+         query: dict[str, str]) -> Answer:
     """What the agent said last, for the "All unreads" feed (#376).
     Cut at `LAST_MAX`: the feed shows the start of each and opens the
     session for the rest, and a very long answer would go whole down an
     ssh tunnel for a glance."""
     text = session.last_answer
     cut = len(text) > LAST_MAX
-    serving.reply_json({"id": session_id, "text": text[:LAST_MAX] if cut else text,
-                     "cut": cut, "at": session.ended_at})
+    return 200, {"id": session_id, "text": text[:LAST_MAX] if cut else text,
+                     "cut": cut, "at": session.ended_at}
 
 
 def verb_commands(serving: Serving, session_id: str, session: Session,
-             query: dict[str, str]) -> None:
+             query: dict[str, str]) -> Answer:
     """What the send box can complete for this session.
 
     Asked for when the list opens, not pushed with the session: the
@@ -10048,12 +10059,12 @@ def verb_commands(serving: Serving, session_id: str, session: Session,
             for one in list(serving.daemon.store.sessions.values())]
     found = serving.daemon.commands.of(session.cwd, serving.command_root(session),
                                     [path for path in seen if path])
-    serving.reply_json({"id": session_id,
-                     "commands": [wire_fields(one) for one in found]})
+    return 200, {"id": session_id,
+                     "commands": [wire_fields(one) for one in found]}
 
 
 def verb_command(serving: Serving, session_id: str, session: Session,
-            query: dict[str, str]) -> None:
+            query: dict[str, str]) -> Answer:
     """One command's text, for the Commands tab (#367).
 
     Asked for by its name, never by a path: the page names one from
@@ -10069,34 +10080,31 @@ def verb_command(serving: Serving, session_id: str, session: Session,
         session.cwd, serving.command_root(session)) if each.name == name), None)
     read = command_text(one) if one else None
     if read is None:
-        serving.reply_json({"id": session_id, "error": "no such command"}, 404)
-        return
-    serving.reply_json({"id": session_id, "name": name,
-                     "text": read[0], "cut": read[1]})
+        return 404, {"id": session_id, "error": "no such command"}
+    return 200, {"id": session_id, "name": name,
+                     "text": read[0], "cut": read[1]}
 
 
 def verb_transcript(serving: Serving, session_id: str, session: Session | None,
-               query: dict[str, str]) -> None:
+               query: dict[str, str]) -> Answer:
     found = serving.daemon.read_transcript(session_id)
     if found is None:
-        serving.reply_json({"id": session_id, "blocks": [],
-                         "missing": "no transcript for this session"})
-        return
+        return 200, {"id": session_id, "blocks": [],
+                         "missing": "no transcript for this session"}
     blocks, run, version = found
     # The page says which reading it holds, and how far. Coming back to
     # the Transcript tab fetched the whole of it every time, 856 KB for
     # four hundred rounds, while the pushes had kept the page up to date
     # all along. A reading still the same is answered with no blocks.
     if query.get("have", "") == f"{run}.{version}":
-        serving.reply_json(dict(transcript_head(session_id, run, version),
-                             same=True))
-        return
-    serving.reply_json(dict(transcript_head(session_id, run, version),
-                         blocks=blocks_json(blocks)))
+        return 200, dict(transcript_head(session_id, run, version),
+                             same=True)
+    return 200, dict(transcript_head(session_id, run, version),
+                         blocks=blocks_json(blocks))
 
 
 def verb_files(serving: Serving, session_id: str, session: Session,
-          query: dict[str, str]) -> None:
+          query: dict[str, str]) -> Answer:
     held = serving.daemon.files.of(session.cwd)
     tree = held.tree
     body = {
@@ -10116,24 +10124,22 @@ def verb_files(serving: Serving, session_id: str, session: Session,
     # bytes instead of the 1.7 MB that fifty thousand names weigh.
     if not held.tag or query.get("have", "") != held.tag:
         body["names"] = held.names
-    serving.reply_json(body)
+    return 200, body
 
 
 def verb_file(serving: Serving, session_id: str, session: Session,
-         query: dict[str, str]) -> None:
+         query: dict[str, str]) -> Answer:
     wanted = query.get("path", "")
     found = read_worktree_file(session.cwd, wanted,
                                held=serving.daemon.files,
                                have=query.get("have", ""))
     if found is None:
-        serving.reply_json({"id": session_id, "path": wanted, "missing": why_unread(
-            session.cwd, wanted, held=serving.daemon.files)}, 404)
-        return
+        return 404, {"id": session_id, "path": wanted, "missing": why_unread(
+            session.cwd, wanted, held=serving.daemon.files)}
     if found.same:
-        serving.reply_json({"id": session_id, "path": wanted, "same": True,
-                         "stamp": found.stamp})
-        return
-    serving.reply_json(wire_fields(found, id=session_id, path=wanted))
+        return 200, {"id": session_id, "path": wanted, "same": True,
+                         "stamp": found.stamp}
+    return 200, wire_fields(found, id=session_id, path=wanted)
 
 
 def verb_raw(serving: Serving, session_id: str, session: Session,
@@ -10192,7 +10198,7 @@ def verb_diff(serving: Serving, session_id: str, session: Session,
 
 
 def verb_whole(serving: Serving, session_id: str, session: Session,
-          query: dict[str, str]) -> None:
+          query: dict[str, str]) -> Answer:
     """One file of the Diff tab with every line of it, for showing the
     lines between two changes. See `whole_file_diff`."""
 
@@ -10201,38 +10207,35 @@ def verb_whole(serving: Serving, session_id: str, session: Session,
                             query.get("of", ""), base=query.get("base", ""),
                             ranks=serving.daemon.ranks,
                             space=query.get("space", "") == "hide")
-    serving.reply_json(wire_fields(found, id=session_id))
+    return 200, wire_fields(found, id=session_id)
 
 
 def verb_jump(serving: Serving, session_id: str, session: Session,
-         body: dict[str, Any]) -> None:
+         body: dict[str, Any]) -> Answer:
     # Like `send` below: an answer carrying no `error` clears the live
     # slot, so a jump into a pane tmux has since closed failed with
     # nothing at all on the page.
     if not tmux_jump(session.pane):
-        serving.reply_json({"id": session_id,
-                         "error": "tmux would not go to that pane"}, 502)
-        return
-    serving.reply_json({"id": session_id, "done": True})
+        return 502, {"id": session_id,
+                         "error": "tmux would not go to that pane"}
+    return 200, {"id": session_id, "done": True}
 
 
 def verb_send(serving: Serving, session_id: str, session: Session,
-         body: dict[str, Any]) -> None:
+         body: dict[str, Any]) -> Answer:
     text = body.get("text")
     text = text if isinstance(text, str) else ""
     why = ("there is nothing to send" if not typed(text).strip()
            else typing_trouble(typed(text), "that"))
     if why:
-        serving.refuse(session_id, 400, why)
-        return
+        return 400, {"error": why}
     # A dialog that is up has its cursor on "1. Yes": the Enter after the
     # text says Yes, and a text that starts with a digit picks that
     # option. `decline` waits for proof that the dialog closed before it
     # types; a send has no such proof, so it waits for the row.
     why = cannot_type(session, text=True)
     if why:
-        serving.refuse(session_id, 409, why)
-        return
+        return 409, {"error": why}
     pane = session.pane
     # Only an agent at its prompt is watched: a message to a busy one is
     # queued, and reaches the transcript when the agent takes it, which
@@ -10241,13 +10244,12 @@ def verb_send(serving: Serving, session_id: str, session: Session,
     watch = session.state == "done" and not text.lstrip().startswith("/")
     with serving.daemon.holding(session_id, pane) as busy:
         if busy:
-            serving.refuse(session_id, 409, busy)
-            return
+            return 409, {"error": busy}
         serving.press_send(session_id, pane, text, watch)
 
 
 def verb_answer(serving: Serving, session_id: str, session: Session,
-           body: dict[str, Any]) -> None:
+           body: dict[str, Any]) -> Answer:
     """Answer the question the agent is waiting on, in its own dialog.
 
     The page sends which options were picked, never keys: the keys are
@@ -10263,37 +10265,32 @@ def verb_answer(serving: Serving, session_id: str, session: Session,
     # and Enter, so they could say Yes to it (#254).
     why = cannot_type(session)
     if why:
-        serving.refuse(session_id, 409, why)
-        return
+        return 409, {"error": why}
     ask = session.asking
     # An ask with no id could be matched by anything that sends none.
     if not ask or not ask["id"] or body.get("ask") != ask["id"]:
-        serving.refuse(session_id, 409, "that question is no longer waiting")
-        return
+        return 409, {"error": "that question is no longer waiting"}
     keys, why = ask_keys(ask, body.get("picks"))
     if why:
-        serving.refuse(session_id, 400, why)
-        return
+        return 400, {"error": why}
     # A second submit, or a send, while these keys go in one at a time
     # `KEY_GAP` apart, mixed its keys with them in the pane.
     pane = session.pane
     with serving.daemon.holding(session_id, pane) as busy:
         if busy:
-            serving.refuse(session_id, 409, busy)
-            return
+            return 409, {"error": busy}
         landed = tmux_keys(pane, keys)
     if landed < len(keys):
         # Some keys may have landed: say so, rather than "nothing went
         # in", which would send the reader back to answer twice.
-        serving.refuse(session_id, 502, f"tmux took {landed} of {len(keys)}"
+        return 502, {"error": f"tmux took {landed} of {len(keys)}"
                                      " keys; look at the question in the"
-                                     " terminal")
-        return
-    serving.reply_json({"id": session_id, "done": True, "keys": keys})
+                                     " terminal"}
+    return 200, {"id": session_id, "done": True, "keys": keys}
 
 
 def verb_decline(serving: Serving, session_id: str, session: Session,
-            body: dict[str, Any]) -> None:
+            body: dict[str, Any]) -> Answer:
     """Say No to the permission dialog on screen, and maybe why.
 
     **No is Escape, and nothing else is pressed until the dialog is seen
@@ -10313,21 +10310,17 @@ def verb_decline(serving: Serving, session_id: str, session: Session,
     """
     why = cannot_type(session, no=True)
     if why:
-        serving.refuse(session_id, 409, why)
-        return
+        return 409, {"error": why}
     shown = session.dialog
     if not shown or body.get("key") != shown["key"]:
-        serving.refuse(session_id, 409,
-                    "that permission request is no longer waiting")
-        return
+        return 409, {"error": "that permission request is no longer waiting"}
     reason = body.get("reason")
     reason = reason if isinstance(reason, str) else ""
     if not typed(reason).strip():
         reason = ""
     why = typing_trouble(typed(reason), "that reason")
     if why:
-        serving.refuse(session_id, 400, why)
-        return
+        return 400, {"error": why}
     call = str(shown.get("call") or "")
     # Answered in the terminal and finished, and the row is amber only
     # because no hook says Yes: an Escape now would stop whatever the
@@ -10337,19 +10330,16 @@ def verb_decline(serving: Serving, session_id: str, session: Session,
     # press. That is the cost of No from here, and it is a stop, which
     # keeps the work done so far.
     if serving.daemon.call_answered(session_id, call):
-        serving.refuse(session_id, 409,
-                    "that request was answered in the terminal already")
-        return
+        return 409, {"error": "that request was answered in the terminal already"}
     pane = session.pane
     with serving.daemon.holding(session_id, pane, no=True) as busy:
         if busy:
-            serving.refuse(session_id, 409, busy)
-            return
+            return 409, {"error": busy}
         serving.press_decline(session_id, pane, shown, call, reason)
 
 
 def verb_approve(serving: Serving, session_id: str, session: Session,
-            body: dict[str, Any]) -> None:
+            body: dict[str, Any]) -> Answer:
     """Say Yes, once, to the permission dialog on screen -- through its
     hook, never through keys.
 
@@ -10365,40 +10355,33 @@ def verb_approve(serving: Serving, session_id: str, session: Session,
     """
     why = cannot_type(session, no=True)
     if why:
-        serving.refuse(session_id, 409, why)
-        return
+        return 409, {"error": why}
     shown = session.dialog
     if not shown or body.get("key") != shown["key"]:
-        serving.refuse(session_id, 409, "that permission request is no longer waiting")
-        return
+        return 409, {"error": "that permission request is no longer waiting"}
     ask = str(shown.get("ask") or "")
     if not hook_waits(ask):
-        serving.refuse(session_id, 409,
-                    "this dialog cannot be answered Yes from here: answer it in"
-                    " the terminal")
-        return
+        return 409, {"error": "this dialog cannot be answered Yes from here: answer it in"
+                    " the terminal"}
     if serving.daemon.call_answered(session_id, str(shown.get("call") or "")):
-        serving.refuse(session_id, 409, "that request was answered in the terminal already")
-        return
+        return 409, {"error": "that request was answered in the terminal already"}
     # "Yes, and ..." names one of the choices this dialog offered, by its
     # place; the hook takes the suggestion itself from its own payload.
     always = body.get("always")
     offered = {one["at"]: one["label"] for one in shown.get("always") or []}
     if always is not None and (type(always) is not int or always not in offered):
-        serving.refuse(session_id, 400, "this dialog offers no such choice")
-        return
+        return 400, {"error": "this dialog offers no such choice"}
     said = ask if always is None else f"{ask}:{always}"
     # One answer at a time: a No on its way and a Yes would race for the
     # same dialog.
     with serving.daemon.holding(session_id, "", no=True) as busy:
         if busy:
-            serving.refuse(session_id, 409, busy)
-            return
+            return 409, {"error": busy}
         serving.give_yes(session_id, shown, ask, said, offered.get(always, ""))
 
 
 def verb_name(serving: Serving, session_id: str, session: Session,
-         body: dict[str, Any]) -> None:
+         body: dict[str, Any]) -> Answer:
     """Name a session, or take its name away with an empty one.
 
     It needs no pane: a session that has ended can still be named, which
@@ -10420,32 +10403,31 @@ def verb_name(serving: Serving, session_id: str, session: Session,
     # are built from the names on every pass, so the next one differs and
     # goes out on its own. The answer carries the name so the page can
     # show it without waiting for that.
-    serving.reply_json({"id": session_id, "name": given, "done": True,
-                     "kept_here": why})
+    return 200, {"id": session_id, "name": given, "done": True,
+                     "kept_here": why}
 
 
 def verb_snooze(serving: Serving, session_id: str, session: Session,
-           body: dict[str, Any]) -> None:
+           body: dict[str, Any]) -> Answer:
     """Snooze a session that needs you, or wake it (#355). It writes a
     file of ours and touches no terminal, as `name` does."""
     if body.get("snooze") and session.state != "needs_you":
-        serving.reply_json({"id": session_id, "error":
-                         "only a session that needs you can be snoozed"}, 409)
-        return
+        return 409, {"id": session_id, "error":
+                         "only a session that needs you can be snoozed"}
     snoozed = serving.daemon.store.snooze(session_id, bool(body.get("snooze")))
-    serving.reply_json({"id": session_id, "snoozed": snoozed, "done": True})
+    return 200, {"id": session_id, "snoozed": snoozed, "done": True}
 
 
 def verb_seen(serving: Serving, session_id: str, session: Session,
-         body: dict[str, Any]) -> None:
+         body: dict[str, Any]) -> Answer:
     """The reader had this session on screen, or marked it unread
     (#373). A file of ours, and no terminal, as `snooze`."""
     unread = serving.daemon.store.see(session_id, bool(body.get("seen")))
-    serving.reply_json({"id": session_id, "unread": unread, "done": True})
+    return 200, {"id": session_id, "unread": unread, "done": True}
 
 
 def verb_remind(serving: Serving, session_id: str, session: Session,
-           body: dict[str, Any]) -> None:
+           body: dict[str, Any]) -> Answer:
     """Bring a session back at a moment, or forget its reminder (#375).
     A file of ours, and no terminal. The moment is a number, 0 or in
     the next `REMIND_MOST` seconds: anything else is refused, not
@@ -10454,14 +10436,13 @@ def verb_remind(serving: Serving, session_id: str, session: Session,
     now = time.time()
     if (not isinstance(at, (int, float)) or isinstance(at, bool)
             or not (at == 0 or now < at <= now + REMIND_MOST)):
-        serving.refuse(session_id, 400, "a reminder is 0 or a moment in the next 31 days")
-        return
+        return 400, {"error": "a reminder is 0 or a moment in the next 31 days"}
     kept = serving.daemon.store.remind(session_id, float(at))
-    serving.reply_json({"id": session_id, "remind_at": kept, "done": True})
+    return 200, {"id": session_id, "remind_at": kept, "done": True}
 
 
 def verb_save(serving: Serving, session_id: str, session: Session | None,
-         body: dict[str, Any]) -> None:
+         body: dict[str, Any]) -> Answer:
     """Save a turn of this session for later, or take it off the list
     (#377). A file of ours, and no terminal. Taking one off needs no
     session: the list keeps the turns of sessions the daemon has
@@ -10472,10 +10453,9 @@ def verb_save(serving: Serving, session_id: str, session: Session | None,
                          "ts": body.get("ts"), "text": body.get("text", ""),
                          "who": body.get("who"), "at": time.time()})
     if entry is None:
-        serving.refuse(session_id, 400, "a saved turn is a place, a moment and its words")
-        return
+        return 400, {"error": "a saved turn is a place, a moment and its words"}
     saved = serving.daemon.store.save(entry, bool(body.get("save")))
-    serving.reply_json({"id": session_id, "saved": saved, "done": True})
+    return 200, {"id": session_id, "saved": saved, "done": True}
 
 
 # The verbs a session route can end in.

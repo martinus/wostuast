@@ -557,7 +557,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `http.server` sets `command`, `path`, `headers` and `request` on the
   handler for each request, and `self.command` hid the verb
   `Serving.command` on the instance; a verb named `path` would have broken
-  every request. `test_no_verb_is_an_attribute_of_the_handler`.
+  every request. `test_no_verb_is_an_attribute_of_the_handler`. **A verb
+  returns what it answers, `(code, payload)`, and `dispatch` sends it
+  with the session's `id`**: only `refuse` added the `id`, and one
+  refusal went round it. `raw` and `diff` send bytes and reply
+  themselves. `test_every_verb_says_whose_answer_it_is`.
   `test_a_name_too_large_to_read_keeps_the_name_there_was`,
   `test_an_answer_too_large_to_read_says_that`,
   `test_a_body_that_is_not_read_is_not_taken_for_an_empty_one`.
