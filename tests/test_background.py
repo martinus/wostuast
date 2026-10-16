@@ -73,8 +73,7 @@ def test_the_reader_s_name_moves_with_it(ws):
     events = recorded()
     store.apply(events[0])
     store.rename(OLD, "the payments work")
-    for one in events[1:]:
-        store.apply(one)
+    store.fold(events[1:])         # written once the fold is done (#546)
     assert ws.read_names() == {FORK: "the payments work"}
 
 

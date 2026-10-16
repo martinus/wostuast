@@ -276,7 +276,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     "fork"` too, and its old session lives on in its own pane. The old
     session ends ("background"), its subagents with it -- the fork starts
     again those that go on -- the page follows `cleared_into`, and the name
-    moves (`_move_name`, shared with `link_clear`). Linux only, as
+    moves (`_move_name`, shared with `link_clear`; **in memory only:
+    `save_names` writes it once the fold is done**, because the fold, the
+    replay at start included, does no I/O, #546). Linux only, as
     `started_by` is. The old row's pane now shows the agents view, and an
     ended row is never typed into; the fork has no pane.
     **The agents view's own session has no row until it is given a task**

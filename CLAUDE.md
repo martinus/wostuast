@@ -89,7 +89,7 @@ bullets beside it are the same part's other scars.
 | `remote_url`, `config_entries`, `config_section`, `config_value`, `CONFIG_MAX`, `hide_secrets`, `clip_hidden`, `SECRET_SHAPES`, `tool_target` | topics/safety: a remote URL and a command reach the page without their secrets, and a long one costs no time |
 | `build_report`, `named`, `tool_named`, `labelled`, `exception_named`, `REPORT_KINDS`, `private_paths`, `installed_files`, `cmd_files` | topics/safety: the report holds names and counts only, and one list of the files |
 | `resume_command`, `drawResume`, `read_worktree_file`, `why_unread`, `is_listed`, `worktree_target`, `inside`, `SHOWN_AS`, the `raw` route, `askFile`, `FileText.stamp` | topics/safety: a path out of the page is input |
-| `Store`, `Session`, `_on_*`, `_clear_attention`, `running_tasks`, `TASK_ENDED`, `read_ask`, `place`, `home`, `link_clear`, `link_move`, `background_start`, `untasked`, `followClear`, `Session.pane`, `Session.pid`, `reads_terminal`, `looks_like_claude` | topics/state |
+| `Store`, `Session`, `_on_*`, `become`, `save_names`, `_clear_attention`, `running_tasks`, `TASK_ENDED`, `read_ask`, `place`, `home`, `link_clear`, `link_move`, `background_start`, `untasked`, `followClear`, `Session.pane`, `Session.pid`, `reads_terminal`, `looks_like_claude` | topics/state |
 | `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `HISTORY_FOLDED`, `folded_long_ago`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
 | `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/sidebar: a snooze is a mark on one wait |
@@ -216,7 +216,13 @@ request, and name the principle.
 
 1. **Data flows one way**: events, then the fold, then rows, then the
    wire, then the page. The fold does no I/O: file, git and `/proc`
-   reads happen at the edges, in named steps. Its test comes with #546.
+   reads happen at the edges, in the named steps of `Store.refresh`
+   (`follow`, `settle`, `reload_git`, `render`), and a write the fold
+   needs waits until it is done (`save_names`). A change of state is
+   `become`. `test_the_fold_does_no_io` folds an event of every handler
+   with I/O made to fail, and
+   `test_the_guard_folds_every_handler_and_both_links` holds that it is
+   given every path.
 2. **Each shape the page receives is defined in one place**: the wire
    section (`row`, `blocks_json`, `session_json`, `wire_fields`, the
    `EVENTS`). Its head comment names the five dataclasses that go out
