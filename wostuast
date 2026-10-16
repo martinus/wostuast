@@ -13983,17 +13983,21 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    hover does not touch the text. */
 .filelist.transcript { line-height: 1.55; }
 .filelist.transcript button { padding-top: 1px; padding-bottom: 1px; }
-/* A round is yours, so its person takes the one colour that means that.
-   The chevron stays quiet, and turns down while the round is open. */
+/* A round is yours, so its person takes the one colour that means that,
+   and its words are in bold, so they stand out from the replies (issue 512). */
 .filelist.transcript button.dir .icon { color: var(--mine); }
-.filelist.transcript button.dir .icon.fold { color: var(--ink-faint); }
-.filelist.transcript button.dir .icon.fold:hover { color: var(--needs); }
-.filelist.transcript button[aria-expanded="true"] .fold { transform: rotate(90deg); }
-/* The chevron and the gap after it are one tree step, 13 px, so the person
-   stands exactly where a reply's robot does: the reply lines up under what
-   it answers. The chevron's own box is blank on its right, so taking the
-   gap back does not crowd the person. */
-.filelist.transcript .fold { margin-right: -5px; }
+.filelist.transcript button.dir .name { font-weight: 600; }
+/* The day a round starts on, over it, when the rounds span more than one
+   day (issue 512): small and quiet, a label and not a row, with a rule. */
+.filelist.transcript .mapday {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px 2px; color: var(--ink-faint);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.filelist.transcript .mapday::after {
+  content: ""; flex: 1; border-top: 1px solid var(--edge);
+}
+.filelist.transcript .mapday:first-child { padding-top: 2px; }
 /* The padding is on the children of the scroller, so a branch added to
    `drawFiles` later cannot quietly lose its gutter, and so the header --
    which is not one of them -- keeps running to the pane's edges. */
@@ -19176,14 +19180,14 @@ function rounds() {
     const block = state.turns.blocks[at];
     if (!block) continue;
     if (block.kind === "prompt") {
-      out.push(here = { seq: at, text: block.text, replies: [] });
+      out.push(here = { seq: at, ts: block.ts, text: block.text, replies: [] });
     } else if (block.kind === "shell") {      // typed too, with its `!`
-      out.push(here = { seq: at, text: "! " + block.text, replies: [] });
+      out.push(here = { seq: at, ts: block.ts, text: "! " + block.text, replies: [] });
     } else if (block.kind === "command" && block.text) {   // with its `/`
-      out.push(here = { seq: at, text: block.text, replies: [] });
+      out.push(here = { seq: at, ts: block.ts, text: block.text, replies: [] });
     } else if (block.kind === "text" || block.kind === "plan") {
       // A `note` is neither, by design. A plan is the agent's words.
-      if (!here) out.push(here = { seq: at, text: "", replies: [] });
+      if (!here) out.push(here = { seq: at, ts: block.ts, text: "", replies: [] });
       here.replies.push({ seq: at, text: block.text });
     }
   }
@@ -19261,14 +19265,9 @@ function drawTurnList(list, note) {
   if (!fresh(list, "turns", [state.turns.run, state.find, state.turns.at,
                              all.length, found.length, replies,
                              last ? last.seq : -1, tail,
-                             // Or folding a round redraws nothing: the shape
-                             // of the conversation has not changed, only what
-                             // is shown of it. Sorted, so the key is what the
-                             // set holds and not the order it was filled in:
-                             // folding 1 then 2 and folding 2 then 1 are the
-                             // same list, and a spurious redraw is a rebuild
-                             // of every row.
-                             [...state.turns.shut].sort().join(",")].join("\n"))) {
+                             // A day line says "Today", which is yesterday
+                             // after midnight.
+                             new Date(Date.now() + state.skew * 1000).toDateString()].join("\n"))) {
     return;
   }
   // Where the reader had the map, read before it is emptied: emptying it
@@ -19284,9 +19283,10 @@ function drawTurnList(list, note) {
     put(list, "div", "nohits",
         state.find ? "Nothing here matches." : "Nothing said yet.");
   }
+  const days = mapDays(found);
   for (const one of found) {
+    if (days.has(one.seq)) put(list, "div", "mapday", days.get(one.seq));
     putTurnRow(list, one.seq, glimpse(one.text) || "(no prompt)", true);
-    if (state.turns.shut.has(one.seq)) continue;
     for (const reply of one.replies) {
       putTurnRow(list, reply.seq, glimpse(reply.text) || "(no text)", false);
     }
@@ -19295,42 +19295,45 @@ function drawTurnList(list, note) {
   list.scrollTop = atFoot ? list.scrollHeight : was;
 }
 
+// The day each round starts on, where it is not the day of the round before
+// (#512): a long session is a column of prompts, and nothing said where
+// Tuesday ended. Only when the rounds span more than one day: a line that
+// says "Today" over a session of one afternoon is a line of nothing. The
+// round's own time, so a round that ran past midnight stays under the day
+// it was asked on.
+function mapDays(found) {
+  const out = new Map();
+  let was = null;
+  for (const one of found) {
+    if (!one.ts) continue;
+    const at = new Date(one.ts * 1000);
+    const day = at.toDateString();
+    if (day === was) continue;
+    was = day;
+    const today = new Date((Date.now() / 1000 + state.skew) * 1000);
+    const ago = Math.round((new Date(today.toDateString()) - new Date(day)) / 86400000);
+    out.set(one.seq, ago === 0 ? "Today" : ago === 1 ? "Yesterday"
+            : WEEKDAYS[at.getDay()] + " " + at.getDate() + " " + MONTHS[at.getMonth()]);
+  }
+  return out.size > 1 ? out : new Map();
+}
+
 // A prompt is a folder and a reply is what is in it, so the depth is the one
 // bit `mine` already carries.
 //
-// A round folds shut, and it folds from its icon. The row has two jobs and
-// one of them must not be taken by the other: the whole row goes to that
-// place in the transcript, which is what the map is for, and the icon alone
-// folds -- `ICONS.dirOpen` is what says which way it is, and it is the
-// triangle this list does not draw. Folding on any click would mean you could
-// not read a round without closing it.
+// **A round does not fold** (#512). A chevron in front of each prompt folded
+// its replies away; the reader never used it, and it held every row of the
+// map one step to the right. The row has one job: it goes to that place in
+// the transcript. A prompt is in bold instead, so the reader's own words
+// stand out from the replies under them.
 function putTurnRow(list, seq, text, mine) {
-  const shut = mine && state.turns.shut.has(seq);
-  const button = putListRow(list, { dir: mine, open: mine && !shut,
+  const button = putListRow(list, { dir: mine, open: mine,
                                     depth: mine ? 0 : 1,
                                     chosen: seq === state.turns.at,
                                     title: text,
                                     icon: mine ? "person" : "robot" });
-  if (mine) {
-    // Said out loud, because a second target on a row nothing else on this
-    // page has two of is not something a reader can be expected to find.
-    // The chevron hangs in front of the person, so a reply's robot, one
-    // step in, stands under the person it answers.
-    button.setAttribute("aria-expanded", String(!shut));
-    const fold = putIcon(button, "chevron");
-    fold.classList.add("fold");
-    fold.setAttribute("title", shut ? "open this round" : "fold this round away");
-    button.insertBefore(fold, button.firstChild);
-  }
   putName(button, text, []);
-  button.addEventListener("click", (press) => {
-    if (mine && press.target.closest(".fold")) {
-      if (shut) state.turns.shut.delete(seq); else state.turns.shut.add(seq);
-      redrawMap();
-      return;
-    }
-    goToTurn(seq);
-  });
+  button.addEventListener("click", () => goToTurn(seq));
 }
 
 // Go to one turn, and mark where you went. The list is the map; the mark is
@@ -20674,7 +20677,6 @@ function blankTurns() {
     heads: new Map(),   // the one line over each run of calls, by its first
     run: -1,            // which reading of this transcript those are from
     open: new Set(),    // blocks the reader opened: a tool, a long message
-    shut: new Set(),    // rounds the reader folded shut on the map
     goTo: null,         // a block a link asked for, until it is on screen
     goToTs: null,       // and its moment, for a saved turn (#377)
     goToNear: null,     // or about when, for a search result (#379)
@@ -23533,7 +23535,6 @@ const asIs = (value) => value;
 const PLACE_FIELDS = [
   ["turns", "at", asIs], ["turns", "down", asIs], ["turns", "run", asIs],
   ["turns", "open", (value) => new Set(value)],
-  ["turns", "shut", (value) => new Set(value)],
   ["files", "path", asIs], ["files", "at", asIs], ["files", "asText", asIs],
   ["files", "down", asIs], ["files", "dirs", (value) => new Map(value)],
   ["diffs", "open", (value) => new Map(value)], ["diffs", "of", asIs],
@@ -23740,9 +23741,9 @@ async function load() {
 // `seq` is a place in one reading, not an identity. A transcript rewritten
 // under its own name counts from nought again, so everything the reader
 // chose by `seq` then points at a different block: the tool results they had
-// expanded, the rounds they had folded shut, and the row the map marks. They
-// are forgotten together, in one place, because there are three of them and
-// a fourth would be added to two of them.
+// expanded and the row the map marks. They are forgotten together, in one
+// place, because there were three of them once and a fourth would be added to
+// two of them.
 //
 // This is why `run` is one of the things a session keeps: coming back to a
 // session whose transcript has not been rewritten must keep your place, and
@@ -23750,7 +23751,6 @@ async function load() {
 // would make every return look like a rewrite.
 function forgetPlaces() {
   state.turns.open = new Set();
-  state.turns.shut = new Set();
   state.turns.at = null;
   state.turns.goTo = null;
 }

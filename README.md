@@ -291,8 +291,9 @@ on all three. The browser remembers what you folded. Press <kbd>f</kbd> or
 #### Transcript
 
 The map beside the transcript has one row for each thing you typed, with the
-replies under it. Click a row to go there. Click its chevron to fold that round
-away. When you scroll up, a round **↓** button at the foot of the transcript takes you back to the end. After a reload, the page stays on the same session, and the transcript and the map both open at the latest round.
+replies under it. What you typed is in bold. Click a row to go there. When a
+session runs over more than one day, a line over the first round of each day
+says which day it is. When you scroll up, a round **↓** button at the foot of the transcript takes you back to the end. After a reload, the page stays on the same session, and the transcript and the map both open at the latest round.
 
 A very long message, such as a log you pasted, shows only its first lines.
 Click **show all** under it to read all of it, and **fold** to make it short
