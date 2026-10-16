@@ -813,7 +813,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     find box by CSS** (`order: -1`, #492): `homeFind` appends `#find` to
     the slot, so the markup is no guide. It stood after the box, and the
     reader asked for it at the column's left, in both columns, once the
-    Files tab's funnel stood beside it.
+    Files tab's funnel stood beside it. **Folded or open, it stands in one
+    place** (`--fold-in` from the column's edge, and as far from the box):
+    it is pressed to fold and again to unfold, and the pointer has not
+    moved. The open slot's padding is taken back by the button's margin;
+    the strip no longer centres it. Its middle is the box's middle.
+    `test_a_fold_button_stays_where_it_was_pressed`.
   - **A folded column's edge drags nothing** (`pointer-events: none`): a
     drag set a width nobody could see.
   - **`f` and `/` unfold the column they type into**: nothing is focused

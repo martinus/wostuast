@@ -12427,14 +12427,14 @@ body {
 /* A column folded away (issue 464) is a strip as wide as its button, and
    the button stands where it stood. Its edge drags nothing while it is
    folded: a drag would set a width nobody can see. */
-:root { --fold-w: 34px; }
+:root { --fold-w: 34px; --fold-in: 4px; }
 /* The fold button is a bare icon beside a box, never a second box (issue
    469): a box of the same height with an edge of its own read as the find
    box's twin, not quite the same. A ring shows on the hover. It stands
    before the box, at the column's left (issue 492): the reader asked for
    it there, in both columns. */
-.findslot > .fold { order: -1; margin-right: 6px; align-self: center;
-  border-color: transparent; background: none; }
+.findslot > .fold { order: -1; margin: 0 var(--fold-in) 0 calc(var(--fold-in) - 10px);
+  align-self: center; border-color: transparent; background: none; }
 .findslot > .fold:hover { border-color: var(--edge-bright); }
 /* "Only the changed files" (issue 492), after the find box, lit while it
    is on. */
@@ -12453,9 +12453,16 @@ body {
 /* Folded, the head holds the logo alone, in the middle of the strip. */
 .foldsessions .sidebar-head { padding: 0; justify-content: center; align-items: center; }
 .foldsessions .sidebar .findslot, .foldlist .content.split > .side > .findslot {
-  padding-left: 0; padding-right: 0; justify-content: center;
+  padding-left: 0; padding-right: 0;
 }
-.foldsessions .findslot > .fold, .foldlist .findslot > .fold { margin-right: 0; }
+/* Folded or open, the button stands `--fold-in` from the column's left
+   edge (issue 492): it is pressed to fold and pressed again to unfold,
+   and a button that moved between the two was not under the pointer any
+   more. The open slot's 10 px of padding are taken back by its margin,
+   and the box stands as far after it, so it is in the middle of the room
+   left of the box as well as of the box's line. */
+.foldsessions .findslot > .fold, .foldlist .findslot > .fold {
+  margin: 0 0 0 var(--fold-in); }
 .foldsessions #grip, .foldlist .content.split > .grip { pointer-events: none; }
 /* Folded, every row is a tile in the strip (issue 464): the first letters
    of its name on its state's colour, a dot when it is unread, and the
