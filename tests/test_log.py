@@ -573,7 +573,8 @@ def test_no_name_is_defined_twice():
 #: scars hide each other (#436). These were past the limit when the rule
 #: was written; each may only shrink, and goes from the list once it is
 #: under. Python by `ast`, methods as `Class.method`; the page's top-level
-#: `function`s as `page:name`, to the `}` that closes them.
+#: `function`s as `page:name`, to the `}` that closes them. #548 splits
+#: them, one or two at a time.
 LINES_MOST = 100
 LONGER_ALREADY = {
     "EventFollower.new_lines": 117, "pick_base": 124, "worktree_diff": 149,
