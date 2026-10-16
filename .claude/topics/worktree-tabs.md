@@ -110,6 +110,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   stays one row, which is what git's own rule was protecting.
   **The budget is an argument, not a default read at import**, or a test
   would have to build two thousand files to reach it.
+  - **A walked file written since the session began is changed** (#492,
+    `FileEntry.walked`, `Listing.written`, `written_since`). git says
+    nothing about a file it ignores, so `.oa-implement`'s plan had no dot,
+    its folder never opened itself, and the "changed only" filter left it
+    out. A walked file is stat'ed -- the budget bounds them -- and the
+    route, not the listing, picks the ones at or after the asking
+    session's `started_at`: one listing serves every session in the
+    worktree. An ignored file git lists by itself, beside tracked ones, is
+    not stat'ed: nothing bounds how many there are.
+    `test_a_file_written_in_an_ignored_folder_since_the_session_began_is_changed`.
   A link to a directory is neither followed nor listed: following it is a way
   round the budget and into a loop, and it is not a file.
 - **`skipped` is not in the listing's tag.** The tag is a hash of the names,
@@ -158,6 +168,26 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   x=13 with nothing joining them, and read as a folder with its right side
   sliced off, although nothing was ever clipped. Draw it, look at it at 13 px,
   then measure it.
+- **What changed is bold, and the funnel shows it alone** (#492,
+  `onlyChanged`, `putOnlyChanged`, `.onlychanged`). The dot after a name
+  was easy to miss in a long tree, so a touched row of the Files tab's tree
+  (`.filelist.files`, not the transcript's map, which wears the same rows)
+  is bold. The funnel, after the find box, keeps only the folders in
+  `state.files.marked` and the files in `state.files.changed` in
+  `treeRows`, and is in the list's redraw key, or a click drew nothing. It
+  is this browser's, in `localStorage`, as the folds are; `split` builds
+  the slot again on every switch, so `drawFiles` puts it back.
+  `test_what_changed_is_bold_and_the_funnel_shows_it_alone`.
+- **A binary file is its hex on the Files tab** (#487, `hex_dump`,
+  `HEX_MAX_BYTES`, `FileText.hex`, `state.files.hex`, `.code.hexdump`).
+  It was a note and nothing more. The first 64 KB as `xxd` draws them,
+  a dot for every byte that is not printable ASCII, so nothing in it acts
+  on a page or a terminal. The answer stays `binary`: `readLoose` reads an
+  untracked file through the same route, and the Review tab still says
+  "binary". On the page the hex is drawn as a text's rows, with no colour
+  and no `+`: there is no line of text to comment on.
+  `test_a_binary_file_is_read_as_hex_for_the_files_tab`,
+  `test_a_binary_file_is_drawn_as_hex`.
 - **A folder row carries no triangle.** It stood where nothing stood on a
   file row, so a folder's name sat 9 px right of a file's at the same depth —
   and a file one level deeper lined up exactly with the folder above it, which

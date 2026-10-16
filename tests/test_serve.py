@@ -2734,3 +2734,31 @@ def test_a_turn_is_saved_by_a_post_and_listed_by_a_get(ws, served, monkeypatch):
     status, body = post(gone, dict(turn, ts=5.0, save=False), token=daemon.token)
     assert status == 200 and [e["id"] for e in body["saved"]] == ["s1"], body
     assert not typed
+
+
+def test_a_file_written_in_an_ignored_folder_since_the_session_began_is_changed(
+        ws, served, repo):
+    """git says nothing about a file it ignores, and `.oa-implement` is
+    where an agent writes its plan (#492): a file there that was written
+    after the session began counts as changed. One written before does not,
+    and neither does one of a session that has begun later than it."""
+    daemon, base = served
+    (repo / ".gitignore").write_text(".oa-implement/\n")
+    (repo / ".oa-implement").mkdir()
+    old = repo / ".oa-implement" / "old.md"
+    old.write_text("# old\n")
+    began = time.time() - 600
+    os.utime(old, (began - 600, began - 600))
+    (repo / ".oa-implement" / "plan.md").write_text("# plan\n")
+    ws.append_event(event("SessionStart", cwd=str(repo), ts=began))
+    ws.append_event(event("SessionStart", sid="s2", cwd=str(repo),
+                          ts=time.time() + 600))
+    daemon.store.refresh()
+    _, body = get(f"{base}/api/session/s1/files")
+    assert ".oa-implement/old.md" in body["names"].split("\0")
+    assert ".oa-implement/plan.md" in body["changed"]
+    assert ".oa-implement/old.md" not in body["changed"]
+    assert ".gitignore" in body["changed"]           # what git says, as before
+    _, later = get(f"{base}/api/session/s2/files")
+    assert ".oa-implement/plan.md" not in later["changed"]
+    assert ".gitignore" in later["changed"]

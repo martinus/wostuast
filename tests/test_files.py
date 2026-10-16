@@ -1838,3 +1838,20 @@ def test_the_whitespace_settings_take_their_words_only(ws):
     assert ws.config_trouble("space_marks", "yes")
     assert not ws.config_trouble("code_width", "narrow")
     assert ws.config_trouble("code_width", "wide")
+
+
+def test_a_binary_file_is_read_as_hex_for_the_files_tab(ws, seeded, monkeypatch):
+    """A binary file was a note and nothing more (#487). It is its first
+    `HEX_MAX_BYTES` as `xxd` shows them, with a dot for every byte that is
+    not printable, and it stays `binary` for the Review tab."""
+    (seeded / "blob.bin").write_bytes(b"\0\x01<a&>\x1b[31m" + bytes(range(200, 216)))
+    found = ws.read_worktree_file(str(seeded), "blob.bin")
+    assert found.binary is True and found.text == ""
+    assert found.hex.splitlines() == [
+        "00000000: 0001 3c61 263e 1b5b 3331 6dc8 c9ca cbcc  ..<a&>.[31m.....",
+        "00000010: " + f"{'cdce cfd0 d1d2 d3d4 d5d6 d7':<39}" + "  ...........",
+    ]
+    monkeypatch.setattr(ws, "HEX_MAX_BYTES", 32)
+    (seeded / "big.bin").write_bytes(b"\0" * 100)
+    big = ws.read_worktree_file(str(seeded), "big.bin").hex
+    assert big.count("\n00000") == 1 and "the first 32 B of 100 B" in big

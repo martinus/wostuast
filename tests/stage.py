@@ -17,7 +17,9 @@ The repository, made fresh each run: `main` with one commit; `feature` with
 four more -- the second has a Markdown message with a trailer, and each adds
 a function with a tab-indented body and a line far wider than the pane --
 a change not committed yet, and `PLAN.md`, a Markdown document nobody has
-committed. One session stands in it, with a short transcript.
+committed. Folders (`src/util`, `docs`), a binary `logo.bin`, and
+`.oa-implement/plan.md` in a folder git ignores, written after the session
+began. One session stands in it, with a short transcript.
 
 `--tab` is the tab drawn; `review` is the default. `--commit N` shows the
 Nth commit of the branch, counted from the oldest, as "N / 4" does; 0 is
@@ -99,6 +101,15 @@ def make_repo(repo: Path) -> None:
     git(repo, "config", "user.name", "Stage")
     body = "int ring_size(struct ring *r)\n{\n\treturn r->size;\n}\n"
     (repo / "ring.c").write_text(body)
+    # A tree with folders in it, a binary file, and a folder git ignores,
+    # where an agent writes its plan (`serve` writes it, once the session
+    # has begun).
+    (repo / "src" / "util").mkdir(parents=True)
+    (repo / "src" / "util" / "list.c").write_text("int list_size(void);\n")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "notes.md").write_text("# Notes\n")
+    (repo / "logo.bin").write_bytes(bytes(range(256)) * 3)
+    (repo / ".gitignore").write_text(".oa-implement/\n")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "Start the ring")
     git(repo, "checkout", "-qb", "feature")
@@ -145,8 +156,10 @@ def serve(home: Path, commands: bool = False) -> tuple[str, Path]:
         shutil.copytree(FIXTURES / "commands" / "claude",
                         ws.settings_path().parent, dirs_exist_ok=True)
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": str(repo), "pane": "%7", "ts": time.time(),
+                     "cwd": str(repo), "pane": "%7", "ts": time.time() - 1,
                      "transcript_path": str(transcript)})
+    (repo / ".oa-implement").mkdir()
+    (repo / ".oa-implement" / "plan.md").write_text("# The plan\n")
     daemon = ws.Daemon()
     server = ws.make_server(daemon, 0)
     threading.Thread(target=server.serve_forever,
