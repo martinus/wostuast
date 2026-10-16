@@ -386,6 +386,11 @@ for the sidebar and the views over it, `tests/tour.py` draws every row
 state and each view at once; a
 session wrote that script from nothing each time, in a scratchpad that
 stays behind on the machine, and one lost it when the session restarted.
+**Draw a look change with text that runs to the edge, as well as a short
+case.** #526 put a saved bookmark at a turn's top right, drawn over replies
+of a few words; the cover picture of #521, real-length text, showed it
+standing on the words of a reply's first line, and #529 fixed it after the
+merge. `tests/tour.py`'s transcript is the long case, ready-made.
 **A mockup is drawn the same way**: `--eval` builds the proposal inside the
 real page, with its real CSS. **`--eval` is handed to `page.evaluate`, so it
 is one expression**: statements go in `(() => { … })()`, and a list of them
