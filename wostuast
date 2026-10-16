@@ -1896,7 +1896,8 @@ class Store:
     can never see half of an update.
     """
 
-    def __init__(self, follower: EventFollower | None = None) -> None:
+    def __init__(self, follower: EventFollower | None = None,
+                 marks: "Marks | None" = None) -> None:
         self.sessions: dict[str, Session] = {}
         # Passed in by a test that folds events of its own (#546).
         self.follower = follower if follower is not None else EventFollower()
@@ -1909,8 +1910,6 @@ class Store:
         self.liveness_checked = 0.0
         #: Where the log's clock stood at the last look for quiet sessions.
         self.forgot_at = 0.0
-        import threading
-
         # The names the reader gave. Written by whichever thread took the
         # rename and read by the one that folds, so it is replaced whole
         # rather than edited — the same trick `rows` plays, for the same
@@ -1920,27 +1919,9 @@ class Store:
         # at once in one process, and both built the new map from the same
         # snapshot: one name was lost, and memory and the file disagreed
         # about which, so a restart silently swapped them.
-        self.names: dict[str, str] = read_names()
-        #: For a name the page typed as `/rename`: Claude Code's name just
-        #: before it. A name not in here is the page's alone. See
-        #: `page_name`. Replaced whole with `names`, under `naming`.
-        self.over: dict[str, str] = read_names_over()
-        self.names_moved = False          # by a fold, and not yet written
-        self.naming = threading.Lock()
-        #: The snoozes, by session: the moment each was snoozed at (#355).
-        #: Replaced whole under `naming`, as the names are, and for the same
-        #: reason: two POSTs at once built from one snapshot lose one.
-        self.snoozes: dict[str, float] = read_snoozed()
-        #: When the reader last had each session on screen, and the floor
-        #: for a session not in it (#373). Replaced whole under `naming`,
-        #: as the snoozes are.
-        self.seen_floor, self.seen = read_seen()
-        #: The reminders, by session (#375). Replaced whole under `naming`.
-        self.reminders: dict[str, float] = read_reminders()
-        #: The turns saved for later, newest first (#377). Replaced whole
-        #: under `naming`. Kept for a session that has gone from the list
-        #: too: a saved turn is what the reader wanted to keep.
-        self.saved: list[dict[str, Any]] = read_saved()
+        # The reader's marks, out of their five files (#547). Passed in by a
+        # test that folds with no files at all.
+        self.marks = marks if marks is not None else Marks.load()
 
     def get(self, session_id: str) -> Session:
         session = self.sessions.get(session_id)
@@ -2118,10 +2099,10 @@ class Store:
 
     def _move_name(self, old: Session, new: Session) -> None:
         """The reader's name for a conversation goes where it went on."""
-        with self.naming:
-            if old.session_id not in self.names or new.session_id in self.names:
+        with self.marks.naming:
+            if old.session_id not in self.marks.names or new.session_id in self.marks.names:
                 return
-            names, over = dict(self.names), dict(self.over)
+            names, over = dict(self.marks.names), dict(self.marks.over)
             names[new.session_id] = names.pop(old.session_id)
             # The new session has no `/rename` of its own: Claude Code does
             # not carry it over. So the name is the page's alone there.
@@ -2130,17 +2111,17 @@ class Store:
             # Not written here: this runs inside the fold, the replay at
             # start included, and the fold does no I/O (#546, CLAUDE.md,
             # **Principles**, 1). `save_names` writes it once the fold is done.
-            self.names, self.over = names, over
-            self.names_moved = True
+            self.marks.names, self.marks.over = names, over
+            self.marks.names_moved = True
 
     def save_names(self) -> None:
         """Write the names a fold moved, once it is done (`_move_name`)."""
-        with self.naming:
-            if not self.names_moved:
+        with self.marks.naming:
+            if not self.marks.names_moved:
                 return
-            self.names_moved = False
+            self.marks.names_moved = False
             try:
-                write_names(self.names, self.over)
+                write_names(self.marks.names, self.marks.over)
             except OSError as error:
                 log(f"cannot write the names: {error!r}")
 
@@ -2212,7 +2193,7 @@ class Store:
         whose session was forgotten could not be opened. A start folds
         `HISTORY_FOLDED` of the log, so after a restart a saved turn older
         than that has no session to open, still."""
-        kept = {one["id"] for one in self.saved} | set(self.reminders)
+        kept = {one["id"] for one in self.marks.saved} | set(self.marks.reminders)
         for session_id, session in list(self.sessions.items()):
             if now - session.last_ts > SESSION_MAX_AGE and session_id not in kept:
                 del self.sessions[session_id]
@@ -2259,37 +2240,8 @@ class Store:
             self.reload_status(session)
             shown = session.dialog
             session.approvable = bool(shown and hook_waits(str(shown.get("ask") or "")))
-            session.mine = self.page_name(session)
-            session.snoozed_at = self.snoozes.get(session.session_id, 0.0)
-            session.seen_at = self.seen.get(session.session_id, self.seen_floor)
-            session.remind_at = self.reminders.get(session.session_id, 0.0)
+            self.marks.onto(session)
         return sessions
-
-    def page_name(self, session: Session) -> str:
-        """The name the reader gave this session on the page, while it is
-        the one to show, else "" (#351). It reads and never writes:
-        `settle` runs it, and so do `ls` and `wait` in processes of their
-        own, whose copy of the names is not the daemon's.
-
-        A name the page typed as `/rename` is shown only until Claude
-        Code's name moves from what it was just before (`over`): then the
-        status line carries ours, or a later `/rename` from the terminal,
-        and either is the name. Until then it bridges the wait, which is
-        long: at an idle prompt Claude Code does not run the status line
-        again after a `/rename`, only at the next turn (measured, 2.1.288).
-
-        A name nothing could be typed for -- no tmux, the session over, a
-        dialog up -- is the page's alone, and it stands until the reader
-        changes it. "Last wins" against a `/rename` in the terminal was
-        tried and cannot be told: the status line says what the name is,
-        not when it was set, and with the stale status above a rename made
-        before the page's looked like one made after it.
-        """
-        sid = session.session_id
-        name = self.names.get(sid, "")
-        if not name or sid not in self.over:
-            return name
-        return name if session.status.name == self.over[sid] else ""
 
     def reload_git(self, sessions: Sequence[Session], moment: float) -> None:
         """Read git for the directories that asked, and for any we have never
@@ -2335,8 +2287,8 @@ class Store:
         snoozed now. A snooze that no longer holds -- its session moved on --
         is dropped from the file on the next write, so it does not grow."""
         session = self.sessions.get(session_id)
-        with self.naming:
-            snoozes = {key: at for key, at in self.snoozes.items()
+        with self.marks.naming:
+            snoozes = {key: at for key, at in self.marks.snoozes.items()
                        if (one := self.sessions.get(key)) is not None
                        and one.snoozed_at == at and one.snoozed}
             if on and session is not None and session.state == "needs_you":
@@ -2344,42 +2296,42 @@ class Store:
             else:
                 snoozes.pop(session_id, None)
             write_snoozed(snoozes)
-            self.snoozes = snoozes
+            self.marks.snoozes = snoozes
         if session is not None:
-            session.snoozed_at = self.snoozes.get(session_id, 0.0)
+            session.snoozed_at = self.marks.snoozes.get(session_id, 0.0)
         return session is not None and session.snoozed
 
     def save(self, entry: dict[str, Any], on: bool) -> list[dict[str, Any]]:
         """Save a turn, or take it off the list (#377). A turn is the same
         turn when its session and its moment are: `seq` is a place in one
         reading of the transcript, and a resumed session counts again."""
-        with self.naming:
-            saved = [one for one in self.saved
+        with self.marks.naming:
+            saved = [one for one in self.marks.saved
                      if (one["id"], one["ts"]) != (entry["id"], entry["ts"])]
             if on:
                 saved.insert(0, entry)
             saved = saved[:SAVED_MAX]
             write_saved(saved)
-            self.saved = saved
-        return self.saved
+            self.marks.saved = saved
+        return self.marks.saved
 
     def remind(self, session_id: str, at: float) -> float:
         """Remind the reader of this session at `at`, or forget its
         reminder when `at` is 0 (#375). Returns the moment kept. A session
         no longer known is dropped from the file on the write."""
         session = self.sessions.get(session_id)
-        with self.naming:
-            reminders = {key: when for key, when in self.reminders.items()
+        with self.marks.naming:
+            reminders = {key: when for key, when in self.marks.reminders.items()
                          if key in self.sessions}
             if session is not None and at > 0:
                 reminders[session_id] = at
             else:
                 reminders.pop(session_id, None)
             write_reminders(reminders)
-            self.reminders = reminders
+            self.marks.reminders = reminders
         if session is None:
             return 0.0
-        session.remind_at = self.reminders.get(session_id, 0.0)
+        session.remind_at = self.marks.reminders.get(session_id, 0.0)
         return session.remind_at
 
     def see(self, session_id: str, read: bool) -> bool:
@@ -2391,16 +2343,16 @@ class Store:
         hook read a moment ahead of this one must not leave the turn the
         reader is looking at unread."""
         session = self.sessions.get(session_id)
-        with self.naming:
-            seen = {key: at for key, at in self.seen.items() if key in self.sessions}
+        with self.marks.naming:
+            seen = {key: at for key, at in self.marks.seen.items() if key in self.sessions}
             if session is not None:
                 seen[session_id] = (max(time.time(), session.ended_at)
                                     if read else -1.0)
-            write_seen(self.seen_floor, seen)
-            self.seen = seen
+            write_seen(self.marks.seen_floor, seen)
+            self.marks.seen = seen
         if session is None:
             return False
-        session.seen_at = self.seen.get(session_id, self.seen_floor)
+        session.seen_at = self.marks.seen.get(session_id, self.marks.seen_floor)
         return session.unread
 
     def rename(self, session_id: str, name: str,
@@ -2416,9 +2368,9 @@ class Store:
         """
         clean = clean_name(name)
         session = self.sessions.get(session_id)
-        with self.naming:
-            names, kept = dict(self.names), dict(self.over)
-            for key, was in self.over.items():
+        with self.marks.naming:
+            names, kept = dict(self.marks.names), dict(self.marks.over)
+            for key, was in self.marks.over.items():
                 one = self.sessions.get(key)
                 if one is not None and one.status.name != was:
                     names.pop(key, None)
@@ -2431,7 +2383,7 @@ class Store:
             else:
                 names.pop(session_id, None)
             write_names(names, kept)
-            self.names, self.over = names, kept
+            self.marks.names, self.marks.over = names, kept
         if session is not None:
             session.mine = clean
         return clean
@@ -7012,12 +6964,9 @@ def clean_name(text: str) -> str:
 def read_name_entries() -> dict[str, tuple[str, str | None]]:
     """Every name the reader has given, with Claude Code's name just before
     the page typed it as `/rename`, or None for a name that is the page's
-    alone (`Store.page_name`). That one is kept as a bare string, as every
+    alone (`Marks.page_name`). That one is kept as a bare string, as every
     name was before #351, so an older wostuast still reads it."""
-    try:
-        payload = json.loads(names_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    payload = read_json(names_path())
     if not isinstance(payload, dict):
         return {}
     found: dict[str, tuple[str, str | None]] = {}
@@ -7031,18 +6980,115 @@ def read_name_entries() -> dict[str, tuple[str, str | None]]:
     return found
 
 
-def read_snoozed() -> dict[str, float]:
-    """Every snooze kept, or none. A value that is not a number is left out:
-    the file is ours, but nothing read from a disk is trusted blindly."""
+class Marks:
+    """The reader's marks on sessions (#547): the names they gave, and
+    Claude Code's name just before a typed one (`over`); the snoozes; what
+    they have seen, and since when (`seen_floor`); the reminders; the
+    saved turns. Five small files, read at start by `load` and written by
+    `Store`'s verbs, each under the one lock, `naming`. A `Marks()` holds
+    none and reads nothing, for a test.
+
+    Each mark had its reader, its writer, its own copy of the number check,
+    and its own line copying it onto a `Session` on every tick; a sixth
+    mark would have copied the shape once more. The copying is `onto`."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.names: dict[str, str] = {}
+        #: For a name the page typed as `/rename`: Claude Code's name just
+        #: before it. A name not in here is the page's alone. See
+        #: `page_name`. Replaced whole with `names`, under `naming`.
+        self.over: dict[str, str] = {}
+        self.names_moved = False          # by a fold, and not yet written
+        self.snoozes: dict[str, float] = {}
+        self.seen_floor = time.time()
+        self.seen: dict[str, float] = {}
+        self.reminders: dict[str, float] = {}
+        self.saved: list[dict[str, Any]] = []
+        self.naming = threading.Lock()
+
+    @classmethod
+    def load(cls) -> "Marks":
+        """Every mark kept on the disk. A file that is not there, or not
+        what it should be, is no marks of that kind (`read_json`)."""
+        marks = cls()
+        marks.names = read_names()
+        marks.over = read_names_over()
+        marks.snoozes = read_snoozed()
+        marks.seen_floor, marks.seen = read_seen()
+        marks.reminders = read_reminders()
+        marks.saved = read_saved()
+        return marks
+
+    def onto(self, session: Session) -> None:
+        """Give a session its marks, as the page shows them: the one place
+        they reach a `Session`. `settle` calls it for every shown session."""
+        sid = session.session_id
+        session.mine = self.page_name(session)
+        session.snoozed_at = self.snoozes.get(sid, 0.0)
+        session.seen_at = self.seen.get(sid, self.seen_floor)
+        session.remind_at = self.reminders.get(sid, 0.0)
+
+    def page_name(self, session: Session) -> str:
+        """The name the reader gave this session on the page, while it is
+        the one to show, else "" (#351). It reads and never writes:
+        `settle` runs it, and so do `ls` and `wait` in processes of their
+        own, whose copy of the names is not the daemon's.
+
+        A name the page typed as `/rename` is shown only until Claude
+        Code's name moves from what it was just before (`over`): then the
+        status line carries ours, or a later `/rename` from the terminal,
+        and either is the name. Until then it bridges the wait, which is
+        long: at an idle prompt Claude Code does not run the status line
+        again after a `/rename`, only at the next turn (measured, 2.1.288).
+
+        A name nothing could be typed for -- no tmux, the session over, a
+        dialog up -- is the page's alone, and it stands until the reader
+        changes it. "Last wins" against a `/rename` in the terminal was
+        tried and cannot be told: the status line says what the name is,
+        not when it was set, and with the stale status above a rename made
+        before the page's looked like one made after it.
+        """
+        sid = session.session_id
+        name = self.names.get(sid, "")
+        if not name or sid not in self.over:
+            return name
+        return name if session.status.name == self.over[sid] else ""
+
+
+
+def is_number(value: Any) -> bool:
+    """A real number. JSON's `true` is an `int` to Python, and is not one.
+    Written out in four readers before #547."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def read_json(path: Path) -> Any:
+    """What a file of ours holds, or None when it is not there or is not
+    JSON. The file is ours, but nothing read from a disk is trusted
+    blindly: every reader checks the shape of what this gives back."""
     try:
-        payload = json.loads(snoozed_path().read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        return None
+
+
+def read_moments(path: Path, positive: bool = False) -> dict[str, float]:
+    """A map of session to moment, as the snoozes and the reminders are
+    kept. A value that is not a number is left out, and with `positive`
+    one that is not past nought."""
+    payload = read_json(path)
     if not isinstance(payload, dict):
         return {}
     return {str(key): float(value) for key, value in payload.items()
-            if isinstance(key, str) and isinstance(value, (int, float))
-            and not isinstance(value, bool)}
+            if isinstance(key, str) and is_number(value)
+            and (value > 0 or not positive)}
+
+
+def read_snoozed() -> dict[str, float]:
+    """Every snooze kept, or none."""
+    return read_moments(snoozed_path())
 
 
 def write_snoozed(snoozes: dict[str, float]) -> None:
@@ -7071,10 +7117,9 @@ def saved_entry(raw: Any) -> dict[str, Any] | None:
         return None
     sid, seq, ts = raw.get("id"), raw.get("seq"), raw.get("ts")
     text, at, who = raw.get("text", ""), raw.get("at", 0.0), raw.get("who")
-    number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool)
     if (not isinstance(sid, str) or not sid or not isinstance(seq, int)
-            or isinstance(seq, bool) or seq < 0 or not number(ts)
-            or not isinstance(text, str) or not number(at)
+            or isinstance(seq, bool) or seq < 0 or not is_number(ts)
+            or not isinstance(text, str) or not is_number(at)
             or who not in SAVED_WHO):
         return None
     entry = {"id": sid, "seq": seq, "ts": float(ts), "text": text[:SAVED_PREVIEW],
@@ -7086,10 +7131,7 @@ def saved_entry(raw: Any) -> dict[str, Any] | None:
 
 def read_saved() -> list[dict[str, Any]]:
     """Every saved turn, newest first, or none."""
-    try:
-        payload = json.loads(saved_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    payload = read_json(saved_path())
     if not isinstance(payload, list):
         return []
     return [one for one in map(saved_entry, payload) if one is not None][:SAVED_MAX]
@@ -7227,17 +7269,8 @@ def search_log(query: str, sessions: dict[str, Session]) -> list[dict[str, Any]]
 
 
 def read_reminders() -> dict[str, float]:
-    """Every reminder kept, or none: the same shape as the snoozes, and
-    read as carefully."""
-    try:
-        payload = json.loads(reminders_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {str(key): float(value) for key, value in payload.items()
-            if isinstance(key, str) and isinstance(value, (int, float))
-            and not isinstance(value, bool) and value > 0}
+    """Every reminder kept, or none: the same shape as the snoozes."""
+    return read_moments(reminders_path(), positive=True)
 
 
 def write_reminders(reminders: dict[str, float]) -> None:
@@ -7253,18 +7286,14 @@ def read_seen() -> tuple[float, dict[str, float]]:
     that is not a number is left out, as `read_snoozed` leaves one out.
     """
     now = time.time()
-    try:
-        payload = json.loads(seen_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return now, {}
+    payload = read_json(seen_path())
     if not isinstance(payload, dict):
         return now, {}
-    number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool)
     floor = payload.get("floor")
     seen = payload.get("seen")
-    return (float(floor) if number(floor) else now,
+    return (float(floor) if is_number(floor) else now,
             {str(key): float(value) for key, value in seen.items()
-             if isinstance(key, str) and number(value)}
+             if isinstance(key, str) and is_number(value)}
             if isinstance(seen, dict) else {})
 
 
@@ -9081,7 +9110,7 @@ class Daemon:
         change: dict[str, Any] = {
             "now": time.time(),
             "changed": [one for one in rows if told.get(one["id"]) != one],
-            "saved": len(self.store.saved)}
+            "saved": len(self.store.marks.saved)}
         if order != self.told_order:
             change["order"] = order
         self.told = {one["id"]: one for one in rows}
@@ -9092,7 +9121,7 @@ class Daemon:
         # How many turns are saved, for the sidebar's link (#377): the list
         # itself is asked for when it opens.
         return {"now": time.time(), "sessions": self.store.rows,
-                "saved": len(self.store.saved)}
+                "saved": len(self.store.marks.saved)}
 
     def tick(self) -> None:
         """One pass: fold new events, then tell the browsers what changed."""
@@ -9700,7 +9729,7 @@ class Serving:
     def saved_turns(self, query: dict[str, str]) -> None:
         """Every saved turn, of every session (#377): asked for when the
         list opens, not pushed."""
-        self.reply_json({"saved": self.daemon.store.saved})
+        self.reply_json({"saved": self.daemon.store.marks.saved})
 
     def events(self, query: dict[str, str]) -> None:
         self.stream(query.get("watch", ""))

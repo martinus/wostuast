@@ -33,6 +33,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   The worktree is the tiebreaker only. Sorting on `label` is still wrong, for
   the reason it always was: the name arrives from the status line a second
   after the session starts, and `/rename` changes it later.
+- **The reader's marks are one store, `Marks`** (#547): the names and
+  `over`, the snoozes, what was seen and since when, the reminders, the
+  saved turns. `Marks.load` reads the five files, each through `read_json`
+  and one number check (`is_number`); `Marks.onto` is the one place they
+  reach a `Session`; `naming` is the one lock every writer takes. Each
+  mark had its reader, its own copy of the number check, and its own line
+  in `settle`, and a sixth would have copied the shape again. A `Marks()`
+  reads nothing, so a `Store` can be made with no files.
+  `test_each_mark_survives_a_restart`,
+  `test_a_broken_file_of_each_kind_is_no_marks`,
+  `test_a_store_can_be_built_with_no_files`.
 - **A snooze is a mark on one wait, not a state and not a timer** (#355).
   `Session.snoozed` holds while the session still waits on what it waited
   on when the reader said "not now": `snoozed_at` is that wait's
@@ -652,7 +663,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     so a stale title is one keystroke from right. The row's second line
     still says where it stands.
     **A typed name bridges; a name nothing was typed for stands**
-    (`Store.page_name`). A name the page typed as `/rename` is kept with
+    (`Marks.page_name`). A name the page typed as `/rename` is kept with
     Claude Code's name just before (`Store.over`) and shown until that
     moves: then the status line carries ours, or a later terminal
     `/rename`. The bridge is long -- at an idle prompt Claude Code runs the

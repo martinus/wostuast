@@ -1435,7 +1435,7 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
         page.wait_for_function(
             """document.querySelector('.row[data-id="fresh"] .name')
                .textContent === 'retry work!'""")
-        assert daemon.store.names.get("fresh") == "retry work!"
+        assert daemon.store.marks.names.get("fresh") == "retry work!"
 
         # `e` on the chosen row, and Escape: nothing is kept.
         page.click('.row[data-id="idle"]')
@@ -1451,7 +1451,7 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
         page.keyboard.press("e")
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)          # proving nothing was sent
-        assert "idle" not in daemon.store.names
+        assert "idle" not in daemon.store.marks.names
 
 
 
@@ -1473,7 +1473,7 @@ def test_the_enter_that_ends_a_composition_keeps_no_name(rows_at):
               document.querySelector(box).dispatchEvent(press);
             }""", ['.row[data-id="fresh"] input.rowname', how])
         page.wait_for_timeout(300)          # proving nothing was kept
-        assert "fresh" not in daemon.store.names
+        assert "fresh" not in daemon.store.marks.names
         assert page.locator('.row[data-id="fresh"] input.rowname').count() == 1
         page.keyboard.press("Enter")
         page.wait_for_function(
@@ -1788,7 +1788,7 @@ def test_a_rename_that_could_not_reach_claude_code_says_so(rows_at):
         said = page.evaluate("window.__said")[-1]
         assert said.startswith("renamed on this page only: ")
         assert "permission dialog" in said
-        assert daemon.store.names.get("named") == "dialog work"
+        assert daemon.store.marks.names.get("named") == "dialog work"
 
 
 

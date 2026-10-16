@@ -11,6 +11,7 @@ handler and both link paths are among them.
 from __future__ import annotations
 
 import builtins
+import io as iomodule
 import json
 import os
 import subprocess
@@ -56,19 +57,23 @@ def test_the_fold_does_no_io(ws, monkeypatch):
     once the fold is done (`save_names`), and not inside it."""
     events = every_kind_of_event(ws)
     store = ws.Store()
-    store.names = {"s1": "the payments work", OLD: "the moved one"}
+    store.marks.names = {"s1": "the payments work", OLD: "the moved one"}
     # Its own context, so that leaving it undoes only these: a plain
     # `monkeypatch.undo()` undid the `ws` fixture's throwaway home too, and
     # the names were then written into the real state directory.
     with monkeypatch.context() as io:
-        for owner, name in [(builtins, "open"), (os, "open"), (os, "replace"),
+        # `Path.read_text` opens through `io.open`, which patching
+        # `builtins.open` does not reach (#547): `Path` is refused too.
+        for owner, name in [(builtins, "open"), (os, "open"), (iomodule, "open"),
+                            (Path, "open"), (Path, "read_text"),
+                            (Path, "read_bytes"), (os, "replace"),
                             (os, "rename"), (os, "stat"), (os, "kill"),
                             (os, "listdir"), (os, "scandir"), (subprocess, "run"),
                             (subprocess, "Popen"), (time, "time")]:
             io.setattr(owner, name, refuse(name))
         for one in events:
             store.apply(one)
-    assert store.names_moved
+    assert store.marks.names_moved
     assert ws.read_names() == {}, "the fold wrote the names itself"
     store.save_names()
     assert ws.read_names() == {"s2": "the payments work",
