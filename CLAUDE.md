@@ -380,7 +380,15 @@ state and each view at once; a
 session wrote that script from nothing each time, in a scratchpad that
 stays behind on the machine, and one lost it when the session restarted.
 **A mockup is drawn the same way**: `--eval` builds the proposal inside the
-real page, with its real CSS. A standalone HTML file with the CSS copied by
+real page, with its real CSS. **`--eval` is handed to `page.evaluate`, so it
+is one expression**: statements go in `(() => { … })()`, and a list of them
+with a `const` drew nothing and said nothing. A change to a session is undone
+by the next push (`patchSession` then a push), so a picture of a state the
+daemon does not hold keeps patching on an interval; and the bars over the
+transcript -- the question, the send box -- are drawn by `drawHeader()`,
+not `draw()`. `tour.py --hover SELECTOR` is for what only a hover shows: a
+`mouseover` sent from `--eval` drew nothing, because the tour moves the
+pointer itself. A standalone HTML file with the CSS copied by
 hand drifts from the page, and needs the browser path that `browser.py`
 already knows. **Every tool keeps to its own home, through `conftest.isolate(home)`**,
 called by each function that writes -- `stage.serve`, `shot.serve`,

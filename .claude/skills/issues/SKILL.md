@@ -211,6 +211,16 @@ for `martinus/martinus/wostuast`.
 0. **Load the tools in one call**: `ToolSearch` with `select:mcp__github__create_pull_request,mcp__github__update_pull_request,mcp__github__pull_request_read,mcp__github__merge_pull_request,mcp__github__actions_list,mcp__github__get_job_logs,mcp__github__list_issues,mcp__github__issue_read,mcp__github__issue_write`
    and `max_results` 9. `subscribe_pr_activity`, `send_later` and
    `delete_trigger` are loaded already.
+   - **When the github server did not connect, `gh api` reads the same
+     things and nothing waits for it**: the server timed out at the start
+     of one session and came back minutes later. The owner's issues are
+     `gh api 'repos/martinus/wostuast/issues?state=open&per_page=100'
+     --jq '.[] | select(.pull_request|not) | "\(.number) \(.user.login)"'`,
+     then a body is `gh api repos/martinus/wostuast/issues/N --jq .body`
+     for a number whose author was `martinus`; a check run is
+     `gh api repos/martinus/wostuast/commits/<sha>/check-runs`. Create,
+     update and merge a pull request through the server once it is back:
+     the footer rule below is written for its calls.
 1. **Push**: `git push -u origin <branch>`.
 2. **Create**: `create_pull_request` with head `<branch>`, base `main`, and
    the body. The server adds a footer and a session link to it.
