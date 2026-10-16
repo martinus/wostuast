@@ -570,15 +570,13 @@ def test_no_name_is_defined_twice():
 
 
 #: A function this long is read in pieces and changed in pieces, and its
-#: scars hide each other (#436). These were past the limit when the rule
-#: was written; each may only shrink, and goes from the list once it is
-#: under. Python by `ast`, methods as `Class.method`; the page's top-level
-#: `function`s as `page:name`, to the `}` that closes them. #548 splits
-#: them, one or two at a time.
+#: scars hide each other (#436). Python by `ast`, methods as
+#: `Class.method`; the page's top-level `function`s as `page:name`, to the
+#: `}` that closes them. `LONGER_ALREADY` held the seven that were past the
+#: limit when the rule was written, each allowed to shrink only; #548 split
+#: them all. A pull request that adds an entry says why in its description.
 LINES_MOST = 100
-LONGER_ALREADY = {
-    "EventFollower.new_lines": 117, "build_report": 153,
-}
+LONGER_ALREADY: dict[str, int] = {}
 
 
 def function_lengths() -> dict[str, int]:
