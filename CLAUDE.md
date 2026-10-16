@@ -72,6 +72,7 @@ bullets beside it are the same part's other scars.
 | About to touch | Read |
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
+| where new code goes: a route, a view, a field the page reads, a second way to read a fact | **Principles** below, and the test that holds each one |
 | `install`, `bring_up_to_date`, `fetch_newest`, `newest_program`, `runs_installed`, `own_version`, `unreadable`, `cmd_serve`'s start, `one_daemon`, `daemon_lock_path`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
 | `hook_source`, `HOOK_PARTS`, `HOOK_HEAD`, `hook_path`, `hook_command`, `is_hook_file`, `write_program`, `install_behind`, `hook_files_missing`, `program_files`, `GONE_VERBS`, `runs_hook_file`, `STATUS_PARTS`, `status_program_path`, `is_status_file`, `then_in` | topics/safety: the hooks run the installed copy, and the hook file is made from it |
 | `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety: our `settings.json`, written from the page; topics/sidebar for the menu |
@@ -200,6 +201,55 @@ building anything. A goal that bends is rewritten here in the same PR.
 - **A review that goes anywhere but the agent.** No GitHub API, no pull
   request, no posting. It is pasted into the pane of the agent standing in
   that worktree, and the reader reads every byte of it first.
+
+## Principles
+
+Five, each held by a test. Where a goal says what the program is for, a
+principle says where its code goes, so that a new feature lands in the
+one place made for it and not beside it. They were written after a
+review of the whole file (#535): the bugs it found were each one fact
+with two homes. When a change cannot keep one, say so in the pull
+request, and name the principle.
+
+1. **Data flows one way**: events, then the fold, then rows, then the
+   wire, then the page. The fold does no I/O: file, git and `/proc`
+   reads happen at the edges, in named steps. Its test comes with #546.
+2. **Each shape the page receives is defined in one place.** Its test
+   comes with #540.
+3. **A draw only reads state.** Only the code that loads data or handles
+   a click changes `state`. Its test comes with #542.
+4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
+   session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`). A test walks
+   the table, so a new entry is tested without anyone writing its test.
+   The views and the routes get theirs with #543 and #545.
+5. **One reader for each fact.** Where two parts of the program read the
+   same fact, they call one function: `prompt_said` for a prompt,
+   `git_status` for `git status`, `apply_git_facts` for a reading of git.
+   `test_search_reads_a_prompt_as_the_fold_does`,
+   `test_the_row_counts_the_changed_files_the_files_tab_marks`,
+   `test_only_one_function_runs_git_status`.
+
+**How a test holds a principle, strongest first.** A test that walks a
+table checks each entry. A differential test gives two readers of one
+fact one hard case, and asks that they agree; write it first and see it
+fail. A guard at run time -- a fold with I/O made to fail, a draw that
+records its fetches -- checks what the code does, but only on the paths
+the tests run, so it comes with a test that each path is run. A static
+check of the source's form is the weakest: moving code satisfies it.
+
+**A ratchet is a list of known breaks that may only get shorter**, like
+`LONGER_ALREADY`. It stops the code sliding back, and it cleans nothing:
+in its first eleven days `LONGER_ALREADY` gained no entry and lost none,
+and `drawSessions` stood at exactly its limit. So:
+
+- **A guard lands in the pull request of the refactor that empties most
+  of its list**, never alone before it. A list of thirty breaks that
+  nobody works on is noise.
+- **Each entry says why it is there**, in a comment beside it or above
+  the list.
+- **A pull request that adds an entry says why in its description.**
+  Adding one is the cheapest way to turn a red test green, and the diff
+  is the only thing that shows it.
 
 ## Layout
 
