@@ -20197,11 +20197,8 @@ function measureTall(code, tall, first, last) {
   shown.forEach(([line], at) => code.tall.set(line, blocks[at].offsetHeight));
 }
 
-function drawFiles(box) {
-  const [list, pane, note] = split(box, "files", "filebody");
-  drawGoTo($("find").parentNode);
-  putOnlyChanged(list.parentNode.querySelector(".findslot"));
-
+// The tree on the left, when what it draws has moved.
+function drawFileList(box, list, note) {
   // What the list draws is what decides whether it is drawn again: which
   // names there are, which file is open, which carry a dot, and which
   // directories stand open. The names come as `filesTag`, which is the
@@ -20230,6 +20227,13 @@ function drawFiles(box) {
     noteList(note, found);
   }
   goToInList(list);
+}
+
+function drawFiles(box) {
+  const [list, pane, note] = split(box, "files", "filebody");
+  drawGoTo($("find").parentNode);
+  putOnlyChanged(list.parentNode.querySelector(".findslot"));
+  drawFileList(box, list, note);
 
   if (holdingText(box)) return;
   // The session is part of it. Two sessions in one worktree land on the

@@ -50,8 +50,8 @@ def test_a_generated_directory_is_in_the_tree_and_its_build_root_is_not(
         (repo / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
     with opened(path) as page:
         show_tab(page, "files")
-        page.wait_for_selector(".filelist button:has-text('.oa-implement')")
-        page.click(".filelist button:has-text('.oa-implement')")
+        # Open by itself: the plan was written since the session began, so
+        # it is a change, and a folder holding one opens (#492).
         page.wait_for_selector(".filelist button:has-text('_build_root_c2')")
         # The folder says why it is empty, where it stands.
         assert page.locator(
@@ -87,8 +87,7 @@ def test_a_build_root_that_appears_later_turns_up_on_its_own(ws, repo_page,
     (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
     with opened(path) as page:
         show_tab(page, "files")
-        page.wait_for_selector(".filelist button:has-text('.oa-implement')")
-        page.click(".filelist button:has-text('.oa-implement')")
+        # Open by itself, as above.
         page.wait_for_selector(".filelist button:has-text('PLAN.md')")
         held = page.evaluate("state.files.tag")
 
@@ -971,6 +970,8 @@ def test_the_file_line_carries_the_width_and_wrap_beside_the_code(ws, repo_page)
         assert page.locator(f"{quick} > *").evaluate_all(
             "(all) => all.map((b) => [b.dataset.name, b.getAttribute('aria-pressed'),"
             " b.getAttribute('aria-label')])") == [
+                ["spacemarks", "false",
+                 "draw a tab as \u2192 and a space at a line's end as \u00b7"],
                 ["codewidth", "false", "narrow code: more of a line fits in a column"],
                 ["wrapping", "false", "wrap long lines"]]
         page.click(f"{quick} .toggle[data-name='codewidth']")
@@ -1332,13 +1333,9 @@ def test_a_picture_is_shown_rather_than_named(repo_page):
             "document.querySelector('.filebody .media img').naturalWidth > 0")
         assert page.locator(".filebody .note").count() == 0
 
-        # And a binary that is not a picture still says so.
+        # And a binary that is not a picture is its hex (#487).
         page.click(".filelist button:has-text('blob.bin')")
-        page.wait_for_function(
-            """() => {
-                 const note = document.querySelector('.filebody .note');
-                 return note && note.textContent.includes('Binary file');
-               }""")
+        page.wait_for_selector(".filebody .code.hexdump .dline")
         assert page.locator(".filebody .media").count() == 0
 
 
