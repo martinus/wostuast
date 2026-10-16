@@ -3340,3 +3340,31 @@ def test_what_a_turn_can_do_is_one_row_at_its_top_right(ws, page_at):
         assert row.locator(".save").is_visible()
         assert not row.locator(".copy").is_visible()
         assert row.locator(".save").bounding_box() == where
+
+
+def test_a_saved_mark_stands_on_no_words(ws, page_at):
+    """A saved bookmark shows without the hover, at the turn's top right, and
+    stood on the words of a reply whose first line ran to the edge (#526's
+    row). A turn with a mark that stays keeps the row's room on its right."""
+    daemon, path = page_at
+    long = ("Found it. `put` and `get` share `entries` with no lock, so a read "
+            "during a write sees half an update, and the test sees it too. ") * 2
+    write_records(daemon,
+                  conftest.record("you", "why?", ts="2026-09-18T14:20:00.000Z"),
+                  conftest.record("claude", long, ts="2026-09-18T14:21:00.000Z"))
+    with opened(path) as page:
+        turn = page.locator(".turn:not(.mine)", has_text="Found it")
+        turn.locator(".prose code").first.wait_for()
+        turn.locator(".prose").hover()
+        turn.locator(".turnacts .save").click()
+        turn.locator(".turnacts .save.on").wait_for()
+        page.mouse.move(5, 5)
+        hit = turn.evaluate("""(one) => {
+          const mark = one.querySelector('.turnacts .save').getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(one.querySelector('.prose'));
+          return [...range.getClientRects()].filter((r) => r.width && r.height
+            && r.left < mark.right && r.right > mark.left
+            && r.top < mark.bottom && r.bottom > mark.top).length;
+        }""")
+        assert hit == 0, hit

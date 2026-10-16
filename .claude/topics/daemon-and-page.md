@@ -417,6 +417,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   09:10" is one moment, and faint it read as a note.
   `test_what_a_turn_can_do_is_one_row_at_its_top_right`,
   `test_a_day_wears_the_time_s_colour`.
+  - **A turn with a mark that stays keeps the row's room on its right**
+    (`.turn:has(> .turnacts > :is(.on, [aria-pressed="true"]))`). A saved
+    bookmark shows without the hover, and stood on the words of a reply
+    whose first line ran to the edge: the cover picture of #521 showed it,
+    after #526 had merged. Only such a turn: every turn keeping 92 px would
+    take back what the narrow column gave. `test_a_saved_mark_stands_on_no_words`.
 - **A column may hang 10 px past its turn.** On a line of its own under the
   time, the copy button once made `.who` 55 px tall, taller than a line of
   text (22) or a prompt's bubble (45), so the gap a reader saw was 32 px
