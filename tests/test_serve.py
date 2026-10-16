@@ -2943,3 +2943,9 @@ def test_every_route_refuses_what_it_must(ws, in_tmux, monkeypatch):
                                         "Content-Type": "application/json"},
                    big) == 413, (method, path)
     assert seen == [], "a refused request typed into the terminal"
+    # A POST is matched with its slashes stripped, as before the table: a
+    # review of the change found `/api/settings/` answered 404 by it.
+    for spelling in ("/api/settings/", "api/settings", "/api/settings//"):
+        assert ask("POST", spelling, ours, {"X-Wostuast-Token": daemon.token,
+                                            "Content-Type": "application/json"},
+                   big) == 413, spelling

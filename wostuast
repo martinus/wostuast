@@ -10441,7 +10441,10 @@ def find_route(method: str, path: str) -> tuple[Any, str, str, str | None] | Non
     """What answers a request: its handler, what its body is called, the
     session it needs (`Serving.dispatch`), and the session's id -- None for
     a route outside a session. None when nothing answers it."""
-    found = ROUTES.get((method, path))
+    # A POST was matched with its slashes stripped, a GET by its path as it
+    # stands; kept so, so that no request is answered other than it was
+    # before the table (#545): `POST /api/settings/` reached the settings.
+    found = ROUTES.get((method, path if method == "GET" else "/" + path.strip("/")))
     if found is not None:
         return found[0], found[1], "", None
     parts = path.strip("/").split("/")
