@@ -203,7 +203,13 @@ SUBAGENTS_HELD = 12
 #: The tool that starts a subagent: `Agent` on 2.1.289, `Task` before it.
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 LOG_MAX_BYTES = 5 * 1024 * 1024
-SESSION_MAX_AGE = 7 * 24 * 3600
+#: How long a session that says nothing stays in the list, under "history":
+#: a month, as far back as a start folds the log (`HISTORY_FOLDED`). It was
+#: a week, and the reader's history shrank under the turns they had saved,
+#: which then said "a session no longer listed" and opened nothing (#494).
+#: A session a saved turn or a reminder points at is kept longer still
+#: (`Store.forget_quiet`).
+SESSION_MAX_AGE = 30 * 24 * 3600
 
 #: How far back a start folds the log (#430): an archive last written
 #: before this is left out. Every start folded every archive, because the
@@ -2183,9 +2189,14 @@ class Store:
         return [one for one in self.sessions.values() if not one.untasked()]
 
     def forget_quiet(self, now: float) -> None:
-        """Forget every session that has said nothing for `SESSION_MAX_AGE`."""
+        """Forget every session that has said nothing for `SESSION_MAX_AGE`,
+        but one a saved turn or a reminder points at (#494): a saved turn
+        whose session was forgotten could not be opened. A start folds
+        `HISTORY_FOLDED` of the log, so after a restart a saved turn older
+        than that has no session to open, still."""
+        kept = {one["id"] for one in self.saved} | set(self.reminders)
         for session_id, session in list(self.sessions.items()):
-            if now - session.last_ts > SESSION_MAX_AGE:
+            if now - session.last_ts > SESSION_MAX_AGE and session_id not in kept:
                 del self.sessions[session_id]
 
     def refresh(
