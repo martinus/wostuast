@@ -1341,6 +1341,9 @@ class Session:
     #: agent waits for it (#447): the row stays working, and `reason` says
     #: what on. Cleared with the attention, by the next prompt or state.
     waits_on_tasks: bool = False
+    #: One of those tasks is a subagent, whose report is the agent's next
+    #: step: such a row stays working while the prompt is idle (#488).
+    waits_on_agents: bool = False
     attention_since: float = 0.0
     # True once this session has sent a PermissionRequest. That event is
     # the same news as a permission Notification, up to twelve seconds
@@ -2660,6 +2663,7 @@ def _clear_attention(session: Session) -> None:
     session.attention_since = 0.0
     session.reason = ""
     session.waits_on_tasks = False
+    session.waits_on_agents = False
     session.asked_about = ""
     session.asking = None
     session.permission = None
@@ -3027,7 +3031,22 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
     if kind == "idle_prompt":
         # The agent waits on its own background task (#447): the prompt is
         # idle, the agent is not, and the row's line says what it waits on.
+        #
+        # **Unless all it waits on is a command in the background** (#488).
+        # A server or a watch loop never ends, and the row stayed green for
+        # hours over an agent idle at its prompt. Claude Code says it is
+        # idle about a minute after the `Stop`, so that is when the turn
+        # ends here -- ready, unread, "has finished" -- and the line says
+        # what still runs. If the command ends and wakes the agent, its
+        # prompt makes the row green again. A subagent is the agent's next
+        # step, so a row that waits on one stays green. The reader chose
+        # this over ready at the `Stop` and over green until the end.
         if session.waits_on_tasks:
+            if session.state == "working" and not session.waits_on_agents:
+                session.state = "done"
+                session.ended_at = ts
+                session.reason = session.reason.replace("waiting on: ", "in the background: ", 1)
+                session.last_event = message or "waiting for input"
             return
         # An open dialog is the better reason, and it outranks this one.
         if session.state != "needs_you":
@@ -3099,6 +3118,10 @@ def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
         session.reason = f"waiting on: {clip(waiting[0], 80)}{more}"
         session.last_event = session.reason
         session.waits_on_tasks = True
+        tasks = event.get("background_tasks")
+        session.waits_on_agents = any(
+            isinstance(one, dict) and one.get("status") == "running"
+            and one.get("type") == "subagent" for one in tasks)
         return
     session.state = "done"
     session.last_event = "stopped"

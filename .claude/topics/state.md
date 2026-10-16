@@ -319,9 +319,19 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   with `<agent-message from=…>` as its prompt, and as `first_prompt` it
   named the session, tag and all, in the row, the tab's title and the
   "needs you" alert. It is the latest event and nothing more.
-  `test_another_sessions_message_does_not_name_the_session`. **The reader chose this knowing the
-  cost**: a server started in the background keeps the row green until it
-  ends. `test_a_turn_that_leaves_a_task_running_is_not_over`,
+  `test_another_sessions_message_does_not_name_the_session`. **But only
+  until Claude Code says the prompt is idle, when all it waits on is a
+  command** (#488, `waits_on_agents`): the reader chose "green until it
+  ends" in #447, and then a server or a watch loop held a row green for
+  hours over an agent idle at its prompt. The idle `Notification`, about a
+  minute after the `Stop`, ends the turn: ready, `ended_at` (so unread and
+  "has finished"), and the line says "in the background: …". If the
+  command ends and wakes the agent, its prompt makes the row green again.
+  A subagent is the agent's next step, so a row waiting on one stays
+  green. The reader chose this over ready at the `Stop` and over green
+  until the end, from the events of a real session: every `Stop` listed
+  one `shell` task running. `test_a_turn_that_leaves_a_task_running_is_not_over`,
+  `test_a_subagent_in_the_background_holds_the_row_green_while_idle`,
   `test_an_idle_prompt_still_speaks_for_a_row_with_no_task`.
   **And the wait clock only starts when the wait does**: a second
   notification about the same dialog moved it, so a row that had waited a

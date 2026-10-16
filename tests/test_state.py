@@ -1798,7 +1798,11 @@ def recorded_background(**changes):
 
 def test_a_turn_that_leaves_a_task_running_is_not_over(ws):
     """The row went to ready at the turn's `Stop`, said "has finished", and
-    went green again when the task's end woke the agent (#447)."""
+    went green again when the task's end woke the agent (#447). So it stays
+    green at the `Stop`. But a command in the background may never end -- a
+    server, a watch loop -- and the row stayed green for hours over an
+    agent idle at its prompt (#488): once Claude Code says the prompt is
+    idle, the turn is over, and the line says what still runs."""
     stop, woken, last = recorded_background()
     store = ws.Store()
     for one in (event("UserPromptSubmit", prompt="build it", ts=1999.0), stop):
@@ -1807,10 +1811,10 @@ def test_a_turn_that_leaves_a_task_running_is_not_over(ws):
     assert session.state == "working"
     assert session.reason == "waiting on: build in the background"
     assert not session.ended_at and not session.unread
-    # The prompt is idle while it waits, and that is not the reader's.
     store.apply(event("Notification", notification_type="idle_prompt",
                       message="Claude is waiting for your input", ts=2000.5))
-    assert session.reason == "waiting on: build in the background"
+    assert session.state == "done" and session.ended_at == 2000.5
+    assert session.reason == "in the background: build in the background"
     store.apply(woken)
     assert session.state == "working"
     assert session.last_prompt == "build it"          # the reader's, still
@@ -1819,6 +1823,19 @@ def test_a_turn_that_leaves_a_task_running_is_not_over(ws):
     store.apply(last)
     assert session.state == "done"
     assert session.ended_at == 2002.0 and session.reason == ""
+
+
+def test_a_subagent_in_the_background_holds_the_row_green_while_idle(ws):
+    """A subagent's report is the agent's next step, so an idle prompt does
+    not end a turn that waits on one (#488 is about commands only)."""
+    stop = recorded_background()[0]
+    stop["background_tasks"].append({"id": "a1", "type": "subagent",
+                                     "status": "running", "description": "look around"})
+    session = fold(ws, event("UserPromptSubmit", prompt="x", ts=1999.0), stop,
+                   event("Notification", notification_type="idle_prompt",
+                         message="Claude is waiting for your input", ts=2000.5))
+    assert session.state == "working" and not session.ended_at
+    assert session.reason.startswith("waiting on: ")
 
 
 def test_a_task_that_is_not_running_does_not_hold_the_turn(ws):
