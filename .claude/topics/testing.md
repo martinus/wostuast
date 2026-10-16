@@ -288,6 +288,13 @@ luck, and on `main` too, to tell whose it is.
   it too**: they serve a session in `%7` without `ws`, and a `--type
   '#say=…'` typed into the reader's own `%7`.
   `test_no_test_reaches_the_tmux_it_runs_under`, `test_it_types_into_no_real_tmux`.
+  - **Nor the real state directory: never `monkeypatch.undo()` in a test
+    that uses `ws`.** `ws` points the state at the test's home through the
+    same `monkeypatch`, and `undo()` takes back every patch, its own too.
+    `test_the_fold_does_no_io` undid its I/O guard that way, and the names
+    it then saved went into `~/.local/state/wostuast/names.json` (#546).
+    Patch for a while with `with monkeypatch.context() as io:`, which
+    undoes only what it set.
 - **A page hears a change only from `daemon.tick()`; `daemon.store.refresh()`
   folds it and tells nobody.** A test that appended and refreshed waited out
   its whole timeout for a push the daemon already held (#422). Refresh before

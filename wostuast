@@ -1896,9 +1896,10 @@ class Store:
     can never see half of an update.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, follower: EventFollower | None = None) -> None:
         self.sessions: dict[str, Session] = {}
-        self.follower = EventFollower()
+        # Passed in by a test that folds events of its own (#546).
+        self.follower = follower if follower is not None else EventFollower()
         self.rows: list[dict[str, Any]] = []
         self.git_read: dict[str, float] = {}
         self.git_wanted: set[str] = set()
@@ -1924,6 +1925,7 @@ class Store:
         #: before it. A name not in here is the page's alone. See
         #: `page_name`. Replaced whole with `names`, under `naming`.
         self.over: dict[str, str] = read_names_over()
+        self.names_moved = False          # by a fold, and not yet written
         self.naming = threading.Lock()
         #: The snoozes, by session: the moment each was snoozed at (#355).
         #: Replaced whole under `naming`, as the names are, and for the same
@@ -2108,9 +2110,7 @@ class Store:
         old.cleared_into = new.session_id
         new.cleared_from = old.session_id
         if old.state not in GONE_STATES:
-            _clear_attention(old)
-            old.state = "ended"
-            old.state_since = moment or old.last_ts
+            become(old, "ended", moment or old.last_ts)
             old.end_reason = "background"
             old.last_event = "moved to the background"
         end_subagents(old, moment or old.last_ts)
@@ -2127,8 +2127,22 @@ class Store:
             # not carry it over. So the name is the page's alone there.
             over.pop(old.session_id, None)
             over.pop(new.session_id, None)
-            write_names(names, over)
+            # Not written here: this runs inside the fold, the replay at
+            # start included, and the fold does no I/O (#546, CLAUDE.md,
+            # **Principles**, 1). `save_names` writes it once the fold is done.
             self.names, self.over = names, over
+            self.names_moved = True
+
+    def save_names(self) -> None:
+        """Write the names a fold moved, once it is done (`_move_name`)."""
+        with self.naming:
+            if not self.names_moved:
+                return
+            self.names_moved = False
+            try:
+                write_names(self.names, self.over)
+            except OSError as error:
+                log(f"cannot write the names: {error!r}")
 
     def _cleared_partner(self, session: Session, want: str) -> Session | None:
         """The other half of a `/clear`: same process or pane, moments apart."""
@@ -2179,6 +2193,7 @@ class Store:
             if session is not None and session.last_ts - self.forgot_at > FORGET_EVERY:
                 self.forgot_at = session.last_ts
                 self.forget_quiet(min(session.last_ts, time.time()))
+        self.save_names()
 
     def follow(self) -> None:
         """Fold whatever has been appended since the last look."""
@@ -2210,14 +2225,21 @@ class Store:
         Returns True when the rows changed, which is also the daemon's answer
         to "is there anything to tell the browsers about?".
         """
+        # Four steps, each named (#546): the log folded in, with no I/O but
+        # the reading of it; the edges -- processes, status files, a hook's
+        # wait -- probed; git read; the rows built for the page.
         moment = now if now is not None else time.time()
         self.follow()
         sessions = self.settle(moment, alive)
         self.reload_git(sessions, moment)
-        rows = [row(session) for session in sort_sessions(sessions)]
+        rows = self.render(sessions)
         changed = rows != self.rows
         self.rows = rows
         return changed
+
+    def render(self, sessions: Sequence[Session]) -> list[dict[str, Any]]:
+        """The rows the page shows, in the order of the sidebar."""
+        return [row(session) for session in sort_sessions(sessions)]
 
     def settle(
         self, moment: float, alive: Callable[[int], bool] | None = None
@@ -2520,8 +2542,21 @@ def model_id(session: Session) -> str:
     return found if MODEL_SHAPE.fullmatch(found) else ""
 
 
+def become(session: Session, state: str, since: float | None = None) -> None:
+    """A change of state: the attention forgotten, then the state set (#546).
+    The pair was written out at every change, and two places outside
+    `Store.apply` -- `link_move` and `_bury` -- moved `state_since` by hand
+    as well, which `since` does. `Store.apply` moves it for a handler."""
+    _clear_attention(session)
+    session.state = state
+    if since is not None:
+        session.state_since = since
+
+
 def _clear_attention(session: Session) -> None:
-    """Forget that the agent was waiting. Every caller sets the state itself.
+    """Forget that the agent was waiting. `become` sets the state after it;
+    `_on_stop` alone calls this by itself, because its state is decided
+    further down.
 
     The open question goes with it. A question you can still answer on a row
     that is no longer waiting is the same bug as a stale permission line, and
@@ -2555,8 +2590,7 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
     # A `/compact` typed at the prompt finds the session ready already.
     source = str(event.get("source") or "")
     working = source == "compact" and session.state == "working"
-    _clear_attention(session)
-    session.state = "working" if working else "done"
+    become(session, "working" if working else "done")
     session.end_reason = ""
     # A resume starts the session again, and a `/clear` after it is a new
     # one: session A, cleared into B and then resumed, kept `cleared_into`
@@ -2600,10 +2634,9 @@ def prompt_said(prompt: Any) -> tuple[str, str]:
 
 
 def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
-    _clear_attention(session)
+    become(session, "working")
     session.prompted = True
     session.calls.clear()          # a new turn: see `_on_stop`
-    session.state = "working"
     by, prompt = prompt_said(event.get("prompt"))
     if by == "task":
         session.last_event = clip(prompt, PROMPT_WIDTH)
@@ -2671,8 +2704,7 @@ def _on_pre_tool(session: Session, event: dict[str, Any], ts: float) -> None:
                        or session.asked_about == summary):
         # The state goes with the attention. A row that stays amber because
         # the dialog is still up must not also say it is working.
-        _clear_attention(session)
-        session.state = "working"
+        become(session, "working")
     # What happened is still the latest thing that happened, either way.
     session.last_tool = summary
     session.last_event = session.last_tool
@@ -2719,8 +2751,7 @@ def _on_tool_failed(session: Session, event: dict[str, Any], ts: float) -> None:
     # A subagent's failure answers nothing of its agent's: see `_on_pre_tool`.
     if not event.get("agent_id") and (not session.asked_about
                                       or session.asked_about == summary):
-        _clear_attention(session)
-        session.state = "working"
+        become(session, "working")
         if ask and str(event.get("tool_use_id") or "") != ask["id"]:
             session.asking = ask
     if event.get("is_interrupt"):
@@ -2861,8 +2892,7 @@ def _on_declined(session: Session, event: dict[str, Any], ts: float) -> None:
     if not shown or shown.get("key") != str(event.get("key") or ""):
         return
     session.calls.pop(str(shown.get("call") or ""), None)
-    _clear_attention(session)
-    session.state = "done"
+    become(session, "done")
     session.last_event = ("declined in the terminal" if event.get("where") == "terminal"
                           else "declined from the page")
 
@@ -2874,8 +2904,7 @@ def _on_approved(session: Session, event: dict[str, Any], ts: float) -> None:
     shown = session.permission
     if not shown or shown.get("key") != str(event.get("key") or ""):
         return
-    _clear_attention(session)
-    session.state = "working"
+    become(session, "working")
     always = str(event.get("always") or "")
     session.last_event = (f"allowed from the page, and {always}" if always
                           else "allowed from the page")
@@ -3041,13 +3070,12 @@ def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None
     Claude Code's own sentence, which it also writes into the transcript:
     `last_assistant_message`, measured on 2.1.285. `error` is the fallback.
     """
-    _clear_attention(session)
+    become(session, "needs_you")
     session.calls.clear()
     error = str(event.get("error") or "unknown")
     said = str(event.get("last_assistant_message") or event.get("error_details")
                or "")
     words = clip(said.strip().split("\n")[0], 200)
-    session.state = "needs_you"
     session.attention_since = ts
     session.reason = "stopped: " + (words or STOP_FAILURES.get(error, error))
     session.last_event = f"stopped by an API error ({error})"
@@ -3162,8 +3190,7 @@ def _on_pre_compact(session: Session, event: dict[str, Any], ts: float) -> None:
 
 
 def _on_session_end(session: Session, event: dict[str, Any], ts: float) -> None:
-    _clear_attention(session)
-    session.state = "ended"
+    become(session, "ended")
     session.end_reason = str(event.get("reason") or "")
     session.last_event = f"ended ({session.end_reason})" if session.end_reason else "ended"
 
@@ -3432,9 +3459,7 @@ def _bury(session: Session, moment: float, why: str) -> None:
     buttons, and the answer's keys went into whatever the pane held next --
     a shell, or a new agent, where `2 1 Enter` submits "21"."""
     if session.state != "dead":
-        session.state_since = moment
-        _clear_attention(session)
-    session.state = "dead"
+        become(session, "dead", moment)
     end_subagents(session, moment)
     if not session.end_reason:
         session.end_reason = why

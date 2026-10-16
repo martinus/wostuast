@@ -1486,8 +1486,9 @@ def test_the_name_goes_with_a_clear_and_moves_once(ws):
     store = ws.Store()
     store.apply(event("SessionStart", source="startup", ts=1000.0))
     store.rename("s1", "the payments work")
-    for one in clear_events():
-        store.apply(one)
+    # `fold`, as the daemon folds: the name moved in the fold is written
+    # once the fold is done, never inside it (#546).
+    store.fold(clear_events())
     assert ws.read_names() == {"s2": "the payments work"}
     store.settle(2001.0, alive=lambda pid: True)
     assert ws.row(store.sessions["s2"])["name"] == "the payments work"
@@ -1495,8 +1496,7 @@ def test_the_name_goes_with_a_clear_and_moves_once(ws):
     store.rename("s1", "read later")
     again = ws.Store()
     again.apply(event("SessionStart", source="startup", ts=1000.0))
-    for one in clear_events():
-        again.apply(one)
+    again.fold(clear_events())
     assert ws.read_names() == {"s2": "the payments work", "s1": "read later"}
 
 
