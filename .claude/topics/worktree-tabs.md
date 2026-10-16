@@ -188,6 +188,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   is this browser's, in `localStorage`, as the folds are; `split` builds
   the slot again on every switch, so `drawFiles` puts it back.
   `test_what_changed_is_bold_and_the_funnel_shows_it_alone`.
+- **One file of a diff stands apart from the next** (#525, `.dfile`):
+  28 px between two cards, the header (`.dfile > .name`, and the
+  `.openfile` beside it) on `--raised`, the path in bold at 14 px. At
+  10 px, with the header on the code's own `--sheet`, one file ran into
+  the next and where one stopped was hard to see. The transcript's tool
+  diffs wear the same card and keep their own margin (`.dfile.tooldiff`).
+  **This reverses an older rule**: the header stood on the code's ground
+  because a darker bar of its own "read as a bar rather than as the top
+  of the file". The reader asked for the header to stand out, and chose
+  the raised ground from a picture in both schemes; its test went into
+  `test_one_file_stands_apart_from_the_next`.
 - **A binary file is its hex on the Files tab** (#487, `hex_dump`,
   `HEX_MAX_BYTES`, `FileText.hex`, `state.files.hex`, `.code.hexdump`).
   It was a note and nothing more. The first 64 KB as `xxd` draws them,
