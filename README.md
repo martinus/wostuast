@@ -63,8 +63,8 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   first. Slack's filters work: `in:name`, `from:me`, `from:claude`,
   `after:2026-10-01`, `before:2026-10-03`, `is:unread`.
 - **You keep any message for later.** Hover it and click the bookmark
-  before its name: "claude", "you" (a prompt, or a `!` or slash command
-  with what it printed), or "system". "Saved" over the list shows every
+  at its top right: a reply, a prompt, a `!` or slash command with what it
+  printed, or a message of the system. "Saved" over the list shows every
   saved turn of every session, with "open" to go back to it and "done" to
   take it off.
 - **You find a command.** "Commands" over the list (or <kbd>4</kbd>) shows
@@ -343,8 +343,11 @@ in the middle of a message, but it tells the agent that you named a skill,
 and the agent can then use it. A built-in such as `/clear` works only at the
 start.
 
-Point at a code block in a reply to show a copy button at its top right. It
-copies the block and nothing else.
+Point at a message to show its buttons at its top right: the bookmark
+keeps it for later, the copy button copies it as the Markdown it was written
+in, and **txt** shows that Markdown in place. Point at a code block in a
+reply to show a copy button at the block's own top right. It copies the
+block and nothing else.
 
 An edit shows how many lines it added and removed. Click it to see the change
 under it, drawn as the Review tab draws it, with the line numbers the file had at

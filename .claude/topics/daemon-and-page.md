@@ -293,9 +293,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   bordered box, a look of its own, while a prompt's kept its box; now
   `.bubble` goes only on a prompt's and a note's. **Lit, the button stands
   where it stood** (#510): it stepped 6 px in, and a second press missed. **It stands at the block's top right, out of the flow**
-  (`.turn > .readas`): under the time it stood on the next turn's name
-  after a one-line reply, and on the time's line it ran past `.who`'s 64 px
-  into the pane's edge, which cut it. **A prompt is Markdown too** (#500):
+  (`.turnacts`): under the time it stood on the next turn's name after a
+  one-line reply, and on the time's line it ran past `.who`'s 64 px into
+  the pane's edge, which cut it. **A prompt is Markdown too** (#500):
   the reader asked for it by default, after a first round that kept it as
   typed. It is drawn with `breaks` (`markdown(..., true)`), as a chat box
   and a GitHub comment draw it: without, a log pasted into a prompt ran
@@ -402,19 +402,33 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   straight after a push waits for `document.getAnimations()` to be empty.
   `test_a_group_of_calls_sits_under_the_line_that_announced_it` measures from
   the text, and each of its five parts fails it.
-- **The copy button stands on the time's line, and a column may hang 10 px
-  past its turn.** On a line of its own the button made `.who` 55 px tall,
-  taller than a line of text (22) or a prompt's bubble (45), so the gap a
-  reader saw was 32 px after a prompt and 59 after a one-line reply before
-  a prompt, where 22 and 26 were meant. `.who .stamp` holds the time and the
-  button; the column is 35 px now, 51 with a day. What is still past the
+- **What a turn can do is one row at its top right, and `.who` holds words
+  only** (`.turnacts`, #520, #522). The save, the copy and the "txt" stand
+  there in that order, the "txt" last so a lit one never moves (#510). In
+  `.who` the bookmark and the "copy" word held the column at 64 px, room a
+  small screen needs for the text; it is 44 now, the width of "system", with
+  `nowrap`, because a bold "14 Oct" broke in two at 40. **Each button is
+  hidden, not taken away** (`visibility`): the row is out of the flow, so a
+  hidden one takes no room from the text, and a saved bookmark, shown
+  without the hover, stands where the hover shows it. **The row has a
+  ground only on the hover**: without it, the text showed through the 4 px
+  between two buttons. The copy is the code block's icon, and `flashOutcome`
+  ticks it. The day wears the time's colour and weight (#519): "14 Oct
+  09:10" is one moment, and faint it read as a note.
+  `test_what_a_turn_can_do_is_one_row_at_its_top_right`,
+  `test_a_day_wears_the_time_s_colour`.
+- **A column may hang 10 px past its turn.** On a line of its own under the
+  time, the copy button once made `.who` 55 px tall, taller than a line of
+  text (22) or a prompt's bubble (45), so the gap a reader saw was 32 px
+  after a prompt and 59 after a one-line reply before a prompt, where 22
+  and 26 were meant. What is still past the
   words hangs into the gap: 10 px, because the rule over the next prompt is
   12 px down (its `::before`, 26 − 14) and the next turn's name 25. More
   than that runs the column into the rule. `next-tool` allows 36 where a
   call comes next, whose column is empty.
   `test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant`
-  measures from the bubble and the text, and fails with the button back on
-  its own line or with a larger overhang.
+  measures from the bubble and the text, and fails with a larger
+  overhang.
 - **The send box and the question bar start where the transcript does, and
   the map runs down beside them.** Both stand under a split tab's right
   half, and both used to run the whole width and under the map beside it — a

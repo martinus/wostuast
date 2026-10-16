@@ -13352,26 +13352,46 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    new; the reduced-motion switch above covers this like everything else. */
 .fresh { animation: slide .15s ease-out; }
 @keyframes slide { from { transform: translateY(4px); opacity: 0; } }
+/* As wide as its widest word, "system", and no wider (issue 520): the copy
+   and the save stood in it and made it 64 px, room a small screen needs. */
 .who {
-  width: 64px; flex-shrink: 0; padding-top: 2px; font-family: var(--sans);
+  width: 44px; flex-shrink: 0; white-space: nowrap; padding-top: 2px; font-family: var(--sans);
   font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.5;
 }
-/* Markdown or the text as written (issue 493): the Files tab's "txt", at
-   the block's top right, out of the flow. Not in the name's column: under
-   the time it stood on the next turn's name after a reply of one line, and
-   on the time's line it ran out of the column's 64 px and was cut by the
-   pane's edge. There on the hover, over the end of the first line, as a
-   code block's copy button is; and always while lit, in the same place, so
-   a second press needs no move (issue 510): lit, it stepped 6 px in. The
-   text as written keeps a margin for it. */
-.turn > .readas { position: absolute; top: 0; right: 0; display: none;
-  background: var(--bg); }
-.turn:hover > .readas, .turn > .readas:focus,
-.turn > .readas[aria-pressed="true"] { display: block; }
+/* What a turn can do -- save, copy, the text as written -- in one row at its
+   top right, out of the flow (issues 493, 520, 522). Not in the name's
+   column: under the time the "txt" stood on the next turn's name after a
+   reply of one line, and the column was 64 px for the copy and the save.
+   There on the hover, over the end of the first line, as a code block's
+   copy button is; and a saved bookmark or a lit "txt" always, in the same
+   place, so a second press needs no move (issue 510): lit, it stepped 6 px
+   in. So the row keeps its room and each button is only hidden: the row is
+   out of the flow, and a hidden button in it takes no room from the text.
+   The text as written keeps a margin for the row. */
+.turnacts { position: absolute; top: 0; right: 0; display: flex; gap: 4px;
+  pointer-events: none; }
+.turnacts > * { visibility: hidden; pointer-events: auto; }
+.turn:hover > .turnacts > *, .turnacts > :focus-visible, .turnacts > .on,
+.turnacts > .done, .turnacts > [aria-pressed="true"] { visibility: visible; }
+.turnacts > .verb { background: var(--bg); }
+.turn:hover > .turnacts { background: var(--bg); }
+.turnacts > .save, .turnacts > .copy {
+  width: 22px; height: 22px; display: flex; align-items: center;
+  justify-content: center; padding: 0; border: 1px solid var(--edge);
+  border-radius: 5px; background: var(--bg); color: var(--ink-faint);
+  cursor: pointer;
+}
+.turnacts > .save:hover, .turnacts > .copy:hover {
+  color: var(--needs); border-color: var(--edge-bright); }
+.turnacts > .save.on { color: var(--needs); }
+.turnacts > .copy.done { color: var(--working); }
+.turnacts .icon { width: 14px; height: 14px; fill: none; stroke: currentColor;
+  stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; }
+.turnacts > .save.on .icon { fill: currentColor; }
 /* What the agent wrote, as it wrote it: to select and copy, Markdown and
    all. Only the face changes (issue 509): an answer's source is no box,
    and a prompt's or a note's keeps the box it had. */
-.source { flex-grow: 1; min-width: 0; margin: 0; padding-right: 48px;
+.source { flex-grow: 1; min-width: 0; margin: 0; padding-right: 96px;
   font-family: var(--mono); font-size: 13px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere; }
 .turn:not(.mine):not(.aside) > .source,
@@ -13384,46 +13404,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    browser's own "open in a new tab" is what it is there for. */
 .who .self { color: inherit; text-decoration: none; }
 .who .self:hover { text-decoration: underline; }
-.who .day { color: var(--ink-faint); }
-/* The copy button stands on the time's line, left of it, not on a line of its
-   own under it. On its own line it made the column 55 px tall -- more than a
-   line of text (22) or a prompt's bubble (45) -- so the column set the height
-   of most turns, and the gap a reader saw was 32 px after a prompt and 59
-   after a one-line reply, where 22 and 26 were meant. "copy" and a time fit
-   the column's 64 px; "copied" hangs into the pane's gutter for a second. */
-.who .stamp { display: flex; justify-content: flex-end; align-items: baseline;
-  gap: 6px; }
-.who .stamp .copy { order: -1; margin-top: 0; }
+/* The day wears the time's colour and weight, as the time does the name's
+   (issue 519): it is one moment, "14 Oct 09:10", read as one. It was faint
+   under a time in the turn's colour, and read as a note about something. */
 /* And whatever the column still has past the words -- the time under a
    line of text, a day under a prompt -- may hang 10 px into the gap below.
    10 and no more: the rule over the next prompt is 12 px down, and the next
    turn's name 25. A call coming next allows more; see `.turn.toolrow`. */
 .turn:not(.toolrow) > .who { margin-bottom: -10px; }
-/* Copy the source of a reply. It is there when the pointer is on the turn,
-   the way the `+` on a diff line is: a button beside every line of a
-   transcript would be the loudest thing on the page. Keyboard focus shows it
-   too, or it could not be reached without a mouse. */
-.who .copy {
-  margin-top: 5px; padding: 0; border: none; background: none; cursor: pointer;
-  font-family: var(--sans); font-size: 10px; color: var(--ink-faint);
-  opacity: 0; transition: opacity .1s ease;
-}
-.turn:hover .copy, .copy:focus { opacity: 1; }
-/* Saved for later (issue 377): a bookmark after the name, on the hover, and
-   always once saved, filled. */
-.who .save {
-  /* Before the name: the column is right-aligned, so it moves nothing.
-     After it, an invisible bookmark pushed "claude" out of line with the
-     time; in the gap beside the words, it touched them. */
-  margin-right: 4px; padding: 0; border: none; background: none;
-  cursor: pointer; color: var(--ink-faint); opacity: 0; vertical-align: -1px;
-}
-.turn:hover .who .save, .who .save:focus, .who .save.on { opacity: 1; }
-.who .save:hover, .who .save.on { color: var(--needs); }
-.who .save .icon { width: 11px; height: 11px; fill: none; stroke: currentColor;
-  stroke-width: 1.3; stroke-linejoin: round; }
-.who .save.on .icon { fill: currentColor; }
-.who .copy:hover { color: var(--needs); }
 /* Where a link landed, for long enough to find with your eye. */
 .turn.linked { outline: 2px solid var(--needs); outline-offset: 6px;
   border-radius: 4px; }
@@ -18828,6 +18816,37 @@ function landOnBlock(box) {
 // Rebuilding the lot re-ran marked over the whole history on every update, and
 // restarted the slide-in of every turn each time one line arrived.
 
+// What a turn can do, at its top right, in one row (#520, #522): save it,
+// copy it, and read it as written. The left column held the bookmark and
+// the "copy" word beside the name and the time, and was 64 px wide for
+// them; on a small screen that was room the text needed. One place for
+// all of them, the place the "txt" already stood, so the reader looks in
+// one corner. The save is on every block with a link (#424): a prompt
+// the reader typed (#403), a `!` or slash command with what it printed,
+// and a message of the harness. Whether the block is shown as written.
+function putTurnActs(node, block, index, shell, aside, mine) {
+  const acts = put(node, "div", "turnacts");
+  putSave(acts, block, index, shell ? "shell" : aside ? "system"
+          : block.kind === "prompt" ? "me" : "claude");
+  putCopy(acts, block, mine);
+  // Markdown, or the text as it was written (#493): the reader wants to
+  // select and copy what the agent wrote, Markdown and all. The Files
+  // tab's "txt". Every block drawn as Markdown has one: an answer, a
+  // plan, a message of the harness, and a prompt the reader typed (#500).
+  // A `!` or slash command is not Markdown. Last in the row, so a lit one
+  // never moves when the others come and go (#510).
+  const md = !shell && !!block.text;
+  const asText = md && state.turns.open.has(textKey(index));
+  if (md) {
+    putReadAs(acts, asText, (on) => {
+      if (on) state.turns.open.add(textKey(index));
+      else state.turns.open.delete(textKey(index));
+      redrawBlock(index);
+    }, "show the text as written, not as Markdown");
+  }
+  return asText;
+}
+
 function blockTurn(block, index) {
   if (block.kind === "divider") {
     const node = document.createElement("div");
@@ -18867,33 +18886,12 @@ function blockTurn(block, index) {
   name.href = blockHref(index);
   name.title = "link to this " + (mine ? "prompt"
                                        : aside ? "message" : plan ? "plan" : "reply");
-  // A bookmark beside the name, not a word beside "copy": the column is
-  // 64 px, and the two words pushed "copy" out of it (#377). On every
-  // block with a link (#424): a prompt the reader typed (#403), a `!` or
-  // slash command with what it printed, and a message of the harness.
-  putSave(who, block, index, shell ? "shell" : aside ? "system"
-          : block.kind === "prompt" ? "me" : "claude");
   if (block.ts) {
     const day = dayOf(block.ts);
     if (day) put(who, "div", "day", day);
+    put(who, "div", "stamp", clock(block.ts));
   }
-  // The copy button shares the time's line: see `.who .stamp`.
-  const stamp = block.ts ? put(who, "div", "stamp", clock(block.ts)) : who;
-  putCopy(stamp, block, mine);
-  // Markdown, or the text as it was written (#493): the reader wants to
-  // select and copy what the agent wrote, Markdown and all. The Files
-  // tab's "txt", at the block's top right. Every block drawn as Markdown
-  // has one: an answer, a plan, a message of the harness, and a prompt the
-  // reader typed (#500). A `!` or slash command is not Markdown.
-  const md = !shell && !!block.text;
-  const asText = md && state.turns.open.has(textKey(index));
-  if (md) {
-    putReadAs(node, asText, (on) => {
-      if (on) state.turns.open.add(textKey(index));
-      else state.turns.open.delete(textKey(index));
-      redrawBlock(index);
-    }, "show the text as written, not as Markdown");
-  }
+  const asText = putTurnActs(node, block, index, shell, aside, mine);
   // A message too long to show whole is drawn in a box of its own, with the
   // bar that opens and folds it under it: see `foldedHead`.
   const whole = String((shell ? block.result : block.text) || "");
@@ -19067,17 +19065,20 @@ function flashOutcome(button, icon, title, done, saying, words) {
 
 // The Markdown an agent wrote, as it wrote it. The page shows it drawn; this
 // is the source, which is what goes into a bug report or another prompt.
+// The icon a code block's copy wears (#520), not the word: it stands in a
+// row of buttons at the turn's corner now, as that one stands at the block's.
 function putCopy(parent, block, mine) {
   if (!block.text) return null;
-  const copy = put(parent, "button", "copy", "copy");
+  const copy = put(parent, "button", "copy");
   copy.title = "copy this " + (mine ? "prompt" : "reply") + " as Markdown";
+  copy.setAttribute("aria-label", copy.title);
+  putIcon(copy, "copy");
   const title = copy.title;
   copy.addEventListener("click", async () => {
     const done = await copyToClipboard(block.text);
     // The node may be redrawn out from under this; writing to a node that has
     // left the page is harmless, and there is nothing to put back.
-    flashOutcome(copy, "copy", title, done, done ? "copied" : "could not copy",
-                 ["copied", "cannot"]);
+    flashOutcome(copy, "copy", title, done, done ? "copied" : "could not copy");
   });
   return copy;
 }
@@ -19099,7 +19100,6 @@ function putSave(parent, block, index, whose) {
   const id = state.chosen;
   const key = savedKey(id, block.ts);
   const button = put(parent, "button", "save" + (state.savedKeys.has(key) ? " on" : ""));
-  parent.insertBefore(button, parent.firstChild);   // before the name
   putIcon(button, "save");
   const say = () => {
     button.title = state.savedKeys.has(key) ? "saved: take it off the list"
