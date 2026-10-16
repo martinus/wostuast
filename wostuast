@@ -12824,16 +12824,17 @@ body.dragging.rowdrag { cursor: row-resize; }
    over the rows below rather than pushing them, in whole words. Four grey
    abbreviations in a line of their own were missed. */
 .row { position: relative; }
-/* A tile's row whole, beside the folded strip, on the hover (issue 491):
-   on the list's own ground, as wide as the open list, and above the page.
-   The row is the open list's, so its margins into the grip go. */
+/* A tile's row whole, in the tile's own place, on the hover (issue 491):
+   from the strip's left edge, so the row stands where the tile does, as
+   wide as the open list, and above the page. The row keeps the tile's
+   4 px from the edge; its margin into the grip goes. */
 .tilecard {
   position: fixed; z-index: 30; width: var(--sidebar-w, 340px);
-  padding: 6px 8px 0 4px; background: var(--edge); border-radius: 0 8px 8px 0;
+  padding: 0 8px 0 4px; background: var(--edge); border-radius: 0 8px 8px 0;
   box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 70%, transparent);
   pointer-events: none;
 }
-.tilecard .row { margin: 0 0 6px; border-radius: 6px; }
+.tilecard .row { margin: 0; border-radius: 6px; }
 .row .remindmenu {
   position: absolute; right: 12px; top: 30px; z-index: 5;
   display: flex; flex-direction: column; min-width: 150px; padding: 4px;
@@ -16401,7 +16402,9 @@ function tileTitle(row) {
 
 // A folded list's tile, on the hover (#491): the row whole, as the open list
 // draws it -- its name, where it stands, its state and its line -- in a
-// card beside the strip, at the tile's height, over the page. The tile held
+// card that stands where the tile stands, over it and over the page. Beside
+// the strip it was a second tab next to the first; the reader asked for
+// the one tab, opened out in place. The tile held
 // the start of a name turned up its side, and its title the name alone,
 // after a wait. A copy of the row and not a second drawing of it: a row
 // is drawn in one place (`fillRow`), and a card drawn its own way would
@@ -16415,11 +16418,14 @@ function tileCard(row) {
   }
   const copy = row.cloneNode(true);
   copy.classList.remove("chosen");
+  // At least as tall as the tile it stands on, or the tile's foot showed
+  // under it.
+  copy.style.minHeight = row.getBoundingClientRect().height + "px";
   card.replaceChildren(copy);
   card.hidden = false;
   const at = row.getBoundingClientRect();
   const strip = document.querySelector(".sidebar").getBoundingClientRect();
-  card.style.left = strip.right + 6 + "px";
+  card.style.left = strip.left + "px";
   // As high as the tile, and all of it on the screen.
   card.style.top = Math.max(4, Math.min(at.top, window.innerHeight - card.offsetHeight - 4))
     + "px";

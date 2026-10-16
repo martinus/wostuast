@@ -487,7 +487,8 @@ def test_a_folded_session_list_is_a_tile_for_each_session(ws, pair_at, tmp_path)
         other = [one for one in tiles if not one["chosen"]][0]
         assert len(chosen) == 1 and chosen[0]["width"] > other["width"], tiles
         # The name runs up the tile, turned, and the hover shows the row
-        # whole, beside the strip, at the tile's height.
+        # whole in the tile's own place: one tab opened out, not a second
+        # one beside it.
         says = {one["id"]: one["says"] for one in tiles}
         assert says["s1"] == '"A session"', says
         page.hover('#rows .row[data-id="s1"]')
@@ -498,11 +499,13 @@ def test_a_folded_session_list_is_a_tile_for_each_session(ws, pair_at, tmp_path)
           const strip = document.querySelector('.sidebar').getBoundingClientRect();
           return {name: document.querySelector('#tilecard .row .name').textContent,
                   lines: document.querySelectorAll('#tilecard .row > [class^="line"]').length,
-                  top: Math.round(card.top - tile.top), right: card.left >= strip.right,
+                  top: Math.round(card.top - tile.top),
+                  left: Math.round(document.querySelector('#tilecard .row')
+                                   .getBoundingClientRect().left - tile.left),
                   wide: card.width >= 300};
         }""")
         assert card == {"name": "A session", "lines": card["lines"], "top": 0,
-                        "right": True, "wide": True} and card["lines"] >= 2, card
+                        "left": 0, "wide": True} and card["lines"] >= 2, card
         page.mouse.move(700, 500)
         page.wait_for_selector("#tilecard", state="hidden")
         turned = page.evaluate("""() => { const css = getComputedStyle(

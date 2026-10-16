@@ -838,10 +838,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     reader asked for them, clickable. CSS draws each row as a tile as tall
     as a row, its name turned up it (`writing-mode: vertical-rl`, then
     `rotate(180deg)`, read bottom to top) on its state's colour, and the
-    unread dot. **On the hover, the row whole, in a card beside the strip**
+    unread dot. **On the hover, the row whole, in the tile's own place**
     (`tileCard`, `#tilecard`, #491): the name, where it stands, its state
-    and its line, as the open list draws them, at the tile's height and
-    over the page. It was the name alone in `title`, after a wait, and the
+    and its line, as the open list draws them, over the tile and the page,
+    and at least as tall as the tile. Beside the strip it was a second tab
+    next to the first, and the reader asked for the one tab opened out. It was the name alone in `title`, after a wait, and the
     reader asked for the whole row; the card is a copy of the row
     (`cloneNode`), so it says what the row says and is drawn in one place,
     and no row carries a title any more (`tileTitle`), or the browser's
