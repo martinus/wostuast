@@ -305,9 +305,9 @@ in the middle of a message, but it tells the agent that you named a skill,
 and the agent can then use it. A built-in such as `/clear` works only at the
 start.
 
-Point at a message to show its buttons at its top right: the bookmark
-keeps it for later, the copy button copies it as the Markdown it was written
-in, and **txt** shows that Markdown in place. Point at a code block in a
+Point at a message to show its buttons at its top right: the copy button
+copies it as the Markdown it was written in, **txt** shows that Markdown in
+place, and the bookmark keeps it for later. Point at a code block in a
 reply to show a copy button at the block's own top right. It copies the
 block and nothing else.
 

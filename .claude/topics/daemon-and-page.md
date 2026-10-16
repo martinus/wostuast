@@ -403,8 +403,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_group_of_calls_sits_under_the_line_that_announced_it` measures from
   the text, and each of its five parts fails it.
 - **What a turn can do is one row at its top right, and `.who` holds words
-  only** (`.turnacts`, #520, #522). The save, the copy and the "txt" stand
-  there in that order, the "txt" last so a lit one never moves (#510). In
+  only** (`.turnacts`, #520, #522). The copy, the "txt" and the bookmark
+  stand there in that order, the reader's (#527); a lit one never moves
+  (#510), because a hidden one keeps its room. In
   `.who` the bookmark and the "copy" word held the column at 64 px, room a
   small screen needs for the text; it is 44 now, the width of "system", with
   `nowrap`, because a bold "14 Oct" broke in two at 40. **Each button is
@@ -423,6 +424,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     whose first line ran to the edge: the cover picture of #521 showed it,
     after #526 had merged. Only such a turn: every turn keeping 92 px would
     take back what the narrow column gave. `test_a_saved_mark_stands_on_no_words`.
+  - **The row's ground is the ground under it** (`--acts-ground`, #527). On
+    a prompt it was the page's dark `--bg`, which showed between the
+    buttons over the box's tint. The tint (`--mine-soft`) is see-through,
+    so the row lays it over `--bg` as a gradient, as the box does; the tint
+    alone would be the page showing through, and the tint over the box would
+    be twice the tint. `test_the_row_of_buttons_wears_the_ground_under_it`
+    reads the drawn pixels, because a ground is in no computed style.
 - **A column may hang 10 px past its turn.** On a line of its own under the
   time, the copy button once made `.who` 55 px tall, taller than a line of
   text (22) or a prompt's bubble (45), so the gap a reader saw was 32 px

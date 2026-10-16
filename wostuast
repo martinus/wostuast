@@ -13373,12 +13373,19 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .turnacts > * { visibility: hidden; pointer-events: auto; }
 .turn:hover > .turnacts > *, .turnacts > :focus-visible, .turnacts > .on,
 .turnacts > .done, .turnacts > [aria-pressed="true"] { visibility: visible; }
-.turnacts > .verb { background: var(--bg); }
-.turn:hover > .turnacts { background: var(--bg); }
+/* The row's ground is the ground under it (issue 527): the page's, or a
+   prompt's tinted box. The box's tint is see-through, so it is laid over
+   the page's colour here, as the box lays it; the page's colour alone
+   showed dark between the buttons on a prompt. */
+.turnacts { --acts-ground: var(--bg); }
+.turn.mine > .turnacts {
+  --acts-ground: linear-gradient(var(--mine-soft), var(--mine-soft)), var(--bg); }
+.turnacts > .verb { background: var(--acts-ground); }
+.turn:hover > .turnacts { background: var(--acts-ground); }
 .turnacts > .save, .turnacts > .copy {
   width: 22px; height: 22px; display: flex; align-items: center;
   justify-content: center; padding: 0; border: 1px solid var(--edge);
-  border-radius: 5px; background: var(--bg); color: var(--ink-faint);
+  border-radius: 5px; background: var(--acts-ground); color: var(--ink-faint);
   cursor: pointer;
 }
 .turnacts > .save:hover, .turnacts > .copy:hover {
@@ -18843,15 +18850,16 @@ function landOnBlock(box) {
 // and a message of the harness. Whether the block is shown as written.
 function putTurnActs(node, block, index, shell, aside, mine) {
   const acts = put(node, "div", "turnacts");
-  putSave(acts, block, index, shell ? "shell" : aside ? "system"
-          : block.kind === "prompt" ? "me" : "claude");
+  // Copy, the text as written, and the bookmark last, in the order the
+  // reader asked for (#527). Nothing moves when the hover ends: a hidden
+  // button keeps its room in the row, so a lit one stands where it stood.
   putCopy(acts, block, mine);
   // Markdown, or the text as it was written (#493): the reader wants to
   // select and copy what the agent wrote, Markdown and all. The Files
   // tab's "txt". Every block drawn as Markdown has one: an answer, a
   // plan, a message of the harness, and a prompt the reader typed (#500).
-  // A `!` or slash command is not Markdown. Last in the row, so a lit one
-  // never moves when the others come and go (#510).
+  // A `!` or slash command is not Markdown. A lit one stays where the
+  // hover showed it (#510).
   const md = !shell && !!block.text;
   const asText = md && state.turns.open.has(textKey(index));
   if (md) {
@@ -18861,6 +18869,8 @@ function putTurnActs(node, block, index, shell, aside, mine) {
       redrawBlock(index);
     }, "show the text as written, not as Markdown");
   }
+  putSave(acts, block, index, shell ? "shell" : aside ? "system"
+          : block.kind === "prompt" ? "me" : "claude");
   return asText;
 }
 

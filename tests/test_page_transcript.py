@@ -26,6 +26,7 @@ from browser import (
     write_records,
     hold,
     wait_until,
+    pixels,
 )
 
 pytestmark = skip_without_browser
@@ -3319,7 +3320,7 @@ def test_what_a_turn_can_do_is_one_row_at_its_top_right(ws, page_at):
         row = turn.locator(":scope > .turnacts")
         assert [one.get_attribute("class").split()[0] if "readas" not in
                 one.get_attribute("class") else "readas"
-                for one in row.locator(":scope > *").all()] == ["save", "copy", "readas"]
+                for one in row.locator(":scope > *").all()] == ["copy", "readas", "save"]
         assert page.locator(".who button, .who .copy, .who .save").count() == 0
         width = page.evaluate("document.querySelector('.who').getBoundingClientRect().width")
         assert width <= 44, width
@@ -3331,7 +3332,7 @@ def test_what_a_turn_can_do_is_one_row_at_its_top_right(ws, page_at):
         icon = row.locator(".save .icon").bounding_box()
         assert icon["width"] >= 14, icon
         right = turn.bounding_box()
-        last = row.locator(".readas").bounding_box()
+        last = row.locator(".save").bounding_box()       # copy, txt, bookmark (#527)
         assert abs(last["x"] + last["width"] - right["x"] - right["width"]) < 1, (last, right)
         where = row.locator(".save").bounding_box()
         row.locator(".save").click()
@@ -3368,3 +3369,28 @@ def test_a_saved_mark_stands_on_no_words(ws, page_at):
             && r.top < mark.bottom && r.bottom > mark.top).length;
         }""")
         assert hit == 0, hit
+
+
+def test_the_row_of_buttons_wears_the_ground_under_it(ws, page_at):
+    """On a prompt the row stood on the page's dark ground, which showed
+    between the buttons over the prompt's tinted box (#527). The box's tint
+    is see-through, so the row lays it over the page's colour, as the box
+    does: what is drawn between two buttons is what is drawn beside them."""
+    daemon, path = page_at
+    write_records(daemon,
+                  conftest.record("you", "A short prompt.", ts="2026-09-18T14:20:00.000Z"))
+    with opened(path) as page:
+        turn = page.locator(".turn.mine", has_text="A short prompt.")
+        turn.wait_for()
+        turn.locator(".bubble").hover()
+        page.wait_for_timeout(200)
+        gap = turn.evaluate("""(one) => {
+          const [a, b] = [...one.querySelectorAll('.turnacts > *')].map(
+            (button) => button.getBoundingClientRect());
+          return {x: Math.round((a.right + b.left) / 2), y: Math.round(a.top + a.height / 2),
+                  beside: Math.round(a.left - 30)};
+        }""")
+        drawn = pixels(page.screenshot())
+        between = drawn[gap["y"]][gap["x"]]
+        beside = drawn[gap["y"]][gap["beside"]]
+        assert max(abs(a - b) for a, b in zip(between, beside)) <= 2, (between, beside)

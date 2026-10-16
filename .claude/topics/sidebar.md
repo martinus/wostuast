@@ -79,7 +79,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   only to save): registered "known", "done" on a turn of a forgotten
   session was a 404, and the entry could never go.
   - **The bookmark stands in the turn's row of buttons, at its top right**
-    (`putSave` into `.turnacts`, #522), first of save, copy and "txt". In
+    (`putSave` into `.turnacts`, #522), last of copy, "txt" and save (#527). In
     the name's column it moved the words: beside "copy" it pushed "copy"
     out, after the name an invisible one moved "claude" out of line with
     the time, and before it the column had to be 64 px. A saved one shows
