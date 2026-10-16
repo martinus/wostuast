@@ -2520,136 +2520,6 @@ def model_id(session: Session) -> str:
     return found if MODEL_SHAPE.fullmatch(found) else ""
 
 
-def resume_command(session: Session) -> str:
-    """The command that brings back a session that is over, for the reader
-    to copy and run (#352), or "" when there is none to give.
-
-    `claude --resume <id>` finds a session only in the project of the folder
-    it is started in -- measured on 2.1.288: in the folder the session
-    started in it opened the conversation, anywhere else it asked whether to
-    trust that folder and found nothing. So it starts with `cd` to `home`,
-    and not to `cwd`, which moves with every `cd` the agent made. A
-    transcript under another config folder than `~/.claude` (a second
-    account) needs `CLAUDE_CONFIG_DIR` in front: it is the folder above
-    `projects/`. Every part came out of an event and the reader will run
-    the line, so each is quoted, and a folder or an id with a control
-    character in it gets no command at all.
-
-    Starting the agent is a non-goal; handing the reader the command is
-    not. Nothing here types into a terminal.
-    """
-    import shlex
-
-    folder = session.home or session.cwd
-    if not folder or not re.fullmatch(r"[\w-]+", session.session_id or ""):
-        return ""
-    # `CONTROL_CHARS` keeps a tab and a newline, being for text typed into a
-    # terminal; in a folder of a one-line command either one is a trap.
-    if CONTROL_CHARS.search(folder) or "\n" in folder or "\t" in folder:
-        return ""
-    prefix = ""
-    transcript = Path(session.transcript_path) if session.transcript_path else None
-    if transcript is not None and transcript.parent.parent.name == "projects":
-        config = transcript.parent.parent.parent
-        if config != Path.home() / ".claude" and not re.search(r"[\x00-\x1f]", str(config)) \
-                and not CONTROL_CHARS.search(str(config)):
-            prefix = f"CLAUDE_CONFIG_DIR={shlex.quote(str(config))} "
-    return (f"cd {shlex.quote(folder)} && {prefix}claude --resume"
-            f" {shlex.quote(session.session_id)}")
-
-
-def row(session: Session) -> dict[str, Any]:
-    """One session as the page wants it: flat, small, and ready to compare.
-
-    It is built by hand rather than from the dataclass, so that adding a field
-    to `Session` never quietly sends something to the browser. Rows are
-    compared with `!=` to decide what to push, so everything in here must be a
-    plain value, and nothing in here may depend on the current time: a row that
-    ages by itself would look changed every second and the page would be sent
-    the whole list for ever. `since` is a moment, and the page counts from it.
-    """
-    facts = session.git
-    return {
-        "id": session.session_id,
-        "label": session.label,
-        # A session's name on the row until the reader gives it one, and
-        # part of what the find box searches.
-        "place": session.place,
-        # The worktree's own folder, for the row's second line. The top of
-        # the worktree once git has said where that is, so a session started
-        # in `src` is still in `richpalm`; until then, where it started.
-        "worktree": os.path.basename(
-            (facts.root or session.home or session.cwd).rstrip("/")),
-        "worktree_path": facts.root or session.home or session.cwd,
-        "remote": facts.remote,
-        "state": session.state,
-        "state_word": STATE_WORDS.get(session.state, session.state),
-        "cwd": session.cwd,
-        "pane": session.pane,
-        "repo": facts.repo,
-        "branch": facts.branch,
-        "root": facts.root,
-        "ahead": facts.ahead,
-        "behind": facts.behind,
-        "dirty": facts.dirty,
-        "touched_files": facts.touched_files,
-        "doing": facts.doing,
-        "conflicts": facts.conflicts,
-        "reason": session.reason,
-        # The question the agent is waiting on, so the page can draw it over
-        # whatever tab you are reading. It is here and not on a route of its
-        # own because it must arrive with the amber, not a fetch later.
-        "asking": session.asking,
-        # The permission dialog, for the same reason: whole, so the reader
-        # can read what they are declining. Only while the row is amber.
-        "permission": session.dialog,
-        # Its hook waits for a Yes from the page (`hook_waits`).
-        "approvable": session.approvable,
-        "last_event": session.last_event,
-        # What it was last asked, for the alert that says it has finished.
-        "prompt": shown_prompt(session),
-        "since": round(session.since, 3),
-        # For a session that is over, the line that brings it back.
-        "resume": resume_command(session) if session.state in GONE_STATES else "",
-        "snoozed": session.snoozed,
-        # A turn ended since the reader last had it on screen (#373).
-        "unread": session.unread,
-        # When that was, for the "new" line in the transcript (#374). It
-        # moves only when the reader looks, so it never makes a row differ
-        # by itself.
-        "seen_at": round(session.seen_at, 3),
-        # When to bring it back (#375): a moment, and the page decides.
-        "remind_at": round(session.remind_at, 3),
-        # When its last turn ended, for the order of the feed (#376).
-        "ended_at": round(session.ended_at, 3),
-        "name": session.title,
-        # Whether that name is one the reader set here. The page shows the
-        # box with it in, rather than making them type it again to change it.
-        "mine": bool(session.mine),
-        "model": session.status.model,
-        "effort": session.status.effort,
-        "model_id": model_id(session),
-        "context_pct": session.status.context_pct,
-        # What the session has spent. It moves only when a status line
-        # lands, so it never makes a row differ by itself -- which is the
-        # rule this dict is built by.
-        "cost_usd": session.status.cost_usd,
-        # The session a `/clear` turned this one into. The page follows it
-        # when the link appears while the reader is watching this one.
-        "cleared_into": session.cleared_into,
-        # The agent that ran this one, and the subagents this one runs
-        # (#422): the page draws both as lines under the parent's row.
-        "started_by": session.started_by,
-        "started_at": round(session.started_at, 3),
-        "subagents": [
-            {"id": key, "kind": one.kind, "what": one.what, "doing": one.doing,
-             "started": round(one.started, 3), "ended": round(one.ended, 3)}
-            for key, one in session.subagents.items()
-        ],
-        "agents_ran": session.agents_ran,
-    }
-
-
 def _clear_attention(session: Session) -> None:
     """Forget that the agent was waiting. Every caller sets the state itself.
 
@@ -5479,62 +5349,6 @@ def written_since(held: "Listing", since: float) -> dict[str, float]:
     return {**held.changed, **late} if late else held.changed
 
 
-def wire_json(data: Any) -> str:
-    """Anything the daemon sends the page, as JSON: one spelling for the
-    answers, the pushes and the stream's opening, which had three (#289).
-    Not ASCII: a transcript in another script would be six bytes a letter on
-    the stream, which is not compressed. So what writes it to the socket
-    goes through `wire_bytes`.
-
-    A dataclass goes out as its fields, read where they stand: `asdict`
-    copied every one of the thousands of lines of a large diff before it
-    was written, 343 ms of a 715 ms poll (#291).
-    """
-    return json.dumps(data, ensure_ascii=False, default=plain)
-
-
-def plain(value: Any) -> Any:
-    """What `json.dumps` writes for a value it does not know: a dataclass's
-    fields, and anything else as text."""
-    import dataclasses
-
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return vars(value)
-    return str(value)
-
-
-def wire_bytes(text: str) -> bytes:
-    """`wire_json`'s text as the bytes that go out. "replace", because a lone
-    surrogate is reachable: Claude Code cuts a string between the halves of
-    an emoji and writes the escape, and `json.loads` makes it a real one. A
-    strict encode refused the whole answer, so one such line took a
-    session's transcript down for good -- and in the open stream it raised a
-    ValueError nothing caught, and `guarded` wrote an HTTP 500 into it.
-    `page_json` is the other road out: it stands inside the page's
-    `<script>`, so it is ASCII and needs no such care."""
-    return text.encode("utf-8", "replace")
-
-
-def answer_tag(text: str) -> str:
-    """A short name for one answer, given it as `wire_json` wrote it."""
-    import hashlib
-
-    return hashlib.sha1(wire_bytes(text)).hexdigest()[:16]
-
-
-def listing_tag(names: str) -> str:
-    """A short name for one set of file names, given them already joined.
-
-    The browser sends back the tag it already holds, and an answer that still
-    has that tag carries no names at all. Names change when a file is added or
-    removed, which is rare; which files have changed moves every few seconds,
-    and that part is short.
-    """
-    import hashlib
-
-    return hashlib.sha1(names.encode("utf-8", "replace")).hexdigest()[:16]
-
-
 @dataclass
 class Listing:
     """One worktree's file list, kept between requests."""
@@ -7106,28 +6920,6 @@ def load_config() -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     return good, links, trouble
 
 
-def config_payload() -> dict[str, Any]:
-    """What the page is handed: the settings, the links, the trouble, and
-    where the file is, with the home directory as `~` so it fits the menu."""
-    good, links, trouble = load_config()
-    return dict(good, links=links, trouble=trouble, path=tilde(config_path()))
-
-
-def page_json(data: Any) -> str:
-    """JSON that may stand inside a `<script>` of the page.
-
-    The links are the reader's text, and a `</script>` in one would end the
-    script there and start reading HTML. `<`, `>` and `&` are written as
-    their `\\u` escapes, which mean the same in JSON and in JavaScript, so
-    nothing in the data can close the element it stands in. **ASCII only**:
-    a `\\ud800` in the file is a lone surrogate once read, and the page is
-    encoded strictly, so one such link answered the page with a 500.
-    """
-    text = json.dumps(data)
-    return (text.replace("<", "\\u003c").replace(">", "\\u003e")
-            .replace("&", "\\u0026"))
-
-
 def config_stamp() -> tuple[int, int] | None:
     """What changes when the file does, for the daemon's tick: a stat, not a
     read, because it runs every second."""
@@ -8573,6 +8365,338 @@ class Commands:
         return sorted(found.values(), key=lambda one: (-one.uses, one.name))
 
 
+# --- wire: every shape the page receives ------------------------------------
+
+# One place for what goes to the page (#540, CLAUDE.md, **Principles**, 2):
+# the rows, the blocks, the settings, the stream's events and their names,
+# and how any of it is written. It was built in about eight places, and a
+# field added to `Block` went to every page without anyone choosing it.
+#
+# Five dataclasses go out whole, by design, through `wire_fields`, and
+# each of their fields is one the page reads: `DiffReport`, `Listing`,
+# `FileText`, `WholeFile`, `Command`. Anything else is written out key by
+# key. `test_only_the_wire_section_turns_a_dataclass_into_json` holds it.
+
+#: The events the stream sends. The page listens for exactly these
+#: (`test_the_page_listens_for_every_event_the_stream_sends`).
+EVENT_SESSIONS = "sessions"
+EVENT_TRANSCRIPT = "transcript"
+EVENT_SETTINGS = "settings"
+EVENTS = (EVENT_SESSIONS, EVENT_TRANSCRIPT, EVENT_SETTINGS)
+
+
+def sse(kind: str, data: str) -> str:
+    """One event of the stream, its data already JSON. The hub and the
+    stream's opening each wrote this frame by hand."""
+    assert kind in EVENTS, kind
+    return f"event: {kind}\ndata: {data}\n\n"
+
+
+def transcript_head(session_id: str, run: int, version: int) -> dict[str, Any]:
+    """Which reading of a transcript an answer or a push is about: the push,
+    the tab's fetch and the stream's opening each spelled it."""
+    return {"id": session_id, "run": run, "version": version}
+
+
+def wire_fields(value: Any, **extra: Any) -> dict[str, Any]:
+    """One of the five dataclasses that go to the page whole, as its
+    fields, and `extra` beside them. Read where they stand, never copied:
+    see `wire_json`."""
+    return dict(vars(value), **extra)
+
+
+def worktree_path(session: Session) -> str:
+    """The top of the session's worktree once git has said where that is,
+    so a session started in `src` is still in `richpalm`; until then,
+    where it started. The row and `ls --json` both say it."""
+    return session.git.root or session.home or session.cwd
+
+
+def git_fields(facts: GitFacts) -> dict[str, Any]:
+    """What git says about a worktree, as the row and `ls --json` both
+    send it: one list, so the two cannot drift."""
+    return {
+        "branch": facts.branch,
+        "ahead": facts.ahead,
+        "behind": facts.behind,
+        "dirty": facts.dirty,
+        "touched_files": facts.touched_files,
+        "doing": facts.doing,
+        "conflicts": facts.conflicts,
+    }
+
+
+def row(session: Session) -> dict[str, Any]:
+    """One session as the page wants it: flat, small, and ready to compare.
+
+    It is built by hand rather than from the dataclass, so that adding a field
+    to `Session` never quietly sends something to the browser. Rows are
+    compared with `!=` to decide what to push, so everything in here must be a
+    plain value, and nothing in here may depend on the current time: a row that
+    ages by itself would look changed every second and the page would be sent
+    the whole list for ever. `since` is a moment, and the page counts from it.
+    """
+    facts = session.git
+    return {
+        "id": session.session_id,
+        "label": session.label,
+        # A session's name on the row until the reader gives it one, and
+        # part of what the find box searches.
+        "place": session.place,
+        # The worktree's own folder, for the row's second line.
+        "worktree": os.path.basename(worktree_path(session).rstrip("/")),
+        "worktree_path": worktree_path(session),
+        "remote": facts.remote,
+        "state": session.state,
+        "state_word": STATE_WORDS.get(session.state, session.state),
+        "cwd": session.cwd,
+        "pane": session.pane,
+        "repo": facts.repo,
+        "root": facts.root,
+        **git_fields(facts),
+        "reason": session.reason,
+        # The question the agent is waiting on, so the page can draw it over
+        # whatever tab you are reading. It is here and not on a route of its
+        # own because it must arrive with the amber, not a fetch later.
+        "asking": session.asking,
+        # The permission dialog, for the same reason: whole, so the reader
+        # can read what they are declining. Only while the row is amber.
+        "permission": session.dialog,
+        # Its hook waits for a Yes from the page (`hook_waits`).
+        "approvable": session.approvable,
+        "last_event": session.last_event,
+        # What it was last asked, for the alert that says it has finished.
+        "prompt": shown_prompt(session),
+        "since": round(session.since, 3),
+        # For a session that is over, the line that brings it back.
+        "resume": resume_command(session) if session.state in GONE_STATES else "",
+        "snoozed": session.snoozed,
+        # A turn ended since the reader last had it on screen (#373).
+        "unread": session.unread,
+        # When that was, for the "new" line in the transcript (#374). It
+        # moves only when the reader looks, so it never makes a row differ
+        # by itself.
+        "seen_at": round(session.seen_at, 3),
+        # When to bring it back (#375): a moment, and the page decides.
+        "remind_at": round(session.remind_at, 3),
+        # When its last turn ended, for the order of the feed (#376).
+        "ended_at": round(session.ended_at, 3),
+        "name": session.title,
+        # Whether that name is one the reader set here. The page shows the
+        # box with it in, rather than making them type it again to change it.
+        "mine": bool(session.mine),
+        "model": session.status.model,
+        "effort": session.status.effort,
+        "model_id": model_id(session),
+        "context_pct": session.status.context_pct,
+        # What the session has spent. It moves only when a status line
+        # lands, so it never makes a row differ by itself -- which is the
+        # rule this dict is built by.
+        "cost_usd": session.status.cost_usd,
+        # The session a `/clear` turned this one into. The page follows it
+        # when the link appears while the reader is watching this one.
+        "cleared_into": session.cleared_into,
+        # The agent that ran this one, and the subagents this one runs
+        # (#422): the page draws both as lines under the parent's row.
+        "started_by": session.started_by,
+        "started_at": round(session.started_at, 3),
+        "subagents": [
+            {"id": key, "kind": one.kind, "what": one.what, "doing": one.doing,
+             "started": round(one.started, 3), "ended": round(one.ended, 3)}
+            for key, one in session.subagents.items()
+        ],
+        "agents_ran": session.agents_ran,
+    }
+
+
+def resume_command(session: Session) -> str:
+    """The command that brings back a session that is over, for the reader
+    to copy and run (#352), or "" when there is none to give.
+
+    `claude --resume <id>` finds a session only in the project of the folder
+    it is started in -- measured on 2.1.288: in the folder the session
+    started in it opened the conversation, anywhere else it asked whether to
+    trust that folder and found nothing. So it starts with `cd` to `home`,
+    and not to `cwd`, which moves with every `cd` the agent made. A
+    transcript under another config folder than `~/.claude` (a second
+    account) needs `CLAUDE_CONFIG_DIR` in front: it is the folder above
+    `projects/`. Every part came out of an event and the reader will run
+    the line, so each is quoted, and a folder or an id with a control
+    character in it gets no command at all.
+
+    Starting the agent is a non-goal; handing the reader the command is
+    not. Nothing here types into a terminal.
+    """
+    import shlex
+
+    folder = session.home or session.cwd
+    if not folder or not re.fullmatch(r"[\w-]+", session.session_id or ""):
+        return ""
+    # `CONTROL_CHARS` keeps a tab and a newline, being for text typed into a
+    # terminal; in a folder of a one-line command either one is a trap.
+    if CONTROL_CHARS.search(folder) or "\n" in folder or "\t" in folder:
+        return ""
+    prefix = ""
+    transcript = Path(session.transcript_path) if session.transcript_path else None
+    if transcript is not None and transcript.parent.parent.name == "projects":
+        config = transcript.parent.parent.parent
+        if config != Path.home() / ".claude" and not re.search(r"[\x00-\x1f]", str(config)) \
+                and not CONTROL_CHARS.search(str(config)):
+            prefix = f"CLAUDE_CONFIG_DIR={shlex.quote(str(config))} "
+    return (f"cd {shlex.quote(folder)} && {prefix}claude --resume"
+            f" {shlex.quote(session.session_id)}")
+
+
+#: The version of the shape `session_json` and `ls --json` print. It goes up
+#: only when a field is renamed or removed, which breaks a reader's script;
+#: a field added is not a new version (#353).
+JSON_VERSION = 1
+
+
+def session_json(session: Session) -> dict[str, Any]:
+    """One session as a script reads it: `ls --json` and `wait --json` (#353).
+
+    Not `row`: that is the page's, and changes whenever the page does. This
+    one is a promise, written in `README.md` and held field by field by
+    `test_ls_json_keeps_its_shape`, so a field is added here and never
+    renamed. Times are moments in seconds since the epoch, never "3min",
+    which a script would have to parse back.
+    """
+    return {
+        "id": session.session_id,
+        "name": session.title,
+        "place": session.place,
+        "worktree_path": worktree_path(session),
+        "cwd": session.cwd,
+        "state": session.state,
+        "state_word": STATE_WORDS.get(session.state, session.state),
+        # The moment it became what it is: `now - settled` is how long.
+        "settled": round(session.settled, 3),
+        "last_ts": round(session.last_ts, 3),
+        **git_fields(session.git),
+        "pane": session.pane,
+        "pid": session.pid,
+        "reason": session.reason,
+        "last_event": session.last_event,
+        "model": session.status.model,
+        "cleared_into": session.cleared_into,
+        "snoozed": session.snoozed,
+    }
+
+
+def blocks_json(blocks: Sequence[Block]) -> list[dict[str, Any]]:
+    """Blocks as the page wants them. Results are cut: the page shows a line.
+
+    Written out key by key, as `row` is: it sent `block.__dict__`, so a field
+    added to `Block` for the daemon's own use went to every page (#540).
+    `test_a_block_sends_only_the_fields_it_names` holds the list."""
+    return [{
+        "seq": block.seq,
+        "kind": block.kind,
+        "ts": block.ts,
+        "text": block.text,
+        "tool": block.tool,
+        "target": block.target,
+        "added": block.added,
+        "removed": block.removed,
+        "result": clip_lines(block.result, 40),
+        "patch": block.patch,
+        "patch_more": block.patch_more,
+        "failed": block.failed,
+        "tool_use_id": block.tool_use_id,
+        "answered": block.answered,
+    } for block in blocks]
+
+
+def clip_lines(text: str, limit: int) -> str:
+    """Keep the first lines of a tool result, and say how many were dropped."""
+    if not text:
+        return ""
+    lines = text.splitlines()
+    if len(lines) <= limit:
+        return text
+    rest = len(lines) - limit
+    return "\n".join(lines[:limit]) + f"\n… {rest} more line{'s' if rest > 1 else ''}"
+
+
+def config_payload() -> dict[str, Any]:
+    """What the page is handed: the settings, the links, the trouble, and
+    where the file is, with the home directory as `~` so it fits the menu."""
+    good, links, trouble = load_config()
+    return dict(good, links=links, trouble=trouble, path=tilde(config_path()))
+
+
+def page_json(data: Any) -> str:
+    """JSON that may stand inside a `<script>` of the page.
+
+    The links are the reader's text, and a `</script>` in one would end the
+    script there and start reading HTML. `<`, `>` and `&` are written as
+    their `\\u` escapes, which mean the same in JSON and in JavaScript, so
+    nothing in the data can close the element it stands in. **ASCII only**:
+    a `\\ud800` in the file is a lone surrogate once read, and the page is
+    encoded strictly, so one such link answered the page with a 500.
+    """
+    text = json.dumps(data)
+    return (text.replace("<", "\\u003c").replace(">", "\\u003e")
+            .replace("&", "\\u0026"))
+
+
+def wire_json(data: Any) -> str:
+    """Anything the daemon sends the page, as JSON: one spelling for the
+    answers, the pushes and the stream's opening, which had three (#289).
+    Not ASCII: a transcript in another script would be six bytes a letter on
+    the stream, which is not compressed. So what writes it to the socket
+    goes through `wire_bytes`.
+
+    A dataclass goes out as its fields, read where they stand: `asdict`
+    copied every one of the thousands of lines of a large diff before it
+    was written, 343 ms of a 715 ms poll (#291).
+    """
+    return json.dumps(data, ensure_ascii=False, default=plain)
+
+
+def plain(value: Any) -> Any:
+    """What `json.dumps` writes for a value it does not know: a dataclass's
+    fields, and anything else as text."""
+    import dataclasses
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return vars(value)
+    return str(value)
+
+
+def wire_bytes(text: str) -> bytes:
+    """`wire_json`'s text as the bytes that go out. "replace", because a lone
+    surrogate is reachable: Claude Code cuts a string between the halves of
+    an emoji and writes the escape, and `json.loads` makes it a real one. A
+    strict encode refused the whole answer, so one such line took a
+    session's transcript down for good -- and in the open stream it raised a
+    ValueError nothing caught, and `guarded` wrote an HTTP 500 into it.
+    `page_json` is the other road out: it stands inside the page's
+    `<script>`, so it is ASCII and needs no such care."""
+    return text.encode("utf-8", "replace")
+
+
+def answer_tag(text: str) -> str:
+    """A short name for one answer, given it as `wire_json` wrote it."""
+    import hashlib
+
+    return hashlib.sha1(wire_bytes(text)).hexdigest()[:16]
+
+
+def listing_tag(names: str) -> str:
+    """A short name for one set of file names, given them already joined.
+
+    The browser sends back the tag it already holds, and an answer that still
+    has that tag carries no names at all. Names change when a file is added or
+    removed, which is rare; which files have changed moves every few seconds,
+    and that part is short.
+    """
+    import hashlib
+
+    return hashlib.sha1(names.encode("utf-8", "replace")).hexdigest()[:16]
+
+
 # --- the daemon: one page, a little JSON, and a stream of changes ------------
 
 
@@ -8643,7 +8767,7 @@ class Hub:
 
     def send(self, kind: str, data: Any, session_id: str = "") -> None:
         """Send to every client, or only to those watching one session."""
-        message = f"event: {kind}\ndata: {wire_json(data)}\n\n"
+        message = sse(kind, wire_json(data))
         with self.lock:
             targets = [
                 client
@@ -8823,10 +8947,9 @@ class Daemon:
             # by index, never drew block 1 at all. `send` only queues, so
             # nothing here waits on a socket.
             if changed or fresh:
-                self.hub.send("transcript",
-                              {"id": session_id, "run": run,
-                               "version": reader.version,
-                               "blocks": blocks_json(changed)},
+                self.hub.send(EVENT_TRANSCRIPT,
+                              dict(transcript_head(session_id, run, reader.version),
+                                   blocks=blocks_json(changed)),
                               session_id=session_id)
             return blocks, run, reader.version
 
@@ -8956,7 +9079,7 @@ class Daemon:
         if self.declined_in_terminal():
             moved = self.store.refresh() or moved
         if moved:
-            self.hub.send("sessions", self.sessions_change())
+            self.hub.send(EVENT_SESSIONS, self.sessions_change())
         self.tell_config()
         for session_id in self.hub.watchers():
             self.read_transcript(session_id)
@@ -8978,7 +9101,7 @@ class Daemon:
             if now == self.config_seen and not force:
                 return
             self.config_seen = now
-            self.hub.send("settings", config_payload())
+            self.hub.send(EVENT_SETTINGS, config_payload())
 
     def forget_gone(self) -> None:
         """Drop the readers nobody needs.
@@ -9037,23 +9160,6 @@ class Daemon:
             except Exception as error:  # a bad tick must not stop the daemon
                 log(f"tick failed: {error!r}")
             self.stopping.wait(TICK)
-
-
-def blocks_json(blocks: Sequence[Block]) -> list[dict[str, Any]]:
-    """Blocks as the page wants them. Results are cut: the page shows a line."""
-    return [dict(block.__dict__, result=clip_lines(block.result, 40))
-            for block in blocks]
-
-
-def clip_lines(text: str, limit: int) -> str:
-    """Keep the first lines of a tool result, and say how many were dropped."""
-    if not text:
-        return ""
-    lines = text.splitlines()
-    if len(lines) <= limit:
-        return text
-    rest = len(lines) - limit
-    return "\n".join(lines[:limit]) + f"\n… {rest} more line{'s' if rest > 1 else ''}"
 
 
 def table_address(host: str, port: int, six: bool = False) -> str:
@@ -10047,11 +10153,11 @@ class Serving:
         # four hundred rounds, while the pushes had kept the page up to date
         # all along. A reading still the same is answered with no blocks.
         if query.get("have", "") == f"{run}.{version}":
-            self.reply_json({"id": session_id, "run": run, "version": version,
-                             "same": True})
+            self.reply_json(dict(transcript_head(session_id, run, version),
+                                 same=True))
             return
-        self.reply_json({"id": session_id, "run": run, "version": version,
-                         "blocks": blocks_json(blocks)})
+        self.reply_json(dict(transcript_head(session_id, run, version),
+                             blocks=blocks_json(blocks)))
 
     def last(self, session_id: str, session: Session,
              query: dict[str, str]) -> None:
@@ -10078,7 +10184,7 @@ class Serving:
         found = self.daemon.commands.of(session.cwd, self.command_root(session),
                                         [path for path in seen if path])
         self.reply_json({"id": session_id,
-                         "commands": [asdict(one) for one in found]})
+                         "commands": [wire_fields(one) for one in found]})
 
     def command_root(self, session: Session) -> str:
         """Where the session's worktree starts, from the answer the Files
@@ -10159,7 +10265,7 @@ class Serving:
             self.reply_json({"id": session_id, "path": wanted, "same": True,
                              "stamp": found.stamp})
             return
-        self.reply_json(dict(vars(found), id=session_id, path=wanted))
+        self.reply_json(wire_fields(found, id=session_id, path=wanted))
 
     def raw(self, session_id: str, session: Session,
             query: dict[str, str]) -> None:
@@ -10204,7 +10310,7 @@ class Serving:
         # Written once: the tag is a hash of these bytes, and the answer is
         # these bytes with the tag set in before the closing brace. Built as a
         # dict and written twice, it cost two passes over the whole diff.
-        text = wire_json(dict(vars(report), id=session_id))
+        text = wire_json(wire_fields(report, id=session_id))
         tag = answer_tag(text)
         if query.get("have", "") == tag:
             self.reply_json({"id": session_id, "tag": tag, "same": True})
@@ -10222,7 +10328,7 @@ class Serving:
                                 query.get("of", ""), base=query.get("base", ""),
                                 ranks=self.daemon.ranks,
                                 space=query.get("space", "") == "hide")
-        self.reply_json(dict(asdict(found), id=session_id))
+        self.reply_json(wire_fields(found, id=session_id))
 
     def stream(self, watching: str) -> None:
         self.send_response(200)
@@ -10243,11 +10349,10 @@ class Serving:
             held = self.daemon.transcript_held(watching) if watching else None
             opening = ""
             if held is not None:
-                told = wire_json({"id": watching, "run": held[0],
-                                  "version": held[1], "opening": True})
-                opening = f"event: transcript\ndata: {told}\n\n"
-            self.wfile.write(
-                wire_bytes(f"event: sessions\ndata: {first}\n\n" + opening))
+                told = wire_json(dict(transcript_head(watching, *held),
+                                      opening=True))
+                opening = sse(EVENT_TRANSCRIPT, told)
+            self.wfile.write(wire_bytes(sse(EVENT_SESSIONS, first) + opening))
             self.wfile.flush()
             while not self.daemon.stopping.is_set():
                 try:
@@ -10527,50 +10632,6 @@ def run_status_line(command: str, payload: str) -> str:
         log(f"the status line {command!r} failed: {error!r}")
         return ""
     return done.stdout
-
-
-#: The version of the shape `session_json` and `ls --json` print. It goes up
-#: only when a field is renamed or removed, which breaks a reader's script;
-#: a field added is not a new version (#353).
-JSON_VERSION = 1
-
-
-def session_json(session: Session) -> dict[str, Any]:
-    """One session as a script reads it: `ls --json` and `wait --json` (#353).
-
-    Not `row`: that is the page's, and changes whenever the page does. This
-    one is a promise, written in `README.md` and held field by field by
-    `test_ls_json_keeps_its_shape`, so a field is added here and never
-    renamed. Times are moments in seconds since the epoch, never "3min",
-    which a script would have to parse back.
-    """
-    facts = session.git
-    return {
-        "id": session.session_id,
-        "name": session.title,
-        "place": session.place,
-        "worktree_path": facts.root or session.home or session.cwd,
-        "cwd": session.cwd,
-        "state": session.state,
-        "state_word": STATE_WORDS.get(session.state, session.state),
-        # The moment it became what it is: `now - settled` is how long.
-        "settled": round(session.settled, 3),
-        "last_ts": round(session.last_ts, 3),
-        "branch": facts.branch,
-        "ahead": facts.ahead,
-        "behind": facts.behind,
-        "dirty": facts.dirty,
-        "touched_files": facts.touched_files,
-        "doing": facts.doing,
-        "conflicts": facts.conflicts,
-        "pane": session.pane,
-        "pid": session.pid,
-        "reason": session.reason,
-        "last_event": session.last_event,
-        "model": session.status.model,
-        "cleared_into": session.cleared_into,
-        "snoozed": session.snoozed,
-    }
 
 
 def print_json(sessions: Sequence[Session]) -> None:

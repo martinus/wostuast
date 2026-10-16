@@ -107,6 +107,7 @@ bullets beside it are the same part's other scars.
 | `git_facts_many`, `git_facts_or_failed`, `worktree_doing`, `own_git_dir`, `worktree_files`, `walk_ignored`, `written_since`, `hex_dump`, `hexWide`, `onlyChanged`, `openDirs`, `dirsWithChanges`, `git_status`, `apply_git_facts`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of`, `base` and `held`, `Daemon.diffs`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `markSpaces`, `SPACE_ARGS`, `openInFiles`, `.dtext`, `putMessage`, `putReadAs`, `stepat`, `blockSig`, `settle`, `readerAt` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `inWorktree`, `diffLineAnchor`, `drawReviewBar`, `reviewText`, `unsent` | topics/review |
+| `row`, `blocks_json`, `session_json`, `wire_fields`, `sse`, `EVENTS`, `transcript_head`, `git_fields`, `worktree_path`, a field the page reads | **Principles**, 2, and the wire section's head comment; `tests/test_wire.py` |
 | `sessions_change`, `mergeSessions`, `takeSessions`, `sameOrNew`, `patchSession`, `redrawRows`, `dataset.sig`, `filledWith`, `told` | topics/daemon-and-page: a push carries what changed; topics/sidebar: a row is filled only when what it shows changed |
 | `goBack`, `state.before`, `beginSwitch`, `endSwitch`, `keepTurns`, `takeTurns`, `TRANSCRIPTS_KEPT`, `drawTranscript`, `drawFiles`, `drawHeader`, `drawContext`, `showModels`, `putModels`, `MODELS`, `EFFORTS`, `MODEL_SHAPE`, `model_id`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | topics/daemon-and-page |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** below |
@@ -214,8 +215,15 @@ request, and name the principle.
 1. **Data flows one way**: events, then the fold, then rows, then the
    wire, then the page. The fold does no I/O: file, git and `/proc`
    reads happen at the edges, in named steps. Its test comes with #546.
-2. **Each shape the page receives is defined in one place.** Its test
-   comes with #540.
+2. **Each shape the page receives is defined in one place**: the wire
+   section (`row`, `blocks_json`, `session_json`, `wire_fields`, the
+   `EVENTS`). Its head comment names the five dataclasses that go out
+   whole; anything else is written key by key.
+   `test_a_block_sends_only_the_fields_it_names`,
+   `test_the_page_reads_only_session_fields_the_row_sends`,
+   `test_the_page_listens_for_every_event_the_stream_sends`,
+   `test_the_row_and_ls_json_say_the_same_of_a_session`,
+   `test_only_the_wire_section_turns_a_dataclass_into_json`.
 3. **A draw only reads state.** Only the code that loads data or handles
    a click changes `state`. Its test comes with #542.
 4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
@@ -284,7 +292,8 @@ Do that before grepping for a symbol.
 
 Python: constants · log · event log · following files · **session model** ·
 transcript · git facts · **files and diffs** · status ·
-settings.json · output helpers · ansi · **tmux verbs** · **the daemon** ·
+settings.json · output helpers · ansi · **tmux verbs** · slash commands ·
+**wire** · **the daemon** ·
 commands · command line · the page.
 
 Page: asking the daemon · dragging an edge · the two fetched scripts · colours ·
