@@ -11568,7 +11568,7 @@ def build_report(days: float, now: float | None = None,
 
     out += ["", "## Setup", "", "What `wostuast doctor` checks.", ""]
     out += report_table(("Result", "Check"),
-                        [(verdict, private(text)) for verdict, text in doctor_checks()])
+                        [(check.verdict, private(check.said)) for check in setup_checks()])
 
     out += ["", "## Files", "", "What `wostuast files` lists.", ""]
     out += report_table(
@@ -11694,50 +11694,97 @@ def cmd_wait(args: argparse.Namespace) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Check the setup and say what is wrong."""
-    checks = doctor_checks()
-    problems = sum(1 for verdict, _ in checks if verdict == "FAIL")
+    checks = setup_checks()
+    problems = sum(1 for check in checks if check.verdict == "FAIL")
     print("wostuast doctor")
-    print("\n".join(f"  {verdict:<4}  {text}" for verdict, text in checks))
+    print("\n".join(f"  {check.verdict:<4}  {check.said}" for check in checks))
     print()
     print("all good." if problems == 0 else f"{problems} problem(s) to fix.")
     return 1 if problems else 0
 
 
-def doctor_checks() -> list[tuple[str, str]]:
-    """Every check `doctor` makes, as ("ok" | "FAIL" | "note", what it found).
-    `report` hands an agent the same rows (#323)."""
-    lines: list[tuple[str, str]] = []
+@dataclass
+class Check:
+    """One thing the setup is checked for (#549).
 
-    def report(ok: bool, good: str, bad: str, fatal: bool = True) -> None:
-        if ok:
-            lines.append(("ok", good))
-        else:
-            lines.append(("FAIL" if fatal else "note", bad))
+    `doctor` prints each in the long form, `report` hands an agent the same
+    list, and a start prints the ones that are not ok, each with its `start`
+    mark. The checks were written twice, in `doctor_checks` and in the
+    start, and their words had drifted apart: "tmux not found;" here,
+    "tmux not found:" there, the state directory with its full path in one
+    and with `~` in the other.
+    """
 
-    report(sys.version_info >= (3, 10), f"python {sys.version.split()[0]}",
-           f"python {sys.version.split()[0]} is older than 3.10")
+    key: str
+    ok: bool
+    good: str
+    bad: str
+    fatal: bool = True        # `doctor` says FAIL, and exits 1
+    start: str = "warn"       # the mark a start gives it when it is not ok
 
+    @property
+    def verdict(self) -> str:
+        return "ok" if self.ok else "FAIL" if self.fatal else "note"
+
+    @property
+    def said(self) -> str:
+        return self.good if self.ok else self.bad
+
+
+class SetupFacts:
+    """What the checks share, each read once: Claude Code's `settings.json`
+    was loaded three times by one `doctor`."""
+
+    def __init__(self, built: tuple[str, str] | None = None) -> None:
+        self.built = built
+        self.loaded: tuple[dict[str, Any], str] | None = None
+
+    def settings(self) -> tuple[dict[str, Any], str]:
+        """Claude Code's settings, and why they could not be read, or ""."""
+        if self.loaded is None:
+            path = settings_path()
+            try:
+                self.loaded = load_settings(path)[0], ""
+            except (OSError, ValueError) as error:
+                self.loaded = {}, unreadable(path, error)
+        return self.loaded
+
+
+def check_python(facts: SetupFacts) -> Check:
+    version = sys.version.split()[0]
+    return Check("python", sys.version_info >= (3, 10), f"python {version}",
+                 f"python {version} is older than 3.10")
+
+
+def check_state(facts: SetupFacts) -> Check:
     directory = state_dir()
     trouble = state_dir_trouble()
-    report(not trouble, f"state directory {directory}",
-           f"cannot write {directory}: {trouble}")
+    return Check("state", not trouble, f"state directory {directory}",
+                 f"cannot write {tilde(directory)}: {trouble}", start="fail")
 
+
+def check_events(facts: SetupFacts) -> Check:
     events = events_path()
     try:
         count, held, size = measure_log()
-        report(events.exists(),
-               f"event log {events} with {count} events"
-               f" in {counted(held, 'file', 'files')} ({size_label(size)})",
-               f"no events yet at {events}; run a Claude Code session", fatal=False)
     except OSError as error:
-        report(False, "", f"cannot read the event log: {error}", fatal=False)
+        return Check("events", False, "", f"cannot read the event log: {error}",
+                     fatal=False)
+    return Check("events", events.exists(),
+                 f"event log {events} with {count} events"
+                 f" in {counted(held, 'file', 'files')} ({size_label(size)})",
+                 f"no events yet at {tilde(events)}: start a Claude Code session",
+                 fatal=False, start="note")
 
+
+def check_settings(facts: SetupFacts) -> Check | None:
+    trouble = facts.settings()[1]
+    return Check("settings", False, "", trouble) if trouble else None
+
+
+def check_hooks(facts: SetupFacts) -> Check:
     path = settings_path()
-    settings: dict[str, Any] = {}
-    try:
-        settings, _, _ = load_settings(path)
-    except (OSError, ValueError) as error:
-        report(False, "", unreadable(path, error))
+    settings = facts.settings()[0]
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
     # Only the hook file counts. An entry from before it names `wostuast
     # hook`, which is gone (#322): it records nothing, so it is missing.
@@ -11746,39 +11793,90 @@ def doctor_checks() -> list[tuple[str, str]]:
         for event in HOOK_EVENTS
         if not any(runs_hook_file(group) for group in (hooks.get(event) or []))
     ]
-    report(not missing, f"all {len(HOOK_EVENTS)} hooks registered in {path}",
-           f"hooks missing in {path}: {', '.join(missing)}; run `wostuast install`")
+    return Check("hooks", not missing, f"all {len(HOOK_EVENTS)} hooks registered in {path}",
+                 f"hooks missing in {path}: {', '.join(missing)}; run `wostuast install`")
 
-    current = settings.get("statusLine")
+
+def check_status_line(facts: SetupFacts) -> Check:
+    current = facts.settings()[0].get("statusLine")
     line = current.get("command") if isinstance(current, dict) else None
-    mine = is_status_file(line)
-    report(mine, "status line registered (session names and context)",
-           "status line runs `wostuast status`, which is gone; run `wostuast install`"
-           if is_ours(line, "status") else
-           "status line not registered; without it sessions have no name and no context percent",
-           fatal=False)
+    return Check("status line", is_status_file(line),
+                 "status line registered (session names and context)",
+                 "status line runs `wostuast status`, which is gone; run `wostuast install`"
+                 if is_ours(line, "status") else
+                 "status line not registered; without it sessions have no name and no context percent",
+                 fatal=False)
 
-    report(which_tmux(), "tmux found",
-           "tmux not found; jump and send stay hidden", fatal=False)
 
+def check_tmux(facts: SetupFacts) -> Check:
+    return Check("tmux", which_tmux(), "tmux found",
+                 "tmux not found: jump and send stay hidden", fatal=False)
+
+
+def check_config(facts: SetupFacts) -> Check | None:
     # The settings, if there are any. A broken one is a note and not a
     # failure: the page reads perfectly well on its defaults, and the point
     # of saying so is that a link doing nothing gives no clue why.
-    if config_path().exists():
-        _, links, trouble = load_config()
-        usable = sum(1 for one in links if not one["trouble"])
-        report(not trouble,
-               f"settings in {config_path()}, {usable} ticket link(s)",
-               "; ".join(trouble), fatal=False)
-    if links_path().exists():
-        report(False, "",
-               f"{links_path()} is no longer read; add the links in the page's"
-               " settings menu, then delete the file", fatal=False)
-    report(install_path().exists(), f"installed at {install_path()}",
-           f"not installed at {install_path()}; run `wostuast install`", fatal=False)
-    behind = install_behind()
-    report(not behind, "the installed copy is this version", behind)
-    return lines
+    if not config_path().exists():
+        return None
+    _, links, trouble = load_config()
+    usable = sum(1 for one in links if not one["trouble"])
+    return Check("config", not trouble,
+                 f"settings in {config_path()}, {usable} ticket link(s)",
+                 "settings: " + "; ".join(trouble), fatal=False)
+
+
+def check_links(facts: SetupFacts) -> Check | None:
+    if not links_path().exists():
+        return None
+    return Check("links", False, "",
+                 f"{links_path()} is no longer read; add the links in the page's"
+                 " settings menu, then delete the file", fatal=False)
+
+
+def check_installed(facts: SetupFacts) -> Check:
+    return Check("installed", install_path().exists(), f"installed at {install_path()}",
+                 f"not installed at {install_path()}; run `wostuast install`",
+                 fatal=False)
+
+
+def check_behind(facts: SetupFacts) -> Check:
+    behind = install_behind(facts.built, facts.settings()[0])
+    return Check("behind", not behind, "the installed copy is this version", behind)
+
+
+#: Every check, in the order `doctor` prints them (#549). One that gives
+#: None has nothing to say: there is no file of ours to check.
+SETUP_CHECKS: tuple[tuple[str, Callable[[SetupFacts], Check | None]], ...] = (
+    ("python", check_python),
+    ("state", check_state),
+    ("events", check_events),
+    ("settings", check_settings),
+    ("hooks", check_hooks),
+    ("status line", check_status_line),
+    ("tmux", check_tmux),
+    ("config", check_config),
+    ("links", check_links),
+    ("installed", check_installed),
+    ("behind", check_behind),
+)
+
+
+#: The checks a start makes, and when: before anything is written, and
+#: once the hooks are brought up to date. The rest a start does not make:
+#: it prints the python it runs, and `bring_up_to_date` mends the hooks,
+#: the status line and the install rather than saying they are wrong.
+START_FIRST = ("tmux", "state")
+START_AFTER = ("config", "behind", "events")
+
+
+def setup_checks(built: tuple[str, str] | None = None,
+                 only: Sequence[str] | None = None) -> list[Check]:
+    """The checks named in `only`, or all of them, each made once. `built`
+    is what `bring_up_to_date` wrote, which `install_behind` compares with."""
+    facts = SetupFacts(built)
+    found = (make(facts) for key, make in SETUP_CHECKS if only is None or key in only)
+    return [check for check in found if check is not None]
 
 
 def own_version(path: Path | None = None) -> str:
@@ -11806,12 +11904,14 @@ def own_version(path: Path | None = None) -> str:
     return f"{day} \u00b7 {hashlib.sha256(data).hexdigest()[:7]}"
 
 
-def hook_files_missing() -> list[str]:
-    """The hook files Claude Code's settings run that cannot be run."""
-    try:
-        settings, _, _ = load_settings(settings_path())
-    except (OSError, ValueError):
-        return []
+def hook_files_missing(settings: dict[str, Any] | None = None) -> list[str]:
+    """The hook files Claude Code's settings run that cannot be run. The
+    settings are read here unless the caller has them (`SetupFacts`)."""
+    if settings is None:
+        try:
+            settings, _, _ = load_settings(settings_path())
+        except (OSError, ValueError):
+            return []
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
     named = {
         words_of(entry["command"])[0]
@@ -11826,7 +11926,8 @@ def hook_files_missing() -> list[str]:
     return sorted(path for path in named if not os.access(path, os.X_OK))
 
 
-def install_behind(built: tuple[str, str] | None = None) -> str:
+def install_behind(built: tuple[str, str] | None = None,
+                   settings: dict[str, Any] | None = None) -> str:
     """Why the installed copy is not this one, or "" when it is.
 
     `built` is the hook file and the status file this version writes, when
@@ -11849,7 +11950,7 @@ def install_behind(built: tuple[str, str] | None = None) -> str:
     # event lost, and the hooks still look registered: `is_ours` knows the
     # command by its shape. Before the file, the command was the program,
     # and "installed at" caught it.
-    gone = hook_files_missing()
+    gone = hook_files_missing(settings)
     if gone:
         return (f"the hooks run {', '.join(gone)}, which is not there or"
                 f" cannot run, so nothing is recorded; run `{here} install`")
@@ -12311,15 +12412,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
     tools = [f"python {sys.version.split()[0]}"]
     tools += [name for name in ("tmux", "git") if shutil.which(name)]
     print(mark("ok", " · ".join(tools), color))
-    if not which_tmux():
-        print(mark("warn", "tmux not found: jump and send stay hidden", color))
-
-    directory = state_dir()
-    trouble = state_dir_trouble()
-    if trouble:
-        print(mark("fail", f"cannot write {tilde(directory)}: {trouble}", color),
-              file=sys.stderr)
-        return 1
+    # The same checks `doctor` makes, in the same words (#549): the ones
+    # that matter before anything is written, here; the rest once the
+    # hooks are brought up to date (`serve_page`).
+    for check in setup_checks(only=START_FIRST):
+        if check.ok:
+            continue
+        if check.start == "fail":
+            print(mark("fail", check.bad, color), file=sys.stderr)
+            return 1
+        print(mark(check.start, check.bad, color))
 
     held, holder = one_daemon()
     if held is None:
@@ -12416,15 +12518,12 @@ def serve_page(args: argparse.Namespace, color: bool, held: int) -> int:
         print(mark("warn", "your own status line runs, so sessions have no name"
                    " and no context; `wostuast install` says how to have both",
                    color))
-    # Said here because the page says it only in a corner. A file you wrote
-    # and got wrong must never look like a file you never wrote.
-    for why in load_config()[2]:
-        print(mark("warn", f"settings: {why}", color))
-    behind = install_behind(built)
-    if behind:
-        print(mark("warn", behind, color))
-    if not events_path().exists():
-        print(mark("note", "no events yet: start a Claude Code session", color))
+    # The settings are said here because the page says it only in a
+    # corner. A file you wrote and got wrong must never look like a file
+    # you never wrote.
+    for check in setup_checks(built, only=START_AFTER):
+        if not check.ok:
+            print(mark(check.start, check.bad, color))
 
     port = args.port
     daemon = Daemon()

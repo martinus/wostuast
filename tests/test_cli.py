@@ -131,6 +131,34 @@ def test_ls_shows_the_name_from_the_status_file(ws, written_events, recorded_sta
     assert "warmhare" in capsys.readouterr().out
 
 
+def test_every_check_says_the_same_in_doctor_and_at_a_start(ws, capsys, monkeypatch):
+    """The setup checks are one table (#549). They were written twice, in
+    `doctor` and in the start, and the words had drifted apart. Each check
+    made to fail here says its one bad text in `doctor`, and at a start
+    when the start makes it."""
+    keys = [key for key, _ in ws.SETUP_CHECKS]
+    assert len(keys) == len(set(keys))
+    assert set(ws.START_FIRST + ws.START_AFTER) <= set(keys)
+    # Every real check says something either way.
+    for check in ws.setup_checks():
+        assert check.said, check.key
+
+    def failing(key):
+        return lambda facts: ws.Check(key, False, f"good {key}", f"bad {key}",
+                                      fatal=False)
+
+    monkeypatch.setattr(ws, "SETUP_CHECKS",
+                        tuple((key, failing(key)) for key in keys))
+    ws.cmd_doctor(None)
+    said = capsys.readouterr().out
+    for key in keys:
+        assert f"bad {key}" in said, key
+    assert start(ws, monkeypatch) == 0
+    said = capsys.readouterr().out
+    for key in ws.START_FIRST + ws.START_AFTER:
+        assert f"bad {key}" in said, key
+
+
 def test_doctor_reports_a_missing_install(ws, capsys):
     code = ws.cmd_doctor(None)
     out = capsys.readouterr().out
