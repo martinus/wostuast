@@ -23082,13 +23082,10 @@ function isShown(ranges, line) {
 function withMore(one, section) {
   const key = moreKey(section, one.path);
   const more = state.diffs.more.get(key);
-  let whole = state.diffs.whole.get(key);
-  if (whole && !whole.asking && whole.sig !== hunkSig(one)) {
-    state.diffs.whole.delete(key);
-    whole = undefined;
-  }
-  if (!whole && more && more.length) fetchWhole(one, section);  // draws again
-  const usable = whole && whole.file;
+  // A whole file read for hunks that have since changed is not this file:
+  // `askWhole` reads it again.
+  const whole = state.diffs.whole.get(key);
+  const usable = whole && whole.sig === hunkSig(one) && whole.file;
   // Every row with its numbers, and null where rows are hidden.
   const rows = [];
   // What git named at the top of each of its hunks -- the function a hunk
@@ -23181,6 +23178,25 @@ async function fetchWhole(one, section) {
   draw();
 }
 
+// The whole file for each file the reader asked to see more of, and has
+// not got, or got for hunks that have since changed. Asked where the need
+// starts -- a click (`revealLines`), a new diff (`loadDiff`) -- and never by
+// the draw (#566): `withMore` asked for it as it drew, so a draw started
+// work that came back as another draw.
+function askWhole() {
+  if (!state.diff) return;
+  for (const section of state.diff.sections) {
+    for (const one of section.files || []) {
+      const key = moreKey(section.name, one.path);
+      const more = state.diffs.more.get(key);
+      if (!more || !more.length) continue;
+      const whole = state.diffs.whole.get(key);
+      if (whole && (whole.asking || whole.sig === hunkSig(one))) continue;
+      fetchWhole(one, section.name);                     // draws again
+    }
+  }
+}
+
 // Show the lines `from`..`to` (new-side numbers; `to` may be Infinity) of a
 // file drawn by `withMore`. A choice, so it is kept by `savePlace`.
 function revealLines(file, from, to) {
@@ -23194,6 +23210,7 @@ function revealLines(file, from, to) {
   const ranges = state.diffs.more.get(key) || [];
   ranges.push([from, to]);
   state.diffs.more.set(key, ranges);
+  askWhole();
   draw();
 }
 
@@ -23700,7 +23717,6 @@ function fillElsewhere(holder) {
   if (!byPath.size) return;
   const head = put(holder, "div", "diffhead elsewhere", "commented elsewhere");
   put(head, "span", "about", "comments on lines this diff does not show");
-  const want = [];
   for (const [path, comments] of byPath) {
     const node = put(holder, "div", "dfile");
     const name = put(node, "div", "name");
@@ -23708,7 +23724,6 @@ function fillElsewhere(holder) {
     put(name, "span", "path", path);
     const body = put(node, "div", "dbody");
     const read = state.reviewFiles.get(path);
-    if (!read) want.push(path);
     const lines = read && typeof read.text === "string"
       ? linesOf(read.text.replace(/\n$/, "")) : [];
     const runs = [];
@@ -23735,7 +23750,21 @@ function fillElsewhere(holder) {
                 one.anchor, one.quoted, true);
     }
   }
-  if (want.length) readElsewhere(want);
+}
+
+// The files that hold a comment the diff does not reach, read where the
+// need starts: a new diff, and a review with a comment in it (#566).
+// `fillElsewhere` asked for them as it drew. A read that failed is not
+// kept, so the next poll asks again.
+function askElsewhere() {
+  if (!state.diff) return;
+  const drawn = diffAnchors(state.diff);
+  const want = new Set();
+  for (const one of reviewInOrder()) {
+    const path = one.anchor.split("\n")[0];
+    if (!drawn.has(one.anchor) && !state.reviewFiles.has(path)) want.add(path);
+  }
+  if (want.size) readElsewhere([...want]);
 }
 
 // The lines of the files `fillElsewhere` shows. An answer is kept until the
@@ -24784,6 +24813,8 @@ async function loadDiff() {
   if (state.diffs.loose && !state.diffs.found && state.diffs.asking !== state.diffs.loose) {
     readLoose(state.diffs.loose);
   }
+  askWhole();
+  askElsewhere();
 }
 
 // Every block carries its place in the transcript, so a block that arrives
