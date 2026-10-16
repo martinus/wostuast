@@ -12,7 +12,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   on every tool call**. `test_the_hook_does_not_import_what_it_does_not_need`
   fails if that slips.
 - **`name` keeps the page's name, and types `/rename` where it may**
-  (`Serving.name`, `type_rename`, #351). This bullet said the status line
+  (`verb_name`, `type_rename`, #351). This bullet said the status line
   kept the name a session started with and `/rename` did not change it;
   on 2.1.288 `session_name` is `customTitle ?? aiTitle` and follows a
   `/rename` at once (measured with `tests/claude_pane.py`). `/rename`
@@ -700,7 +700,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     session the view asked** (`useTarget`), which it then chooses. The
     view is drawn in the reading face, the names too (#414).
   - **The Commands view shows the same list, and reads one by its name**
-    (#367, `drawCommands`, `Serving.command`). The one asked for is
+    (#367, `drawCommands`, `verb_command`). The one asked for is
     found among `Commands.defined`, nearest first as the list has them,
     and it sends only the text: the rest the tab shows is the list's
     entry (`commandOf`). Its text comes without its frontmatter

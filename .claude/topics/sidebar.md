@@ -63,7 +63,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   state stays `needs_you`, because the session does still wait, and a
   script that waits on it (`cmd_wait`) must still see that.
   **Only a session that needs you is snoozed**: snoozing one at work would
-  hide its next question before anybody saw it, so `Serving.snooze` answers
+  hide its next question before anybody saw it, so `verb_snooze` answers
   409 and `toggleSnooze` says why. The snoozes are kept in `snoozed_path`,
   beside the names and written the same way (`Store.snooze`, under
   `naming`), so every browser shares them and a restart keeps them; an
@@ -86,7 +86,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   than the fold still has no session.
   `test_a_session_a_saved_turn_points_at_is_not_forgotten`. `saved_entry` checks every
   entry, from the disk and from a POST alike. **Taking one off needs no
-  session** (`POST_VERBS` gives `save` "", and `Serving.save` asks `known`
+  session** (`POST_VERBS` gives `save` "", and `verb_save` asks `known`
   only to save): registered "known", "done" on a turn of a forgotten
   session was a 404, and the entry could never go.
   - **The bookmark stands in the turn's row of buttons, at its top right**
@@ -121,7 +121,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   when it opens** (#376). The text is `Session.last_answer`, from the
   `Stop` hook's `last_assistant_message` (topics/payloads) -- not read out
   of each transcript, and **not on the row**: a row goes out on every
-  change, and an answer can run to pages. `Serving.last` hands one over,
+  change, and an answer can run to pages. `verb_last` hands one over,
   cut at `LAST_MAX`, and `askLast` asks once a session while the feed is
   open. The feed stands in place of the tabs (`state.feed`, `body.infeed`),
   newest first by the row's `ended_at`; `drawFeedLink` redraws it on every
