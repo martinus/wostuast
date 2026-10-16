@@ -3188,19 +3188,31 @@ def test_a_block_shows_its_text_as_written_from_txt(ws, page_at):
         button = turn.locator(":scope > .readas")
         assert not button.is_visible()
         turn.locator(".prose").hover()
+        where = button.bounding_box()
         button.click()
         turn = page.locator(".turn:not(.mine)", has_text="Found it")
-        turn.locator(".bubble.source").wait_for()
-        assert turn.locator(".bubble.source").inner_text() == said
+        turn.locator(".source").wait_for()
+        assert turn.locator(".source").inner_text() == said
+        # Only the text changes (#509): an answer's source is no box, on
+        # the page's ground, as its Markdown was.
+        look = turn.locator(".source").evaluate("""(one) => {
+          const css = getComputedStyle(one);
+          return [one.classList.contains('bubble'), css.borderTopStyle,
+                  css.backgroundColor];
+        }""")
+        assert look == [False, "none", "rgba(0, 0, 0, 0)"], look
         button = turn.locator(":scope > .readas")
         assert button.get_attribute("aria-pressed") == "true"
-        # Lit, it stays in sight with the pointer gone.
+        # Lit, it stays in sight with the pointer gone, and where it was,
+        # so a second press needs no move (#510).
         page.mouse.move(5, 5)
         assert button.is_visible()
+        lit = button.bounding_box()
+        assert (round(lit["x"]), round(lit["y"])) == (round(where["x"]), round(where["y"]))
         button.click()
         page.locator(".turn:not(.mine)", has_text="Found it").locator(
             ".prose strong").wait_for()
-        assert page.locator(".bubble.source").count() == 0
+        assert page.locator(".turn:not(.mine) .source").count() == 0
 
 
 def test_a_prompt_under_the_compaction_line_draws_no_rule_of_its_own(ws, page_at):

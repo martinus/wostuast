@@ -13294,17 +13294,21 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    the time it stood on the next turn's name after a reply of one line, and
    on the time's line it ran out of the column's 64 px and was cut by the
    pane's edge. There on the hover, over the end of the first line, as a
-   code block's copy button is; and always while lit, inside the box of the
-   text, which keeps a margin for it. */
+   code block's copy button is; and always while lit, in the same place, so
+   a second press needs no move (issue 510): lit, it stepped 6 px in. The
+   text as written keeps a margin for it. */
 .turn > .readas { position: absolute; top: 0; right: 0; display: none;
   background: var(--bg); }
 .turn:hover > .readas, .turn > .readas:focus,
 .turn > .readas[aria-pressed="true"] { display: block; }
-.turn > .readas[aria-pressed="true"] { top: 6px; right: 6px; }
 /* What the agent wrote, as it wrote it: to select and copy, Markdown and
-   all. */
-.bubble.source { margin: 0; padding-right: 48px; font-family: var(--mono);
-  font-size: 13px; color: var(--ink); }
+   all. Only the face changes (issue 509): an answer's source is no box,
+   and a prompt's or a note's keeps the box it had. */
+.source { flex-grow: 1; min-width: 0; margin: 0; padding-right: 48px;
+  font-family: var(--mono); font-size: 13px; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
+.turn:not(.mine):not(.aside) > .source,
+.turn:not(.mine):not(.aside) > .foldbox > .source { color: var(--ink); }
 /* The harness's words as Markdown, in its box: `.bubble` keeps the text's
    own line breaks, which between the blocks Markdown makes are blank lines. */
 .bubble.prosebox { white-space: normal; }
@@ -18831,7 +18835,10 @@ function blockTurn(block, index) {
   if (shell) {
     shown = putShell(box, block, drawn);
   } else if (asText) {
-    shown = put(box, "pre", "bubble source", drawn);
+    // The text as written changes the text and nothing else (#509): a
+    // prompt and a message of the harness keep their boxes, and an answer
+    // stays on the page's ground, as its Markdown does.
+    shown = put(box, "pre", (mine || aside ? "bubble " : "") + "source", drawn);
     if (mine) linkTickets(shown);
   } else if (mine || aside) {
     // The harness's words are Markdown too (#490): a subagent's report

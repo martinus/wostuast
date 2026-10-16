@@ -288,8 +288,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   is normal, because `.bubble`'s `pre-wrap` made the newlines between the
   blocks blank lines. Every block drawn as Markdown has the Files tab's
   "txt" (`putReadAs`, #493), kept in `state.turns.open` under `textKey`, so
-  `forgetPlaces` forgets it with the rest; lit, the block is
-  `.bubble.source`. **It stands at the block's top right, out of the flow**
+  `forgetPlaces` forgets it with the rest; lit, the block is `.source`,
+  **and only its text changes** (#509): an answer's source stood in a
+  bordered box, a look of its own, while a prompt's kept its box; now
+  `.bubble` goes only on a prompt's and a note's. **Lit, the button stands
+  where it stood** (#510): it stepped 6 px in, and a second press missed. **It stands at the block's top right, out of the flow**
   (`.turn > .readas`): under the time it stood on the next turn's name
   after a one-line reply, and on the time's line it ran past `.who`'s 64 px
   into the pane's edge, which cut it. **A prompt is Markdown too** (#500):
