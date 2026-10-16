@@ -558,8 +558,17 @@ def in_pane(ws, served, tmp_path, monkeypatch, transcript_file):
     """
     seen = []
 
+    # A text pasted into the pane is a prompt Claude Code takes and writes
+    # into the transcript, as a real one does: a send to an agent at its
+    # prompt waits to see it there (#489), and says when it does not.
     def runner(args, **rest):
         seen.append(said(args, rest))
+        if "paste-buffer" in args and typed(seen):
+            moment = time.time()
+            stamp = (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(moment))
+                     + f".{int(moment % 1 * 1000):03d}Z")
+            with transcript.open("a") as out:
+                out.write(records(record("you", typed(seen)[-1], ts=stamp)))
         return ""
 
     monkeypatch.setattr(ws, "run", runner)

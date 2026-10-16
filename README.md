@@ -109,10 +109,12 @@ ready      Fix issue 142 · unordered_dense/calmpuma  fix/issue-142   ↑1 ✓  
   `Authorization:` headers, `TOKEN=…`, and known token shapes. A secret in
   another shape still shows.
 - **You answer an agent's question from the page.** When an agent asks you
-  something, the question and its answers show at the foot of the transcript.
+  something, the question and its answers show at the foot of every tab.
   Pick one answer, or several where the question allows it. Change your mind
   if you want. Nothing goes to the terminal until you press submit, and the
-  button says which keys it will press.
+  button says which keys it will press. While the question waits, the send
+  box and the review's send button are gone, so you cannot press send by
+  mistake.
 - **You can say Yes or No to a permission request.** The page shows the
   whole request: every field, not a clipped line. Pick **Yes** to allow
   this one call, once, or **Yes, and don't ask again for npm test \*** to
@@ -309,6 +311,12 @@ a `!` command with what it printed, and a slash command such as `/model opus`
 with what Claude Code answered. You can send a slash command from the send box
 too. One that opens a menu, such as `/model` alone, opens it in the terminal:
 press <kbd>Enter</kbd> to jump there and pick.
+
+If Claude Code does not take a message you send to an agent at its prompt,
+for example because a dialog such as `/config` is open in the terminal, the
+page says so and puts your text back in the box. Press <kbd>↑</kbd> in the
+empty send box to bring back what you sent before, and <kbd>↓</kbd> to go
+forward again.
 
 When the send box is three lines tall or more, it shows how much it holds
 over the send button: the lines and the size, such as "2.4k lines" and
