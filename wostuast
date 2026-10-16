@@ -2695,6 +2695,16 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
         session.last_event = clip(" ".join((note.group(1) or "background task ended").split()),
                                   PROMPT_WIDTH)
         return
+    # Nor is a message from another session (#482): a subagent's hand-back
+    # wakes the agent with `<agent-message from=…>` as its prompt. Kept as
+    # the first prompt, it named the session, tag and all, in the row, the
+    # tab's title and the alert that it needs you. The transcript shows its
+    # words as a note (`AGENT_MESSAGE`); here it is only the latest event.
+    sent = AGENT_SENT.match(str(event.get("prompt") or ""))
+    if sent:
+        words = " ".join(sent.group(1).split("</agent-message>")[0].split())
+        session.last_event = clip("from another session: " + words, PROMPT_WIDTH)
+        return
     # Cut it here, once. Keeping the whole of a pasted prompt would put it in
     # every row, to be compared every tick and sent to the browser every time.
     # The paste tags come off first, as the transcript takes them off: the
@@ -3673,6 +3683,11 @@ TASK_FIELD = re.compile(r"<(status|summary|result)>\s*(.*?)\s*</\1>", re.S)
 AGENT_MESSAGE = re.compile(
     r"\A\s*(?:Another Claude session sent a message:\s*)?"
     r"<agent-message\b[^>]*>\s*(.*?)\s*</agent-message>", re.S)
+#: The same, as a hook's prompt sees it: only its start is asked for, so a
+#: message cut short, or one with the paragraph after it, is still one.
+AGENT_SENT = re.compile(
+    r"\A\s*(?:Another Claude session sent a message:\s*)?"
+    r"<agent-message\b[^>]*>\s*(.*)", re.S)
 
 
 def task_note(inner: str) -> str:
