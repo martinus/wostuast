@@ -2810,9 +2810,9 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
         assert page.eval_on_selector_all(
             ".feedentry .feedwho", "els => els.map((e) => e.textContent)") == ["you", "claude"]
         # Each as the transcript draws it: the prompt in the reader's box,
-        # the answer as Markdown, and the two names in their colours.
-        assert page.locator(".feedentry >> nth=0 >> .bubble.mine").count() == 1
-        assert page.locator(".feedentry >> nth=0 >> .prose").count() == 0
+        # as Markdown too (#500), the answer as Markdown, and the two names
+        # in their colours.
+        assert page.locator(".feedentry >> nth=0 >> .bubble.mine .prose").count() == 1
         assert page.locator(".feedentry >> nth=1 >> .prose").count() == 1
         look = page.evaluate("""() => {
           const root = getComputedStyle(document.documentElement);
@@ -3171,9 +3171,9 @@ def test_a_message_of_the_harness_is_markdown(ws, page_at):
 
 def test_a_block_shows_its_text_as_written_from_txt(ws, page_at):
     """The reader wanted to select and copy what the agent wrote, Markdown
-    and all (#493): "txt", as on the Files tab, under the time of every
+    and all (#493): "txt", as on the Files tab, at the top right of every
     block drawn as Markdown. Lit, the block is its source; again, Markdown.
-    A prompt is drawn as typed already and has none."""
+    A prompt is Markdown too, and has one (#500)."""
     daemon, path = page_at
     said = "Found it. `put` takes **no lock**.\n\n- one\n- two"
     write_records(daemon,
@@ -3183,7 +3183,8 @@ def test_a_block_shows_its_text_as_written_from_txt(ws, page_at):
     with opened(path) as page:
         turn = page.locator(".turn:not(.mine)", has_text="Found it")
         turn.locator(".prose strong").wait_for()
-        assert page.locator(".turn.mine .readas").count() == 0
+        assert page.locator(".turn.mine", has_text="why?").locator(
+            ":scope > .readas").count() == 1
         button = turn.locator(":scope > .readas")
         assert not button.is_visible()
         turn.locator(".prose").hover()
@@ -3226,3 +3227,46 @@ def test_a_prompt_under_the_compaction_line_draws_no_rule_of_its_own(ws, page_at
         }""")
         assert rules["under"] == "none", rules
         assert rules["others"] and "none" not in rules["others"], rules
+
+
+def test_a_prompt_is_markdown_in_its_own_box(ws, page_at):
+    """The reader asked for their own prompts as Markdown by default, with
+    the txt button (#500): `**` and backticks and a list were drawn as
+    typed. Still in the reader's box, with its rail; a `!` command stays
+    as typed, in the fixed face."""
+    daemon, path = page_at
+    write_records(daemon, conftest.record(
+        "you", "Look at the **cache**:\n\n- does `put` lock?",
+        ts="2026-09-18T14:20:00.000Z"), conftest.record(
+        "you", "first line\nsecond line", ts="2026-09-18T14:21:00.000Z"))
+    daemon.tick()
+    with opened(path) as page:
+        turn = page.locator(".turn.mine", has_text="does")
+        turn.locator(".bubble li code").wait_for()
+        assert turn.locator(".bubble strong").inner_text() == "cache"
+        assert turn.locator(".bubble").evaluate(
+            "(one) => getComputedStyle(one).borderLeftStyle") == "solid"
+        turn.locator(".bubble").hover()
+        turn.locator(":scope > .readas").click()
+        page.locator(".turn.mine", has_text="does").locator(".bubble.source").wait_for()
+        assert page.locator(".turn.mine", has_text="does").locator(
+            ".bubble.source").inner_text() == "Look at the **cache**:\n\n- does `put` lock?"
+        # A line the reader ended is a line, or a pasted log ran together.
+        assert page.locator(".turn.mine", has_text="first line").locator(
+            ".bubble p br").count() == 1
+
+
+def test_the_compaction_line_says_when(ws, page_at):
+    """"context compacted" said what happened and not when (#499): its
+    time, as the "new" line has, and the day when it was not today."""
+    daemon, path = page_at
+    write_records(daemon, {"type": "system", "subtype": "compact_boundary",
+                           "timestamp": "2026-09-18T14:22:00.000Z"})
+    daemon.tick()
+    with opened(path) as page:
+        page.wait_for_selector(".divider")
+        said = page.inner_text(".divider")
+        expected = page.evaluate(
+            "(ts) => (dayOf(ts) ? dayOf(ts) + ' ' : '') + clock(ts)",
+            ws.parse_timestamp("2026-09-18T14:22:00.000Z"))
+        assert " ".join(said.lower().split()) == "context compacted \u00b7 " + expected.lower(), said

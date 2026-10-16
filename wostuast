@@ -4041,7 +4041,8 @@ class Transcript:
             # An older build. What it meant there was never settled — the
             # payload schema says a session that was compacted *or* resumed —
             # and no build in use writes one, so there is nothing to measure.
-            return [self.keep(Block(kind="divider", text="context compacted"))]
+            return [self.keep(Block(kind="divider", text="context compacted",
+                                    ts=parse_timestamp(record.get("timestamp"))))]
         if kind == "system":
             subtype = str(record.get("subtype") or "")
             if subtype == "local_command":
@@ -4056,7 +4057,10 @@ class Transcript:
                 return [block] if block else []
             if subtype != "compact_boundary":
                 return []
-            return [self.keep(Block(kind="divider", text="context compacted"))]
+            # With its moment (#499): when the agent forgot is half of what
+            # the line says.
+            return [self.keep(Block(kind="divider", text="context compacted",
+                                    ts=parse_timestamp(record.get("timestamp"))))]
         if kind == "attachment":
             return self.add_queued(record)
         if kind not in ("user", "assistant"):
@@ -13260,7 +13264,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   font-size: 13px; color: var(--ink); }
 /* The harness's words as Markdown, in its box: `.bubble` keeps the text's
    own line breaks, which between the blocks Markdown makes are blank lines. */
-.bubble.prosebox { white-space: normal; padding-top: 2px; padding-bottom: 2px; }
+.bubble.prosebox { white-space: normal; }
 .who.claude { color: var(--needs); }
 /* The name is a link to this block. It reads as the name it always was; the
    browser's own "open in a new tab" is what it is there for. */
@@ -15867,10 +15871,11 @@ function drawSaved(box) {
       takeSaved(answer.saved);
     });
     const text = one.text + (one.text.length >= 300 ? " …" : "");
-    // As the transcript draws it: a prompt in the reader's box, as typed;
-    // a command in it too, in the fixed face; the harness's words in its
-    // dashed box, as Markdown (#490); an answer as Markdown.
-    if (one.who === "me") put(entry, "div", "bubble mine", text);
+    // As the transcript draws it: a prompt in the reader's box, as
+    // Markdown (#500); a command in it too, as typed, in the fixed face;
+    // the harness's words in its dashed box, as Markdown (#490); an answer
+    // as Markdown.
+    if (one.who === "me") markdown(put(entry, "div", "bubble mine prosebox"), text, true);
     else if (one.who === "shell") put(put(entry, "div", "bubble mine shell"), "pre", "output", text);
     else if (one.who === "system") markdown(put(entry, "div", "bubble aside prosebox"), text);
     else markdown(entry, text);
@@ -18314,7 +18319,10 @@ function markedReady() {
   return markedAsked;
 }
 
-function markdown(parent, text) {
+// `breaks` is for what the reader typed (#500): a line they ended is a
+// line, as in a chat box and a GitHub comment, or a log pasted into a
+// prompt ran together into one paragraph.
+function markdown(parent, text, breaks = false) {
   const node = put(parent, "div", "prose");
   // Not here yet, or never coming. Markdown reads as text, which is the whole
   // point of it, so the transcript is never blank while the page waits.
@@ -18330,7 +18338,7 @@ function markdown(parent, text) {
     // no image is fetched and no handler runs. Assigning to innerHTML here
     // would already have fired an onerror before the scrub could remove it.
     const holder = document.createElement("template");
-    holder.innerHTML = marked.parse(String(text), { breaks: false, gfm: true });
+    holder.innerHTML = marked.parse(String(text), { breaks, gfm: true });
     scrub(holder.content);
     node.replaceChildren(holder.content);
   } catch (error) {
@@ -18671,7 +18679,11 @@ function blockTurn(block, index) {
   if (block.kind === "divider") {
     const node = document.createElement("div");
     node.className = "divider";
-    node.textContent = block.text;
+    // And when (#499), as the "new" line says since when: the day too when
+    // it was not today.
+    node.textContent = block.text + (block.ts
+      ? "  \u00b7  " + (dayOf(block.ts) ? dayOf(block.ts) + " " : "") + clock(block.ts)
+      : "");
     return node;
   }
   if (block.kind === "tool") {
@@ -18718,8 +18730,9 @@ function blockTurn(block, index) {
   // Markdown, or the text as it was written (#493): the reader wants to
   // select and copy what the agent wrote, Markdown and all. The Files
   // tab's "txt", at the block's top right. Every block drawn as Markdown
-  // has one: an answer, a plan, a message of the harness.
-  const md = !mine && !!block.text;
+  // has one: an answer, a plan, a message of the harness, and a prompt the
+  // reader typed (#500). A `!` or slash command is not Markdown.
+  const md = !shell && !!block.text;
   const asText = md && state.turns.open.has(textKey(index));
   if (md) {
     putReadAs(node, asText, (on) => {
@@ -18739,16 +18752,16 @@ function blockTurn(block, index) {
   let shown;
   if (shell) {
     shown = putShell(box, block, drawn);
-  } else if (mine) {
-    shown = put(box, "div", "bubble", drawn);
-    linkTickets(shown);
   } else if (asText) {
     shown = put(box, "pre", "bubble source", drawn);
-  } else if (aside) {
+    if (mine) linkTickets(shown);
+  } else if (mine || aside) {
     // The harness's words are Markdown too (#490): a subagent's report
-    // came as a wall of `##` and `|`. In its dashed box, as before.
+    // came as a wall of `##` and `|`. And so are the reader's own (#500),
+    // who asked for them so. Each in its box, as before: the reader's
+    // tint and rail, the harness's dashes.
     shown = put(box, "div", "bubble prosebox");
-    markdown(shown, drawn);
+    markdown(shown, drawn, mine);
   } else {
     shown = markdown(box, drawn);
   }

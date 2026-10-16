@@ -871,3 +871,12 @@ def test_a_plan_call_with_no_plan_stays_a_tool_row(ws, tmp_path):
             {"type": "tool_use", "id": "t1", "name": "ExitPlanMode", "input": {}}]}}) + "\n")
     [block] = ws.Transcript(str(path)).read_new()
     assert block.kind == "tool" and block.tool == "ExitPlanMode"
+
+
+def test_a_compaction_carries_its_moment(ws, tmp_path):
+    """The line says when the agent forgot (#499)."""
+    reader = ws.Transcript(str(tmp_path / "t.jsonl"))
+    made = reader.add({"type": "system", "subtype": "compact_boundary",
+                       "timestamp": "2026-09-18T14:22:00.000Z"})
+    assert made[0].kind == "divider"
+    assert made[0].ts == ws.parse_timestamp("2026-09-18T14:22:00.000Z")
