@@ -229,7 +229,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   authenticated. They refuse a header they cannot read; `guarded()` catches
   the rest, and it wraps the whole of a request.
 - **A POST that may not act is refused before its body is read**
-  (`route_post`: `ours`, then `allowed`, then `asked`). `POST_MAX` is
+  (`Serving.route`: `ours`, then `allowed`, then `asked`). `POST_MAX` is
   megabytes since a send may be a long log, and any site in the reader's
   browser can POST to us: read first, it made the daemon read and parse
   that much for a request it then refused. The body stays in the socket, so
@@ -246,8 +246,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the request written inside either was answered as the next one.
   `body_length` gives None for a `Transfer-Encoding`, a `Content-Length`
   that is not plain digits (`int()` takes " -5" and "5_0"), and two that
-  disagree; `asked()` then closes the connection, and so does `route_get`
-  for any body at all. A test counts status lines no more: a chunk's size
+  disagree; `asked()` then closes the connection, and so does `Serving.route` for a GET
+  with any body at all. A test counts status lines no more: a chunk's size
   line, read as a request, is answered as HTTP/0.9, which has none, so
   `only_one_answer` checks that nothing follows the first answer's body.
   `test_a_body_that_is_not_read_does_not_frame_the_next_request`.
@@ -539,13 +539,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   every request on a connection. **Every route that reads `{}` as an answer
   checks it**: `name` did not, and read a 70,000-character paste as "take
   the name away" (#235). `answer` did not either, and said "that question
-  is no longer waiting" about a question that was (#254). **So `route_post`
+  is no longer waiting" about a question that was (#254). **So `Serving.route`
   refuses `too_big` itself, before any verb runs**, with the noun each
   `POST_VERBS` entry carries (#287): a new verb cannot forget it. The rename box
   has `maxLength` at `NAME_MAX` too,
   which `test_a_row_is_renamed_where_it_stands` holds in step. A body not
-  read because its end is not known (`unread`) is refused in `route_post`,
+  read because its end is not known (`unread`) is refused in `Serving.route`,
   before any route sees it.
+  **Every route is found before that check and after the others, in one
+  place** (#545): `Serving.route` runs the checks in one order for every
+  request, and `find_route` looks it up in `ROUTES`, `GET_VERBS` and
+  `POST_VERBS`. The settings route wrote its own size check, and a new
+  top-level route would have had to remember it.
+  `test_every_route_refuses_what_it_must` walks the three tables: a foreign
+  Host, a missing token, a body too large, for every route.
   `test_a_name_too_large_to_read_keeps_the_name_there_was`,
   `test_an_answer_too_large_to_read_says_that`,
   `test_a_body_that_is_not_read_is_not_taken_for_an_empty_one`.
@@ -735,7 +742,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   hook event keeps its fields. Written whole with
   `write_atomic(private=True)`: the links say where the reader's tickets
   live. **Into the page it goes through `page_json`**, ASCII with `<`, `>`
-  and `&` escaped, and the marks are replaced in one pass (`route_get`):
+  and `&` escaped, and the marks are replaced in one pass (`Serving.page`):
   a link is the reader's text, a `</script>` in it ended the script, a
   lone surrogate answered the page 500, and with one `replace` after
   another a link holding the token's mark would have had the token

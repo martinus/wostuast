@@ -2899,3 +2899,47 @@ def test_a_folder_that_ignores_itself_counts_what_was_written_in_it(
     monkeypatch.setattr(ws, "IGNORED_MAX", 1)
     tree = ws.worktree_files(str(repo))
     assert [one.path for one in tree.files if one.walked] == [".oa-implement/notes.md"]
+
+
+def test_every_route_refuses_what_it_must(ws, in_tmux, monkeypatch):
+    """Every route, walked from the three tables (#545): `ROUTES`,
+    `GET_VERBS` and `POST_VERBS`. Each refuses a foreign Host; each POST
+    refuses a request without the token, and a body too large to read --
+    which a route once read as `{}`, an answer (#235, #254). The checks run
+    in `Serving.route`, before the route, so a new route gets them, and this
+    test, without anyone writing them."""
+    import http.client
+    from urllib.parse import urlparse
+
+    daemon, base, seen = in_tmux
+    monkeypatch.setattr(ws, "POST_MAX", 64)
+    routes = [key for key in ws.ROUTES]
+    routes += [("GET", f"/api/session/s1/{verb}") for verb in ws.GET_VERBS]
+    routes += [("POST", f"/api/session/s1/{verb}") for verb in ws.POST_VERBS]
+    assert len(routes) == len(ws.ROUTES) + len(ws.GET_VERBS) + len(ws.POST_VERBS)
+    where = urlparse(base)
+
+    def ask(method, path, host, headers, body=b""):
+        link = http.client.HTTPConnection(where.hostname, where.port, timeout=5)
+        try:
+            link.putrequest(method, path, skip_host=True)
+            link.putheader("Host", host)
+            for name, value in headers.items():
+                link.putheader(name, value)
+            link.putheader("Content-Length", str(len(body)))
+            link.endheaders(body)
+            return link.getresponse().status
+        finally:
+            link.close()
+
+    ours = where.netloc
+    for method, path in routes:
+        assert ask(method, path, "evil.example.com", {}) == 403, (method, path)
+        if method != "POST":
+            continue
+        assert ask(method, path, ours, {}) == 403, (method, path)
+        big = json.dumps({"text": "x" * 200, "name": "x" * 200}).encode()
+        assert ask(method, path, ours, {"X-Wostuast-Token": daemon.token,
+                                        "Content-Type": "application/json"},
+                   big) == 413, (method, path)
+    assert seen == [], "a refused request typed into the terminal"
