@@ -14158,15 +14158,18 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    stops and the next begins. `clip` and not `hidden`, because `hidden` makes
    a scroller of the card and the header inside it would stop being sticky
    against the pane. */
+/* 28 px apart, and the header on the raised ground with the path in bold
+   (issue 525): 10 px apart, on the code's own ground, one file ran into the
+   next, and where one stopped was hard to see in a long diff. */
 .dfile {
-  margin: 10px var(--line-end-in) 0 16px; border: 1px solid var(--edge); border-radius: 8px;
+  margin: 28px var(--line-end-in) 0 16px; border: 1px solid var(--edge); border-radius: 8px;
   overflow: clip; background: var(--sheet);
 }
 /* Sticky, so a file three screens long still says which file it is. */
 .dfile > .name {
   position: sticky; top: 0; z-index: 2;
   display: flex; gap: 10px; align-items: baseline; width: 100%;
-  padding: 9px 16px; background: var(--sheet); border: 0;
+  padding: 11px 16px; background: var(--raised); border: 0;
   border-bottom: 1px solid var(--edge); font: inherit;
   color: var(--ink-bright); text-align: left; cursor: pointer;
 }
@@ -14179,7 +14182,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .dfile .path {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--narrow); font-size: 13px;
+  font-family: var(--narrow); font-size: 14px; font-weight: 600;
 }
 .dfile .why { margin-left: auto; flex-shrink: 0; color: var(--ink-faint); font-size: 11px; }
 /* The file on the Files tab, beside the header (issue 449): a grid, so it stands
@@ -14192,7 +14195,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .dfile > .openfile {
   grid-column: 2; grid-row: 1; position: sticky; top: 0; z-index: 2;
   display: flex; align-items: center; padding: 0 14px 0 6px; border: 0;
-  border-bottom: 1px solid var(--edge); background: var(--sheet);
+  border-bottom: 1px solid var(--edge); background: var(--raised);
   color: var(--ink-faint); cursor: pointer;
 }
 .dfile > .openfile:hover { color: var(--needs); }

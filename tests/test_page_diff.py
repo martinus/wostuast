@@ -1044,19 +1044,6 @@ def test_shown_lines_come_again_from_the_file_as_it_now_is(repo_page):
         assert page.locator(LONG + " .dtext:text-is('line 10')").count() == 1
 
 
-def test_the_file_header_stands_on_the_diffs_own_ground(repo_page):
-    """It had a colour of its own, darker than the code under it, and read
-    as a bar rather than as the top of the file."""
-    for scheme in ("light", "dark"):
-        with opened(repo_page, scheme=scheme) as page:
-            show_tab(page, "diff")
-            page.wait_for_selector(".dfile > .name")
-            card, head = page.evaluate("""() => [
-              getComputedStyle(document.querySelector('.dfile')).backgroundColor,
-              getComputedStyle(document.querySelector('.dfile > .name')).backgroundColor]""")
-            assert head == card, (scheme, head, card)
-
-
 # --- a failure, or a choice, that outlived what it was about -----------------
 
 
@@ -1756,3 +1743,36 @@ def test_a_file_in_the_diff_opens_on_the_files_tab(repo_page):
         page.click(".diffhead.uncommitted ~ .dfile:has(.path:text-is('README.md')) .openfile")
         page.wait_for_function("state.tab === 'files' && state.files.path === 'README.md'")
         page.wait_for_selector(".filebody .prose, .filebody .dline")
+
+
+def test_one_file_stands_apart_from_the_next(repo_page):
+    """One file ran into the next (#525): 10 px apart, and the header on
+    the code's own ground. They stand 28 px apart now, with the header on
+    the raised ground, the open-file button with it, and the path in bold,
+    in both schemes. The header stood on the code's ground before, because a
+    darker bar of its own read as a bar and not as the top of the file; the
+    reader asked for the header to stand out, and chose this from a picture."""
+    root, _ = repo_page
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+    for scheme in ("light", "dark"):
+        with opened(repo_page, tab="diff", scheme=scheme) as page:
+            page.wait_for_function("document.querySelectorAll('.dfile').length >= 2")
+            seen = page.evaluate("""() => {
+              const css = (one) => getComputedStyle(one);
+              const card = [...document.querySelectorAll('.dfile')].find(
+                (one) => one.querySelector(':scope > .openfile'));
+              const probe = document.createElement('div');
+              probe.style.background = 'var(--raised)';
+              document.body.append(probe);
+              const want = css(probe).backgroundColor;
+              probe.remove();
+              return {gap: css(card).marginTop,
+                      head: css(card.querySelector(':scope > .name')).backgroundColor,
+                      button: css(card.querySelector(':scope > .openfile')).backgroundColor,
+                      sheet: css(card).backgroundColor, want,
+                      weight: Number(css(card.querySelector('.path')).fontWeight)};
+            }""")
+            assert seen["gap"] == "28px", (scheme, seen)
+            assert seen["head"] == seen["want"] == seen["button"], (scheme, seen)
+            assert seen["head"] != seen["sheet"], (scheme, seen)
+            assert seen["weight"] >= 600, (scheme, seen)
