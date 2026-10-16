@@ -2473,3 +2473,38 @@ def test_a_view_says_where_back_goes_and_closes_like_a_window(pair_at):
             page.wait_for_function("!state.feed")
             page.wait_for_function("document.getElementById('grip').classList.contains('open')")
             assert page.evaluate(look)["fade"], leave
+
+
+def test_a_fold_button_stays_where_it_was_pressed(repo_page):
+    """The reader presses the fold button to fold a column and presses it
+    again to bring it back, without moving the mouse: it stands at the
+    column's left, and folded or open it is in the same place (#492)."""
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".side .fold")
+        at = """(sel) => { const r = document.querySelector(sel).getBoundingClientRect();
+                          return [Math.round(r.left), Math.round(r.top)]; }"""
+        for button in (".side .fold", "#sessionfold"):
+            before = page.evaluate(at, button)
+            page.click(button)
+            page.wait_for_function(
+                "(sel) => document.querySelector(sel).getAttribute('aria-expanded') === 'false'",
+                arg=button)
+            shut = page.evaluate(at, button)
+            page.click(button)
+            page.wait_for_function(
+                "(sel) => document.querySelector(sel).getAttribute('aria-expanded') === 'true'",
+                arg=button)
+            assert (button, before, shut) == (button, page.evaluate(at, button), before)
+            # At the column's left, before the find box, in the middle of
+            # the box's line and of the room left of it: as far from the
+            # column's edge as from the box.
+            seen = page.evaluate("""([sel, find]) => {
+              const b = document.querySelector(sel).getBoundingClientRect();
+              const f = document.querySelector(find).getBoundingClientRect();
+              const column = document.querySelector(sel).closest('.sidebar, .side')
+                .getBoundingClientRect();
+              return {before: b.left - column.left, after: f.left - b.right,
+                      middle: (b.top + b.bottom) / 2 - (f.top + f.bottom) / 2};
+            }""", [button, "#pick" if button == "#sessionfold" else "#find"])
+            assert seen["before"] == seen["after"] and seen["middle"] == 0, (button, seen)

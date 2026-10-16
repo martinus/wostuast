@@ -463,10 +463,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     of their own, tabs, and bare lines. A group is a subgrid, so every
     label still stands in one column.
     `test_the_settings_stand_in_four_titled_groups`.
-    **Four settings are also beside the code they change** (`putQuick`,
+    **Five settings are also beside the code they change** (`putQuick`,
     `QUICK`): the diff's columns, whitespace and the code's width at the
-    Review bar's right end, the code's width and long lines on the open
-    file's line -- the ones the reader changes while reading. The menu
+    Review bar's right end, the marks, the code's width and long lines on
+    the open file's line -- the ones the reader changes while reading.
+    The marks came there for #486, which asked for the Review bar's
+    whitespace button on a file: a change of whitespace means nothing on
+    one file, so beside it the button is the marks (`keepMarks`, the
+    `marks` icon). `test_the_marks_are_one_click_beside_a_file`. The menu
     still holds every setting: the reader weighed taking them out of it and
     kept one place where all of them are.
     **One button each, lit while its setting is on** (`.toggle`,
@@ -805,9 +809,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     split tab's list again on every switch, and the sidebar's grip and
     `.main`'s grid columns must know too. The list column is one for the
     three tabs, as `--side-w` is, so it folds on all three.
-  - **The button stands in the column's `.findslot`, ordered after the
-    find box by CSS** (`order: 1`): `homeFind` appends `#find` to the slot,
-    so in the markup the box comes after the button.
+  - **The button stands in the column's `.findslot`, ordered before the
+    find box by CSS** (`order: -1`, #492): `homeFind` appends `#find` to
+    the slot, so the markup is no guide. It stood after the box, and the
+    reader asked for it at the column's left, in both columns, once the
+    Files tab's funnel stood beside it. **Folded or open, it stands in one
+    place** (`--fold-in` from the column's edge, and as far from the box):
+    it is pressed to fold and again to unfold, and the pointer has not
+    moved. The open slot's padding is taken back by the button's margin;
+    the strip no longer centres it. Its middle is the box's middle.
+    `test_a_fold_button_stays_where_it_was_pressed`.
   - **A folded column's edge drags nothing** (`pointer-events: none`): a
     drag set a width nobody could see.
   - **`f` and `/` unfold the column they type into**: nothing is focused

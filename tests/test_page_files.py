@@ -50,8 +50,8 @@ def test_a_generated_directory_is_in_the_tree_and_its_build_root_is_not(
         (repo / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
     with opened(path) as page:
         show_tab(page, "files")
-        page.wait_for_selector(".filelist button:has-text('.oa-implement')")
-        page.click(".filelist button:has-text('.oa-implement')")
+        # Open by itself: the plan was written since the session began, so
+        # it is a change, and a folder holding one opens (#492).
         page.wait_for_selector(".filelist button:has-text('_build_root_c2')")
         # The folder says why it is empty, where it stands.
         assert page.locator(
@@ -87,8 +87,7 @@ def test_a_build_root_that_appears_later_turns_up_on_its_own(ws, repo_page,
     (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
     with opened(path) as page:
         show_tab(page, "files")
-        page.wait_for_selector(".filelist button:has-text('.oa-implement')")
-        page.click(".filelist button:has-text('.oa-implement')")
+        # Open by itself, as above.
         page.wait_for_selector(".filelist button:has-text('PLAN.md')")
         held = page.evaluate("state.files.tag")
 
@@ -971,6 +970,8 @@ def test_the_file_line_carries_the_width_and_wrap_beside_the_code(ws, repo_page)
         assert page.locator(f"{quick} > *").evaluate_all(
             "(all) => all.map((b) => [b.dataset.name, b.getAttribute('aria-pressed'),"
             " b.getAttribute('aria-label')])") == [
+                ["spacemarks", "false",
+                 "draw a tab as \u2192 and a space at a line's end as \u00b7"],
                 ["codewidth", "false", "narrow code: more of a line fits in a column"],
                 ["wrapping", "false", "wrap long lines"]]
         page.click(f"{quick} .toggle[data-name='codewidth']")
@@ -1332,13 +1333,9 @@ def test_a_picture_is_shown_rather_than_named(repo_page):
             "document.querySelector('.filebody .media img').naturalWidth > 0")
         assert page.locator(".filebody .note").count() == 0
 
-        # And a binary that is not a picture still says so.
+        # And a binary that is not a picture is its hex (#487).
         page.click(".filelist button:has-text('blob.bin')")
-        page.wait_for_function(
-            """() => {
-                 const note = document.querySelector('.filebody .note');
-                 return note && note.textContent.includes('Binary file');
-               }""")
+        page.wait_for_selector(".filebody .code.hexdump .dline")
         assert page.locator(".filebody .media").count() == 0
 
 
@@ -1827,3 +1824,66 @@ def test_a_file_without_a_suffix_is_named_by_its_shebang(page_at):
           languageOf("bin/run", "no shebang", "sniffed"),
           languageOf("bin/run.sh", "#!/usr/bin/perl\\n", null)]""")
     assert said == ["python", "bash", "perl", "sniffed", "sniffed", "bash"]
+
+
+def test_what_changed_is_bold_and_the_funnel_shows_it_alone(ws, repo_page):
+    """A folder holding a change, and a changed file, are bold: the dot alone
+    was easy to miss in a long tree (#492). The funnel beside the find box
+    shows only those, and says how many of how many; again, all of them."""
+    root, _ = repo_page
+    (root / "docs").mkdir()
+    (root / "docs" / "guide.md").write_text("# guide\n")
+    conftest.git_in(root, "add", "docs")
+    conftest.git_in(root, "commit", "-qm", "docs")
+    (root / "lib").mkdir()
+    (root / "lib" / "new.py").write_text("print(3)\n")
+    names = """() => [...document.querySelectorAll('.filelist.files button .name')]
+                 .map((one) => one.textContent)"""
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist.files button.dir.touched:has-text('lib')")
+        weight = lambda name: page.eval_on_selector(
+            f".filelist.files button:has-text('{name}') .name",
+            "one => getComputedStyle(one).fontWeight")
+        assert weight("lib") == "600" and weight("README.md") == "600"
+        assert weight("docs") == "400" and weight("code.py") == "400"
+        everything = page.evaluate(names)
+        page.click(".findslot .onlychanged")
+        page.wait_for_selector(".filelist.files button:has-text('docs')",
+                               state="detached")
+        assert sorted(page.evaluate(names)) == ["NOTES.md", "README.md", "lib", "new.py"]
+        assert page.get_attribute(".findslot .onlychanged", "aria-pressed") == "true"
+        assert page.inner_text(".listnote").startswith("3 changed files of ")
+        page.click(".findslot .onlychanged")
+        page.wait_for_selector(".filelist.files button:has-text('docs')")
+        assert page.evaluate(names) == everything
+
+
+def test_the_marks_are_one_click_beside_a_file(ws, repo_page):
+    """The Review bar had its whitespace button and the Files tab none
+    (#486). A change of whitespace means nothing on one file, so beside a
+    file it is the marks: a tab as an arrow, a space at a line's end as a
+    dot. It is the menu's setting, kept in `settings.json`."""
+    with opened(repo_page) as page:
+        open_file(page, "code.py")
+        button = ".filebody .quick .toggle[data-name='spacemarks']"
+        assert page.get_attribute(button, "aria-pressed") == "false"
+        page.click(button)
+        kept(ws, "space_marks", "on")
+        assert page.get_attribute(button, "aria-pressed") == "true"
+
+
+def test_a_binary_file_is_drawn_as_hex(repo_page):
+    """A binary file the browser cannot show was a note and nothing more
+    (#487). It is its hex, as `xxd` draws it, with no colour and no `+`:
+    there is no line of text to comment on."""
+    root, _ = repo_page
+    (root / "blob.bin").write_bytes(b"\0\x01<a>" + bytes(range(65, 91)))
+    with opened(repo_page) as page:
+        open_file(page, "blob.bin")
+        assert code_text(page).split("\n")[0] == (
+            "00000000: 0001 3c61 3e41 4243 4445 4647 4849 4a4b  ..<a>ABCDEFGHIJK")
+        assert page.locator(".filebody .code.hexdump").count() == 1
+        assert "binary, as hex" in page.inner_text(".filebody .whatis")
+        page.hover(".filebody .code .dline >> nth=0")
+        assert not page.is_visible(".filebody .code .addnote >> nth=0")

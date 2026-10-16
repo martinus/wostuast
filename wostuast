@@ -4886,6 +4886,24 @@ LIST_TIMEOUT = 20.0
 #: "binary file" note instead of a screen of control characters.
 BINARY_SNIFF = 8000
 
+#: How much of a binary file the Files tab shows, as hex (#487): 4,096
+#: rows of sixteen bytes, which the page draws a window at a time.
+HEX_MAX_BYTES = 64 * 1024
+
+
+def hex_dump(raw: bytes) -> str:
+    """Bytes as `xxd` shows them: the offset, sixteen bytes in hex in pairs,
+    and the same bytes as text, with a dot for each that is not printable
+    ASCII -- so nothing in it is a control a page or a terminal acts on."""
+    rows = []
+    for at in range(0, len(raw), 16):
+        row = raw[at:at + 16]
+        pairs = " ".join(row[one:one + 2].hex() for one in range(0, len(row), 2))
+        text = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in row)
+        rows.append(f"{at:08x}: {pairs:<39}  {text}")
+    return "\n".join(rows) + "\n" if rows else ""
+
+
 #: A diff longer than this is cut. No page can show more, and parsing the rest
 #: would cost more than it is worth.
 DIFF_MAX_BYTES = 2 * 1024 * 1024
@@ -4994,8 +5012,11 @@ class FileEntry:
     """One file the Files tab offers."""
 
     path: str = ""          # relative to the worktree root
-    mtime: float = 0.0      # only read for a changed file; 0 for the rest
+    mtime: float = 0.0      # only read for a changed or a walked file; 0 for the rest
     changed: bool = False   # git says this one differs from the last commit
+    #: In an ignored directory we walked (`walk_ignored`): git says nothing
+    #: about it, so its time says whether it was written while a session ran.
+    walked: bool = False
 
 
 @dataclass
@@ -5022,6 +5043,10 @@ class FileText:
     #: or cut at `FILE_MAX_BYTES`. The stat that reads the mtime has it.
     size: int = 0
     binary: bool = False
+    #: A binary file's first `HEX_MAX_BYTES`, as `xxd` shows them, for the
+    #: Files tab (#487). `binary` stays true, so the Review tab, which reads
+    #: an untracked file through the same route, still says "binary".
+    hex: str = ""
     #: The type this file is shown as, when the page may show it as it is --
     #: `image/png`, `video/mp4`, and so on. Empty for everything else. The
     #: list lives here, beside the route that has to enforce it, and the page
@@ -5286,16 +5311,22 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     # The entries git collapsed. Each is a directory it declined to look
     # inside, and one of them is where the agent's own work is kept.
     skipped: list[str] = []
+    walked: set[str] = set()
     for name in parts[2] or []:
         if name.endswith("/"):
             found, left = walk_ignored(tree.root, name, IGNORED_MAX)
             names.update(found)
+            walked.update(found)
             skipped.extend(left)
     tree.skipped = sorted(skipped)
     touched = touched or set()
     for name in in_order(names):
-        entry = FileEntry(path=name, changed=name in touched)
-        if entry.changed:
+        entry = FileEntry(path=name, changed=name in touched, walked=name in walked)
+        # A walked file is stat'ed too (#492): git has no word for a file it
+        # ignores, and `.oa-implement` is where an agent writes. There are
+        # at most `IGNORED_MAX` of them a directory, the budget the walk
+        # already keeps, and only when the listing is read again.
+        if entry.changed or entry.walked:
             try:
                 entry.mtime = os.stat(os.path.join(tree.root, name)).st_mtime
             except OSError:
@@ -5306,6 +5337,22 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
         del tree.files[FILES_MAX:]
         tree.cut = True
     return tree
+
+
+def written_since(held: "Listing", since: float) -> dict[str, float]:
+    """What git says changed, and every file of an ignored directory we
+    walked that was written since the session began (#492).
+
+    git says nothing about a file it ignores, and `.oa-implement` -- where
+    an agent writes its plan -- is ignored: its files carried no dot, its
+    folder was never opened for the reader, and the "changed only" filter
+    left them out. A session with no first event yet counts none of them:
+    every file is older than "the beginning of time" is no answer.
+    """
+    if not since or not held.written:
+        return held.changed
+    late = {path: when for path, when in held.written.items() if when >= since}
+    return {**held.changed, **late} if late else held.changed
 
 
 def wire_json(data: Any) -> str:
@@ -5376,6 +5423,10 @@ class Listing:
     # asking "have they moved?" should not pay.
     names: str = ""
     changed: dict[str, float] = field(default_factory=dict)
+    #: The walked ignored files and their times. Which of them count as
+    #: changed depends on when the session asking began, so the route
+    #: decides, not the listing: one listing serves every session in it.
+    written: dict[str, float] = field(default_factory=dict)
 
 
 class Files:
@@ -5501,6 +5552,7 @@ class Files:
         fresh = Listing(
             tree=tree, names=names, tag=listing_tag(names),
             changed={one.path: one.mtime for one in tree.files if one.changed},
+            written={one.path: one.mtime for one in tree.files if one.walked},
             read_at=time.time())
         with self.lock:
             self.held[root] = fresh
@@ -5744,6 +5796,10 @@ def read_worktree_file(
         return None
     if b"\0" in raw[:BINARY_SNIFF]:
         found.binary = True
+        found.hex = hex_dump(raw[:HEX_MAX_BYTES])
+        if info.st_size > HEX_MAX_BYTES:
+            found.hex += (f"\n… the first {size_label(HEX_MAX_BYTES)} of"
+                          f" {size_label(info.st_size)}; the rest is not shown.\n")
         return found
     found.text = raw[:FILE_MAX_BYTES].decode("utf-8", "replace")
     if len(raw) > FILE_MAX_BYTES:
@@ -9843,7 +9899,7 @@ class Serving:
             "skipped": tree.skipped, "ignored_max": IGNORED_MAX,
             # Name to modification time, for the few files that moved. The
             # page needs the time to put the newest change first.
-            "changed": held.changed,
+            "changed": written_since(held, session.started_at),
         }
         # The browser sends back the tag it already holds. Names change
         # when a file is added or removed, which is rare; which files have
@@ -12371,13 +12427,22 @@ body {
 /* A column folded away (issue 464) is a strip as wide as its button, and
    the button stands where it stood. Its edge drags nothing while it is
    folded: a drag would set a width nobody can see. */
-:root { --fold-w: 34px; }
+:root { --fold-w: 34px; --fold-in: 4px; }
 /* The fold button is a bare icon beside a box, never a second box (issue
    469): a box of the same height with an edge of its own read as the find
-   box's twin, not quite the same. A ring shows on the hover. */
-.findslot > .fold { order: 1; margin-left: 6px; align-self: center;
-  border-color: transparent; background: none; }
+   box's twin, not quite the same. A ring shows on the hover. It stands
+   before the box, at the column's left (issue 492): the reader asked for
+   it there, in both columns. */
+.findslot > .fold { order: -1; margin: 0 var(--fold-in) 0 calc(var(--fold-in) - 10px);
+  align-self: center; border-color: transparent; background: none; }
 .findslot > .fold:hover { border-color: var(--edge-bright); }
+/* "Only the changed files" (issue 492), after the find box, lit while it
+   is on. */
+.findslot > .onlychanged { order: 1; margin-left: 6px; }
+.findslot > .onlychanged[aria-pressed="true"] {
+  color: var(--needs); border-color: var(--needs); }
+/* A binary file's hex (issue 487) is no text to comment on. */
+.code.hexdump .addnote { display: none; }
 .findslot > .fold .icon { width: 17px; height: 17px; }
 .foldsessions .sidebar { width: var(--fold-w); }
 .foldsessions .sidebar > :not(.findslot, .sidebar-head, .rows),
@@ -12388,9 +12453,16 @@ body {
 /* Folded, the head holds the logo alone, in the middle of the strip. */
 .foldsessions .sidebar-head { padding: 0; justify-content: center; align-items: center; }
 .foldsessions .sidebar .findslot, .foldlist .content.split > .side > .findslot {
-  padding-left: 0; padding-right: 0; justify-content: center;
+  padding-left: 0; padding-right: 0;
 }
-.foldsessions .findslot > .fold, .foldlist .findslot > .fold { margin-left: 0; }
+/* Folded or open, the button stands `--fold-in` from the column's left
+   edge (issue 492): it is pressed to fold and pressed again to unfold,
+   and a button that moved between the two was not under the pointer any
+   more. The open slot's 10 px of padding are taken back by its margin,
+   and the box stands as far after it, so it is in the middle of the room
+   left of the box as well as of the box's line. */
+.foldsessions .findslot > .fold, .foldlist .findslot > .fold {
+  margin: 0 0 0 var(--fold-in); }
 .foldsessions #grip, .foldlist .content.split > .grip { pointer-events: none; }
 /* Folded, every row is a tile in the strip (issue 464): the first letters
    of its name on its state's colour, a dot when it is unread, and the
@@ -13622,6 +13694,10 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   padding: 12px 14px 4px; font-size: 11px; letter-spacing: .08em;
   text-transform: uppercase; color: var(--ink-faint);
 }
+/* A folder that holds a change, and a changed file, stand out of a long
+   tree (issue 492): the dot alone was easy to miss. Only the Files tab's
+   tree: the transcript's map wears the same rows. */
+.filelist.files button.touched .name { font-weight: 600; color: var(--ink-bright); }
 .filelist button.touched .name::after {
   content: "\25cf"; margin-left: 6px; color: var(--needs); font-size: 9px;
   vertical-align: middle;
@@ -14963,6 +15039,10 @@ const ICONS = {
   tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
   // A space, as a keyboard's legend draws one (#449).
   space: "M2.2 7.4v2.6h9.6V7.4",
+  // A tab's arrow and a space's dot, as the marks draw them (#486).
+  marks: "M1.8 7h5.6M5.4 4.8L7.6 7 5.4 9.2M11 7h.01",
+  // A funnel: only the files that changed (#492).
+  changed: "M1.8 2.4h10.4L8.2 7.2v4.2l-2.4-1.2v-3z",
   // The same, struck through: a change of whitespace alone left out.
   spaceHide: "M2.2 7.4v2.6h9.6V7.4M2.4 11.8L11.6 2.2",
   // Two arrows pointing out from a bar: code at its normal width.
@@ -17454,10 +17534,7 @@ function putSettings() {
   choice("spacemarks", [
     [false, "off", null, "draw tabs and spaces as they are"],
     [true, "on", null, "draw a tab as \u2192 and a space at a line's end as \u00b7, faintly"]],
-         (on) => {
-           keepSetting({ space_marks: on ? "on" : "off" });
-           applyReading(readingWanted());
-         });
+         keepMarks);
   group("Review");
   label("diff", "twoColumns");
   choice("sides", [["unified", "one", "oneColumn"], ["split", "two", "twoColumns"]],
@@ -17561,12 +17638,21 @@ const QUICK = {
                  "hide a change of whitespace alone, as git diff -w does"],
   codewidth: [true, false, "font", "narrow code: more of a line fits in a column"],
   wrapping: [true, false, "wrap", "wrap long lines"],
+  spacemarks: [true, false, "marks",
+               "draw a tab as \u2192 and a space at a line's end as \u00b7"],
 };
+
+// Tabs and the spaces at a line's end, marked or not: in the menu, and
+// beside a file on the Files tab (#486).
+function keepMarks(on) {
+  keepSetting({ space_marks: on ? "on" : "off" });
+  applyReading(readingWanted());
+}
 
 function putQuick(parent, names) {
   const box = put(parent, "span", "quick");
   const picks = { sides: keepSides, codewidth: keepWidth, wrapping: keepWrap,
-                  spacechanges: keepSpace };
+                  spacechanges: keepSpace, spacemarks: keepMarks };
   for (const name of names) {
     const [on, off, icon, words] = QUICK[name];
     const button = put(box, "button", "verb quiet toggle");
@@ -19657,11 +19743,13 @@ function dirFiles(files) {
 // drawn.
 function treeRows(dirs, open) {
   const rows = [];
+  const only = onlyChanged();
   const walk = (path, depth) => {
     const one = dirs.get(path);
     if (!one) return;
     const from = path ? path.length + 1 : 0;
     for (const child of one.dirs) {
+      if (only && !state.files.marked.has(child)) continue;
       // A directory nobody walked cannot open: there is nothing behind it,
       // and a folder that opens onto nothing reads as a broken one.
       const shut = state.files.skipped.has(child);
@@ -19675,7 +19763,10 @@ function treeRows(dirs, open) {
     // and `state.files.marked` says which those are. It halves a fully opened tree.
     const files = (path && !state.files.marked.has(path))
       ? one.files : dirFiles(one.files);
-    for (const file of files) rows.push({ path: file, from, depth });
+    for (const file of files) {
+      if (only && !state.files.changed.has(file)) continue;
+      rows.push({ path: file, from, depth });
+    }
   };
   walk("", 0);
   return rows;
@@ -19766,6 +19857,26 @@ function goToKey(press) {
 // hiding the answer to "where does this file sit" as a way of asking it.
 function listRows() {
   return treeRows(state.files.tree, openDirs());
+}
+
+// Only what changed (#492): a folder holding a change, and the changed files
+// in it. The reader's own choice, kept in this browser as the folds are.
+function onlyChanged() { return stored("wostuast-onlychanged") === "1"; }
+
+// The button that says so, beside the find box. `split` builds the slot
+// again on every switch of tab, so it is put back when it is not there.
+function putOnlyChanged(slot) {
+  let button = slot.querySelector(".onlychanged");
+  if (!button) {
+    button = put(slot, "button", "theme toggle onlychanged");
+    button.setAttribute("aria-label", "show only the files that changed");
+    putIcon(button, "changed");
+    button.addEventListener("click", () => {
+      store("wostuast-onlychanged", onlyChanged() ? "" : "1");
+      draw();
+    });
+  }
+  paintToggle(button, onlyChanged());
 }
 
 // Everything whose path matches what is typed, in the order it came, each one
@@ -19920,6 +20031,9 @@ function noteList(note, found) {
   } else if (state.files.cut) {
     put(note, "span", null, state.files.total + " files, more than one list"
         + " can answer for");
+  } else if (onlyChanged()) {
+    put(note, "span", null, counted(state.files.changed.size, "changed file",
+                                    "changed files") + " of " + state.files.total);
   } else {
     countNote(note, state.files.total);
   }
@@ -20083,10 +20197,8 @@ function measureTall(code, tall, first, last) {
   shown.forEach(([line], at) => code.tall.set(line, blocks[at].offsetHeight));
 }
 
-function drawFiles(box) {
-  const [list, pane, note] = split(box, "files", "filebody");
-  drawGoTo($("find").parentNode);
-
+// The tree on the left, when what it draws has moved.
+function drawFileList(box, list, note) {
   // What the list draws is what decides whether it is drawn again: which
   // names there are, which file is open, which carry a dot, and which
   // directories stand open. The names come as `filesTag`, which is the
@@ -20098,7 +20210,8 @@ function drawFiles(box) {
   if (fresh(box, "listKey", JSON.stringify(
       [state.find, state.files.path, state.files.at, state.files.failed,
        state.files.tag, [...state.files.skipped],
-       [...state.files.changed.keys()].sort(), [...state.files.dirs]]))) {
+       [...state.files.changed.keys()].sort(), [...state.files.dirs],
+       onlyChanged()]))) {
     // Built here and not before: with a query typed this is a pass over every
     // name in the repository, and a poll that changes nothing wants none of
     // it.
@@ -20114,6 +20227,13 @@ function drawFiles(box) {
     noteList(note, found);
   }
   goToInList(list);
+}
+
+function drawFiles(box) {
+  const [list, pane, note] = split(box, "files", "filebody");
+  drawGoTo($("find").parentNode);
+  putOnlyChanged(list.parentNode.querySelector(".findslot"));
+  drawFileList(box, list, note);
 
   if (holdingText(box)) return;
   // The session is part of it. Two sessions in one worktree land on the
@@ -20223,7 +20343,8 @@ function drawFiles(box) {
           + " colour. Colouring them would stop this page each time the file"
           + " changes, so this file has no colour.");
     }
-    const code = put(view, "div", "code" + (windowed ? " windowed" : ""));
+    const code = put(view, "div", "code" + (windowed ? " windowed" : "")
+                     + (state.files.hex ? " hexdump" : ""));
     code.dataset.path = state.files.path;
     if (windowed) {
       code.lines = rows;
@@ -20235,7 +20356,7 @@ function drawFiles(box) {
       fillCode(view, place);
     } else {
       fillDiffFile(code, asLines(state.files.path, rows));
-      paintLines(code, state.files.path, body, state.files.lang);
+      if (!state.files.hex) paintLines(code, state.files.path, body, state.files.lang);
     }
   }
   // Said outright, rather than only when there is a place to go back to.
@@ -20388,6 +20509,7 @@ function blankFiles() {
     at: null,
     text: "",
     binary: false,
+    hex: false,         // `text` is a binary file's hex, not its text (#487)
     // What the daemon will serve this one as, when the page may show it as
     // it is -- `image/png`, and so on -- and whether it is past the cap. The
     // list is the daemon's; see `putMedia`.
@@ -20571,7 +20693,8 @@ function putWhere(pane, path) {
 // anyway.
 function putAbout(where, windowed) {
   const facts = [];
-  const lang = languageOf(state.files.path, state.files.text, state.files.lang);
+  const lang = state.files.hex ? "binary, as hex"
+    : languageOf(state.files.path, state.files.text, state.files.lang);
   if (lang) facts.push(lang);
   if (state.files.size) facts.push(sizeOf(state.files.size));
   const when = whenOf(state.files.mtime);
@@ -20591,7 +20714,7 @@ function putAbout(where, windowed) {
 function putFileHead(pane, windowed, asCode, isDoc) {
   const where = putWhere(pane, state.files.path);
   putAbout(where, windowed);
-  if (asCode) putQuick(where, ["codewidth", "wrapping"]);
+  if (asCode) putQuick(where, ["spacemarks", "codewidth", "wrapping"]);
   if (isDoc) putAsText(where);
 }
 
@@ -20644,6 +20767,7 @@ function forgetFile(path) {
   state.files.down = 0;       // another file, so there is no place to go back to
   state.files.text = "";
   state.files.binary = false;
+  state.files.hex = false;
   state.files.shown = "";
   state.files.oversize = false;
   state.files.lang = "";
@@ -23579,8 +23703,11 @@ async function loadFiles() {
     if (body && !body.same
         && (!state.files.read || body.mtime !== state.files.mtime)) {
       state.files.read = true;
-      state.files.text = body.text || "";
-      state.files.binary = !!body.binary;
+      // A binary file the browser cannot show is its hex (#487), drawn as
+      // the rows of a text, without colour and without a comment's `+`.
+      state.files.hex = !!(body.binary && !body.shown && body.hex);
+      state.files.text = state.files.hex ? body.hex : body.text || "";
+      state.files.binary = !!body.binary && !state.files.hex;
       state.files.shown = body.shown || "";
       state.files.oversize = !!body.oversize;
       state.files.lang = body.language || "";
