@@ -122,6 +122,9 @@ it. The reason is the part to weigh before undoing one.
   `JSON_VERSION`. Times are moments, never "3min". docs/GUIDE.md lists every
   field, and `test_ls_json_keeps_its_shape` and
   `test_the_json_fields_are_the_ones_readme_lists` hold both lists to it.
+  **What both say comes from one place** (#540): the worktree is
+  `worktree_path`, git's facts are `git_fields`, and
+  `test_the_row_and_ls_json_say_the_same_of_a_session` holds them equal.
 - **`wait` reads the log, as the daemon does, and needs no daemon** (#356,
   `cmd_wait`). A `Store` and its `EventFollower`, folded every `WAIT_STEP`:
   only what was appended is read. It types nothing, so a script that types
