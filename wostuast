@@ -20,7 +20,8 @@ import time
 from collections import Counter, deque
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Sequence
+from typing import (TYPE_CHECKING, Any, Callable, Generator, Iterable,
+                    Iterator, Sequence)
 
 if TYPE_CHECKING:  # only the annotations need these; the hot paths must not pay
     import argparse
@@ -1149,63 +1150,80 @@ class EventFollower:
                 if live is not None:
                     live.close()
                 return
-            pending: list[tuple[Path, tuple[int, int] | None]] = []
-            now = time.time()
-            for path in listed:
-                if path in self.finished:
-                    continue
-                try:
-                    info = path.stat()
-                    key: tuple[int, int] | None = file_key(info)
-                except OSError:
-                    key = None            # the read that follows says why
-                    info = None
-                # One last written before `HISTORY_FOLDED` is left out, and
-                # never begun (#430): every start read all of them, and grew
-                # with the whole history. Never one already begun, and never
-                # the file the live tail holds, which was written just now.
-                if (info is not None and path not in self.archives
-                        and key != self.live.key and folded_long_ago(info, now)):
-                    self.finished.add(path)
-                    self.left_out += 1
-                    continue
-                pending.append((path, key))
-            while pending and holding is not None and pending[-1][1] == holding:
-                pending.pop()
+            pending = self.unread_archives(listed, holding)
             if not pending:
                 break
             if live is not None:
                 live.close()
             for path, key in pending:
-                if key is not None and key in self.done_files:
-                    self.finished.add(path)   # its first name, just read
-                    self.second_names += 1
-                    continue
-                tail = self.archives.get(path)
-                if tail is None:
-                    tail = self.archives[path] = self.archive_tail(path, key)
-                before = tail.consumed
-                yield from tail.lines()
-                if not tail.whole:
-                    if tail.consumed > before:
-                        self.failed.pop(path, None)   # it moved: not a failure
-                        return
-                    tries = self.failed[path] = self.failed.get(path, 0) + 1
-                    if tries < ARCHIVE_TRIES:
-                        return
-                    log(f"an archive could not be read {tries} times, so it"
-                        f" is left out until the next start: {path.name}")
-                # Read to its end, and nothing will be added to it: the tail
-                # is done with, and only how much it read is kept.
-                self.finished.add(path)
-                done = tail.key if tail.key != (0, 0) else key
-                if done is not None:
-                    self.done_files.add(done)
-                del self.archives[path]
-                self.failed.pop(path, None)
-                self.finished_bytes += tail.consumed
+                if (yield from self.read_archive(path, key)):
+                    return
         if live is not None:
             yield from self.live.lines(live)
+
+    def unread_archives(self, listed: list[Path], holding: tuple[int, int] | None
+                        ) -> list[tuple[Path, tuple[int, int] | None]]:
+        """The archives listed that are still to be read, oldest first, each
+        with its device and inode. One folded long ago is finished here
+        unread, and the newest that are the live file are not archives."""
+        pending: list[tuple[Path, tuple[int, int] | None]] = []
+        now = time.time()
+        for path in listed:
+            if path in self.finished:
+                continue
+            try:
+                info = path.stat()
+                key: tuple[int, int] | None = file_key(info)
+            except OSError:
+                key = None            # the read that follows says why
+                info = None
+            # One last written before `HISTORY_FOLDED` is left out, and
+            # never begun (#430): every start read all of them, and grew
+            # with the whole history. Never one already begun, and never
+            # the file the live tail holds, which was written just now.
+            if (info is not None and path not in self.archives
+                    and key != self.live.key and folded_long_ago(info, now)):
+                self.finished.add(path)
+                self.left_out += 1
+                continue
+            pending.append((path, key))
+        while pending and holding is not None and pending[-1][1] == holding:
+            pending.pop()
+        return pending
+
+    def read_archive(self, path: Path, key: tuple[int, int] | None
+                     ) -> Generator[bytes, None, bool]:
+        """The lines of one archive not read yet. Gives back True when the
+        pass stops here: the archive could not be read to its end, and
+        nothing after it may come first."""
+        if key is not None and key in self.done_files:
+            self.finished.add(path)   # its first name, just read
+            self.second_names += 1
+            return False
+        tail = self.archives.get(path)
+        if tail is None:
+            tail = self.archives[path] = self.archive_tail(path, key)
+        before = tail.consumed
+        yield from tail.lines()
+        if not tail.whole:
+            if tail.consumed > before:
+                self.failed.pop(path, None)   # it moved: not a failure
+                return True
+            tries = self.failed[path] = self.failed.get(path, 0) + 1
+            if tries < ARCHIVE_TRIES:
+                return True
+            log(f"an archive could not be read {tries} times, so it"
+                f" is left out until the next start: {path.name}")
+        # Read to its end, and nothing will be added to it: the tail
+        # is done with, and only how much it read is kept.
+        self.finished.add(path)
+        done = tail.key if tail.key != (0, 0) else key
+        if done is not None:
+            self.done_files.add(done)
+        del self.archives[path]
+        self.failed.pop(path, None)
+        self.finished_bytes += tail.consumed
+        return False
 
     def new_events(self) -> Iterator[dict[str, Any]]:
         for event in json_objects(self.new_lines()):
@@ -11297,6 +11315,130 @@ def private_paths() -> Callable[[str], str]:
     return private
 
 
+def report_events(days: float, now: float | None) -> list[str]:
+    """The report's hook events: each kind, the fields it carried, the
+    kinds a field names, and the tools."""
+    out: list[str] = []
+    events: Counter[str] = Counter()
+    fields: dict[str, Counter[str]] = {}
+    kinds: dict[str, Counter[str]] = {}
+    tools: Counter[str] = Counter()
+    sessions: set[str] = set()
+    for event in recent_events(days, now):
+        name = named(event.get("hook_event_name"))
+        events[name] += 1
+        fields.setdefault(name, Counter()).update(named(key) for key in event)
+        sessions.add(str(event.get("session_id") or ""))
+        if event.get("tool_name") is not None and name in ("PreToolUse", "PermissionRequest"):
+            tools[tool_named(event.get("tool_name"))] += 1
+        for field_name in REPORT_KINDS.get(name, ()):
+            if field_name in event:
+                kinds.setdefault(f"{name}.{field_name}", Counter())[
+                    named(event[field_name])] += 1
+    known = set(HOOK_EVENTS) | {"Declined", "Approved"}
+    out += ["", f"## Hook events, last {days:g} days", ""]
+    if not events:
+        out.append("No events in that time.")
+    else:
+        out.append(f"{sum(events.values())} events from"
+                   f" {counted(len(sessions), 'session', 'sessions')}. An event"
+                   " wostuast does not handle is marked **new**: it is kept in the"
+                   " log, and nothing reads it yet.")
+        out.append("")
+        out += report_table(("Event", "Count", "Handled"), [
+            (name, n, "yes" if name in known else "**new**")
+            for name, n in events.most_common()])
+        out += ["", "### Payload fields", "",
+                "Every top-level field each event carried, with how often."
+                " `ts`, `pane`, `pid` and `shell_pid` are added by the hook;"
+                " `tests/fixtures/README.md` lists the fields wostuast reads.", ""]
+        out += report_table(("Event", "Fields"), [
+            (name, counts_of(fields[name])) for name, _ in events.most_common()])
+        if kinds:
+            out += ["", "### Kinds", "",
+                    "Fields whose value names a kind; `(other)` is a value that"
+                    " was not a plain name and is not shown.", ""]
+            out += report_table(("Field", "Values"),
+                                [(key, counts_of(found)) for key, found in sorted(kinds.items())])
+        if tools:
+            out += ["", "### Tools", "", "Tool calls that started or asked for permission.", ""]
+            out += report_table(("Tool", "Calls"), tools.most_common())
+
+    return out
+
+
+def report_transcripts(days: float, shapes: Shapes) -> list[str]:
+    """The report's transcripts: what the page does not show of them."""
+    out: list[str] = []
+    out += ["", f"## Transcripts, last {days:g} days", "",
+            f"{shapes.records} records in {counted(shapes.transcripts, 'transcript', 'transcripts')}."]
+    if shapes.not_read:
+        out += ["", "Records and pieces the page does not show:", ""]
+        out += report_table(("Record or piece", "Count"),
+                            [(labelled(name), n) for name, n in
+                             sorted(shapes.not_read.items(), key=lambda one: -one[1])])
+    if shapes.tags:
+        out += ["", "Claude Code's tags that still reach the page as text:", ""]
+        out += report_table(("Tag", "Count"),
+                            [(labelled(name), n) for name, n in
+                             sorted(shapes.tags.items(), key=lambda one: -one[1])])
+    if not shapes.not_read and not shapes.tags:
+        out += ["", "Nothing the page does not know."]
+
+    return out
+
+
+def report_errors() -> list[str]:
+    """The report's errors: what `wostuast.log` holds, by the exception
+    it names."""
+    out: list[str] = []
+    errors: Counter[str] = Counter()
+    last: dict[str, str] = {}
+    for path in (log_path().with_name(log_path().name + ".1"), log_path()):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            kind = exception_named(line)
+            errors[kind] += 1
+            # The day, when the line starts with one: a line a newline in a
+            # logged path began gave its first ten letters instead.
+            if re.match(r"\d{4}-\d{2}-\d{2}", line):
+                last[kind] = line[:10]
+    out += ["", "## Errors", "",
+            "What `wostuast.log` holds, by the exception it names; the messages"
+            " are left out, because they can hold paths and commands.", ""]
+    if errors:
+        out += report_table(("Exception", "Lines", "Last day"),
+                            [(kind, n, last.get(kind, "-")) for kind, n in errors.most_common()])
+    else:
+        out.append("None.")
+
+    return out
+
+
+def report_cost(measure: bool) -> list[str]:
+    """The report's cost: the hook and the status file, each timed."""
+    out: list[str] = []
+    out += ["", "## Cost", ""]
+    if measure:
+        hook = program_cost(hook_path(), json.dumps(
+            {"session_id": "wostuast-report", "hook_event_name": "Notification"}))
+        status = program_cost(status_program_path(),
+                              json.dumps({"session_id": "wostuast-report"}))
+        out.append("The installed hook and status file, each run five times as"
+                   " Claude Code runs them, into a state directory of their own.")
+        out.append("")
+        out += report_table(("Program", "Median"), [
+            ("hook.py, one event", f"{hook:.0f} ms" if hook is not None else "did not run"),
+            ("status.py, one redraw", f"{status:.0f} ms" if status is not None else "did not run"),
+        ])
+    else:
+        out.append("Not measured.")
+    return out
+
+
 def build_report(days: float, now: float | None = None,
                  measure: bool = True) -> str:
     """Everything an agent needs to improve wostuast for this machine, as
@@ -11351,104 +11493,10 @@ def build_report(days: float, now: float | None = None,
           size_label(row.size) if row.there else "not there",
           row.count, row.what) for row in installed_files()])
 
-    events: Counter[str] = Counter()
-    fields: dict[str, Counter[str]] = {}
-    kinds: dict[str, Counter[str]] = {}
-    tools: Counter[str] = Counter()
-    sessions: set[str] = set()
-    for event in recent_events(days, now):
-        name = named(event.get("hook_event_name"))
-        events[name] += 1
-        fields.setdefault(name, Counter()).update(named(key) for key in event)
-        sessions.add(str(event.get("session_id") or ""))
-        if event.get("tool_name") is not None and name in ("PreToolUse", "PermissionRequest"):
-            tools[tool_named(event.get("tool_name"))] += 1
-        for field_name in REPORT_KINDS.get(name, ()):
-            if field_name in event:
-                kinds.setdefault(f"{name}.{field_name}", Counter())[
-                    named(event[field_name])] += 1
-    known = set(HOOK_EVENTS) | {"Declined", "Approved"}
-    out += ["", f"## Hook events, last {days:g} days", ""]
-    if not events:
-        out.append("No events in that time.")
-    else:
-        out.append(f"{sum(events.values())} events from"
-                   f" {counted(len(sessions), 'session', 'sessions')}. An event"
-                   " wostuast does not handle is marked **new**: it is kept in the"
-                   " log, and nothing reads it yet.")
-        out.append("")
-        out += report_table(("Event", "Count", "Handled"), [
-            (name, n, "yes" if name in known else "**new**")
-            for name, n in events.most_common()])
-        out += ["", "### Payload fields", "",
-                "Every top-level field each event carried, with how often."
-                " `ts`, `pane`, `pid` and `shell_pid` are added by the hook;"
-                " `tests/fixtures/README.md` lists the fields wostuast reads.", ""]
-        out += report_table(("Event", "Fields"), [
-            (name, counts_of(fields[name])) for name, _ in events.most_common()])
-        if kinds:
-            out += ["", "### Kinds", "",
-                    "Fields whose value names a kind; `(other)` is a value that"
-                    " was not a plain name and is not shown.", ""]
-            out += report_table(("Field", "Values"),
-                                [(key, counts_of(found)) for key, found in sorted(kinds.items())])
-        if tools:
-            out += ["", "### Tools", "", "Tool calls that started or asked for permission.", ""]
-            out += report_table(("Tool", "Calls"), tools.most_common())
-
-    out += ["", f"## Transcripts, last {days:g} days", "",
-            f"{shapes.records} records in {counted(shapes.transcripts, 'transcript', 'transcripts')}."]
-    if shapes.not_read:
-        out += ["", "Records and pieces the page does not show:", ""]
-        out += report_table(("Record or piece", "Count"),
-                            [(labelled(name), n) for name, n in
-                             sorted(shapes.not_read.items(), key=lambda one: -one[1])])
-    if shapes.tags:
-        out += ["", "Claude Code's tags that still reach the page as text:", ""]
-        out += report_table(("Tag", "Count"),
-                            [(labelled(name), n) for name, n in
-                             sorted(shapes.tags.items(), key=lambda one: -one[1])])
-    if not shapes.not_read and not shapes.tags:
-        out += ["", "Nothing the page does not know."]
-
-    errors: Counter[str] = Counter()
-    last: dict[str, str] = {}
-    for path in (log_path().with_name(log_path().name + ".1"), log_path()):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for line in text.splitlines():
-            kind = exception_named(line)
-            errors[kind] += 1
-            # The day, when the line starts with one: a line a newline in a
-            # logged path began gave its first ten letters instead.
-            if re.match(r"\d{4}-\d{2}-\d{2}", line):
-                last[kind] = line[:10]
-    out += ["", "## Errors", "",
-            "What `wostuast.log` holds, by the exception it names; the messages"
-            " are left out, because they can hold paths and commands.", ""]
-    if errors:
-        out += report_table(("Exception", "Lines", "Last day"),
-                            [(kind, n, last.get(kind, "-")) for kind, n in errors.most_common()])
-    else:
-        out.append("None.")
-
-    out += ["", "## Cost", ""]
-    if measure:
-        hook = program_cost(hook_path(), json.dumps(
-            {"session_id": "wostuast-report", "hook_event_name": "Notification"}))
-        status = program_cost(status_program_path(),
-                              json.dumps({"session_id": "wostuast-report"}))
-        out.append("The installed hook and status file, each run five times as"
-                   " Claude Code runs them, into a state directory of their own.")
-        out.append("")
-        out += report_table(("Program", "Median"), [
-            ("hook.py, one event", f"{hook:.0f} ms" if hook is not None else "did not run"),
-            ("status.py, one redraw", f"{status:.0f} ms" if status is not None else "did not run"),
-        ])
-    else:
-        out.append("Not measured.")
+    out += report_events(days, now)
+    out += report_transcripts(days, shapes)
+    out += report_errors()
+    out += report_cost(measure)
     return "\n".join(out) + "\n"
 
 

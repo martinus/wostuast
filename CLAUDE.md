@@ -739,14 +739,17 @@ before you edit its part:
   never crashes anything.
 - A comment says *why*, especially why the obvious simpler thing is wrong. The
   long comments here are load-bearing; do not tidy them away.
-- **No function past 100 lines, and none already past it grows** (#436,
-  `LONGER_ALREADY` in `tests/test_log.py`). A change to one of those first
-  moves the part it touches into a helper of its own, with that part's
-  comments and with its tests green, and then makes the change there. Not
-  all at once: `worktree_diff`, `build_report` and the rest each hold
-  many fixes, and a rewrite of a whole one is how a fix gets lost. The
-  list only shrinks; `test_no_function_grows_past_the_limit` takes off a
-  function once it is under. **A split is by job, not by length** (#548):
+- **No function past 100 lines** (#436, `LINES_MOST` in
+  `tests/test_log.py`, held by `test_no_function_grows_past_the_limit`).
+  `LONGER_ALREADY` held the seven that were past it when the rule was
+  written; #548 split them all, and the list is empty. A change that would
+  take a function past the limit first moves the part it touches into a
+  helper of its own, with that part's comments and with its tests green,
+  and then makes the change there. **One function or two a pull request,
+  never all at once**: each held many fixes, and a rewrite of a whole one
+  is how a fix gets lost. #548 took four pull requests, each cut by an
+  edit script that asserted no comment line was lost or doubled -- the
+  `comments(old) == comments(new)` check. **A split is by job, not by length** (#548):
   `drawDiff` became the notes above and below (`putDiffNotesAbove`,
   `putDiffNotesBelow`), the blocks (`putDiffBlocks`) and where the pane
   is left (`putDiffPlace`); `drawFiles` gave its empty states to

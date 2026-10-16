@@ -595,8 +595,8 @@ DRAW_EFFECTS_ALREADY = {
     # painted in slices.
     "draw: setTimeout",
     # A part drawn asks for text it needs: the files the review's comments
-    # stand in, more of a file between its changes. Into `loadDiff` with
-    # the split of `drawDiff` (#548).
+    # stand in, more of a file between its changes. Out of the draw, to
+    # where the need starts, in #566.
     "draw: fetch /api/session/*/file", "draw: fetch /api/session/*/whole",
     # The question's picks start again when a new question is drawn.
     "drawHeader: state.picked", "drawHeader: state.picked.at",
