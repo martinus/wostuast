@@ -606,6 +606,35 @@ def test_search_reads_the_archives_too(ws, store):
     assert len(found) == 3
 
 
+def test_search_reads_a_prompt_as_the_fold_does(ws, store):
+    """Search and the fold read one `UserPromptSubmit` the same way (#536):
+    one function says what a prompt is. Search read `prompt` by itself, so
+    a background task's notification and another session's message came
+    up as the reader's own words, and a paste kept its tags."""
+    paste = ('<pasted_content id="1da8">\nthe pasted zebra log\n'
+             '</pasted_content id="1da8">')
+    prompts = {
+        "typed": "Fix the zebra race.",
+        "task": "<task-notification><summary>zebra build done</summary>"
+                "</task-notification>",
+        "agent": '<agent-message from="a1">zebra report</agent-message>',
+        "paste": "Read this zebra:\n\n" + paste,
+    }
+    for at, (sid, prompt) in enumerate(prompts.items()):
+        ws.append_event(event("UserPromptSubmit", sid=sid, ts=1000.0 + at,
+                              prompt=prompt))
+    store.refresh(now=1010.0, alive=lambda p: True)
+    # No `from:me`: it would hide a hit whose `who` is not "me" anyway.
+    found = ws.search_log("zebra", store.sessions)
+    # Each hit is a prompt the fold kept as the reader's.
+    assert sorted((one["id"], one["who"]) for one in found) == [
+        ("paste", "me"), ("typed", "me")]
+    for one in found:
+        assert "<" not in one["text"], one   # the paste's tags are off
+    assert not store.sessions["task"].last_prompt
+    assert not store.sessions["agent"].last_prompt
+
+
 def test_a_session_a_saved_turn_points_at_is_not_forgotten(ws, store):
     """The history kept a week, and the reader's saved turns of an older
     session said "a session no longer listed" and opened nothing (#494). It
