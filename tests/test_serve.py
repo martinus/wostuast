@@ -353,7 +353,7 @@ def test_a_transcript_push_leaves_under_the_lock(ws, served, transcript_file,
 
     def spy(kind, data, session_id=""):
         if kind == "transcript":
-            held.append(daemon.lock.locked())
+            held.append(daemon.reading.locked())
         real(kind, data, session_id=session_id)
 
     monkeypatch.setattr(daemon.hub, "send", spy)
@@ -2227,6 +2227,25 @@ def test_two_sessions_in_one_pane_are_typed_into_one_at_a_time(ws, served):
     assert daemon.claim("s3", pane="%8") == "", "another pane is not held"
     daemon.release("s1")
     assert daemon.claim("s2", pane="%7") == ""
+
+
+def test_a_slow_transcript_read_holds_back_no_send(served):
+    """A claim does not wait for a transcript read (#538). They shared one
+    lock, and `read_transcript` reads the file while it holds it: the first
+    read of a long transcript held back every send, answer and No. A thread
+    holds `reading` here as that read does, and a claim from another one
+    must still come back at once."""
+    import threading
+    daemon, _ = served
+    took: list[str] = []
+    with daemon.reading:
+        claimer = threading.Thread(target=lambda: took.append(daemon.claim("s1")))
+        claimer.start()
+        claimer.join(timeout=5)
+        assert not claimer.is_alive(), "the claim waited on the reading lock"
+    assert took == [""]
+    daemon.release("s1")
+
 
 
 def test_two_sends_at_once_do_not_mix_in_the_pane(ws, served, monkeypatch):
