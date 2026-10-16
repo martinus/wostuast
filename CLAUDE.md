@@ -155,8 +155,13 @@ building anything. A goal that bends is rewritten here in the same PR.
    second source: `hook_source` copies it out of the one file, and
    `uninstall` takes it away. It earned its place by time: 33 ms an event
    against 131 for the whole program (#271).
-5. Look good enough that a screenshot would sell it. None ships: see
-   `README.md`, "No screenshots".
+5. Look good enough that a screenshot would sell it. **One ships**
+   (#521): `docs/cover.png` at the top of the README, drawn by
+   `tests/tour.py` from made-up sessions, never from anybody's real ones.
+   It was none -- a picture of real agents is somebody's work, and made-up
+   ones "show a tool nobody is using" -- until the reader asked for a cover
+   and chose the tour's sessions. Draw it again when the page changes how
+   it looks: the command is under the picture.
 
 **Non-goals. If a feature needs one of these, leave the feature out.**
 
@@ -213,7 +218,9 @@ building anything. A goal that bends is rewritten here in the same PR.
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act, commands. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
-| `README.md` | What a user reads. Keep in step with the commands. |
+| `README.md` | What a user reads first: what wostuast is, why, how to install it, and a short tour. Short on purpose (#521): it was 800 lines, and the reader asked for only what sets wostuast apart. A detail goes in the guide. |
+| `docs/GUIDE.md` | Everything a user can look up: each part of the page, the keys, the settings, the commands, `ls --json`, the files, safety, the FAQ. Keep in step with the commands. |
+| `docs/cover.png` | The README's picture: `tests/tour.py`'s transcript view, made-up sessions. |
 | `ARCHITECTURE.md` | What a person reads to learn how the program works and why, with diagrams. It has no authority: where it and these rules or the tests disagree, they are right, and it is fixed in the same pull request. A change to what it draws -- a route, a state, a verb, a file on disk, a hook event -- updates it too. |
 | `.claude/topics/*.md` | The rules, one file a subject: safety, state, sidebar, tab-state, worktree-tabs, review, daemon-and-page, testing, decisions, landing, payloads. **Where to look** routes to them. |
 | `.claude/skills/issues/SKILL.md` | How to work the issue list: the owner's issues only, group, reproduce, ask, prove, review, merge on green, read the list again, then reflect on the session and land what is clear. Invoked as `/issues`, and by "do the issues". |
