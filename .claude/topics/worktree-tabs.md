@@ -213,8 +213,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `gitignore.`. `unicode-bidi: plaintext` takes the direction from the first
   strong character instead. Never clip a path at its start without it.
 - **The tree holds the tiers.** `dirFiles` orders each directory's own files —
-  named, changed newest first, then the rest. `openDirs` opens a directory
-  holding a change; `state.dirs` (what the reader opened by hand) wins over it.
+  named, changed newest first, then the rest. **A directory holding a
+  change does not open itself; it counts them** (#517, `openDirs`,
+  `dirsWithChanges`, `.nchanged`). It did open, so that the tree said what
+  the agent just did; where the agent touched many folders the whole tree
+  stood open, and the reader asked for it shut. `state.files.marked` is a
+  map from a folder to the changed files under it, at any depth, and the
+  number stands at the folder's right edge, where a file has its dot (the
+  dot is `:not(.dir)` now). **The funnel still opens them**: it asks for
+  the changes alone. What the reader opened or shut by hand (`state.dirs`)
+  wins over both. `test_a_directory_holding_a_change_stays_shut_and_counts_them`,
+  `test_a_directory_stays_as_the_hand_left_it`.
 - **Typing is "go to file", not a filter.** The tree never moves: where a file
   sits is half of what you know about it, and taking the tree apart was hiding
   that answer as a way of asking for it. `drawGoTo` opens a list under the

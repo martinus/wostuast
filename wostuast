@@ -13870,9 +13870,16 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    tree (issue 492): the dot alone was easy to miss. Only the Files tab's
    tree: the transcript's map wears the same rows. */
 .filelist.files button.touched .name { font-weight: 600; color: var(--ink-bright); }
-.filelist button.touched .name::after {
+.filelist button.touched:not(.dir) .name::after {
   content: "\25cf"; margin-left: 6px; color: var(--needs); font-size: 9px;
   vertical-align: middle;
+}
+/* How many changed files a folder holds (issue 517): at its right edge,
+   where a count sits on a diff row, in the colour the file's dot has. A
+   folder does not open itself for them any more; this says what is in it. */
+.filelist .nchanged {
+  margin-left: auto; padding-left: 8px; flex-shrink: 0; color: var(--needs);
+  font-family: var(--sans); font-size: 10px; font-variant-numeric: tabular-nums;
 }
 /* At the right edge of a folder row, where a count sits on a diff row: it
    is what the folder has instead of contents. Quiet, because it is a fact
@@ -19940,25 +19947,27 @@ function* ancestors(path) {
   }
 }
 
-// The directories holding something the agent touched, so a closed one can
-// still say there is a change inside it.
+// The directories holding something the agent touched, each with how many
+// changed files are under it, so a closed one can still say there is a
+// change inside it, and how much (#517).
 function dirsWithChanges(changed) {
-  const marked = new Set();
+  const marked = new Map();
   for (const path of changed.keys()) {
     for (const above of ancestors(path)) {
-      if (marked.has(above)) break;   // and so is everything above it
-      marked.add(above);
+      marked.set(above, (marked.get(above) || 0) + 1);
     }
   }
   return marked;
 }
 
-// Which directories stand open. The ones holding a change open themselves,
-// because a closed tree cannot answer what the agent just did, and that is
-// the question this tool exists to answer. What the reader opens or closes
-// wins over that, so the tree never fights the hand on it.
+// Which directories stand open: the ones the reader opened. **A folder that
+// holds a change does not open itself** (#517). It did, so that the tree
+// answered what the agent just did; in a worktree where the agent touched
+// many folders the whole tree stood open, and the reader asked for it shut.
+// A shut folder says how many changed files are under it instead, and the
+// funnel, which asks for the changes alone, still opens every one of them.
 function openDirs() {
-  const open = new Set(state.files.marked);
+  const open = new Set(onlyChanged() ? state.files.marked.keys() : []);
   for (const [path, wanted] of state.files.dirs) {
     if (wanted) open.add(path); else open.delete(path);
   }
@@ -20246,6 +20255,12 @@ function drawRow(list, row) {
     }
   }
   putName(button, name, at);
+  // How many changed files a folder holds (#517), where a file has its dot.
+  if (dir && state.files.marked.has(row.path)) {
+    const many = state.files.marked.get(row.path);
+    put(button, "span", "nchanged", String(many)).title =
+      counted(many, "changed file", "changed files") + " in here";
+  }
   if (row.skipped) {
     // Where the reader is looking, rather than in a strip at the foot: this
     // is a fact about this folder, and the question it answers -- "where is
