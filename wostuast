@@ -5877,6 +5877,50 @@ def read_worktree_file(
     return found
 
 
+def why_unread(
+    cwd: str, wanted: str, runner: Callable[..., str | None] = run,
+    held: "Files | None" = None,
+) -> str:
+    """What the page says when `read_worktree_file` gave nothing.
+
+    Asked only after the refusal, and it opens nothing: the refusal stands.
+    **A link out of the worktree is in the worktree** (#515). A venv's
+    `bin/python` and `bin/𝜋thon` are links to the system's Python; the
+    Files tab lists them, `inside` refuses them as it must, and the page
+    said "that file is not in this worktree" of a file the reader could see
+    in the list. It now says where the link goes. The link's own text sits
+    in the worktree, which git stores as the link's content, so saying it
+    gives nothing away that `git show` would not. A link into `.git` says
+    only that: where in it is not the page's business.
+    """
+    root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
+    if not root or not is_listed(root, wanted, runner):
+        return "that file is not in this worktree"
+    place = Path(root) / wanted
+    try:
+        if inside(root, place.parent) is None or not place.is_symlink():
+            return "that file could not be read"
+        to = os.readlink(place)
+        # A loop raises up to Python 3.12 and is handed back unfinished on
+        # 3.13 -- `inside` has the same two cases.
+        try:
+            end = place.resolve()
+        except RuntimeError:
+            end = place
+        if end.is_symlink():
+            return "it is a link that leads back to itself"
+        if not end.exists():
+            return f"it is a link to {to}, which does not exist"
+        top = Path(root).resolve()
+        if not end.is_relative_to(top):
+            return f"it is a link to {end}, outside this worktree"
+        if any(part.lower() == ".git" for part in end.relative_to(top).parts):
+            return "it is a link into the git directory, which is not shown"
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return "that file could not be read"
+
+
 @dataclass
 class DiffLine:
     """One line of a hunk."""
@@ -10037,8 +10081,8 @@ class Serving:
                                    held=self.daemon.files,
                                    have=query.get("have", ""))
         if found is None:
-            self.reply_json({"id": session_id, "path": wanted,
-                             "missing": "that file is not in this worktree"}, 404)
+            self.reply_json({"id": session_id, "path": wanted, "missing": why_unread(
+                session.cwd, wanted, held=self.daemon.files)}, 404)
             return
         if found.same:
             self.reply_json({"id": session_id, "path": wanted, "same": True,

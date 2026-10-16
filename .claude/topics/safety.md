@@ -702,6 +702,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     case opens `.GIT/config` as `.git/config`. A git directory outside the
     worktree is `inside`'s to refuse.
     `test_a_link_into_the_git_directory_is_refused`.
+  - **A refused read says why, and the refusal stands** (`why_unread`,
+    #515). A venv's `bin/𝜋thon` and `bin/python` are links to the
+    system's Python: listed, and refused by `inside` as they must be. The
+    route said "that file is not in this worktree" of a file the reader
+    could see in the list. `why_unread` is asked only after the refusal,
+    opens nothing, and says where the link goes -- the link's own text,
+    which git stores as its content, or the end of it outside the tree. A
+    link into `.git` says only that. A name git does not offer still gets
+    the old words, so the reason gives away nothing the name did not.
+    `test_a_link_out_of_the_worktree_says_where_it_goes`,
+    `test_a_link_out_of_the_worktree_is_refused_with_where_it_goes`.
 - **Our `settings.json` is written by the page, and by nothing else.**
   `config_path` puts it in `$XDG_CONFIG_HOME/wostuast/` or
   `~/.config/wostuast/`, where a person looks; `WOSTUAST_CONFIG` moves it

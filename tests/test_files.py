@@ -413,6 +413,35 @@ def test_a_link_that_leaves_the_worktree_is_refused(ws, seeded, tmp_path):
     assert ws.read_worktree_file(str(seeded), "link.md") is None
 
 
+def test_a_link_out_of_the_worktree_says_where_it_goes(ws, seeded, tmp_path):
+    """A venv's `bin/𝜋thon` is a link to `python`, a link to the system's
+    Python (#515). The Files tab lists it, the read is refused as it must
+    be, and the page said "that file is not in this worktree" of a file the
+    reader could see in the list. The refusal stands; the reason is true."""
+    outside = tmp_path / "python3"
+    outside.write_text("#!/bin/sh\n")
+    (seeded / "bin").mkdir()
+    (seeded / "bin" / "python").symlink_to(outside)
+    (seeded / "bin" / "𝜋thon").symlink_to("python")
+    (seeded / "bin" / "gone").symlink_to("nowhere")
+    (seeded / "bin" / "a").symlink_to("b")
+    (seeded / "bin" / "b").symlink_to("a")
+    (seeded / "cfg.md").symlink_to(".git/config")
+    git(seeded, "add", "bin", "cfg.md")
+    for name in ("bin/python", "bin/𝜋thon"):
+        assert ws.read_worktree_file(str(seeded), name) is None, name
+        assert ws.why_unread(str(seeded), name) == (
+            f"it is a link to {outside.resolve()}, outside this worktree"), name
+    assert ws.why_unread(str(seeded), "bin/gone") == (
+        "it is a link to nowhere, which does not exist")
+    assert ws.why_unread(str(seeded), "bin/a") == "it is a link that leads back to itself"
+    assert ws.why_unread(str(seeded), "cfg.md") == (
+        "it is a link into the git directory, which is not shown")
+    # A name git does not offer is still not in the worktree, link or not.
+    assert ws.why_unread(str(seeded), "../outside") == "that file is not in this worktree"
+    assert ws.why_unread(str(seeded), str(outside)) == "that file is not in this worktree"
+
+
 def test_a_link_into_the_git_directory_is_refused(ws, seeded):
     """git lists a tracked link and never what it points at, and `.git` is
     inside the worktree, so both checks passed and the Files tab showed

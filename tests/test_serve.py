@@ -725,6 +725,21 @@ def test_a_file_the_listing_does_not_offer_is_a_404(repo_session):
     assert caught.value.code == 404
 
 
+def test_a_link_out_of_the_worktree_is_refused_with_where_it_goes(repo_session,
+                                                                    tmp_path):
+    """#515: the 404 says what the file is, not that it is not there."""
+    root, base = repo_session
+    (tmp_path / "python3").write_text("#!/bin/sh\n")
+    (root / "𝜋thon").symlink_to(tmp_path / "python3")
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        urllib.request.urlopen(f"{base}/api/session/s1/file?path=%F0%9D%9C%8Bthon",
+                               timeout=5)
+    assert caught.value.code == 404
+    answer = json.loads(caught.value.read())
+    assert answer["missing"] == (
+        f"it is a link to {(tmp_path / 'python3').resolve()}, outside this worktree")
+
+
 def test_the_diff_is_served(repo_session):
     root, base = repo_session
     (root / "README.md").write_text("# readme\n\nchanged\n")
