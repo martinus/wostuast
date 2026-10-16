@@ -414,10 +414,10 @@ def test_the_marks_outlive_the_daemon_and_forget_unknown_sessions(ws, store):
     of ours, beside the snoozes, and a session nobody knows is dropped."""
     ws.append_event(event("SessionStart", ts=time.time()))
     store.refresh(alive=lambda p: True)
-    store.seen["gone"] = 5.0
+    store.marks.seen["gone"] = 5.0
     store.see("s1", False)
     floor, seen = ws.read_seen()
-    assert seen == {"s1": -1.0} and floor == store.seen_floor
+    assert seen == {"s1": -1.0} and floor == store.marks.seen_floor
     again = ws.Store()
     again.refresh(alive=lambda p: True)
     assert again.rows[0]["unread"] is True
@@ -451,7 +451,7 @@ def test_a_reminder_is_a_moment_kept_in_a_file_of_ours(ws, store):
     again = ws.Store()
     again.refresh(alive=lambda p: True)
     assert again.rows[0]["remind_at"] == round(at, 3)
-    store.reminders["gone"] = at
+    store.marks.reminders["gone"] = at
     assert store.remind("s1", 0) == 0.0
     assert ws.read_reminders() == {}
 
@@ -504,8 +504,8 @@ def test_a_saved_turn_is_its_session_and_its_moment(ws, store):
     store.save(one, True)
     store.save(two, True)
     store.save(dict(one, seq=4), True)
-    assert [(e["id"], e["seq"]) for e in store.saved] == [("s1", 4), ("gone", 1)]
-    assert ws.read_saved() == store.saved
+    assert [(e["id"], e["seq"]) for e in store.marks.saved] == [("s1", 4), ("gone", 1)]
+    assert ws.read_saved() == store.marks.saved
     assert ws.saved_path().stat().st_mode & 0o777 == 0o600
     store.save(one, False)
     assert ws.read_saved() == [two]
@@ -645,7 +645,7 @@ def test_a_session_a_saved_turn_points_at_is_not_forgotten(ws, store):
     ws.append_event(event("Stop", sid="reminded", ts=1000.0))
     ws.append_event(event("Stop", sid="gone", ts=1000.0))
     store.refresh(now=1001.0, alive=lambda p: True)
-    store.saved = [{"id": "kept", "seq": 1, "ts": 1000.0, "text": "x", "at": 1000.0}]
-    store.reminders = {"reminded": 1000.0 + 10 ** 9}
+    store.marks.saved = [{"id": "kept", "seq": 1, "ts": 1000.0, "text": "x", "at": 1000.0}]
+    store.marks.reminders = {"reminded": 1000.0 + 10 ** 9}
     store.refresh(now=1000.0 + ws.SESSION_MAX_AGE + 10, alive=lambda p: True)
     assert sorted(one["id"] for one in store.rows) == ["kept", "reminded"]

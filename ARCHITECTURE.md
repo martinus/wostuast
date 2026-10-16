@@ -427,10 +427,10 @@ There are two small exceptions, and each one has a lock:
 
 - **Names and snoozes.** `POST name` runs in a request thread. Two renames
   at once once built two new name maps from the same old one, and one name
-  was lost. Now writers of `Store.names` take the `naming` lock. `POST
-  snooze` writes `Store.snoozes` under the same lock, for the same reason,
-  and so does `POST seen`, which writes `Store.seen`, and `POST remind`,
-  which writes `Store.reminders`.
+  was lost. Now writers of the names (`Marks.names`, in `Store.marks`) take the `naming` lock. `POST
+  snooze` writes `Marks.snoozes` under the same lock, for the same reason,
+  and so does `POST seen`, which writes `Marks.seen`, and `POST remind`,
+  which writes `Marks.reminders`. All five kinds of the reader's marks are one `Marks` (#547).
 - **Transcript readers** are shared between the worker and the request
   threads, under `Daemon.reading`. The claims of a send, an answer or a No
   have a lock of their own, `Daemon.typing_lock`, so a slow read never

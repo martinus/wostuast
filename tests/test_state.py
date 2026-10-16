@@ -821,7 +821,7 @@ def test_renaming_keeps_it_and_taking_it_away_forgets_it(ws):
     assert ws.read_names() == {"s": "a long name"}
     # A fresh store reads what the last one wrote: this is the half that
     # survives a restart of the daemon.
-    assert ws.Store().names == {"s": "a long name"}
+    assert ws.Store().marks.names == {"s": "a long name"}
     assert store.rename("s", "   ") == ""
     assert ws.read_names() == {}
 
@@ -970,8 +970,8 @@ def test_two_renames_at_once_keep_both_names(ws):
     finally:
         ws.write_names = real
 
-    assert store.names == {"a": "name-a", "b": "name-b"}
-    assert ws.read_names() == store.names
+    assert store.marks.names == {"a": "name-a", "b": "name-b"}
+    assert ws.read_names() == store.marks.names
 
 
 # --- two tools at once, and a dialog on one of them --------------------------

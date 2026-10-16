@@ -2681,7 +2681,7 @@ def seen_before(ws, served, tmp_path, transcript_file):
                                    pid=1, ts=now - 4000, transcript_path=str(path)))
     ws.append_event(conftest.event("Stop", cwd=str(tmp_path), pane="%7", pid=1,
                                    ts=now - 3600 + 7 * 400 + 61))
-    daemon.store.seen = {"s1": now - 3600 + 400 + 120}
+    daemon.store.marks.seen = {"s1": now - 3600 + 400 + 120}
     daemon.store.refresh()
     assert daemon.store.sessions["s1"].unread
     return daemon, base + "/"
@@ -2701,7 +2701,7 @@ def test_coming_back_lands_on_a_line_over_the_first_turn_not_seen(seen_before):
     reader scrolled up to find where they had stopped."""
     daemon, url = seen_before
     # The reader's last look, before this one marks it read.
-    seen = daemon.store.seen["s1"]
+    seen = daemon.store.marks.seen["s1"]
     with opened(url) as page:
         page.set_viewport_size({"width": 1200, "height": 600})
         page.wait_for_selector(".turnbody > .newline")
@@ -2791,15 +2791,15 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
         page.hover(reply)
         page.click(mark)
         page.wait_for_selector(f"{mark}.on")
-        assert daemon.store.saved[0]["id"] == "s1"
-        assert "who" not in daemon.store.saved[0]
+        assert daemon.store.marks.saved[0]["id"] == "s1"
+        assert "who" not in daemon.store.marks.saved[0]
         page.wait_for_function(
             "document.querySelector('#savedlink .n').textContent === '1'")
         page.hover(prompt)
         page.click(f"{prompt} .turnacts .save")
         page.wait_for_selector(f"{prompt} .turnacts .save.on")
-        assert daemon.store.saved[0]["who"] == "me"
-        assert daemon.store.saved[0]["text"] == page.evaluate(
+        assert daemon.store.marks.saved[0]["who"] == "me"
+        assert daemon.store.marks.saved[0]["text"] == page.evaluate(
             "state.turns.blocks.find((b) => b.kind === 'prompt').text").strip()[:300]
         page.wait_for_function(
             "document.querySelector('#savedlink .n').textContent === '2'")
@@ -2840,7 +2840,7 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
             page.hover(".feedentry >> nth=0")
             page.click(".feedentry >> nth=0 >> button:text('done')")
         page.wait_for_selector(".feed .empty")
-        assert daemon.store.saved == []
+        assert daemon.store.marks.saved == []
 
 
 
@@ -2867,7 +2867,7 @@ def test_a_command_and_a_system_message_are_saved_too(ws, page_at):
             page.hover(turn)
             page.click(f"{turn} .turnacts .save")
             page.wait_for_selector(f"{turn} .turnacts .save.on")
-        assert [(one["who"], one["text"]) for one in daemon.store.saved] == [
+        assert [(one["who"], one["text"]) for one in daemon.store.marks.saved] == [
             ("system", "Interrupted."), ("shell", "! make test\nok 3")]
         page.click("#savedlink")
         page.wait_for_function("document.querySelectorAll('.feedentry').length === 2")
