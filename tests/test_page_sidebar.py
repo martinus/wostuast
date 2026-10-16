@@ -13,6 +13,8 @@ import pytest
 
 import conftest
 from browser import (
+    check_draws,
+    guard_draws,
     hold,
     renew_stream,
     pixels,
@@ -889,7 +891,9 @@ def alerts_page(where):
         page.goto(where, wait_until="domcontentloaded")
         page.wait_for_selector(".row", timeout=15000)
         page.wait_for_function("!!window.marked", timeout=15000)
+        guard_draws(page)
         yield page
+        check_draws(page)
 
 
 def test_the_needs_you_alert_is_on_as_soon_as_alerts_are(page_at):

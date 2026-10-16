@@ -14849,6 +14849,22 @@ const state = {
   listings: new Map(),
   poll: 0,
   transcriptRetry: 0,   // the one timer asking again for a transcript that failed
+  // The view standing over the tabs (`openFeed`), or false; the last answers
+  // its cards show, by session; and what the search view asked and got.
+  feed: false,
+  feedText: new Map(),
+  searchQuery: "",
+  searchResults: null,
+  // The session kept unread by its reader's "unread" while on screen, the
+  // one being marked seen now, and the one whose due reminder is being
+  // ended: each a session's id, or null.
+  keptUnread: null,
+  seeing: null,
+  ending: null,
+  // The stream and what it says of itself: its address, and "live" or
+  // "reconnecting" once it has said anything.
+  streamUrl: undefined,
+  live: undefined,
 };
 
 state.files = blankFiles();
@@ -15770,6 +15786,7 @@ function armReminders() {
   const wait = Math.max(0, (Math.min(...next) - serverNow()) * 1000) + 50;
   reminderTimer = setTimeout(() => {
     redrawRows();
+    onSessions();
     drawSessions();
   }, Math.min(wait, 2 ** 31 - 1));
 }
@@ -15931,6 +15948,7 @@ function openFeed(kind = "unread") {
   if (kind === "saved") askSaved();
   if (kind === "commands") loadCommands();
   state.feedText = new Map();
+  askUnread();
   document.body.classList.add("infeed");
   homeFind($("findhome"));
   draw();
@@ -16081,7 +16099,6 @@ function drawFeed(box) {
   }
   const board = putBoard(box);
   for (const s of shown) {
-    askLast(s.id);
     const [entry, top] = putCard(board, s.id, s, () => choose(s.id));
     put(top, "span", "feedwhen",
         (dayOf(s.ended_at) ? dayOf(s.ended_at) + " " : "") + clock(s.ended_at));
@@ -16328,7 +16345,14 @@ function patchSession(id, fields) {
   const s = Object.freeze(Object.assign({}, held, fields));
   state.sessions = state.sessions.slice();
   state.sessions[at] = s;
+  onSessions();
   return s;
+}
+
+// The push's one write of the sessions, and what follows it (`onSessions`).
+function setSessions(body) {
+  state.sessions = takeSessions(body);
+  onSessions();
 }
 
 // What a push leaves the page holding, every session frozen (#435). A
@@ -16775,7 +16799,6 @@ function drawSessions() {
   // moment a session is first chosen, and the new stream opens with a full
   // push of its own, so every page load drew the whole sidebar twice.
   const shown = shownSessions();
-  pruneReviews(state.sessions);
   drawCounts();
   const listed = listedSessions();
   const past = shown.filter(isGone);
@@ -16944,11 +16967,29 @@ function drawCounts() {
   document.title = tabTitle(rows);
   drawIcon(needs ? "needs_you" : working ? "working"
     : rows.length ? "done" : "gone");
-  // About every session, filter or no filter: "who needs me" must not
-  // change because you typed in a box.
-  notifyAbout(rows);
-  armReminders();
   drawFeedLink();
+}
+
+// What a change to the sessions does besides drawing (#542, CLAUDE.md,
+// **Principles**, 3). It ran inside `drawSessions`, so one draw of the
+// sidebar -- a filter typed, a row chosen -- could ring an alert, arm a
+// timer, write to storage and fetch. Called where `state.sessions` is
+// written, and only there: the push (`resubscribe`), `patchSession`, and
+// the reminder timer, whose clock moves a row into "needs you".
+function onSessions() {
+  pruneReviews(state.sessions);
+  // About every session, filter or no filter: "who needs me" must not
+  // change because you typed in a box. Not a child (#422).
+  notifyAbout(topSessions());
+  armReminders();
+  askUnread();
+}
+
+// The last answer of each unread session, for the "All unreads" view: asked
+// when it opens and when a push brings a new one, never while it draws.
+function askUnread() {
+  if (state.feed !== "unread") return;
+  for (const s of unreadSessions()) askLast(s.id);
 }
 
 function current() {
@@ -23656,9 +23697,13 @@ const TABS = {
 //: How long a switch may take before the old content says it is old.
 const SWITCH_SHOWN = 120;
 
+// A timer's handle, not something the page knows: kept out of `state`, so
+// `draw` ending a switch changes no state (#542).
+let switchTimer = 0;
+
 function beginSwitch() {
-  clearTimeout(state.switchTimer);
-  state.switchTimer = setTimeout(() => {
+  clearTimeout(switchTimer);
+  switchTimer = setTimeout(() => {
     const s = current();
     if (!s || state.feed) return;
     $("content").dataset.loading = "loading " + rowName(s) + "  \u00b7  "
@@ -23669,8 +23714,8 @@ function beginSwitch() {
 
 // What `draw` says: the box holds what was asked for now.
 function endSwitch() {
-  clearTimeout(state.switchTimer);
-  state.switchTimer = 0;
+  clearTimeout(switchTimer);
+  switchTimer = 0;
   document.body.classList.remove("switching");
 }
 
@@ -24259,7 +24304,7 @@ function resubscribe() {
     const waiting = !!state.chosen && !current();
     const first = !state.sessions.length;
     // Every row when a stream opens, then only what changed (#431).
-    state.sessions = takeSessions(body);
+    setSessions(body);
     if (typeof body.saved === "number") state.savedCount = body.saved;
     forgetAnswered();
     followClear(first);

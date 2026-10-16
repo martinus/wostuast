@@ -111,3 +111,17 @@ def test_only_get_json_calls_fetch(ws):
     assert len(calls) == 1
     assert page.rfind("\nasync function getJson(", 0, calls[0]) \
         > page.rfind("\nfunction ", 0, calls[0])
+
+
+def test_every_field_of_the_pages_state_is_declared(ws):
+    """One list names all the state of the page (#542): the `state` literal,
+    or a line right after it that sets one field from a helper. Ten fields
+    were set first wherever they were first needed, so no one place said
+    what the page holds."""
+    page = page_source(ws)
+    start = page.index("\nconst state = {")
+    end = page.index("\n};\n", start)
+    declared = set(re.findall(r"^  (\w+):", page[start:end], re.M))
+    declared |= set(re.findall(r"^state\.(\w+) = ", page, re.M))
+    used = set(re.findall(r"\bstate\.(\w+)", page))
+    assert used - declared == set()
