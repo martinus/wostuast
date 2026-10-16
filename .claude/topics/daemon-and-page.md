@@ -740,7 +740,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     Chrome and Firefox on Linux take Alt+1-8 for their own tabs, and on a
     Mac Alt+number types a symbol, so the reader chose Esc. Every box
     already left on Esc (`#say` keeps its text; `#find` and `#pick` are
-    cleared), so the fix was to say so: `?` and the README.
+    cleared), so the fix was to say so: `?` and the guide.
     `test_esc_leaves_a_box_and_a_number_then_picks_a_tab`.
 - **A row of a list is one line, and `.filelist button` is a block.** A
   list whose rows are one line says so in the one rule that groups them —

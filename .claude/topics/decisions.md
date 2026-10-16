@@ -117,7 +117,7 @@ it. The reason is the part to weigh before undoing one.
   `row` is the page's, and changes whenever the page does; a script that
   read it would break on the next pull request. `session_json` only grows:
   a field is added, never renamed or taken out without a new
-  `JSON_VERSION`. Times are moments, never "3min". README.md lists every
+  `JSON_VERSION`. Times are moments, never "3min". docs/GUIDE.md lists every
   field, and `test_ls_json_keeps_its_shape` and
   `test_the_json_fields_are_the_ones_readme_lists` hold both lists to it.
 - **`wait` reads the log, as the daemon does, and needs no daemon** (#356,

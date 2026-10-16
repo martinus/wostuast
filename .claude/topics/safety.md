@@ -172,8 +172,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     so refusing it costs the owner nothing. `TIME_WAIT` lines have no
     inode either, so one test covers both.
   - **`another_user` refuses whatever it cannot prove, except a machine
-    with no table.** No table at all is macOS, and stays as it was: README
-    says so. An empty table is not a real one either, because a real one
+    with no table.** No table at all is macOS, and stays as it was: the
+    guide says so. An empty table is not a real one either, because a real one
     lists our own listening socket, and nobody else can empty it.
     Everything else that is not our uid or root's is a no. A line that is
     not there: the other end is open as long as the connection is, so that
@@ -199,7 +199,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_root_is_let_in_too`. **WSL2's mirrored mode is not proven**: a
     Windows browser's socket may not be in Linux's table at all, and then
     the owner is refused every time. There was no WSL to measure on, and
-    README says so. Do not let a missing line in to fix it: that is the
+    the guide says so. Do not let a missing line in to fix it: that is the
     hole the rules above close.
   - **An ssh tunnel is the owner.** sshd opens the forwarded connection from
     the session process, which runs as the user who logged in, and a socket
@@ -819,7 +819,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   reader's text into every place it can stand.
 - **`installed_files` is the one list of what wostuast puts on the disk**,
   for `wostuast files` and the report (#321). A new file goes on it, and in
-  the README's Files table; `test_every_file_wostuast_writes_is_listed`
+  the guide's Files table (`docs/GUIDE.md`); `test_every_file_wostuast_writes_is_listed`
   calls every `*_path()` and `*_dir()` of the program and fails on one it
   does not find there.
 - **One daemon a state directory, held by a lock, not by the port.** A

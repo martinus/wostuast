@@ -94,7 +94,7 @@ JSON_FIELDS = {
 
 def test_ls_json_keeps_its_shape(ws, written_events, capsys):
     """For a script: one object, with a version, and every session in the
-    order of the page, each with exactly the fields README.md lists."""
+    order of the page, each with exactly the fields docs/GUIDE.md lists."""
     assert ws.cmd_ls(argparse.Namespace(json=True)) == 0
     found = json.loads(capsys.readouterr().out)
     assert set(found) == {"version", "now", "sessions"}
@@ -109,9 +109,10 @@ def test_ls_json_keeps_its_shape(ws, written_events, capsys):
         assert one["state"] in ws.STATE_WORDS
 
 
-def test_the_json_fields_are_the_ones_readme_lists():
-    """The shape is a promise, and README.md is where a reader finds it."""
-    readme = (conftest.ROOT / "README.md").read_text(encoding="utf-8")
+def test_the_json_fields_are_the_ones_the_guide_lists():
+    """The shape is a promise, and the guide is where a reader finds it. It
+    was the README, until the README became the short one (#521)."""
+    readme = (conftest.ROOT / "docs" / "GUIDE.md").read_text(encoding="utf-8")
     listed = set(re.findall(r"^\| `([a-z_]+)` \|", readme.split("### ls --json")[1]
                             .split("\n## ")[0], re.M))
     assert listed == JSON_FIELDS

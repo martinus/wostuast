@@ -114,7 +114,7 @@ and were done by hand after it.
 | --- | --- |
 | `.claude/topics/<subject>.md` | a rule the next agent needs, in the shape `CLAUDE.md`'s header sets; a decision with no scar behind it goes in `decisions.md`; a way of working goes in `CLAUDE.md` itself |
 | `tests/fixtures/README.md` | a payload shape, read off a real payload |
-| `README.md` | anything a reader of the program sees |
+| `docs/GUIDE.md` | anything a reader of the program sees; `README.md` only when it changes what wostuast is, why, or how to install it |
 
 The rule and the code that keeps it land together, or the rule is not true
 yet. **Grep for the symbol before adding a bullet** (`grep -rn <symbol>
