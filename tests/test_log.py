@@ -577,8 +577,7 @@ def test_no_name_is_defined_twice():
 #: them, one or two at a time.
 LINES_MOST = 100
 LONGER_ALREADY = {
-    "EventFollower.new_lines": 117, "pick_base": 124, "worktree_diff": 149,
-    "build_report": 153,
+    "EventFollower.new_lines": 117, "build_report": 153,
 }
 
 

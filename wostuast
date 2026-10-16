@@ -6148,6 +6148,99 @@ class BaseChoice:
     tip: str = ""             # the base's own sha, from the same listing
 
 
+def list_refs(cwd: str, runner: Callable[..., str | None]
+              ) -> tuple[str, dict[str, str], dict[str, str]] | None:
+    """Every branch, local and remote, with its full name and its commit:
+    the listing as git gave it, short name to full name, and short name to
+    sha. None when git did not answer. A remote's `HEAD` is not a branch."""
+    listing = runner(["git", "-C", cwd, "for-each-ref",
+                      "--format=%(refname)%09%(refname:short)%09%(objectname)",
+                      "refs/remotes/", "refs/heads/"])
+    if listing is None:
+        return None
+    refs: dict[str, str] = {}
+    shas: dict[str, str] = {}
+    for line in listing.splitlines():
+        full, _, rest = line.partition("\t")
+        name, _, sha = rest.partition("\t")
+        if name and not full.endswith("/HEAD"):
+            refs[name] = full
+            shas[name] = sha.strip()
+    return listing, refs, shas
+
+
+def head_branch(cwd: str, runner: Callable[..., str | None]) -> tuple[str, bool]:
+    """The branch HEAD is on, "" when it is detached; and whether git
+    failed to say, which is not the same."""
+    named = runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
+                    "HEAD"])
+    # None is a detached HEAD, and a git that timed out too. Only the second
+    # loses the branch's own name, which is what keeps its copy on a remote
+    # out: that copy lacks only the commits not pushed yet, so it ranked
+    # first, and one unpushed commit read as the whole of the branch's work.
+    # `--abbrev-ref` says `HEAD` for a detached one and fails only when git
+    # does -- asked only then, so a branch never pays for it.
+    lost = False
+    if named is None:
+        again = runner(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
+        if again is None:
+            lost = True
+        elif again.strip() != "HEAD":
+            named = again
+    return (named or "").strip(), lost
+
+
+def ahead_behind(cwd: str, runner: Callable[..., str | None], at: str,
+                 key: Any, ranks: dict[Any, Any] | None
+                 ) -> dict[str, tuple[int, int]] | None:
+    """How far each branch is ahead of HEAD and behind it, kept in `ranks`
+    under `key`. None when git could not count."""
+    # One read: the request threads share `ranks`, and a `clear()` between
+    # `key in ranks` and `ranks[key]` raised KeyError, which answered 500.
+    counts = ranks.get(key) if ranks is not None else None
+    if counts is None:
+        counted = runner(["git", "-C", cwd, "for-each-ref",
+                          "--format=%(refname:short)%09%(ahead-behind:HEAD)",
+                          "refs/remotes/", "refs/heads/"],
+                         timeout=DIFF_TIMEOUT) if at else None
+        if counted is not None:
+            counts = {}
+            for line in counted.splitlines():
+                name, _, both = line.partition("\t")
+                numbers = both.split()
+                if len(numbers) == 2 and numbers[0].isdigit() and numbers[1].isdigit():
+                    counts[name] = (int(numbers[0]), int(numbers[1]))
+        # A count git failed on is not kept. Kept, one timeout named the
+        # fallback base -- `main` for a branch cut from `release` -- until
+        # HEAD or a ref moved.
+        if ranks is not None and counts is not None:
+            if len(ranks) > 64:
+                ranks.clear()
+            ranks[key] = counts
+    return counts
+
+
+def rank_bases(refs: dict[str, str], counts: dict[str, tuple[int, int]],
+               default: str, prefer: list[str], current: str) -> list[str]:
+    """The branches that could be the base, best first: the fewest of
+    HEAD's commits it lacks, then the preferred names, then the fewest it
+    has that HEAD lacks. A branch that holds all of HEAD is left out, the
+    default one aside, and so is the branch's own copy on a remote."""
+    ranked: list[tuple[int, int, int, str]] = []
+    for name, full in refs.items():
+        if name not in counts:
+            continue
+        ahead, behind = counts[name]
+        branch = (full.split("/", 3)[3] if full.startswith("refs/remotes/")
+                  and full.count("/") >= 3 else name)
+        if name != default and (behind == 0 or (current and branch == current)):
+            continue
+        place = prefer.index(name) if name in prefer else len(prefer)
+        ranked.append((behind, place, ahead, name))
+    ranked.sort()
+    return [one[3] for one in ranked]
+
+
 def pick_base(cwd: str, runner: Callable[..., str | None] = run,
               wanted: str = "", ranks: dict[Any, Any] | None = None) -> BaseChoice:
     """The commit a branch's own work is measured against.
@@ -6181,80 +6274,23 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
     one that could not say which branch HEAD is.
     """
     choice = BaseChoice()
-    listing = runner(["git", "-C", cwd, "for-each-ref",
-                      "--format=%(refname)%09%(refname:short)%09%(objectname)",
-                      "refs/remotes/", "refs/heads/"])
-    if listing is None:
+    listed = list_refs(cwd, runner)
+    if listed is None:
         choice.failed = True
         return choice
-    refs: dict[str, str] = {}
-    shas: dict[str, str] = {}
-    for line in listing.splitlines():
-        full, _, rest = line.partition("\t")
-        name, _, sha = rest.partition("\t")
-        if name and not full.endswith("/HEAD"):
-            refs[name] = full
-            shas[name] = sha.strip()
+    listing, refs, shas = listed
     head = (runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
                     "refs/remotes/origin/HEAD"]) or "").strip()
     head = head if head in refs else ""
-    named = runner(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short",
-                    "HEAD"])
-    # None is a detached HEAD, and a git that timed out too. Only the second
-    # loses the branch's own name, which is what keeps its copy on a remote
-    # out: that copy lacks only the commits not pushed yet, so it ranked
-    # first, and one unpushed commit read as the whole of the branch's work.
-    # `--abbrev-ref` says `HEAD` for a detached one and fails only when git
-    # does -- asked only then, so a branch never pays for it.
-    lost = False
-    if named is None:
-        again = runner(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
-        if again is None:
-            lost = True
-        elif again.strip() != "HEAD":
-            named = again
-    current = (named or "").strip()
+    current, lost = head_branch(cwd, runner)
     prefer = ([head] if head else []) + [one for one in BASE_NAMES if one != head]
     default = next((one for one in prefer if one in refs), "")
     at = (runner(["git", "-C", cwd, "rev-parse", "--verify", "--quiet", "HEAD"])
           or "").strip()
     key = (cwd, at, current, hash(listing))
-    # One read: the request threads share `ranks`, and a `clear()` between
-    # `key in ranks` and `ranks[key]` raised KeyError, which answered 500.
-    counts = ranks.get(key) if ranks is not None else None
-    if counts is None:
-        counted = runner(["git", "-C", cwd, "for-each-ref",
-                          "--format=%(refname:short)%09%(ahead-behind:HEAD)",
-                          "refs/remotes/", "refs/heads/"],
-                         timeout=DIFF_TIMEOUT) if at else None
-        if counted is not None:
-            counts = {}
-            for line in counted.splitlines():
-                name, _, both = line.partition("\t")
-                numbers = both.split()
-                if len(numbers) == 2 and numbers[0].isdigit() and numbers[1].isdigit():
-                    counts[name] = (int(numbers[0]), int(numbers[1]))
-        # A count git failed on is not kept. Kept, one timeout named the
-        # fallback base -- `main` for a branch cut from `release` -- until
-        # HEAD or a ref moved.
-        if ranks is not None and counts is not None:
-            if len(ranks) > 64:
-                ranks.clear()
-            ranks[key] = counts
+    counts = ahead_behind(cwd, runner, at, key, ranks)
     if counts and not lost:
-        ranked: list[tuple[int, int, int, str]] = []
-        for name, full in refs.items():
-            if name not in counts:
-                continue
-            ahead, behind = counts[name]
-            branch = (full.split("/", 3)[3] if full.startswith("refs/remotes/")
-                      and full.count("/") >= 3 else name)
-            if name != default and (behind == 0 or (current and branch == current)):
-                continue
-            place = prefer.index(name) if name in prefer else len(prefer)
-            ranked.append((behind, place, ahead, name))
-        ranked.sort()
-        names = [one[3] for one in ranked]
+        names = rank_bases(refs, counts, default, prefer, current)
     else:
         names = [one for one in prefer if one in refs]
     choice.detected = names[0] if names else ""
@@ -6428,6 +6464,122 @@ def empty_tree(root: str, runner: Callable[..., str | None] = run) -> str:
     return (out or "").strip()
 
 
+@dataclass
+class DiffBuild:
+    """What one `worktree_diff` asks git with, and the report it fills.
+
+    Its parts -- the branch's log, one commit, the committed half -- each
+    ask git the same way and add to the same report (#548).
+    """
+    root: str
+    runner: Callable[..., str | None]
+    space: bool
+    report: DiffReport
+
+    def ask(self, *args: str) -> tuple[str | None, bool]:
+        # Three lines of context, said rather than assumed: the page reads
+        # fewer than three after the last change as the end of the file, and
+        # a reader's `diff.context` would otherwise move that line. The `--`
+        # says the arguments are revisions: a file named `HEAD` made git
+        # refuse `HEAD` as ambiguous, and the tab failed on every poll.
+        return git_diff(self.root, [*args, *SPACE_ARGS[self.space],
+                                    f"-U{DIFF_CONTEXT}", "--"], self.runner)
+
+    def section(self, name: str, title: str, about: str, *args: str,
+                answer: tuple[str | None, bool] | None = None,
+                parsed: list[DiffFile] | None = None) -> list[DiffFile]:
+        if parsed is None:
+            text, cut = answer or self.ask(*args)
+            self.report.cut = self.report.cut or cut
+            self.report.failed = self.report.failed or text is None
+            files = parse_diff(text or "")
+        else:
+            files = parsed
+        self.report.sections.append(
+            DiffSection(name=name, title=title, about=about, files=files,
+                        at_commit=name != "uncommitted"))
+        return files
+
+
+def branch_log(build: DiffBuild, choice: BaseChoice, held: dict[Any, Any] | None,
+               key: Any) -> tuple[list[Commit] | None, dict[str, Any] | None]:
+    """The branch's commits, and what `held` keeps of them under `key`.
+
+    `held` is cleared past 64 entries: a key is a base and a HEAD, and an
+    agent that commits all day makes a new one each time.
+    """
+    report = build.report
+    kept = held.get(key) if held is not None and key else None
+    if kept is not None:
+        commits, report.recent = kept["commits"], kept["recent"]
+    else:
+        commits, report.recent = branch_commits(build.root, choice.ref, build.runner)
+        if key and held is not None and commits is not None:
+            if len(held) > 64:
+                held.clear()
+            held[key] = kept = {"commits": commits, "recent": report.recent}
+    return commits, kept
+
+
+def one_commit(build: DiffBuild, one: Commit) -> None:
+    """One commit of the branch, against its first parent, and the map of
+    where its lines stand now (`since`)."""
+    report = build.report
+    report.of = one.sha
+    parent = one.parent or empty_tree(build.root, build.runner)
+    if not parent:
+        report.failed = True
+        return
+    body = build.runner(["git", "-C", build.root, "show", "-s", "--no-color",
+                         "--no-show-signature", "--format=%b", one.sha, "--"])
+    report.failed = report.failed or body is None
+    report.body = (body or "").strip()[:COMMIT_BODY_MAX]
+    files = build.section(
+        "commit", one.subject or one.short,
+        f"what {'merge' if one.merge else 'commit'} {one.short}"
+        f" by {one.author} changed"
+        + (", against its first parent" if one.merge else ""),
+        parent, one.sha)
+    # Only the files this commit touched, so the map costs what the
+    # commit costs and not what every later commit does.
+    paths = [":(literal)" + each.path for each in files
+             if each.path and each.status != "deleted"]
+    if paths:
+        text, _ = git_diff(build.root, [one.sha, "--", *paths], build.runner)
+        report.failed = report.failed or text is None
+        report.since = parse_diff(text or "")
+
+
+def committed_half(build: DiffBuild, choice: BaseChoice,
+                   kept: dict[str, Any] | None, key: Any,
+                   held: dict[Any, Any] | None) -> None:
+    """What the branch committed: `git diff <base>...HEAD`, or what `held`
+    kept of it for this base and HEAD."""
+    report = build.report
+    about = (f"every commit this branch has that {report.base} has not"
+             f" \u2014 and nothing that landed on {report.base} since")
+    if kept is not None and "committed" in kept:
+        files, cut, report.unrelated = kept["committed"]
+        report.cut = report.cut or cut
+        if not report.unrelated:
+            build.section("committed", "committed on this branch", about,
+                          parsed=files)
+    else:
+        answer = build.ask(choice.ref + "...HEAD")
+        # No commit in common is git's answer, and the half is left out:
+        # the page says why. Anything else that failed is still a failure.
+        files = []
+        if answer[0] is None and no_common_commit(build.root, choice.ref, build.runner):
+            report.unrelated = True
+        else:
+            files = build.section("committed", "committed on this branch",
+                                  about, answer=answer)
+        if kept is not None and key and held is not None and (
+                report.unrelated or answer[0] is not None):
+            held[key] = dict(kept, committed=(files, answer[1],
+                                              report.unrelated))
+
+
 def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
                   of: str = "", base: str = "",
                   ranks: dict[Any, Any] | None = None,
@@ -6460,45 +6612,14 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         # as "nothing changed".
         report.failed = root is None
         return report
-
-    def ask(*args: str) -> tuple[str | None, bool]:
-        # Three lines of context, said rather than assumed: the page reads
-        # fewer than three after the last change as the end of the file, and
-        # a reader's `diff.context` would otherwise move that line. The `--`
-        # says the arguments are revisions: a file named `HEAD` made git
-        # refuse `HEAD` as ambiguous, and the tab failed on every poll.
-        return git_diff(root, [*args, *SPACE_ARGS[space], f"-U{DIFF_CONTEXT}", "--"], runner)
-
-    def section(name: str, title: str, about: str, *args: str,
-                answer: tuple[str | None, bool] | None = None,
-                parsed: list[DiffFile] | None = None) -> list[DiffFile]:
-        if parsed is None:
-            text, cut = answer or ask(*args)
-            report.cut = report.cut or cut
-            report.failed = report.failed or text is None
-            files = parse_diff(text or "")
-        else:
-            files = parsed
-        report.sections.append(
-            DiffSection(name=name, title=title, about=about, files=files,
-                        at_commit=name != "uncommitted"))
-        return files
-
+    build = DiffBuild(root, runner, space, report)
     choice = pick_base(root, runner, base, ranks)
     report.base, lost = choice.name, choice.failed
     report.base_auto, report.bases = choice.detected, choice.offered
     key = ((root, choice.ref, choice.tip, choice.head, space)
            if held is not None and choice.ref and choice.tip and choice.head
            and not lost else None)
-    kept = held.get(key) if held is not None and key else None
-    if kept is not None:
-        commits, report.recent = kept["commits"], kept["recent"]
-    else:
-        commits, report.recent = branch_commits(root, choice.ref, runner)
-        if key and held is not None and commits is not None:
-            if len(held) > 64:
-                held.clear()
-            held[key] = kept = {"commits": commits, "recent": report.recent}
+    commits, kept = branch_log(build, choice, held, key)
     # A repository with no commit yet has no HEAD, so the log fails: git
     # answering "there is none", not failing to answer. Asked only on the
     # failure path, so a repository with commits never pays for it.
@@ -6517,62 +6638,19 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         if one is None:
             report.gone = of
         else:
-            report.of = of
-            parent = one.parent or empty_tree(root, runner)
-            if not parent:
-                report.failed = True
-                return report
-            body = runner(["git", "-C", root, "show", "-s", "--no-color",
-                           "--no-show-signature", "--format=%b", one.sha, "--"])
-            report.failed = report.failed or body is None
-            report.body = (body or "").strip()[:COMMIT_BODY_MAX]
-            files = section(
-                "commit", one.subject or one.short,
-                f"what {'merge' if one.merge else 'commit'} {one.short}"
-                f" by {one.author} changed"
-                + (", against its first parent" if one.merge else ""),
-                parent, one.sha)
-            # Only the files this commit touched, so the map costs what the
-            # commit costs and not what every later commit does.
-            paths = [":(literal)" + each.path for each in files
-                     if each.path and each.status != "deleted"]
-            if paths:
-                text, _ = git_diff(root, [one.sha, "--", *paths], runner)
-                report.failed = report.failed or text is None
-                report.since = parse_diff(text or "")
+            one_commit(build, one)
             return report
     if of == "uncommitted":
         report.of = of
     elif choice.ref and not unborn:
-        about = (f"every commit this branch has that {report.base} has not"
-                 f" \u2014 and nothing that landed on {report.base} since")
-        if kept is not None and "committed" in kept:
-            files, cut, report.unrelated = kept["committed"]
-            report.cut = report.cut or cut
-            if not report.unrelated:
-                section("committed", "committed on this branch", about,
-                        parsed=files)
-        else:
-            answer = ask(choice.ref + "...HEAD")
-            # No commit in common is git's answer, and the half is left out:
-            # the page says why. Anything else that failed is still a failure.
-            files = []
-            if answer[0] is None and no_common_commit(root, choice.ref, runner):
-                report.unrelated = True
-            else:
-                files = section("committed", "committed on this branch", about,
-                                answer=answer)
-            if kept is not None and key and held is not None and (
-                    report.unrelated or answer[0] is not None):
-                held[key] = dict(kept, committed=(files, answer[1],
-                                                  report.unrelated))
+        committed_half(build, choice, kept, key, held)
     # With no commit, against the empty tree: the staged files are in the
     # index, so they are not untracked, and `HEAD` is not there to diff to.
-    section("uncommitted", "not committed yet",
-            "what the files on disk hold that the last commit does not"
-            if not unborn else "every file git has been given, as there is"
-            " no commit yet",
-            empty_tree(root, runner) if unborn else "HEAD")
+    build.section("uncommitted", "not committed yet",
+                  "what the files on disk hold that the last commit does not"
+                  if not unborn else "every file git has been given, as there"
+                  " is no commit yet",
+                  empty_tree(root, runner) if unborn else "HEAD")
     loose = untracked_files(root, runner)
     report.failed = report.failed or loose is None
     report.untracked = (loose or [])[:UNTRACKED_SHOWN]
