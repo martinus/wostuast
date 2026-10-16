@@ -112,6 +112,13 @@ Keep the breaks list in the scratchpad; it is about one fix.
   second, which was red alone (#328). **A GREEN that is red alone is this,
   or a test that leans on another**: run that break by itself before you
   believe either. `test_no_bytecode_of_a_break_is_left_behind`.
+- **A GREEN may be a break the new code cannot reach: put the old code
+  back whole.** #566 moved the draw's fetch of a whole file out to
+  `askWhole`, which `revealLines` calls before it draws; a break that put
+  `fetchWhole` back into `withMore` only when no whole file was held stayed
+  green, because one always was by then. The old lines put back in full --
+  the delete of a stale file as well as the fetch -- turned five tests red.
+  A break is a regression somebody could write, not the smallest edit.
 - **A GREEN may be code nothing needs: then delete the code, not add a
   test.** A break that took the list of gone rows out of a push stayed
   green under every test, because a row that goes always moves the order,

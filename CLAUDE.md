@@ -440,10 +440,11 @@ WOSTUAST_WAIT=5000 python3 -m pytest tests/test_page_review.py -q -k name  # whi
 python3 -m pytest tests/test_page_review.py -q  # the subject you are changing. Do this first.
 python3 tests/perturb.py breaks.json            # prove the new tests: each break runs only the tests it names
 python3 tests/page_coverage.py                  # what no browser test runs of the page script: the browser suite, once
-# before the push, both of these; run them in the background and write the rule meanwhile:
-for i in 1 2 3; do python3 -m pytest -q -n 12 tests/test_page_review.py; done  # the test files you changed, under load
-python3 -m pytest -q -n auto --ignore-glob='tests/test_page_*'   # every test that drives no browser
-python3 -m pytest -q -n auto          # the whole suite: only when a shared part changed (below). Needs pytest-xdist.
+# before the push, both of these; run them in the background and write the rule meanwhile.
+# -rf names each failure; pipefail stops a chain on a red count (below):
+set -o pipefail; for i in 1 2 3; do python3 -m pytest -q -n 12 -rf tests/test_page_review.py | grep -E "^FAILED|passed|failed"; done
+set -o pipefail; python3 -m pytest -q -n auto -rf --ignore-glob='tests/test_page_*' | grep -E "^FAILED|passed|failed"
+set -o pipefail; python3 -m pytest -q -n auto -rf | grep -E "^FAILED|passed|failed"  # the whole suite: only when a shared part changed (below)
 ./wostuast doctor / ls        # and ./wostuast --port 0: check, update, serve
 ```
 
@@ -536,6 +537,20 @@ suite. So before a push:
   `browser.py`, `split`, `draw`, `showTab`, `paintLive`, the stream, a CSS
   rule every tab wears, or anything that runs on every push or poll.
 
+**A pipe's status is its last command's, so a gate chained with `&&`
+starts with `set -o pipefail;`.** `pytest … | tail -1 && …` ran the next
+step after red tests, because `tail` succeeded -- twice, the second time a
+commit and a push after "1 failed" (#569). The rule stood under the
+editing scars, where nobody running a gate reads; the commands above carry
+it now. **And `-rf`, never `tail -1` alone**: a count of "1 failed" with no
+name left that failure unknowable once the run was over.
+
+**One gate at a time on the machine.** Two whole-suite runs side by side
+took eleven minutes, not seven, and each failed a test the other did not
+-- `test_another_file_opens_at_its_top`, then one with no browser that
+passed alone. Neither said anything about the change. Start the next
+pull request's gate when the last one's has ended; build and prove meanwhile.
+
 **The rules are read by tests too.** `test_the_map_in_claude_md_points_at_real_symbols`
 reads **Where to look**, and failed on a test helper written into it after
 the last run: that table names symbols of `wostuast` only. An edit to
@@ -607,10 +622,13 @@ reliable shape when making several edits at once. Three scars on that shape:
     `chr(92) + "u00b7"`.
 - **Chain the tests after the script with `&&`.** A failed `assert` stops
   the script before its later edits, and three runs under load then tested
-  code that had not changed.
-  - **A pipe's status is its last command's.** `pytest … | tail -1 && …` ran
-    the next step after red tests, because `tail` succeeded. Put
-    `set -o pipefail;` first, or read the count before the next step.
+  code that had not changed. A pipe in that chain needs `set -o pipefail`:
+  the bullet under "Before the push" says why.
+- **An offset taken before a replace is wrong after it.** An edit
+  script for #548 found a function's start and end, then changed the
+  imports at the top, then cut by the offsets it held: the cut landed
+  short, and the file ended in `ield from`. Make every whole-file replace
+  last, or find the offsets again after it.
 - **A replace from one anchor to another deletes all that stands between
   them.** A slice from `dayValue` to the next function's comment took
   `setReminder` with it; the page still parsed, no name was defined twice,
