@@ -198,6 +198,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   and no `+`: there is no line of text to comment on.
   `test_a_binary_file_is_read_as_hex_for_the_files_tab`,
   `test_a_binary_file_is_drawn_as_hex`.
+  - **A hex row is as wide as the pane has room for** (`hexWide`, #524):
+    16 bytes a row was a narrow column down a wide pane. The daemon still
+    sends `xxd`'s 16, and the page joins two or four rows into one when 32
+    or 64 fit without a sideways scroll, measured with the code face (a
+    row of 16k bytes is 56k + 11 characters, the gutter about 110 px). The
+    pane's width is the page's to know, not the daemon's. The short last
+    row is padded, so its text stands under the others; the note after
+    the rows is not a row and stands alone. `drawFiles` is past 100
+    lines, so the call took the place of the line that read the text.
+    `test_a_hex_row_is_as_wide_as_the_pane_has_room_for`.
 - **A folder row carries no triangle.** It stood where nothing stood on a
   file row, so a folder's name sat 9 px right of a file's at the same depth —
   and a file one level deeper lined up exactly with the folder above it, which

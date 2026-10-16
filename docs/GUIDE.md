@@ -324,7 +324,7 @@ folder with thousands of files in it is one row that says it is not listed.
 A Markdown file is drawn as Markdown. The **txt** button at the right of its
 path shows its lines, so you can comment on one; it is lit while it does.
 A file that is not text, and not a picture, shows as hex: its first 64 KB,
-as `xxd` shows them.
+as `xxd` shows them, with 16, 32 or 64 bytes a row: as many as fit the pane.
 
 A **changed** file has a dot after its name and is bold. A folder that
 holds changed files is bold too, and says how many are under it. It does not
