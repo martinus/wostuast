@@ -104,14 +104,20 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_a_request_two_open_calls_could_be_has_no_call`,
   `test_a_decline_seen_in_the_transcript_ends_the_wait`,
   `test_a_permission_is_read_whole_and_declined_with_a_reason`.
-- **The question bar belongs to the Transcript tab, at its foot.** It is not
-  the header bar that was taken away (`review.md` says why that went):
-  this stands in one place, over the send box, because the
-  transcript ends at its foot and answering is sending. The row still goes amber from any tab, which is what
-  the row is for. It reads `state.tab`, like the send box, because it is
-  chrome outside the content box and is drawn after `showTab` has set the
-  name. `drawAsking` is called from `drawHeader`, so a fifth call site cannot
-  forget it.
+- **The question bar stands at the foot of every tab, and while it is up
+  nothing else types** (#483, `drawAsking`, `whyNoText`, `cannot_type`'s
+  `text`). It belonged to the Transcript tab alone, over the send box, and
+  the reader pressed send where submit was meant; on the Review tab the
+  review's send stood under a question nobody could see. So the bar is on
+  every tab (the views over the tabs still hide it, `body.infeed`), the
+  send box is away, and so is the review's send (`#sendreview` hidden, not
+  only off); the model menu and a command are refused. The daemon refuses
+  a send while `asking` too: a question's dialog takes a digit and an
+  Enter as the permission's does. `whyNotTyped` stays what the question
+  bar itself asks, or the bar would refuse its own answer.
+  `drawAsking` is called from `drawHeader`, so a fifth call site cannot
+  forget it. `test_a_question_stands_on_every_tab_and_nothing_else_types`,
+  `test_no_text_is_typed_into_a_question`.
 - **Picking types nothing; submit does.** A click that went straight into a
   terminal was a click you could not take back, on a page you may have opened
   on a phone in a pocket. `state.picked` holds the indexes picked for each

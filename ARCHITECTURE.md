@@ -673,7 +673,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/session/ID/command?name=N` | One command's text, by its name, for the Commands view. |
 | POST | `/api/settings` | Save our `settings.json`. |
 | POST | `/api/session/ID/jump` | Show the agent's tmux pane. |
-| POST | `/api/session/ID/send` | Type text into the pane. |
+| POST | `/api/session/ID/send` | Type text into the pane. To an agent at its prompt, it waits up to five seconds for the prompt to show in the transcript, and answers `seen: false` when it does not: the page then puts the text back. Refused while a question waits. |
 | POST | `/api/session/ID/answer` | Press the keys that answer a question. |
 | POST | `/api/session/ID/decline` | Say **No** to a permission dialog. |
 | POST | `/api/session/ID/approve` | Say **Yes** to a permission dialog, through its waiting hook. Touches no terminal. |

@@ -427,6 +427,29 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_the_map_and_its_grip_run_down_beside_the_send_box` holds the layout
   and the button; the question and send-box tests in `test_page_act.py` are
   what catch the clicks.
+- **A send to an agent at its prompt is seen to land, or comes back**
+  (#489, `press_send`'s `watch`, `prompt_landed`, `SEND_WAIT`,
+  `TYPED_KINDS`, `seen: false`). With `/config` open in the terminal the
+  keys went into the dialog, and the message was gone: the box had been
+  emptied and nothing was said. Claude Code writes a prompt as a `user`
+  record a few milliseconds after the Enter, so the daemon waits for one
+  at or after the moment it typed, and without it answers `seen: false`
+  and the page puts the text back. **Only an agent at its prompt, and not
+  a slash command**: a message to a busy agent is queued and reaches the
+  transcript when the agent takes it, which may be minutes on, and a
+  slash command may open a dialog of its own and write nothing. A session
+  with no transcript is not watched: there is nothing to ask. `in_pane`'s
+  tmux writes the prompt, as Claude Code does, or every page test that
+  sends would wait and see its text come back.
+  `test_a_send_claude_code_never_took_is_said_and_given_back`,
+  `test_a_send_to_a_busy_agent_is_not_watched`.
+  - **Up in an empty send box brings back what this browser sent**
+    (`keepSent`, `recallSent`, `SENT_KEPT`, `wostuast-sent`), as a shell's
+    history does; Down goes newer, and past the newest to empty. Only
+    while the box is empty or holds what Up brought back: the reader's own
+    words keep their arrows for the caret. A send that came back is not
+    kept, because it is in the box already.
+    `test_a_send_claude_code_did_not_take_comes_back_and_up_recalls_one`.
 - **The send box says how much it holds, over the send button, once it is
   tall enough to leave room there** (`sizeSay`, `SAY_ROOM`, issue 332). A
   box scrolled to the end of a long log shows its last screenful and

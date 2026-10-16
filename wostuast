@@ -2435,7 +2435,7 @@ def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
     return False
 
 
-def cannot_type(session: Session, no: bool = False) -> str:
+def cannot_type(session: Session, no: bool = False, text: bool = False) -> str:
     """Why nothing may be typed into this session now, or "" when it may.
 
     The one test `answer`, `decline` and `send` make, after `in_tmux`; the
@@ -2452,6 +2452,11 @@ def cannot_type(session: Session, no: bool = False) -> str:
         return "this session is over"
     if not no and session.dialog:
         return "a permission dialog is open in the terminal: answer it there first"
+    # A question's dialog takes keys as the permission's does: a text that
+    # starts with a digit picks an option, and its Enter submits (#483).
+    # `text` is a send or a rename; `answer` is meant for the question.
+    if text and session.asking:
+        return "a question is open in the terminal: answer it first"
     return ""
 
 
@@ -5004,6 +5009,13 @@ SEND_MAX = 1024 * 1024
 #: every browser on every push; past this the page says the request is too
 #: long to show and points at the pane, where the whole of it is.
 PERMISSION_SHOWN = 8000
+
+#: How long a send to an agent at its prompt waits to see the prompt in the
+#: transcript (#489), and the blocks that say something was typed. Claude
+#: Code writes the record a few milliseconds after the Enter; the rest is
+#: room for a loaded machine.
+SEND_WAIT = 5.0
+TYPED_KINDS = ("prompt", "shell", "command")
 
 #: How long a decline waits to see its dialog close, in the transcript,
 #: before it will type the reason. Measured against 2.1.282: the rejection
@@ -8677,6 +8689,27 @@ class Daemon:
             reader = self.transcripts.get(session_id)
             return None if reader is None else (reader.run, reader.version)
 
+    def prompt_landed(self, session_id: str, since: float,
+                      wait: float) -> bool | None:
+        """Whether the transcript holds something typed at or after `since`,
+        within `wait` seconds; None when there is no transcript to ask.
+
+        Claude Code writes a prompt it takes as a `user` record, and a `!`
+        command as one too, a few milliseconds after the Enter. Nothing else
+        says that the keys reached its prompt and not a dialog over it.
+        """
+        deadline = time.monotonic() + wait
+        while True:
+            read = self.read_transcript(session_id)
+            if read is None:
+                return None
+            if any(one.kind in TYPED_KINDS and one.ts >= since - 0.5
+                   for one in reversed(read[0][-20:])):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+
     def call_answered(self, session_id: str, call: str) -> bool:
         """Whether the transcript holds this call's result, read just now.
 
@@ -9712,19 +9745,34 @@ class Serving:
         # text says Yes, and a text that starts with a digit picks that
         # option. `decline` waits for proof that the dialog closed before it
         # types; a send has no such proof, so it waits for the row.
-        why = cannot_type(session)
+        why = cannot_type(session, text=True)
         if why:
             self.refuse(session_id, 409, why)
             return
         pane = session.pane
+        # Only an agent at its prompt is watched: a message to a busy one is
+        # queued, and reaches the transcript when the agent takes it, which
+        # may be minutes on. A slash command may open a dialog of its own
+        # and write nothing until it closes.
+        watch = session.state == "done" and not text.lstrip().startswith("/")
         with self.daemon.holding(session_id, pane) as busy:
             if busy:
                 self.refuse(session_id, 409, busy)
                 return
-            self.press_send(session_id, pane, text)
+            self.press_send(session_id, pane, text, watch)
 
-    def press_send(self, session_id: str, pane: str, text: str) -> None:
-        """`send`'s keys, and the answer that says how they went."""
+    def press_send(self, session_id: str, pane: str, text: str,
+                   watch: bool = False) -> None:
+        """`send`'s keys, and the answer that says how they went.
+
+        **A send to an agent at its prompt is seen to land, or said not to**
+        (#489). With a dialog of Claude Code's own open -- `/config` -- the
+        keys went into the dialog, and the message was gone: the page had
+        emptied the box and said nothing. Claude Code writes a prompt into
+        the transcript as it takes it, so the daemon waits `SEND_WAIT` for
+        one, and without it says so, and the page puts the text back.
+        """
+        moment = time.time()
         # "It did not work" and nothing else on the page is how this arrives
         # for a reader: `done: false` carries no `error`, so `said` clears the
         # slot and writes nothing into it. A refusal from tmux is something
@@ -9740,6 +9788,13 @@ class Serving:
                              "error": "tmux did not answer. Look at the pane"
                                       " before sending again: the text may be"
                                       " on the prompt, unsent."}, 502)
+            return
+        if watch and self.daemon.prompt_landed(session_id, moment, SEND_WAIT) is False:
+            self.reply_json({"id": session_id, "done": True, "seen": False,
+                             "error": "Claude Code did not take it: a dialog of"
+                                      " its own may be open. Your text is back"
+                                      " in the box; look at the pane before"
+                                      " you send it again."})
             return
         self.reply_json({"id": session_id, "done": True})
 
@@ -15204,6 +15259,16 @@ function whyNotTyped(s, no) {
   return "";
 }
 
+// The same, for a text: the send box, the review, a model, a command. A
+// question's dialog takes keys as the permission's does -- a digit picks,
+// Enter submits -- and the reader pressed send where submit was meant
+// (#483). `cannot_type(text=True)` is the daemon's twin. Not for the
+// question bar itself, which is how the question is answered.
+function whyNoText(s) {
+  return whyNotTyped(s) || (s && s.asking
+    ? "a question is open in the terminal: answer it first" : "");
+}
+
 // The four groups the list is drawn in, most urgent first, and what each one
 // is called above its rows.
 //
@@ -16596,9 +16661,11 @@ function current() {
 function drawAsking() {
   const box = $("asking");
   const s = current();
-  // `state.tab` and not the content box: this is chrome outside that box,
-  // like the send box, and it is drawn after `showTab` has set the name.
-  const here = !!s && state.tab === "transcript";
+  // On every tab (#483): what the agent waits on is the news, whatever the
+  // reader is looking at, and on the Review tab the review's send stood
+  // under a question nobody could see. The views over the tabs hide it
+  // (`body.infeed`).
+  const here = !!s;
   const ask = here ? s.asking : null;
   // A permission dialog stands in the same place: it is the other thing an
   // agent waits on, and the two are never up at once -- a question is a
@@ -17087,7 +17154,7 @@ function drawHeader() {
   // And away while a permission dialog is up: its cursor starts on "1. Yes",
   // so the Enter after a message approves, and a digit picks an option. The
   // dialog's bar says so where the box stood; the daemon refuses it anyway.
-  $("sendbar").hidden = state.tab !== "transcript" || !!whyNotTyped(s);
+  $("sendbar").hidden = state.tab !== "transcript" || !!whyNoText(s);
   drawResume(s);
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
@@ -17209,7 +17276,7 @@ function showModels(open) {
 function putModels(pop, button) {
   const s = current();
   pop.replaceChildren();
-  const why = s ? whyNotTyped(s) : "no session is chosen";
+  const why = s ? whyNoText(s) : "no session is chosen";
   // An alias names the newest of a family as this Claude Code maps it, so
   // none is pressed: which one the session runs is the full id, below.
   put(pop, "span", "setlabel", "model");
@@ -22813,10 +22880,14 @@ function drawReviewBar() {
   const moved = said.value !== text;
   if (moved) said.value = text;
   const s = current();
-  const why = whyNotTyped(s)
+  const why = whyNoText(s)
     || (!state.review.comments.length ? "nothing to send yet: comment on a line first"
     : "");
   const send = $("sendreview");
+  // Away, not only off, while the agent waits on a dialog (#483): the
+  // question bar stands over it, and a send beside a submit is the press
+  // the reader made by mistake.
+  send.hidden = !!s && !!(s.asking || s.permission);
   send.disabled = !!why;
   send.title = why || "type the whole review into the agent's pane";
   if (was || moved) { fitSay($("overall")); fitSay($("reviewsay")); }
@@ -23067,7 +23138,7 @@ function useCommand(key) {
   const one = commandOf(key);
   if (!one) return;
   const target = useTarget(one);
-  const why = whyNotTyped(sessionById(target));
+  const why = whyNoText(sessionById(target));
   if (why) {
     note(why);
     return;
@@ -24281,10 +24352,55 @@ async function sendTyped() {
     doneSending(id);
   }
   said(answer);
-  if (!answer || !answer.done) {
+  // `seen: false` is a send the daemon watched for and Claude Code never
+  // took (#489): a dialog of its own was up, and the text went into it.
+  if (!answer || !answer.done || answer.seen === false) {
     box.value = text + box.value;
     fitSay();
+  } else {
+    keepSent(text);
   }
+}
+
+// What this browser sent, newest last, for Up and Down in an empty send box
+// (#489): a message lost to a dialog in the terminal is one key away, as a
+// shell's history is. This browser's, as a draft is; never written down
+// anywhere else.
+const SENT_KEPT = 50;
+let sentAt = -1;           // which one Up brought back, from the newest; -1 none
+
+function sentList() {
+  try {
+    const held = JSON.parse(stored("wostuast-sent") || "[]");
+    return Array.isArray(held) ? held.filter((one) => typeof one === "string") : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function keepSent(text) {
+  const held = sentList().filter((one) => one !== text);
+  held.push(text);
+  store("wostuast-sent", JSON.stringify(held.slice(-SENT_KEPT)));
+  sentAt = -1;
+}
+
+// Up in a box that is empty, or that holds what Up brought back, steps to
+// an older send; Down to a newer one, and past the newest to an empty box.
+// Anything else in the box is the reader's own and the keys move the caret.
+function recallSent(press) {
+  if (press.key !== "ArrowUp" && press.key !== "ArrowDown") return false;
+  const box = $("say");
+  const held = sentList();
+  const shown = sentAt >= 0 ? held[held.length - 1 - sentAt] : "";
+  if (box.value !== shown || (sentAt < 0 && press.key === "ArrowDown")) return false;
+  const next = sentAt + (press.key === "ArrowUp" ? 1 : -1);
+  if (next >= held.length) return false;
+  press.preventDefault();
+  sentAt = next;
+  box.value = next >= 0 ? held[held.length - 1 - next] : "";
+  fitSay();
+  return true;
 }
 
 $("sendbar").addEventListener("submit", (press) => {
@@ -24331,10 +24447,11 @@ function sizeSay(box) {
   put(out, "span", null, sizeOf(new TextEncoder().encode(text).length));
 }
 
-$("say").addEventListener("input", () => { fitSay(); followSlash(); });
+$("say").addEventListener("input", () => { sentAt = -1; fitSay(); followSlash(); });
 $("say").addEventListener("blur", closeSlash);
 $("say").addEventListener("keydown", (press) => {
   if (slashKey(press)) return;
+  if (recallSent(press)) return;
   if (press.key === "Escape") {
     $("say").blur();
     return;

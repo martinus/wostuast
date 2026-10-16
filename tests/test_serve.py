@@ -2762,3 +2762,78 @@ def test_a_file_written_in_an_ignored_folder_since_the_session_began_is_changed(
     _, later = get(f"{base}/api/session/s2/files")
     assert ".oa-implement/plan.md" not in later["changed"]
     assert ".gitignore" in later["changed"]
+
+
+def test_no_text_is_typed_into_a_question(ws, in_tmux):
+    """A question's dialog takes keys as a permission's does: a digit picks
+    and Enter submits. The reader pressed send where submit was meant
+    (#483). The answer is what the bar is for, and it still goes in."""
+    daemon, base, seen = in_tmux
+    asking(ws, daemon)
+    status, body = post(f"{base}/api/session/s1/send", {"text": "1"},
+                        token=daemon.token)
+    assert status == 409 and "question" in body["error"], body
+    assert seen == []
+
+
+@pytest.fixture
+def watched(ws, served, monkeypatch, transcript_file):
+    """A session at its prompt with a transcript, and a tmux that writes
+    the prompt into it when `lands` is true, as Claude Code does."""
+    monkeypatch.setattr(ws, "SEND_WAIT", 0.5)
+    transcript = transcript_file("s1", [])
+    lands = {"on": True}
+    seen = []
+
+    def runner(args, **rest):
+        seen.append(conftest.said(args, rest))
+        if lands["on"] and "paste-buffer" in args:
+            moment = time.time()
+            now = (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(moment))
+                   + f".{int(moment % 1 * 1000):03d}Z")
+            with transcript.open("a") as out:
+                out.write(conftest.records(conftest.record("you", "hello", ts=now)))
+        return ""
+
+    monkeypatch.setattr(ws, "run", runner)
+    daemon, base = served
+    ws.append_event(event("SessionStart", pane="%7", pid=1,
+                          transcript_path=str(transcript)))
+    daemon.store.refresh()
+    return daemon, base, seen, lands
+
+
+def test_a_send_claude_code_never_took_is_said_and_given_back(ws, watched):
+    """With `/config` open in the terminal, a message went into the dialog
+    and was gone; the page had emptied the box and said nothing (#489). A
+    send to an agent at its prompt waits to see the prompt in the
+    transcript, and says when it does not."""
+    daemon, base, seen, lands = watched
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello"},
+                        token=daemon.token)
+    assert status == 200 and body.get("seen") is None and "error" not in body, body
+    lands["on"] = False
+    time.sleep(0.6)          # the prompt before is no proof for this one
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello again"},
+                        token=daemon.token)
+    assert status == 200 and body["done"] is True and body["seen"] is False, body
+    assert "did not take it" in body["error"]
+    # A slash command may open a dialog and write nothing: not watched.
+    status, body = post(f"{base}/api/session/s1/send", {"text": "/config"},
+                        token=daemon.token)
+    assert body.get("seen") is None, body
+
+
+def test_a_send_to_a_busy_agent_is_not_watched(ws, watched):
+    """A message to an agent at work is queued, and reaches the transcript
+    when the agent takes it, minutes on perhaps: waiting for it would say
+    "lost" of a message that is not."""
+    daemon, base, seen, lands = watched
+    lands["on"] = False
+    ws.append_event(event("UserPromptSubmit", prompt="go", pane="%7", pid=1))
+    daemon.store.refresh()
+    started = time.monotonic()
+    status, body = post(f"{base}/api/session/s1/send", {"text": "and this"},
+                        token=daemon.token)
+    assert status == 200 and body.get("seen") is None, body
+    assert time.monotonic() - started < 0.5
