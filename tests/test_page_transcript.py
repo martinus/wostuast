@@ -639,14 +639,17 @@ def test_a_reply_can_be_copied_as_the_markdown_it_was_written_in(page_at):
     is on screen. Copy the node's text instead and the fences go missing."""
     with opened(page_at) as page:
         page.context.grant_permissions(["clipboard-read", "clipboard-write"])
-        # The button is on hover, like the `+` on a diff line.
-        page.locator(".turn.mine .copy").first.click(force=True)
-        page.wait_for_selector(".turn.mine .copy:text-is('copied')")
+        # The button is on hover, like the `+` on a diff line, at the
+        # turn's top right (#520), and a tick says it went.
+        page.locator(".turn.mine").first.hover()
+        page.locator(".turn.mine .turnacts .copy").first.click()
+        page.wait_for_selector(".turn.mine .turnacts .copy.done")
         assert page.evaluate(
             "navigator.clipboard.readText()") == "Do the thing."
 
         # And the agent's answer, which is Markdown with a fence in it.
-        page.locator(".turn:not(.mine) .copy").first.click(force=True)
+        page.locator(".turn:not(.mine):not(.toolrow)").first.hover()
+        page.locator(".turn:not(.mine) .turnacts .copy").first.click()
         page.wait_for_function(
             """() => navigator.clipboard.readText()
                        .then((text) => text.includes('```python'))""")
@@ -1386,27 +1389,19 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
           const calls = shown.slice(at + 1, shown.indexOf(reply)).filter(
             (t) => t.classList.contains('toolrow'));
           // What each name column shows, top to bottom, and where the
-          // next one starts. The copy button is part of it, because a
-          // hover shows it.
+          // next one starts.
           const columns = shown.map((t) => t.querySelector('.who'))
             .filter((who) => who.children.length);
           const clash = columns.slice(1).map((who, n) =>
             box(who.firstElementChild).top
               - box(columns[n].lastElementChild).bottom);
-          const copy = words.querySelector('.copy');
-          const c = box(copy);
-          // Over the whole button, not its middle: the middle can fall
-          // in the gap between two calls, and then nothing covers it.
-          const hit = [0.2, 0.5, 0.8].every((y) => [0.2, 0.5, 0.8].every(
-            (x) => copy.contains(document.elementFromPoint(
-              c.left + c.width * x, c.top + c.height * y))));
           // Thoughts shown, the block above the first call is a thought.
           const over = shown[shown.indexOf(calls[0]) - 1];
           return {
             above: box(calls[0]).top - box(over.lastElementChild).bottom,
             below: box(reply).top - box(calls[calls.length - 1]).bottom,
             rows: calls.length,
-            clash, copyHit: hit,
+            clash,
           };
         }"""
         for rows in (1, 4):
@@ -1415,7 +1410,6 @@ def test_a_group_of_calls_sits_under_the_line_that_announced_it(page_at):
             assert measured["above"] <= 8, measured
             assert measured["below"] >= 20, measured
             assert min(measured["clash"]) >= 0, measured
-            assert measured["copyHit"], measured
             if rows == 1:
                 page.click(".callsum")
 
@@ -1493,16 +1487,15 @@ def test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant(page_at
             afterOldPrompt: gap('An old prompt', 'An old reply'),
             // The rule over a prompt is its ::before, 14 px above it.
             toRule: box(turn('And then')).top - 14 - who('Run this one').bottom,
-            // One line, with the button in it, not a second line under.
-            copyOnTimeLine: !!stamp.querySelector('.copy')
-                            && box(stamp).height < 20,
+            // The time is one line. The copy stood on it until #520.
+            timeOneLine: box(stamp).height < 20,
           };
         }""")
         assert seen["afterPrompt"] <= 23, seen
         assert seen["beforePrompt"] <= 30, seen
         assert seen["afterOldPrompt"] <= 23, seen
         assert seen["toRule"] >= 1, seen
-        assert seen["copyOnTimeLine"], seen
+        assert seen["timeOneLine"], seen
 
 
 def test_the_send_box_starts_where_the_transcript_does(page_at):
@@ -2790,10 +2783,10 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
     with opened(url) as page:
         wait_for_map(page)
         reply = ".turn:not(.mine):not(.toolrow)"
-        mark = f"{reply} .who .save"
+        mark = f"{reply} .turnacts .save"
         assert page.locator(mark).count() == 1
         prompt = ".turn.mine"
-        assert page.locator(f"{prompt} .who .save").count() == 1
+        assert page.locator(f"{prompt} .turnacts .save").count() == 1
         page.hover(reply)
         page.click(mark)
         page.wait_for_selector(f"{mark}.on")
@@ -2802,8 +2795,8 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
         page.wait_for_function(
             "document.querySelector('#savedlink .n').textContent === '1'")
         page.hover(prompt)
-        page.click(f"{prompt} .who .save")
-        page.wait_for_selector(f"{prompt} .who .save.on")
+        page.click(f"{prompt} .turnacts .save")
+        page.wait_for_selector(f"{prompt} .turnacts .save.on")
         assert daemon.store.saved[0]["who"] == "me"
         assert daemon.store.saved[0]["text"] == page.evaluate(
             "state.turns.blocks.find((b) => b.kind === 'prompt').text").strip()[:300]
@@ -2871,8 +2864,8 @@ def test_a_command_and_a_system_message_are_saved_too(ws, page_at):
         shell, note = ".turn.mine:has(.bubble.shell)", ".turn.aside"
         for turn in (shell, note):
             page.hover(turn)
-            page.click(f"{turn} .who .save")
-            page.wait_for_selector(f"{turn} .who .save.on")
+            page.click(f"{turn} .turnacts .save")
+            page.wait_for_selector(f"{turn} .turnacts .save.on")
         assert [(one["who"], one["text"]) for one in daemon.store.saved] == [
             ("system", "Interrupted."), ("shell", "! make test\nok 3")]
         page.click("#savedlink")
@@ -3188,8 +3181,8 @@ def test_a_block_shows_its_text_as_written_from_txt(ws, page_at):
         turn = page.locator(".turn:not(.mine)", has_text="Found it")
         turn.locator(".prose strong").wait_for()
         assert page.locator(".turn.mine", has_text="why?").locator(
-            ":scope > .readas").count() == 1
-        button = turn.locator(":scope > .readas")
+            ":scope > .turnacts > .readas").count() == 1
+        button = turn.locator(":scope > .turnacts > .readas")
         assert not button.is_visible()
         turn.locator(".prose").hover()
         where = button.bounding_box()
@@ -3205,7 +3198,7 @@ def test_a_block_shows_its_text_as_written_from_txt(ws, page_at):
                   css.backgroundColor];
         }""")
         assert look == [False, "none", "rgba(0, 0, 0, 0)"], look
-        button = turn.locator(":scope > .readas")
+        button = turn.locator(":scope > .turnacts > .readas")
         assert button.get_attribute("aria-pressed") == "true"
         # Lit, it stays in sight with the pointer gone, and where it was,
         # so a second press needs no move (#510).
@@ -3263,7 +3256,7 @@ def test_a_prompt_is_markdown_in_its_own_box(ws, page_at):
         assert turn.locator(".bubble").evaluate(
             "(one) => getComputedStyle(one).borderLeftStyle") == "solid"
         turn.locator(".bubble").hover()
-        turn.locator(":scope > .readas").click()
+        turn.locator(":scope > .turnacts > .readas").click()
         page.locator(".turn.mine", has_text="does").locator(".bubble.source").wait_for()
         assert page.locator(".turn.mine", has_text="does").locator(
             ".bubble.source").inner_text() == "Look at the **cache**:\n\n- does `put` lock?"
@@ -3286,3 +3279,64 @@ def test_the_compaction_line_says_when(ws, page_at):
             "(ts) => (dayOf(ts) ? dayOf(ts) + ' ' : '') + clock(ts)",
             ws.parse_timestamp("2026-09-18T14:22:00.000Z"))
         assert " ".join(said.lower().split()) == "context compacted \u00b7 " + expected.lower(), said
+
+
+def test_a_day_wears_the_time_s_colour(ws, page_at):
+    """"14 Oct 09:10" is one moment (#519). The day was faint under a time
+    in the turn's colour, and read as a note about something else."""
+    daemon, path = page_at
+    write_records(daemon,
+                  conftest.record("you", "Old prompt.", ts="2026-09-18T14:20:00.000Z"),
+                  conftest.record("claude", "Old reply.", ts="2026-09-18T14:21:00.000Z"))
+    with opened(path) as page:
+        page.wait_for_selector(".turn.mine .who .day")
+        seen = page.evaluate("""() => [...document.querySelectorAll('.who')]
+          .filter((who) => who.querySelector('.day'))
+          .map((who) => [getComputedStyle(who.querySelector('.day')).color,
+                         getComputedStyle(who.querySelector('.stamp')).color,
+                         getComputedStyle(who.querySelector('.day')).fontWeight,
+                         getComputedStyle(who.querySelector('.stamp')).fontWeight,
+                         who.closest('.turn').classList.contains('mine')])""")
+        assert {mine for *_, mine in seen} == {True, False}, seen
+        for day, time_, day_weight, time_weight, _ in seen:
+            assert day == time_ and day_weight == time_weight, seen
+
+
+def test_what_a_turn_can_do_is_one_row_at_its_top_right(ws, page_at):
+    """Save, copy and the text as written stand in one row at the turn's top
+    right (#520, #522), the place the "txt" already stood: the bookmark and
+    the "copy" word sat in the name's column and held it 64 px wide, room
+    a small screen needs for the text. On the hover, and a saved bookmark
+    always, in the place the hover shows it, so nothing moves under the
+    pointer."""
+    daemon, path = page_at
+    write_records(daemon,
+                  conftest.record("you", "why?", ts="2026-09-18T14:20:00.000Z"),
+                  conftest.record("claude", "Because.", ts="2026-09-18T14:21:00.000Z"))
+    with opened(path) as page:
+        turn = page.locator(".turn:not(.mine)", has_text="Because.")
+        turn.wait_for()
+        row = turn.locator(":scope > .turnacts")
+        assert [one.get_attribute("class").split()[0] if "readas" not in
+                one.get_attribute("class") else "readas"
+                for one in row.locator(":scope > *").all()] == ["save", "copy", "readas"]
+        assert page.locator(".who button, .who .copy, .who .save").count() == 0
+        width = page.evaluate("document.querySelector('.who').getBoundingClientRect().width")
+        assert width <= 44, width
+        assert not row.locator(".save").is_visible()
+        turn.locator(".prose").hover()
+        tops = [round(one.bounding_box()["y"]) for one in row.locator(":scope > *").all()]
+        assert len(set(tops)) == 1, tops
+        # As big as a code block's copy: 14 px of icon, not the 11 it was.
+        icon = row.locator(".save .icon").bounding_box()
+        assert icon["width"] >= 14, icon
+        right = turn.bounding_box()
+        last = row.locator(".readas").bounding_box()
+        assert abs(last["x"] + last["width"] - right["x"] - right["width"]) < 1, (last, right)
+        where = row.locator(".save").bounding_box()
+        row.locator(".save").click()
+        turn.locator(".turnacts .save.on").wait_for()
+        page.mouse.move(5, 5)
+        assert row.locator(".save").is_visible()
+        assert not row.locator(".copy").is_visible()
+        assert row.locator(".save").bounding_box() == where

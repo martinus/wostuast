@@ -78,10 +78,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   session** (`POST_VERBS` gives `save` "", and `Serving.save` asks `known`
   only to save): registered "known", "done" on a turn of a forgotten
   session was a 404, and the entry could never go.
-  - **The bookmark stands before the name** (`putSave`): the column is
-    64 px and right-aligned. A word beside "copy" pushed "copy" out of it;
-    after the name, an invisible bookmark moved "claude" out of line with
-    the time; in the gap beside the words, it touched them.
+  - **The bookmark stands in the turn's row of buttons, at its top right**
+    (`putSave` into `.turnacts`, #522), first of save, copy and "txt". In
+    the name's column it moved the words: beside "copy" it pushed "copy"
+    out, after the name an invisible one moved "claude" out of line with
+    the time, and before it the column had to be 64 px. A saved one shows
+    without the hover, where the hover shows it (topics/daemon-and-page).
   - **A prompt the reader typed is saved too** (#403), and its entry
     carries `who: "me"`; an answer carries no `who`, so every entry kept
     before prompts could be saved is still an answer, and `saved_entry`
