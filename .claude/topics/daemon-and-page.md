@@ -581,7 +581,14 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   to a session look like a rewrite. And the forgetting is guarded on
   `run !== -1` — "none held yet" is every first load, and `goTo` is set from
   the address bar before that load, so forgetting there threw away the link
-  the page had just been opened on.
+  the page had just been opened on. **That guard is `takeRun`, one
+  function** (#544): the fetch (`loadTranscript`) and the push
+  (`onTranscriptPush`) each wrote it, with comments that differed.
+  `test_a_reading_that_has_not_changed_forgets_nothing`,
+  `test_a_rewritten_transcript_forgets_what_was_chosen_by_seq`.
+- **Each push has a handler of its own**, `onSessionsPush` and
+  `onTranscriptPush` (#544): `resubscribe` opens the stream and nothing
+  more. It held all three inline and was past the 100-line limit.
 - **Ctrl+Enter presses the button of the box it is typed in**, in every box
   that keeps or sends something: the send box, a review comment, the reason
   for a No, and the comment on the whole review in the review's send bar. The comment box had Escape and
