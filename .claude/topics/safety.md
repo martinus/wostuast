@@ -298,7 +298,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     there into a terminal; the page sets every part with `put`.
     `test_a_name_that_is_not_a_command_is_left_out`.
   - **And its whole text is read by name, never by path** (#367,
-    `Serving.command`, `command_text`). `~/.claude` is outside every
+    `verb_command`, `command_text`). `~/.claude` is outside every
     worktree, so the Files tab's route may not read it, and a path from
     the page is input. The page names a command from the list it was
     sent; only a file that list holds is read (`Commands.defined`, the
@@ -552,7 +552,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `POST_VERBS`. The settings route wrote its own size check, and a new
   top-level route would have had to remember it.
   `test_every_route_refuses_what_it_must` walks the three tables: a foreign
-  Host, a missing token, a body too large, for every route.
+  Host, a missing token, a body too large, for every route. **And a verb
+  is a function, `verb_<name>`, never a method of the handler**:
+  `http.server` sets `command`, `path`, `headers` and `request` on the
+  handler for each request, and `self.command` hid the verb
+  `Serving.command` on the instance; a verb named `path` would have broken
+  every request. `test_no_verb_is_an_attribute_of_the_handler`.
   `test_a_name_too_large_to_read_keeps_the_name_there_was`,
   `test_an_answer_too_large_to_read_says_that`,
   `test_a_body_that_is_not_read_is_not_taken_for_an_empty_one`.

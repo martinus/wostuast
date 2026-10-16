@@ -1943,6 +1943,9 @@ def test_the_raw_route_serves_nothing_that_could_be_a_document(repo_session):
             urllib.request.urlopen(
                 f"{base}/api/session/s1/raw?path={name}", timeout=5)
         assert caught.value.code == 404, name
+        # Through `refuse`, as every refusal of a verb, so it says whose
+        # (#545): it alone carried no `id`.
+        assert json.loads(caught.value.read())["id"] == "s1", name
 
 
 # --- answering a question -----------------------------------------------------
@@ -2949,3 +2952,22 @@ def test_every_route_refuses_what_it_must(ws, in_tmux, monkeypatch):
         assert ask("POST", spelling, ours, {"X-Wostuast-Token": daemon.token,
                                             "Content-Type": "application/json"},
                    big) == 413, spelling
+
+
+def test_no_verb_is_an_attribute_of_the_handler(ws):
+    """The verbs are functions, not methods of `Serving` (#545):
+    `http.server` sets attributes on the handler for each request, and
+    `self.command` hid the verb `Serving.command` on the instance. A verb
+    named `path` or `headers` would have broken every request. Every verb
+    is a module function now, and none of them is an attribute of the
+    handler's class, whatever its name."""
+    import http.server
+
+    for table in (ws.GET_VERBS, ws.POST_VERBS):
+        for name, entry in table.items():
+            verb = entry[0]
+            assert verb.__qualname__ == verb.__name__, (name, verb.__qualname__)
+            assert not hasattr(ws.Serving, name), name
+    taken = set(dir(http.server.BaseHTTPRequestHandler)) | set(dir(ws.Serving))
+    assert not {f"verb_{name}" for t in (ws.GET_VERBS, ws.POST_VERBS)
+                for name in t} & taken
