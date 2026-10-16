@@ -3200,3 +3200,29 @@ def test_a_block_shows_its_text_as_written_from_txt(ws, page_at):
         page.locator(".turn:not(.mine)", has_text="Found it").locator(
             ".prose strong").wait_for()
         assert page.locator(".bubble.source").count() == 0
+
+
+def test_a_prompt_under_the_compaction_line_draws_no_rule_of_its_own(ws, page_at):
+    """"context compacted" is a rule, and the prompt under it drew its own a
+    few pixels lower: two lines where one was meant (#496). A prompt
+    anywhere else keeps its rule."""
+    daemon, path = page_at
+    write_records(daemon,
+                  conftest.record("you", "first ask", ts="2026-09-18T14:20:00.000Z"),
+                  conftest.record("claude", "done", ts="2026-09-18T14:21:00.000Z"),
+                  {"type": "system", "subtype": "compact_boundary",
+                   "timestamp": "2026-09-18T14:22:00.000Z"},
+                  conftest.record("you", "after the compaction",
+                                  ts="2026-09-18T14:23:00.000Z"))
+    daemon.tick()
+    with opened(path) as page:
+        page.wait_for_selector(".divider + .turn.mine")
+        rules = page.evaluate("""() => {
+          const rule = (turn) => getComputedStyle(turn, '::before').display;
+          const under = document.querySelector('.divider + .turn.mine');
+          const others = [...document.querySelectorAll('.turn.mine:not(:first-child)')]
+            .filter((one) => one !== under);
+          return {under: rule(under), others: others.map(rule)};
+        }""")
+        assert rules["under"] == "none", rules
+        assert rules["others"] and "none" not in rules["others"], rules

@@ -93,6 +93,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     the first draw, with the line near the foot. A link (`goTo`) wins. A
     line that cannot reach the top -- too little after it -- stands where
     the end of the pane lets it, which is right.
+  - **A prompt right under it, or under "context compacted", draws no
+    rule of its own** (#496, `:is(.divider, .newline) + .turn.mine`):
+    each is a rule already, and the prompt's `::before` drew a second a few
+    pixels lower. A sibling selector, so `putNewLine` must keep the line
+    the block's sibling just before it.
+    `test_a_prompt_under_the_compaction_line_draws_no_rule_of_its_own`.
   **A test of "at the top" has two bounds** (`AT_TOP`): `top < 20` passed
   with the landing taken out, because the line stood 470 px *above* the
   pane. `test_coming_back_lands_on_a_line_over_the_first_turn_not_seen`,

@@ -13305,6 +13305,11 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .turn.mine:first-child { margin-top: 0; }
 .turn.mine:first-child::before { display: none; }
+/* A prompt right under a line that is a rule already -- "context
+   compacted", or the "new" line -- draws no rule of its own (issue 496):
+   two lines a few pixels apart read as one drawn twice. */
+:is(.divider, .newline) + .turn.mine { margin-top: 0; }
+:is(.divider, .newline) + .turn.mine::before { display: none; }
 .turn.mine .who { color: var(--mine); font-weight: 600; }
 /* A saved prompt's card wears it too (issue 403): out of its transcript,
    a prompt in an answer's face read as an answer. */
