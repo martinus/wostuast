@@ -80,7 +80,7 @@ bullets beside it are the same part's other scars.
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `session_json`, `cmd_wait`, `pick_session`, `wait_states`, `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite, the Agent SDK, stream-json, channels, an `http` hook, a hook decision, OpenTelemetry | topics/decisions |
 | `getJson`, `ask`, `post`, a fetch of the page | topics/daemon-and-page: the page asks the daemon one way |
-| `tmux_send`, `SEND_MAX`, `POST_MAX`, `typing_trouble`, `prompt_landed`, `whyNoText`, `recallSent`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `typing_lock`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
+| `tmux_send`, `ROUTES`, `find_route`, `Serving.route`, `SEND_MAX`, `POST_MAX`, `typing_trouble`, `prompt_landed`, `whyNoText`, `recallSent`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `typing_lock`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
 | `answer`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked`, `state.answered`, `forgetAnswered` | topics/state: the question bar's bullets — the keys are measured |
 | `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Session.dialog`, `cannot_type`, `whyNotTyped`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
 | `approve`, `give_yes`, `wait_for_yes`, `hook_waits`, `lock_held`, `daemon_running`, `always_offered`, `allow_for`, `always_label`, `ALWAYS_MODES`, `approvals_dir`, `ALLOW`, `NOT_APPROVED`, `APPROVE_WAIT`, `ASK_SHAPE`, `submitPermission`, `permissionPick`, `Approved` | topics/safety, its first bullet: the hook says allow only for its own dialog, after the reader's Yes |
@@ -237,10 +237,10 @@ request, and name the principle.
    `test_every_field_of_the_pages_state_is_declared`.
 4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
    session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`), views
-   (`VIEWS`). A test walks the table, so a new entry is tested without
-   anyone writing its test:
-   `test_every_view_opens_draws_and_gives_the_session_back`. The routes
-   get theirs with #545.
+   (`VIEWS`), routes (`ROUTES`). A test walks the table, so a new entry is
+   tested without anyone writing its test:
+   `test_every_view_opens_draws_and_gives_the_session_back`,
+   `test_every_route_refuses_what_it_must`.
 5. **One reader for each fact.** Where two parts of the program read the
    same fact, they call one function: `prompt_said` for a prompt,
    `git_status` for `git status`, `apply_git_facts` for a reading of git,

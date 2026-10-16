@@ -4877,7 +4877,7 @@ TOKEN_MARK = "__WOSTUAST_TOKEN__"
 VERSION_MARK = "__WOSTUAST_VERSION__"
 
 #: Where the reader's settings go into the page, so the first paint already
-#: has their colours. The marks are put in in one pass (`route_get`).
+#: has their colours. The marks are put in in one pass (`Serving.page`).
 SETTINGS_MARK = '"__WOSTUAST_SETTINGS__"'
 
 #: How Claude Code answers a call whose dialog was told No, as the call's
@@ -4890,7 +4890,7 @@ REJECTED = "The user doesn't want to proceed with this tool use"
 #: (`\u001b`), which a log with colours is full of -- `tmux_send` takes them
 #: out, but they come in the body first. Six times `SEND_MAX`, and room for
 #: the rest of the body. Only a request that passed `allowed` is read at
-#: all (`route_post`), so a site in the reader's browser cannot make the
+#: all (`Serving.route`), so a site in the reader's browser cannot make the
 #: daemon read this much.
 POST_MAX = 8 * 1024 * 1024
 
@@ -9565,57 +9565,120 @@ class Serving:
             except OSError:
                 pass
 
+    def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
+        self.guarded(lambda: self.route("GET"))
+
     def do_POST(self) -> None:  # noqa: N802 - the name http.server requires
-        self.guarded(self.route_post)
+        self.guarded(lambda: self.route("POST"))
 
-    def route_post(self) -> None:
-        from urllib.parse import urlparse
+    def route(self, method: str) -> None:
+        """Every request through one gate, in one order, then its handler
+        (#545). The uid comes first, in `guarded`. Then, for a GET, a body
+        closes the connection; the Host (`ours`); for a POST, the origin and
+        the token (`allowed`), the body (`asked`) and a body whose end is not
+        known (`unread`); the route, from `ROUTES` or a session verb; and for
+        a POST, a body too large to read (`too_big`). Each check was written
+        per route, and a new POST route had to remember the size check
+        itself: one that forgot read a refused body as `{}`, which a verb
+        takes for an answer (#235, #254).
+        """
+        from urllib.parse import parse_qs, urlparse
 
-        # Who asks is known from the headers and the socket, so a request
-        # that may not act is refused before its body is read: a site in the
-        # reader's browser could otherwise make the daemon read and parse
-        # `POST_MAX` bytes, which is megabytes since a send may be a long
-        # log. The body stays in the socket, so the connection closes.
+        # A GET's body is never read, so a connection that carried one is
+        # closed after the answer: kept open, the body was read as the next
+        # request, and one GET got two answers (#235).
+        if method == "GET" and self.body_length() != 0:
+            self.close_connection = True
         if not self.ours():
-            self.close_connection = True
-            self.reply_json({"error": "wostuast answers on localhost only"},
-                            403)
+            if method == "POST":
+                self.close_connection = True
+            self.reply_json({"error": "wostuast answers on localhost only"}, 403)
             return
-        if not self.allowed():
-            self.close_connection = True
-            if self.stale_page():
-                self.reply_json(
-                    {"error": "wostuast was restarted, so this page is out of"
-                              " date. Reload it.", "stale": True}, 403)
-            else:
-                self.reply_json({"error": "that did not come from this page"},
-                                403)
-            return
-        body = self.asked()
-        if self.unread:
-            # The route would see `{}` and take it for an empty body: `name`
-            # read it as "take the name away".
-            self.reply_json({"error": "wostuast reads a body only when a"
-                                      " Content-Length gives its size"}, 400)
-            return
-        parts = urlparse(self.path).path.strip("/").split("/")
-        if parts == ["api", "settings"]:
-            self.settings(body)
-        elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-            found = POST_VERBS.get(parts[3])
-            if found is None:
-                self.reply_json({"error": "no such thing"}, 404)
-            elif self.too_big:
-                # `asked()` hands over `{}` for a body it did not read, and
-                # each verb reads `{}` as an answer: `name` as "take the
-                # name away" (#235), `answer` as a question no longer
-                # waiting (#254). Refused here, before any verb sees it.
-                self.refuse(parts[2], 413,
-                            f"that {found[1]} is too large to accept")
-            else:
-                self.dispatch(found[0], found[2], parts[2], body)
+        url = urlparse(self.path)
+        given: dict[str, Any]
+        if method == "POST":
+            # Who asks is known from the headers and the socket, so a
+            # request that may not act is refused before its body is read: a
+            # site in the reader's browser could otherwise make the daemon
+            # read and parse `POST_MAX` bytes, which is megabytes since a
+            # send may be a long log. The body stays in the socket, so the
+            # connection closes.
+            if not self.allowed():
+                self.close_connection = True
+                if self.stale_page():
+                    self.reply_json(
+                        {"error": "wostuast was restarted, so this page is out of"
+                                  " date. Reload it.", "stale": True}, 403)
+                else:
+                    self.reply_json({"error": "that did not come from this page"},
+                                    403)
+                return
+            given = self.asked()
+            if self.unread:
+                # The route would see `{}` and take it for an empty body:
+                # `name` read it as "take the name away".
+                self.reply_json({"error": "wostuast reads a body only when a"
+                                          " Content-Length gives its size"}, 400)
+                return
         else:
+            # The first of each, once: every verb read `query.get(x, [""])[0]`,
+            # and one wrote itself a helper so as not to.
+            given = {name: values[0]
+                     for name, values in parse_qs(url.query).items()}
+        found = find_route(method, url.path)
+        if found is None:
             self.reply_json({"error": "no such thing"}, 404)
+            return
+        handler, noun, needs, session_id = found
+        if method == "POST" and self.too_big:
+            # `asked()` hands over `{}` for a body it did not read, and each
+            # route reads `{}` as an answer: `name` as "take the name away"
+            # (#235), `answer` as a question no longer waiting (#254), the
+            # settings as a change of nothing that answered "done". Refused
+            # here, before any route sees it.
+            why = f"that {noun} is too large to accept"
+            if session_id is None:
+                self.reply_json({"error": why}, 413)
+            else:
+                self.refuse(session_id, 413, why)
+            return
+        if session_id is None:
+            handler(self, given)
+        else:
+            self.dispatch(handler, needs, session_id, given)
+
+    def page(self, query: dict[str, str]) -> None:
+        """The page, with the token, the version and the settings in it."""
+        marks = {TOKEN_MARK: self.daemon.token,
+                 VERSION_MARK: self.daemon.version,
+                 SETTINGS_MARK: page_json(config_payload())}
+        # One pass, so no mark is looked for in what another put in: the
+        # settings are the reader's text, and a link holding the token's
+        # mark would have had the token written into it.
+        page = re.sub("|".join(map(re.escape, marks)),
+                      lambda hit: marks[hit[0]], PAGE)
+        self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
+
+    def sessions(self, query: dict[str, str]) -> None:
+        self.reply_json(self.daemon.sessions_payload())
+
+    def search(self, query: dict[str, str]) -> None:
+        """Every session's prompts and last answers (#379): a scan of the
+        log, asked for as the reader types, never pushed."""
+        try:
+            found = search_log(query.get("q", ""), self.daemon.store.sessions)
+        except ValueError as error:
+            self.reply_json({"results": [], "error": str(error)})
+        else:
+            self.reply_json({"results": found})
+
+    def saved_turns(self, query: dict[str, str]) -> None:
+        """Every saved turn, of every session (#377): asked for when the
+        list opens, not pushed."""
+        self.reply_json({"saved": self.daemon.store.saved})
+
+    def events(self, query: dict[str, str]) -> None:
+        self.stream(query.get("watch", ""))
 
     def refuse(self, session_id: str, code: int, why: str) -> None:
         """A verb's refusal. It always says why: `said` clears the live slot
@@ -9631,12 +9694,6 @@ class Serving:
         machine, this user. Every page hears of the change from the push,
         this one included, and the answer carries it too.
         """
-        if self.too_big:
-            # `asked()` hands over `{}` for a body it did not read, which
-            # would be a change of nothing that answered "done".
-            self.reply_json({"error": "that change is too large to accept"},
-                            413)
-            return
         with self.daemon.config_lock:
             try:
                 why, refused = save_config(body)
@@ -10059,62 +10116,6 @@ class Serving:
             return
         self.reply_json({"id": session_id, "done": True})
 
-    def do_GET(self) -> None:  # noqa: N802 - the name http.server requires
-        self.guarded(self.route_get)
-
-    def route_get(self) -> None:
-        from urllib.parse import parse_qs, urlparse
-
-        # A GET's body is never read, so a connection that carried one is
-        # closed after the answer: kept open, the body was read as the next
-        # request, and one GET got two answers (#235).
-        if self.body_length() != 0:
-            self.close_connection = True
-        if not self.ours():
-            self.reply_json({"error": "wostuast answers on localhost only"}, 403)
-            return
-        url = urlparse(self.path)
-        path = url.path
-        # The first of each, once: every verb read `query.get(x, [""])[0]`,
-        # and one wrote itself a helper so as not to.
-        query = {name: values[0] for name, values in parse_qs(url.query).items()}
-        parts = path.strip("/").split("/")
-        if path == "/":
-            marks = {TOKEN_MARK: self.daemon.token,
-                     VERSION_MARK: self.daemon.version,
-                     SETTINGS_MARK: page_json(config_payload())}
-            # One pass, so no mark is looked for in what another put in: the
-            # settings are the reader's text, and a link holding the token's
-            # mark would have had the token written into it.
-            page = re.sub("|".join(map(re.escape, marks)),
-                          lambda hit: marks[hit[0]], PAGE)
-            self.reply(200, page.encode("utf-8"), "text/html; charset=utf-8")
-        elif path == "/api/sessions":
-            self.reply_json(self.daemon.sessions_payload())
-        elif path == "/api/search":
-            # Every session's prompts and last answers (#379): a scan of the
-            # log, asked for as the reader types, never pushed.
-            try:
-                found = search_log(query.get("q", ""), self.daemon.store.sessions)
-            except ValueError as error:
-                self.reply_json({"results": [], "error": str(error)})
-            else:
-                self.reply_json({"results": found})
-        elif path == "/api/saved":
-            # Every saved turn, of every session (#377): asked for when the
-            # list opens, not pushed.
-            self.reply_json({"saved": self.daemon.store.saved})
-        elif path == "/api/events":
-            self.stream(query.get("watch", ""))
-        elif len(parts) == 4 and parts[:2] == ["api", "session"] and parts[2]:
-            found = GET_VERBS.get(parts[3])
-            if found is None:
-                self.reply_json({"error": "no such thing"}, 404)
-            else:
-                self.dispatch(found[0], found[1], parts[2], query)
-        else:
-            self.reply_json({"error": "no such thing"}, 404)
-
     def known(self, session_id: str) -> Session | None:
         """The session, or None with a 404 already sent."""
         session = self.daemon.session(session_id)
@@ -10397,7 +10398,7 @@ GET_VERBS: dict[str, tuple[Any, str]] = {
 # touches no terminal, but it arrives the same way and is checked the same
 # way.
 #: Each with what its body is called, for the refusal of a body too large
-#: to read (`route_post`).
+#: to read (`Serving.route`).
 POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "jump": (Serving.jump, "request", "in_tmux"),
     "send": (Serving.send, "message", "in_tmux"),
@@ -10419,6 +10420,42 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     # And a turn saved for later (#377).
     "save": (Serving.save, "saved turn", ""),
 }
+
+#: Every route outside a session, by method and path, each with what its
+#: body is called, for the refusal of a body too large to read (#545). A
+#: session's routes are `GET_VERBS` and `POST_VERBS`. Every request comes
+#: through `Serving.route`, and `test_every_route_refuses_what_it_must`
+#: walks all three tables: a new route is checked without anyone writing
+#: its test.
+ROUTES: dict[tuple[str, str], tuple[Any, str]] = {
+    ("GET", "/"): (Serving.page, ""),
+    ("GET", "/api/sessions"): (Serving.sessions, ""),
+    ("GET", "/api/search"): (Serving.search, ""),
+    ("GET", "/api/saved"): (Serving.saved_turns, ""),
+    ("GET", "/api/events"): (Serving.events, ""),
+    ("POST", "/api/settings"): (Serving.settings, "change"),
+}
+
+
+def find_route(method: str, path: str) -> tuple[Any, str, str, str | None] | None:
+    """What answers a request: its handler, what its body is called, the
+    session it needs (`Serving.dispatch`), and the session's id -- None for
+    a route outside a session. None when nothing answers it."""
+    # A POST was matched with its slashes stripped, a GET by its path as it
+    # stands; kept so, so that no request is answered other than it was
+    # before the table (#545): `POST /api/settings/` reached the settings.
+    found = ROUTES.get((method, path if method == "GET" else "/" + path.strip("/")))
+    if found is not None:
+        return found[0], found[1], "", None
+    parts = path.strip("/").split("/")
+    if len(parts) != 4 or parts[:2] != ["api", "session"] or not parts[2]:
+        return None
+    if method == "GET":
+        verb = GET_VERBS.get(parts[3])
+        return None if verb is None else (verb[0], "", verb[1], parts[2])
+    posted = POST_VERBS.get(parts[3])
+    return None if posted is None else (posted[0], posted[1], posted[2], parts[2])
+
 
 #: The furthest a reminder may be set, in seconds: 31 days. The page offers
 #: a day up to 30 days ahead (#406); this bounds what a POST may write. A
