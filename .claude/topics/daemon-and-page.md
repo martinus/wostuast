@@ -916,6 +916,17 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   · <tab>…". **Not at once**: a switch drawn sooner shows nothing, or every
   switch would flicker; the test checks at half the delay.
   `test_a_slow_switch_says_it_is_loading_and_a_quick_one_says_nothing`.
+- **The page asks the daemon one way: `getJson`, the one `fetch`** (#541).
+  It was four -- `ask` gave null, `post` an `{error}`, `runSearch` and
+  `askSaved` each a try of their own -- and each new caller picked one.
+  `getJson` gives `{ok, body}`, or `{ok: false, body: null, why}` when the
+  daemon did not answer; `ask` and `post` keep their own answers on top of
+  it, because many callers read them. Its `wanted` drops an answer the
+  reader no longer wants by giving null; a loader whose check reads its
+  own state -- the session, the base, a ticket -- keeps that check after
+  `ask`, because a null from `ask` must keep meaning "no answer" and not
+  also "too late". `test_only_get_json_calls_fetch`,
+  `test_the_page_asks_the_daemon_one_way`.
 - **A failed transcript fetch is not an empty transcript.** `ask` gives
   null, and the page drew "Nothing in this transcript yet.", forgot the
   reader's places, and asked no more, because the tab polls nothing. Now

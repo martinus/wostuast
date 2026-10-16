@@ -100,3 +100,14 @@ def test_only_the_wire_section_turns_a_dataclass_into_json(ws):
                      key=lambda one: one.end_lineno - one.lineno)
         found[inside.name] = found.get(inside.name, 0) + 1
     assert found == DATACLASS_TO_JSON_ELSEWHERE
+
+
+def test_only_get_json_calls_fetch(ws):
+    """One way for the page to ask the daemon (#541): `getJson`. It was
+    four, each with its own answer when the daemon went away -- null, an
+    `{error}`, a try of its own -- and a fifth would have been a fifth."""
+    page = page_source(ws)
+    calls = [hit.start() for hit in re.finditer(r"\bfetch\(", page)]
+    assert len(calls) == 1
+    assert page.rfind("\nasync function getJson(", 0, calls[0]) \
+        > page.rfind("\nfunction ", 0, calls[0])
