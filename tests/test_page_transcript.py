@@ -1158,30 +1158,56 @@ def test_the_way_back_to_the_end_is_offered_only_when_it_would_do_something(page
         ) < 80
 
 
-# --- folding a round on the map ----------------------------------------------
+# --- the map beside the transcript -------------------------------------------
 
-def test_a_round_folds_shut_from_its_chevron_and_the_rest_of_the_row_still_goes(page_at):
-    """The row has two jobs. Folding on any click would mean you could not
-    read a round without closing it."""
+def test_a_round_on_the_map_does_not_fold_and_a_prompt_is_bold(page_at):
+    """A chevron in front of each prompt folded its replies away (#512). The
+    reader never used it, and it held every row one step to the right. A
+    prompt is in bold now, so the reader's own words stand out, and the
+    whole row goes to that place in the transcript."""
+    with opened(page_at) as page:
+        wait_for_map(page, 2)
+        got = page.evaluate("""() => {
+          const rows = [...document.querySelectorAll('.filelist.transcript button')];
+          const weight = (row) => Number(getComputedStyle(row.querySelector('.name')).fontWeight);
+          const prompt = rows.find((row) => row.classList.contains('dir'));
+          const reply = rows.find((row) => !row.classList.contains('dir'));
+          return {folds: document.querySelectorAll('.filelist.transcript .fold').length,
+                  expanded: rows.filter((row) => row.hasAttribute('aria-expanded')).length,
+                  prompt: weight(prompt), reply: weight(reply),
+                  left: prompt.querySelector('.icon').getBoundingClientRect().left
+                        - prompt.getBoundingClientRect().left};
+        }""")
+        assert got["folds"] == 0 and got["expanded"] == 0, got
+        assert got["prompt"] >= 600 and got["reply"] < 600, got
+        # The person stands at the row's own padding, with nothing before
+        # it: 16 px in. Behind the chevron it stood 13 px further.
+        assert got["left"] < 20, got
+        page.click(".filelist.transcript button.dir >> nth=0 >> .name")
+        page.wait_for_selector(".turn.linked")
+
+
+def test_the_map_marks_where_each_day_starts(page_at):
+    """A long session is a column of prompts, and nothing said where one day
+    ended (#512). A line names the day a round starts on, where it is not
+    the day of the round before -- and only when there is more than one."""
     daemon, path = page_at
     with opened(path) as page:
         wait_for_map(page, 2)
-        count = "document.querySelectorAll('.filelist.transcript button').length"
-        rows = "() => " + count
-        before = page.evaluate(rows)
-        assert before >= 2, before
-
-        page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
-        page.wait_for_function("n => " + count + " < n", arg=before)
-        folded = page.evaluate(rows)
-
-        # The name still goes to that place, and does not unfold it.
-        page.click(".filelist.transcript button.dir >> nth=0 >> .name")
-        page.wait_for_selector(".turn.linked")
-        assert page.evaluate(rows) == folded
-
-        page.click(".filelist.transcript button.dir >> nth=0 >> .fold")
-        page.wait_for_function("n => " + count + " === n", arg=before)
+        assert page.locator(".filelist.transcript .mapday").count() == 0
+    write_records(daemon,
+                  conftest.record("you", "Next day.", ts="2026-09-19T12:00:00.000Z"),
+                  conftest.record("claude", "On it.", ts="2026-09-19T12:01:00.000Z"),
+                  conftest.record("you", "Later the same day.", ts="2026-09-19T13:00:00.000Z"),
+                  conftest.record("you", "Monday.", ts="2026-09-21T12:00:00.000Z"))
+    with opened(path) as page:
+        page.wait_for_function(
+            "document.querySelectorAll('.filelist.transcript .mapday').length === 3")
+        got = page.evaluate("""() => [...document.querySelectorAll(
+            '.filelist.transcript .mapday')].map((day) => [day.textContent,
+              day.nextElementSibling.querySelector('.name').textContent])""")
+        assert [day for day, _ in got] == ["Fri 18 Sep", "Sat 19 Sep", "Mon 21 Sep"], got
+        assert [prompt for _, prompt in got][1:] == ["Next day.", "Monday."], got
 
 
 # --- what the agent was thinking ---------------------------------------------
@@ -1497,24 +1523,22 @@ def test_the_send_box_starts_where_the_transcript_does(page_at):
 def test_a_rewritten_transcript_forgets_what_was_chosen_by_seq(page_at):
     """`seq` is a place in one reading, not an identity. A transcript
     rewritten under its own name counts from nought again, so the expanded
-    tool results, the folded rounds and the marked row all point at different
-    blocks. Three things keyed the same way, forgotten in one place."""
+    tool results and the marked row all point at different blocks. Things
+    keyed the same way, forgotten in one place."""
     _, path = page_at
     with opened(path) as page:
         wait_for_map(page)
         seen = page.evaluate("""() => {
           state.turns.run = 4;
           state.turns.open = new Set([2]);
-          state.turns.shut = new Set([0]);
           state.turns.at = 2;
           const same = (run) => {
             forgetPlaces();     // what a run change calls
-            return [state.turns.open.size, state.turns.shut.size,
-                    state.turns.at];
+            return [state.turns.open.size, state.turns.at];
           };
           return same();
         }""")
-        assert seen == [0, 0, None], seen
+        assert seen == [0, None], seen
 
 
 def test_a_reading_that_has_not_changed_forgets_nothing(page_at):
@@ -1537,36 +1561,19 @@ def test_a_reading_that_has_not_changed_forgets_nothing(page_at):
 
           // The same reading again: nothing has been rewritten.
           state.turns.open = new Set([1]);
-          state.turns.shut = new Set([0]);
           await loadTranscript();
-          out.again = [state.turns.open.size, state.turns.shut.size];
+          out.again = [state.turns.open.size];
 
           // A reading that really did change.
           state.turns.run = 99;
           await loadTranscript();
-          out.rewritten = [state.turns.open.size, state.turns.shut.size,
-                           state.turns.at];
+          out.rewritten = [state.turns.open.size, state.turns.at];
           return out;
         }""")
         # The link survived the first load, whatever `run` came back.
         assert seen["first"][0] == 1, seen
-        assert seen["again"] == [1, 1], seen
-        assert seen["rewritten"] == [0, 0, None], seen
-
-
-def test_a_round_on_the_map_says_whether_it_is_folded(page_at):
-    """A second target on a row is not something a reader can be expected to
-    find, and `.icon` is decoration everywhere else in this list."""
-    with opened(page_at) as page:
-        wait_for_map(page, 2)
-        row = ".filelist.transcript button.dir >> nth=0"
-        assert page.locator(row).get_attribute("aria-expanded") == "true"
-        assert "fold" in page.locator(row + " >> .fold").get_attribute("title")
-        page.click(row + " >> .fold")
-        page.wait_for_function(
-            """() => document.querySelector('.filelist.transcript button.dir')
-                      .getAttribute('aria-expanded') === 'false'""")
-        assert "open" in page.locator(row + " >> .fold").get_attribute("title")
+        assert seen["again"] == [1], seen
+        assert seen["rewritten"] == [0, None], seen
 
 
 def test_a_push_that_beats_the_first_fetch_forgets_nothing(page_at):
@@ -2092,28 +2099,25 @@ def test_a_failed_fetch_does_not_take_a_sessions_place(page_at, ws,
 def test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt(page_at):
     """A folder and a page said "a round holds replies", which is the list's
     shape and not what a row is. A prompt wears a person, a reply a robot,
-    and the chevron that folds hangs in front, one tree step wide -- so the
-    robot stands exactly under the person it answers."""
+    one tree step in: it stands under the words it answers."""
     daemon, path = page_at
     with opened(path) as page:
         wait_for_map(page, 2)
         got = page.evaluate("""() => {
           const rows = [...document.querySelectorAll('.filelist.transcript button')];
-          const icon = (row) => row.querySelector('.icon:not(.fold)');
+          const icon = (row) => row.querySelector('.icon');
           const prompt = rows.find((row) => row.classList.contains('dir'));
           const reply = rows.find((row) => !row.classList.contains('dir'));
           return {
             prompt: icon(prompt).querySelector('path').getAttribute('d'),
             reply: icon(reply).querySelector('path').getAttribute('d'),
-            fold: !!prompt.querySelector('.fold') && !reply.querySelector('.fold'),
             person: ICONS.person, robot: ICONS.robot,
             lined: icon(prompt).getBoundingClientRect().left
                    - icon(reply).getBoundingClientRect().left,
           };
         }""")
         assert got["prompt"] == got["person"] and got["reply"] == got["robot"]
-        assert got["fold"]
-        assert abs(got["lined"]) < 0.5, got["lined"]
+        assert abs(got["lined"] + 13) < 0.5, got["lined"]
 
 
 def test_a_slash_command_is_drawn_with_what_it_answered(page_at):

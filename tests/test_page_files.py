@@ -1549,7 +1549,6 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
                                       asText: true, down: 321});
           state.files.dirs = new Map([['a', true]]);
           state.turns.open = new Set([7]);
-          state.turns.shut = new Set([3]);
           state.turns.at = 12;
           state.turns.down = 654;
           state.turns.run = 3;
@@ -1588,7 +1587,7 @@ def test_what_a_session_keeps_is_what_comes_back(two_repos):
         # And what is kept, by name: a row left out of the table would be
         # neither saved nor put back, and agree with itself.
         assert seen["names"] == [
-            "turns.at", "turns.down", "turns.run", "turns.open", "turns.shut",
+            "turns.at", "turns.down", "turns.run", "turns.open",
             "files.path", "files.at", "files.asText", "files.down",
             "files.dirs", "diffs.open", "diffs.of", "diffs.shut",
             "diffs.more", "diffs.loose"], seen["names"]

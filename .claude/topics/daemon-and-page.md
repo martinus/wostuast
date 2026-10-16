@@ -520,32 +520,33 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   rows keep 1 px above and below, so a row still comes about every line.
   `test_the_map_wears_the_lists_face_and_a_prompt_is_round` compares the
   map's computed face with a bare `.filelist`'s, so the lists move together.
-- **A round on the map folds from its chevron, and only from its chevron.**
-  The row has two jobs: the whole of it goes to that place in the transcript,
-  which is what the map is for, and the chevron alone folds. Folding on any
-  click would mean you could not read a round without closing it.
-  `state.turns.shut` is in `drawTurnList`'s redraw key — the shape of the
-  conversation has not changed when you fold one, only what is shown of it,
-  so without it a click redraws nothing — and in `savePlace`/`usePlace`,
-  because it is a choice. **A second target on a row has to say so**:
-  nothing else in this list has two, so the round carries `aria-expanded`
-  and the chevron its own `title`, turns down while the round is open, and
-  alone changes colour under the pointer. It carries no `cursor`, because
-  the row is a button and already sets one. There is no keyboard route to
-  folding yet, and that is a gap, not a decision.
-- **The map's icons say who spoke; the chevron says what folds.** A folder
-  and a page said "a round holds replies", which is the list's shape and not
-  what a row is, so a prompt is `ICONS.person` and a reply `ICONS.robot`.
-  The fold moved to `ICONS.chevron` so that the icon saying who spoke is not
-  also a button. **The chevron and its gap are one tree step, 13 px**
-  (`margin-right: -5px` on `.fold`), so a reply's robot stands exactly under
-  the person it answers; measured, not eyeballed. The chevron stays
-  `--ink-faint`, which takes a rule as specific as the one colouring the
-  person, or it turns `--mine` with it.
+- **A round on the map does not fold, and a prompt is in bold** (#512).
+  A chevron in front of each prompt folded its replies away, with
+  `state.turns.shut` in the redraw key and in `savePlace`. The reader never
+  used it, and it held every row of the map one tree step to the right. The
+  row has one job now: the whole of it goes to that place in the
+  transcript. The reader's own words are in bold, so they stand out from
+  the replies under them. Before a fold is put back, ask the reader: it was
+  taken out on their word.
+  `test_a_round_on_the_map_does_not_fold_and_a_prompt_is_bold`.
+- **The map marks where each day starts** (`mapDays`, `.mapday`, #512). A
+  long session was a column of prompts, and nothing said where one day
+  ended. A line names the day a round starts on -- "Today", "Yesterday",
+  "Fri 18 Sep" -- over the first round of each day, by the round's own
+  time, so a round that ran past midnight stays under the day it was asked
+  on. **Only when the rounds span more than one day**: a "Today" over a
+  session of one afternoon is a line of nothing. The day of today is in
+  `drawTurnList`'s redraw key, or "Today" stays on the lines after
+  midnight. `test_the_map_marks_where_each_day_starts`.
+- **The map's icons say who spoke.** A folder and a page said "a round
+  holds replies", which is the list's shape and not what a row is, so a
+  prompt is `ICONS.person` and a reply `ICONS.robot`, one tree step in, so
+  it stands under the words it answers.
+  `test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt`.
 - **Everything keyed on `seq` is forgotten together, in `forgetPlaces`.**
   `seq` is a place in one reading, not an identity, so a transcript rewritten
-  under its own name leaves `state.turns.open`, `state.turns.shut` and
-  `state.turns.at` all pointing at different blocks. Two of those were wrong
+  under its own name leaves `state.turns.open` and `state.turns.at`
+  pointing at different blocks. There were three once, two of them wrong
   before the third was added, which is the moment to give them one place.
   **`run` is therefore one of the things a session keeps**: `usePlace` putting
   the choices back without the reading they belong to would make every return
