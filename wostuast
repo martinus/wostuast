@@ -15930,10 +15930,9 @@ function unreadSessions() {
 // The three views over the list, in one row (#391): unread, saved (#377)
 // and search (#379), each always there, with its count.
 function drawFeedLink() {
-  viewLink($("feedlink"), "inbox", "Unread", unreadSessions().length, "unread");
-  viewLink($("savedlink"), "save", "Saved", state.savedCount || 0, "saved");
-  viewLink($("searchlink"), "search", "Search", null, "search");
-  viewLink($("cmdlink"), "slash", "Commands", null, "commands");
+  for (const [kind, view] of Object.entries(VIEWS)) {
+    viewLink($(view.link), view.icon, view.word, view.count(), kind);
+  }
   fitViews();
   drawViewTitle();
   // A session read elsewhere leaves the feed while it is open.
@@ -15945,10 +15944,8 @@ function openFeed(kind = "unread") {
   if (!state.feed) savePlace(state.chosen);
   state.feed = kind;
   $("content").dataset.tab = "";
-  if (kind === "saved") askSaved();
-  if (kind === "commands") loadCommands();
   state.feedText = new Map();
-  askUnread();
+  if (VIEWS[kind].open) VIEWS[kind].open();
   document.body.classList.add("infeed");
   homeFind($("findhome"));
   draw();
@@ -15966,10 +15963,33 @@ function leaveFeed() {
   draw();
 }
 
-// The view's name in the tab row, in place of the tabs (#392); the heading
-// it had inside the content said it a second time.
-const VIEW_NAMES = { unread: "All unreads", saved: "Saved", search: "Search every session",
-                     commands: "Commands" };
+// The four views that stand over the tabs, for every session at once: one
+// entry each, as `TABS` holds the tabs (#543). A fifth view is an entry
+// here; the link, its toggle, its title and its draw follow from it, and
+// `test_every_view_opens_draws_and_gives_the_session_back` walks it.
+// `link` is its button in the sidebar, `icon` and `word` what that shows,
+// `count` the number beside it (null for none). `name` is its title in the
+// tab row, in place of the tabs (#392); the heading it had inside the
+// content said it a second time. `open` is what it asks the daemon for as
+// it opens, and `draw` fills the content.
+const VIEWS = {
+  unread: { link: "feedlink", icon: "inbox", word: "Unread", name: "All unreads",
+            count: () => unreadSessions().length, open: askUnread, draw: drawUnread },
+  saved: { link: "savedlink", icon: "save", word: "Saved", name: "Saved",
+           count: () => state.savedCount || 0, open: askSaved, draw: drawSaved },
+  search: { link: "searchlink", icon: "search", word: "Search",
+            name: "Search every session", count: () => null, open: null,
+            draw: drawSearch },
+  commands: { link: "cmdlink", icon: "slash", word: "Commands", name: "Commands",
+              count: () => null, open: loadCommands, draw: drawCommands },
+};
+
+// A view, or back to the session it stands over: its link, and `4` for
+// Commands (#411). It was written four times, one a view.
+function toggleView(kind) {
+  if (state.feed === kind) { if (state.chosen) choose(state.chosen); }
+  else openFeed(kind);
+}
 
 // The reader did not see that a view stands over the tabs, nor how to
 // leave it: "esc · back to the session", faint beside the name, was the one
@@ -15985,7 +16005,7 @@ function drawViewTitle() {
   const button = put(title, "button", "back", back);
   button.title = "back to the session  ·  esc";
   button.addEventListener("click", leaveFeed);
-  put(title, "span", "viewname", VIEW_NAMES[state.feed]);
+  put(title, "span", "viewname", VIEWS[state.feed].name);
 }
 
 // A view's entry as a card that reads like its session's row (#393): the
@@ -16081,10 +16101,13 @@ async function askLast(id) {
   drawFeed($("content"));
 }
 
+// The view standing over the tabs, drawn by its entry in `VIEWS`.
 function drawFeed(box) {
-  if (state.feed === "saved") { drawSaved(box); return; }
-  if (state.feed === "search") { drawSearch(box); return; }
-  if (state.feed === "commands") { drawCommands(box); return; }
+  VIEWS[state.feed].draw(box);
+}
+
+// "All unreads" (#376): the last answer of every unread session, a card each.
+function drawUnread(box) {
   const shown = unreadSessions();
   const key = JSON.stringify([shown.map((s) => [s.id, s.ended_at, rowName(s), s.state]),
                               [...state.feedText.entries()]]);
@@ -23532,11 +23555,6 @@ async function pickCommand(key) {
   draw();
 }
 
-// The view, or back to the session it stands over: its button and `4`.
-function toggleCommands() {
-  if (state.feed === "commands") { if (state.chosen) choose(state.chosen); }
-  else openFeed("commands");
-}
 
 // Where "use" types: the chosen session, unless the command is a project's
 // it cannot see -- then the session the view asked for it.
@@ -24458,7 +24476,7 @@ document.addEventListener("keydown", (press) => {
     case "u": if (state.chosen) toggleUnread(state.chosen); break;
     case "?": help.open ? help.close() : help.showModal(); break;
     // The Commands view (#411): it was the fourth tab, and its key stays.
-    case "4": toggleCommands(); break;
+    case "4": toggleView("commands"); break;
     default: {
       // A tab per number key, in the order the tabs are drawn. The list is
       // the one in `TAB_KEYS`, so a new tab is an entry there and nothing
@@ -24485,17 +24503,10 @@ setInterval(tickAges, 1000);
 // A hidden page polls nothing. Looking at it again starts the timer.
 document.addEventListener("visibilitychange", repoll);
 document.addEventListener("visibilitychange", markSeen);
-$("feedlink").addEventListener("click", () => {
-  if (state.feed === "unread") { if (state.chosen) choose(state.chosen); } else openFeed("unread");
-});
+for (const [kind, view] of Object.entries(VIEWS)) {
+  $(view.link).addEventListener("click", () => toggleView(kind));
+}
 askSaved();        // which answers are saved, for their "saved"
-$("searchlink").addEventListener("click", () => {
-  if (state.feed === "search") { if (state.chosen) choose(state.chosen); } else openFeed("search");
-});
-$("savedlink").addEventListener("click", () => {
-  if (state.feed === "saved") { if (state.chosen) choose(state.chosen); } else openFeed("saved");
-});
-$("cmdlink").addEventListener("click", toggleCommands);
 // The list is dragged wider and narrower: the views fit again each time.
 new ResizeObserver(() => fitViews()).observe(document.querySelector(".views"));
 

@@ -2531,3 +2531,28 @@ def test_a_fold_button_stays_where_it_was_pressed(repo_page):
                       middle: (b.top + b.bottom) / 2 - (f.top + f.bottom) / 2};
             }""", [button, "#pick" if button == "#sessionfold" else "#find"])
             assert seen["before"] == seen["after"] and seen["middle"] == 0, (button, seen)
+
+
+def test_every_view_opens_draws_and_gives_the_session_back(page_at):
+    """Each entry of `VIEWS` (#543), walked: its link opens it, the link
+    is lit, the tab row says its name, it fills the content, and its link
+    again gives back the session it stood over. A fifth view is an entry
+    in the table, and gets this test without anyone writing it."""
+    with opened(page_at) as page:
+        views = page.evaluate(
+            "Object.entries(VIEWS).map(([kind, v]) => [kind, v.link, v.name])")
+        assert len(views) == 4
+        chosen = page.evaluate("state.chosen")
+        for kind, link, name in views:
+            page.click("#" + link)
+            page.wait_for_function(
+                "kind => state.feed === kind"
+                " && document.body.classList.contains('infeed')"
+                " && document.querySelector('#content').children.length > 0",
+                arg=kind)
+            assert page.text_content("#viewtitle .viewname") == name
+            assert "open" in page.get_attribute("#" + link, "class")
+            page.click("#" + link)
+            page.wait_for_function(
+                "id => !state.feed && state.chosen === id"
+                " && !document.body.classList.contains('infeed')", arg=chosen)

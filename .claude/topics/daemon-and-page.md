@@ -678,7 +678,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   - **An answer for a box the reader left opens nothing.** `followSlash`
     checks the focus after its fetch, as it checks the session: the list
     opened over the transcript with no box to type into.
-  - **Commands is a view, not a tab** (#411, `toggleCommands`, key `4`):
+  - **Commands is a view, not a tab** (#411, `toggleView`, key `4`):
     a tab belongs to the chosen session, and most commands belong to no
     session -- yours in `~/.claude` and the built-ins -- while a project's
     belong to every session standing in it. So `loadCommands` asks one

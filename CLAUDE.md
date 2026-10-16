@@ -97,14 +97,14 @@ bullets beside it are the same part's other scars.
 | `putNewLine`, `landOnNew`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |
 | `search_log`, `prompt_said`, `parse_search`, `search_day`, `SEARCH_MAX`, `SEARCH_FILTERS`, `drawSearch`, `runSearch`, `drawResults`, `goToNear` | topics/decisions: search is a scan of the event log |
 | `saved_path`, `saved_entry`, `Store.save`, `SAVED_MAX`, `SAVED_PREVIEW`, `putSave`, `drawSaved`, `takeSaved`, `askSaved`, `goToTs` | topics/sidebar: a saved turn |
-| `last_answer`, `Serving.last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `drawFeedLink`, `viewLink`, `fitViews`, `VIEW_FITS`, `drawViewTitle`, `leaveFeed`, `putCard`, `unmarked`, `state.feed`, `infeed`, `putBoard`, `layoutCards`, `CARD_MIN` | topics/sidebar: "All unreads" |
+| `last_answer`, `Serving.last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `VIEWS`, `toggleView`, `drawUnread`, `drawFeedLink`, `viewLink`, `fitViews`, `VIEW_FITS`, `drawViewTitle`, `leaveFeed`, `putCard`, `unmarked`, `state.feed`, `infeed`, `putBoard`, `layoutCards`, `CARD_MIN` | topics/sidebar: "All unreads" |
 | `remind_at`, `Store.remind`, `reminders_path`, `REMIND_MOST`, `reminderDue`, `reminderSet`, `armReminders`, `endReminder`, `serverNow`, `openReminders`, `REMIND_IN`, `remindMoment`, `customReminder`, `REMIND_DAYS`, `dayName`, `readTime` | topics/sidebar: a reminder is the snooze's twin with a clock |
 | `Session.title`, `first_prompt`, `Store.page_name`, `Store.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/sidebar, the name bullet; topics/daemon-and-page for `name`; topics/safety for the typing |
 | `fillKids`, `kidsOf`, `putKid`, `topSessions`, `childIds`, `Subagent`, `note_subagent`, `end_subagents`, `SUBAGENTS_HELD`, `Store.parent_of`, `claude_from`, `started_by` | topics/sidebar: what an agent starts is a line under its row; topics/state for the hook's `started_by` |
 | `onSessions`, `askUnread`, a draw that fetches, rings or writes, the draw guard in tests/browser.py | **Principles**, 3; topics/sidebar, "The counts are about every session" |
 | `newRow`, `fillRow`, `setIcon`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `dragHeight`, `dragEdge`, `putFold`, `paintFold`, `unfold`, `FOLDS`, `markRow`, `tileTitle`, `tileCard`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `iconPicture`, `robotPicture`, `drawLogo`, `ALERT_ICON`, `tellAbout`, `waitsFor`, `shown_prompt`, `putSettings`, `paintSettings`, `putQuick`, `QUICK`, `settingsNow`, `keepWidth`, `keepWrap`, `measureScrollbar`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `.turnacts`, `putCopy`, `putTurnRow`, `mapDays`, `GLIMPSE`, `putToFoot`, `putCodeCopies`, `foldedHead`, `putFoldBar`, `foldRun`, `runOf`, `fillCallSum`, `RUN_FOLDS` | topics/daemon-and-page: the transcript's shape; a run of calls is one line |
-| `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `plugin_dirs`, `enabled_plugins`, `commandKey`, `projectSessions`, `projectName`, `useTarget`, `toggleCommands`, `project_dirs`, `claude_dir`, `slashSpot`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
+| `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `plugin_dirs`, `enabled_plugins`, `commandKey`, `projectSessions`, `projectName`, `useTarget`, `toggleView`, `project_dirs`, `claude_dir`, `slashSpot`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
 | `state.files`, `state.turns`, `state.diffs`, `savePlace`, `usePlace`, `PLACE_FIELDS`, `blank…()`, `diffKey` | topics/tab-state |
 | `git_facts_many`, `git_facts_or_failed`, `worktree_doing`, `own_git_dir`, `worktree_files`, `walk_ignored`, `written_since`, `hex_dump`, `hexWide`, `onlyChanged`, `openDirs`, `dirsWithChanges`, `git_status`, `apply_git_facts`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of`, `base` and `held`, `Daemon.diffs`, `pick_base`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `markSpaces`, `SPACE_ARGS`, `openInFiles`, `.dtext`, `putMessage`, `putReadAs`, `stepat`, `blockSig`, `settle`, `readerAt` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
@@ -236,9 +236,11 @@ request, and name the principle.
    field of `state` is declared in its literal:
    `test_every_field_of_the_pages_state_is_declared`.
 4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
-   session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`). A test walks
-   the table, so a new entry is tested without anyone writing its test.
-   The views and the routes get theirs with #543 and #545.
+   session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`), views
+   (`VIEWS`). A test walks the table, so a new entry is tested without
+   anyone writing its test:
+   `test_every_view_opens_draws_and_gives_the_session_back`. The routes
+   get theirs with #545.
 5. **One reader for each fact.** Where two parts of the program read the
    same fact, they call one function: `prompt_said` for a prompt,
    `git_status` for `git status`, `apply_git_facts` for a reading of git,
