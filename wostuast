@@ -16736,36 +16736,52 @@ function fillRow(row, s) {
   one.children[1].textContent = isGone(s) ? s.state_word
     : reminderWord(s) || (s.snoozed ? "snoozed" : "");
   one.children[1].classList.toggle("pill", !isGone(s) && reminderDue(s));
-  const later = one.children[2];
-  // Only where a snooze can hold: a session that waits. A row a reminder
-  // brought back is not one, and the daemon would refuse it (#375).
-  later.hidden = !(s.state === "needs_you" && !reminderSet(s)) && !s.snoozed;
-  setIcon(later, s.snoozed ? "sun" : "moon");
-  later.title = s.snoozed ? "it needs you again  ·  z" : "it waits, but not now  ·  z";
   // On every row, the same four lines: the name, where it stands, the
   // branch and what git counts, and what it is doing. A row not renamed
   // says its repository twice, and a row that is always one shape is read
   // faster than one that saves a word.
-  const fact = (line, cls, icon, text, title) => {
-    const part = put(line, "span", cls);
-    putIcon(part, icon);
-    // The reader's ticket links, from `links.json`: a branch or a worktree
-    // named after its ticket is the most common place for one.
-    linkTickets(put(part, "span", "text", text));
-    part.title = title;
-  };
+  fillRowPlace(where, s, links);
+  fillRowGit(two, s, links);
+  // Only while the session is doing something or waiting on you. A ready
+  // session's reason is the state again ("waiting for input", "stopped"),
+  // and a finished one's is "ended (logout)" under the word "ended".
+  const said = s.state === "done" || isGone(s)
+    ? "" : (s.reason || s.last_event || "");
+  three.children[0].textContent = said;
+  three.hidden = !said;
+  fillKids(kids, s);
+  fillRowActs(one, s);
+}
+
+// One fact on a row's line: an icon, then the text, with the reader's
+// ticket links in it.
+function putFact(line, cls, icon, text, title) {
+  const part = put(line, "span", cls);
+  putIcon(part, icon);
+  // The reader's ticket links, from `links.json`: a branch or a worktree
+  // named after its ticket is the most common place for one.
+  linkTickets(put(part, "span", "text", text));
+  part.title = title;
+}
+
+// The second line: the repository and the worktree.
+function fillRowPlace(where, s, links) {
   if (fresh(where, "text", JSON.stringify([s.repo, s.remote, s.worktree,
                                            s.worktree_path, links]))) {
     where.replaceChildren();
-    if (s.repo) fact(where, "repo", "repo", s.repo, s.remote || "no remote");
-    if (s.worktree) fact(where, "worktree", "dir", s.worktree, s.worktree_path || "");
+    if (s.repo) putFact(where, "repo", "repo", s.repo, s.remote || "no remote");
+    if (s.worktree) putFact(where, "worktree", "dir", s.worktree, s.worktree_path || "");
   }
+}
+
+// The third line: the branch, and what git counts at its right edge.
+function fillRowGit(two, s, links) {
   two.hidden = !s.branch;
   if (fresh(two, "text", JSON.stringify([s.branch, s.ahead, s.behind, s.dirty,
                                          s.touched_files, s.doing, s.conflicts,
                                          links]))) {
     two.replaceChildren();
-    if (s.branch) fact(two, "branch", "branch", s.branch, s.branch);
+    if (s.branch) putFact(two, "branch", "branch", s.branch, s.branch);
     // What git counts, at the right edge, so the counts of every row stand
     // in one column however long each branch is.
     const counts = put(two, "span", "gitstate");
@@ -16784,16 +16800,17 @@ function fillRow(row, s) {
     if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
     else if (s.branch) put(counts, "span", "clean", "✓ clean");
   }
-  // Only while the session is doing something or waiting on you. A ready
-  // session's reason is the state again ("waiting for input", "stopped"),
-  // and a finished one's is "ended (logout)" under the word "ended".
-  const said = s.state === "done" || isGone(s)
-    ? "" : (s.reason || s.last_event || "");
-  three.children[0].textContent = said;
-  three.hidden = !said;
-  fillKids(kids, s);
-  // Beside the name, at the right: "how long has this needed me?" is read
-  // with the name, and a ready row has no fourth line to carry it.
+}
+
+// What the reader can do to a row, which shows on a hover: snooze it,
+// remind me later, mark it unread. Each shows only where it can hold.
+function fillRowActs(one, s) {
+  const later = one.children[2];
+  // Only where a snooze can hold: a session that waits. A row a reminder
+  // brought back is not one, and the daemon would refuse it (#375).
+  later.hidden = !(s.state === "needs_you" && !reminderSet(s)) && !s.snoozed;
+  setIcon(later, s.snoozed ? "sun" : "moon");
+  later.title = s.snoozed ? "it needs you again  ·  z" : "it waits, but not now  ·  z";
   // On a row a reminder brought back too: "later" again, as Slack lets a
   // reminder be put off once more.
   const remind = one.children[3];
@@ -16801,10 +16818,17 @@ function fillRow(row, s) {
   setIcon(remind, reminderSet(s) ? "clockOff" : "clock");
   remind.title = reminderSet(s) ? "cancel the reminder" : "remind me about it later";
   one.children[4].hidden = !!s.unread || needsYou(s) || s.snoozed;
-  // The hover's icons stand in the age's place, on a row that offers any;
-  // a reminder's time stays, because it says when the row comes back.
-  const age = one.children[5];
+  // The hover's icons stand in the age's place, on a row that offers any.
   const offers = [later, remind, one.children[4]].some((act) => !act.hidden);
+  fillRowAge(one.children[5], s, offers);
+}
+
+// The age at the right of the name, or a reminder's time. Beside the name:
+// "how long has this needed me?" is read with the name, and a ready row has
+// no fourth line to carry it. The hover's icons stand in its place on a row
+// that `offers` any; a reminder's time stays, because it says when the row
+// comes back.
+function fillRowAge(age, s, offers) {
   age.classList.toggle("swap", offers && !reminderSet(s));
   age.classList.toggle("when", reminderSet(s));
   if (reminderSet(s)) {
