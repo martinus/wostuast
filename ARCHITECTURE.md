@@ -571,7 +571,7 @@ A model that only grows will one day fill the memory. So the daemon forgets on
 purpose:
 
 - `mark_dead` buries a session whose process is gone.
-- `forget_quiet` drops sessions that were quiet for a week (`SESSION_MAX_AGE`).
+- `forget_quiet` drops sessions that were quiet for a month (`SESSION_MAX_AGE`), but not one that a saved turn or a reminder points at.
 - `forget_gone` closes transcript readers that nobody watched for a minute
   (`READER_IDLE`), unless a dialog is open.
 

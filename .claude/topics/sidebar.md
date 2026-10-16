@@ -67,7 +67,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   back on nothing, not on the wrong block. The entry keeps the first
   `SAVED_PREVIEW` characters, so the list (`GET /api/saved`, asked for when
   it opens; the pushes carry only the count) reads no transcript. Kept for
-  a session gone from the list, without "open". `saved_entry` checks every
+  a session gone from the list, without "open". **A session a saved turn
+  or a reminder points at is not forgotten** (#494, `Store.forget_quiet`),
+  and the history keeps a month, `SESSION_MAX_AGE`, as far as a start folds
+  (`HISTORY_FOLDED`): it kept a week, and the reader's history shrank under
+  saved turns that then opened nothing. After a restart a saved turn older
+  than the fold still has no session.
+  `test_a_session_a_saved_turn_points_at_is_not_forgotten`. `saved_entry` checks every
   entry, from the disk and from a POST alike. **Taking one off needs no
   session** (`POST_VERBS` gives `save` "", and `Serving.save` asks `known`
   only to save): registered "known", "done" on a turn of a forgotten

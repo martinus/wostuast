@@ -604,3 +604,19 @@ def test_search_reads_the_archives_too(ws, store):
     found = ws.search_log("cache from:me", store.sessions)
     assert [one["text"] for one in found][:1] == ["cache, again"]
     assert len(found) == 3
+
+
+def test_a_session_a_saved_turn_points_at_is_not_forgotten(ws, store):
+    """The history kept a week, and the reader's saved turns of an older
+    session said "a session no longer listed" and opened nothing (#494). It
+    keeps a month now, as far as a start folds, and a session a saved turn
+    or a reminder points at is kept while it does."""
+    assert ws.SESSION_MAX_AGE >= ws.HISTORY_FOLDED
+    ws.append_event(event("Stop", sid="kept", ts=1000.0))
+    ws.append_event(event("Stop", sid="reminded", ts=1000.0))
+    ws.append_event(event("Stop", sid="gone", ts=1000.0))
+    store.refresh(now=1001.0, alive=lambda p: True)
+    store.saved = [{"id": "kept", "seq": 1, "ts": 1000.0, "text": "x", "at": 1000.0}]
+    store.reminders = {"reminded": 1000.0 + 10 ** 9}
+    store.refresh(now=1000.0 + ws.SESSION_MAX_AGE + 10, alive=lambda p: True)
+    assert sorted(one["id"] for one in store.rows) == ["kept", "reminded"]

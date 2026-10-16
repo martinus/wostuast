@@ -1109,9 +1109,9 @@ def a_year_of_sessions():
                     prompt="and again", ts=n * DAY + 90)
 
 
-def test_the_first_read_holds_a_week_of_sessions_not_all_of_them(ws):
+def test_the_first_read_holds_the_history_not_all_of_it(ws):
     """The log is never thrown away now, and the first read folds all of it.
-    `visible()` forgets a session a week quiet, but only once the fold is
+    `visible()` forgets a session a month quiet (#494; it was a week), but only once the fold is
     over -- measured on a year-shaped log, 1,873 sessions at about 80 KB each
     sat in memory until then. The fold forgets as it goes, by the time the
     log itself has reached, never the clock: a test's events are from 1970."""
@@ -1120,7 +1120,7 @@ def test_the_first_read_holds_a_week_of_sessions_not_all_of_them(ws):
     for one in a_year_of_sessions():
         store.fold([one])
         most = max(most, len(store.sessions))
-    assert most <= 10, f"{most} sessions held at once"
+    assert most <= ws.SESSION_MAX_AGE / DAY + 3, f"{most} sessions held at once"
     # Forgetting goes by the last event, never the first: a session that
     # started a year ago and is still going keeps where it started.
     assert store.sessions["long"].home == "/w/long"

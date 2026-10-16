@@ -439,7 +439,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `Store.fold` catches per event and logs it.
   `test_one_event_that_cannot_be_folded_costs_only_itself`.
   `test_a_big_log_is_read_a_piece_at_a_time` measures what is held with
-  `tracemalloc`; `test_the_first_read_holds_a_week_of_sessions_not_all_of_them`
+  `tracemalloc`; `test_the_first_read_holds_the_history_not_all_of_it`
   and `test_git_is_asked_about_the_sessions_shown_and_no_others` hold the other
   two.
 - **An archive's name is taken with `os.link`, never `os.replace`.** The next
