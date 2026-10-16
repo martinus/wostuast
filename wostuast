@@ -13388,6 +13388,13 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .turnacts .icon { width: 14px; height: 14px; fill: none; stroke: currentColor;
   stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; }
 .turnacts > .save.on .icon { fill: currentColor; }
+/* A mark that stays -- a saved bookmark, a lit "txt" -- stands over the
+   first line without the hover, and stood on the words of a reply that ran
+   to the edge. Such a turn keeps the row's room on its right, so its text
+   wraps before the row. Only such a turn: every turn keeping it would take
+   back the width the narrow name column gave (issue 520). */
+.turn:has(> .turnacts > :is(.on, [aria-pressed="true"])) > :not(.who):not(.turnacts) {
+  padding-right: 92px; }
 /* What the agent wrote, as it wrote it: to select and copy, Markdown and
    all. Only the face changes (issue 509): an answer's source is no box,
    and a prompt's or a note's keeps the box it had. */
