@@ -638,23 +638,33 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   `test_scrolled_sideways_every_line_keeps_its_colour`,
   `test_a_long_line_wraps_under_its_own_text_in_one_column`,
   `test_the_settings_say_what_is_chosen_and_change_it_in_place`.
-- **The two changed-file counts are about different things, and stay that
-  way.** The sidebar's comes from `git status` in git's default untracked
-  mode, which collapses a wholly-untracked directory into one entry; the
-  Files tab dots each name, from `--untracked-files=all`. So five new files in
-  a new directory read as "1 file" beside five dots. The cheap call is on the
-  tick thread under a two second timeout, and the thorough one is not — that
-  is the reason, and it is worth more than the two numbers agreeing.
-  **But both read through one parser, `git_status`, and only its
-  `untracked` mode differs** (#537): the row parsed lines with no `-z` and
-  counted a rename's two names as one, the tab parsed records, and nothing
-  held them to one meaning. Measured: 50,000 untracked files, 4 ms in
-  "normal", 55 in "all". Make the count the same once git is read off the
-  tick thread (#550). A failed reading is applied by `apply_git_facts`
-  alone, never written over what a session had: `add_git_facts` (for `ls`
-  and `wait`) wrote it, `reload_git` did not.
+- **The row's count is the number of files the Files tab marks** (#550).
+  Both read `git status` through one parser, `git_status`, in one mode,
+  "all": one entry a file. The row read "normal", which folds a wholly
+  untracked folder into one entry, so five new files in a new folder read
+  as "1 file" beside five dots -- because its read was on the tick thread
+  under a two second timeout (measured: 50,000 untracked files, 4 ms in
+  "normal", 55 in "all"). Before #537 the row also parsed lines with no
+  `-z` and counted a rename's two names as one. A failed reading is
+  applied by `apply_git_facts` alone, never written over what a session
+  had: `add_git_facts` (for `ls` and `wait`) wrote it, `reload_git` did not.
   `test_the_row_counts_the_changed_files_the_files_tab_marks`,
   `test_only_one_function_runs_git_status`.
+  - **The tick never waits on git** (`GitReader`, #550). `reload_git` ran
+    `git_facts_many` in the tick, so a slow `git status` held back every
+    push up to its timeout, and a new event on any session reached the
+    page only when git was done. The daemon's `Store` reads behind
+    (`GitReader(behind=True)`), with the Files tab's `LIST_TIMEOUT`, and
+    the next tick takes what came. The cool-down starts at the ask, and a
+    directory whose read still runs (`busy`) is not asked again. A `Store`
+    built anywhere else reads at once, so `ls` and a test of the fold see
+    the facts on the same tick. **So does a daemon ticked by hand**: the
+    `served` fixture and the picture tools call `tick` themselves and run
+    no loop, so they set `daemon.store.git = ws.GitReader()`. Without it,
+    `test_a_worktree_git_has_not_finished_with_says_so` waited for a row
+    that a tick nobody ran would have drawn, and the tour drew rows with
+    no branch.
+    `test_a_slow_git_holds_back_no_push`.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once, `fresh()` decides what changed, both reading the DOM. One key
   over the whole tab re-rendered the file you were reading every two seconds.

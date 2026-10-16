@@ -1142,7 +1142,7 @@ def backport_on_page(repo_page, served, ws, monkeypatch):
     root, _ = repo_page
     daemon, _ = served
     # The fixture's git gives no worktree root; a real one does.
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs, timeout=None: {
         d: ws.GitFacts(repo="repo", branch="fix", root=str(root)) for d in dirs})
     daemon.store.git_read.clear()
     daemon.tick()
@@ -1660,7 +1660,7 @@ def test_a_worktree_git_has_not_finished_with_says_so(ws, repo_page, served,
     daemon, _ = served
     conftest.git_in(root, "bisect", "start")
     monkeypatch.setattr(ws, "git_facts_many",
-                        lambda dirs: {d: ws.git_facts(d) for d in dirs})
+                        lambda dirs, timeout=None: {d: ws.git_facts(d) for d in dirs})
     daemon.store.git_read.clear()
     daemon.tick()
     with opened(repo_page) as page:

@@ -1915,8 +1915,11 @@ class Store:
     """
 
     def __init__(self, follower: EventFollower | None = None,
-                 marks: "Marks | None" = None) -> None:
+                 marks: "Marks | None" = None,
+                 git: "GitReader | None" = None) -> None:
         self.sessions: dict[str, Session] = {}
+        # Behind the tick in the daemon (#550); at once anywhere else.
+        self.git = git if git is not None else GitReader()
         # Passed in by a test that folds events of its own (#546).
         self.follower = follower if follower is not None else EventFollower()
         self.rows: list[dict[str, Any]] = []
@@ -2272,26 +2275,30 @@ class Store:
         shown = {s.cwd for s in sessions if s.cwd}
         never_read = {d for d in shown if d not in self.git_read}
         asked = (self.git_wanted & shown) | never_read
+        busy = self.git.busy()
         ready = {
             directory
             for directory in asked
             if moment - self.git_read.get(directory, 0.0) >= GIT_MIN_INTERVAL
+            and directory not in busy
         }
         # Keep the ones still inside the cool-down. Clearing them all dropped
         # the request instead of deferring it, so a write that landed just
         # after a git run left the row stale for good.
         self.git_wanted = asked - ready
-        wanted = sorted(ready)
-        if not wanted:
+        # The cool-down starts at the ask, so a read still running behind
+        # the tick is not asked for again (#550).
+        self.git_read.update(dict.fromkeys(ready, moment))
+        self.git.ask(sorted(ready))
+        facts = self.git.take()
+        if not facts:
             return
-        facts = git_facts_many(wanted)
         # The cool-down applies either way, so a worktree whose `status`
         # always passes its timeout is not asked every tick. But a failure is
         # neither written over what we knew nor left standing as the answer:
         # it goes back on the list, and is asked again when the cool-down is
         # up. It used to be recorded as read and assigned over the good facts,
         # so an idle session kept "no branch, clean" until a tool call.
-        self.git_read.update(dict.fromkeys(facts, moment))
         self.git_wanted |= {
             directory for directory, one in facts.items() if one.failed}
         for directory, one in facts.items():
@@ -4608,7 +4615,8 @@ def worktree_doing(git_dir: str) -> tuple[str, str]:
     return "", ""
 
 
-def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
+def git_facts(cwd: str, runner: Callable[..., str | None] = run,
+              timeout: float = RUN_TIMEOUT) -> GitFacts:
     """Read the repository name, branch, ahead, behind and dirty state.
 
     Two git runs, not four: one gives both directories, the other gives the
@@ -4652,8 +4660,9 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         git_dir = common if len(found) > 1 else os.path.join(common, ".git")
         facts.remote = remote_url(git_dir)
 
-    # The cheap mode, on purpose: see `git_status`.
-    status = git_status(cwd, runner, untracked="normal")
+    # One entry a file, as the Files tab reads it (#550): the row's count
+    # is the number of files the tab marks. See `git_status`.
+    status = git_status(cwd, runner, timeout)
     if not found:
         # Neither `rev-parse` answered. Outside a repository that is the
         # answer; on a stalled machine it is not one, and taken for one it
@@ -4663,8 +4672,8 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
         return facts
     if status is None:
         # `--show-toplevel` answered, so this is a repository and git was
-        # asked about it and did not answer. The call has a two second
-        # timeout, and `status` on a very large worktree can pass it.
+        # asked about it and did not answer. `status` on a very large
+        # worktree can pass even the timeout the reader behind gives it.
         facts.failed = True
         return facts
     facts.branch, facts.ahead, facts.behind = parse_status_branch(status.head)
@@ -4676,7 +4685,8 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     return facts
 
 
-def git_facts_many(directories: Sequence[str]) -> dict[str, GitFacts]:
+def git_facts_many(directories: Sequence[str],
+                   timeout: float = RUN_TIMEOUT) -> dict[str, GitFacts]:
     """Read several directories at once. git waits on disk, so ten worktrees
     cost about as long as one. It reads and returns; it assigns nothing, so
     only the thread that called it ever writes to a session.
@@ -4693,17 +4703,92 @@ def git_facts_many(directories: Sequence[str]) -> dict[str, GitFacts]:
     if not wanted:
         return {}
     with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
-        return dict(zip(wanted, pool.map(git_facts_or_failed, wanted)))
+        return dict(zip(wanted, pool.map(
+            lambda directory: git_facts_or_failed(directory, timeout), wanted)))
 
 
-def git_facts_or_failed(directory: str) -> GitFacts:
+def git_facts_or_failed(directory: str, timeout: float = RUN_TIMEOUT) -> GitFacts:
     """`git_facts`, with anything it raises turned into a failure that
     says what it raised. The caller logs it: the `Store` once a directory,
     because a failure is asked again after every cool-down."""
     try:
-        return git_facts(directory)
+        return git_facts(directory, timeout=timeout)
     except Exception as error:
         return GitFacts(failed=True, raised=repr(error))
+
+
+class GitReader:
+    """What git said about each directory, read behind the tick (#550).
+
+    `reload_git` ran `git_facts_many` in the tick itself, so a slow `git
+    status` held back every push up to its timeout: a new event on any
+    session reached the page only when git was done. Built `behind`, as
+    the daemon builds it, a reader asks in a thread of its own, and what
+    git says waits in `came` until the next tick takes it. Built without,
+    as `ls` and a test of the `Store` build it, it asks at once, and the
+    tick that asked takes the answer.
+
+    Only the reading thread and the tick touch `came` and `asking`, each
+    under `lock`; the facts reach a session only in the tick, through
+    `apply_git_facts`, so one thread still writes the `Store`.
+    """
+
+    def __init__(self, behind: bool = False,
+                 read: Callable[..., dict[str, GitFacts]] | None = None) -> None:
+        import threading
+
+        self.behind = behind
+        # None is `git_facts_many`, looked up at each read, so a test that
+        # puts a stand-in there reaches a reader built before it.
+        self.read = read
+        self.lock = threading.Lock()
+        self.came: dict[str, GitFacts] = {}
+        #: The directories asked about and not answered yet: one is not
+        #: asked again while its last read still runs.
+        self.asking: set[str] = set()
+
+    def busy(self) -> set[str]:
+        """The directories whose read still runs."""
+        with self.lock:
+            return set(self.asking)
+
+    def ask(self, directories: Sequence[str]) -> None:
+        """Read these directories: at once, or behind. The caller leaves
+        out what is `busy`."""
+        wanted = sorted(set(directories))
+        if not wanted:
+            return
+        if not self.behind:
+            facts = (self.read or git_facts_many)(wanted)
+            with self.lock:
+                self.came.update(facts)
+            return
+        import threading
+
+        with self.lock:
+            self.asking.update(wanted)
+        threading.Thread(target=self.read_behind, args=(wanted,),
+                         name="git facts", daemon=True).start()
+
+    def read_behind(self, wanted: list[str]) -> None:
+        # Off the tick, so the timeout is the Files tab's and not the
+        # tick's two seconds: the row and the tab read the same `git
+        # status` the same way, and a large worktree answers both.
+        # `git_facts_many` never raises; `finally` is for a reader that
+        # does, which would otherwise leave its directories asked for ever.
+        facts: dict[str, GitFacts] = {}
+        try:
+            facts = (self.read or git_facts_many)(wanted, timeout=LIST_TIMEOUT)
+        finally:
+            with self.lock:
+                self.came.update(facts)
+                self.asking.difference_update(wanted)
+
+    def take(self) -> dict[str, GitFacts]:
+        """What git has said since the last take."""
+        with self.lock:
+            came, self.came = self.came, {}
+        return came
 
 
 def add_git_facts(sessions: Sequence[Session]) -> None:
@@ -5180,14 +5265,13 @@ def git_status(cwd: str, runner: Callable[..., str | None] = run,
                untracked: str = "all") -> GitStatus | None:
     """The one reader of `git status` (#537). None when git did not answer.
 
-    The row and the Files tab parsed it each in a way of their own. Only the
-    untracked mode differs now, and on purpose: the row (`git_facts`) asks
-    for "normal", which folds a wholly untracked folder into one entry, and
-    the Files tab for "all", one entry a file. The row's read is on the tick
-    thread under a two second timeout. Measured on 50,000 untracked files,
-    "normal" took 4 ms and "all" 55; a tree of a million, an un-ignored
-    virtualenv, would come near the timeout. The count is to be the same
-    once git is read off the tick thread (#550).
+    The row and the Files tab parsed it each in a way of their own. Both
+    read "all" now, one entry a file (#550). The row read "normal", which
+    folds a wholly untracked folder into one entry, only because its read
+    was on the tick thread under a two second timeout: measured on 50,000
+    untracked files, "normal" took 4 ms and "all" 55, and a tree of a
+    million, an un-ignored virtualenv, would come near it. `GitReader`
+    reads behind the tick, with the Files tab's timeout.
 
     `-z` gives one NUL-terminated record per file: two status letters, a
     space, then the name. A rename or a copy is followed by one more record
@@ -8936,7 +9020,7 @@ class Daemon:
 
         import secrets
 
-        self.store = Store()
+        self.store = Store(git=GitReader(behind=True))
         self.hub = Hub()
         self.files = Files()
         self.commands = Commands()

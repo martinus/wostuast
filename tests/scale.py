@@ -72,12 +72,15 @@ def measure(ws, home: Path, sessions: int, turns: int, days: float,
 
     isolate(home)
     ws.pid_alive = lambda pid: True
-    ws.git_facts_many = lambda dirs: {d: ws.GitFacts(repo="r", branch="b", root=d)
+    ws.git_facts_many = lambda dirs, timeout=None: {d: ws.GitFacts(repo="r", branch="b", root=d)
                                       for d in dirs}
     events = write_log(ws, sessions, turns, days)
     out: dict = {"sessions": sessions, "events": events,
                  "log_mb": round(ws.events_path().stat().st_size / 1e6, 1)}
     daemon = ws.Daemon()
+    # Ticked by hand, so git is read at once: behind the tick (#550) its
+    # facts would wait for a tick that nothing here runs.
+    daemon.store.git = ws.GitReader()
     # As `serve` starts: the catch-up fold, then the first tick builds the
     # rows and pushes them. Only the tick refreshes, as in the daemon: a
     # refresh outside it left `told` behind, and the next push carried

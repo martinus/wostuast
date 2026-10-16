@@ -455,7 +455,9 @@ flowchart LR
 2. **Settle**: every few seconds, check that each agent's pid is still alive,
    and read the status files and the names.
 3. **Reload git** for the sessions on screen, but each directory at most once
-   in a while (`GIT_MIN_INTERVAL`).
+   in a while (`GIT_MIN_INTERVAL`). In the daemon, `GitReader` asks git in a
+   thread of its own, and the next tick takes what it said: a slow
+   `git status` never holds back a push.
 4. **Rebuild `rows`**, and say whether anything changed. Only a change is
    pushed to the page.
 
@@ -613,7 +615,7 @@ daemon asks git three kinds of questions.
 
 | Question | Function | Used by |
 | --- | --- | --- |
-| Which branch? Ahead or behind? How many changes? | `git_facts_many` | the sidebar row |
+| Which branch? Ahead or behind? How many changes? | `git_facts_many`, behind the tick through `GitReader` | the sidebar row |
 | Which files are here? | `worktree_files` | the Files tab |
 | What changed, since where? | `worktree_diff`, `pick_base` | the Review tab |
 

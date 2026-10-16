@@ -314,7 +314,7 @@ def records(*made):
 @pytest.fixture
 def stub_git(ws, monkeypatch):
     """Answer for git and for liveness, so a test stays about its own subject."""
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs, timeout=None: {
         d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
     monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
 
@@ -325,6 +325,9 @@ def served(ws, stub_git):
     import threading
 
     daemon = ws.Daemon()
+    # Ticked by hand, so git is read at once: behind the tick (#550) its
+    # facts would wait for a tick that nothing here runs.
+    daemon.store.git = ws.GitReader()
     server = ws.make_server(daemon, 0)
     port = server.server_address[1]
     # Not the default half second: `shutdown` waits for the loop to look

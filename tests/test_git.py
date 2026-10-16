@@ -29,10 +29,9 @@ def test_a_dirty_repository_counts_its_files(ws, repo):
 
 def test_the_row_counts_the_changed_files_the_files_tab_marks(ws, repo):
     """The row's count and the Files tab's marks come from one reader of
-    `git status` (#537), so they agree: a change, a rename (one change to
-    both, not two), a new file. They differ in one named way only: the row
-    reads git's cheap untracked mode, which folds a wholly untracked
-    folder into one entry (`git_status` says why)."""
+    `git status` (#537), in one mode (#550), so they agree: a change, a
+    rename (one change to both, not two), a new file, and each file of a
+    folder git does not track, which the row once counted as one."""
     (repo / "README.md").write_text("changed\n")
     git(repo, "mv", "README.md", "READ.md")
     (repo / "new.txt").write_text("new\n")
@@ -44,7 +43,49 @@ def test_the_row_counts_the_changed_files_the_files_tab_marks(ws, repo):
     for name in "xyz":
         (repo / "fresh" / f"{name}.txt").write_text(name)
     assert len(marked()) == 5
-    assert ws.git_facts(str(repo)).touched_files == 3
+    assert ws.git_facts(str(repo)).touched_files == 5
+
+
+def test_a_slow_git_holds_back_no_push(ws):
+    """The daemon reads git behind the tick (#550): while one `git status`
+    hangs, a new event still reaches the rows on the next tick, and the
+    facts land on the tick after they come."""
+    import threading
+    import time
+    import types
+
+    from conftest import event
+
+    gate = threading.Event()
+    asked: list[list[str]] = []
+
+    def slow(directories, timeout=None):
+        asked.append(list(directories))
+        gate.wait(10)
+        return {one: ws.GitFacts(branch="main") for one in directories}
+
+    assert ws.Daemon().store.git.behind, "the daemon's tick reads git itself"
+    quiet = types.SimpleNamespace(new_events=lambda: iter(()))
+    store = ws.Store(follower=quiet, git=ws.GitReader(behind=True, read=slow))
+    store.fold([event("SessionStart", sid="a", cwd="/tmp/w")])
+    started = time.monotonic()
+    store.refresh(now=1001.0, alive=lambda pid: True)
+    # A write puts the directory on the list again (`touched_the_tree`).
+    store.fold([event("UserPromptSubmit", sid="a", cwd="/tmp/w", prompt="go"),
+                event("PostToolUse", sid="a", cwd="/tmp/w", tool_name="Write")])
+    store.refresh(now=1001.0, alive=lambda pid: True)
+    assert time.monotonic() - started < 2, "the tick waited on git"
+    assert store.rows[0]["state"] == "working"
+    assert store.rows[0]["branch"] == ""
+    # Past the cool-down, and git has still not answered.
+    store.refresh(now=1001.0 + ws.GIT_MIN_INTERVAL, alive=lambda pid: True)
+    assert asked == [["/tmp/w"]], "a read still running was asked again"
+    gate.set()
+    deadline = time.monotonic() + 10
+    while store.git.busy() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    store.refresh(now=1001.0, alive=lambda pid: True)
+    assert store.rows[0]["branch"] == "main"
 
 
 def test_only_one_function_runs_git_status(ws):
@@ -363,13 +404,13 @@ def test_a_failed_read_is_asked_again_rather_than_kept(ws, repo, monkeypatch):
     store.sessions["s1"] = session
 
     monkeypatch.setattr(ws, "git_facts_many",
-                        lambda dirs: {d: ws.GitFacts(failed=True) for d in dirs})
+                        lambda dirs, timeout=None: {d: ws.GitFacts(failed=True) for d in dirs})
     store.reload_git([session], 1000.0)
     assert session.git.branch == "main", "the failure was written over it"
     assert str(repo) in store.git_wanted, "and it will never be asked again"
 
     monkeypatch.setattr(ws, "git_facts_many",
-                        lambda dirs: {d: ws.GitFacts(repo="myrepo", branch="side")
+                        lambda dirs, timeout=None: {d: ws.GitFacts(repo="myrepo", branch="side")
                                       for d in dirs})
     store.reload_git([session], 1000.0 + ws.GIT_MIN_INTERVAL)
     assert session.git.branch == "side"
@@ -1122,10 +1163,10 @@ def test_one_directory_that_raises_stops_no_other(ws, repo, tmp_path, monkeypatc
     bad.mkdir()
     real = ws.git_facts
 
-    def facts(cwd, runner=ws.run):
+    def facts(cwd, runner=ws.run, timeout=ws.RUN_TIMEOUT):
         if cwd == str(bad):
             raise AttributeError("'NoneType' object has no attribute 'append'")
-        return real(cwd, runner)
+        return real(cwd, runner, timeout)
 
     logged = []
     monkeypatch.setattr(ws, "git_facts", facts)
