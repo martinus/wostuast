@@ -101,6 +101,7 @@ bullets beside it are the same part's other scars.
 | `remind_at`, `Store.remind`, `reminders_path`, `REMIND_MOST`, `reminderDue`, `reminderSet`, `armReminders`, `endReminder`, `serverNow`, `openReminders`, `REMIND_IN`, `remindMoment`, `customReminder`, `REMIND_DAYS`, `dayName`, `readTime` | topics/sidebar: a reminder is the snooze's twin with a clock |
 | `Session.title`, `first_prompt`, `Store.page_name`, `Store.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/sidebar, the name bullet; topics/daemon-and-page for `name`; topics/safety for the typing |
 | `fillKids`, `kidsOf`, `putKid`, `topSessions`, `childIds`, `Subagent`, `note_subagent`, `end_subagents`, `SUBAGENTS_HELD`, `Store.parent_of`, `claude_from`, `started_by` | topics/sidebar: what an agent starts is a line under its row; topics/state for the hook's `started_by` |
+| `onSessions`, `askUnread`, a draw that fetches, rings or writes, the draw guard in tests/browser.py | **Principles**, 3; topics/sidebar, "The counts are about every session" |
 | `newRow`, `fillRow`, `setIcon`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `dragHeight`, `dragEdge`, `putFold`, `paintFold`, `unfold`, `FOLDS`, `markRow`, `tileTitle`, `tileCard`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `iconPicture`, `robotPicture`, `drawLogo`, `ALERT_ICON`, `tellAbout`, `waitsFor`, `shown_prompt`, `putSettings`, `paintSettings`, `putQuick`, `QUICK`, `settingsNow`, `keepWidth`, `keepWrap`, `measureScrollbar`, `drawBell`, `putChoice` | topics/sidebar |
 | `.turn`, `.bubble`, `.turnacts`, `putCopy`, `putTurnRow`, `mapDays`, `GLIMPSE`, `putToFoot`, `putCodeCopies`, `foldedHead`, `putFoldBar`, `foldRun`, `runOf`, `fillCallSum`, `RUN_FOLDS` | topics/daemon-and-page: the transcript's shape; a run of calls is one line |
 | `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `plugin_dirs`, `enabled_plugins`, `commandKey`, `projectSessions`, `projectName`, `useTarget`, `toggleCommands`, `project_dirs`, `claude_dir`, `slashSpot`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
@@ -226,7 +227,14 @@ request, and name the principle.
    `test_the_row_and_ls_json_say_the_same_of_a_session`,
    `test_only_the_wire_section_turns_a_dataclass_into_json`.
 3. **A draw only reads state.** Only the code that loads data or handles
-   a click changes `state`. Its test comes with #542.
+   a click changes `state`. What a change to the sessions does besides
+   drawing is `onSessions`. Every browser test that opens a page with
+   `opened` checks it: `guard_draws` in `tests/browser.py` wraps `draw`,
+   `drawSessions`, `drawHeader` and `drawFeed`, writes down each fetch,
+   timer, alert, storage write and change to `state` they make, and fails
+   on one not in `DRAW_EFFECTS_ALREADY`, a ratchet with its reasons. Every
+   field of `state` is declared in its literal:
+   `test_every_field_of_the_pages_state_is_declared`.
 4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
    session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`). A test walks
    the table, so a new entry is tested without anyone writing its test.

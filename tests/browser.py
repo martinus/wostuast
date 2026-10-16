@@ -518,6 +518,113 @@ def open_code(page, stub, name="code.py"):
 # --- the review: milestone 7 stage 1 -----------------------------------------
 
 
+
+#: The page's draws, wrapped once it is open (#542, CLAUDE.md,
+#: **Principles**, 3): while one runs, every fetch, timer, notification,
+#: storage write and change to `state` it makes is written down. Only the
+#: entry points are wrapped -- `draw`, `drawSessions`, `drawHeader`,
+#: `drawFeed` -- and all they call while they run counts as theirs, so a
+#: helper's name does not hide it. `state` is compared two levels down,
+#: before and after the outermost draw.
+DRAW_GUARD = r"""(() => {
+  if (window.__drawSeen) return;
+  const seen = window.__drawSeen = new Set();
+  let depth = 0, top = "", before = null;
+  const snap = () => {
+    const out = new Map();
+    for (const [k, v] of Object.entries(state)) {
+      out.set(k, v);
+      if (v && typeof v === "object" && v.constructor === Object) {
+        for (const [j, w] of Object.entries(v)) out.set(k + "." + j, w);
+      }
+    }
+    return out;
+  };
+  const note = (what) => { if (depth) seen.add(top + ": " + what); };
+  const wrap = (owner, name, what) => {
+    const real = owner[name];
+    owner[name] = function (...args) { note(what(args)); return real.apply(this, args); };
+  };
+  wrap(window, "fetch", (a) => "fetch " + String(a[0]).split("?")[0].replace(/session\/[^/]+/, "session/*"));
+  wrap(window, "setTimeout", () => "setTimeout");
+  wrap(window, "setInterval", () => "setInterval");
+  wrap(Storage.prototype, "setItem", () => "storage");
+  wrap(Storage.prototype, "removeItem", () => "storage");
+  // A test that stubs `Notification` replaces the wrapper below, so the
+  // page's one alert, `tellAbout`, is watched as well.
+  wrap(window, "tellAbout", () => "alert");
+  if (window.Notification) {
+    const Real = window.Notification;
+    window.Notification = function (...args) { note("notification"); return new Real(...args); };
+    Object.assign(window.Notification, { permission: Real.permission,
+                                         requestPermission: Real.requestPermission });
+  }
+  for (const name of ["draw", "drawSessions", "drawHeader", "drawFeed"]) {
+    const real = window[name];
+    window[name] = function (...args) {
+      if (!depth) { top = name; before = snap(); }
+      depth += 1;
+      try { return real.apply(this, args); }
+      finally {
+        depth -= 1;
+        if (!depth) {
+          const after = snap();
+          for (const key of new Set([...before.keys(), ...after.keys()])) {
+            if (before.get(key) !== after.get(key)) seen.add(name + ": state." + key);
+          }
+        }
+      }
+    };
+  }
+})()"""
+
+
+#: What a draw may still do besides drawing, each with why (#542). May
+#: only get shorter (CLAUDE.md, **Principles**, the ratchet): an entry is
+#: taken off when the code it names moves out of the draw.
+DRAW_EFFECTS_ALREADY = {
+    # The transcript's own nodes, kept so a push can patch them in place.
+    "draw: state.turns.heads", "draw: state.turns.nodes",
+    # A one-shot mark of where to land, used up by the draw that lands there.
+    "draw: state.turns.goTo", "draw: state.turns.goToTs",
+    "draw: state.turns.goToNear", "draw: state.files.goTo",
+    "draw: state.diffs.goTo", "draw: state.turns.newLanded",
+    # The reader's place, read off the page before the list is built again.
+    "draw: state.files.down",
+    # Timers that touch only the page: a highlight that fades, a diff
+    # painted in slices.
+    "draw: setTimeout",
+    # A part drawn asks for text it needs: the files the review's comments
+    # stand in, more of a file between its changes. Into `loadDiff` with
+    # the split of `drawDiff` (#548).
+    "draw: fetch /api/session/*/file", "draw: fetch /api/session/*/whole",
+    # The question's picks start again when a new question is drawn.
+    "drawHeader: state.picked", "drawHeader: state.picked.at",
+    "drawHeader: state.picked.id",
+}
+
+
+def guard_draws(page):
+    """Wrap the page's draws to write down what they do besides drawing."""
+    page.evaluate(DRAW_GUARD)
+
+
+def check_draws(page):
+    """Fail when a draw did more than draw, past `DRAW_EFFECTS_ALREADY`.
+    `opened` asks it of every page; a helper that builds its own context,
+    such as the alert tests' `alerts_page`, asks it too."""
+    did = draw_effects(page) - DRAW_EFFECTS_ALREADY
+    assert not did, f"a draw did more than draw (#542): {sorted(did)}"
+
+
+def draw_effects(page):
+    """What the page's draws did besides drawing, since `guard_draws`."""
+    try:
+        return set(page.evaluate("[...(window.__drawSeen || [])]"))
+    except Exception:           # the page went away; nothing to read
+        return set()
+
+
 @contextmanager
 def opened(where, scheme="dark", with_marked=True, wait="transcript", *,
            tab=None):
@@ -533,6 +640,7 @@ def opened(where, scheme="dark", with_marked=True, wait="transcript", *,
     a test that needs the context before the page uses `own_context` and
     `load`."""
     browser, page = open_page(where, scheme, with_marked, wait)
+    guard_draws(page)
     # A session is frozen on the page, and changed only by `patchSession`
     # (#435): a write in place throws in the strict script. Any test that
     # reaches one fails here, whatever it was about -- four such writes
@@ -548,6 +656,7 @@ def opened(where, scheme="dark", with_marked=True, wait="transcript", *,
             raise ValueError(f"opened() knows no tab {tab!r}")
         yield page
         assert not frozen, f"a session was written in place: {frozen}"
+        check_draws(page)
     finally:
         browser.close()
 

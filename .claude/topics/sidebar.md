@@ -207,7 +207,8 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   the row carries it as `remind_at`. **"Due" is never a field**: a row must
   not change by itself (`row`'s rule), so `reminderDue` and `reminderSet`
   compare it with `serverNow`, and `armReminders` wakes the page at the
-  next one and draws again, which rings it through `notifyAbout`.
+  next one, which rings it through `onSessions` (`notifyAbout`) and draws
+  again.
   - **`needsYou` asks it**: a reminder that has come counts whatever the
     session does; one still to come puts a waiting session aside, with the
     snooze's colours (`.snoozed`). One that has come wears the amber
@@ -403,6 +404,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
 - **The counts are about every session.** `drawCounts` runs *before* the guard
   that asks whether the shown rows changed — behind it, a session the filter
   hides could go amber and reach the title, icon and notification: none of them.
+  **The alerts are not a draw's at all** (#542): `onSessions` rings them,
+  where `state.sessions` is written -- the push, `patchSession`, the
+  reminder timer -- with the review prune, the reminder timer and the
+  unread view's `askLast`. Inside `drawSessions`, one draw of the sidebar
+  -- a filter typed, a row chosen -- could ring, arm, write and fetch.
   **They are not on the page itself**: a strip over it said "1 ready" and
   "3 sessions" beside groups that already said so, and the reader asked for
   the room. The browser tab's title and icon, and the alerts, are what count.

@@ -402,7 +402,7 @@ def test_a_review_for_a_session_that_is_gone_is_swept_up(repo_page):
           localStorage.setItem("wostuast-review-someone-else", JSON.stringify(
             {overall: "", comments: [{anchor: "a\\nnew\\n1", note: "theirs"}]}));
           state.pruned = false;
-          drawSessions();
+          onSessions();          // where the sessions are written, not a draw (#542)
         }""")
         kept = page.evaluate(
             "Object.keys(localStorage)"
