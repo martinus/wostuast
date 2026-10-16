@@ -5339,12 +5339,24 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     # inside, and one of them is where the agent's own work is kept.
     skipped: list[str] = []
     walked: set[str] = set()
+    loose: list[str] = []
     for name in parts[2] or []:
         if name.endswith("/"):
             found, left = walk_ignored(tree.root, name, IGNORED_MAX)
             names.update(found)
             walked.update(found)
             skipped.extend(left)
+        else:
+            loose.append(name)
+    # And an ignored file git names by itself (#506). A folder that ignores
+    # itself with a `.gitignore` of its own -- `*`, then `!.gitignore` -- is
+    # not one ignored folder to git, because that `.gitignore` is not
+    # ignored: git names every file in it, the walk never sees them, and
+    # only the `.gitignore` was marked, as new. The first `IGNORED_MAX` of
+    # these, in git's order, which is the path's: a build's objects beside
+    # their sources can be tens of thousands, and their times are not worth
+    # a stat each every few seconds.
+    walked.update(loose[:IGNORED_MAX])
     tree.skipped = sorted(skipped)
     touched = touched or set()
     for name in in_order(names):

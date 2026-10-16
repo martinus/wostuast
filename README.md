@@ -280,7 +280,7 @@ top of a column folds it to a thin strip, and the same button brings it
 back. The session list folds on its own. Folded, it shows a narrow tab
 for each session, as tall as a row, with the name turned on its side and in
 the colour of its state. Click a tab to open that session, and point at it
-to see its whole name. The list beside a tab (the map,
+to see its whole row, opened out in its place. The list beside a tab (the map,
 the files, the changed files) is one column for all three tabs, so it folds
 on all three. The browser remembers what you folded. Press <kbd>f</kbd> or
 <kbd>/</kbd> to bring back the column you type into.
@@ -357,6 +357,21 @@ ignored directory that an agent generated files into is in the tree too. A
 folder with thousands of files in it is one row that says it is not listed.
 A Markdown file is drawn as Markdown. The **txt** button at the right of its
 path shows its lines, so you can comment on one; it is lit while it does.
+A file that is not text, and not a picture, shows as hex: its first 64 KB,
+as `xxd` shows them.
+
+A **changed** file has a dot after its name and is bold, and so is each
+folder that holds one. Changed means one of two things:
+
+- git sees it as changed: modified, added, or new and not ignored;
+- git ignores it, and it was written after the session began. This is how
+  the files an agent writes into an ignored folder such as `.oa-implement`
+  count, even when that folder ignores itself with a `.gitignore` of its
+  own.
+
+The funnel button beside **go to file** shows only the changed files and
+the folders that hold them, and the line under it says how many of how
+many.
 
 #### Review
 
@@ -456,10 +471,10 @@ hidden, because an alert can show on a locked screen.
 The **settings** button (the sliders, at the end of the tab row) holds all
 the settings, in four groups: page, code, review and links.
 
-Four of them are also small buttons beside the code they change. The
+Five of them are also small buttons beside the code they change. The
 Review tab has two columns, hide whitespace and narrow code at the right end
-of its bar. The Files tab has narrow code and wrap long lines at the right
-end of the file's line. A button is lit while its setting is on, and one
+of its bar. The Files tab has the whitespace marks, narrow code and wrap long
+lines at the right end of the file's line. A button is lit while its setting is on, and one
 click switches it. A click there and a click in the menu change the same
 setting.
 
