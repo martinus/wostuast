@@ -50,8 +50,9 @@ def test_a_generated_directory_is_in_the_tree_and_its_build_root_is_not(
         (repo / ".oa-implement" / "_build_root_c2" / f"o{index}.o").write_text("x")
     with opened(path) as page:
         show_tab(page, "files")
-        # Open by itself: the plan was written since the session began, so
-        # it is a change, and a folder holding one opens (#492).
+        # The plan was written since the session began, so it is a change;
+        # its folder says so and stays shut (#517), and a click opens it.
+        page.click(".filelist button.dir:has-text('.oa-implement')")
         page.wait_for_selector(".filelist button:has-text('_build_root_c2')")
         # The folder says why it is empty, where it stands.
         assert page.locator(
@@ -87,7 +88,8 @@ def test_a_build_root_that_appears_later_turns_up_on_its_own(ws, repo_page,
     (repo / ".oa-implement" / "PLAN.md").write_text("# the plan\n")
     with opened(path) as page:
         show_tab(page, "files")
-        # Open by itself, as above.
+        # Shut, with its count (#517): opened by hand.
+        page.click(".filelist button.dir:has-text('.oa-implement')")
         page.wait_for_selector(".filelist button:has-text('PLAN.md')")
         held = page.evaluate("state.files.tag")
 
@@ -552,29 +554,40 @@ def test_the_list_is_a_tree_that_opens_and_closes(big_page):
         assert page.locator(".filelist button.dir.open").count() == 0
 
 
-def test_a_directory_holding_a_change_opens_itself(repo_page):
-    """A closed tree cannot say what the agent just did, and that is the
-    question this tool exists to answer."""
+def test_a_directory_holding_a_change_stays_shut_and_counts_them(repo_page):
+    """A folder holding a change opened itself, so that the tree said what
+    the agent just did; where the agent touched many folders, the whole tree
+    stood open (#517). It stays shut and says how many changed files are
+    under it, counting a folder inside it too. The funnel asks for the
+    changes alone, and still opens them."""
     root, _ = repo_page
     (root / "deep").mkdir()
     (root / "deep" / "quiet.txt").write_text("nothing\n")
     git = conftest.git_in
     git(root, "add", "deep"), git(root, "commit", "-qm", "deep")
-    (root / "src").mkdir()
+    (root / "src" / "inner").mkdir(parents=True)
     (root / "src" / "touched.txt").write_text("the agent wrote this\n")
+    (root / "src" / "inner" / "more.txt").write_text("and this\n")
 
     with opened(repo_page) as page:
         show_tab(page, "files")
-        page.wait_for_selector(".filelist button.dir.open")
-        open_dirs = page.eval_on_selector_all(
-            ".filelist button.dir.open", "els => els.map(e => e.title)")
-        assert open_dirs == ["src"], open_dirs
-        # and the file inside it is on screen, marked
+        src = page.locator(".filelist button.dir:has-text('src')")
+        src.locator(".nchanged").wait_for()
+        assert src.locator(".nchanged").inner_text() == "2"
+        assert page.locator(".filelist button.dir.open").count() == 0
+        assert page.locator(".filelist button:has-text('touched.txt')").count() == 0
+        # The folder that holds nothing new has no count.
+        assert page.locator(
+            ".filelist button.dir:has-text('deep') .nchanged").count() == 0
+        # A file keeps its dot; a folder has its count instead.
+        dots = page.evaluate("""() => [...document.querySelectorAll(
+            '.filelist button.touched')].map((one) => [one.classList.contains('dir'),
+              getComputedStyle(one.querySelector('.name'), '::after').content])""")
+        assert all(content == "none" for is_dir, content in dots if is_dir), dots
+        page.click(".onlychanged")
+        page.wait_for_selector(".filelist button:has-text('more.txt')")
         assert page.locator(
             ".filelist button.touched:has-text('touched.txt')").count() == 1
-        # the directory that holds nothing new stays shut, but says so
-        shut = page.locator(".filelist button.dir:has-text('deep')")
-        assert "open" not in (shut.get_attribute("class") or "")
 
 
 def test_a_closed_directory_still_says_a_change_is_inside(repo_page):
@@ -583,29 +596,30 @@ def test_a_closed_directory_still_says_a_change_is_inside(repo_page):
     (root / "src" / "touched.txt").write_text("the agent wrote this\n")
     with opened(repo_page) as page:
         show_tab(page, "files")
-        page.wait_for_selector(".filelist button.dir.open")
-        page.click(".filelist button.dir.open")          # close it by hand
-        page.wait_for_timeout(250)
         shut = page.locator(".filelist button.dir:has-text('src')")
+        shut.locator(".nchanged").wait_for()
         assert "touched" in (shut.get_attribute("class") or "")
         assert "open" not in (shut.get_attribute("class") or "")
 
 
-def test_closing_a_directory_by_hand_beats_opening_it_for_you(repo_page):
-    """The tree never fights the hand on it."""
+def test_a_directory_stays_as_the_hand_left_it(repo_page):
+    """The tree never fights the hand on it: a folder the reader opened
+    stays open when a change lands in it, and its count moves."""
     root, _ = repo_page
     (root / "src").mkdir()
     (root / "src" / "touched.txt").write_text("one\n")
     with opened(repo_page) as page:
         show_tab(page, "files")
+        page.click(".filelist button.dir:has-text('src')")
         page.wait_for_selector(".filelist button.dir.open")
-        page.click(".filelist button.dir.open")
-        page.wait_for_timeout(250)
         # another change lands in the same directory
         (root / "src" / "second.txt").write_text("two\n")
-        page.wait_for_timeout(3000)       # two polls
-        assert page.locator(".filelist button.dir.open").count() == 0, \
-            "it re-opened a directory the reader had closed"
+        page.wait_for_function(
+            """() => document.querySelector(
+                 '.filelist button.dir .nchanged')?.textContent === '2'""",
+            timeout=15000)
+        assert page.locator(".filelist button.dir.open").count() == 1, \
+            "it shut a directory the reader had opened"
 
 
 def test_typing_leaves_the_tree_exactly_where_it_was(big_page):

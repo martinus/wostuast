@@ -364,8 +364,10 @@ path shows its lines, so you can comment on one; it is lit while it does.
 A file that is not text, and not a picture, shows as hex: its first 64 KB,
 as `xxd` shows them.
 
-A **changed** file has a dot after its name and is bold, and so is each
-folder that holds one. Changed means one of two things:
+A **changed** file has a dot after its name and is bold. A folder that
+holds changed files is bold too, and says how many are under it. It does not
+open by itself; click it, or press the funnel to see only the changes, with
+their folders open. Changed means one of two things:
 
 - git sees it as changed: modified, added, or new and not ignored;
 - git ignores it, and it was written after the first session in this
