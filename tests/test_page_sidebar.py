@@ -2563,3 +2563,65 @@ def test_every_view_opens_draws_and_gives_the_session_back(page_at):
             page.wait_for_function(
                 "id => !state.feed && state.chosen === id"
                 " && !document.body.classList.contains('infeed')", arg=chosen)
+
+
+# --- b, when it cannot keep or find what it needs (#600) --------------------------
+
+
+def test_a_tab_that_keeps_nothing_still_goes_back(pair_at):
+    """A tab whose storage throws -- a privacy mode, a policy -- and whose
+    `history` refuses to rewrite the address: the page still starts, still
+    chooses, and `b` still goes back until a reload. Each refusal is caught
+    where it is met, and no test had made one (#600)."""
+    _, path = pair_at
+    with own_context() as context:
+        context.add_init_script("""
+          Object.defineProperty(window, 'sessionStorage', {
+            get() { throw new DOMException('denied', 'SecurityError'); } });
+          history.replaceState = () => { throw new DOMException('no', 'SecurityError'); };
+        """)
+        page = context.new_page()
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.goto(path, wait_until="domcontentloaded")
+        page.wait_for_selector(".row[data-id='s2']")
+        page.evaluate("choose('s1')")
+        page.click(".row[data-id='s2']")
+        page.wait_for_function("state.chosen === 's2'")
+        page.press("body", "b")
+        page.wait_for_function("state.chosen === 's1'")
+        assert not blew_up, blew_up
+
+
+def test_b_follows_a_clear_made_since(page_at, ws, tmp_path, transcript_file):
+    """The session before this one was cleared while the reader was on
+    another: `b` goes to the session the `/clear` started, as the page
+    follows one, not to the conversation that ended (#354, #600)."""
+    daemon, _ = page_at
+    other = tmp_path.parent / "warmhare"
+    other.mkdir(exist_ok=True)
+    ws.append_event(conftest.event("SessionStart", sid="s3", cwd=str(other),
+                                   pane="%9", pid=3, ts=time.time()))
+    daemon.store.refresh()
+    with opened(page_at) as page:
+        page.wait_for_selector(".row[data-id='s3']")
+        page.evaluate("choose('s1')")
+        page.click(".row[data-id='s3']")
+        page.wait_for_function("state.chosen === 's3'")
+        clear_into_s2(ws, daemon, tmp_path, transcript_file)
+        page.wait_for_function("state.sessions.some((one) => one.cleared_into === 's2')")
+        assert page.evaluate("state.chosen") == "s3"
+        page.press("body", "b")
+        page.wait_for_function("state.chosen === 's2'")
+
+
+def test_b_says_when_the_session_before_is_gone(pair_at):
+    """A session the daemon has forgotten since is not gone to, and the
+    page says why."""
+    with opened(pair_at) as page:
+        page.wait_for_selector(".row[data-id='s2']")
+        spy_on_note(page)
+        page.evaluate("state.before = 'forgotten'")
+        page.press("body", "b")
+        assert page.evaluate("window.__said") == [
+            "the session before this one is no longer in the list"]

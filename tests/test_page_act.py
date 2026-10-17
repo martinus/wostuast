@@ -1995,3 +1995,68 @@ def test_the_page_asks_the_daemon_one_way(page_at):
     assert got["late"] is None
     assert got["none"]["ok"] is False and got["none"]["body"]["error"]
     assert got["posted"]["error"]
+
+
+# --- the send box's own keys and buttons (#600) -----------------------------------
+
+
+def test_s_puts_the_cursor_in_the_send_box(in_pane):
+    """`s` goes to the send box from anywhere on the page, and does nothing
+    where there is no box to go to. No test had pressed it (#600)."""
+    _, base, _ = in_pane
+    with opened((None, base)) as page:
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        page.press("body", "s")
+        assert page.evaluate("document.activeElement.id") == "say"
+        assert page.input_value("#say") == ""
+
+
+def test_s_does_nothing_without_a_send_box(no_pane):
+    """Not even what a key that did something does: a button the pointer
+    pressed keeps the focus."""
+    with opened(no_pane) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        assert page.locator("#sendbar").is_hidden()
+        page.click(".tab[data-tab='files']")
+        page.keyboard.press("s")
+        assert page.evaluate("document.activeElement.matches('.tab[data-tab=files]')")
+
+
+def test_the_send_button_sends_what_is_in_the_box(in_pane):
+    """The button is the form's submit, and a click sends as Enter does.
+    Every send in the tests was an Enter (#600)."""
+    daemon, base, seen = in_pane
+    with opened((None, base)) as page:
+        page.fill("#say", "from the button")
+        page.click("#sendbar button[type=submit]")
+        wait_until(page, lambda: "from the button" in conftest.typed(seen))
+
+
+def test_a_sent_list_that_is_not_one_is_no_history(in_pane):
+    """The history of what this browser sent is its own storage, so it is
+    read as it is found: a value that is not JSON is no history, and Up
+    in the empty box does nothing."""
+    _, base, _ = in_pane
+    with opened((None, base)) as page:
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.evaluate("localStorage.setItem('wostuast-sent', '{not json')")
+        page.click("#say")
+        page.keyboard.press("ArrowUp")
+        assert page.input_value("#say") == ""
+        assert not blew_up, blew_up
+
+
+def test_a_command_in_the_slash_list_is_taken_with_the_mouse(ws, in_pane, tmp_path):
+    """A row is taken on the press, before the click moves the focus out of
+    the box; the keys took one in every test (#600)."""
+    daemon, base, seen = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request")
+    with opened((None, base)) as page:
+        page.click("#say")
+        page.keyboard.type("/rev")
+        page.wait_for_function("document.querySelectorAll('#slash button').length === 1")
+        page.click("#slash button")
+        assert page.input_value("#say") == "/review-pr "
+        assert page.evaluate("document.activeElement.id") == "say"
+        assert not conftest.into_pane(seen)
