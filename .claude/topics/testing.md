@@ -189,6 +189,16 @@ Keep the breaks list in the scratchpad; it is about one fix.
       `test_an_untracked_file_picked_and_then_added_lets_go_of_the_pick`).
       A new page function needs a
       test that runs it, or an entry on the list with why.
+    - **A branch no test runs is not dead because two tries did not
+      reach it** (#600). The commit picker's option for a pick the list
+      does not name (`fillDiffBar`) looked unreachable: a switch waits
+      for its fetch, and the daemon says "gone" of a commit off the
+      branch. It was deleted, and a probe found the path before the
+      commit: back on a session with a commit picked, a failed answer of
+      git keeps the pick (`loadDiff`) and draws with no list, and the
+      picker read "all changes". Before deleting a branch as dead, list
+      every writer of the state it reads and try each in the real page;
+      `test_a_commit_picked_is_named_when_git_does_not_answer_on_the_way_back`.
 - **`page.evaluate` is not strict, and the page's script is.** A write to
   a frozen session threw in the page and was dropped without a word in an
   `evaluate`, and the test that was to prove the throw read nothing

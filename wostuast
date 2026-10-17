@@ -22182,7 +22182,9 @@ function fillDiffBar(bar) {
         option(group, one.sha, one.short + "  " + one.subject);
       }
     }
-    // Picked before the list that names it has arrived.
+    // A pick the list does not name: back on a session, its place keeps
+    // the commit picked, and git did not answer, so no list has come.
+    // Without it the picker would read "all changes" for one commit (#600).
     if (![...pick.options].some((one) => one.value === state.diffs.of)) {
       option(pick, state.diffs.of, state.diffs.of.slice(0, 7));
     }

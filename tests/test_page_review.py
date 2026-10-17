@@ -1660,3 +1660,95 @@ def test_another_window_does_not_rebuild_a_box_that_is_open(repo_page):
         first.wait_for_function("""() => [...document.querySelectorAll(
           '.diffscroll .comment')].some(
             (one) => one.dataset.anchor === 'README.md\\n1')""")
+
+
+# --- the review's other answers (#600) ---------------------------------------------
+
+
+def test_a_review_kept_in_a_shape_that_is_not_json_is_no_review(repo_page):
+    """The draft lives in the browser's storage, and is read as it is
+    found: a value that is not JSON is no draft, and the page opens."""
+    _, path = repo_page
+    with own_context() as context:
+        context.add_init_script(
+            "localStorage.setItem('wostuast-review-s1', '{not json');")
+        page = context.new_page()
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.goto(path, wait_until="domcontentloaded")
+        page.wait_for_function("state.chosen === 's1'")
+        assert page.evaluate("state.review.comments.length") == 0
+        assert not blew_up, blew_up
+
+
+def test_a_comment_being_edited_is_gone_to_from_the_list(repo_page):
+    """The list under the files goes to a comment; one whose box is open
+    is the box, not the comment it hides. The comment is far down a long
+    file, so the pane has to move to it."""
+    root, _ = repo_page
+    (root / "deep.py").write_text("".join(f"line{n} = {n}\n" for n in range(1, 301)))
+    conftest.git_in(root, "add", "deep.py")
+    anchor = "deep.py\n250"
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_selector(".dfile:has(.path:text-is('deep.py')) .dline")
+        add_comment(page, anchor, "a thought", quoted="line250 = 250")
+        # CSS writes the newline in the anchor as `\a `.
+        page.click('.comment[data-anchor="deep.py\\a 250"] button:text-is(\'edit\')')
+        page.wait_for_selector(".commentbox textarea")
+        page.evaluate("document.querySelector('.diffscroll').scrollTop = 0")
+        page.wait_for_function(
+            """() => document.querySelector('.commentbox').getBoundingClientRect().top
+                     > document.querySelector('.diffscroll').getBoundingClientRect().bottom""")
+        page.click(".filelist .said:not(.head)")
+        page.wait_for_function(
+            """() => { const box = document.querySelector('.commentbox').getBoundingClientRect();
+                       const pane = document.querySelector('.diffscroll').getBoundingClientRect();
+                       return box.top >= pane.top - 1 && box.top < pane.bottom; }""")
+        assert page.input_value(".commentbox textarea") == "a thought"
+
+
+def test_a_review_sent_to_a_working_agent_says_when_it_is_read(ws, repo_page, served):
+    """Claude Code reads what comes mid-turn when the turn ends; from the
+    page a send looks like nothing happened, so it says so."""
+    daemon, _ = served
+    ws.append_event(conftest.event("UserPromptSubmit", cwd=str(repo_page[0]),
+                                   pane="%7", pid=1, prompt="go", ts=time.time()))
+    daemon.store.refresh()
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_function("state.sessions[0].state === 'working'")
+        comment_on_first_line(page, "a thought")
+        stub_send(page, [{"done": True}])
+        spy_on_note(page)
+        page.click("#sendreview")
+        page.wait_for_function(
+            "(window.__said || []).includes("
+            "'review sent; the agent is working, so it reads this when the turn ends')")
+
+
+def test_the_lines_round_a_comment_elsewhere_are_painted(repo_page):
+    """A comment off the diff stands with the lines round it, and those are
+    code: once the highlighter has come, they are painted as code is.
+    No test with such a comment had a highlighter (#600). The file is
+    short enough to paint: one past `CODE_WHOLE` lines is left plain."""
+    root, _ = repo_page
+    lines = [f"line{n} = {n}" for n in range(60)]
+    (root / "mid.py").write_text("\n".join(lines) + "\n")
+    conftest.git_in(root, "add", "mid.py")
+    conftest.git_in(root, "commit", "-qm", "mid")
+    lines[50] = "changed = 50"
+    (root / "mid.py").write_text("\n".join(lines) + "\n")
+    card = ".offdiff .dfile:has(.path:text-is('mid.py'))"
+    with opened(repo_page) as page:
+        page.evaluate("""() => { hljsAsked = Promise.resolve({
+          getLanguage: () => true,
+          highlight: (text) => ({ value: text.split('\\n').map(
+            (line) => '<span class="hljs-number">' + line + '</span>').join('\\n') }) }); }""")
+        show_tab(page, "diff")
+        page.wait_for_selector(".dline")
+        # The commit that added the file draws line 6; what is not
+        # committed yet is the change to line 50 alone.
+        page.select_option(".pickof", "uncommitted")
+        page.wait_for_function("state.diff && state.diff.of === 'uncommitted'")
+        add_comment(page, "mid.py\n6", "off the diff", quoted="line5 = 5")
+        page.wait_for_selector(f"{card} .dline .dtext span.hljs-number")
+        assert "line5 = 5" in page.locator(f"{card} .dtext span.hljs-number").all_inner_texts()
