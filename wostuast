@@ -2104,11 +2104,17 @@ class Store:
         with self.marks.naming:
             if not self.marks.names_moved:
                 return
-            self.marks.names_moved = False
             try:
                 write_names(self.marks.names, self.marks.over)
             except OSError as error:
+                # Still moved, so the next save tries again (#593). The
+                # fold already changed the names in memory; with the mark
+                # gone, a write that failed was never tried again, and a
+                # restart read the old file and put the name back on the
+                # session a `/clear` had left.
                 log(f"cannot write the names: {error!r}")
+                return
+            self.marks.names_moved = False
 
     def _cleared_partner(self, session: Session, want: str) -> Session | None:
         """The other half of a `/clear`: same process or pane, moments apart."""

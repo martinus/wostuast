@@ -80,6 +80,30 @@ def test_the_fold_does_no_io(ws, monkeypatch):
                                FORK: "the moved one"}
 
 
+def test_a_moved_name_that_could_not_be_written_is_written_later(ws, monkeypatch):
+    """The fold moves a name in memory and `save_names` writes it after
+    (#593). A write that failed -- a full disk -- is tried again by the
+    next save, or memory and the file disagree until some other rename,
+    and a restart puts the name back where it was."""
+    store = ws.Store()
+    store.marks.names = {"s2": "the payments work"}
+    store.marks.names_moved = True
+    real, tries = ws.write_names, []
+
+    def full_once(*args):
+        tries.append(args)
+        if len(tries) == 1:
+            raise OSError("no space left on device")
+        real(*args)
+
+    monkeypatch.setattr(ws, "write_names", full_once)
+    store.save_names()
+    assert ws.read_names() == {}
+    store.save_names()
+    assert ws.read_names() == {"s2": "the payments work"}
+    assert not store.marks.names_moved
+
+
 def test_the_guard_folds_every_handler_and_both_links(ws):
     """A guard proves nothing about a path it never runs: the fold was clean
     on the recorded logs while the `/clear` that writes was not among them."""
