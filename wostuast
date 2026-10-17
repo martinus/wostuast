@@ -5336,8 +5336,6 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     sort those few — asking the disk about every file, every poll, would cost
     far more than the answer is worth.
     """
-    from concurrent.futures import ThreadPoolExecutor
-
     tree = Worktree()
     found = root or worktree_root(cwd, runner)
     if not found:
@@ -5348,32 +5346,51 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
         tree.failed = found is None
         return tree
     tree.root = found
+    parts, touched = git_listings(tree.root, runner)
+    tree.failed = touched is None or any(part is None for part in parts)
+    names: set[str] = set()
+    for part in parts:
+        if part is not None:
+            names.update(name for name in part if not name.endswith("/"))
+    walked = add_ignored(tree, parts[2] or [], names)
+    put_entries(tree, names, touched or set(), walked)
+    return tree
+
+
+def git_listings(root: str, runner: Callable[..., str | None]
+                 ) -> tuple[list[list[str] | None], set[str] | None]:
+    """What git tracks, what is untracked and not ignored, and what is
+    ignored, in that order, each `None` when git did not answer; and the
+    changed paths, `None` when `status` did not answer."""
+    from concurrent.futures import ThreadPoolExecutor
+
     # Three calls, at once: each walks the worktree, and one after another
     # they cost 138 ms on fifty thousand files where the slowest alone is 56.
     # The untracked names come from `status`, which prints every one of them
     # as a `??` record: an `ls-files --others --exclude-standard` beside it
     # walked the whole worktree again for the same names.
     with ThreadPoolExecutor(max_workers=3) as pool:
-        tracked = pool.submit(git_names, tree.root, [], runner)
-        ignored = pool.submit(git_names, tree.root,
+        tracked = pool.submit(git_names, root, [], runner)
+        ignored = pool.submit(git_names, root,
                               ["--others", "--ignored", "--exclude-standard",
                                "--directory"], runner)
-        status = pool.submit(status_names, tree.root, runner)
+        status = pool.submit(status_names, root, runner)
     told = status.result()
     parts = [tracked.result(), None if told is None else sorted(told[1]),
              ignored.result()]
-    touched = None if told is None else told[0]
-    tree.failed = touched is None or any(part is None for part in parts)
-    names: set[str] = set()
-    for part in parts:
-        if part is not None:
-            names.update(name for name in part if not name.endswith("/"))
+    return parts, None if told is None else told[0]
+
+
+def add_ignored(tree: Worktree, ignored: list[str], names: set[str]) -> set[str]:
+    """Add to `names` what the ignored listing holds, walking each folder
+    git collapsed, and say which names came from there. What a walk left
+    out goes into `tree.skipped`."""
     # The entries git collapsed. Each is a directory it declined to look
     # inside, and one of them is where the agent's own work is kept.
     skipped: list[str] = []
     walked: set[str] = set()
     loose: list[str] = []
-    for name in parts[2] or []:
+    for name in ignored:
         if name.endswith("/"):
             found, left = walk_ignored(tree.root, name, IGNORED_MAX)
             names.update(found)
@@ -5391,7 +5408,13 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     # a stat each every few seconds.
     walked.update(loose[:IGNORED_MAX])
     tree.skipped = sorted(skipped)
-    touched = touched or set()
+    return walked
+
+
+def put_entries(tree: Worktree, names: set[str], touched: set[str],
+                walked: set[str]) -> None:
+    """The names as the tab lists them, in its order, with a time for each
+    changed or walked one, and no more than `FILES_MAX` of them."""
     for name in in_order(names):
         entry = FileEntry(path=name, changed=name in touched, walked=name in walked)
         # A walked file is stat'ed too (#492): git has no word for a file it
@@ -5408,7 +5431,6 @@ def worktree_files(cwd: str, runner: Callable[..., str | None] = run,
     if tree.total > FILES_MAX:
         del tree.files[FILES_MAX:]
         tree.cut = True
-    return tree
 
 
 def written_since(held: "Listing", since: float) -> dict[str, float]:
@@ -6119,47 +6141,62 @@ def parse_diff(text: str) -> list[DiffFile]:
             left = ([int(counts.group(1) or 1), int(counts.group(2) or 1)]
                     if counts else [-1, -1])
         elif hunk is not None:
-            if line.startswith("+"):
-                current.added += 1
-                hunk.lines.append(DiffLine("added", line[1:]))
-                left[1] -= 1
-            elif line.startswith("-"):
-                current.removed += 1
-                hunk.lines.append(DiffLine("removed", line[1:]))
-                left[0] -= 1
-            elif line.startswith(" ") or not line:
-                hunk.lines.append(DiffLine("context", line[1:]))
-                left[0] -= 1
-                left[1] -= 1
-            # anything else is `\\ No newline at end of file`
-            if left[0] == 0 and left[1] == 0:
+            if hunk_line(current, hunk, line, left):
                 hunk = None
-        elif line.startswith("--- "):
-            # git ends a name holding a space with a TAB here, for GNU patch.
-            # Kept, the Diff tab's `foo bar.txt\t` was not the Files tab's
-            # `foo bar.txt`: one line, two anchors. A name that really ends
-            # in a tab is quoted, so this one is always git's.
-            current.old_path = diff_side(line[4:].removesuffix("\t"))
-        elif line.startswith("+++ "):
-            # Empty means the file is gone.
-            current.path = diff_side(line[4:].removesuffix("\t"))
-        elif line.startswith("new file mode "):
-            # An empty or a binary file has no `---`/`+++` to say it is new,
-            # and the `diff --git` line names it twice: it read as modified.
-            current.old_path = ""
-            came[len(files) - 1] = line[len("new file mode "):].strip()
-        elif line.startswith("deleted file mode "):
-            current.path = ""       # `name_change` puts the name back
-            gone[len(files) - 1] = line[len("deleted file mode "):].strip()
-        elif line.startswith("rename from "):
-            current.old_path = unquote_path(line[len("rename from "):])
-        elif line.startswith("rename to "):
-            current.path = unquote_path(line[len("rename to "):])
-        elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
-            current.binary = True
+        else:
+            header_line(current, line, len(files) - 1, gone, came)
     for one in files:
         name_change(one)
     return join_type_change(files, gone, came)
+
+
+def hunk_line(current: DiffFile, hunk: Hunk, line: str, left: list[int]) -> bool:
+    """Read one line inside a hunk into it, and count it off `left`, the old
+    and new lines still to come. True when the hunk has all its lines."""
+    if line.startswith("+"):
+        current.added += 1
+        hunk.lines.append(DiffLine("added", line[1:]))
+        left[1] -= 1
+    elif line.startswith("-"):
+        current.removed += 1
+        hunk.lines.append(DiffLine("removed", line[1:]))
+        left[0] -= 1
+    elif line.startswith(" ") or not line:
+        hunk.lines.append(DiffLine("context", line[1:]))
+        left[0] -= 1
+        left[1] -= 1
+    # anything else is `\\ No newline at end of file`
+    return left[0] == 0 and left[1] == 0
+
+
+def header_line(current: DiffFile, line: str, at: int,
+                gone: dict[int, str], came: dict[int, str]) -> None:
+    """Read one line of a file's header, outside its hunks: its names, a
+    mode that says it came or went, and whether it is binary. `at` is the
+    file's place in the list, the key of `gone` and `came`."""
+    if line.startswith("--- "):
+        # git ends a name holding a space with a TAB here, for GNU patch.
+        # Kept, the Diff tab's `foo bar.txt\t` was not the Files tab's
+        # `foo bar.txt`: one line, two anchors. A name that really ends
+        # in a tab is quoted, so this one is always git's.
+        current.old_path = diff_side(line[4:].removesuffix("\t"))
+    elif line.startswith("+++ "):
+        # Empty means the file is gone.
+        current.path = diff_side(line[4:].removesuffix("\t"))
+    elif line.startswith("new file mode "):
+        # An empty or a binary file has no `---`/`+++` to say it is new,
+        # and the `diff --git` line names it twice: it read as modified.
+        current.old_path = ""
+        came[at] = line[len("new file mode "):].strip()
+    elif line.startswith("deleted file mode "):
+        current.path = ""       # `name_change` puts the name back
+        gone[at] = line[len("deleted file mode "):].strip()
+    elif line.startswith("rename from "):
+        current.old_path = unquote_path(line[len("rename from "):])
+    elif line.startswith("rename to "):
+        current.path = unquote_path(line[len("rename to "):])
+    elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+        current.binary = True
 
 
 #: What a git mode says a path is. Every other mode is a file: 100644 and
