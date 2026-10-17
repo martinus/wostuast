@@ -13,6 +13,7 @@ import pytest
 import conftest
 from browser import (
     skip_without_browser,
+    wait_for_watching,
     opened,
     show_tab,
     base_of,
@@ -317,6 +318,37 @@ def test_picking_types_nothing_and_can_be_changed(ws, in_pane):
         assert page.locator(option(1, 3)).evaluate(
             "one => one.classList.contains('chosen')")
         assert not conftest.into_pane(seen)
+
+
+def test_a_new_question_on_screen_starts_with_no_picks(ws, in_pane):
+    """A pick belongs to the question it was made for (#573). The picks
+    start again where a question arrives, in `fitPicks`, which `onSessions`
+    and `choose` call; `drawAsking` only reads them. A second question on
+    the session on screen comes in a push, with no `choose`: the picks of
+    the first must not stand on it, and `paintPicks` threw on picks of
+    another shape."""
+    daemon, base, seen = in_pane
+    now_asking(ws, daemon)
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking .askopt")
+        page.click(option(1, 2))
+        page.wait_for_selector(option(1, 2) + ".chosen")
+        wait_for_watching(daemon)
+        at = time.time()
+        ws.append_event({"session_id": "s1", "hook_event_name": "PostToolUse",
+                         "tool_name": "AskUserQuestion", "tool_use_id": "toolu_q1",
+                         "ts": at})
+        ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
+                         "tool_name": "AskUserQuestion", "tool_input": ASKED,
+                         "tool_use_id": "toolu_q2", "ts": at + 0.1})
+        ws.append_event({"session_id": "s1", "hook_event_name": "PermissionRequest",
+                         "tool_name": "AskUserQuestion", "tool_input": ASKED,
+                         "ts": at + 0.2})
+        daemon.tick()
+        page.wait_for_function(
+            "document.getElementById('asking').dataset.ask === 's1\\ntoolu_q2'")
+        assert page.locator("#asking .askopt.chosen").count() == 0
+        assert page.evaluate("state.picked.id") == "toolu_q2"
 
 
 def test_submit_waits_until_every_question_is_answered(ws, in_pane):

@@ -119,6 +119,15 @@ Keep the breaks list in the scratchpad; it is about one fix.
   green, because one always was by then. The old lines put back in full --
   the delete of a stale file as well as the fetch -- turned five tests red.
   A break is a regression somebody could write, not the smallest edit.
+  - **Two edits are one break when the old code was both**: `perturb.py`
+    takes one edit a break, so apply both by hand, run the test, and copy
+    the file back from a copy made first. #573's picks: the draw's reset
+    alone stayed green, because `fitPicks` had already run.
+  - **The draw guard sees only what is drawn after `opened` installs
+    it.** A question there at load was drawn before the guard, so the old
+    reset in `drawAsking` passed every test that opened on a question;
+    only a question that arrives after the page is open turned it red.
+    A test of a draw's write brings the change in after `opened`.
 - **A GREEN may be code nothing needs: then delete the code, not add a
   test.** A break that took the list of gone rows out of a push stayed
   green under every test, because a row that goes always moves the order,

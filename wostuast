@@ -17456,11 +17456,29 @@ function drawCounts() {
 // the reminder timer, whose clock moves a row into "needs you".
 function onSessions() {
   pruneReviews(state.sessions);
+  fitPicks();
   // About every session, filter or no filter: "who needs me" must not
   // change because you typed in a box. Not a child (#422).
   notifyAbout(topSessions());
   armReminders();
   askUnread();
+}
+
+// A pick belongs to the question it was made for. A different question
+// arriving takes the old picks with it rather than submitting them. An ask
+// with no id matches the empty picks the page starts with, so the shape is
+// asked as well: `paintPicks` threw on a question with no list of picks,
+// and took `drawHeader` -- jump, the send box, the strip -- down with it.
+// Started again where a question arrives -- a change to the sessions, or
+// another one chosen -- and never by `drawAsking`, which only reads (#573).
+function fitPicks() {
+  const s = current();
+  const ask = s && s.asking;
+  if (!ask) return;
+  if (state.picked.id !== ask.id
+      || state.picked.at.length !== ask.questions.length) {
+    state.picked = { id: ask.id, at: ask.questions.map(() => []) };
+  }
 }
 
 // The last answer of each unread session, for the "All unreads" view: asked
@@ -17525,15 +17543,6 @@ function drawAsking() {
   if (!fresh(box, "ask", s.id + "\n" + ask.id)) {
     paintPicks(box, ask);
     return;
-  }
-  // A pick belongs to the question it was made for. A different question
-  // arriving takes the old picks with it rather than submitting them. An ask
-  // with no id matches the empty picks the page starts with, so the shape is
-  // asked as well: `paintPicks` threw on a question with no list of picks,
-  // and took `drawHeader` -- jump, the send box, the strip -- down with it.
-  if (state.picked.id !== ask.id
-      || state.picked.at.length !== ask.questions.length) {
-    state.picked = { id: ask.id, at: ask.questions.map(() => []) };
   }
   box.replaceChildren();
   ask.questions.forEach((one, which) => {
@@ -24425,6 +24434,7 @@ function choose(id) {
   // transcript was drawn at once under the new session's name.
   keepTurns(state.chosen);
   state.chosen = id;
+  fitPicks();
   state.keptUnread = null;        // a mark made while looking holds till now
   // The address names the session on screen, so a reload comes back to it.
   // Without it a reload chose the first row, which after a `/clear` is the
