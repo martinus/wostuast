@@ -546,8 +546,26 @@ DRAW_GUARD = r"""(() => {
     owner[name] = function (...args) { note(what(args)); return real.apply(this, args); };
   };
   wrap(window, "fetch", (a) => "fetch " + String(a[0]).split("?")[0].replace(/session\/[^/]+/, "session/*"));
-  wrap(window, "setTimeout", () => "setTimeout");
-  wrap(window, "setInterval", () => "setInterval");
+  // A timer a draw sets is no effect of its own: a highlight that fades or
+  // a diff painted in slices touches only the page (#573). What its
+  // callback does to `state` when it fires is, so the callback is watched,
+  // under the name of the draw that set it.
+  const changes = (before, after) => [...new Set([...before.keys(), ...after.keys()])]
+    .filter((key) => before.get(key) !== after.get(key));
+  for (const name of ["setTimeout", "setInterval"]) {
+    const real = window[name];
+    window[name] = function (fn, ...rest) {
+      if (!depth || typeof fn !== "function") return real.call(this, fn, ...rest);
+      const owner = top;
+      return real.call(this, function (...args) {
+        const was = snap();
+        try { return fn.apply(this, args); }
+        finally {
+          for (const key of changes(was, snap())) seen.add(owner + ": timer: state." + key);
+        }
+      }, ...rest);
+    };
+  }
   wrap(Storage.prototype, "setItem", () => "storage");
   wrap(Storage.prototype, "removeItem", () => "storage");
   // A test that stubs `Notification` replaces the wrapper below, so the
@@ -568,10 +586,7 @@ DRAW_GUARD = r"""(() => {
       finally {
         depth -= 1;
         if (!depth) {
-          const after = snap();
-          for (const key of new Set([...before.keys(), ...after.keys()])) {
-            if (before.get(key) !== after.get(key)) seen.add(name + ": state." + key);
-          }
+          for (const key of changes(before, snap())) seen.add(name + ": state." + key);
         }
       }
     };
@@ -579,14 +594,12 @@ DRAW_GUARD = r"""(() => {
 })()"""
 
 
-#: What a draw may still do besides drawing, each with why (#542). May
-#: only get shorter (CLAUDE.md, **Principles**, the ratchet): an entry is
-#: taken off when the code it names moves out of the draw.
-DRAW_EFFECTS_ALREADY = {
-    # Timers that touch only the page: a highlight that fades, a diff
-    # painted in slices.
-    "paint: setTimeout",
-}
+#: What a draw may still do besides drawing, each with why (#542). #573
+#: emptied it: the drawn nodes went onto the pane, the picks to
+#: `fitPicks`, the place to a local, the landing marks to `land`, and a
+#: timer counts only for what its callback does to `state`. A pull request
+#: that adds an entry says why in its description (CLAUDE.md, the ratchet).
+DRAW_EFFECTS_ALREADY: frozenset[str] = frozenset()
 
 
 def guard_draws(page):
