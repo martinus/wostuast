@@ -1959,64 +1959,8 @@ class Store:
         session = self.get(session_id)
         name = str(event.get("hook_event_name") or "")
         ts = to_float(event.get("ts"))
-
-        # Every event is folded, in the order of the log, and none is dropped
-        # for its time. The follower reads each line once, oldest first
-        # (`EventFollower.new_lines`), so there is no repeat to skip. This
-        # used to drop an event older than its session had seen, for an
-        # archive read again, and it dropped real ones: two hooks of one
-        # session race for the lock, and a log written before `append_event`
-        # stamped under it holds lines out of `ts` order -- a lost
-        # `PermissionRequest` is a row that never goes amber. And a clock
-        # stepped back by NTP or a VM resume dropped every event of every
-        # session until real time caught up.
-        if ts > session.last_ts:
-            session.last_ts = ts
-        if ts and not session.started_at:
-            session.started_at = ts
-        for key in ("cwd", "transcript_path"):
-            value = event.get(key)
-            if value:
-                setattr(session, key, str(value))
-        # A session starts once, and every event after that carries wherever
-        # the agent has walked to since. `SessionStart` is the one event that
-        # means "this is where I am starting", and a resume really does start
-        # a session in another directory, so it is the one that may move this.
-        # **Not a compaction's**: an auto compaction sends `SessionStart`
-        # (`source=compact`) in the middle of a turn, with the directory the
-        # agent has walked to, and the row renamed itself from `richpalm` to
-        # `src` while the agent worked.
-        starts = name == "SessionStart" and event.get("source") != "compact"
-        if session.cwd and (not session.home or starts):
-            session.home = session.cwd
-        # A hook writes both keys on every event, and an empty one is news:
-        # it says "not in tmux" or "no process found" *now*. A session that
-        # ran in pane %5, ended, and was resumed in a plain terminal kept %5
-        # when only a pane that was there counted -- and the page typed into
-        # whatever %5 held by then, a shell or another agent. A kept pid made
-        # `mark_dead` bury the resumed session as killed. The daemon's own
-        # records (`Declined`) carry neither key, and change neither.
-        if "pane" in event:
-            pane = str(event.get("pane") or "")
-            session.pane = pane if PANE_PATTERN.match(pane) else ""
-        if "pid" in event:
-            session.pid = to_int(event.get("pid"))
-        # The agent that ran this one, by its process (#422). Every event
-        # that carries the key decides: a `claude -p` resumed later at a
-        # terminal is nobody's child, and its events say 0 -- kept, it was
-        # hidden under its old parent while it waited for the reader. A pid
-        # is looked up once: a Remote Control worker's is `claude rc`'s,
-        # which has no session, and every event of it scanned them all.
-        if "started_by" in event:
-            by = to_int(event.get("started_by"))
-            if by <= 0:
-                session.started_by, session.started_pid = "", 0
-            elif by != session.started_pid:
-                session.started_pid = by
-                session.started_by = self.parent_of(session, by)
-        if name == "SessionStart" and "background" in event:
-            session.background = bool(event.get("background"))
-            session.moved_from = str(event.get("moved_from") or "")
+        note_where(session, event, name, ts)
+        self.note_origin(session, event, name)
         handler = _HANDLERS.get(name)
         was = session.state
         if handler is not None:
@@ -2043,6 +1987,26 @@ class Store:
         if name == "SessionStart" and session.moved_from:
             self.link_move(session, ts)
         return session
+
+    def note_origin(self, session: Session, event: dict[str, Any], name: str) -> None:
+        """Which agent started this one, and whether it runs in the
+        background: what the hook found about where the session came from."""
+        # The agent that ran this one, by its process (#422). Every event
+        # that carries the key decides: a `claude -p` resumed later at a
+        # terminal is nobody's child, and its events say 0 -- kept, it was
+        # hidden under its old parent while it waited for the reader. A pid
+        # is looked up once: a Remote Control worker's is `claude rc`'s,
+        # which has no session, and every event of it scanned them all.
+        if "started_by" in event:
+            by = to_int(event.get("started_by"))
+            if by <= 0:
+                session.started_by, session.started_pid = "", 0
+            elif by != session.started_pid:
+                session.started_pid = by
+                session.started_by = self.parent_of(session, by)
+        if name == "SessionStart" and "background" in event:
+            session.background = bool(event.get("background"))
+            session.moved_from = str(event.get("moved_from") or "")
 
     def parent_of(self, child: Session, pid: int) -> str:
         """The session whose agent is process `pid`, which ran `child` from
@@ -2423,6 +2387,54 @@ class Store:
             return
         self.status_seen[session.session_id] = mtime
         session.status = read_status(session.session_id)
+
+
+def note_where(session: Session, event: dict[str, Any], name: str,
+               ts: float) -> None:
+    """When and where an event says the session is: its times, its
+    directories, its pane and its process. Every event carries them, so
+    every one is read before its handler runs."""
+    # Every event is folded, in the order of the log, and none is dropped
+    # for its time. The follower reads each line once, oldest first
+    # (`EventFollower.new_lines`), so there is no repeat to skip. This
+    # used to drop an event older than its session had seen, for an
+    # archive read again, and it dropped real ones: two hooks of one
+    # session race for the lock, and a log written before `append_event`
+    # stamped under it holds lines out of `ts` order -- a lost
+    # `PermissionRequest` is a row that never goes amber. And a clock
+    # stepped back by NTP or a VM resume dropped every event of every
+    # session until real time caught up.
+    if ts > session.last_ts:
+        session.last_ts = ts
+    if ts and not session.started_at:
+        session.started_at = ts
+    for key in ("cwd", "transcript_path"):
+        value = event.get(key)
+        if value:
+            setattr(session, key, str(value))
+    # A session starts once, and every event after that carries wherever
+    # the agent has walked to since. `SessionStart` is the one event that
+    # means "this is where I am starting", and a resume really does start
+    # a session in another directory, so it is the one that may move this.
+    # **Not a compaction's**: an auto compaction sends `SessionStart`
+    # (`source=compact`) in the middle of a turn, with the directory the
+    # agent has walked to, and the row renamed itself from `richpalm` to
+    # `src` while the agent worked.
+    starts = name == "SessionStart" and event.get("source") != "compact"
+    if session.cwd and (not session.home or starts):
+        session.home = session.cwd
+    # A hook writes both keys on every event, and an empty one is news:
+    # it says "not in tmux" or "no process found" *now*. A session that
+    # ran in pane %5, ended, and was resumed in a plain terminal kept %5
+    # when only a pane that was there counted -- and the page typed into
+    # whatever %5 held by then, a shell or another agent. A kept pid made
+    # `mark_dead` bury the resumed session as killed. The daemon's own
+    # records (`Declined`) carry neither key, and change neither.
+    if "pane" in event:
+        pane = str(event.get("pane") or "")
+        session.pane = pane if PANE_PATTERN.match(pane) else ""
+    if "pid" in event:
+        session.pid = to_int(event.get("pid"))
 
 
 def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
@@ -8752,6 +8764,19 @@ def row(session: Session) -> dict[str, Any]:
         "since": round(session.since, 3),
         # For a session that is over, the line that brings it back.
         "resume": resume_command(session) if session.state in GONE_STATES else "",
+        **mark_fields(session),
+        **status_fields(session),
+        # The session a `/clear` turned this one into. The page follows it
+        # when the link appears while the reader is watching this one.
+        "cleared_into": session.cleared_into,
+        **agent_fields(session),
+    }
+
+
+def mark_fields(session: Session) -> dict[str, Any]:
+    """What the reader marked on a session, for its row: a snooze, unread,
+    a reminder, a name."""
+    return {
         "snoozed": session.snoozed,
         # A turn ended since the reader last had it on screen (#373).
         "unread": session.unread,
@@ -8767,6 +8792,12 @@ def row(session: Session) -> dict[str, Any]:
         # Whether that name is one the reader set here. The page shows the
         # box with it in, rather than making them type it again to change it.
         "mine": bool(session.mine),
+    }
+
+
+def status_fields(session: Session) -> dict[str, Any]:
+    """What the status line last said of a session, for its row."""
+    return {
         "model": session.status.model,
         "effort": session.status.effort,
         "model_id": model_id(session),
@@ -8775,9 +8806,12 @@ def row(session: Session) -> dict[str, Any]:
         # lands, so it never makes a row differ by itself -- which is the
         # rule this dict is built by.
         "cost_usd": session.status.cost_usd,
-        # The session a `/clear` turned this one into. The page follows it
-        # when the link appears while the reader is watching this one.
-        "cleared_into": session.cleared_into,
+    }
+
+
+def agent_fields(session: Session) -> dict[str, Any]:
+    """The agent that ran a session, and the subagents it runs, for its row."""
+    return {
         # The agent that ran this one, and the subagents this one runs
         # (#422): the page draws both as lines under the parent's row.
         "started_by": session.started_by,
