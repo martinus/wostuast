@@ -563,7 +563,9 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     press of `c`, put "dark" back over "auto", and the third press started
     from there, once in four runs under load (#439). It wraps
     `takeSettings` and waits for the word it expects;
-    `test_the_c_key_steps_through_the_colours`.
+    `test_the_c_key_steps_through_the_colours`. The colours test chose
+    "dark" and then "system" without that wait, and CI read "dark" (#606);
+    `test_the_colours_can_be_switched_and_are_remembered` waits now.
   - **The ticket links are rows in the menu, saved on leave or Enter**
     (`putLinkRow`, `saveLinks`, `putLinkRows`): the reader chose that over a
     save button and over saving each keystroke, which linked half a
