@@ -1955,3 +1955,133 @@ def test_a_hex_row_is_as_wide_as_the_pane_has_room_for(repo_page):
         open_file(page, "blob.bin")
         page.wait_for_selector(".filebody .code.hexdump")
         assert code_text(page).split("\n")[1].startswith("00000010:"), code_text(page)
+
+
+# --- the Files tab's other answers (#600) ------------------------------------------
+
+
+def test_a_sound_is_given_controls_to_play_it(repo_page):
+    """A picture is shown; a sound or a video is given the browser's own
+    controls, or it is a box that does nothing."""
+    import io
+    import wave
+
+    root, _ = repo_page
+    held = io.BytesIO()
+    with wave.open(held, "wb") as sound:       # a tenth of a second of silence
+        sound.setnchannels(1)
+        sound.setsampwidth(2)
+        sound.setframerate(8000)
+        sound.writeframes(b"\0\0" * 800)
+    (root / "chime.wav").write_bytes(held.getvalue())
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('chime.wav')")
+        page.wait_for_selector(".filebody .media audio")
+        assert page.evaluate("document.querySelector('.filebody .media audio').controls")
+
+
+def test_a_picture_that_will_not_draw_says_so(repo_page):
+    """A file named like a picture that the browser cannot decode: a note
+    beats a broken picture."""
+    root, _ = repo_page
+    (root / "broken.png").write_bytes(b"not a picture at all")
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('broken.png')")
+        page.wait_for_function(
+            "document.querySelector('.filebody .media')?.textContent"
+            ".includes('did not come back')")
+        assert page.locator(".filebody .media img").count() == 0
+
+
+def test_a_picture_too_big_says_how_big_in_megabytes(ws, repo_page, monkeypatch):
+    """`sizeOf` says MB past a megabyte; the cap is lowered so that two
+    megabytes are too big."""
+    root, _ = repo_page
+    monkeypatch.setattr(ws, "SHOWN_MAX_BYTES", 1024)
+    (root / "big.png").write_bytes(conftest.tiny_png() + b"\0" * (2 * 1024 * 1024))
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('big.png')")
+        page.wait_for_function(
+            "document.querySelector('.filebody .note')?.textContent"
+            ".startsWith('2.0 MB')")
+
+
+def test_a_list_cut_short_says_how_many_files_there_are(ws, repo_page, monkeypatch):
+    """Past `FILES_MAX` the daemon sends a part, and the strip under the list
+    says how many there are and that the list is not all of them."""
+    monkeypatch.setattr(ws, "FILES_MAX", 2)
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_function(
+            "document.querySelector('.listnote')?.textContent"
+            ".includes('more than one list can answer for')")
+
+
+def test_a_worktree_with_every_file_in_a_folder_asks_for_one(ws, served, tmp_path):
+    """The first file row the list shows is opened. When every file is in a
+    folder, and folders start shut, there is none: the pane says how to
+    pick one, and not that the worktree is empty. It ran in one coverage
+    run and not the next, on what had loaded by then; nothing tested it
+    (#600)."""
+    daemon, base = served
+    root = tmp_path / "foldered"
+    (root / "src").mkdir(parents=True)
+    conftest.git_in(root, "init", "-q", "-b", "main")
+    (root / "src" / "code.py").write_text("print(1)\n")
+    ws.append_event(conftest.event("SessionStart", cwd=str(root), ts=time.time()))
+    daemon.store.refresh()
+    with opened((None, base)) as page:
+        show_tab(page, "files")
+        page.wait_for_function(
+            "document.querySelector('.filebody .empty')?.textContent"
+            ".startsWith('Pick a file on the left')")
+
+
+def test_a_script_whose_interpreter_is_not_named_is_drawn_plain(repo_page):
+    """`#!/usr/bin/env` and nothing after it names no program: the first
+    line says no language, and the file is still drawn."""
+    root, _ = repo_page
+    (root / "bin").mkdir()
+    (root / "bin" / "run").write_text("#!/usr/bin/env\necho hi\n")
+    with opened(repo_page) as page:
+        page.route("**/highlight.min.js", lambda route: route.abort())
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('bin')")
+        page.click(".filelist button:has-text('run')")
+        page.wait_for_selector(".filebody .code .dline")
+        assert page.evaluate("fromShebang('#!/usr/bin/env')") is None
+        assert page.evaluate("fromShebang('#!/usr/bin/env -S')") is None
+
+
+def test_an_answer_without_the_file_says_so(repo_page):
+    """An answer of the `file` route with no text, no `same` and no
+    `binary` is not a file. `askFile` says so, and the pane says why
+    rather than drawing nothing."""
+    with opened(repo_page) as page:
+        page.route("**/file?*", lambda route: route.fulfill(
+            status=200, content_type="application/json", body='{"path": "code.py"}'))
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('code.py')")
+        page.wait_for_function(
+            "document.querySelector('.filebody')?.textContent"
+            ".includes('the daemon did not send the file')")
+
+
+def test_a_highlighter_that_throws_leaves_the_plain_text(repo_page):
+    """A grammar that throws on a text is the highlighter's trouble, not
+    the reader's: the rows stand as plain text."""
+    with opened(repo_page) as page:
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        show_tab(page, "files")
+        page.evaluate("""() => { hljsAsked = Promise.resolve({
+          getLanguage: () => true,
+          highlight: () => { throw new Error('a grammar that throws'); } }); }""")
+        open_file(page, "code.py")
+        stays(page, 300)                          # proving no paint comes
+        assert page.locator(".filebody .code .dtext span").count() == 0
+        assert "print(1)" in code_text(page)
+        assert not blew_up, blew_up

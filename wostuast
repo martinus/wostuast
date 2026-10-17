@@ -21129,19 +21129,10 @@ function drawRow(list, row) {
     depth: row.depth,
     title: row.path,
   });
-  // A row shows one segment of a path. The letters that matched were found
-  // in the whole of it, so a letter found in a directory is picked out on
-  // that directory's own row and nowhere else. Cutting the name and the
-  // letters up happens here, for the eighty rows that are drawn, not for the
-  // fifty thousand that are built.
-  const name = row.path.slice(row.from);
-  const at = [];
-  for (const where of row.hit || []) {
-    if (where >= row.from && where - row.from < name.length) {
-      at.push(where - row.from);
-    }
-  }
-  putName(button, name, at);
+  // A row shows one segment of a path, cut here for the eighty rows that are
+  // drawn, not for the fifty thousand that are built. No letters are picked
+  // out: a find lists its hits apart, and the tree stays as it is (#600).
+  putName(button, row.path.slice(row.from), []);
   // How many changed files a folder holds (#517), where a file has its dot.
   if (dir && state.files.marked.has(row.path)) {
     const many = state.files.marked.get(row.path);
