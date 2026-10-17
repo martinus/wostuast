@@ -451,10 +451,11 @@ python3 -m pytest tests/test_page_review.py -q  # the subject you are changing. 
 python3 tests/perturb.py breaks.json            # prove the new tests: each break runs only the tests it names
 python3 tests/page_coverage.py                  # what no browser test runs of the page script: the browser suite, once
 # before the push, both of these; run them in the background and write the rule meanwhile.
-# -rf names each failure; pipefail stops a chain on a red count (below):
-set -o pipefail; for i in 1 2 3; do python3 -m pytest -q -n 12 -rf tests/test_page_review.py | grep -E "^FAILED|passed|failed"; done
-set -o pipefail; python3 -m pytest -q -n auto -rf --ignore-glob='tests/test_page_*' | grep -E "^FAILED|passed|failed"
-set -o pipefail; python3 -m pytest -q -n auto -rf | grep -E "^FAILED|passed|failed"  # the whole suite: only when a shared part changed (below)
+# -rf names each failure; pipefail stops a chain on a red count; tee keeps
+# the traceback (below). $S is the session's scratchpad:
+set -o pipefail; for i in 1 2 3; do python3 -m pytest -q -n 12 -rf tests/test_page_review.py | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"; done
+set -o pipefail; python3 -m pytest -q -n auto -rf --ignore-glob='tests/test_page_*' | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"
+set -o pipefail; python3 -m pytest -q -n auto -rf | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"  # the whole suite: only when a shared part changed (below)
 ./wostuast doctor / ls        # and ./wostuast --port 0: check, update, serve
 ```
 
@@ -528,7 +529,11 @@ in five seconds rather than thirty, which is three of them a minute and a
 half in one sitting. `WOSTUAST_WAIT` is for a desk, never CI: the 15 s and
 30 s waits are what a loaded runner needs. **Not for a test that waits on the
 Review tab's poll**: it comes every five seconds, so such a test fails at
-5,000 ms and passes without it. Run those without the variable.
+5,000 ms and passes without it. Run those without the variable. **And
+`tests/perturb.py` sets it to 5000 when it is not set**, so a break of
+such a test is red whatever the break does, and the red proves nothing:
+run it as `WOSTUAST_WAIT=30000 python3 tests/perturb.py …`, as the proof
+of `test_an_untracked_file_picked_and_then_added_lets_go_of_the_pick` did.
 
 **Before the push, run what you changed under load, and let CI run the
 rest.** CI runs the whole suite on every push, sharded, and CI is the gate.
@@ -553,7 +558,11 @@ step after red tests, because `tail` succeeded -- twice, the second time a
 commit and a push after "1 failed" (#569). The rule stood under the
 editing scars, where nobody running a gate reads; the commands above carry
 it now. **And `-rf`, never `tail -1` alone**: a count of "1 failed" with no
-name left that failure unknowable once the run was over.
+name left that failure unknowable once the run was over. **And `tee` the
+whole output first**: `-rf` gives the name and one clipped line, and the
+`grep` throws the traceback away. `test_a_ticket_in_a_rows_name_or_branch_is_a_link`
+failed once in a whole-suite run (#595), passed six times after, alone
+and under load, and why it failed once could no longer be read.
 
 **One gate at a time on the machine.** Two whole-suite runs side by side
 took eleven minutes, not seven, and each failed a test the other did not
