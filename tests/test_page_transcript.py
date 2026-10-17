@@ -2861,9 +2861,14 @@ def test_an_answer_is_saved_and_opened_again_from_the_list(ws, page_at):
         page.click(".feedentry >> nth=1 >> button:text('open')")
         page.wait_for_selector(f"{reply}.linked")
         page.click("#savedlink")
-        for _ in range(2):
+        # One at a time: the second press, before the first one's answer
+        # had taken its card away, landed on that card again under load,
+        # and one saved turn stayed.
+        for left in (1, 0):
             page.hover(".feedentry >> nth=0")
             page.click(".feedentry >> nth=0 >> button:text('done')")
+            page.wait_for_function(
+                f"document.querySelectorAll('.feedentry').length === {left}")
         page.wait_for_selector(".feed .empty")
         assert daemon.store.marks.saved == []
 
@@ -3419,3 +3424,73 @@ def test_the_row_of_buttons_wears_the_ground_under_it(ws, page_at):
         between = drawn[gap["y"]][gap["x"]]
         beside = drawn[gap["y"]][gap["beside"]]
         assert max(abs(a - b) for a, b in zip(between, beside)) <= 2, (between, beside)
+
+
+# --- a browser that refuses (#600) ----------------------------------------------
+
+
+def test_a_reply_is_copied_the_old_way_when_the_clipboard_refuses(page_at):
+    """`navigator.clipboard` is there and refuses often enough -- a page
+    without the focus, a browser that wants a permission -- that
+    `copyToClipboard` keeps the old way behind it: a hidden text box and
+    `execCommand("copy")`. No test had taken it (#600)."""
+    with opened(page_at) as page:
+        page.evaluate("""() => {
+          navigator.clipboard.writeText = () => Promise.reject(new Error('denied'));
+          window.__copied = null;
+          document.addEventListener('copy', (event) => {
+            const box = event.target;
+            window.__copied = box.value.slice(box.selectionStart, box.selectionEnd);
+          });
+        }""")
+        boxes = "document.querySelectorAll('textarea[readonly]').length"
+        before = page.evaluate(boxes)
+        page.locator(".turn.mine").first.hover()
+        page.locator(".turn.mine .turnacts .copy").first.click()
+        page.wait_for_function("window.__copied !== null")
+        assert page.evaluate("window.__copied") == "Do the thing."
+        assert page.evaluate(boxes) == before, "the text box it copied from stayed"
+
+
+def test_a_copy_that_no_way_takes_says_so(page_at):
+    """Neither way may throw out of a click: with no clipboard and an
+    `execCommand` that throws, the button says it could not copy."""
+    with opened(page_at) as page:
+        page.evaluate("""() => {
+          Object.defineProperty(navigator, 'clipboard', {value: undefined});
+          document.execCommand = () => { throw new Error('no'); };
+        }""")
+        copy = page.locator(".turn.mine .turnacts .copy").first
+        page.locator(".turn.mine").first.hover()
+        copy.click()
+        page.wait_for_function(
+            "document.querySelector('.turn.mine .turnacts .copy').title === 'could not copy'")
+        assert "done" not in copy.get_attribute("class")
+
+
+def test_markdown_that_marked_cannot_parse_is_shown_as_its_text(page_at):
+    """`marked` is a script fetched from elsewhere; one that throws on a
+    text leaves that text as it was written, never a blank turn (#600)."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_watching(daemon)
+        page.wait_for_function("!!window.marked")
+        page.evaluate("() => { marked.parse = () => { throw new Error('a bad day'); }; }")
+        write_records(daemon, conftest.record("claude", "Some **bold** words."))
+        daemon.tick()
+        turn = page.locator(".turn", has_text="Some **bold** words.")
+        turn.wait_for()
+        assert turn.locator("strong").count() == 0
+
+
+def test_a_hash_typed_by_hand_that_does_not_decode_opens_the_page(page_at):
+    """`decodeURIComponent` throws on a half escape. `placeInHash` takes
+    such an address for none, and the page opens on its first session."""
+    _, path = page_at
+    with own_context() as context:
+        page = context.new_page()
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.goto(path + "#%E0%A4%A", wait_until="domcontentloaded")
+        page.wait_for_function("state.chosen === 's1'")
+        assert not blew_up, blew_up
