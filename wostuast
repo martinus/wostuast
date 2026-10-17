@@ -17401,24 +17401,12 @@ function drawSessions() {
                              state.sessions.filter((s) => children.has(s.id))]))) {
     return;
   }
-  // A row that is still there is kept and filled in again. A dot can only
-  // fade into its new colour if it is the same dot, and the needs-you ring
-  // can only finish a cycle if its row outlives the change that started it —
-  // and a state change is exactly when both of those used to be thrown away.
-  // The bar is kept for the same reason; anything else that is not a row goes
-  // first, because the loop below places things by position and a stray node
-  // would shift every one of them.
   // A row being renamed may move below, and a moved node loses the focus.
   const typing = box.contains(document.activeElement)
     && document.activeElement.tagName === "INPUT" ? document.activeElement : null;
   const caret = typing ? [typing.selectionStart, typing.selectionEnd] : null;
   const had = new Map();
-  let bar = null;
-  for (const node of Array.from(box.children)) {
-    if (node.dataset.id) had.set(node.dataset.id, node);
-    else if (node.classList.contains("histhead")) bar = node;
-    else node.remove();
-  }
+  let bar = keepRows(box, had);
   // The children of each row, once a draw, for the rows' signatures.
   const kidsBy = new Map();
   for (const s of state.sessions) {
@@ -17453,23 +17441,7 @@ function drawSessions() {
     for (const s of mine) {
       const row = had.get(s.id) || newRow(s.id);
       had.delete(s.id);
-      // Only a row whose session, or what the page shows beside it, has
-      // changed (#431): filling all 500 rows took 34 ms on every push, and
-      // with the layout after it up to 125 ms. The session and its
-      // children by object, which only `mergeSessions` and `patchSession`
-      // replace (#435); what the page shows beside them by its text.
-      const kids = kidsBy.get(s.id) || [];
-      const sig = JSON.stringify([s.id === state.chosen, state.linksKey,
-                                  reminderDue(s), reminderAt(s), reminderWord(s),
-                                  state.kidsOpen.has(s.id)]);
-      const same = row.filledWith && row.filledWith[0] === s
-        && row.filledWith[1].length === kids.length
-        && kids.every((kid, at) => row.filledWith[1][at] === kid);
-      if (!same || row.dataset.sig !== sig || row.querySelector(".name input")) {
-        fillRow(row, s);
-        row.dataset.sig = sig;
-        row.filledWith = [s, kids];
-      }
+      refillRow(row, s, kidsBy.get(s.id) || []);
       place(row);
     }
   }
@@ -17483,6 +17455,46 @@ function drawSessions() {
     put(box, "div", "nohits", "no session matches");
   }
   openGrip();
+}
+
+// The sidebar's rows that are still there, by their session, into `had`;
+// what is neither a row nor the history's bar is taken away. Gives back
+// the bar, or null.
+function keepRows(box, had) {
+  // A row that is still there is kept and filled in again. A dot can only
+  // fade into its new colour if it is the same dot, and the needs-you ring
+  // can only finish a cycle if its row outlives the change that started it —
+  // and a state change is exactly when both of those used to be thrown away.
+  // The bar is kept for the same reason; anything else that is not a row goes
+  // first, because the loop below places things by position and a stray node
+  // would shift every one of them.
+  let bar = null;
+  for (const node of Array.from(box.children)) {
+    if (node.dataset.id) had.set(node.dataset.id, node);
+    else if (node.classList.contains("histhead")) bar = node;
+    else node.remove();
+  }
+  return bar;
+}
+
+// One row filled again, when what it shows has changed.
+function refillRow(row, s, kids) {
+  // Only a row whose session, or what the page shows beside it, has
+  // changed (#431): filling all 500 rows took 34 ms on every push, and
+  // with the layout after it up to 125 ms. The session and its
+  // children by object, which only `mergeSessions` and `patchSession`
+  // replace (#435); what the page shows beside them by its text.
+  const sig = JSON.stringify([s.id === state.chosen, state.linksKey,
+                              reminderDue(s), reminderAt(s), reminderWord(s),
+                              state.kidsOpen.has(s.id)]);
+  const same = row.filledWith && row.filledWith[0] === s
+    && row.filledWith[1].length === kids.length
+    && kids.every((kid, at) => row.filledWith[1][at] === kid);
+  if (!same || row.dataset.sig !== sig || row.querySelector(".name input")) {
+    fillRow(row, s);
+    row.dataset.sig = sig;
+    row.filledWith = [s, kids];
+  }
 }
 
 // The line between the list and the content opens where the chosen row

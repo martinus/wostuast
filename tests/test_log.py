@@ -574,8 +574,9 @@ def test_no_name_is_defined_twice():
 #: `Class.method`; the page's top-level `function`s as `page:name`, to the
 #: `}` that closes them. `LONGER_ALREADY` held the seven that were past the
 #: limit when the rule was written, each allowed to shrink only; #548 split
-#: them all. A pull request that adds an entry says why in its description.
-LINES_MOST = 100
+#: them all. #578 split the nine past 80, then lowered the limit from 100.
+#: A pull request that adds an entry says why in its description.
+LINES_MOST = 80
 LONGER_ALREADY: dict[str, int] = {}
 
 
