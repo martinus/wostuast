@@ -331,6 +331,14 @@ luck, and on `main` too, to tell whose it is.
   Its sibling `test_yes_shows_while_the_hook_waits_and_goes_to_it` started
   the hook inside the `with`, and was never red. Start a thread with a
   deadline of its own inside `opened`, never before it.
+  - **And end it with the test.** The `asking` fixture of
+    `tests/test_approve.py` left its `wait_for_yes` waiting out a 20 s
+    `APPROVE_WAIT` after two of its tests, on the same worker as the next
+    tests. `test_it_waits_for_the_state_to_come` patches `time.sleep`;
+    the old thread slept through the patch, which does not sleep, and
+    spun to twenty "steps" of the other test's wait (#584's CI, red on
+    3.10 only, by where the shards fell). The fixture's teardown now
+    writes the hook's Yes and asserts the thread is gone.
 - **In a browser test, `wait_for_watching(daemon)` comes before the first
   `daemon.tick()`.** `open_page` and `wait_for_map` prove the fetch
   answered, not that the stream listens: `showTab` fetches and *then*
