@@ -1,73 +1,68 @@
 # CLAUDE.md
 
-No human reads this file or `.claude/topics/`. This file is the map, the
-reuse index and the way of working; the scars are in `.claude/topics/`, one
+Only agents read this file and `.claude/topics/`. This file is the map, the
+reuse index and the way of working; the rules are in `.claude/topics/`, one
 file a subject.
 
 **Read the rules file before you edit its part.** **Where to look** names
-it. `grep -rn <symbol> CLAUDE.md .claude/topics` finds the rule that names a
-symbol. The rules were one file of 50,000 tokens, loaded at every start and
-again after every compaction, so a long session spent its room on subjects
-it never touched and compacted sooner. Split, a session loads the map and
-reads the one subject it works on -- which only works if it does read it.
-**Not `.claude/rules/`, whatever the name suggests**: Claude Code loads every
-file there at launch, as it loads this one (code.claude.com/docs/en/memory,
-"Rules without `paths` frontmatter are loaded at launch"), and a `paths:`
-scope does not help, because every rule is about the one file `wostuast`.
-Nothing here may be written as an `@` import either: that also loads it.
+it; `grep -rn <symbol> CLAUDE.md .claude/topics` finds the rule that names a
+symbol. A session loads this map and reads only the subject it works on: the
+rules were one file of 50,000 tokens, loaded at every start and after every
+compaction. **Never `.claude/rules/`, and never an `@` import**: Claude Code
+loads both at launch (code.claude.com/docs/en/memory, "Rules without `paths`
+frontmatter are loaded at launch"), and a `paths:` scope does not help,
+because every rule is about the one file `wostuast`.
 
 **Nothing durable goes in machine-local memory.** The owner works from more
-than one computer: `~/.claude` memory and the scratchpad stay behind on the
+than one computer; `~/.claude` memory and the scratchpad stay on the
 machine. A lesson goes in this file or `.claude/topics/`, committed; a tool
 worth keeping goes in `tests/`, as `shot.py` and `stage.py` did. The
-scratchpad is for this session's throwaway files and nothing else.
+scratchpad is for this session's throwaway files.
 
-**How a rule is written, and how to add one.** One bullet: the assertion
-in bold, then why the obvious alternative is wrong, then the symbols to grep
-and the test that holds it. Name the symbols in the rule itself, so `grep -rn
-tmux_send .claude/topics` finds it. A rule goes in the file of its subject; a
-new subject is a new file, and a row in **Where to look** and in the list
-under **Rules**.
+**How a rule is written.** Only agents read these files: write for one
+that finds a rule by grep and acts on it. One bullet a rule, in this order:
 
-**A new scar goes into the bullet it belongs to, not beside it.** Grep for
-the symbol first. A bullet is new only when the bug is a new kind; the same
-kind again adds its test name and a sentence to the bullet that holds it,
-as a nested item when it has a why of its own (the live slot and the
-transcript's place are the shape). The skill writes a rule for every fix, and a file that
-grows by one bullet a fix is read whole when it is read, and pushes a long
-session into compaction sooner — eleven times in the session that wrote
-this.
+1. the assertion, in bold: what to do, or never to do;
+2. why, in one or two sentences: the failure the obvious alternative
+   caused, or the reader's decision and what it rules out;
+3. the symbols to grep, the test that holds it, and the issue (`#N`).
 
-**Never cut the why to make this shorter.** The assertion says what to do; the
-why is the only thing that stops the next agent doing the plausible wrong
-thing again, and every one of these was written after something shipped
-broken. The rules files are long because the program is subtle; they are
-split so that each is read when it matters, not cut.
+Leave out the story: who found it, in which session, after how many runs,
+what was tried first. `git log --grep '#N'` and the issue keep that. Keep a
+number only when it sets a limit or proves the why. Name the symbols in the
+rule itself, so `grep -rn tmux_send .claude/topics` finds it. A rule goes in
+the file of its subject; a new subject is a new file, a row in **Where to
+look** and one in the list under **Rules**.
 
-**State no number a person would have to maintain.** Give the command that
-answers it. Three numbers in here went stale by 40% before anybody noticed,
-and a stale fact is worse than no fact: it is believed. **A measurement is
-not that**: "2,500 lines took 144 ms" records an experiment somebody ran, and
-it stays true. The rotting kind describes this repository as it is today —
-how long the program is, how long the suite takes.
+**A new scar goes into the bullet it belongs to.** Grep for the symbol
+first. The same kind of bug again adds its test name and a clause to that
+bullet, or a nested item when it has a why of its own. A new bullet is for
+a new kind of bug. Every fix writes a rule, so a file that grows by a
+story a fix is soon too long to read whole.
 
-**This file and `.claude/topics/` are the only design document, and they
-have no senior.** There was a
-`PLAN.md`: the brief the program was built from, which said it won where the
-two disagreed. It was deleted once all seven milestones were done, because
-parts of it had gone false and a false brief that outranks the rules is worse
-than none. What still held moved here: **Goals and non-goals**, and
-`.claude/topics/decisions.md`. `git show d440d2f:PLAN.md` prints
-the old text. It is history and never authority: an old commit, issue or
-comment that cites a section of `PLAN.md` -- or of this file before the
-split -- is answered by these files, and where they and the tests disagree,
-the tests are right and the rule is fixed in the same commit.
+**Keep the why, cut the story.** The why stops the next agent from making
+the plausible wrong fix again; the story does not. A rule without its why
+is broken by the first agent that thinks it knows better.
+
+**State no number a person would have to maintain; give the command that
+answers it.** A stale fact is believed: three numbers here once went 40%
+stale unnoticed. A measurement ("2,500 lines took 144 ms") is not that: it
+records an experiment, and stays true.
+
+**This file and `.claude/topics/` are the only design document.** `PLAN.md`,
+the brief the program was built from, was deleted once its seven milestones
+were done: parts had gone false, and it outranked the rules. What still held
+is **Goals and non-goals** and `.claude/topics/decisions.md`;
+`git show d440d2f:PLAN.md` is history, never authority. An old commit, issue
+or comment that cites `PLAN.md`, or this file before the split, is answered
+by these files. Where they and the tests disagree, the tests are right, and
+the rule is fixed in the same commit.
 
 ## Where to look
 
 Find your row before editing, not after the tests go red. "topics/<subject>"
-is `.claude/topics/<subject>.md`: read it, not only the bullet grep found, because the
-bullets beside it are the same part's other scars.
+is `.claude/topics/<subject>.md`: read the whole file, not only the bullet
+grep found; the bullets beside it are the same part's other rules.
 
 | About to touch | Read |
 | --- | --- |
@@ -144,9 +139,9 @@ interrupt is a keystroke, not a signal.
 
 ## Goals and non-goals
 
-Every feature is judged against these. When a request fights one, the
-question to ask is whether the goal bends — ask that, one level up, before
-building anything. A goal that bends is rewritten here in the same PR.
+Every feature is judged against these. When a request fights one, ask one
+level up whether the goal bends, before building anything. A goal that bends
+is rewritten here in the same pull request.
 
 **Goals.** The numbers are cited elsewhere; keep them.
 
@@ -157,49 +152,42 @@ building anything. A goal that bends is rewritten here in the same PR.
 4. Stay small: one Python file, the standard library, no daemon needed to
    *record* events, no config file needed to run, a one-line install and a
    one-line uninstall. Our `settings.json` is the one optional file: the
-   settings menu writes it, nobody has to, and **Shape** says what it took
-   to earn that. The hook file `install` writes (`hook_path`) is not a
-   second source: `hook_source` copies it out of the one file, and
-   `uninstall` takes it away. It earned its place by time: 33 ms an event
-   against 131 for the whole program (#271).
-5. Look good enough that a screenshot would sell it. **One ships**
-   (#521): `docs/cover.png` at the top of the README, drawn by
-   `tests/tour.py` from made-up sessions, never from anybody's real ones.
-   It was none -- a picture of real agents is somebody's work, and made-up
-   ones "show a tool nobody is using" -- until the reader asked for a cover
-   and chose the tour's sessions. Draw it again when the page changes how
-   it looks: the command is under the picture.
+   settings menu writes it, nobody has to (**Shape** says why it is allowed).
+   The hook file `install` writes (`hook_path`) is no second source:
+   `hook_source` copies it out of the one file, `uninstall` removes it, and
+   it costs 33 ms an event against 131 for the whole program (#271).
+5. Look good enough that a screenshot would sell it. **One ships** (#521):
+   `docs/cover.png`, at the top of the README, drawn by `tests/tour.py` from
+   made-up sessions, never real ones -- a picture of real agents is
+   somebody's work. Draw it again when the page changes how it looks; the
+   command is under the picture.
 
 **Non-goals. If a feature needs one of these, leave the feature out.**
 
 - **Owning the agent process.** Nothing here spawns, wraps or kills it; tmux
-  owns the PTY. Typing into a pane is not owning it, which is why jump, send,
-  the answer keys and a No's Escape are allowed and a signal is not.
-- **A terminal emulator** (no xterm.js). A Peek tab showed a still capture of
-  the pane for two milestones and was removed: the tmux window it copied was
-  always one keystroke away. `capture-pane` went with it.
-- **A Yes the reader did not give, or one that keys carry.** The page
-  says Yes to a permission dialog only as the reader's own click, and only
-  through that dialog's hook (`approve`, `wait_for_yes`): keys land on
-  whichever dialog is up when they arrive, and a Yes typed for `git
-  status` could approve an `rm -rf` that came up meanwhile. The hook is
-  called for one dialog and Claude Code takes its allow for that one only,
-  so the Yes cannot land elsewhere. It was a non-goal -- "no approve
-  button, ever" -- while keys were the only way; the reader asked for Yes
-  once the page showed the whole request, and chose the hook, and this
-  bullet was rewritten in the same PR. **"Yes, and don't ask again" is
+  owns the PTY. Typing into a pane is not owning it: jump, send, the answer
+  keys and a No's Escape are allowed, a signal is not.
+- **A terminal emulator** (no xterm.js). A Peek tab that showed a still
+  capture of the pane was removed: the real pane is one keystroke away.
+  `capture-pane` went with it.
+- **A Yes the reader did not give, or one that keys carry.** The page says
+  Yes only as the reader's click, and only through that dialog's own hook
+  (`approve`, `wait_for_yes`). Keys land on whichever dialog is up when they
+  arrive, so a Yes typed for `git status` could approve an `rm -rf` that came
+  up meanwhile; the hook is called for one dialog, and Claude Code applies
+  its allow to that one only. The reader asked for Yes once the page showed
+  the whole request, and chose the hook. **"Yes, and don't ask again" is
   Claude Code's own suggestion, never a rule of ours** (`always_offered`,
-  `allow_for`): the reader asked for the CLI's choices, and each
-  `permission_suggestions` entry that allows something is one button; the
-  page sends only which, and the hook takes the rule from its own payload.
-  No mode that turns every prompt off, no plan, no question. Answering an `AskUserQuestion` is the agent's own question, and
-  the page types nothing until the reader submits.
+  `allow_for`): each `permission_suggestions` entry that allows something is
+  one button; the page sends only which, and the hook takes the rule from its
+  own payload. No mode that turns every prompt off, no plan, no question. An
+  `AskUserQuestion` is the agent's own question: the page types nothing until
+  the reader submits.
 - **Agent-to-agent messaging, teams, orchestration, cache telemetry.** Showing
   the spend the status line sends is in; accounting is out. **So is a spend
-  limit**: one shipped, the one thing here that typed into a terminal with
-  nobody watching, and it went with the Session tab that set it -- ten rules
-  and their tests for a box the reader never used. `git show` the commit
-  that removed the Session tab before building one again.
+  limit**: one shipped, typed into a terminal with nobody watching, and went
+  with the Session tab that set it. `git show` the commit that removed the
+  Session tab before building one again.
 - **Knowing a worktree layout.** A session is an agent standing in a
   directory, nothing more. No dependency on `gra`.
 - **Electron, Tauri, React, or any build step**, a Python dependency outside
@@ -210,85 +198,80 @@ building anything. A goal that bends is rewritten here in the same PR.
 
 ## Principles
 
-Five, each held by a test. Where a goal says what the program is for, a
-principle says where its code goes, so that a new feature lands in the
-one place made for it and not beside it. They were written after a
-review of the whole file (#535): the bugs it found were each one fact
-with two homes. When a change cannot keep one, say so in the pull
-request, and name the principle.
+Five, each held by a test. A goal says what the program is for; a principle
+says where its code goes, so a new feature lands in the one place made for
+it. They came from a review of the whole file (#535): its bugs were each one
+fact with two homes. A change that cannot keep one says so in its pull
+request, and names the principle.
 
-1. **Data flows one way**: events, then the fold, then rows, then the
-   wire, then the page. The fold does no I/O: file, git and `/proc`
-   reads happen at the edges, in the named steps of `Store.refresh`
-   (`follow`, `settle`, `reload_git`, `render`), and a write the fold
-   needs waits until it is done (`save_names`). A change of state is
-   `become`. `test_the_fold_does_no_io` folds an event of every handler
-   with I/O made to fail, and
-   `test_the_guard_folds_every_handler_and_both_links` holds that it is
-   given every path.
+1. **Data flows one way**: events, then the fold, then rows, then the wire,
+   then the page. The fold does no I/O: file, git and `/proc` reads happen at
+   the edges, in the named steps of `Store.refresh` (`follow`, `settle`,
+   `reload_git`, `render`), and a write the fold needs waits until it is done
+   (`save_names`). A change of state is `become`. `test_the_fold_does_no_io`
+   folds an event of every handler with I/O made to fail;
+   `test_the_guard_folds_every_handler_and_both_links` holds that it is given
+   every path.
 2. **Each shape the page receives is defined in one place**: the wire
    section (`row`, `blocks_json`, `session_json`, `wire_fields`, the
-   `EVENTS`). Its head comment names the five dataclasses that go out
-   whole; anything else is written key by key.
+   `EVENTS`). Its head comment names the five dataclasses that go out whole;
+   anything else is written key by key.
    `test_a_block_sends_only_the_fields_it_names`,
    `test_the_page_reads_only_session_fields_the_row_sends`,
    `test_the_page_listens_for_every_event_the_stream_sends`,
    `test_the_row_and_ls_json_say_the_same_of_a_session`,
    `test_only_the_wire_section_turns_a_dataclass_into_json`.
-3. **A draw only reads state.** Only the code that loads data or handles
-   a click changes `state`. What a change to the sessions does besides
-   drawing is `onSessions`. Every browser test that opens a page with
-   `opened` checks it: `DRAW_GUARD` in `tests/browser.py`, an init script
-   of every context, so the draws at load count too (#577), wraps `paint`
-   and every `draw…` but `draw`, writes down each fetch, alert, storage
-   write and change to `state` they make, four levels deep and into each
-   array, `Set` and `Map` -- and each change
-   to `state` a timer they set makes when it fires, since a timer that
-   touches only the page is no effect (#573) -- and fails on one not in
-   `DRAW_EFFECTS_ALREADY`, a ratchet that #573 emptied. Every
-   field of `state` is declared in its literal:
-   `test_every_field_of_the_pages_state_is_declared`. **`draw()` is two
-   steps, `paint` and then `land`** (#573), as `Store.refresh`'s are: a
-   mark of where to go -- a link to a block, a file asked for, the "new"
-   line -- is used up once it is landed on, and that write is the land's,
-   each tab's own in `TABS` (`landTranscript`, `landFiles`, `landDiff`).
-   A build leaves what its land needs on the pane (`toLand`); the Review
-   tab's lands once a build, not on every push.
-4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
-   session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`), views
-   (`VIEWS`), routes (`ROUTES`). A test walks the table, so a new entry is
-   tested without anyone writing its test:
+3. **A draw only reads state.** Only code that loads data or handles a click
+   changes `state`; what a change to the sessions does besides drawing is
+   `onSessions`. `DRAW_GUARD` in `tests/browser.py` -- an init script of every
+   context, so the draws at load count too (#577) -- wraps `paint` and every
+   `draw…` but `draw`, records each fetch, alert, storage write and change to
+   `state` they make (four levels deep, into each array, `Set` and `Map`, and
+   from a timer they set when it fires, #573), and fails on one not in
+   `DRAW_EFFECTS_ALREADY`, a ratchet #573 emptied. Every browser test that
+   opens a page with `opened` checks it. Every field of `state` is declared
+   in its literal: `test_every_field_of_the_pages_state_is_declared`.
+   **`draw()` is two steps, `paint` and then `land`** (#573), as
+   `Store.refresh`'s are: a mark of where to go -- a link to a block, a file
+   asked for, the "new" line -- is used up once landed on, and that write is
+   the land's, each tab's own in `TABS` (`landTranscript`, `landFiles`,
+   `landDiff`). A build leaves what its land needs on the pane (`toLand`); the
+   Review tab lands once a build, not on every push.
+4. **Every extension point is a table**: hook handlers (`_HANDLERS`), session
+   verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`), views (`VIEWS`), routes
+   (`ROUTES`). A test walks the table, so a new entry is tested without
+   anyone writing its test:
    `test_every_view_opens_draws_and_gives_the_session_back`,
    `test_every_route_refuses_what_it_must`.
-5. **One reader for each fact.** Where two parts of the program read the
-   same fact, they call one function: `prompt_said` for a prompt,
-   `git_status` for `git status`, `apply_git_facts` for a reading of git,
-   `getJson` for an answer of the daemon.
-   `test_search_reads_a_prompt_as_the_fold_does`, `test_only_get_json_calls_fetch`,
+5. **One reader for each fact.** Where two parts read the same fact, they
+   call one function: `prompt_said` for a prompt, `git_status` for
+   `git status`, `apply_git_facts` for a reading of git, `getJson` for an
+   answer of the daemon. `test_search_reads_a_prompt_as_the_fold_does`,
+   `test_only_get_json_calls_fetch`,
    `test_the_row_counts_the_changed_files_the_files_tab_marks`,
    `test_only_one_function_runs_git_status`.
 
 **How a test holds a principle, strongest first.** A test that walks a
-table checks each entry. A differential test gives two readers of one
-fact one hard case, and asks that they agree; write it first and see it
-fail. A guard at run time -- a fold with I/O made to fail, a draw that
-records its fetches -- checks what the code does, but only on the paths
-the tests run, so it comes with a test that each path is run. A static
-check of the source's form is the weakest: moving code satisfies it.
+table checks each entry. A differential test gives two readers of one fact
+one hard case and asks that they agree; write it first and see it fail. A
+guard at run time -- a fold with I/O made to fail, a draw that records its
+fetches -- checks only the paths the tests run, so it comes with a test that
+each path is run. A static check of the source's form is the weakest: moving
+code satisfies it.
 
 **A ratchet is a list of known breaks that may only get shorter**, like
-`LONGER_ALREADY`. It stops the code sliding back, and it cleans nothing:
-in its first eleven days `LONGER_ALREADY` gained no entry and lost none,
-and `drawSessions` stood at exactly its limit. So:
+`LONGER_ALREADY`. It stops the code sliding back, and cleans nothing:
+`LONGER_ALREADY` gained and lost no entry in its first eleven days, and
+`drawSessions` stood at exactly its limit. So:
 
-- **A guard lands in the pull request of the refactor that empties most
-  of its list**, never alone before it. A list of thirty breaks that
-  nobody works on is noise.
-- **Each entry says why it is there**, in a comment beside it or above
-  the list.
-- **A pull request that adds an entry says why in its description.**
-  Adding one is the cheapest way to turn a red test green, and the diff
-  is the only thing that shows it.
+- **A guard lands in the pull request of the refactor that empties most of
+  its list**, never alone before it: a list of thirty breaks nobody works on
+  is noise.
+- **Each entry says why it is there**, in a comment beside it or above the
+  list.
+- **A pull request that adds an entry says why in its description.** Adding
+  one is the cheapest way to turn a red test green, and the diff is the only
+  thing that shows it.
 
 ## Layout
 
@@ -297,42 +280,23 @@ and `drawSessions` stood at exactly its limit. So:
 | `wostuast` | The whole program: Python, then `PAGE = r"""` and the HTML/CSS/JS. Five figures of lines — `wc -l wostuast` rather than a number here that rots. |
 | `tests/conftest.py` | Every fixture, including the page ones (`page_at`, `repo_page`, `big_page`, `in_pane`, `no_pane`, `pair_at`, `past_at`) and `event()`. |
 | `tests/browser.py` | The shared Chromium, `opened`, `own_context`, `show_tab`, and the other page helpers. No fixtures. `WAIT` is `WOSTUAST_WAIT`. |
-| `tests/shot.py` | Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `--eval JS` runs in the page first: a click, a scroll. `tests/test_shot.py` keeps it working. |
-| `tests/stage.py` | Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working. |
-| `tests/tour.py` | Not a test. Six sessions, one in each state a row can be in -- unread with a plan, working with subagents under it, needing you, a reminder, over -- saved turns of each kind, and a status line each; then a PNG of each view: `transcript`, `later` (the remind menu), `unread`, `saved`, `search`, `permission`. `--view` picks, `--light`, `--width`, `--height`, `--eval JS` (or a file of it) and `--hover SELECTOR` before each picture, which is how a mockup of the sidebar or the views is drawn. `tests/test_tour.py` keeps it working. |
-| `tests/scale.py` | Not a test. Writes a synthetic history of `--sessions` and `--turns` into a throwaway home and prints one line of JSON: the first fold of a start, a quiet tick, a tick after one event, a push and a stream's opening, and with `--page` one push's redraw in Chromium. How #430 and #431 were measured; run it before and after a change to the fold, a row, the stream or the sidebar's draw. `tests/test_scale.py` keeps it working. |
-| `tests/claude_pane.py` | Not a test. A real Claude Code in a tmux pane of its own, against a fake Messages API that keeps every request and can answer once with a tool call: `send`, `paste`, `ask`, `busy` (a turn still running), `turns`, `statuses`, `hooks`, `settings`. How a question about what Claude Code does is measured, not guessed (topics/payloads). `tests/test_claude_pane.py` keeps the fake API working. |
-| `tests/page_coverage.py` | Not a test. Runs the browser tests -- all, or the ones named -- with `WOSTUAST_COVERAGE` set, so that `cover` in `tests/browser.py` has Chromium count what each page ran of the page script, and prints the share of its lines that ran and each named function that never did, at its line in `wostuast`. `--lines` adds the lines, `--from DIR` reads a run again, and `--check` fails on a named function that never ran and is not in `UNRUN_ALREADY`, a ratchet that started empty (#579), and on one whose lines that never ran are more than `UNRUN_LINES_ALREADY` allows it, naming them (#600); CI's `browser` job runs it over the four shards. A function it names is dead code or a test nobody wrote (topics/testing). `tests/test_page_coverage.py` keeps it working. |
-| `tests/perturb.py` | Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working. |
+| `tests/shot.py`, `stage.py`, `tour.py`, `scale.py`, `claude_pane.py`, `page_coverage.py`, `perturb.py` | Tools, not tests. topics/working, "The tools in `tests/`", says what each does and takes. Each has a `tests/test_<name>.py` that keeps it working. |
 | `tests/test_page_*.py` | Browser tests, one file per subject: transcript, sidebar, theme, tabs, files, diff, review, act, commands. |
 | `tests/test_*.py` | Everything that needs no browser. Named after what it tests. |
 | `tests/fixtures/README.md` | The hook and status line payload fields. |
-| `README.md` | What a user reads first: what wostuast is, why, how to install it, and a short tour. Short on purpose (#521): it was 800 lines, and the reader asked for only what sets wostuast apart. A detail goes in the guide. |
+| `README.md` | What a user reads first: what wostuast is, why, how to install it, and a short tour. Short on purpose (#521): a detail goes in the guide. |
 | `docs/GUIDE.md` | Everything a user can look up: each part of the page, the keys, the settings, the commands, `ls --json`, the files, safety, the FAQ. Keep in step with the commands. |
 | `docs/cover.png` | The README's picture: `tests/tour.py`'s transcript view, made-up sessions. |
 | `ARCHITECTURE.md` | What a person reads to learn how the program works and why, with diagrams. It has no authority: where it and these rules or the tests disagree, they are right, and it is fixed in the same pull request. A change to what it draws -- a route, a state, a verb, a file on disk, a hook event -- updates it too. |
 | `.claude/topics/*.md` | The rules, one file a subject: safety, safety-typing, safety-install, state, sidebar, marks, tab-state, worktree-tabs, review, daemon-and-page, transcript, transcript-look, send-and-keys, testing, working, decisions, landing, payloads. **Where to look** routes to them. |
 | `.claude/skills/issues/SKILL.md` | How to work the issue list: the owner's issues only, group, reproduce, ask, prove, review, merge on green, read the list again, then reflect on the session and land what is clear. Invoked as `/issues`, and by "do the issues". |
-| `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, four sharded browser jobs that each record what they ran of the page script, and an aggregator named `browser` that the branch rule requires: it fails on a red shard, and on a page function no shard ran (#579). No job names a test file, and none may — naming one broke the browser job the moment a file was renamed, and the shards split on a hash of the test id for that reason. |
+| `.github/workflows/tests.yml` | The only CI: a pytest matrix over 3.10–3.13, four sharded browser jobs that record what they ran of the page script, and `browser`, the aggregator the branch rule requires. It fails on a red shard, and on page code no shard ran (#579, #600). No job names a test file: naming one broke the browser job when a file was renamed, so the shards split on a hash of the test id. |
 
 ### Finding code in `wostuast`
 
 Every section starts `# --- name: one line ---` (Python) or `// --- name ---`
-(page). `grep -n "^# --- \|^// --- " wostuast` prints the whole map in one go.
-Do that before grepping for a symbol.
-
-Python: constants · log · event log · following files · **session model** ·
-transcript · git facts · **files and diffs** · status ·
-settings.json · output helpers · ansi · **tmux verbs** · slash commands ·
-**wire** · **the daemon** ·
-commands · command line · the page.
-
-Page: asking the daemon · dragging an edge · the two fetched scripts · colours ·
-**the sidebar** · the tab icon and title · notifications · **the transcript** · painting code ·
-**the Files tab** · finding a file · the tree · a file too long to draw whole ·
-how a file is drawn · **the Diff tab** · **the review** ·
-keeping a review · **the review on the Review tab** · the Commands view · the tabs ·
-talking to the daemon · keys.
+(page). `grep -n "^# --- \|^// --- " wostuast` prints the whole map; run it
+before grepping for a symbol.
 
 ## Before you write anything new
 
@@ -382,70 +346,62 @@ status file this checkout makes, as Claude Code does -- the hook under a
 stand-in `claude` whose stdin is a terminal, or a pipe with `keys="pipe"`
 (`as_claude`). `conftest.event(name, sid=..., **extra)` builds a hook event
 as the log holds it, with a `cwd`, a `pane`, a `pid` and a `ts`;
-`conftest.bare_event` builds one with only the fields named, which is what
-Claude Code hands the hook, and an event that must carry no pane. Never
-hand-write the dict: `test_no_test_writes_a_hook_event_by_hand` fails on
-one that `EVENTS_BY_HAND` does not hold (#599). **To call the program from a scratch script,
-`sys.path.insert(0, "tests")` and `from conftest import wostuast`**: a
-`SourceFileLoader` of its own, without the module in `sys.modules`, failed
-at the first `@dataclass`. `conftest.record(kind, text, ...)` builds a
-transcript record — `you`, `claude`, `think`, `tool`, `result` — and
+`conftest.bare_event` builds one with only the fields named, as Claude Code
+hands it to the hook, and an event that must carry no pane. Never hand-write
+the dict: `test_no_test_writes_a_hook_event_by_hand` fails on one that
+`EVENTS_BY_HAND` does not hold (#599). **To call the program from a scratch
+script, `sys.path.insert(0, "tests")` and `from conftest import wostuast`**:
+a `SourceFileLoader` of its own, without the module in `sys.modules`, fails at
+the first `@dataclass`. `conftest.record(kind, text, ...)` builds a
+transcript record -- `you`, `claude`, `think`, `tool`, `result` -- and
 `conftest.records(...)` makes them the lines of a file; never hand-write
-those either, because a hand-written one ended in a backslash and an `n`
-rather than a newline and the reader waited on it for ever. `conftest.said(args, rest)`
-is what a runner that records keeps of one call, with the text that
-`tmux_send` hands `load-buffer` on stdin; `conftest.typed(seen)` gives those
-texts back, and `conftest.into_pane(seen)` every call that put something
-into a pane. A runner that records `list(args)` alone has lost the text. `browser.py` has `opened` (`with opened(where) as page:`, and
-`tab="diff"`), `own_context` and `load` for a test that needs the context
-before the page, `show_tab`,
-`comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`, `open_code`,
-`stays` (the one fixed wait: proving that nothing comes), `frames` (the
-next frames a page draws),
-`pixels` (the colours a `page.screenshot` drew: a gradient's shape is in no
-computed style),
+those either: one ended in a backslash and an `n` rather than a newline, and
+the reader waited on it for ever. `conftest.said(args, rest)` is what a
+runner that records keeps of one call, with the text `tmux_send` hands
+`load-buffer` on stdin; `conftest.typed(seen)` gives those texts back, and
+`conftest.into_pane(seen)` every call that put something into a pane. A
+runner that records `list(args)` alone has lost the text. `browser.py` has
+`opened` (`with opened(where) as page:`, and `tab="diff"`), `own_context` and
+`load` for a test that needs the context before the page, `show_tab`,
+`comment_on_first_line`, `two_rows`, `rgb`/`contrast`, `numbers`,
+`open_code`, `stays` (the one fixed wait: proving that nothing comes),
+`frames` (the next frames a page draws), `pixels` (the colours a
+`page.screenshot` drew: a gradient's shape is in no computed style), and
 `spy_on_note`.
 
 **CSS**: `.verb` (button; `.verb.quiet` is the same shape a size down, for a
-button that only changes what is on screen), `.choice` (one control in
-parts, the part in force pressed: `putChoice` and `paintChoice` build and
-paint it, the settings menu uses it), `.toggle` (one button lit while what
-it says is on: `paintToggle`; `putQuick` and `putReadAs` use it), `.link` (small text
-button),
-`.acts` (what you can do to a comment,
-at its right edge), `.find`/`.findslot`,
-`.empty`, `.nohits`, `.note`, `.comment`. **Every colour is a variable**
-and a `:root` block is the only place a colour may be a number —
-`test_every_colour_outside_the_palette_is_named` fails the build otherwise.
-It reads an issue number in a CSS comment as a colour too: `(#333)` failed
-it, so a comment in the CSS says `issue 333`.
-Derive a tint or a ring with `color-mix`, never by copying an rgb triple.
-**The fixed face is for machine text only** (#448): code, a diff, a file,
-a command, the send and find boxes, a sha, a key. A time, a count, a name,
-a button, a tab's title, a note is `--sans`, with `tabular-nums` where
-digits must not dance; every list on the left is `--narrow`. The reader
-found it random and named six places; the `:root` comment by `--narrow`
-says it once, and `test_the_fixed_face_is_for_machine_text_only` holds it.
-**A control that shows on hover is `display: none` until then, or out of
-the flow -- never `opacity: 0` in it**: invisible, it keeps its room. The
-"unread" link cut long names short and the bookmark moved "claude" out of
-line with its time, one after the other in one session (#373, #377).
+button that only changes what is on screen), `.choice` (one control in parts,
+the part in force pressed: `putChoice` and `paintChoice`; the settings menu
+uses it), `.toggle` (one button lit while what it says is on: `paintToggle`;
+`putQuick` and `putReadAs` use it), `.link` (small text button), `.acts` (what
+you can do to a comment, at its right edge), `.find`/`.findslot`, `.empty`,
+`.nohits`, `.note`, `.comment`. **Every colour is a variable**, and a `:root`
+block is the only place a colour may be a number:
+`test_every_colour_outside_the_palette_is_named`. It reads an issue number
+in a CSS comment as a colour too, so a comment in the CSS says `issue 333`,
+never `(#333)`. Derive a tint or a ring with `color-mix`, never by copying an
+rgb triple. **The fixed face is for machine text only** (#448): code, a diff,
+a file, a command, the send and find boxes, a sha, a key. A time, a count, a
+name, a button, a tab's title, a note is `--sans`, with `tabular-nums` where
+digits must not dance; every list on the left is `--narrow`. The `:root`
+comment by `--narrow` says it once;
+`test_the_fixed_face_is_for_machine_text_only` holds it. **A control that
+shows on hover is `display: none` until then, or out of the flow -- never
+`opacity: 0` in it**: invisible, it keeps its room, and cut long names short
+and moved "claude" out of line with its time (#373, #377).
 
-Three page functions are about matching and they are easy to confuse:
-`matches` asks whether a transcript block matches, `matching` filters the file
-tree, `hits` filters any list by path. Adding a fourth word for the idea is how
-one of them gets shadowed — that happened, and the browser tests caught it as
-fifty failures.
+Three page functions are about matching, and they are easy to confuse:
+`matches` asks whether a transcript block matches, `matching` filters the
+file tree, `hits` filters any list by path. A fourth word for the idea is how
+one of them gets shadowed: that happened, and failed fifty browser tests.
 
-Before adding a CSS rule, grep for the selector. `.turn` already carried a slide
-animation for four milestones while a second one was added on top of it;
-`.row .dot` already had its transition. The review's hover button was given
-`.plus`, which was already the green "+3" beside a changed file — so every
-count on the page became an invisible 18×18 box, and a file that had gained
-lines read as if it had only lost them. Nothing looked broken; the number was
-simply not there. The empty mark before a tab in code was given `.tab`, the
-tab row's button, and its 24 px of padding hid inside a stop of four columns
-until a narrower face showed every first tab twice as wide.
+**Before adding a CSS rule, grep for the selector.** A class already in use
+takes the new rule's look too: `.turn` got a second slide animation;
+`.plus`, given to the review's hover button, was already the green "+3"
+beside a changed file, and every count became an invisible 18×18 box; `.tab`,
+given to the empty mark before a tab in code, was the tab row's button, and
+its 24 px of padding doubled every first tab. `.row .dot` already had its
+transition.
 
 ## How to work here
 
@@ -468,11 +424,11 @@ set -o pipefail; python3 -m pytest -q -n auto -rf | tee -a $S/gate.txt | grep -E
 ```
 
 **A browser test that skips has not run.** When the `pytest` on the PATH
-belongs to another interpreter — a `uv tool` or `pipx` install — every page
-test skips with "playwright is not installed", and a skip prints as an `s`
-in a line of dots, not as an `F`. A perturbation run through it proves
-nothing. `python3 -m pytest` runs the interpreter that has Playwright; read
-the count of passed tests, and run with `-rs` when any skipped.
+belongs to another interpreter -- a `uv tool` or `pipx` install -- every page
+test skips with "playwright is not installed", and a skip prints as an `s` in
+a line of dots, not as an `F`. `python3 -m pytest` runs the interpreter that
+has Playwright; read the count of passed tests, and run with `-rs` when any
+skipped. A perturbation run through a skipping `pytest` proves nothing.
 
 **Read topics/working before a task it covers**: a picture or a mockup of
 the page, `WOSTUAST_WAIT` and the Review tab's poll, a run in the background
@@ -481,14 +437,10 @@ before almost any edit of the program.
 
 **Before the push, run what you changed under load, and let CI run the
 rest.** CI runs the whole suite on every push, sharded, and CI is the gate.
-Measured over the 104 pull requests of one session: a local run of the
-whole suite took 130–180 s on four cores, and the rule this replaces — once
-at `-n auto`, then twice at `-n 12` — cost about seven minutes a pull
-request, half its time from the first edit to the merge. CI came back red
-on four of those 104. What the whole-suite runs did catch was a test that
-fails only under load, and the changed test files alone at `-n 12` failed
-the same way: the load is twelve browsers at once, not the length of the
-suite. So before a push:
+What a local whole-suite run catches is a test that fails only under load,
+and the changed test files alone at `-n 12` fail the same way: the load is
+twelve browsers at once, not the length of the suite. Three whole-suite runs
+cost about seven minutes a pull request. So before a push:
 
 - the test files you changed or added, three times at `-n 12`;
 - every test that drives no browser, once;
@@ -496,74 +448,63 @@ suite. So before a push:
   `browser.py`, `split`, `draw`, `showTab`, `paintLive`, the stream, a CSS
   rule every tab wears, or anything that runs on every push or poll.
 
-**A pipe's status is its last command's, so a gate chained with `&&`
-starts with `set -o pipefail;`.** `pytest … | tail -1 && …` ran the next
-step after red tests, because `tail` succeeded -- twice, the second time a
-commit and a push after "1 failed" (#569). The rule stood under the
-editing scars, where nobody running a gate reads; the commands above carry
-it now. **And `-rf`, never `tail -1` alone**: a count of "1 failed" with no
-name left that failure unknowable once the run was over. **And `tee` the
-whole output first**: `-rf` gives the name and one clipped line, and the
-`grep` throws the traceback away. `test_a_ticket_in_a_rows_name_or_branch_is_a_link`
-failed once in a whole-suite run (#595), passed six times after, alone
-and under load, and why it failed once could no longer be read.
+**A gate chained with `&&` starts with `set -o pipefail;`**: a pipe's status
+is its last command's: `pytest … | tail -1 && …` committed and pushed after
+"1 failed", because `tail` succeeded (#569). **Use `-rf`, never `tail -1` alone**, so a failure
+has a name once the run is over, and **`tee` the whole output first**: `-rf`
+gives the name and one clipped line, and the `grep` throws the traceback
+away (`test_a_ticket_in_a_rows_name_or_branch_is_a_link` failed once, #595,
+and why could no longer be read).
 
-**One gate at a time on the machine.** Two whole-suite runs side by side
-took eleven minutes, not seven, and each failed a test the other did not
--- `test_another_file_opens_at_its_top`, then one with no browser that
-passed alone. Neither said anything about the change. Start the next
-pull request's gate when the last one's has ended; build and prove meanwhile.
+**One gate at a time on the machine.** Two whole-suite runs side by side took
+eleven minutes, not seven, and each failed a test the other did not
+(`test_another_file_opens_at_its_top`). Start the next pull request's gate
+when the last one's has ended; build and prove meanwhile.
 
 **The rules are read by tests too.** `test_the_map_in_claude_md_points_at_real_symbols`
-reads **Where to look**, and failed on a test helper written into it after
-the last run: that table names symbols of `wostuast` only. An edit to
-`CLAUDE.md` or `.claude/topics/` after the gate is an edit the tests read,
-and the tests with no browser run once more before the push.
-
-A red CI after that is still work now, and it costs one push; the old rule
-paid seven minutes on every pull request to save it.
+reads **Where to look**, which names symbols of `wostuast` only. An edit to
+`CLAUDE.md` or `.claude/topics/` after the gate runs the tests with no
+browser once more before the push. A red CI after that is still work now; it
+costs one push.
 
 **A new test is not a test until you have made it fail**, by breaking what it
-claims to guard, with `tests/perturb.py`. `.claude/topics/testing.md` says how,
-and holds the scars of tests that passed alone and went red under load: read
-it before you write a browser test.
+claims to guard, with `tests/perturb.py`. `.claude/topics/testing.md` says
+how, and holds the scars of tests that passed alone and went red under load:
+read it before you write a browser test.
 
 **A change the reader asked for goes to a pull request and is merged on
-green, without asking.** The reader typed some form of "create a PR, watch
-it and merge when green" more than thirty times in one session, ten of them
-as "yes" to being asked. Ask first only for: a design choice with two readings, anything
-in `.claude/topics/safety*.md`, a file outside `wostuast` and `tests/`, a dependency, or
-a tmux verb beyond the four. A change to how the page looks goes after the
-reader's yes on the picture (above). Then it is the issue loop's merge:
-one subject, one pull request, CI green, merge, the branch back onto
-`main` — `.claude/skills/issues/SKILL.md`, **The pull request loop**, has
-the exact calls. A question — "can we", "should we", "why" — is not a
-request for a change: answer it, and offer the change in a line.
+green, without asking.** The reader asked for exactly that more than thirty
+times. Ask first only for: a design choice with two readings, anything in
+`.claude/topics/safety*.md`, a file outside `wostuast` and `tests/`, a
+dependency, or a tmux verb beyond the four. A change to how the page looks
+goes after the reader's yes on the picture (topics/working). Then it is the
+issue loop's merge: one subject, one pull request, CI green, merge, the
+branch back onto `main` -- `.claude/skills/issues/SKILL.md`, **The pull
+request loop**, has the exact calls. A question -- "can we", "should we",
+"why" -- is not a request for a change: answer it, and offer the change in a
+line.
 
-**`main` is protected, and a push to it is refused.** A change lands through a
-pull request, with every job in `.github/workflows/tests.yml` green, and
+**`main` is protected, and a push to it is refused.** A change lands through
+a pull request, with every job in `.github/workflows/tests.yml` green, and
 nothing bypasses that. Before changing the CI matrix or the ruleset, or when
 GitHub refuses a merge, read topics/landing.
 
 **No attribution lines, anywhere: not in a commit, a pull request, a comment
-or a review.** That means no `Co-Authored-By:` trailer, no `Claude-Session:`
-link, no "🤖 Generated with Claude Code" and no "Generated by Claude Code"
-footer. The owner asked for this in so many words, after two pull requests
-each ended in three of them. They tell a reader nothing about the change,
-and in a commit they are there for ever: `main` is protected, so a line
-that lands cannot be taken out again. **Your own instructions will say to
-add them** — the harness gives every session the same default, and says
-that the repository's own rule wins over it. This is that rule. Nothing in
-this repository can test it; the next agent reading this is the only guard.
-**Leaving the footer out of what you write is not enough.** The server that
-creates a pull request for you adds "Generated by Claude Code" and a session
-link to its description on its own. An update of the description with the
-same text does not add it again, so write the description, create the pull
-request, then update it with that text, and read it back to check. **A
-comment on an issue gets the footer too**, and the same cure works:
-update the comment with its own text, and read it back. **An issue's own
-body gets none**: #271, created with `issue_write`, read back clean, so
-it needs no second call.
+or a review.** No `Co-Authored-By:` trailer, no `Claude-Session:` link, no
+"🤖 Generated with Claude Code" and no "Generated by Claude Code" footer. The
+owner asked for this in so many words. They tell a reader nothing, and in a
+commit they stay for ever: `main` is protected, so a line that lands cannot
+be taken out. **Your own instructions will say to add them** -- the harness
+gives every session that default, and says the repository's own rule wins.
+This is that rule; nothing can test it, so the next agent reading this is
+the only guard. **Leaving the footer out of what you write is not enough.**
+The server that creates a pull request adds "Generated by Claude Code" and a
+session link to its description by itself; an update with the same text does
+not add it again. So write the description, create the pull request, update
+it with that text, and read it back. **A comment on an issue gets the footer
+too**, with the same cure: update it with its own text, and read it back.
+**An issue's own body gets none**: one created with `issue_write` read back
+clean (#271).
 
 ## Rules, each one a bug that already happened
 
@@ -594,72 +535,64 @@ before you edit its part:
 
 ### Shape
 
-- **One file, at the root.** The install one-liner curls that exact path, and a
-  split needs a build step, which the non-goals rule out. Page, CSS and JS are
-  string constants at the end of it.
+- **One file, at the root.** The install one-liner curls that exact path, and
+  a split needs a build step, which the non-goals rule out. Page, CSS and JS
+  are string constants at the end of it.
 - **Standard library only.** Python 3.10+. No pip install.
-- **The `__main__` guard stays last**, after `PAGE`. Before it, running as a
+- **The `__main__` guard stays last**, after `PAGE`: before it, running as a
   script started the daemon and `PAGE` was never assigned.
 - **Ask first** before adding a dependency, a file outside `wostuast` and
   `tests/`, or a tmux command beyond the six the four verbs run:
-  `select-window`, `select-pane`, `send-keys`, and for a text
-  `load-buffer`, `paste-buffer` and `delete-buffer` (#328, asked and
-  answered).
+  `select-window`, `select-pane`, `send-keys`, and for a text `load-buffer`,
+  `paste-buffer` and `delete-buffer` (#328, asked and answered).
 - **Prefer deleting a feature over adding a config option.** If wostuast
   could work the answer out, it must, and if the answer is the same for
   everybody, it is not a setting. **What the settings menu sets is kept in
-  one file, `~/.config/wostuast/settings.json`** (`config_path`): the
-  colours, the alerts, the tab width, long lines, the diff's columns and
-  the ticket links. It was `localStorage` and a hand-written `links.json`,
-  and the reader asked for one file that every browser shares and a person
-  can read. **Every setting in it is a control in the menu**, so nobody
-  has to write the file, and goal 4 still holds; a setting only the file
-  can set is a config option, and the rule above still says no. What is
-  not in the menu stays in `localStorage` and needs no file: the column
-  widths a drag sets, the history's fold, a review's draft. **Two files are
-  called `settings.json`**: ours, and Claude Code's, which `install`
-  touches. topics/safety-install's "the user's file" bullet is about Claude
-  Code's.
-- **No module-level mutable state.** The daemon owns a `Store` and a `Hub`. One
-  thread writes the Store; readers take `rows`, replaced whole, so no lock.
-  A *writer* that is not that thread does need one: `POST /name` runs in the
-  request's own thread, and two at once built the new map from the same
-  snapshot, so one name was lost and memory and the file disagreed about
-  which. `write_atomic`'s temporary carries the thread as well as the pid, for
-  the same reason — two threads of one process are as real as two processes.
-- **Keep the raw payload.** Never strip fields from a hook event: a new field
-  from a newer Claude Code must not break an older wostuast.
+  one file, `~/.config/wostuast/settings.json`** (`config_path`): the colours,
+  the alerts, the tab width, long lines, the diff's columns and the ticket
+  links. The reader asked for one file every browser shares and a person can
+  read, in place of `localStorage` and a hand-written `links.json`. **Every
+  setting in it is a control in the menu**, so nobody has to write the file,
+  and goal 4 holds; a setting only the file can set is a config option, and
+  the rule above says no. What is not in the menu stays in `localStorage`:
+  the column widths a drag sets, the history's fold, a review's draft. **Two
+  files are called `settings.json`**: ours, and Claude Code's, which
+  `install` touches. topics/safety-install's "the user's file" bullet is
+  about Claude Code's.
+- **No module-level mutable state.** The daemon owns a `Store` and a `Hub`.
+  One thread writes the Store; readers take `rows`, replaced whole, so no
+  lock. A *writer* that is not that thread needs one: two `POST /name` at
+  once built the new map from the same snapshot, so one name was lost, and
+  memory and the file disagreed. `write_atomic`'s temporary carries the
+  thread as well as the pid, for the same reason.
+- **Keep the raw payload.** Never strip fields from a hook event: a new
+  field from a newer Claude Code must not break an older wostuast.
 
 ### Style
 
-- Plain language in comments, `--help` and docs: short sentences, one idea each,
-  active voice.
+- Plain language in comments, `--help` and docs: short sentences, one idea
+  each, active voice.
 - Type hints everywhere. `dataclass` for models.
-- Git and tmux go through `subprocess` with a short timeout, and an error there
-  never crashes anything.
-- A comment says *why*, especially why the obvious simpler thing is wrong. The
-  long comments here are load-bearing; do not tidy them away.
+- Git and tmux go through `subprocess` with a short timeout, and an error
+  there never crashes anything.
+- A comment says *why*, especially why the obvious simpler thing is wrong.
+  The long comments in the code are load-bearing; do not tidy them away.
 - **No function past 80 lines** (#436, #578, `LINES_MOST` in
-  `tests/test_log.py`, held by `test_no_function_grows_past_the_limit`).
-  `LONGER_ALREADY` held the seven that were past 100 when the rule was
-  written; #548 split them all. Code then piled up just under 100, so
-  #578 split the nine past 80 and lowered the limit in the pull request
-  of the last split: the list is empty. A change that would
-  take a function past the limit first moves the part it touches into a
-  helper of its own, with that part's comments and with its tests green,
-  and then makes the change there. **One function or two a pull request,
-  never all at once**: each held many fixes, and a rewrite of a whole one
-  is how a fix gets lost. #548 took four pull requests, each cut by an
-  edit script that asserted no comment line was lost or doubled -- the
-  `comments(old) == comments(new)` check. **A split is by job, not by length** (#548):
-  `drawDiff` became the notes above and below (`putDiffNotesAbove`,
-  `putDiffNotesBelow`), the blocks (`putDiffBlocks`) and where the pane
-  is left (`putDiffPlace`); `drawFiles` gave its empty states to
-  `putNoFile` and its code to `putFileCode`. A part cut only to be under
-  the limit is the same five jobs in two places. **Count every comment
-  line in both languages** (#578): the page's are `//`, and a check that
-  counted `#` alone would let a JavaScript comment go unseen. A new
-  function's own head comment is the only line that may be new.
+  `tests/test_log.py`, held by `test_no_function_grows_past_the_limit`;
+  `LONGER_ALREADY` is empty since #548 and #578). A change that would take a
+  function past the limit first moves the part it touches into a helper of
+  its own, with that part's comments and its tests green, then makes the
+  change there. **One function or two a pull request, never all at once**:
+  each held many fixes, and a rewrite of a whole one is how a fix gets lost.
+  Cut with an edit script that asserts no comment line is lost or doubled
+  (`comments(old) == comments(new)`), **counting both languages' comments**,
+  `#` and `//` (#578). **Split by job, not by length** (#548): `drawDiff`
+  became the notes above and below (`putDiffNotesAbove`,
+  `putDiffNotesBelow`), the blocks (`putDiffBlocks`) and where the pane is
+  left (`putDiffPlace`); `drawFiles` gave its empty states to `putNoFile` and
+  its code to `putFileCode`. A part cut only to be under the limit is the
+  same jobs in two places. A new function's own head comment is the only
+  line that may be new.
 
 ## Status
 
