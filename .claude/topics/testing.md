@@ -211,6 +211,13 @@ Keep the breaks list in the scratchpad; it is about one fix.
       that three runs of the whole suite left, with why: the "blocking
       alerts" note in `drawBell` ran or not by which context a run made,
       until a test asked for it.
+      - **Three green runs do not prove a line is run on purpose.** The
+        first CI after the check found Escape in the find box unrun
+        (#609): the one test that pressed it there reached it only while
+        the Files tab's list of hits had not come, and the list takes
+        Escape once it has. A line red in CI is asked for by a test of
+        its own before it is ever an allowance;
+        `test_esc_in_the_find_box_empties_it_and_leaves_it`.
       A new page function needs a
       test that runs it, or an entry on the list with why.
     - **A branch no test runs is not dead because two tries did not
