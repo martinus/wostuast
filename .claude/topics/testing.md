@@ -122,12 +122,19 @@ Keep the breaks list in the scratchpad; it is about one fix.
   - **Two edits are one break when the old code was both**: `perturb.py`
     takes one edit a break, so apply both by hand, run the test, and copy
     the file back from a copy made first. #573's picks: the draw's reset
-    alone stayed green, because `fitPicks` had already run.
-  - **The draw guard sees only what is drawn after `opened` installs
-    it.** A question there at load was drawn before the guard, so the old
-    reset in `drawAsking` passed every test that opened on a question;
-    only a question that arrives after the page is open turned it red.
-    A test of a draw's write brings the change in after `opened`.
+    alone stayed green, because `fitPicks` had already run. Put back all
+    of what the old code did not have: #577's proof of the same reset
+    stayed green with `fitPicks` gone from `onSessions`, because
+    `choose()` calls it too, and went red with both calls gone.
+  - **The draw guard is installed before the page's first draw, not
+    after `opened`** (#577). Installed after, it missed a question there
+    at load, so the old reset in `drawAsking` passed every test that
+    opened on a question. `DRAW_GUARD` is now an init script of every
+    context (`fresh_context`), and installs itself on the page script's
+    first top-level `addEventListener`: earlier, the draws are not yet
+    defined, and a function declaration replaces any wrapper an init
+    script set under its name. A function a test replaces after load is
+    still not watched.
 - **A GREEN may be code nothing needs: then delete the code, not add a
   test.** A break that took the list of gone rows out of a push stayed
   green under every test, because a row that goes always moves the order,

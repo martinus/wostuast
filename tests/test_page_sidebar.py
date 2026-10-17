@@ -14,7 +14,6 @@ import pytest
 import conftest
 from browser import (
     check_draws,
-    guard_draws,
     hold,
     renew_stream,
     pixels,
@@ -891,7 +890,6 @@ def alerts_page(where):
         page.goto(where, wait_until="domcontentloaded")
         page.wait_for_selector(".row", timeout=15000)
         page.wait_for_function("!!window.marked", timeout=15000)
-        guard_draws(page)
         yield page
         check_draws(page)
 
