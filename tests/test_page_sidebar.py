@@ -5,6 +5,8 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 from pathlib import Path
 from contextlib import contextmanager
 import time
@@ -28,6 +30,7 @@ from browser import (
     wait_until,
     frames,
     stays,
+    load,
 )
 
 pytestmark = skip_without_browser
@@ -2625,3 +2628,185 @@ def test_b_says_when_the_session_before_is_gone(pair_at):
         page.press("body", "b")
         assert page.evaluate("window.__said") == [
             "the session before this one is no longer in the list"]
+
+
+# --- the sidebar's other answers (#600) --------------------------------------------
+
+
+def test_the_moon_on_a_rows_hover_snoozes_it_and_does_not_choose_it(ws, pair_at):
+    """The moon is `z` for a mouse. It stands on the row, so the click must
+    stop there: a snooze of another row is no choice of it."""
+    daemon, url = pair_at
+    with opened(url) as page:
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        ws.append_event(conftest.event(
+            "PermissionRequest", sid="s2", tool_name="Bash",
+            tool_input={"command": "rm -rf build"}, ts=time.time()))
+        daemon.tick()
+        page.wait_for_function("needsYou(state.sessions.find((s) => s.id === 's2'))")
+        page.hover('.row[data-id="s2"]')
+        page.click('.row[data-id="s2"] .snooze')
+        page.wait_for_function(
+            "state.sessions.find((s) => s.id === 's2').snoozed === true")
+        assert page.evaluate("state.chosen") == "s1"
+
+
+def test_a_merge_that_stopped_on_conflicts_counts_them_on_the_row(
+        ws, served, repo_page, monkeypatch):
+    """git is merging and two files clash: the row says so beside the
+    branch, in the amber of something waiting (#357)."""
+    root, _ = repo_page
+    conftest.git_in(root, "stash", "-q", "-u")
+    conftest.git_in(root, "checkout", "-q", "-b", "theirs")
+    for name in ("one.txt", "two.txt"):
+        (root / name).write_text("theirs\n")
+    conftest.git_in(root, "add", "one.txt", "two.txt")
+    conftest.git_in(root, "commit", "-qm", "theirs")
+    conftest.git_in(root, "checkout", "-q", "-")
+    for name in ("one.txt", "two.txt"):
+        (root / name).write_text("ours\n")
+    conftest.git_in(root, "add", "one.txt", "two.txt")
+    conftest.git_in(root, "commit", "-qm", "ours")
+    merged = subprocess.run(["git", "-C", str(root), "merge", "-q", "theirs"],
+                            capture_output=True, text=True)
+    assert merged.returncode != 0, merged.stdout
+    # `served` answers for git; this test is about git's own answer. The
+    # agent's call that ran the merge is what has the daemon read git
+    # again, once the cool-down since the last read is over.
+    daemon, _ = served
+    monkeypatch.setattr(ws, "git_facts_many",
+                        lambda dirs: {one: ws.git_facts(one) for one in dirs})
+    monkeypatch.setattr(ws, "GIT_MIN_INTERVAL", 0.0)
+    ws.append_event(conftest.event("PostToolUse", cwd=str(root), tool_name="Bash",
+                                   tool_input={"command": "git merge theirs"},
+                                   ts=time.time()))
+    deadline = time.time() + 15
+    while not any(row.get("conflicts") for row in daemon.store.rows):
+        assert time.time() < deadline, daemon.store.rows
+        daemon.tick()
+        time.sleep(0.05)
+    with opened(repo_page) as page:
+        page.wait_for_function(
+            "document.querySelector('.row .gitstate .conflict')?.textContent"
+            " === '2 conflicts'")
+
+
+def test_escape_closes_a_view_when_no_session_is_chosen(served):
+    """A view goes back to the session it stands over. With none chosen
+    there is none to go back to, and Escape still closes it."""
+    _, base = served
+    with own_context() as context:
+        page = context.new_page()
+        page.goto(base, wait_until="domcontentloaded")    # no row to wait for
+        page.wait_for_function("state.sessions.length === 0 && !state.chosen")
+        page.click("#feedlink")
+        page.wait_for_function("state.feed === 'unread'")
+        page.keyboard.press("Escape")
+        page.wait_for_function("!state.feed")
+
+
+@pytest.mark.parametrize("answer, words", [
+    ({"text": "", "failed": True}, "Its last answer could not be read."),
+    ({"text": ""}, "It said nothing at the end of its turn."),
+])
+def test_an_unread_card_says_why_it_shows_no_answer(ws, pair_at, answer, words):
+    daemon, url = pair_at
+    with opened(url) as page:
+        page.route(re.compile(r"/s2/last"), lambda route: route.fulfill(json=answer))
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        ws.append_event(conftest.event("Stop", sid="s2", ts=time.time() + 1,
+                                       last_assistant_message="done"))
+        daemon.tick()
+        page.wait_for_function(
+            "document.querySelector('#feedlink .n').textContent === '1'")
+        page.click("#feedlink")
+        page.wait_for_function(
+            "words => document.querySelector('.feedentry[data-id=\"s2\"] .feedwait')"
+            "?.textContent.startsWith(words)", arg=words)
+
+
+@contextmanager
+def alerts_asked(where, script):
+    """A page whose `Notification` is `script`: what a browser that has not
+    been asked yet, or one that throws, does."""
+    with own_context() as browser:
+        browser.grant_permissions(["notifications"])
+        page = browser.new_page()
+        page.add_init_script(script)
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.goto(where, wait_until="domcontentloaded")
+        page.wait_for_selector(".row", timeout=15000)
+        yield page
+        assert not blew_up, blew_up
+        check_draws(page)
+
+
+def test_ticking_an_alert_asks_the_browser_first(page_at):
+    """Nobody is asked before they have said what they want: the tick is
+    what asks, and only while the browser has not been asked yet."""
+    _, path = page_at
+    with alerts_asked(path, """
+          window.__asked = 0;
+          window.Notification = function () {};
+          window.Notification.permission = "default";
+          window.Notification.requestPermission = async () => {
+            window.__asked += 1; return "denied"; };""") as page:
+        page.click("#settings")
+        page.wait_for_selector("#setpop", state="visible")
+        page.click("#alertdone")
+        page.wait_for_function("window.__asked === 1")
+        assert page.is_checked("#alertdone")
+
+
+def test_an_alert_the_browser_refuses_to_build_breaks_nothing(ws, page_at):
+    """Some browsers refuse a `Notification` without a service worker. The
+    title still says who needs you, and nothing throws."""
+    daemon, path = page_at
+    with alerts_asked(path, """
+          window.__tried = 0;
+          window.Notification = function () {
+            window.__tried += 1; throw new TypeError("needs a service worker"); };
+          window.Notification.permission = "granted";
+          window.Notification.requestPermission = async () => "granted";""") as page:
+        page.wait_for_function("state.sessions.length === 1")
+        ws.append_event(conftest.event(
+            "PermissionRequest", tool_name="Bash",
+            tool_input={"command": "rm -rf build"}, ts=time.time()))
+        daemon.tick()
+        page.wait_for_function("window.__tried === 1")
+        page.wait_for_function("document.title.includes(' asks ')")
+
+
+def test_the_settings_path_is_copied_by_its_button(page_at):
+    _, path = page_at
+    with own_context() as context:
+        context.grant_permissions(["clipboard-read", "clipboard-write"])
+        page = context.new_page()
+        load(page, path)
+        page.click("#settings")
+        page.wait_for_selector("#setpop", state="visible")
+        spy_on_note(page)
+        page.click("#setpop .wherecopy")
+        page.wait_for_function("(window.__said || []).includes('path copied')")
+        assert page.evaluate("navigator.clipboard.readText()") \
+            == page.evaluate("setting('path')")
+
+
+def test_a_drag_whose_pointer_is_gone_still_drags_and_stops(page_at):
+    """`setPointerCapture` throws for a pointer that is already gone. The
+    drag goes on without the capture, and `pointerup` still ends it."""
+    with opened(page_at) as page:
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        page.evaluate("""() => document.getElementById('grip').dispatchEvent(
+          new PointerEvent('pointerdown', {button: 0, pointerId: 4242,
+                                           bubbles: true, cancelable: true}))""")
+        assert page.evaluate("document.body.classList.contains('dragging')")
+        page.evaluate("() => window.dispatchEvent(new PointerEvent('pointerup', {pointerId: 4242}))")
+        assert not page.evaluate("document.body.classList.contains('dragging')")
+        assert not blew_up, blew_up

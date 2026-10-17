@@ -3494,3 +3494,20 @@ def test_a_hash_typed_by_hand_that_does_not_decode_opens_the_page(page_at):
         page.goto(path + "#%E0%A4%A", wait_until="domcontentloaded")
         page.wait_for_function("state.chosen === 's1'")
         assert not blew_up, blew_up
+
+
+def test_a_find_that_is_no_pattern_is_said_where_it_was_typed(ws, page_at):
+    """This browser compiles the pattern before it is sent: one it will not
+    compile is red under its row, with the browser's reason, and not
+    saved (#600)."""
+    _, path = page_at
+    with opened(path) as page:
+        page.click("#settings")
+        type_link(page, r"BUG-(\d+", "https://t.example/browse/BUG-{}")
+        page.wait_for_function(
+            "document.querySelector('#linklist .linkrow:last-child')?.dataset.bad === 'match'")
+        said = link_rows(page)[-1][2]
+        assert said.startswith("“find” is not a regular expression: "), said
+        assert "Invalid regular expression" not in said, said
+        assert said.endswith("not saved"), said
+        assert page.evaluate("state.settings.links.every((one) => one.match !== 'BUG-(\\\\d+')")
