@@ -895,6 +895,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     what they would find. A new check is a row, and the start's lists name
     it if a start should say it.
     `test_every_check_says_the_same_in_doctor_and_at_a_start`.
+    - **A start's checks are brief, and said in the start's order**
+      (#591, from the review of #535's session). One table made the
+      start count the event log as `doctor` does (`measure_log`), which
+      reads every archive -- the cost #430 had kept off the start -- to
+      print nothing when all is well; `SetupFacts.brief` lets
+      `check_events` only ask whether the log exists. And `setup_checks`
+      ran the table's order, so a start said a state directory it cannot
+      write before tmux was missing; it follows `only` now.
+      `test_a_start_reads_no_archive_of_the_log`,
+      `test_a_start_says_its_checks_in_its_own_order`.
   - **The hooks run a file made from the program, never a copy kept by
     hand** (#271). `hook_source` takes the definitions named in
     `HOOK_PARTS` out of the program's source with `ast`, between
