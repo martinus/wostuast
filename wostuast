@@ -21394,6 +21394,34 @@ function drawFiles(box) {
                            + (state.files.read ? "" : state.files.trouble))) {
     return;
   }
+  const place = filePlace(pane);
+  pane.replaceChildren();
+  pane.dataset.file = String(state.files.path);
+  if (putNoFile(pane)) return;
+  const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
+  // Split once. The header wants to know how long the file is and so does the
+  // body, and two copies of that arithmetic are two copies that can drift —
+  // the one that says a file is too long to wrap, and the one that windows it.
+  const asCode = !state.files.binary && !(isDoc && !state.files.asText);
+  const body = asCode ? hexWide(pane, state.files.text).replace(/\n$/, "") : "";
+  const rows = asCode ? linesOf(body) : null;
+  const windowed = !!rows && rows.length > CODE_WHOLE;
+  const plain = !!rows && !windowed && tooDenseToPaint(body);
+  putFileHead(pane, windowed, asCode, isDoc);
+  const view = putFileScroll(pane, windowed);
+  if (state.files.binary) {
+    putMedia(view, state.files.path, state.files);
+  } else if (isDoc && !state.files.asText) {
+    markdown(view, state.files.text);
+  } else {
+    putFileCode(view, body, rows, windowed, plain, place);
+  }
+  putFilePlace(view, place);
+}
+
+// Where the reader is in the file about to be drawn again, read and never
+// written (#573).
+function filePlace(pane) {
   // Where the reader is in this file, whether they scrolled there a moment
   // ago or left it on their last visit to this session. `forgetFile` puts it
   // back to nought, which is what makes a different file open at its top.
@@ -21412,19 +21440,12 @@ function drawFiles(box) {
       && pane.dataset.file === String(state.files.path)) {
     place = shown.scrollTop;
   }
-  pane.replaceChildren();
-  pane.dataset.file = String(state.files.path);
-  if (putNoFile(pane)) return;
-  const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
-  // Split once. The header wants to know how long the file is and so does the
-  // body, and two copies of that arithmetic are two copies that can drift —
-  // the one that says a file is too long to wrap, and the one that windows it.
-  const asCode = !state.files.binary && !(isDoc && !state.files.asText);
-  const body = asCode ? hexWide(pane, state.files.text).replace(/\n$/, "") : "";
-  const rows = asCode ? linesOf(body) : null;
-  const windowed = !!rows && rows.length > CODE_WHOLE;
-  const plain = !!rows && !windowed && tooDenseToPaint(body);
-  putFileHead(pane, windowed, asCode, isDoc);
+  return place;
+}
+
+// The part of the Files tab under the header that scrolls, with the
+// listener that keeps the reader's place.
+function putFileScroll(pane, windowed) {
   // Everything below the header, and the only thing that scrolls. It is built
   // with the file, so the listener a windowed file needs goes on with it.
   const view = put(pane, "div", "filescroll");
@@ -21446,13 +21467,11 @@ function drawFiles(box) {
     state.files.down = view.scrollTop;
     if (windowed) fillCode(view);
   });
-  if (state.files.binary) {
-    putMedia(view, state.files.path, state.files);
-  } else if (isDoc && !state.files.asText) {
-    markdown(view, state.files.text);
-  } else {
-    putFileCode(view, body, rows, windowed, plain, place);
-  }
+  return view;
+}
+
+// The place put back once the file stands in the scroller.
+function putFilePlace(view, place) {
   // Said outright, rather than only when there is a place to go back to.
   // `view` is built with the file, so a different file already starts at
   // nought -- the pane used to be the scroller, it outlived the file in it,
@@ -24881,6 +24900,40 @@ async function loadFiles() {
   const body = await ask(want, "files",
                          "?have=" + encodeURIComponent(state.files.tag));
   if (!body || state.chosen !== want) return;
+  takeListing(body);
+
+  if (state.files.path) {
+    // The file is asked for by name, and the name can change while the answer
+    // is on its way: pick another file quickly and the first one's text landed
+    // under the second one's name, so the tab showed one file's content
+    // labelled as another. The session is not the only thing that can move.
+    const wanted = state.files.path;
+    // The version shown goes back, so a file nobody touched is answered
+    // `same` and not sent again: up to 512 KB every two seconds (#292).
+    const got = await askFile(want, wanted,
+                              state.files.read ? state.files.stamp : "");
+    if (state.chosen !== want || state.files.path !== wanted) return;
+    // Only a file whose mtime moved is drawn again, so the tab keeps your
+    // place in a file the agent has not touched.
+    //
+    // A `missing` answer is not the file's text. It is what the route says
+    // when git did not list the name -- which a timed-out `ls-files` says
+    // too -- and it was drawn as line 1 of the file, with a `+` that would
+    // anchor a comment to the real line 1. What is shown stays; a file that
+    // really went is taken away by the listing. **With nothing shown yet it
+    // is said**: a refused first read drew the header over an empty body,
+    // a file with nothing in it, for as long as the refusal lasted; and a
+    // fetch that failed drew nothing, so the file before stood under the
+    // name just picked.
+    takeFile(got);
+  }
+  draw();
+}
+
+// The Files tab's listing, as the daemon answered it, into `state.files`:
+// the names, what changed, the tree, and the file to open when the open
+// one has gone.
+function takeListing(body) {
   // A listing git failed on is short or empty, and taken as fact it closed
   // the open file, lost its place and a comment half written on it. The
   // names held stand until git answers; only a listing that did not fail
@@ -24924,49 +24977,28 @@ async function loadFiles() {
     const first = listRows().find((row) => !row.dir);
     forgetFile(first ? first.path : null);
   }
+}
 
-  if (state.files.path) {
-    // The file is asked for by name, and the name can change while the answer
-    // is on its way: pick another file quickly and the first one's text landed
-    // under the second one's name, so the tab showed one file's content
-    // labelled as another. The session is not the only thing that can move.
-    const wanted = state.files.path;
-    // The version shown goes back, so a file nobody touched is answered
-    // `same` and not sent again: up to 512 KB every two seconds (#292).
-    const got = await askFile(want, wanted,
-                              state.files.read ? state.files.stamp : "");
-    if (state.chosen !== want || state.files.path !== wanted) return;
-    // Only a file whose mtime moved is drawn again, so the tab keeps your
-    // place in a file the agent has not touched.
-    //
-    // A `missing` answer is not the file's text. It is what the route says
-    // when git did not list the name -- which a timed-out `ls-files` says
-    // too -- and it was drawn as line 1 of the file, with a `+` that would
-    // anchor a comment to the real line 1. What is shown stays; a file that
-    // really went is taken away by the listing. **With nothing shown yet it
-    // is said**: a refused first read drew the header over an empty body,
-    // a file with nothing in it, for as long as the refusal lasted; and a
-    // fetch that failed drew nothing, so the file before stood under the
-    // name just picked.
-    const body = got.file;
-    state.files.trouble = got.why || "";
-    if (body && !body.same
-        && (!state.files.read || body.mtime !== state.files.mtime)) {
-      state.files.read = true;
-      // A binary file the browser cannot show is its hex (#487), drawn as
-      // the rows of a text, without colour and without a comment's `+`.
-      state.files.hex = !!(body.binary && !body.shown && body.hex);
-      state.files.text = state.files.hex ? body.hex : body.text || "";
-      state.files.binary = !!body.binary && !state.files.hex;
-      state.files.shown = body.shown || "";
-      state.files.oversize = !!body.oversize;
-      state.files.lang = body.language || "";
-      state.files.mtime = body.mtime || 0;
-      state.files.size = body.size || 0;
-      state.files.stamp = body.stamp || "";
-    }
+// A file's answer into `state.files`: its text, or what it is when it is
+// not one, and why it could not be read.
+function takeFile(got) {
+  const body = got.file;
+  state.files.trouble = got.why || "";
+  if (body && !body.same
+      && (!state.files.read || body.mtime !== state.files.mtime)) {
+    state.files.read = true;
+    // A binary file the browser cannot show is its hex (#487), drawn as
+    // the rows of a text, without colour and without a comment's `+`.
+    state.files.hex = !!(body.binary && !body.shown && body.hex);
+    state.files.text = state.files.hex ? body.hex : body.text || "";
+    state.files.binary = !!body.binary && !state.files.hex;
+    state.files.shown = body.shown || "";
+    state.files.oversize = !!body.oversize;
+    state.files.lang = body.language || "";
+    state.files.mtime = body.mtime || 0;
+    state.files.size = body.size || 0;
+    state.files.stamp = body.stamp || "";
   }
-  draw();
 }
 
 async function loadDiff() {
