@@ -46,6 +46,23 @@ def test_the_row_counts_the_changed_files_the_files_tab_marks(ws, repo):
     assert ws.git_facts(str(repo)).touched_files == 5
 
 
+def test_ls_reads_git_with_the_time_a_full_status_needs(ws, monkeypatch, tmp_path):
+    """`git status` lists every untracked file (#550), so `ls`, `wait`
+    and a reader built without `behind` give it the Files tab's timeout,
+    as the daemon's reader does (#592). Under the tick's two seconds an
+    un-ignored virtualenv failed the read, and `ls` showed no branch."""
+    seen = []
+
+    def facts(directory, runner=None, timeout=None):
+        seen.append(timeout)
+        return ws.GitFacts()
+
+    monkeypatch.setattr(ws, "git_facts", facts)
+    ws.add_git_facts([ws.Session(session_id="s1", cwd=str(tmp_path))])
+    ws.GitReader().ask([str(tmp_path)])
+    assert seen == [ws.LIST_TIMEOUT, ws.LIST_TIMEOUT]
+
+
 def test_a_slow_git_holds_back_no_push(ws):
     """The daemon reads git behind the tick (#550): while one `git status`
     hangs, a new event still reaches the rows on the next tick, and the

@@ -665,6 +665,13 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     that a tick nobody ran would have drawn, and the tour drew rows with
     no branch.
     `test_a_slow_git_holds_back_no_push`.
+    - **What reads at once reads with the same timeout** (#592, from the
+      review of #535's session). `add_git_facts` -- `ls` and `wait` --
+      and a `GitReader` built without `behind` still passed the tick's
+      two seconds to a status that now lists every untracked file, so an
+      un-ignored virtualenv failed the read and `ls` showed no branch.
+      They pass `LIST_TIMEOUT`: a command waits for its answer.
+      `test_ls_reads_git_with_the_time_a_full_status_needs`.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once, `fresh()` decides what changed, both reading the DOM. One key
   over the whole tab re-rendered the file you were reading every two seconds.
