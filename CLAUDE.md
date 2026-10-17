@@ -767,10 +767,12 @@ before you edit its part:
   never crashes anything.
 - A comment says *why*, especially why the obvious simpler thing is wrong. The
   long comments here are load-bearing; do not tidy them away.
-- **No function past 100 lines** (#436, `LINES_MOST` in
+- **No function past 80 lines** (#436, #578, `LINES_MOST` in
   `tests/test_log.py`, held by `test_no_function_grows_past_the_limit`).
-  `LONGER_ALREADY` held the seven that were past it when the rule was
-  written; #548 split them all, and the list is empty. A change that would
+  `LONGER_ALREADY` held the seven that were past 100 when the rule was
+  written; #548 split them all. Code then piled up just under 100, so
+  #578 split the nine past 80 and lowered the limit in the pull request
+  of the last split: the list is empty. A change that would
   take a function past the limit first moves the part it touches into a
   helper of its own, with that part's comments and with its tests green,
   and then makes the change there. **One function or two a pull request,
@@ -782,7 +784,10 @@ before you edit its part:
   `putDiffNotesBelow`), the blocks (`putDiffBlocks`) and where the pane
   is left (`putDiffPlace`); `drawFiles` gave its empty states to
   `putNoFile` and its code to `putFileCode`. A part cut only to be under
-  100 lines is the same five jobs in two places.
+  the limit is the same five jobs in two places. **Count every comment
+  line in both languages** (#578): the page's are `//`, and a check that
+  counted `#` alone would let a JavaScript comment go unseen. A new
+  function's own head comment is the only line that may be new.
 
 ## Status
 
