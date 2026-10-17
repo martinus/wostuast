@@ -57,7 +57,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
       section's own box (`.offdiff`, `fillElsewhere`), not the whole diff,
       and `paintSlices` paints a file once per read. Forgetting every
       file on every diff redrew the whole pane twice a poll while an
-      agent worked, and the section jumped under the reader.
+      agent worked, and the section jumped under the reader. **They are
+      asked for on each answer of the diff** (`askElsewhere`, from
+      `loadDiff`, #566), and **not at all with no comment** (#594): it
+      walked every line of the diff (`diffAnchors`) every five seconds to
+      find nothing to ask for.
+      `test_a_review_with_no_comment_walks_no_diff`.
   - **The send bar is the only place a review is sent from** (`#reviewbar`,
     `drawReviewBar`), pinned under the pane like the transcript's and shown
     only on this tab and only while there is a review. On top a comment on

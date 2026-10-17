@@ -1327,6 +1327,24 @@ def test_a_comment_the_diff_holds_is_never_commented_elsewhere(repo_page):
         assert page.evaluate(elsewhere) == 0, "found out"
 
 
+def test_a_review_with_no_comment_walks_no_diff(repo_page):
+    """`askElsewhere` runs on every answer of the diff, every five seconds
+    while the Review tab is open. With no comment it has nothing to look
+    for, and it walked every line of the diff to find that (#594)."""
+    walks = """() => {
+      let n = 0;
+      const real = diffAnchors;
+      window.diffAnchors = (...args) => { n += 1; return real(...args); };
+      try { askElsewhere(); } finally { window.diffAnchors = real; }
+      return n;
+    }"""
+    with opened(repo_page, tab="diff") as page:
+        assert page.evaluate("state.review.comments.length") == 0
+        assert page.evaluate(walks) == 0
+        comment_on_first_line(page, "now there is one")
+        assert page.evaluate(walks) == 1, "the spy saw no walk at all"
+
+
 def file_reads(page):
     """The file route's requests, as the page makes them."""
     asked = []
