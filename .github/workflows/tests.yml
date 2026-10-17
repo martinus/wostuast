@@ -98,8 +98,9 @@ jobs:
       # import path from the matrix jobs above.
       # With coverage (#579): what this shard ran of the page script goes
       # to the `browser` job, which asks of all four together whether any
-      # named function ran in none. It made the suite about 70 % slower
-      # (6 min 52 s against about 4 min, measured on one machine).
+      # named function ran in none. On one machine it made the suite about
+      # 70 % slower (6 min 52 s against about 4 min); in CI each shard
+      # still took about 2.5 min, as it did without it (#590).
       - name: Run this shard, with a browser
         env:
           WOSTUAST_COVERAGE: ${{ runner.temp }}/coverage
