@@ -172,6 +172,30 @@ Notice three things in this picture.
 - **There is no database.** The state of every session is rebuilt from a log
   of plain text. You can read that log with `less`.
 
+### Five principles
+
+A review of the whole file found that most of its bugs had one cause: one
+fact with two homes (#535). So the code follows five principles. Each one says
+where new code goes, and a test holds each one.
+
+1. **Data flows one way.** Events, then the fold, then the rows, then the
+   wire, then the page. The fold reads no file, runs no git and asks no
+   process. Those reads happen at the edges (Chapter 4).
+2. **Each shape the page receives is defined in one place**: the `wire`
+   section (Chapter 7).
+3. **A draw only reads state.** Only the code that loads data or handles a
+   click changes `state` (Chapter 8).
+4. **Every extension point is a table**: the hook handlers (`_HANDLERS`),
+   the routes (`ROUTES`), the session verbs (`GET_VERBS`, `POST_VERBS`),
+   the tabs (`TABS`) and the views (`VIEWS`). A test walks each table, so a
+   new entry is tested without anyone writing its test.
+5. **One reader for each fact.** Where two parts read the same fact, they
+   call one function: `prompt_said` for a prompt, `git_status` for
+   `git status`, `apply_git_facts` for a reading of git, and `getJson` for
+   an answer of the daemon.
+
+[`CLAUDE.md`](CLAUDE.md), **Principles**, names the test that holds each one.
+
 ### A tour in one file
 
 The whole program is one file, `wostuast`. It starts with Python and ends with
@@ -183,10 +207,13 @@ prints the map:
 grep -n "^# --- \|^// --- " wostuast
 ```
 
-| Part | The main sections, in order |
-| --- | --- |
-| Python | constants · log · event log · following files · session model · transcript · git facts · files and diffs · status · settings.json · output helpers · tmux verbs · slash commands · the daemon · commands · command line · the page |
-| JavaScript (inside `PAGE`) | asking the daemon · the live slot · dragging an edge · the two fetched scripts · settings · colours · the sidebar · the tab icon · alerts · ticket links · the transcript · painting code · the Files tab · the tree · long files · the Diff tab · the review · the tabs · talking to the daemon · keys · slash completion |
+The Python sections follow the data, in the order of the first principle:
+the log, the session model, transcripts, git, then `wire` (every shape the
+page receives), `the daemon` (the request gate and the stream) and
+`the verbs` (what one session's routes do). The page's sections follow the
+screen: the sidebar, the transcript, the Files tab, the Diff tab, the
+review, the views and the keys. The command above prints the whole list as
+it is today.
 
 > [!NOTE]
 > Why one file? The install command downloads one file from one URL. Two files
@@ -377,18 +404,29 @@ things:
 Run `wostuast` with no arguments, and the daemon starts. `cmd_serve` does its
 work in this order:
 
-1. It prints the tools it found (Python, tmux, git).
-2. It makes sure the state directory exists and is private (mode `0700`).
+1. It prints its version and the tools it found (Python, tmux, git).
+2. It runs the first setup checks (`START_FIRST`): tmux, and a state
+   directory that exists and is private (mode `0700`). A check that is not
+   right is said; one the daemon cannot run without stops the start.
 3. It takes the daemon's lock, `daemon.lock` in the state directory
    (`one_daemon`). If another daemon holds it, the start stops here, before it
    writes anything, and says where the other one serves its page.
 4. It brings the install up to date (`bring_up_to_date`): the program, the hook
    file, the status file, and the entries in Claude Code's `settings.json`. It
    rewrites only what is out of date.
-5. It binds to `127.0.0.1` on port 7331 (or `--port`; `0` lets the system
+5. It runs the other setup checks (`START_AFTER`): our settings file, an
+   install that is behind, and the event log.
+6. It binds to `127.0.0.1` on port 7331 (or `--port`; `0` lets the system
    pick), and writes the page's address into the lock file.
-6. It starts one worker thread that reads the log, and serves HTTP on the main
-   thread.
+7. It starts one worker thread that reads the log, and serves HTTP on the main
+   thread at once. The page is there while the log is still being read.
+
+> [!NOTE]
+> **The checks are one table.** `SETUP_CHECKS` holds each check once.
+> `doctor` runs all of them in their long form; a start runs its two lists
+> in the brief form (#549). A start's check of the event log only asks
+> whether the log exists. Counting it, as `doctor` does, would read every
+> archive (#591).
 
 > [!NOTE]
 > **Why a lock, and not just the port?** With `--port`, a second daemon could
@@ -452,14 +490,24 @@ flowchart LR
 `store.refresh` is the heart of it:
 
 1. **Follow** the log and fold every new event into the sessions.
-2. **Settle**: every few seconds, check that each agent's pid is still alive,
-   and read the status files and the names.
+2. **Settle**: every few seconds, check that each agent's pid is still alive.
+   Read the status files, whether a dialog's hook waits for a Yes, and the
+   reader's marks (`Marks.onto`): names, snoozes, unread, reminders.
 3. **Reload git** for the sessions on screen, but each directory at most once
    in a while (`GIT_MIN_INTERVAL`). In the daemon, `GitReader` asks git in a
    thread of its own, and the next tick takes what it said: a slow
    `git status` never holds back a push.
-4. **Rebuild `rows`**, and say whether anything changed. Only a change is
-   pushed to the page.
+4. **Rebuild `rows`** (`render`), and say whether anything changed. Only a
+   change is pushed to the page.
+
+> [!IMPORTANT]
+> **The fold does no I/O** (#546). A hook handler changes the model and
+> nothing else: no file, no git, no `/proc`. Every read happens in the
+> named steps above, at the edge. A write that the fold needs, such as a
+> name that moves with a `/clear`, waits until the fold is done
+> (`save_names`). A change of state goes through one function, `become`.
+> `test_the_fold_does_no_io` folds an event of every handler with all I/O
+> made to fail.
 
 ### Reading a file that someone else is writing
 
@@ -688,9 +736,18 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | POST | `/api/session/ID/save` | Save a turn for later, or take it off the list. Touches no terminal. |
 | POST | `/api/session/ID/remind` | Bring a session back at a moment, or forget its reminder. Touches no terminal. |
 
-The GET routes live in one table, `GET_VERBS`, and the POST routes in another,
-`POST_VERBS`. `Serving.dispatch` reads the tables. Adding a route means adding
-a row.
+The routes are three tables (#545). `ROUTES` holds the ones outside a
+session: the page, the sessions, search, saved turns, the stream and the
+settings. A session's routes are its verbs: `GET_VERBS` and `POST_VERBS`.
+`find_route` picks the handler. Adding a route means adding a row.
+
+**Every request passes one gate, in one order** (`Serving.route`): the uid
+first, then the Host, then for a POST the origin, the token and the body,
+then the route, then the body's size. Each check used to be written per
+route, and a new POST route once forgot the size check. A verb is a plain
+function. It gets the session and what came with the request, and returns
+what to answer (`Answer`); `Serving.dispatch` sends it.
+`test_every_route_refuses_what_it_must` walks the tables.
 
 ### One stream for state
 
@@ -709,13 +766,24 @@ down it:
 > the new settings come back down the stream, to *every* open page. Two
 > channels for the same state would one day disagree.
 
-A stream opens with every row. After that, a `sessions` push carries only the
-rows that changed, and the order of the ids when it moved
+**Every shape the page receives is defined in one place**, the `wire`
+section (#540): a row (`row`), a block (`blocks_json`), the stream's events
+and their names (`EVENTS`, `sse`). It was built in about eight places, and a
+field added to `Block` went to every page without anyone choosing it. Five
+dataclasses go out whole, through `wire_fields`; everything else is written
+key by key. `test_the_page_listens_for_every_event_the_stream_sends` holds
+the events.
+
+A stream opens with every row, the transcript it watches, and the settings
+(#601). The settings are part of the opening because a page opens a new stream
+when you choose a row: a change made before that stream joined reached nobody,
+and the page kept the old ticket links. After that, a `sessions` push carries
+only the rows that changed, and the order of the ids when it moved
 (`sessions_change`). The page lays them over the rows it holds
-(`mergeSessions`). With 100 sessions, one push was 112 KB and is now about
-2 KB. Every session the page holds is frozen, and `patchSession` is the one
-way to change one, by a new object. So the sidebar fills a row again only when
-its session is another object.
+(`mergeSessions`). With 100 sessions, one push was 112 KB and is now about 2
+KB. Every session the page holds is frozen, and `patchSession` is the one way
+to change one, by a new object. So the sidebar fills a row again only when its
+session is another object.
 
 A slow client must not make the daemon hold memory without end. Each client
 has a short queue (`CLIENT_BACKLOG`). A client that falls too far behind is
@@ -775,10 +843,35 @@ you scrolled, which file was open, which folders were shut. The table
 `PLACE_FIELDS` lists those fields, once. Everything else — the file text, the
 diff, the transcript — is fetched again.
 
+### One way to ask, one way to draw
+
+**The page asks the daemon one way.** `getJson` is the one place the page
+calls `fetch` (#541). It gives `{ok, body}`, or `{ok: false, why}` when the
+daemon did not answer. There were four ways, and each failed in its own way.
+
+**A draw only reads `state`** (#542). The code that loads data or handles a
+click changes `state`; a draw only shows it. What a change to the sessions
+does besides drawing, such as an alert or a reminder's timer, is in one
+function, `onSessions`. A guard in the browser tests checks every draw of
+every test (Chapter 13).
+
+**`draw()` is two steps, `paint` and then `land`** (#573), as `Store.refresh`
+has steps. `paint` builds what `state` holds. `land` then goes where a link,
+a file asked for or the "new" line said to go, and uses that mark up. Using
+it up is a write, so it is not the paint's to make.
+
+**Each push has one handler** (#544): `onSessionsPush` and
+`onTranscriptPush`. A reading of the transcript is taken in one place,
+`takeRun`, whether it came by a fetch or by the push.
+
+**The views are a table, like the tabs** (#543). `VIEWS` holds Unread,
+Saved, Search and Commands: each one's link, icon, count, what it asks for
+as it opens, and its draw. A fifth view is one entry.
+
 ### Drawing only what changed
 
-Each tab has an entry in `TABS`: how to draw it, how to load it, and how often
-to poll it.
+Each tab has an entry in `TABS`: how to draw it, where it lands, how to load
+it, and how often to poll it.
 
 | Tab | Draw | Updates by |
 | --- | --- | --- |
@@ -1059,6 +1152,9 @@ flowchart TB
     F -- yes --> G["strip control chars<br/>→ one of four verbs"]
 ```
 
+All of these checks run in one gate, in one order, for every request
+(`Serving.route`, Chapter 7). A new route cannot forget one.
+
 | Layer | Stops | How |
 | --- | --- | --- |
 | Loopback only | other machines | `BIND_HOST = "127.0.0.1"`. Use an ssh tunnel to reach it from elsewhere. |
@@ -1121,7 +1217,8 @@ flowchart LR
   one command to delete the program too.
 - **`doctor`** checks Python, the state directory, the log, every hook entry,
   the status line, tmux, our settings file, and whether the hook files are the
-  ones this version would write.
+  ones this version would write. It runs the same table of checks as a start
+  (`SETUP_CHECKS`), in their long form, so the two never disagree.
 - **`files`** lists every file wostuast wrote, grouped, with what it is for
   and what `uninstall` does to it (`installed_files`).
 - **`report`** prints all of that, and more, as Markdown for an AI agent that
@@ -1186,6 +1283,35 @@ Three habits make the suite trustworthy:
 Tests that need no browser cover the session model, the log reader, the git
 helpers, the install, and every safety check. CI runs everything on Python 3.10
 to 3.13, with the browser tests split into shards.
+
+### Guards that keep the shape
+
+Some tests check no feature. They check that the code keeps the shape the
+five principles give it (Chapter 2), so it cannot slide back:
+
+| Guard | Fails when |
+| --- | --- |
+| `test_the_fold_does_no_io` | a hook handler reads a file, runs git or asks a process |
+| the draw guard (`DRAW_GUARD`, `tests/browser.py`) | a draw in any browser test fetches, rings an alert, writes storage or changes `state` |
+| `test_only_get_json_calls_fetch` | the page calls `fetch` anywhere but `getJson` |
+| `test_every_route_refuses_what_it_must` | a route, of any of the three tables, takes a foreign Host, a POST without the token, or a body too large |
+| `test_every_view_opens_draws_and_gives_the_session_back` | a view does not open, draw, and give the session back |
+| `test_no_function_grows_past_the_limit` | a function grows past 80 lines |
+| `test_no_test_writes_a_hook_event_by_hand` | a test writes a hook event as a dict, not with the builder |
+| `test_a_browser_test_waits_a_time_only_to_prove_nothing_comes` | a browser test waits a fixed time for something to appear |
+| `tests/page_coverage.py --check`, in CI | a page function, or a line of one, that no browser test runs |
+
+Some of these hold a **ratchet**: a list of known breaks that may only get
+shorter, each entry with why it is there. `grep -rn "_ALREADY" tests/`
+prints the lists.
+
+> [!TIP]
+> **Every line of the page script runs in some browser test, or has an
+> allowance that says why.** The coverage check counts each function's lines
+> that no browser test runs, and fails on one more than its allowance
+> (#600). The allowance list started empty. A line that runs only by the
+> timing of a run gets a test of its own: the first CI after the check found
+> Escape in the find box reached only by luck (#609).
 
 ---
 
