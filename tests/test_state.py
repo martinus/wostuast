@@ -1132,7 +1132,7 @@ def test_git_is_asked_about_the_sessions_shown_and_no_others(ws, monkeypatch):
     on every worktree touched that year, deleted ones included."""
     asked: list[str] = []
 
-    def git(dirs, timeout=None):
+    def git(dirs):
         asked.extend(dirs)
         return {d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
 

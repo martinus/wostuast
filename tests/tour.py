@@ -86,7 +86,7 @@ def make_sessions(ws, home: Path) -> None:
     isolate(home)
 
     ws.pid_alive = lambda pid: True
-    ws.git_facts_many = lambda dirs, timeout=None: {
+    ws.git_facts_many = lambda dirs: {
         d: ws.GitFacts(repo=NAMES[Path(d).name][1], branch=NAMES[Path(d).name][2],
                        root=d, ahead=1 if Path(d).name == "s1" else 0,
                        dirty=3 if Path(d).name in ("s1", "s2") else 0) for d in dirs}

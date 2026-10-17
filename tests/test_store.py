@@ -129,7 +129,7 @@ def test_an_api_error_with_no_words_is_named_by_its_kind(ws, store):
 def test_git_runs_once_and_then_waits(ws, monkeypatch):
     calls: list[list[str]] = []
 
-    def fake(dirs, timeout=None):
+    def fake(dirs):
         calls.append(sorted(dirs))
         return {d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
 
@@ -248,7 +248,7 @@ def test_a_refresh_asked_for_during_the_cool_down_is_not_lost(ws, monkeypatch):
     after a git run left the row stale until something else asked again."""
     calls = []
 
-    def fake(dirs, timeout=None):
+    def fake(dirs):
         calls.append(sorted(dirs))
         return {d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
 

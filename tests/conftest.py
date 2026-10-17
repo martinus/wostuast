@@ -314,7 +314,7 @@ def records(*made):
 @pytest.fixture
 def stub_git(ws, monkeypatch):
     """Answer for git and for liveness, so a test stays about its own subject."""
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs, timeout=None: {
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
         d: ws.GitFacts(repo="repo", branch="main") for d in dirs})
     monkeypatch.setattr(ws, "pid_alive", lambda pid: True)
 

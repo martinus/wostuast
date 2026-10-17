@@ -84,7 +84,7 @@ def serve(lines: str, home: Path):
 
     isolate(home)
 
-    ws.git_facts_many = lambda dirs, timeout=None: {
+    ws.git_facts_many = lambda dirs: {
         d: ws.GitFacts(repo="repo", branch="main") for d in dirs}
     ws.pid_alive = lambda pid: True
     folder = ws.settings_path().parent / "projects" / "-w-repo-dir"
