@@ -11849,8 +11849,12 @@ class SetupFacts:
     """What the checks share, each read once: Claude Code's `settings.json`
     was loaded three times by one `doctor`."""
 
-    def __init__(self, built: tuple[str, str] | None = None) -> None:
+    def __init__(self, built: tuple[str, str] | None = None,
+                 brief: bool = False) -> None:
         self.built = built
+        #: A start's checks: a start says only what is wrong, so what costs
+        #: time to say when all is well is not worked out.
+        self.brief = brief
         self.loaded: tuple[dict[str, Any], str] | None = None
 
     def settings(self) -> tuple[dict[str, Any], str]:
@@ -11879,6 +11883,13 @@ def check_state(facts: SetupFacts) -> Check:
 
 def check_events(facts: SetupFacts) -> Check:
     events = events_path()
+    # A start only asks whether there is a log. Counting it reads every
+    # archive, and the log is never thrown away: a start read a year of
+    # history (#430 had kept that off the start) to say nothing (#591).
+    if facts.brief:
+        return Check("events", events.exists(), "",
+                     f"no events yet at {tilde(events)}: start a Claude Code session",
+                     fatal=False, start="note")
     try:
         count, held, size = measure_log()
     except OSError as error:
@@ -11985,11 +11996,19 @@ START_AFTER = ("config", "behind", "events")
 
 
 def setup_checks(built: tuple[str, str] | None = None,
-                 only: Sequence[str] | None = None) -> list[Check]:
-    """The checks named in `only`, or all of them, each made once. `built`
-    is what `bring_up_to_date` wrote, which `install_behind` compares with."""
-    facts = SetupFacts(built)
-    found = (make(facts) for key, make in SETUP_CHECKS if only is None or key in only)
+                 only: Sequence[str] | None = None,
+                 brief: bool = False) -> list[Check]:
+    """The checks named in `only`, in its order, or all of them, each made
+    once. `built` is what `bring_up_to_date` wrote, which `install_behind`
+    compares with; `brief` is a start's (`SetupFacts.brief`).
+
+    In `only`'s order, not the table's: a start said a state directory it
+    cannot write before tmux was missing, which it had said first, and the
+    order of `START_FIRST` and `START_AFTER` meant nothing (#591)."""
+    facts = SetupFacts(built, brief)
+    makers = dict(SETUP_CHECKS)
+    keys = [key for key, _ in SETUP_CHECKS] if only is None else only
+    found = (makers[key](facts) for key in keys)
     return [check for check in found if check is not None]
 
 
@@ -12529,7 +12548,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # The same checks `doctor` makes, in the same words (#549): the ones
     # that matter before anything is written, here; the rest once the
     # hooks are brought up to date (`serve_page`).
-    for check in setup_checks(only=START_FIRST):
+    for check in setup_checks(only=START_FIRST, brief=True):
         if check.ok:
             continue
         if check.start == "fail":
@@ -12635,7 +12654,7 @@ def serve_page(args: argparse.Namespace, color: bool, held: int) -> int:
     # The settings are said here because the page says it only in a
     # corner. A file you wrote and got wrong must never look like a file
     # you never wrote.
-    for check in setup_checks(built, only=START_AFTER):
+    for check in setup_checks(built, only=START_AFTER, brief=True):
         if not check.ok:
             print(mark(check.start, check.bad, color))
 

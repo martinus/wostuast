@@ -159,6 +159,37 @@ def test_every_check_says_the_same_in_doctor_and_at_a_start(ws, capsys, monkeypa
         assert f"bad {key}" in said, key
 
 
+def test_a_start_says_its_checks_in_its_own_order(ws, capsys, monkeypatch):
+    """`START_FIRST` and `START_AFTER` are orders, not sets (#591): a start
+    said "tmux not found" before a state directory it cannot write, and
+    its notes in the order the start lists them."""
+    def failing(key):
+        return lambda facts: ws.Check(key, False, f"good {key}", f"bad {key}",
+                                      fatal=False)
+
+    keys = [key for key, _ in ws.SETUP_CHECKS]
+    monkeypatch.setattr(ws, "SETUP_CHECKS",
+                        tuple((key, failing(key)) for key in reversed(keys)))
+    # The real state check makes the directory; this one is made to fail.
+    ws.state_dir().mkdir(parents=True, exist_ok=True)
+    assert start(ws, monkeypatch) == 0
+    said = capsys.readouterr().out
+    for order in (ws.START_FIRST, ws.START_AFTER):
+        places = [said.index(f"bad {key}") for key in order]
+        assert places == sorted(places), (order, places)
+
+
+def test_a_start_reads_no_archive_of_the_log(ws, monkeypatch, capsys):
+    """A start only says whether there is a log: counting it reads every
+    archive, and the log is never thrown away (#591). `doctor` counts."""
+    def counted():
+        raise AssertionError("a start counted the log")
+
+    monkeypatch.setattr(ws, "measure_log", counted)
+    assert start(ws, monkeypatch) == 0
+    assert "no events yet" in capsys.readouterr().out
+
+
 def test_doctor_reports_a_missing_install(ws, capsys):
     code = ws.cmd_doctor(None)
     out = capsys.readouterr().out
