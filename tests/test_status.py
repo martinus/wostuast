@@ -51,6 +51,22 @@ def test_write_and_read_round_trip(ws, recorded_status):
     assert ws.read_status("s1") == status
 
 
+def test_the_status_file_keeps_every_field(ws):
+    """`write_status` names its keys one by one (#576), so a field added to
+    `Status` and not to the writer would be lost on the way to the reader.
+    Every field here differs from its default, which the recorded payload
+    does not give: it has no effort, for one."""
+    from dataclasses import fields
+    status = ws.Status(ts=5.0, name="a name", model="Opus 5", context_pct=41.0,
+                       cost_usd=1.25, agent="code-architect",
+                       model_id="claude-opus-5", effort="high")
+    blank = ws.Status()
+    assert all(getattr(status, one.name) != getattr(blank, one.name)
+               for one in fields(ws.Status))
+    ws.write_status("s1", status)
+    assert ws.read_status("s1") == status
+
+
 def test_reading_a_missing_status_gives_an_empty_one(ws):
     assert ws.read_status("nobody") == ws.Status()
 

@@ -69,10 +69,8 @@ def test_the_row_and_ls_json_say_the_same_of_a_session(ws):
 
 #: Turning a dataclass into JSON outside the wire section, each with why.
 #: May only get shorter (CLAUDE.md, **Principles**, the ratchet).
-DATACLASS_TO_JSON_ELSEWHERE = {
-    # It writes the status line's own file, which the page never reads.
-    "write_status": 1,
-}
+#: #576 emptied it: `write_status` writes its keys one by one.
+DATACLASS_TO_JSON_ELSEWHERE: dict[str, int] = {}
 
 
 def test_only_the_wire_section_turns_a_dataclass_into_json(ws):
