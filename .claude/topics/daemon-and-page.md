@@ -59,9 +59,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   reading.** A session resumed from another directory counts from nought
   again, so an old link can name a turn that is no longer there. `landOnBlock`
   does nothing then, and that is the whole of the failure. It also wins over
-  the usual landing at the foot of the transcript exactly once: `state.goToBlock`
+  the usual landing at the foot of the transcript exactly once: `state.turns.goTo`
   is cleared the moment it lands, or a live session would drag the reader back
-  to it every second. **`#<session>` alone is the session on screen**:
+  to it every second. **It runs in `landTranscript`, after `paint`**, never in
+  the draw (#573): the clearing is a write, and a draw only reads `state`. **`#<session>` alone is the session on screen**:
   `choose` writes it with `replaceState`, which fires no `hashchange`, so a
   reload comes back to that session and not to the first row. **Only when
   the address names another session**: rewritten always, a link to one

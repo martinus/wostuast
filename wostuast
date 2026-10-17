@@ -20147,16 +20147,30 @@ function drawTranscript(box) {
       pane.appendChild(node);
     }
     foldRuns(pane);
-    // Where the reader was, or the foot of it. A transcript is read from the
-    // bottom -- the last thing the agent said is the thing you came for --
-    // so that is where a session with no kept place lands.
-    // `null` is "no place kept"; nought is the very top, and a place too.
     putNewLine(pane);
-    if (!landOnBlock(pane) && !landOnNew(pane)) {
-      pane.scrollTop = place ?? pane.scrollHeight;
-    }
+    // Where the pane goes once it is built, for `landTranscript`: a mark
+    // is used up there, and a draw only reads `state` (#573).
+    pane.toLand = { place };
   }
   showToFoot(foot, pane);
+}
+
+// After the transcript is built: the block a link asked for, or the "new"
+// line, or where the reader was, or the foot of it. A transcript is read
+// from the bottom -- the last thing the agent said is the thing you came
+// for -- so that is where a session with no kept place lands. `null` is "no
+// place kept"; nought is the very top, and a place too. `toLand` is what
+// `drawTranscript` left for it: the place it read before it emptied the
+// pane, which the emptying would have put back to nought.
+function landTranscript(box) {
+  const pane = box.querySelector(".turnbody");
+  if (!pane || !pane.toLand) return;
+  const { place } = pane.toLand;
+  pane.toLand = null;
+  if (!landOnBlock(pane) && !landOnNew(pane)) {
+    pane.scrollTop = place ?? pane.scrollHeight;
+  }
+  showToFoot(box.children[3], pane);
 }
 
 // How much of the conversation the list is showing. It is handed what the
@@ -20221,7 +20235,11 @@ function patchTranscript(indexes) {
   // The list is a map of the whole conversation, so a new block changes it
   // whatever the find box holds. It is cheap: a row per prompt and reply.
   redrawMap(box);
-  if (pane.drawnFrom !== state.turns || !pane.nodes.length) { drawTranscript(box); return; }
+  if (pane.drawnFrom !== state.turns || !pane.nodes.length) {
+    drawTranscript(box);
+    landTranscript(box);
+    return;
+  }
   const stick = nearBottom(pane);
   for (const index of indexes) {
     if (index < pane.nodes.length) {
@@ -21200,7 +21218,12 @@ function drawFileList(box, list, note) {
     fillList(list);
     noteList(note, found);
   }
-  goToInList(list);
+}
+
+// After the Files tab is built: the row a link asked for (#573).
+function landFiles(box) {
+  const list = box.querySelector(".filelist.files");
+  if (list) goToInList(list);
 }
 
 // A binary file's hex as wide as the pane has room for (#524): 16 bytes a
@@ -22472,8 +22495,7 @@ function putDiffPlace(scroll, picked, same, reading, place) {
   // at. Working that out again here from two other fields was a string of
   // state algebra explaining itself.
   if (state.diffs.goTo && picked) {
-    if (state.diffs.found) state.diffs.goTo = false;
-    requestAnimationFrame(() => picked.scrollIntoView({ block: "start" }));
+    scroll.toLand = picked;           // `landDiff` goes there (#573)
   } else if (!same) {
     // Said, not left to the emptying: a pane refilled in the same task keeps
     // its offset, and the next commit opened 2,000 px down.
@@ -22485,6 +22507,20 @@ function putDiffPlace(scroll, picked, same, reading, place) {
   } else if (place) {
     requestAnimationFrame(() => { scroll.scrollTop = place; });
   }
+}
+
+// After the Review tab is built: the untracked file picked, which
+// `putDiffPlace` left for it. Once for each build (`toLand`): `land` runs
+// after every draw, and a scroll on each push would drag the reader back
+// every second while the file is read. The pick is said until the file has
+// arrived, which is the second build of the block.
+function landDiff(box) {
+  const scroll = box.querySelector(".diffscroll");
+  const picked = scroll && scroll.toLand;
+  if (!picked) return;
+  scroll.toLand = null;
+  if (state.diffs.found) state.diffs.goTo = false;
+  requestAnimationFrame(() => picked.scrollIntoView({ block: "start" }));
 }
 
 // What a file's block is drawn from, besides what every block shares: when
@@ -24248,11 +24284,11 @@ function drawCommand(pane) {
 // is one entry. The placeholder used to be a ternary in `showTab` naming
 // three tabs, so the two it did not name got whatever the last arm said.
 const TABS = {
-  transcript: { draw: drawTranscript, load: loadTranscript, poll: 0,
+  transcript: { draw: drawTranscript, land: landTranscript, load: loadTranscript, poll: 0,
                 finds: "find a turn  /", name: "Transcript" },
-  files: { draw: drawFiles, load: loadFiles, poll: 2000,
+  files: { draw: drawFiles, land: landFiles, load: loadFiles, poll: 2000,
            finds: "go to file  /", name: "Files" },
-  diff: { draw: drawDiff, load: loadDiff, poll: 5000,
+  diff: { draw: drawDiff, land: landDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /", name: "Review" },
 };
 
@@ -24295,7 +24331,26 @@ function endSwitch() {
 // entry there and nothing else.
 const TAB_KEYS = Object.keys(TABS);
 
+// What `state` holds, on the page: `paint` builds it, and `land` then goes
+// where a link, a file asked for or the "new" line said to go (#573). The
+// two are steps, as `Store.refresh`'s are: a draw only reads `state`
+// (CLAUDE.md, **Principles**, 3), and a mark of where to land is used up
+// once it is landed on -- a write, so it is not the draw's to make. The
+// draw guard in tests/browser.py watches `paint`.
 function draw() {
+  paint();
+  land();
+}
+
+// The tab's own landing, after `paint`: each tab says in `TABS` what it
+// goes to and when.
+function land() {
+  const box = $("content");
+  if (state.feed || !current() || box.dataset.tab !== state.tab) return;
+  TABS[state.tab].land(box);
+}
+
+function paint() {
   endSwitch();
   const box = $("content");
   if (state.feed) { drawFeed(box); return; }
