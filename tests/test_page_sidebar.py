@@ -26,6 +26,8 @@ from browser import (
     two_rows,
     wait_for_watching,
     wait_until,
+    frames,
+    stays,
 )
 
 pytestmark = skip_without_browser
@@ -54,7 +56,7 @@ def test_a_row_is_not_rebuilt_every_second(page_at, ws, tmp_path):
             arg=stop)
         page.evaluate("window.__row = document.querySelector('.row .line1')")
         first = page.locator(".row .age").first.inner_text()
-        page.wait_for_timeout(2400)
+        stays(page, 2400)
         assert page.evaluate("window.__row.isConnected"), "the row was rebuilt"
         assert page.locator(".row .age").first.inner_text() != first
 
@@ -1168,7 +1170,7 @@ def test_two_quick_changes_reach_the_file_in_the_order_they_were_made(
         page.click("#alertneeds")      # off, from its default on
         page.click("#alertdone")       # on
         wait_until(page, lambda: held)
-        page.wait_for_timeout(300)     # proving the second did not go
+        stays(page, 300)     # proving the second did not go
         assert len(sent) == 1, sent
         # Through Playwright, which lets the route pass the second on:
         # `kept` polls the file from Python, and nothing routes then.
@@ -1455,7 +1457,7 @@ def test_a_row_is_renamed_where_it_stands(rows_at, ws):
         # would stop following Claude Code's name for good.
         page.keyboard.press("e")
         page.keyboard.press("Enter")
-        page.wait_for_timeout(300)          # proving nothing was sent
+        stays(page, 300)          # proving nothing was sent
         assert "idle" not in daemon.store.marks.names
 
 
@@ -1477,7 +1479,7 @@ def test_the_enter_that_ends_a_composition_keeps_no_name(rows_at):
               }
               document.querySelector(box).dispatchEvent(press);
             }""", ['.row[data-id="fresh"] input.rowname', how])
-        page.wait_for_timeout(300)          # proving nothing was kept
+        stays(page, 300)          # proving nothing was kept
         assert "fresh" not in daemon.store.marks.names
         assert page.locator('.row[data-id="fresh"] input.rowname').count() == 1
         page.keyboard.press("Enter")
@@ -1559,7 +1561,7 @@ def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
         page.wait_for_function("state.chosen === 'fresh'")
         with context.expect_page():
             page.click(named + " .branch a.ticket")
-        page.wait_for_timeout(300)          # proving nothing was chosen
+        stays(page, 300)          # proving nothing was chosen
         assert page.evaluate("state.chosen") == "fresh"
 
         # A rename edits the name as text, and the link comes back after.
@@ -1642,7 +1644,7 @@ def test_a_reader_who_goes_back_to_a_cleared_session_stays_there(
         page.goto(page.url.split("#")[0] + "#s1")
         page.reload()
         page.wait_for_function("state.chosen === 's1' && state.sessions.length === 2")
-        page.wait_for_timeout(300)     # proving nothing moves
+        stays(page, 300)     # proving nothing moves
         assert page.evaluate("state.chosen") == "s1"
 
 
@@ -1866,7 +1868,7 @@ def test_u_marks_the_session_on_screen_unread_until_another_is_chosen(ws, pair_a
                                        notification_type="idle_prompt",
                                        message="waiting", ts=time.time()))
         daemon.tick()
-        page.wait_for_timeout(600)       # proving it did not go
+        stays(page, 600)       # proving it did not go
         assert unread_of(page, "s1") is True
         assert daemon.store.sessions["s1"].seen_at < 0
         page.click('.row[data-id="s2"]')
@@ -2146,7 +2148,7 @@ def test_the_four_views_are_one_row_and_always_there(page_at):
             page.evaluate(f"document.documentElement.style.setProperty('--sidebar-w', '{width}px')")
             page.wait_for_function(f"document.querySelector('.views').clientWidth < {width}"
                                    f" && document.querySelector('.views').clientWidth > {width - 40}")
-            page.wait_for_timeout(100)        # the observer's next frame
+            frames(page)                      # the observer's next frame
             seen = page.evaluate(look)
             assert len({one["top"] for one in seen}) == 1, (width, seen)
             assert max(one["width"] for one in seen) - min(one["width"] for one in seen) < 1, (width, seen)

@@ -626,6 +626,25 @@ def test_no_test_writes_a_hook_event_by_hand():
     assert not gone, f"no longer written by hand, so off EVENTS_BY_HAND: {gone}"
 
 
+def test_a_browser_test_waits_a_time_only_to_prove_nothing_comes():
+    """`stays` is the one fixed wait in a browser test, and it says what
+    it is for: proving that something does not happen (#598). 27 places
+    in the tests waited a number of milliseconds for something to
+    appear, and each one fails on a runner that draws later than that. A wait for what
+    the page draws needs no number. A static check, so it holds the
+    form and not the purpose: `stays` with a wait for an appearance
+    behind it passes, and a reviewer has to read the line."""
+    import pathlib
+    import re
+
+    tests = pathlib.Path(__file__).resolve().parent
+    found = [f"{path.name}:{number}"
+             for path in sorted(tests.glob("test_page_*.py"))
+             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+             if re.search(r"\.wait_for_timeout\(", line)]
+    assert not found, f"a fixed wait outside `stays`: {found}"
+
+
 #: A function this long is read in pieces and changed in pieces, and its
 #: scars hide each other (#436). Python by `ast`, methods as
 #: `Class.method`; the page's top-level `function`s as `page:name`, to the

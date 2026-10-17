@@ -22,6 +22,8 @@ from browser import (
     numbers,
     open_code,
     wait_until,
+    frames,
+    stays,
 )
 
 pytestmark = skip_without_browser
@@ -166,7 +168,7 @@ def test_a_file_that_is_not_markdown_is_shown_as_it_is(repo_page):
     with opened(repo_page) as page:
         show_tab(page, "files")
         page.click(".filelist button:has-text('code.py')")
-        page.wait_for_timeout(700)
+        page.wait_for_selector(".filebody .code .dline")
         assert page.locator(".filebody .prose").count() == 0
         assert "print(1)" in code_text(page)
 
@@ -219,11 +221,18 @@ def test_a_name_that_matches_nothing_says_so(repo_page):
         assert page.locator(".filelist button").count() > 0
 
 
+#: NOTES.md is drawn. Not `.filebody .prose` alone: the tab opens with
+#: README.md, which is Markdown too, so that holds before the click lands
+#: (#598). A fixed wait of 700 ms hid it.
+NOTES_SHOWN = ("document.querySelector('.filebody .prose')"
+               "?.textContent.includes('Notes')")
+
+
 def test_another_file_is_shown_when_it_is_picked(repo_page):
     with opened(repo_page) as page:
         show_tab(page, "files")
         page.click(".filelist button:has-text('NOTES.md')")
-        page.wait_for_timeout(700)
+        page.wait_for_function(NOTES_SHOWN)
         assert "Notes" in page.locator(".filebody .prose").inner_text()
 
 
@@ -233,7 +242,7 @@ def test_a_hostile_file_cannot_run_either(repo_page):
     with opened(repo_page) as page:
         show_tab(page, "files")
         page.click(".filelist button:has-text('NOTES.md')")
-        page.wait_for_timeout(700)
+        page.wait_for_function(NOTES_SHOWN)
         assert page.evaluate("window.PWNED ?? null") is None
         assert page.locator(".filebody img").count() == 0
         assert page.locator(".filebody script").count() == 0
@@ -269,7 +278,7 @@ def test_touching_another_file_leaves_the_open_one_alone(repo_page):
         page.evaluate(
             "window.__doc = document.querySelector('.filebody .prose')")
         (root / "NOTES.md").write_text("# Notes\n\ntouched again\n")
-        page.wait_for_timeout(3000)       # two polls
+        stays(page, 3000)       # two polls
         assert page.evaluate("window.__doc.isConnected"), \
             "the open document was rebuilt for another file's change"
 
@@ -316,7 +325,7 @@ def test_git_failing_does_not_read_as_an_empty_worktree(repo_page):
         show_tab(page, "files")
         page.evaluate("state.files.names = []; state.files.path = null;"
                       " state.files.failed = true; draw()")
-        page.wait_for_timeout(200)
+        page.wait_for_selector(".filebody .empty")
         said = page.locator(".filebody .empty").inner_text()
         assert "git did not answer" in said
         assert "holds no file" not in said
@@ -415,7 +424,7 @@ def test_no_highlighter_still_shows_the_file(repo_page):
             ".length === 2")
         assert code_text(page).strip() == (
             "print(1)\nprint(2)")
-        page.wait_for_timeout(400)          # proving no paint comes
+        stays(page, 400)          # proving no paint comes
         assert page.locator(".filebody .code .dtext span").count() == 0
 
 
@@ -429,7 +438,7 @@ def test_the_highlighter_is_pinned_and_asked_for_late(repo_page):
         show_tab(page, "files")
         assert page.evaluate(asked) == 0      # nor does a Markdown file
         page.click(".filelist button:has-text('code.py')")
-        page.wait_for_timeout(400)
+        page.wait_for_selector("script[src*='highlight']", state="attached")
         tag = page.locator("script[src*='highlight']")
         assert tag.count() == 1
         assert tag.get_attribute("src").startswith("https://")
@@ -443,7 +452,7 @@ def test_a_file_that_is_not_markdown_has_no_box(repo_page):
     with opened(repo_page) as page:
         show_tab(page, "files")
         page.click(".filelist button:has-text('code.py')")
-        page.wait_for_timeout(400)
+        page.wait_for_selector(".filebody .code")
         look = page.eval_on_selector(".filebody .code", """el => {
           const seen = getComputedStyle(el);
           return [seen.borderTopWidth, seen.backgroundColor];
@@ -474,7 +483,8 @@ def test_only_the_rows_on_screen_are_built(big_page):
         first = page.eval_on_selector(
             ".filelist button", "el => el.title")
         page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
-        page.wait_for_timeout(250)
+        page.wait_for_function(
+            "was => document.querySelector('.filelist button').title !== was", arg=first)
         moved = page.eval_on_selector(".filelist button", "el => el.title")
         assert moved != first, "the window did not follow the scrollbar"
         assert page.locator(".filelist button").count() <= 120
@@ -485,7 +495,7 @@ def test_a_name_is_still_found_after_scrolling(big_page):
     with opened(big_page) as page:
         show_tab(page, "files")
         page.eval_on_selector(".filelist", "el => el.scrollTop = 40000")
-        page.wait_for_timeout(250)
+        frames(page)                              # the scroll event is in
         page.fill("#find", "libcorrelation")
         page.wait_for_selector(".goto button")
         found = page.eval_on_selector_all(
@@ -550,8 +560,8 @@ def test_the_list_is_a_tree_that_opens_and_closes(big_page):
         assert "shared" in " ".join(names), names
 
         page.click(".filelist button.dir.open")
-        page.wait_for_timeout(200)
-        assert page.locator(".filelist button.dir.open").count() == 0
+        page.wait_for_function(
+            "document.querySelectorAll('.filelist button.dir.open').length === 0")
 
 
 def test_a_directory_holding_a_change_stays_shut_and_counts_them(repo_page):
@@ -1719,7 +1729,7 @@ def test_a_file_read_git_failed_on_is_not_drawn_as_its_text(ws, repo_page,
                 if "/file?" in one.url else None)
         monkeypatch.setattr(ws, "is_listed", lambda *a, **k: False)
         wait_until(page, lambda: len(asked) >= 2)   # two answers, so one refused
-        page.wait_for_timeout(300)
+        stays(page, 300)
         shown = page.locator(".filebody .code").inner_text()
         assert "not in this worktree" not in shown, shown
         assert "print(1)" in shown, shown

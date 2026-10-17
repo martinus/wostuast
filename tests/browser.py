@@ -431,6 +431,26 @@ def wait_until(page, check):
     raise AssertionError("it never happened")
 
 
+def stays(page, ms):
+    """Let `ms` pass, to prove that something does *not* happen: nothing
+    is sent, the list stays shut, the place does not move. The one fixed
+    wait a browser test makes (#598). For something that should appear,
+    wait for what the page draws: 27 places in the tests waited a number
+    of milliseconds for an answer to land, and on a loaded runner it
+    lands later. `test_a_browser_test_waits_a_time_only_to_prove_nothing_comes`
+    holds it."""
+    page.wait_for_timeout(ms)
+
+
+def frames(page, count=2):
+    """Let the page draw `count` frames: a `ResizeObserver` and a scroll
+    handler run in the next one, not after a number of milliseconds."""
+    page.evaluate("""(count) => new Promise((done) => {
+      const step = (left) => left ? requestAnimationFrame(() => step(left - 1)) : done();
+      step(count);
+    })""", count)
+
+
 def stub_send(page, answers=None, delay=0):
     """`/send` after `delay` ms, with every text sent kept in
     `window.__sent`. Answered from `answers`, one per call and the last one

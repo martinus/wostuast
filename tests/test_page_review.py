@@ -21,6 +21,7 @@ from browser import (
     comment_on_first_line,
     spy_on_note,
     stub_send,
+    stays,
 )
 
 pytestmark = skip_without_browser
@@ -248,7 +249,7 @@ def test_a_double_click_sends_a_review_once(repo_page):
         stub_send(page, [{"done": True}], delay=400)
         page.dblclick("#sendreview")
         page.wait_for_function("state.review.comments.length === 0")
-        page.wait_for_timeout(300)
+        stays(page, 300)
         assert page.evaluate("window.__sent.length") == 1
 
 
@@ -540,7 +541,7 @@ def test_the_window_stands_still_while_a_comment_is_written(long_page):
         page.fill(".commentbox textarea", "half a thought")
         page.evaluate("() => { document.querySelector('.filescroll')"
                       ".scrollTop = 200 * 21; }")
-        page.wait_for_timeout(300)      # proving it did not move
+        stays(page, 300)      # proving it did not move
         assert page.input_value(".commentbox textarea") == "half a thought"
 
 
@@ -1626,7 +1627,7 @@ def test_send_waits_while_a_box_holds_text(repo_page):
         page.fill(".commentbox textarea", "HALF WRITTEN NOTE")
         spy_on_note(page)
         page.click("#sendreview")
-        page.wait_for_timeout(300)     # proving that nothing is sent
+        stays(page, 300)     # proving that nothing is sent
         assert page.evaluate("window.__sent.length") == 0
         assert page.evaluate(BOX_TEXT) == "HALF WRITTEN NOTE"
         assert page.evaluate("state.review.comments.length") == 1

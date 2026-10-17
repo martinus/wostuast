@@ -122,7 +122,7 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
         assert page.evaluate(chosen) == "system"
 
         settings(page, "colours", "light")
-        page.wait_for_timeout(150)
+        page.wait_for_function(f"{chosen} === 'light'")
         light = page.evaluate("getComputedStyle(document.body).backgroundColor")
         assert light != dark, "light on a dark machine did nothing"
         assert page.evaluate(chosen) == "light"
@@ -137,7 +137,7 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
 
         settings(page, "colours", "dark")
         settings(page, "colours", "system")
-        page.wait_for_timeout(150)
+        page.wait_for_function(f"{chosen} === 'system'")
         assert page.evaluate(chosen) == "system"
         assert page.evaluate(
             "getComputedStyle(document.body).backgroundColor") == dark
