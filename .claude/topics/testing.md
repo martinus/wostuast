@@ -179,7 +179,7 @@ Keep the breaks list in the scratchpad; it is about one fix.
       about 70 % slower, 6 min 52 s against about 4 min on one machine;
       in CI each shard still took about 2.5 min, as without it (#590).
       The reader chose that cost in the shards over a job of its own
-      that the ruleset would not require. **It counts functions, not
+      that the ruleset would not require. **It counted functions, not
       the branches in them**: `drawDiff` ran in every Review tab test,
       and its write to `state.diffs.loose`, behind an `if` that no test
       took, stood there with `DRAW_EFFECTS_ALREADY` empty until
@@ -187,6 +187,17 @@ Keep the breaks list in the scratchpad; it is about one fix.
       in a draw that only a rare branch reaches is found by reading,
       and gets a test that takes the branch (#596,
       `test_an_untracked_file_picked_and_then_added_lets_go_of_the_pick`).
+      **So it counts lines too** (#600): each line no test runs is the
+      innermost named function's that holds it (`unrun_by_function`),
+      or `(top level)`'s, and `--check` names each line past what
+      `UNRUN_LINES_ALREADY` allows that function. The 122 lines the
+      first run left unrun were taken first -- by tests in four pull
+      requests (#604 to #607), one more beside the check, and one
+      deletion -- and the list started empty. An entry is
+      only for a line that runs or not by the timing of a run, the most
+      that three runs of the whole suite left, with why: the "blocking
+      alerts" note in `drawBell` ran or not by which context a run made,
+      until a test asked for it.
       A new page function needs a
       test that runs it, or an entry on the list with why.
     - **A branch no test runs is not dead because two tries did not
