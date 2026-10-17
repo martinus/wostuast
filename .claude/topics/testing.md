@@ -27,6 +27,19 @@ that waited five seconds for an answer that never came send
 `Connection: close` (#280); a test that waits for `LIST_FRESH` sets it
 to 0.
 
+**Under `served`, git always says "main, clean".** `served` takes the
+`stub_git` fixture, which answers `git_facts_many` with that for every
+directory, so every page test stands on it. A test about what git
+itself says -- a conflict, a rebase, a branch -- hands the real
+`git_facts` back in, and the daemon reads it again only after an event
+that touches the tree, once `GIT_MIN_INTERVAL` is over: set it to 0,
+or clear `git_read`, and tick until the row holds the fact, then open
+the page. The conflict test was written without that, and four probes
+found the stub (#607); topics/worktree-tabs said so, under a row a
+sidebar test does not route to.
+`test_a_merge_that_stopped_on_conflicts_counts_them_on_the_row`,
+`test_a_worktree_git_has_not_finished_with_says_so`.
+
 **A test that commits in a clone gives the clone an identity.** CI has no
 global git identity, and `git clone` does not carry the `user.email` the
 `repo` fixture sets locally, so a commit there fails with status 128 in CI
@@ -198,6 +211,13 @@ Keep the breaks list in the scratchpad; it is about one fix.
       that three runs of the whole suite left, with why: the "blocking
       alerts" note in `drawBell` ran or not by which context a run made,
       until a test asked for it.
+      - **Three green runs do not prove a line is run on purpose.** The
+        first CI after the check found Escape in the find box unrun
+        (#609): the one test that pressed it there reached it only while
+        the Files tab's list of hits had not come, and the list takes
+        Escape once it has. A line red in CI is asked for by a test of
+        its own before it is ever an allowance;
+        `test_esc_in_the_find_box_empties_it_and_leaves_it`.
       A new page function needs a
       test that runs it, or an entry on the list with why.
     - **A branch no test runs is not dead because two tries did not

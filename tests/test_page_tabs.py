@@ -553,6 +553,22 @@ def test_esc_leaves_a_box_and_a_number_then_picks_a_tab(page_at):
         assert "1 – 3 work again" in page.text_content("#help")
 
 
+
+def test_esc_in_the_find_box_empties_it_and_leaves_it(page_at):
+    """On a tab with no list under the box, Escape empties the find, shows
+    everything again and leaves the box. The test above reached it only
+    when the Files tab's list had not come yet: once it has, the list
+    takes Escape, and CI's line check found these lines unrun (#609)."""
+    with opened(page_at) as page:
+        page.click("#find")
+        page.keyboard.type("nothing matches this")
+        page.wait_for_function("state.find === 'nothing matches this'")
+        page.keyboard.press("Escape")
+        page.wait_for_function("state.find === ''")
+        assert page.input_value("#find") == ""
+        assert page.evaluate("document.activeElement === document.body")
+
+
 HOLD_FILES = """() => { window.__held = new Promise((done) => { window.__release = done; });
   const real = window.fetch;
   window.fetch = async (url, options) => {
