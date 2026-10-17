@@ -2763,6 +2763,23 @@ def test_ticking_an_alert_asks_the_browser_first(page_at):
         assert page.is_checked("#alertdone")
 
 
+@pytest.mark.parametrize("script, words", [
+    ("delete window.Notification;", "This browser cannot show alerts."),
+    ("""window.Notification = function () {};
+        window.Notification.permission = "denied";""",
+     "This browser is blocking alerts for this page."),
+])
+def test_the_alert_note_says_why_no_alert_comes(page_at, script, words):
+    """A browser with no alerts, and one that blocks them for this page,
+    are each told apart in the menu. Neither was asked for by a test: the
+    blocked one ran or not by which context a run happened to make (#600)."""
+    _, path = page_at
+    with alerts_asked(path, script) as page:
+        page.click("#settings")
+        page.wait_for_selector("#setpop", state="visible")
+        assert page.text_content("#alertnote").startswith(words)
+
+
 def test_an_alert_the_browser_refuses_to_build_breaks_nothing(ws, page_at):
     """Some browsers refuse a `Notification` without a service worker. The
     title still says who needs you, and nothing throws."""

@@ -61,7 +61,8 @@ def test_the_check_fails_on_a_function_no_test_runs(monkeypatch):
     run that recorded nothing: a shard whose upload went missing must not
     pass with every function unseen."""
     text = "const state = {};\nfunction ran() {}\nfunction idle() {}\n"
-    merged = {"text": text, "ran": set(), "functions": {
+    # What ran is every byte before `idle`: its lines alone never ran.
+    merged = {"text": text, "ran": set(range(text.index("function idle"))), "functions": {
         text.index("function ran"): ["ran", text.index("function idle") - 1, True],
         text.index("function idle"): ["idle", len(text) - 1, False]}}
     said = page_coverage.check(merged)
@@ -72,6 +73,54 @@ def test_the_check_fails_on_a_function_no_test_runs(monkeypatch):
     assert page_coverage.check(merged) == [
         "ran: a test runs it now, so it comes off UNRUN_ALREADY"]
     assert page_coverage.check({"text": "", "ran": set(), "functions": {}})
+
+
+def test_the_check_counts_the_lines_a_function_that_ran_left_unrun(monkeypatch):
+    """A function that ran is not all run (#600): its lines that never ran
+    are counted for the innermost named function that holds each -- an
+    unnamed handler's for the function it is written in -- and one in no
+    function for the top level. Past its allowance, it fails, and says
+    which lines."""
+    text = ("const state = {};\n"
+            "function some() {\n"
+            "  if (a) {\n"
+            "    b();\n"
+            "  }\n"
+            "  on(() => {\n"
+            "    c();\n"
+            "  });\n"
+            "  const inner = () => {\n"
+            "    e();\n"
+            "  };\n"
+            "}\n"
+            "d();\n")
+    def at(piece):
+        return text.index(piece)
+    lines = text.split("\n")
+    ran = set()
+    for number in (0, 1, 2, 4, 5, 7, 8, 10, 11):  # all but b(), c(), e() and d()
+        start = sum(len(one) + 1 for one in lines[:number])
+        ran.update(range(start, start + len(lines[number])))
+    merged = {"text": text, "ran": ran, "functions": {
+        at("function some"): ["some", at("d();") - 1, True],
+        at("() => {"): ["", at("  });") + 3, True],
+        at("() => {\n    e"): ["inner", at("  };") + 3, True]}}
+    assert page_coverage.unrun_by_function(merged) == {
+        "some": [3, 6], "inner": [9], "(top level)": [12]}
+    said = page_coverage.check(merged)
+    assert said == [
+        "(top level): 1 lines no browser test runs, and UNRUN_LINES_ALREADY allows 0: wostuast:13",
+        "inner: 1 lines no browser test runs, and UNRUN_LINES_ALREADY allows 0: wostuast:10",
+        "some: 2 lines no browser test runs, and UNRUN_LINES_ALREADY allows 0:"
+        " wostuast:4, wostuast:7"], said
+    allowed = {"some": 2, "inner": 1, "(top level)": 1}
+    monkeypatch.setattr(page_coverage, "UNRUN_LINES_ALREADY", allowed)
+    assert page_coverage.check(merged) == []
+    monkeypatch.setattr(page_coverage, "UNRUN_LINES_ALREADY", {**allowed, "some": 1})
+    assert page_coverage.check(merged) == [
+        "some: 2 lines no browser test runs, and UNRUN_LINES_ALREADY allows 1:"
+        " wostuast:4, wostuast:7"]
+
 
 
 def test_nothing_is_recorded_unless_asked(page_at, tmp_path, monkeypatch):
