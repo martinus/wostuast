@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 
+import re
 import threading
 import time
 
@@ -2060,3 +2061,63 @@ def test_a_command_in_the_slash_list_is_taken_with_the_mouse(ws, in_pane, tmp_pa
         assert page.input_value("#say") == "/review-pr "
         assert page.evaluate("document.activeElement.id") == "say"
         assert not conftest.into_pane(seen)
+
+
+# --- the permission bar's other answers (#600) -------------------------------------
+
+
+def test_a_permission_too_long_to_show_points_at_the_terminal(ws, in_pane):
+    daemon, base, _ = in_pane
+    cwd = daemon.store.sessions["s1"].cwd
+    ws.append_event(conftest.event(
+        "PermissionRequest", tool_name="Bash", pane="%7", cwd=cwd,
+        tool_input={"command": "echo " + "x" * (ws.PERMISSION_SHOWN + 10)},
+        ts=time.time()))
+    daemon.store.refresh()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .asknote")
+        assert page.inner_text("#asking .asknote") == \
+            "This request is too long to show here. Read it in the terminal."
+
+
+def test_read_the_plan_with_no_plan_in_the_transcript_stays_put(ws, in_pane):
+    """The dialog asks to start on a plan the transcript does not hold --
+    one written before a `/clear`. The link finds nothing and goes
+    nowhere, rather than to the first block."""
+    daemon, base, _ = in_pane
+    path = daemon.store.sessions["s1"].transcript_path
+    with open(path, "a") as handle:
+        handle.write(conftest.records(*[
+            conftest.record("you" if n % 2 else "claude", f"line {n}\n" * 8)
+            for n in range(40)]))
+    cwd = daemon.store.sessions["s1"].cwd
+    ws.append_event(conftest.event(
+        "PermissionRequest", tool_name="ExitPlanMode", pane="%7", cwd=cwd,
+        tool_input={"plan": "# A plan"}, ts=time.time()))
+    daemon.store.refresh()
+    with opened((None, base)) as page:
+        page.wait_for_selector("#asking:not([hidden]) .askwhat .link")
+        page.wait_for_function("state.turns.blocks.length >= 40")
+        scroller = "document.querySelector('.turnbody')"
+        page.evaluate(f"() => {{ const it = {scroller}; it.scrollTop = it.scrollHeight; }}")
+        was = page.evaluate(f"() => ({scroller}).scrollTop")
+        assert was > 0
+        page.click("#asking .askwhat .link")
+        assert page.evaluate(f"() => ({scroller}).scrollTop") == was
+
+
+def test_an_answer_that_did_not_land_lets_the_reader_submit_again(ws, in_pane):
+    """A No the daemon could not give -- the pane went, the dialog moved --
+    leaves the submit button live, so the reader can try again."""
+    daemon, base, _ = in_pane
+    now_permission(ws, daemon)
+    with opened((None, base)) as page:
+        page.route(re.compile(r"/decline$"), lambda route: route.fulfill(
+            json={"done": False, "error": "the pane is gone"}))
+        page.wait_for_selector("#asking:not([hidden]) .permfield")
+        page.click("#asking .permno")
+        page.fill("#asking .permwhy", "Use the ninja build instead")
+        page.click("#asking .permsubmit")
+        page.wait_for_function(
+            "() => { const it = document.querySelector('#asking .permsubmit');"
+            " return it && !it.disabled && !it.dataset.busy; }")

@@ -6,6 +6,8 @@ See tests/browser.py for the shared browser and the helpers."""
 
 from __future__ import annotations
 
+import re
+import shutil
 import time
 
 import conftest
@@ -188,3 +190,33 @@ def test_a_project_command_is_used_in_a_session_of_that_project(ws, in_pane, tmp
         page.click(".cmdhead .verb")
         page.wait_for_function("state.chosen === 's2' && !state.feed")
         assert page.input_value("#say") == "/deploy "
+
+
+def test_a_command_that_went_away_says_no_session_can_run_it(ws, in_pane, tmp_path):
+    """The command picked, then its file removed: the list read again has
+    no such command, and the pane says so rather than its old text."""
+    daemon, base, _ = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request", "# Review")
+    with opened((None, base)) as page:
+        on_the_view(page)
+        page.click(".cmdrow:has-text('/review-pr')")
+        page.wait_for_selector(".cmdbody .prose h1")
+        shutil.rmtree(tmp_path / ".claude" / "skills" / "review-pr")
+        page.keyboard.press("Escape")
+        page.wait_for_function("!state.feed")
+        page.keyboard.press("4")
+        page.wait_for_function(
+            "document.querySelector('.cmdbody .note')?.textContent"
+            " === 'No session can run it any more.'")
+
+
+def test_a_command_whose_file_cannot_be_read_says_so(ws, in_pane, tmp_path):
+    daemon, base, _ = in_pane
+    skill(tmp_path / ".claude", "review-pr", "Review a pull request", "# Review")
+    with opened((None, base)) as page:
+        page.route(re.compile(r"/command\?name="), lambda route: route.abort())
+        on_the_view(page)
+        page.click(".cmdrow:has-text('/review-pr')")
+        page.wait_for_function(
+            "document.querySelector('.cmdbody .note')?.textContent"
+            " === 'Its file cannot be read now.'")
