@@ -49,7 +49,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
     `test_a_comment_in_a_long_file_survives_the_file_being_read_again`
     timing out. `drawFiles` reads `.filescroll` before it empties the pane,
     and only one drawn for this session (`dataset.drawn`) and holding the
-    same file: a pane still reading stands at nought, the scar above.
+    same file: a pane still reading stands at nought, the scar above. **It
+    reads it into `place`, never into `state`** (#573): a draw only reads
+    state, and the new scroller's listener writes the place down once it is
+    put back, so the one writer stays the scrollbar.
     `test_a_scroll_not_yet_reported_survives_the_file_being_read_again`
     puts the scroll and the rebuild in one task, where no event can come
     between; `test_another_sessions_scroller_is_not_read_as_this_ones_place`

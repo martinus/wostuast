@@ -21257,24 +21257,27 @@ function drawFiles(box) {
                            + (state.files.read ? "" : state.files.trouble))) {
     return;
   }
-  // Where the scroller stands now, which the listener below may not have
+  // Where the reader is in this file, whether they scrolled there a moment
+  // ago or left it on their last visit to this session. `forgetFile` puts it
+  // back to nought, which is what makes a different file open at its top.
+  //
+  // Or where the scroller stands now, which the listener below may not have
   // written down yet: a browser reports a scroll a frame late, and a poll
   // that brought the file again rebuilt the pane in between -- so the place
   // put back was the one before, and the reader was sent back there. Only
   // from a file drawn for this session, and only for the same file: a pane
-  // still reading stands at nought, and that is not a place.
+  // still reading stands at nought, and that is not a place. Read into
+  // `place`, not written into `state` (#573): the new scroller's listener
+  // writes it down once the place is put back.
+  let place = state.files.down;
   const shown = pane.querySelector(".filescroll");
   if (shown && shown.dataset.drawn === state.chosen
       && pane.dataset.file === String(state.files.path)) {
-    state.files.down = shown.scrollTop;
+    place = shown.scrollTop;
   }
   pane.replaceChildren();
   pane.dataset.file = String(state.files.path);
   if (putNoFile(pane)) return;
-  // Where the reader is in this file, whether they scrolled there a moment
-  // ago or left it on their last visit to this session. `forgetFile` puts it
-  // back to nought, which is what makes a different file open at its top.
-  const place = state.files.down;
   const isDoc = MARKDOWN.test(state.files.path) && !state.files.binary;
   // Split once. The header wants to know how long the file is and so does the
   // body, and two copies of that arithmetic are two copies that can drift —

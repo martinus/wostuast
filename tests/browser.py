@@ -587,8 +587,6 @@ DRAW_EFFECTS_ALREADY = {
     "draw: state.turns.goTo", "draw: state.turns.goToTs",
     "draw: state.turns.goToNear", "draw: state.files.goTo",
     "draw: state.diffs.goTo", "draw: state.turns.newLanded",
-    # The reader's place, read off the page before the list is built again.
-    "draw: state.files.down",
     # Timers that touch only the page: a highlight that fades, a diff
     # painted in slices.
     "draw: setTimeout",
