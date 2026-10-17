@@ -7429,6 +7429,28 @@ def search_log(query: str, sessions: dict[str, Session]) -> list[dict[str, Any]]
     words, filters = parse_search(query)
     if not words and not filters:
         return []
+    span = search_span(filters)
+    # Asked of the raw line only where the line holds the word as typed:
+    # JSON writes a quote, a backslash and anything not ASCII as escapes.
+    plain = [word for word in words
+             if word.isascii() and '"' not in word and "\\" not in word]
+    kept: deque[dict[str, Any]] = deque(maxlen=SEARCH_MAX)
+    for path in (archived_events_paths() or []) + [events_path()]:
+        try:
+            handle = open(path, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                found = search_line(line, words, plain, filters, span, sessions)
+                if found:
+                    kept.append(found)
+    return sorted(kept, key=lambda one: -one["ts"])
+
+
+def search_span(filters: dict[str, str]) -> tuple[float | None, float | None]:
+    """The moments `after:` and `before:` ask for, each `None` when not
+    asked, once every filter is one that can be read."""
     # A filter that cannot be read is said, not dropped: dropped, a query
     # of `before:yesterday` alone answered with the newest of everything.
     after = before = None
@@ -7442,70 +7464,72 @@ def search_log(query: str, sessions: dict[str, Session]) -> list[dict[str, Any]]
         raise ValueError("from: is me or claude")
     if filters.get("is", "unread") != "unread":
         raise ValueError("is: is unread")
+    return after, before
+
+
+def search_line(line: str, words: list[str], plain: list[str],
+                filters: dict[str, str], span: tuple[float | None, float | None],
+                sessions: dict[str, Session]) -> dict[str, Any] | None:
+    """One line of the event log as a hit of the search, or `None`: a prompt
+    the reader typed or the last words of a turn, which holds every word
+    and passes every filter."""
+    low = line.lower()
+    if any(word not in low for word in plain):
+        return None
+    if '"userpromptsubmit"' not in low and '"stop' not in low:
+        return None
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(event, dict):
+        return None
+    name = event.get("hook_event_name")
+    if name == "UserPromptSubmit":
+        # Only what the reader typed: a task's notification
+        # and another session's message are not theirs.
+        by, said = prompt_said(event.get("prompt"))
+        if by != "me":
+            return None
+    elif name in ("Stop", "StopFailure"):
+        said, by = event.get("last_assistant_message"), "claude"
+    else:
+        return None
+    if not isinstance(said, str) or not said.strip():
+        return None
     who = filters.get("from")
+    if who and not by.startswith(who):
+        return None
+    ts = event.get("ts")
+    ts = float(ts) if isinstance(ts, (int, float)) else 0.0
+    after, before = span
+    if (after is not None and ts < after) or (before is not None and ts >= before):
+        return None
+    sid = str(event.get("session_id") or "")
+    session = sessions.get(sid)
     within = filters.get("in")
-    # Asked of the raw line only where the line holds the word as typed:
-    # JSON writes a quote, a backslash and anything not ASCII as escapes.
-    plain = [word for word in words
-             if word.isascii() and '"' not in word and "\\" not in word]
-    kept: deque[dict[str, Any]] = deque(maxlen=SEARCH_MAX)
-    for path in (archived_events_paths() or []) + [events_path()]:
-        try:
-            handle = open(path, encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        with handle:
-            for line in handle:
-                low = line.lower()
-                if any(word not in low for word in plain):
-                    continue
-                if '"userpromptsubmit"' not in low and '"stop' not in low:
-                    continue
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                name = event.get("hook_event_name")
-                if name == "UserPromptSubmit":
-                    # Only what the reader typed: a task's notification
-                    # and another session's message are not theirs.
-                    by, said = prompt_said(event.get("prompt"))
-                    if by != "me":
-                        continue
-                elif name in ("Stop", "StopFailure"):
-                    said, by = event.get("last_assistant_message"), "claude"
-                else:
-                    continue
-                if not isinstance(said, str) or not said.strip():
-                    continue
-                if who and not by.startswith(who):
-                    continue
-                ts = event.get("ts")
-                ts = float(ts) if isinstance(ts, (int, float)) else 0.0
-                if (after is not None and ts < after) or (before is not None and ts >= before):
-                    continue
-                sid = str(event.get("session_id") or "")
-                session = sessions.get(sid)
-                if within and not (session and within in
-                                   f"{session.title} {session.place}".lower()):
-                    continue
-                if filters.get("is") == "unread" and not (session and session.unread):
-                    continue
-                text = said.lower()
-                if any(word not in text for word in words):
-                    continue
-                # Found in the words as written: lower case can be longer
-                # ("İ" is two), and a place in it cuts the original wrong.
-                hit = re.search(re.escape(words[0]), said, re.I) if words else None
-                at = hit.start() if hit else 0
-                start = max(0, at - SEARCH_AROUND)
-                piece = " ".join(said[start:at + SEARCH_AROUND].split())
-                kept.append({"id": sid, "ts": ts, "who": by,
-                             "text": ("… " if start else "") + piece
-                             + (" …" if at + SEARCH_AROUND < len(said) else "")})
-    return sorted(kept, key=lambda one: -one["ts"])
+    if within and not (session and within in
+                       f"{session.title} {session.place}".lower()):
+        return None
+    if filters.get("is") == "unread" and not (session and session.unread):
+        return None
+    text = said.lower()
+    if any(word not in text for word in words):
+        return None
+    return {"id": sid, "ts": ts, "who": by, "text": search_piece(said, words)}
+
+
+def search_piece(said: str, words: list[str]) -> str:
+    """The part of a hit that is shown: `SEARCH_AROUND` characters each side
+    of the first word, on one line, with "…" where it was cut."""
+    # Found in the words as written: lower case can be longer
+    # ("İ" is two), and a place in it cuts the original wrong.
+    hit = re.search(re.escape(words[0]), said, re.I) if words else None
+    at = hit.start() if hit else 0
+    start = max(0, at - SEARCH_AROUND)
+    piece = " ".join(said[start:at + SEARCH_AROUND].split())
+    return (("… " if start else "") + piece
+            + (" …" if at + SEARCH_AROUND < len(said) else ""))
 
 
 def read_reminders() -> dict[str, float]:
@@ -10903,31 +10927,7 @@ def cmd_hook(args: argparse.Namespace) -> int:
                     and record.get("tool_name") not in NOT_APPROVED)
             if asks:
                 record["ask_id"] = os.urandom(8).hex()
-            record["pid"] = agent_pid()
-            # The pane it inherited is not its own when the agent reads no
-            # terminal: an rc session, a `claude -p` (`reads_terminal`).
-            reads = reads_terminal(record["pid"])
-            record["pane"] = os.environ.get("TMUX_PANE", "") if reads else ""
-            # And such an agent may have been run by another one, from its
-            # Bash tool: the page draws it under that one's row (#422).
-            # Only then, so an agent at a terminal pays nothing for it.
-            # Its own `try`: a process name above that is not UTF-8 raised
-            # in `read_text`, and the event was lost, not only the link.
-            try:
-                record["started_by"] = (0 if reads
-                                        else claude_from(parent_pid(record["pid"])))
-            except Exception:
-                record["started_by"] = 0
-            # A session the agents view moved to the background, and the
-            # one it was (`background_start`). Only where a session starts,
-            # so no other event pays for the two reads.
-            if record.get("hook_event_name") == "SessionStart":
-                try:
-                    record["background"], record["moved_from"] = \
-                        background_start(record["pid"])
-                except Exception:
-                    record["background"], record["moved_from"] = False, ""
-            record["shell_pid"] = os.getppid()
+            note_agent(record)
             append_event(record, stamp=True)    # `ts`, under the log's lock
             stand_down()
             # After the line is written, so the row is amber while this
@@ -10954,6 +10954,38 @@ def cmd_hook(args: argparse.Namespace) -> int:
     except BaseException:
         pass
     return 0
+
+
+def note_agent(record: dict[str, Any]) -> None:
+    """What the hook learns of the agent from its processes, written into
+    its line of the log: its pid, its pane, the agent that ran it, and for a
+    session that starts, whether it runs in the background. It is on the
+    hook path, so it prints nothing, as `cmd_hook` says."""
+    record["pid"] = agent_pid()
+    # The pane it inherited is not its own when the agent reads no
+    # terminal: an rc session, a `claude -p` (`reads_terminal`).
+    reads = reads_terminal(record["pid"])
+    record["pane"] = os.environ.get("TMUX_PANE", "") if reads else ""
+    # And such an agent may have been run by another one, from its
+    # Bash tool: the page draws it under that one's row (#422).
+    # Only then, so an agent at a terminal pays nothing for it.
+    # Its own `try`: a process name above that is not UTF-8 raised
+    # in `read_text`, and the event was lost, not only the link.
+    try:
+        record["started_by"] = (0 if reads
+                                else claude_from(parent_pid(record["pid"])))
+    except Exception:
+        record["started_by"] = 0
+    # A session the agents view moved to the background, and the
+    # one it was (`background_start`). Only where a session starts,
+    # so no other event pays for the two reads.
+    if record.get("hook_event_name") == "SessionStart":
+        try:
+            record["background"], record["moved_from"] = \
+                background_start(record["pid"])
+        except Exception:
+            record["background"], record["moved_from"] = False, ""
+    record["shell_pid"] = os.getppid()
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -12175,7 +12207,7 @@ HOOK_PARTS = frozenset({
     "archive_log", "to_int", "process_name", "process_args", "process_argv",
     "background_start", "parent_pid",
     "looks_like_claude", "agent_pid", "claude_from", "reads_terminal", "give_up_after", "stand_down",
-    "read_stdin_json", "cmd_hook", "APPROVE_WAIT", "APPROVE_POLL", "NOT_APPROVED",
+    "read_stdin_json", "cmd_hook", "note_agent", "APPROVE_WAIT", "APPROVE_POLL", "NOT_APPROVED",
     "ALLOW", "approvals_dir", "daemon_lock_path", "lock_held", "daemon_running",
     "wait_for_yes", "ALWAYS_MODES", "always_offered", "allow_for",
 })
