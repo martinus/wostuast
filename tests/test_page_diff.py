@@ -22,6 +22,7 @@ from browser import (
     contrast,
     wait_until,
     stays,
+    spy_on_note,
 )
 
 pytestmark = skip_without_browser
@@ -1803,3 +1804,166 @@ def test_one_file_stands_apart_from_the_next(repo_page):
             assert seen["head"] == seen["want"] == seen["button"], (scheme, seen)
             assert seen["head"] != seen["sheet"], (scheme, seen)
             assert seen["weight"] >= 600, (scheme, seen)
+
+
+# --- the Review tab's other answers (#600) -----------------------------------------
+
+
+def open_box(page, text):
+    """A comment box open on the first line, holding words not saved."""
+    page.wait_for_selector(".dline .addnote", state="attached")
+    page.locator(".dline .addnote").first.click(force=True)
+    page.wait_for_selector(".commentbox textarea")
+    page.fill(".commentbox textarea", text)
+
+
+def test_another_base_waits_while_a_box_holds_text(repo_page, served, ws, monkeypatch):
+    """A base picked while a comment is half written would rebuild the
+    diff and take the words with it. The pick waits, says why, and the
+    picker goes back to what is shown."""
+    _, path = repo_page
+    backport_on_page(repo_page, served, ws, monkeypatch)
+    with opened(path) as page:
+        show_tab(page, "diff")
+        page.wait_for_function(
+            """() => { const one = document.querySelector('.pickbase');
+                       return one && one.options[0].textContent.includes('release'); }""")
+        was = page.input_value(".pickbase")
+        open_box(page, "half a thought")
+        spy_on_note(page)
+        page.select_option(".pickbase", "main")
+        assert page.evaluate("window.__said") == ["Save or cancel the comment first."]
+        assert page.input_value(".pickbase") == was
+        assert page.input_value(".commentbox textarea") == "half a thought"
+
+
+def test_another_commit_waits_while_a_box_holds_text(repo_page):
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_function("document.querySelectorAll('.pickof option').length > 2")
+        sha = page.evaluate(
+            "[...document.querySelectorAll('.pickof option')]"
+            ".map((one) => one.value).find((one) => /^[0-9a-f]{7,}$/.test(one))")
+        open_box(page, "half a thought")
+        spy_on_note(page)
+        page.select_option(".pickof", sha)
+        assert page.evaluate("window.__said") == ["Save or cancel the comment first."]
+        assert page.input_value(".pickof") == ""
+        assert page.evaluate("state.diffs.of") == ""
+
+
+def test_a_commit_picked_is_named_when_git_does_not_answer_on_the_way_back(
+        repo_page, served, ws, tmp_path):
+    """Back on a session whose pick was one commit, git does not answer:
+    the pick stays, and no list of commits has come. The picker names the
+    commit by its short sha, rather than reading "all changes"."""
+    _, path = repo_page
+    daemon, _ = served
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    ws.append_event(conftest.event("SessionStart", sid="s2", cwd=str(other), ts=time.time()))
+    daemon.store.refresh()
+
+    def failed(route):
+        answer = route.fetch()
+        body = answer.json()
+        body.update(failed=True, commits=[], sections=[])
+        body.pop("tag", None)
+        route.fulfill(response=answer, json=body)
+
+    with opened(path) as page:
+        page.wait_for_selector(".row[data-id='s2']")
+        page.evaluate("choose('s1')")
+        show_tab(page, "diff")
+        page.wait_for_function("document.querySelectorAll('.pickof option').length > 2")
+        sha = page.evaluate(
+            "[...document.querySelectorAll('.pickof option')]"
+            ".map((one) => one.value).find((one) => /^[0-9a-f]{7,}$/.test(one))")
+        pick(page, sha)
+        page.evaluate("choose('s2')")
+        page.wait_for_function("state.chosen === 's2'")
+        page.route("**/s1/diff*", failed)
+        page.evaluate("choose('s1')")
+        page.wait_for_function(
+            "sha => [...document.querySelectorAll('.pickof option')]"
+            ".some((one) => one.value === sha && one.textContent === sha.slice(0, 7))",
+            arg=sha)
+        assert page.input_value(".pickof") == sha
+
+
+def test_a_file_that_became_a_folder_is_drawn_beside_it(repo_page):
+    """`lib` was a file and is now a folder holding `lib/x.py`: the diff
+    holds both, and the tree's order meets the one case where a path is
+    the start of another. Both are drawn."""
+    root, _ = repo_page
+    (root / "lib").write_text("a file\n")
+    conftest.git_in(root, "add", "lib")
+    conftest.git_in(root, "commit", "-qm", "lib is a file")
+    conftest.git_in(root, "rm", "-q", "lib")
+    (root / "lib").mkdir()
+    (root / "lib" / "x.py").write_text("print('in a folder')\n")
+    conftest.git_in(root, "add", "-A")
+    with opened(repo_page) as page:
+        blew_up = []
+        page.on("pageerror", lambda error: blew_up.append(str(error)))
+        show_tab(page, "diff")
+        page.wait_for_function(
+            "() => { const paths = [...document.querySelectorAll('.diffhead.uncommitted ~ .dfile .path')]"
+            ".map((one) => one.textContent);"
+            " return paths.includes('lib') && paths.includes('lib/x.py'); }")
+        paths = page.evaluate(
+            "[...document.querySelectorAll('.diffhead.uncommitted ~ .dfile .path')]"
+            ".map((one) => one.textContent)")
+        assert paths.index("lib") < paths.index("lib/x.py"), paths
+        assert not blew_up, blew_up
+
+
+def test_a_diff_git_could_not_finish_says_so(repo_page):
+    """An answer with `failed` and files in it: what came is drawn, and the
+    pane says it may not be the whole diff."""
+    def failed(route):
+        answer = route.fetch()
+        body = answer.json()
+        body["failed"] = True
+        body.pop("tag", None)
+        route.fulfill(response=answer, json=body)
+
+    with opened(repo_page) as page:
+        page.route("**/diff*", failed)
+        show_tab(page, "diff")
+        page.wait_for_function(
+            "document.querySelector('.diffscroll')?.textContent"
+            ".includes('git did not answer here, so this may not be the whole diff')")
+
+
+def test_a_diff_too_long_to_send_says_the_rest_is_left_out(ws, repo_page, monkeypatch):
+    monkeypatch.setattr(ws, "DIFF_MAX_BYTES", 40)
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_function(
+            "document.querySelector('.diffscroll')?.textContent"
+            ".includes('This diff is long, so the rest is left out.')")
+
+
+def test_an_untracked_file_that_is_no_picture_or_text_says_so(repo_page):
+    """An untracked binary the browser cannot show is said to be one, the
+    same answer the Files tab once gave, and nothing is fetched for it."""
+    root, _ = repo_page
+    (root / "blob.bin").write_bytes(b"\0\0\0not text\0")
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.click(".filelist button:has-text('blob.bin')")
+        page.wait_for_function(
+            "document.querySelector('.diffscroll')?.textContent"
+            ".includes('Binary file. There is nothing to show.')")
+
+
+def test_an_untracked_file_that_is_empty_says_so(repo_page):
+    root, _ = repo_page
+    (root / "empty.txt").write_text("")
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.click(".filelist button:has-text('empty.txt')")
+        page.wait_for_function(
+            "document.querySelector('.diffscroll')?.textContent"
+            ".includes('This file is empty.')")

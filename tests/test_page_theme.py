@@ -135,9 +135,18 @@ def test_the_colours_can_be_switched_and_are_remembered(page_at):
             "getComputedStyle(document.body).backgroundColor") == light
         assert page.evaluate(chosen) == "light"
 
+        # Each choice waits for its own push before the next: the push of
+        # "dark" came after "system" was chosen and put "dark" back, and the
+        # read below took it, once in CI (#606).
+        page.evaluate("""() => {
+          window.__took = [];
+          const take = takeSettings;
+          takeSettings = (body, first) => { window.__took.push(body.colours); take(body, first); };
+        }""")
         settings(page, "colours", "dark")
+        page.wait_for_function("window.__took.at(-1) === 'dark'")
         settings(page, "colours", "system")
-        page.wait_for_function(f"{chosen} === 'system'")
+        page.wait_for_function("window.__took.at(-1) === 'auto'")
         assert page.evaluate(chosen) == "system"
         assert page.evaluate(
             "getComputedStyle(document.body).backgroundColor") == dark
