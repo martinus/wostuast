@@ -1284,7 +1284,7 @@ def rows_at(ws, served, monkeypatch, tmp_path):
                              touched_files=3, root=str(places["fresh"])),
     }
     by_dir = {str(places[sid]): one for sid, one in facts.items()}
-    monkeypatch.setattr(ws, "git_facts_many", lambda dirs, timeout=None: {
+    monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
         d: by_dir.get(d, ws.GitFacts(repo="agent", branch="main")) for d in dirs})
     now = time.time()
     for sid, where in places.items():

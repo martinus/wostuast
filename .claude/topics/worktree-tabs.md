@@ -670,8 +670,10 @@ obvious alternative is wrong, then the symbols and the test that holds it.
       and a `GitReader` built without `behind` still passed the tick's
       two seconds to a status that now lists every untracked file, so an
       un-ignored virtualenv failed the read and `ls` showed no branch.
-      They pass `LIST_TIMEOUT`: a command waits for its answer.
-      `test_ls_reads_git_with_the_time_a_full_status_needs`.
+      **So `git_status` takes no timeout**: it uses `LIST_TIMEOUT`
+      itself, and `git_facts` and `git_facts_many` take none either. A
+      parameter is a value each caller can leave wrong, and two did.
+      `test_git_status_has_the_time_a_full_listing_needs`.
 - **A split tab keeps its two columns and redraws one at a time.** `split()`
   builds them once, `fresh()` decides what changed, both reading the DOM. One key
   over the whole tab re-rendered the file you were reading every two seconds.

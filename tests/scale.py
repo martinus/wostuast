@@ -72,7 +72,7 @@ def measure(ws, home: Path, sessions: int, turns: int, days: float,
 
     isolate(home)
     ws.pid_alive = lambda pid: True
-    ws.git_facts_many = lambda dirs, timeout=None: {d: ws.GitFacts(repo="r", branch="b", root=d)
+    ws.git_facts_many = lambda dirs: {d: ws.GitFacts(repo="r", branch="b", root=d)
                                       for d in dirs}
     events = write_log(ws, sessions, turns, days)
     out: dict = {"sessions": sessions, "events": events,

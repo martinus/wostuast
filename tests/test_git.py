@@ -46,20 +46,21 @@ def test_the_row_counts_the_changed_files_the_files_tab_marks(ws, repo):
     assert ws.git_facts(str(repo)).touched_files == 5
 
 
-def test_ls_reads_git_with_the_time_a_full_status_needs(ws, monkeypatch, tmp_path):
-    """`git status` lists every untracked file (#550), so `ls`, `wait`
-    and a reader built without `behind` give it the Files tab's timeout,
-    as the daemon's reader does (#592). Under the tick's two seconds an
-    un-ignored virtualenv failed the read, and `ls` showed no branch."""
+def test_git_status_has_the_time_a_full_listing_needs(ws, tmp_path):
+    """`git status` lists every untracked file (#550), so wherever it is
+    read -- the row, `ls`, `wait`, the Files tab -- it has the Files tab's
+    timeout (#592). Under the tick's two seconds an un-ignored virtualenv
+    failed the read, and `ls` showed no branch. The timeout was a
+    parameter, and two callers left it at two seconds."""
     seen = []
 
-    def facts(directory, runner=None, timeout=None):
-        seen.append(timeout)
-        return ws.GitFacts()
+    def runner(args, timeout=ws.RUN_TIMEOUT):
+        if "status" in args:
+            seen.append(timeout)
+        return None
 
-    monkeypatch.setattr(ws, "git_facts", facts)
-    ws.add_git_facts([ws.Session(session_id="s1", cwd=str(tmp_path))])
-    ws.GitReader().ask([str(tmp_path)])
+    ws.git_facts(str(tmp_path), runner)
+    ws.status_names(str(tmp_path), runner)
     assert seen == [ws.LIST_TIMEOUT, ws.LIST_TIMEOUT]
 
 
@@ -76,7 +77,7 @@ def test_a_slow_git_holds_back_no_push(ws):
     gate = threading.Event()
     asked: list[list[str]] = []
 
-    def slow(directories, timeout=None):
+    def slow(directories):
         asked.append(list(directories))
         gate.wait(10)
         return {one: ws.GitFacts(branch="main") for one in directories}
@@ -421,13 +422,13 @@ def test_a_failed_read_is_asked_again_rather_than_kept(ws, repo, monkeypatch):
     store.sessions["s1"] = session
 
     monkeypatch.setattr(ws, "git_facts_many",
-                        lambda dirs, timeout=None: {d: ws.GitFacts(failed=True) for d in dirs})
+                        lambda dirs: {d: ws.GitFacts(failed=True) for d in dirs})
     store.reload_git([session], 1000.0)
     assert session.git.branch == "main", "the failure was written over it"
     assert str(repo) in store.git_wanted, "and it will never be asked again"
 
     monkeypatch.setattr(ws, "git_facts_many",
-                        lambda dirs, timeout=None: {d: ws.GitFacts(repo="myrepo", branch="side")
+                        lambda dirs: {d: ws.GitFacts(repo="myrepo", branch="side")
                                       for d in dirs})
     store.reload_git([session], 1000.0 + ws.GIT_MIN_INTERVAL)
     assert session.git.branch == "side"
@@ -1180,10 +1181,10 @@ def test_one_directory_that_raises_stops_no_other(ws, repo, tmp_path, monkeypatc
     bad.mkdir()
     real = ws.git_facts
 
-    def facts(cwd, runner=ws.run, timeout=ws.RUN_TIMEOUT):
+    def facts(cwd, runner=ws.run):
         if cwd == str(bad):
             raise AttributeError("'NoneType' object has no attribute 'append'")
-        return real(cwd, runner, timeout)
+        return real(cwd, runner)
 
     logged = []
     monkeypatch.setattr(ws, "git_facts", facts)

@@ -4633,8 +4633,7 @@ def worktree_doing(git_dir: str) -> tuple[str, str]:
     return "", ""
 
 
-def git_facts(cwd: str, runner: Callable[..., str | None] = run,
-              timeout: float = RUN_TIMEOUT) -> GitFacts:
+def git_facts(cwd: str, runner: Callable[..., str | None] = run) -> GitFacts:
     """Read the repository name, branch, ahead, behind and dirty state.
 
     Two git runs, not four: one gives both directories, the other gives the
@@ -4680,7 +4679,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run,
 
     # One entry a file, as the Files tab reads it (#550): the row's count
     # is the number of files the tab marks. See `git_status`.
-    status = git_status(cwd, runner, timeout)
+    status = git_status(cwd, runner)
     if not found:
         # Neither `rev-parse` answered. Outside a repository that is the
         # answer; on a stalled machine it is not one, and taken for one it
@@ -4703,8 +4702,7 @@ def git_facts(cwd: str, runner: Callable[..., str | None] = run,
     return facts
 
 
-def git_facts_many(directories: Sequence[str],
-                   timeout: float = RUN_TIMEOUT) -> dict[str, GitFacts]:
+def git_facts_many(directories: Sequence[str]) -> dict[str, GitFacts]:
     """Read several directories at once. git waits on disk, so ten worktrees
     cost about as long as one. It reads and returns; it assigns nothing, so
     only the thread that called it ever writes to a session.
@@ -4721,16 +4719,15 @@ def git_facts_many(directories: Sequence[str],
     if not wanted:
         return {}
     with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
-        return dict(zip(wanted, pool.map(
-            lambda directory: git_facts_or_failed(directory, timeout), wanted)))
+        return dict(zip(wanted, pool.map(git_facts_or_failed, wanted)))
 
 
-def git_facts_or_failed(directory: str, timeout: float = RUN_TIMEOUT) -> GitFacts:
+def git_facts_or_failed(directory: str) -> GitFacts:
     """`git_facts`, with anything it raises turned into a failure that
     says what it raised. The caller logs it: the `Store` once a directory,
     because a failure is asked again after every cool-down."""
     try:
-        return git_facts(directory, timeout=timeout)
+        return git_facts(directory)
     except Exception as error:
         return GitFacts(failed=True, raised=repr(error))
 
@@ -4777,12 +4774,8 @@ class GitReader:
         if not wanted:
             return
         if not self.behind:
-            # The Files tab's timeout here too: this is `ls` and a test,
-            # which wait for the answer, and `git status` lists every
-            # untracked file now (#550), past two seconds in a large tree.
-            facts = (self.read or git_facts_many)(wanted, timeout=LIST_TIMEOUT)
-            with self.lock:
-                self.came.update(facts)
+            # `ls` and a test, which wait for the answer.
+            self.read_behind(wanted)
             return
         import threading
 
@@ -4792,14 +4785,11 @@ class GitReader:
                          name="git facts", daemon=True).start()
 
     def read_behind(self, wanted: list[str]) -> None:
-        # Off the tick, so the timeout is the Files tab's and not the
-        # tick's two seconds: the row and the tab read the same `git
-        # status` the same way, and a large worktree answers both.
         # `git_facts_many` never raises; `finally` is for a reader that
         # does, which would otherwise leave its directories asked for ever.
         facts: dict[str, GitFacts] = {}
         try:
-            facts = (self.read or git_facts_many)(wanted, timeout=LIST_TIMEOUT)
+            facts = (self.read or git_facts_many)(wanted)
         finally:
             with self.lock:
                 self.came.update(facts)
@@ -4815,12 +4805,8 @@ class GitReader:
 def add_git_facts(sessions: Sequence[Session]) -> None:
     """Fill in git facts for every session. It never raises, because
     `git_facts_many` does not: `ls` ended in a traceback when one
-    directory's facts raised. With the Files tab's timeout, as the daemon
-    reads them (`GitReader`): `git status` lists every untracked file
-    (#550), and under the tick's two seconds an un-ignored virtualenv
-    left `ls` and `wait` with no branch and no changes (#592)."""
-    facts = git_facts_many([session.cwd for session in sessions],
-                           timeout=LIST_TIMEOUT)
+    directory's facts raised."""
+    facts = git_facts_many([session.cwd for session in sessions])
     for one in {one.raised for one in facts.values() if one.raised}:
         log(f"git facts raised: {one}")
     apply_git_facts(sessions, facts)
@@ -5262,7 +5248,7 @@ def status_names(
     file is `??`, and its name is the one `ls-files --others
     --exclude-standard` gives, a nested repository's `sub/` included.
     """
-    status = git_status(cwd, runner, timeout=LIST_TIMEOUT)
+    status = git_status(cwd, runner)
     if status is None:
         return None
     names: set[str] = set()
@@ -5285,8 +5271,8 @@ class GitStatus:
     entries: list[tuple[str, str, str]] = field(default_factory=list)
 
 
-def git_status(cwd: str, runner: Callable[..., str | None] = run,
-               timeout: float = RUN_TIMEOUT) -> GitStatus | None:
+def git_status(cwd: str,
+               runner: Callable[..., str | None] = run) -> GitStatus | None:
     """The one reader of `git status` (#537). None when git did not answer.
 
     The row and the Files tab parsed it each in a way of their own. Both
@@ -5295,7 +5281,15 @@ def git_status(cwd: str, runner: Callable[..., str | None] = run,
     was on the tick thread under a two second timeout: measured on 50,000
     untracked files, "normal" took 4 ms and "all" 55, and a tree of a
     million, an un-ignored virtualenv, would come near it. `GitReader`
-    reads behind the tick, with the Files tab's timeout.
+    reads behind the tick.
+
+    **It has the Files tab's timeout, `LIST_TIMEOUT`, wherever it is
+    read** (#592): every caller waits off the tick -- the reader behind
+    it, `ls`, `wait`, the Files tab -- and the row and the tab read the
+    same `git status` the same way, so a large worktree answers both.
+    Under the tick's two seconds an un-ignored virtualenv failed the
+    read, and `ls` and `wait` showed no branch and no changes. The
+    timeout was a parameter, and two callers left it at two seconds.
 
     `-z` gives one NUL-terminated record per file: two status letters, a
     space, then the name. A rename or a copy is followed by one more record
@@ -5306,7 +5300,7 @@ def git_status(cwd: str, runner: Callable[..., str | None] = run,
     `--branch` puts the `## ` line first; no file record starts with `#`.
     """
     out = runner(["git", "-C", cwd, "status", "--porcelain", "-z", "--branch",
-                  "--untracked-files=all"], timeout=timeout)
+                  "--untracked-files=all"], timeout=LIST_TIMEOUT)
     if out is None:
         return None
     status = GitStatus()
@@ -10265,7 +10259,7 @@ class Serving:
         """
         starts = [one.started_at for one in list(self.daemon.store.sessions.values())
                   if one.started_at
-                  and (one.git.root or one.home or one.cwd) == root]
+                  and worktree_path(one) == root]
         return min(starts + [session.started_at] if session.started_at else starts,
                    default=0.0)
 
@@ -10340,7 +10334,7 @@ def verb_last(serving: Serving, session_id: str, session: Session,
     ssh tunnel for a glance."""
     text = session.last_answer
     cut = len(text) > LAST_MAX
-    return 200, {"id": session_id, "text": text[:LAST_MAX] if cut else text,
+    return 200, {"text": text[:LAST_MAX] if cut else text,
                      "cut": cut, "at": session.ended_at}
 
 
@@ -10357,8 +10351,7 @@ def verb_commands(serving: Serving, session_id: str, session: Session,
             for one in list(serving.daemon.store.sessions.values())]
     found = serving.daemon.commands.of(session.cwd, serving.command_root(session),
                                     [path for path in seen if path])
-    return 200, {"id": session_id,
-                     "commands": [wire_fields(one) for one in found]}
+    return 200, {"commands": [wire_fields(one) for one in found]}
 
 
 def verb_command(serving: Serving, session_id: str, session: Session,
@@ -10378,8 +10371,8 @@ def verb_command(serving: Serving, session_id: str, session: Session,
         session.cwd, serving.command_root(session)) if each.name == name), None)
     read = command_text(one) if one else None
     if read is None:
-        return 404, {"id": session_id, "error": "no such command"}
-    return 200, {"id": session_id, "name": name,
+        return 404, {"error": "no such command"}
+    return 200, {"name": name,
                      "text": read[0], "cut": read[1]}
 
 
@@ -10387,7 +10380,7 @@ def verb_transcript(serving: Serving, session_id: str, session: Session | None,
                query: dict[str, str]) -> Answer:
     found = serving.daemon.read_transcript(session_id)
     if found is None:
-        return 200, {"id": session_id, "blocks": [],
+        return 200, {"blocks": [],
                          "missing": "no transcript for this session"}
     blocks, run, version = found
     # The page says which reading it holds, and how far. Coming back to
@@ -10406,7 +10399,7 @@ def verb_files(serving: Serving, session_id: str, session: Session,
     held = serving.daemon.files.of(session.cwd)
     tree = held.tree
     body = {
-        "id": session_id, "root": tree.root, "total": tree.total,
+        "root": tree.root, "total": tree.total,
         "cut": tree.cut, "failed": tree.failed, "tag": held.tag,
         # The ignored directories too big to walk, and the number that
         # decided it. Both every time: they are a few dozen bytes, and
@@ -10432,10 +10425,10 @@ def verb_file(serving: Serving, session_id: str, session: Session,
                                held=serving.daemon.files,
                                have=query.get("have", ""))
     if found is None:
-        return 404, {"id": session_id, "path": wanted, "missing": why_unread(
+        return 404, {"path": wanted, "missing": why_unread(
             session.cwd, wanted, held=serving.daemon.files)}
     if found.same:
-        return 200, {"id": session_id, "path": wanted, "same": True,
+        return 200, {"path": wanted, "same": True,
                          "stamp": found.stamp}
     return 200, wire_fields(found, id=session_id, path=wanted)
 
@@ -10514,9 +10507,8 @@ def verb_jump(serving: Serving, session_id: str, session: Session,
     # slot, so a jump into a pane tmux has since closed failed with
     # nothing at all on the page.
     if not tmux_jump(session.pane):
-        return 502, {"id": session_id,
-                         "error": "tmux would not go to that pane"}
-    return 200, {"id": session_id, "done": True}
+        return 502, {"error": "tmux would not go to that pane"}
+    return 200, {"done": True}
 
 
 def verb_send(serving: Serving, session_id: str, session: Session,
@@ -10584,7 +10576,7 @@ def verb_answer(serving: Serving, session_id: str, session: Session,
         return 502, {"error": f"tmux took {landed} of {len(keys)}"
                                      " keys; look at the question in the"
                                      " terminal"}
-    return 200, {"id": session_id, "done": True, "keys": keys}
+    return 200, {"done": True, "keys": keys}
 
 
 def verb_decline(serving: Serving, session_id: str, session: Session,
@@ -10701,7 +10693,7 @@ def verb_name(serving: Serving, session_id: str, session: Session,
     # are built from the names on every pass, so the next one differs and
     # goes out on its own. The answer carries the name so the page can
     # show it without waiting for that.
-    return 200, {"id": session_id, "name": given, "done": True,
+    return 200, {"name": given, "done": True,
                      "kept_here": why}
 
 
@@ -10710,10 +10702,10 @@ def verb_snooze(serving: Serving, session_id: str, session: Session,
     """Snooze a session that needs you, or wake it (#355). It writes a
     file of ours and touches no terminal, as `name` does."""
     if body.get("snooze") and session.state != "needs_you":
-        return 409, {"id": session_id, "error":
+        return 409, {"error":
                          "only a session that needs you can be snoozed"}
     snoozed = serving.daemon.store.snooze(session_id, bool(body.get("snooze")))
-    return 200, {"id": session_id, "snoozed": snoozed, "done": True}
+    return 200, {"snoozed": snoozed, "done": True}
 
 
 def verb_seen(serving: Serving, session_id: str, session: Session,
@@ -10721,7 +10713,7 @@ def verb_seen(serving: Serving, session_id: str, session: Session,
     """The reader had this session on screen, or marked it unread
     (#373). A file of ours, and no terminal, as `snooze`."""
     unread = serving.daemon.store.see(session_id, bool(body.get("seen")))
-    return 200, {"id": session_id, "unread": unread, "done": True}
+    return 200, {"unread": unread, "done": True}
 
 
 def verb_remind(serving: Serving, session_id: str, session: Session,
@@ -10732,11 +10724,10 @@ def verb_remind(serving: Serving, session_id: str, session: Session,
     clipped, so a page that sent milliseconds says so."""
     at = body.get("at")
     now = time.time()
-    if (not isinstance(at, (int, float)) or isinstance(at, bool)
-            or not (at == 0 or now < at <= now + REMIND_MOST)):
+    if not is_number(at) or not (at == 0 or now < at <= now + REMIND_MOST):
         return 400, {"error": "a reminder is 0 or a moment in the next 31 days"}
     kept = serving.daemon.store.remind(session_id, float(at))
-    return 200, {"id": session_id, "remind_at": kept, "done": True}
+    return 200, {"remind_at": kept, "done": True}
 
 
 def verb_save(serving: Serving, session_id: str, session: Session | None,
@@ -10753,7 +10744,7 @@ def verb_save(serving: Serving, session_id: str, session: Session | None,
     if entry is None:
         return 400, {"error": "a saved turn is a place, a moment and its words"}
     saved = serving.daemon.store.save(entry, bool(body.get("save")))
-    return 200, {"id": session_id, "saved": saved, "done": True}
+    return 200, {"saved": saved, "done": True}
 
 
 # The verbs a session route can end in.
