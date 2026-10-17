@@ -809,6 +809,16 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   by chance, once. `test_a_stream_decides_its_opening_before_it_says_anything`,
   `test_a_block_read_while_no_stream_was_open_is_fetched`,
   `test_a_tool_result_read_while_no_stream_was_open_is_fetched`.
+  - **The opening carries the settings too**, after the sessions and the
+    transcript, read under `config_lock` once the stream is in the hub.
+    A page has its settings from its load and then only from
+    `tell_config`'s pushes, and choosing a row opens a new stream: a
+    change made before that stream joined went to nobody, and the page
+    kept the old links until the next change.
+    `test_a_ticket_in_a_rows_name_or_branch_is_a_link` was red by chance
+    on it twice, once in #595's gate. `read_events` passes over a
+    `settings` event unless asked, so a count of sessions stays a count
+    of sessions. `test_a_stream_opens_with_the_settings`.
   - **A stream too slow for its pushes is closed, never given a gap.**
     `Client.put` dropped the oldest message when `CLIENT_BACKLOG` were
     queued, and said nothing. A push is only the blocks that changed, so

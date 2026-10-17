@@ -226,8 +226,12 @@ def test_an_unknown_session_does_not_crash(served):
 # --- the live stream ---------------------------------------------------------
 
 
-def read_events(url, count, timeout=10, then=None):
+def read_events(url, count, timeout=10, then=None, settings=False):
     """Read `count` server-sent events off the stream.
+
+    The opening carries the settings too, after the sessions and any
+    transcript. A test of the sessions or the transcript counts only those,
+    so a `settings` event is passed over unless `settings` asks for it.
 
     `then` runs once the first event is in, and that is the only safe moment
     to make a change the stream should carry. The stream joins the hub before
@@ -247,7 +251,8 @@ def read_events(url, count, timeout=10, then=None):
             elif line.startswith("data: "):
                 data = line[6:].strip()
             elif line.strip() == "" and kind:
-                got.append((kind, json.loads(data)))
+                if kind != "settings" or settings:
+                    got.append((kind, json.loads(data)))
                 kind, data = "", ""
                 if then and len(got) == 1:
                     then()
@@ -368,6 +373,21 @@ def test_the_stream_opens_with_the_current_sessions(ws, served):
     got = read_events(f"{base}/api/events", 1)
     assert got[0][0] == "sessions"
     assert len(got[0][1]["sessions"]) == 1
+
+
+def test_a_stream_opens_with_the_settings(ws, served):
+    """A page has its settings from its load, then only from pushes, and
+    choosing a row opens a new stream. A change made while no stream of
+    the page was in the hub reached nobody: the links changed in the menu
+    of one page as another chose a row, and that one kept the old address
+    until the next change. CI's `test_a_ticket_in_a_rows_name_or_branch_is_a_link`
+    was red by chance on it."""
+    daemon, base = served
+    ws.save_config({"links": [{"match": r"PR #(\d+)", "url": "https://code.example/pr/$1"}]})
+    daemon.tell_config()                     # no stream is open to hear it
+    got = read_events(f"{base}/api/events", 2, settings=True)
+    assert [kind for kind, _ in got] == ["sessions", "settings"]
+    assert got[1][1]["links"][0]["url"] == "https://code.example/pr/$1"
 
 
 def test_a_change_is_pushed(ws, served):

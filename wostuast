@@ -10290,6 +10290,14 @@ class Serving:
                 told = wire_json(dict(transcript_head(watching, *held),
                                       opening=True))
                 opening = sse(EVENT_TRANSCRIPT, told)
+            # And the settings. A page has them from its load and then only
+            # from `tell_config`'s pushes, and a row chosen opens a new
+            # stream: a change made before that stream joined the hub went
+            # to nobody, and the page kept the old links until the next
+            # change. Read after joining, under the lock the pushes go out
+            # under, so a change after this read is pushed to this stream.
+            with self.daemon.config_lock:
+                opening += sse(EVENT_SETTINGS, wire_json(config_payload()))
             self.wfile.write(wire_bytes(sse(EVENT_SESSIONS, first) + opening))
             self.wfile.flush()
             while not self.daemon.stopping.is_set():
