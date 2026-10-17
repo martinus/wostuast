@@ -179,7 +179,15 @@ Keep the breaks list in the scratchpad; it is about one fix.
       about 70 % slower, 6 min 52 s against about 4 min on one machine;
       in CI each shard still took about 2.5 min, as without it (#590).
       The reader chose that cost in the shards over a job of its own
-      that the ruleset would not require. A new page function needs a
+      that the ruleset would not require. **It counts functions, not
+      the branches in them**: `drawDiff` ran in every Review tab test,
+      and its write to `state.diffs.loose`, behind an `if` that no test
+      took, stood there with `DRAW_EFFECTS_ALREADY` empty until
+      `/simplify` read it. The draw guard sees only what runs; a write
+      in a draw that only a rare branch reaches is found by reading,
+      and gets a test that takes the branch (#596,
+      `test_an_untracked_file_picked_and_then_added_lets_go_of_the_pick`).
+      A new page function needs a
       test that runs it, or an entry on the list with why.
 - **`page.evaluate` is not strict, and the page's script is.** A write to
   a frozen session threw in the page and was dropped without a word in an
