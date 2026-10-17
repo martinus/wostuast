@@ -520,13 +520,11 @@ def open_code(page, stub, name="code.py"):
 
 
 
-#: The page's draws, wrapped once it is open (#542, CLAUDE.md,
-#: **Principles**, 3): while one runs, every fetch, timer, notification,
-#: storage write and change to `state` it makes is written down. Only the
-#: entry points are wrapped -- `draw`, `drawSessions`, `drawHeader`,
-#: `drawFeed` -- and all they call while they run counts as theirs, so a
-#: helper's name does not hide it. `state` is compared two levels down,
-#: before and after the outermost draw.
+#: The page's draws, watched (CLAUDE.md, **Principles**, 3): while one
+#: runs, every fetch, notification, storage write and change to `state` it
+#: makes is written down, and all it calls counts as its own, so a
+#: helper's name does not hide it.
+#:
 #: The draw guard (#542, #577): an init script of every context
 #: (`fresh_context`), so the draws at load are watched as well -- the three
 #: at the end of the page script, and the first ones the stream brings. It

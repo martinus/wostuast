@@ -23997,15 +23997,18 @@ function fillElsewhere(holder) {
   }
 }
 
-// The files that hold a comment the diff does not reach, read where the
-// need starts: a new diff, and a review with a comment in it (#566).
-// `fillElsewhere` asked for them as it drew. A read that failed is not
-// kept, so the next poll asks again.
+// The files that hold a comment the diff does not reach, read on every
+// answer of the diff (`loadDiff`, #566): a comment written on the Files
+// tab reaches here when the Review tab loads, and a new diff may leave a
+// comment off it. `fillElsewhere` asked for them as it drew. A read that
+// failed is not kept, so the next poll asks again. No comment, no read:
+// the diff's every line was walked every five seconds to find none (#594).
 function askElsewhere() {
-  if (!state.diff) return;
+  const comments = reviewInOrder();
+  if (!state.diff || !comments.length) return;
   const drawn = diffAnchors(state.diff);
   const want = new Set();
-  for (const one of reviewInOrder()) {
+  for (const one of comments) {
     const path = one.anchor.split("\n")[0];
     if (!drawn.has(one.anchor) && !state.reviewFiles.has(path)) want.add(path);
   }
