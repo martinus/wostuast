@@ -55,6 +55,25 @@ def test_the_coverage_names_what_ran_and_what_never_did(page_at, tmp_path, monke
     assert "  wordDiff  " not in capsys.readouterr().out
 
 
+def test_the_check_fails_on_a_function_no_test_runs(monkeypatch):
+    """`--check` (#579) names a function that never ran unless
+    `UNRUN_ALREADY` holds it, names an entry that runs now, and fails a
+    run that recorded nothing: a shard whose upload went missing must not
+    pass with every function unseen."""
+    text = "const state = {};\nfunction ran() {}\nfunction idle() {}\n"
+    merged = {"text": text, "ran": set(), "functions": {
+        text.index("function ran"): ["ran", text.index("function idle") - 1, True],
+        text.index("function idle"): ["idle", len(text) - 1, False]}}
+    said = page_coverage.check(merged)
+    assert len(said) == 1 and said[0].startswith("idle: no browser test runs it")
+    monkeypatch.setattr(page_coverage, "UNRUN_ALREADY", frozenset({"idle"}))
+    assert page_coverage.check(merged) == []
+    monkeypatch.setattr(page_coverage, "UNRUN_ALREADY", frozenset({"idle", "ran"}))
+    assert page_coverage.check(merged) == [
+        "ran: a test runs it now, so it comes off UNRUN_ALREADY"]
+    assert page_coverage.check({"text": "", "ran": set(), "functions": {}})
+
+
 def test_nothing_is_recorded_unless_asked(page_at, tmp_path, monkeypatch):
     """Without `WOSTUAST_COVERAGE` a context is Playwright's own: no
     DevTools session, no file, nothing a test could trip on."""

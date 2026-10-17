@@ -31,4 +31,10 @@ things about it are worth knowing before they surprise you.
   be renumbered without anyone touching the ruleset. It carries `if: always()`
   because a job its `needs` skipped reports neither pass nor fail, and a
   required check can read that as a pass — which would make a red shard
-  mergeable. The `pytest` matrix has no such cover.
+  mergeable. The `pytest` matrix has no such cover. **It also runs the
+  one check that needs every browser test** (#579): each shard records
+  what it ran of the page script (`WOSTUAST_COVERAGE`) and uploads it,
+  and `browser` downloads all four and runs `tests/page_coverage.py
+  --check`. Each shard's files go into a folder of their own: a file is
+  named after its process, and two runners can give two processes one
+  number, so one folder for all four would keep one of two such files.

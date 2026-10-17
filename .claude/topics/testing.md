@@ -171,6 +171,16 @@ Keep the breaks list in the scratchpad; it is about one fix.
     stands on the function's own line; and the tool is not called
     `coverage.py`, because pytest puts `tests/` on the path and it would
     stand in for the coverage package. `test_page_coverage.py`.
+    - **It is a ratchet in CI now** (#579): `--check` fails on a named
+      function that no browser test runs and that `UNRUN_ALREADY` does
+      not hold, on an entry that runs now, and on a run that recorded
+      nothing. The list started empty: the whole suite ran every named
+      function (6552 of 6675 lines, 98.2 %). Recording made the suite
+      about 70 % slower, 6 min 52 s against about 4 min on one machine;
+      in CI each shard still took about 2.5 min, as without it (#590).
+      The reader chose that cost in the shards over a job of its own
+      that the ruleset would not require. A new page function needs a
+      test that runs it, or an entry on the list with why.
 - **`page.evaluate` is not strict, and the page's script is.** A write to
   a frozen session threw in the page and was dropped without a word in an
   `evaluate`, and the test that was to prove the throw read nothing
