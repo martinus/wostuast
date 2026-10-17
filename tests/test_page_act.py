@@ -21,6 +21,7 @@ from browser import (
     hold,
     wait_until,
     stub_send,
+    stays,
 )
 
 pytestmark = skip_without_browser
@@ -304,7 +305,7 @@ def test_picking_types_nothing_and_can_be_changed(ws, in_pane):
     with opened((None, base)) as page:
         page.wait_for_selector("#asking .askopt")
         page.click(option(1, 2))
-        page.wait_for_timeout(300)
+        page.wait_for_selector(option(1, 2) + ".chosen")
         assert page.locator(option(1, 2)).evaluate(
             "one => one.classList.contains('chosen')")
         # Nothing has reached the terminal, and the reader can change
@@ -590,7 +591,7 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
         page.click(option(1, 1))
         page.click(option(2, 1))
         page.click("#asking .asksend .verb")
-        page.wait_for_timeout(600)
+        stays(page, 600)
         assert page.locator("#asking .askopt").count() == 5
         # And what the reader picked stays picked. The rows arrive about
         # once a second while an agent works, and a bar rebuilt under the
@@ -600,7 +601,7 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
             "one => one.classList.contains('chosen')")
         assert page.locator("#asking .asksend .verb").is_disabled()
         daemon.hub.send("sessions", daemon.sessions_payload())
-        page.wait_for_timeout(400)
+        stays(page, 400)
         assert page.locator(option(1, 1)).evaluate(
             "one => one.classList.contains('chosen')")
         assert page.locator("#asking .asksend .verb").is_disabled()
@@ -647,7 +648,7 @@ def test_submit_stays_off_while_its_keys_go_in_and_after(ws, in_pane):
             ".startsWith('pressed')")
         page.click(option(1, 2))
         assert page.locator(SUBMIT).is_disabled()
-        page.wait_for_timeout(500)        # proving nothing more went in
+        stays(page, 500)        # proving nothing more went in
         assert pressed(seen) == ["3", "2", "Enter"], seen
 
 
@@ -699,7 +700,7 @@ def test_an_answered_question_stays_answered_after_a_look_at_another(
             tool_use_id="toolu_q1"))
         daemon.tick()
         page.wait_for_function("!state.answered.has('toolu_q1')")
-        page.wait_for_timeout(300)        # proving nothing more went in
+        stays(page, 300)        # proving nothing more went in
         assert pressed(seen) == ["3", "2", "Enter"], seen
 
 
@@ -750,7 +751,7 @@ def test_a_question_with_no_id_does_not_stop_the_page(ws, in_pane):
         blew_up = []
         page.on("pageerror", lambda error: blew_up.append(str(error)))
         page.click(option(1, 2))
-        page.wait_for_timeout(300)      # proving nothing threw
+        stays(page, 300)      # proving nothing threw
         assert not blew_up, blew_up
         assert page.locator(option(1, 2)).evaluate(
             "one => one.classList.contains('chosen')")
@@ -801,7 +802,7 @@ def test_the_enter_that_ends_a_composition_sends_nothing(in_pane):
         # The box empties the moment a send starts, in the same call as
         # the Enter, so a box still full is the sure sign nothing went.
         assert page.input_value("#say") == "\u65e5\u672c"
-        page.wait_for_timeout(500)          # proving nothing was sent
+        stays(page, 500)          # proving nothing was sent
         assert not conftest.into_pane(seen), seen
         page.press("#say", "Enter")
         # Not the box emptying: that is the send starting, not landing.
@@ -847,7 +848,7 @@ def test_a_restarted_daemon_says_so_and_keeps_saying_it(ws, in_pane):
         # cannot see, and it never went in.
         assert page.input_value("#say") == "after the restart"
         # And the strip still says why, four seconds on.
-        page.wait_for_timeout(4500)
+        stays(page, 4500)
         assert "restarted" in page.inner_text("#live")
 
 
@@ -874,7 +875,7 @@ def test_the_send_box_keeps_the_text_when_it_did_not_go_in(ws, in_pane,
     with opened((None, base)) as page:
         page.fill("#say", "please work")
         page.press("#say", "Enter")
-        page.wait_for_timeout(500)
+        stays(page, 500)
         assert page.input_value("#say") == "please work"
 
 
@@ -982,7 +983,7 @@ def test_shift_and_enter_writes_a_second_line(in_pane):
         page.keyboard.type("first line")
         page.keyboard.press("Shift+Enter")
         page.keyboard.type("second line")
-        page.wait_for_timeout(300)
+        stays(page, 300)
         assert page.input_value("#say") == "first line\nsecond line"
         assert seen == [], "shift and enter sent it"
 
@@ -1018,7 +1019,7 @@ def test_enter_twice_sends_once_and_keeps_what_came_after(in_pane):
         deadline = time.time() + 15
         while not typed() and time.time() < deadline:
             time.sleep(0.05)
-        page.wait_for_timeout(600)
+        stays(page, 600)
         assert typed() == ["run the tests"], seen
 
 
@@ -1051,7 +1052,7 @@ def test_enter_on_a_button_reached_by_keyboard_presses_it(in_pane):
             "document.activeElement.matches('.tab[data-tab=diff]')")
         page.keyboard.press("Enter")
         page.wait_for_function("state.tab === 'diff'")
-        page.wait_for_timeout(300)
+        stays(page, 300)
         assert not [one for one in seen if "select-window" in one], seen
 
         # A click leaves the focus on the tab it pressed, but not
@@ -1074,15 +1075,14 @@ def test_the_box_grows_with_what_is_in_it_and_shrinks_back(in_pane):
         for _ in range(4):
             page.keyboard.type("a line")
             page.keyboard.press("Shift+Enter")
-        page.wait_for_timeout(300)
+        page.wait_for_function(f"$('say').clientHeight > {one} + 30")
         many = page.eval_on_selector("#say", "el => el.clientHeight")
         assert many > one + 30, (one, many)
         # it does not grow for ever
         assert many < page.evaluate("window.innerHeight") / 2 + 40
 
         page.keyboard.press("Enter")
-        page.wait_for_timeout(500)
-        assert page.eval_on_selector("#say", "el => el.clientHeight") == one
+        page.wait_for_function(f"$('say').clientHeight === {one}")
 
 
 def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
@@ -1091,8 +1091,7 @@ def test_a_long_line_wraps_rather_than_running_off_the_side(in_pane):
     with opened((None, base)) as page:
         one = page.eval_on_selector("#say", "el => el.clientHeight")
         page.fill("#say", "word " * 120)      # `fill` fires `input` itself
-        page.wait_for_timeout(300)
-        assert page.eval_on_selector("#say", "el => el.clientHeight") > one
+        page.wait_for_function(f"$('say').clientHeight > {one}")
         assert page.eval_on_selector(
             "#say", "el => el.scrollWidth <= el.clientWidth + 1"
         ), "it ran off the side instead of wrapping"
@@ -1122,7 +1121,7 @@ def test_escape_leaves_the_name_as_it_was(in_pane):
         page.dblclick(".row .name")
         page.fill("input.rowname", "not this")
         page.press("input.rowname", "Escape")
-        page.wait_for_timeout(300)      # proving it did not go
+        stays(page, 300)      # proving it did not go
         assert page.locator(".row .name").inner_text() == was
 
 
@@ -1264,7 +1263,7 @@ def test_yes_shows_while_the_hook_waits_and_goes_to_it(ws, in_pane, monkeypatch)
         page.click("#asking .permyes")
         assert page.locator("#asking .permwhy").is_hidden()
         assert page.inner_text("#asking .permsend .asksays") == "allows this one call, once"
-        page.wait_for_timeout(300)        # proving nothing was said yet
+        stays(page, 300)        # proving nothing was said yet
         assert hook.is_alive() and not took and seen == []
         page.click("#asking .permsubmit")
         page.wait_for_function("window.words.includes('allowed, once')")
@@ -1391,7 +1390,7 @@ def test_a_no_waits_for_a_send_already_on_its_way(ws, in_pane):
         assert page.inner_text("#asking .permsend .asksays") == \
             "waiting for what is on its way to this session"
         page.click("#asking .permsubmit", force=True)
-        page.wait_for_timeout(500)        # proving nothing was pressed
+        stays(page, 500)        # proving nothing was pressed
         assert "Escape" not in conftest.pressed(seen), seen
         page.evaluate("doneSending(state.chosen)")
         assert not page.locator("#asking .permsubmit").is_disabled()
@@ -1646,7 +1645,7 @@ def test_enter_takes_a_command_and_escape_keeps_the_list_shut(ws, in_pane, tmp_p
         assert page.evaluate("$('slash').hidden")
         assert page.evaluate("document.activeElement.id") == "say"
         page.keyboard.type("c")
-        page.wait_for_timeout(300)          # proving the list did *not* open
+        stays(page, 300)          # proving the list did *not* open
         assert page.evaluate("$('slash').hidden")
 
         page.keyboard.press("Backspace")
@@ -1712,7 +1711,7 @@ def test_an_answer_for_a_box_that_was_left_opens_nothing(ws, in_pane, tmp_path):
         page.evaluate("$('say').blur()")
         with page.expect_response("**/commands"):
             held[0].continue_()
-        page.wait_for_timeout(300)          # proving the list did *not* open
+        stays(page, 300)          # proving the list did *not* open
         assert page.evaluate("$('slash').hidden")
 
 
@@ -1894,7 +1893,7 @@ def test_a_slash_inside_a_word_opens_nothing(ws, in_pane, tmp_path):
     with opened((None, base)) as page:
         page.click("#say")
         page.keyboard.type("look at src/")
-        page.wait_for_timeout(300)          # proving nothing opens
+        stays(page, 300)          # proving nothing opens
         assert page.evaluate("$('slash').hidden")
 
 

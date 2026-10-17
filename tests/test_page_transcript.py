@@ -27,6 +27,8 @@ from browser import (
     hold,
     wait_until,
     pixels,
+    frames,
+    stays,
 )
 
 pytestmark = skip_without_browser
@@ -290,7 +292,8 @@ def test_expanding_a_tool_result_leaves_the_rest_alone(page_at):
         page.evaluate("window.__first = document.querySelector('.turn')")
         before = page.evaluate("document.querySelector('.content').scrollTop")
         page.locator(".tool").first.click()
-        page.wait_for_timeout(250)
+        page.wait_for_selector(".tool-result")
+        stays(page, 250)                          # proving the pane did not move
         assert page.locator(".tool-result").count() == 1
         assert page.evaluate("document.querySelector('.content').scrollTop") == before
         assert page.evaluate("window.__first.isConnected"), "everything was redrawn"
@@ -336,7 +339,7 @@ def test_the_same_blocks_arriving_twice_are_not_shown_twice(page_at):
                         {"id": "s1", "run": run,
                          "blocks": [dict(b.__dict__) for b in blocks]},
                         session_id="s1")
-        page.wait_for_timeout(800)
+        stays(page, 800)
         assert page.locator(".turn").count() == before
 
 
@@ -437,7 +440,7 @@ def test_searching_never_re_parses_what_an_agent_wrote(page_at):
     with opened(page_at) as page:
         wait_for_map(page)
         page.locator("#find").fill("<img")
-        page.wait_for_timeout(250)
+        stays(page, 250)
         assert page.evaluate("window.PWNED ?? null") is None
         assert page.locator(".prose img").count() == 0
         assert page.locator("mark").count() >= 1
@@ -446,7 +449,7 @@ def test_searching_never_re_parses_what_an_agent_wrote(page_at):
 def test_a_regex_in_the_search_box_is_taken_literally(page_at):
     with opened(page_at) as page:
         page.locator("#find").fill("len(hits)")
-        page.wait_for_timeout(250)
+        page.wait_for_selector("mark")
         assert page.locator("mark").count() >= 1
         assert "len(hits)" in page.locator("mark").first.inner_text()
 
@@ -460,7 +463,7 @@ def test_keys_do_not_fire_while_typing_in_the_search_box(page_at):
         wait_for_map(page)
         page.locator("#find").focus()
         page.keyboard.type("j")
-        page.wait_for_timeout(150)
+        stays(page, 150)
         assert page.locator("#find").input_value() == "j"
         assert page.evaluate("document.getElementById('help').open") is False
 
@@ -469,7 +472,7 @@ def test_without_marked_the_transcript_is_still_readable(page_at):
     """Markdown is written to be read as plain text, so a fetch that never
     arrives costs the rendering and nothing else. The tab is never blank."""
     with opened(page_at, with_marked=False) as page:
-        page.wait_for_timeout(700)
+        stays(page, 700)                          # proving marked never comes
         assert page.evaluate("!!window.marked") is False
         said = page.locator(".prose").first.inner_text()
         assert said                       # there is text, not an empty box
@@ -481,8 +484,7 @@ def test_marked_is_pinned_too(page_at):
     """Both fetched scripts carry the hash of their bytes. The page is served
     the real marked here, so this checks the pin as the browser does."""
     with opened(page_at) as page:
-        page.wait_for_timeout(700)
-        assert page.evaluate("!!window.marked") is True
+        page.wait_for_function("!!window.marked")
         tag = page.locator("script[src*='marked']")
         assert tag.count() == 1
         assert tag.get_attribute("src").startswith("https://")
@@ -597,7 +599,7 @@ def test_a_failure_in_the_live_slot_stays_there(page_at):
             "state.live === 'live' && document.getElementById('live').textContent === ''")
         page.evaluate("said({error: 'no pane for this session'})")
         assert "no pane" in page.locator("#live").inner_text()
-        page.wait_for_timeout(4500)     # proving it did NOT go away
+        stays(page, 4500)     # proving it did NOT go away
         assert "no pane" in page.locator("#live").inner_text()
         # The next thing that works gives the slot back.
         page.evaluate("said({done: true})")
@@ -618,7 +620,7 @@ def test_a_push_from_the_daemon_does_not_wipe_a_failure(ws, page_at):
 
         # A push, which is what the daemon does whenever anything moves.
         daemon.hub.send("sessions", daemon.sessions_payload())
-        page.wait_for_timeout(500)
+        stays(page, 500)
         assert "no pane" in page.locator("#live").inner_text()
         # And the stream's own word is not lost either: it is underneath.
         page.evaluate("said({done: true})")
@@ -728,7 +730,7 @@ def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
         # There is no block 900, so the draw must fall through to its
         # usual landing rather than reaching into an empty slot.
         page.evaluate("draw()")
-        page.wait_for_timeout(300)      # proving something did not happen
+        stays(page, 300)      # proving something did not happen
         assert not blew_up, blew_up
         assert page.locator(".turn.linked").count() == 0
         assert page.evaluate("state.turns.goTo") == 900
@@ -1685,7 +1687,7 @@ def test_a_transcript_fetch_that_fails_keeps_what_is_held(page_at):
         show_tab(page, "files")
         page.route(TRANSCRIPT, lambda route: route.abort())
         page.click('.tab[data-tab="transcript"]')
-        page.wait_for_timeout(300)             # the failed answer is in
+        page.wait_for_function("state.turns.failed === true")
         page.unroute(TRANSCRIPT)
         assert page.evaluate(
             "document.querySelectorAll('.turn').length") == before
@@ -1910,7 +1912,7 @@ def test_only_the_newest_transcript_fetch_lands(page_at):
         page.wait_for_function("state.turns.early === null")
         first.fulfill(response=older)
         page.unroute(TRANSCRIPT)
-        page.wait_for_timeout(500)           # proving it did not go
+        stays(page, 500)           # proving it did not go
         assert page.evaluate(has_text("PUSHED BETWEEN"))
 
 
@@ -1927,9 +1929,9 @@ def test_failing_fetches_keep_one_retry_not_one_each(page_at):
         for _ in range(4):
             page.click('.tab[data-tab="files"]')
             page.click('.tab[data-tab="transcript"]')
-            page.wait_for_timeout(100)
+            stays(page, 100)
         before = len(asked)
-        page.wait_for_timeout(4500)          # proving it did not happen
+        stays(page, 4500)          # proving it did not happen
         assert len(asked) - before <= 3, len(asked) - before
 
 
@@ -1982,7 +1984,7 @@ def test_the_last_tabs_poll_does_not_fetch_the_transcript_again(page_at):
           document.querySelector('.tab[data-tab="transcript"]').click();
         }""")
         wait_for_request(page, held)
-        page.wait_for_timeout(700)          # proving it did not happen
+        stays(page, 700)          # proving it did not happen
         count = len(held)
         for route in held:
             route.continue_()
@@ -2009,7 +2011,7 @@ def test_a_load_that_ends_after_the_switch_sets_no_timer(page_at):
         page.click('.tab[data-tab="diff"]')
         wait_until(page, lambda: diffs)
         files[0].continue_()                 # the Files load ends now
-        page.wait_for_timeout(600)           # proving it did not happen
+        stays(page, 600)           # proving it did not happen
         count = len(diffs)
         for route in files[1:] + diffs:
             route.continue_()
@@ -2105,7 +2107,7 @@ def test_a_failed_fetch_does_not_take_a_sessions_place(page_at, ws,
         page.route(TRANSCRIPT, lambda route: route.abort())
         page.evaluate("choose('s2')")
         page.wait_for_function("state.turns.failed === true")
-        page.wait_for_timeout(300)           # the scroll event is in
+        frames(page)                         # the scroll event is in
         page.unroute(TRANSCRIPT)
         assert page.evaluate("state.turns.down") == 600
         page.wait_for_function("state.turns.failed === false")
@@ -2734,7 +2736,7 @@ def test_coming_back_lands_on_a_line_over_the_first_turn_not_seen(seen_before):
         page.wait_for_function(f"(({LINE_AT})() || [])[0] === true")
         # At the top of the pane, through the second draw as Markdown.
         page.wait_for_function(AT_TOP)
-        page.wait_for_timeout(500)
+        stays(page, 500)
         assert -5 < page.evaluate(LINE_AT)[1] < 20
 
 
@@ -2767,7 +2769,7 @@ def test_a_turn_that_ends_while_you_watch_draws_no_line(ws, page_at):
         ws.append_event(conftest.event("Stop", ts=time.time() + 6))
         daemon.tick()
         page.wait_for_selector(".turnbody .turn:has-text('Here is more.')")
-        page.wait_for_timeout(300)       # proving nothing comes
+        stays(page, 300)       # proving nothing comes
         assert page.locator(".newline").count() == 0
 
 
@@ -3406,7 +3408,7 @@ def test_the_row_of_buttons_wears_the_ground_under_it(ws, page_at):
         turn = page.locator(".turn.mine", has_text="A short prompt.")
         turn.wait_for()
         turn.locator(".bubble").hover()
-        page.wait_for_timeout(200)
+        turn.locator(".turnacts > *").first.wait_for(state="visible")
         gap = turn.evaluate("""(one) => {
           const [a, b] = [...one.querySelectorAll('.turnacts > *')].map(
             (button) => button.getBoundingClientRect());

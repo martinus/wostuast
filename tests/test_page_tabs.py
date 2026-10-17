@@ -16,6 +16,7 @@ from browser import (
     DRAWN,
     show_tab,
     wait_for_map,
+    stays,
 )
 
 pytestmark = skip_without_browser
@@ -30,7 +31,7 @@ def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
         wait_for_map(page)
         turns = page.locator(".turn").count()
         page.keyboard.press("6")
-        page.wait_for_timeout(200)
+        stays(page, 200)
         assert page.locator(".tab[data-tab='transcript']").get_attribute(
             "aria-selected") == "true"
         assert page.locator(".turn").count() == turns
@@ -39,13 +40,12 @@ def test_a_key_for_a_tab_that_does_not_exist_does_nothing(page_at):
 def test_a_number_key_picks_a_tab_that_is_built(page_at):
     with opened(page_at) as page:
         page.keyboard.press("2")
-        page.wait_for_timeout(500)
+        page.wait_for_selector(".filelist.files")       # the Transcript's is .transcript
         assert page.locator(".tab[data-tab='files']").get_attribute(
             "aria-selected") == "true"
         assert page.locator(".filelist").count() == 1
         page.keyboard.press("1")
-        page.wait_for_timeout(500)
-        assert page.locator(".turn").count() >= 2
+        page.wait_for_function("document.querySelectorAll('.turn').length >= 2")
 
 
 def test_the_find_box_sits_above_the_list_it_narrows(repo_page):
@@ -75,7 +75,7 @@ def test_the_find_box_keeps_focus_while_you_type(repo_page):
         show_tab(page, "files")
         page.click("#find")
         page.keyboard.type("note", delay=60)
-        page.wait_for_timeout(400)
+        stays(page, 400)
         assert page.evaluate("document.activeElement.id") == "find"
         assert page.input_value("#find") == "note"
 
@@ -169,7 +169,7 @@ def test_switching_tabs_faster_than_they_load_still_lands(repo_page):
         for name in ["files", "diff", "transcript", "files", "transcript",
                      "diff", "transcript", "diff", "files", "files"]:
             page.click(f".tab[data-tab='{name}']")
-            page.wait_for_timeout(110)      # quicker than a human, on purpose
+            stays(page, 110)      # quicker than a human, on purpose
         page.wait_for_selector(DRAWN["files"], timeout=15000)
         assert page.evaluate("$('content').dataset.tab") == "files"
         assert not blew_up, blew_up

@@ -234,8 +234,21 @@ by chance (`test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight`).
 handler took 10 ms of it. Put a long text in as a paste does: set `value`
 in `evaluate` and send one `input` event
 (`test_a_tall_send_box_says_how_much_it_holds`). A hover-only control (`.plus`) needs `click(force=True)`. Wait
-for what the page has drawn, never for a number of seconds; `wait_for_timeout`
-is right only when proving something did **not** happen. Ask one question when a
+for what the page has drawn, never for a number of seconds; a fixed wait
+is right only when proving something did **not** happen, and it is
+`stays(page, ms)` (#598): 27 places in the tests waited a number of
+milliseconds for a file, a mark or a class to appear, and a loaded runner
+draws later. A
+frame a `ResizeObserver` or a scroll handler needs is `frames(page)`, not
+100 ms. `test_a_browser_test_waits_a_time_only_to_prove_nothing_comes`
+fails on a `wait_for_timeout` in a page test. **A wait for an appearance
+asks for what was not there before the action**: the Files tab opens
+with `README.md`, so a wait for `.filebody .prose` after a click on
+`NOTES.md` held at once, and the next line read the readme. The Transcript
+tab has a `.filelist` too (`.filelist.transcript`), so after the key `2`
+the wait is for `.filelist.files`. Both stood green three times under
+load and went red in the whole suite; the 700 ms they replaced had hidden
+them. `NOTES_SHOWN` in `test_page_files.py`. Ask one question when a
 redraw could land between two: `wait_for_function("...length === 1")`, not
 `wait_for_selector` then `.count()`. **`evaluate` waits for a promise it is
 handed**: `page.evaluate("load()")` with the request held by a route never

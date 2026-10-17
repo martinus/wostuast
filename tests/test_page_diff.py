@@ -21,6 +21,7 @@ from browser import (
     rgb,
     contrast,
     wait_until,
+    stays,
 )
 
 pytestmark = skip_without_browser
@@ -280,7 +281,7 @@ def test_an_untracked_file_opens_as_one_added_block(repo_page):
     with opened(repo_page) as page:
         show_tab(page, "diff")
         page.click(".filelist button:has-text('NOTES.md')")
-        page.wait_for_timeout(700)
+        page.wait_for_selector(".dfile:has(.what:text-is('untracked')) .dline")
         block = page.locator(".dfile:has(.what:text-is('untracked'))")
         assert block.count() == 1
         assert block.locator(".path").inner_text() == "NOTES.md"
@@ -294,11 +295,18 @@ def test_an_untracked_file_opens_as_one_added_block(repo_page):
                        )[:3] == [["", "1"], ["", "2"], ["", "3"]]
 
 
+#: The last block of `big.txt` the pane draws: the committed half and the
+#: uncommitted one each hold one.
+LAST_BIG = ("[...document.querySelectorAll('.dfile')]"
+            ".filter((one) => one.textContent.includes('big.txt')).at(-1)")
+
+
 def test_the_find_box_narrows_the_file_list(repo_page):
     with opened(repo_page) as page:
         show_tab(page, "diff")
         page.fill("#find", "readme")
-        page.wait_for_timeout(400)
+        page.wait_for_function("[...document.querySelectorAll('.dfile .path')]"
+                               ".map((one) => one.textContent).join() === 'README.md'")
         paths = page.eval_on_selector_all(
             ".dfile .path", "els => els.map(e => e.textContent)")
         assert paths == ["README.md"]
@@ -315,17 +323,17 @@ def test_a_long_file_starts_closed_and_opens_on_click(repo_page):
     (root / "big.txt").write_text("\n".join(f"changed {n}" for n in range(60)))
     with opened(repo_page) as page:
         show_tab(page, "diff")
-        page.wait_for_timeout(400)
+        page.wait_for_selector(".dfile:has-text('big.txt')")
         # The page owns the cut-off, so the test moves the page's own
         # number rather than pretending the daemon sent a different one.
         page.evaluate("BIG_LINES = 20; state.diffs.tag += '+'; draw()")
-        page.wait_for_timeout(200)
+        page.wait_for_function(LAST_BIG + ".querySelector('.why')?.textContent"
+                               ".includes('hidden')")
         big = page.locator(".dfile:has-text('big.txt')").last
         assert "hidden" in big.locator(".why").inner_text()
         assert big.locator(".dline").count() == 0
         big.locator(".name").click()
-        page.wait_for_timeout(200)
-        assert big.locator(".dline").count() > 20
+        page.wait_for_function(LAST_BIG + ".querySelectorAll('.dline').length > 20")
 
 
 def test_a_diff_line_carries_the_number_it_had_on_each_side(repo_page):
@@ -377,7 +385,7 @@ def test_picking_an_untracked_file_moves_the_pane_to_it(repo_page):
         ), "the pane does not scroll, so this proves nothing"
         page.click(".filelist button:has-text('NOTES.md')")
         page.wait_for_selector(".dfile .what:text-is('untracked')")
-        page.wait_for_timeout(600)
+        page.wait_for_function("document.querySelector('.diffscroll').scrollTop > 0")
         where = page.eval_on_selector_all(
             ".diffscroll, .dfile:has(.what:text-is('untracked'))", """els => {
               const pane = els[0].getBoundingClientRect();
@@ -558,7 +566,7 @@ def test_another_commit_is_read_from_its_top(repo_page):
         page.wait_for_function(
             "document.querySelector('.diffhead')?.firstChild.textContent"
             " === 'third'")
-        page.wait_for_timeout(100)      # past the frame a place is put back in
+        stays(page, 100)      # past the frame a place is put back in
         assert page.evaluate(
             "document.querySelector('.diffscroll').scrollTop") == 0
 
@@ -827,7 +835,7 @@ def test_a_file_that_grows_above_leaves_the_reader_where_they_were(repo_page):
             "".join(f"call_{n}()\n" for n in range(30)))
         page.evaluate("loadDiff()")
         page.wait_for_function(shows, arg="call_29()")
-        page.wait_for_timeout(100)      # past any frame that sets the place
+        stays(page, 100)      # past any frame that sets the place
         assert abs(page.evaluate(where) - before) <= 1
 
 
@@ -1241,7 +1249,7 @@ def test_a_diff_asked_for_before_the_base_was_picked_does_not_land(
             f"() => [...document.querySelectorAll('{committed}')]"
             ".some((one) => one.textContent === 'hotfix.txt')")
         held[0].continue_()
-        page.wait_for_timeout(700)       # proving the late answer did not land
+        stays(page, 700)       # proving the late answer did not land
         assert page.evaluate("state.diff.base") == "main"
         assert "hotfix.txt" in page.locator(committed).all_inner_texts()
 
