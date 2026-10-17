@@ -27,6 +27,19 @@ that waited five seconds for an answer that never came send
 `Connection: close` (#280); a test that waits for `LIST_FRESH` sets it
 to 0.
 
+**Under `served`, git always says "main, clean".** `served` takes the
+`stub_git` fixture, which answers `git_facts_many` with that for every
+directory, so every page test stands on it. A test about what git
+itself says -- a conflict, a rebase, a branch -- hands the real
+`git_facts` back in, and the daemon reads it again only after an event
+that touches the tree, once `GIT_MIN_INTERVAL` is over: set it to 0,
+or clear `git_read`, and tick until the row holds the fact, then open
+the page. The conflict test was written without that, and four probes
+found the stub (#607); topics/worktree-tabs said so, under a row a
+sidebar test does not route to.
+`test_a_merge_that_stopped_on_conflicts_counts_them_on_the_row`,
+`test_a_worktree_git_has_not_finished_with_says_so`.
+
 **A test that commits in a clone gives the clone an identity.** CI has no
 global git identity, and `git clone` does not carry the `user.email` the
 `repo` fixture sets locally, so a commit there fails with status 128 in CI
