@@ -583,8 +583,6 @@ DRAW_GUARD = r"""(() => {
 #: only get shorter (CLAUDE.md, **Principles**, the ratchet): an entry is
 #: taken off when the code it names moves out of the draw.
 DRAW_EFFECTS_ALREADY = {
-    # The transcript's own nodes, kept so a push can patch them in place.
-    "draw: state.turns.heads", "draw: state.turns.nodes",
     # A one-shot mark of where to land, used up by the draw that lands there.
     "draw: state.turns.goTo", "draw: state.turns.goToTs",
     "draw: state.turns.goToNear", "draw: state.files.goTo",

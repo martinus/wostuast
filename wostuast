@@ -14238,7 +14238,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    honest one is a `.toolgroup` node around each run of calls and a `gap` on
    a flex column, which is one number and no arithmetic -- but blocks are
    appended flat, and `patchTranscript` appends a new one by index into
-   `state.turns.nodes`, which is the only place a block is ever new and so is
+   the pane's `nodes`, which is the only place a block is ever new and so is
    what the arriving-block animation rests on. Grouping changes both. If the
    numbers here need touching again, measure them in a browser rather than
    reading them off. */
@@ -16312,14 +16312,14 @@ function putNewLine(pane) {
     if (!block || !(block.ts > since)) continue;
     // A block with no node here is passed over, not the end of the search:
     // the line goes over the first one there is.
-    const node = state.turns.nodes[at];
+    const node = (pane.nodes || [])[at];
     if (!node || node.parentNode !== pane) continue;
     const line = document.createElement("div");
     line.className = "newline";
     // A call in a folded run is not on screen: the line goes over the
     // run's own line, or it would stand under it with nothing to point at.
     const run = node.hidden ? runOf(at) : null;
-    const over = run && state.turns.heads.get(run[0]);
+    const over = run && pane.heads && pane.heads.get(run[0]);
     // Since when (#398): "new" alone did not say how much was missed.
     line.textContent = "new since " + (dayOf(since) ? dayOf(since) + ", " : "")
       + clock(since);
@@ -17607,7 +17607,7 @@ function drawPermission(box, s, permission) {
     const read = put(what, "button", "link", "read the plan");
     read.addEventListener("click", () => {
       const at = lastPlan(permission.call);
-      const node = at === null ? null : state.turns.nodes[at];
+      const node = at === null ? null : turnNode(at);
       if (node) node.scrollIntoView({ block: "start" });
     });
   } else {
@@ -19486,7 +19486,7 @@ function landOnBlock(box) {
     state.turns.goToTs = null;
     if (state.turns.goTo === null) return false;
   }
-  const node = state.turns.nodes[state.turns.goTo];
+  const node = (box.nodes || [])[state.turns.goTo];
   if (!node || node.parentNode !== box) return false;
   if (node.hidden) {
     const run = runOf(state.turns.goTo);
@@ -20120,8 +20120,9 @@ function drawTranscript(box) {
     });
   }
   pane.replaceChildren();
-  state.turns.nodes = [];
-  state.turns.heads = new Map();
+  pane.nodes = [];
+  pane.heads = new Map();
+  pane.drawnFrom = state.turns;
   if (!state.turns.blocks.length) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, state.turns.failed
@@ -20132,7 +20133,7 @@ function drawTranscript(box) {
       const block = state.turns.blocks[index];
       if (!block) continue;
       const node = blockTurn(block, index);
-      state.turns.nodes[index] = node;
+      pane.nodes[index] = node;
       markHits(node, state.find);
       pane.appendChild(node);
     }
@@ -20164,6 +20165,25 @@ function noteTurns(note, found, replies, all) {
           + replies + " of " + every + " replies");
 }
 
+// The transcript's pane, while it holds what was drawn from the transcript
+// held now; null otherwise. The node drawn for each block (`pane.nodes`)
+// and the line over each run of calls (`pane.heads`, by the run's first)
+// live on the pane that holds them, not in `state` (#573): they are what
+// was drawn, and the draw kept writing them into `state`. `drawnFrom` is
+// the `state.turns` they were drawn from: `choose` blanks that and keeps
+// the pane, which holds the last session's nodes until the new fetch
+// lands, and a push meanwhile must not patch them.
+function drawnTurns() {
+  const pane = $("content").querySelector(".turnbody");
+  return pane && pane.drawnFrom === state.turns ? pane : null;
+}
+
+// The node drawn for one block, or null.
+function turnNode(index) {
+  const pane = drawnTurns();
+  return (pane && pane.nodes[index]) || null;
+}
+
 // Redraw one block where it stands, without touching anything else.
 function redrawBlock(index) {
   const node = blockTurn(state.turns.blocks[index], index);
@@ -20171,8 +20191,10 @@ function redrawBlock(index) {
   // during a search left that one block unhighlighted while every other
   // match kept its `<mark>`.
   markHits(node, state.find);
-  const old = state.turns.nodes[index];
-  state.turns.nodes[index] = node;
+  const pane = drawnTurns();
+  if (!pane) return node;
+  const old = pane.nodes[index];
+  pane.nodes[index] = node;
   if (old && old.parentNode) old.replaceWith(node);
   return node;
 }
@@ -20186,14 +20208,14 @@ function patchTranscript(indexes) {
   if (state.tab !== "transcript" || box.dataset.tab !== "transcript") return;
   const pane = box.querySelector(".turnbody");
   const list = box.querySelector(".filelist.transcript");
-  if (!pane || !list || !state.turns.nodes) return;
+  if (!pane || !list) return;
   // The list is a map of the whole conversation, so a new block changes it
   // whatever the find box holds. It is cheap: a row per prompt and reply.
   redrawMap(box);
-  if (!state.turns.nodes.length) { drawTranscript(box); return; }
+  if (pane.drawnFrom !== state.turns || !pane.nodes.length) { drawTranscript(box); return; }
   const stick = nearBottom(pane);
   for (const index of indexes) {
-    if (index < state.turns.nodes.length) {
+    if (index < pane.nodes.length) {
       redrawBlock(index);
     } else {
       // Arriving, rather than being drawn again. This is the only place a
@@ -20202,7 +20224,7 @@ function patchTranscript(indexes) {
       const node = blockTurn(state.turns.blocks[index], index);
       node.classList.add("fresh");
       markHits(node, state.find);
-      state.turns.nodes[index] = node;
+      pane.nodes[index] = node;
       pane.appendChild(node);
     }
   }
@@ -20315,10 +20337,11 @@ function foldRuns(pane) {
 
 // Draw one run's line, or take it away, and show or hide its calls.
 function foldRun(pane, start, end) {
-  const nodes = state.turns.nodes;
-  let head = state.turns.heads.get(start);
+  const nodes = pane.nodes || [];
+  const heads = pane.heads || new Map();
+  let head = heads.get(start);
   if (end - start + 1 < RUN_FOLDS || !nodes[start] || nodes[start].parentNode !== pane) {
-    if (head) { head.remove(); state.turns.heads.delete(start); }
+    if (head) { head.remove(); heads.delete(start); }
     for (let at = start; at <= end; at += 1) if (nodes[at]) nodes[at].hidden = false;
     return;
   }
@@ -20338,7 +20361,7 @@ function foldRun(pane, start, end) {
       const run = runOf(start);
       if (run) foldRun(pane, run[0], run[1]);
     });
-    state.turns.heads.set(start, head);
+    heads.set(start, head);
   }
   if (head.nextSibling !== nodes[start]) pane.insertBefore(head, nodes[start]);
   fillCallSum(head.querySelector(".callsum"), state.turns.blocks.slice(start, end + 1), open);
@@ -21418,8 +21441,6 @@ function putMedia(parent, path, found) {
 function blankTurns() {
   return {
     blocks: [],         // what the daemon has pushed, by seq
-    nodes: [],          // the node drawn for each one, so one can be redrawn
-    heads: new Map(),   // the one line over each run of calls, by its first
     run: -1,            // which reading of this transcript those are from
     open: new Set(),    // blocks the reader opened: a tool, a long message
     goTo: null,         // a block a link asked for, until it is on screen
@@ -24274,7 +24295,6 @@ function draw() {
     homeFind($("findhome"));
     box.replaceChildren();
     box.dataset.tab = "";       // nothing is built, so the next tab rebuilds
-    state.turns.nodes = [];
     drawEmpty(box);
     return;
   }
@@ -24906,7 +24926,6 @@ function onTranscriptPush(message) {
     state.turns.blocks = [];
     state.turns.whole = false;
     mergeBlocks(body.blocks || []);
-    state.turns.nodes = [];
     draw();
     return;
   }

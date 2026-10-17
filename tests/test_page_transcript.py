@@ -369,6 +369,29 @@ def test_a_rewritten_transcript_replaces_the_page_rather_than_doubling_it(page_a
         assert "Do the thing." not in shown, "the old reading is still here"
 
 
+def test_a_push_after_a_switch_patches_no_node_of_the_last_session(page_at):
+    """The nodes drawn live on the pane, not in `state` (#573), and `choose`
+    blanks the transcript but keeps the pane, which holds the last session's
+    nodes until the new fetch lands. A push in that gap is patched at once
+    -- `early` keeps a copy and lets it through -- so the pane says which
+    transcript it was drawn from (`drawnFrom`), and a patch of another one
+    draws the whole tab again rather than writing over the last session's
+    blocks. When `blankTurns` held the nodes, blanking them did this."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_map(page)
+        assert page.locator(".turn").count() > 1
+        left = page.evaluate("""() => {
+          const old = [...document.querySelectorAll('.turn')];
+          const block = state.turns.blocks.find(Boolean);
+          state.turns = blankTurns();          // what `choose` does
+          state.turns.blocks[0] = block;
+          patchTranscript([0]);
+          return old.filter((node) => node.isConnected).length;
+        }""")
+        assert left == 0, "a node of the last session is still drawn"
+
+
 def test_typing_narrows_the_list_and_leaves_the_transcript_whole(page_at):
     """The find box belongs to the list beside the transcript now. Taking
     turns out of the transcript took the conversation around a hit away with
@@ -2968,7 +2991,7 @@ def test_search_every_session_and_open_a_result(ws, page_at):
         page.hover(".searchresults .feedentry")
         page.click(".searchresults button:text('open')")
         page.wait_for_selector(".turn:not(.mine).linked")
-        assert page.evaluate("state.turns.nodes.indexOf("
+        assert page.evaluate("drawnTurns().nodes.indexOf("
                              "document.querySelector('.turn.linked'))") == 1
         assert page.is_visible(".tabs .tab")
 
@@ -3121,7 +3144,7 @@ def test_landing_on_a_folded_call_opens_its_run(page_at):
           const at = state.turns.blocks.findIndex((one) => one && one.target === 'beta.py');
           state.turns.goTo = at;
           drawTranscript($('content'));
-          return [state.turns.goTo, !!state.turns.nodes[at].getClientRects().length];
+          return [state.turns.goTo, !!turnNode(at).getClientRects().length];
         }""")
         assert shown == [None, True]
 
