@@ -97,12 +97,10 @@ ASKED = {"questions": [
 def now_asking(ws, daemon, at=None):
     """The two events a real ask sends, folded into the daemon."""
     at = at or time.time()
-    ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
-                     "tool_name": "AskUserQuestion", "tool_input": ASKED,
-                     "tool_use_id": "toolu_q1", "ts": at})
-    ws.append_event({"session_id": "s1", "hook_event_name": "PermissionRequest",
-                     "tool_name": "AskUserQuestion", "tool_input": ASKED,
-                     "ts": at + 0.1})
+    ws.append_event(conftest.bare_event("PreToolUse", tool_name="AskUserQuestion",
+                                        tool_input=ASKED, tool_use_id="toolu_q1", ts=at))
+    ws.append_event(conftest.bare_event("PermissionRequest", tool_name="AskUserQuestion",
+                                        tool_input=ASKED, ts=at + 0.1))
     daemon.store.refresh()
 
 
@@ -335,15 +333,14 @@ def test_a_new_question_on_screen_starts_with_no_picks(ws, in_pane):
         page.wait_for_selector(option(1, 2) + ".chosen")
         wait_for_watching(daemon)
         at = time.time()
-        ws.append_event({"session_id": "s1", "hook_event_name": "PostToolUse",
-                         "tool_name": "AskUserQuestion", "tool_use_id": "toolu_q1",
-                         "ts": at})
-        ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
-                         "tool_name": "AskUserQuestion", "tool_input": ASKED,
-                         "tool_use_id": "toolu_q2", "ts": at + 0.1})
-        ws.append_event({"session_id": "s1", "hook_event_name": "PermissionRequest",
-                         "tool_name": "AskUserQuestion", "tool_input": ASKED,
-                         "ts": at + 0.2})
+        ws.append_event(conftest.bare_event("PostToolUse", tool_name="AskUserQuestion",
+                                            tool_use_id="toolu_q1", ts=at))
+        ws.append_event(conftest.bare_event("PreToolUse", tool_name="AskUserQuestion",
+                                            tool_input=ASKED, tool_use_id="toolu_q2",
+                                            ts=at + 0.1))
+        ws.append_event(conftest.bare_event("PermissionRequest",
+                                            tool_name="AskUserQuestion", tool_input=ASKED,
+                                            ts=at + 0.2))
         daemon.tick()
         page.wait_for_function(
             "document.getElementById('asking').dataset.ask === 's1\\ntoolu_q2'")
@@ -440,9 +437,9 @@ MANY = {"questions": [
 
 
 def asking_many(ws, daemon, asked=MANY):
-    ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
-                     "tool_name": "AskUserQuestion", "tool_input": asked,
-                     "tool_use_id": "toolu_many", "ts": time.time()})
+    ws.append_event(conftest.bare_event("PreToolUse", tool_name="AskUserQuestion",
+                                        tool_input=asked, tool_use_id="toolu_many",
+                                        ts=time.time()))
     daemon.store.refresh()
 
 
@@ -608,9 +605,9 @@ def test_the_question_stays_until_the_daemon_says_it_was_answered(ws, in_pane):
             "one => one.classList.contains('chosen')")
         assert page.locator("#asking .asksend .verb").is_disabled()
 
-        ws.append_event({"session_id": "s1", "hook_event_name": "PostToolUse",
-                         "tool_name": "AskUserQuestion", "tool_input": ASKED,
-                         "tool_use_id": "toolu_q1", "ts": time.time()})
+        ws.append_event(conftest.bare_event("PostToolUse", tool_name="AskUserQuestion",
+                                            tool_input=ASKED, tool_use_id="toolu_q1",
+                                            ts=time.time()))
         daemon.tick()            # fold it, and tell the page
         # `hidden` is an attribute, not a thing that can be waited for by
         # being visible: an element that is hidden never is.
@@ -741,9 +738,8 @@ def test_a_question_with_no_id_does_not_stop_the_page(ws, in_pane):
     no jump, no send box. No real payload without the id has been seen;
     the page must not depend on that."""
     daemon, base, seen = in_pane
-    ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
-                     "tool_name": "AskUserQuestion", "tool_input": ASKED,
-                     "ts": time.time()})
+    ws.append_event(conftest.bare_event("PreToolUse", tool_name="AskUserQuestion",
+                                        tool_input=ASKED, ts=time.time()))
     daemon.store.refresh()
     with opened((None, base)) as page:
         page.wait_for_selector("#asking .askopt")

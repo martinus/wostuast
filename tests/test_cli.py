@@ -499,8 +499,7 @@ def test_the_store_keeps_the_whole_prompt(ws):
     """The sidebar clips for its column. The page wants the full text."""
     store = ws.Store()
     long_prompt = "please " + "x" * 300
-    store.apply({"session_id": "s", "hook_event_name": "UserPromptSubmit",
-                 "prompt": long_prompt, "ts": 1.0})
+    store.apply(conftest.bare_event("UserPromptSubmit", sid="s", prompt=long_prompt, ts=1.0))
     session = store.sessions["s"]
     assert session.last_prompt == long_prompt
     assert long_prompt in session.last_event

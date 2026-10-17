@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from conftest import FIXTURES, ROOT, as_claude, event
+from conftest import FIXTURES, ROOT, as_claude, bare_event, event
 
 
 def folded(ws, *events):
@@ -171,7 +171,7 @@ def test_the_hook_names_the_agent_that_ran_a_claude_p(ws, tmp_path):
     env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
            "WOSTUAST_STATE": str(tmp_path / "state"), "TMUX_PANE": "%3"}
     folder = tmp_path / "stand-in"
-    payload = json.dumps({"session_id": "s1", "hook_event_name": "SessionStart"})
+    payload = json.dumps(bare_event("SessionStart"))
     done = as_claude([str(path)], payload, env, folder, "terminal")
     assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
     log = tmp_path / "state" / "events.jsonl"
@@ -240,7 +240,7 @@ def test_a_walk_that_raises_loses_no_event(ws, monkeypatch, capsys):
     monkeypatch.setattr(ws, "reads_terminal", lambda pid: False)
     monkeypatch.setattr(ws, "claude_from", broken)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
-        {"session_id": "s1", "hook_event_name": "SessionStart"})))
+        bare_event("SessionStart"))))
     assert ws.cmd_hook(None) == 0
     assert capsys.readouterr() == ("", "")
     line = json.loads(ws.events_path().read_text())

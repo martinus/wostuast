@@ -270,9 +270,9 @@ def hook_at(ws, tmp_path):
         held.append(lock)
 
     def start(tool: str = "Bash", suggestions=None) -> subprocess.Popen:
-        payload = json.dumps({"session_id": "s1", "hook_event_name": "PermissionRequest",
-                              "tool_name": tool, "tool_input": {"command": "rm -rf build"},
-                              "permission_suggestions": suggestions or []})
+        payload = json.dumps(conftest.bare_event("PermissionRequest", tool_name=tool,
+                                                 tool_input={"command": "rm -rf build"},
+                                                 permission_suggestions=suggestions or []))
         child = subprocess.Popen([str(folder / "claude"), str(folder / "stand_in.py"),
                                   "terminal", str(path)], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,

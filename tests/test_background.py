@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 
-from conftest import FIXTURES, ROOT, event
+from conftest import FIXTURES, ROOT, bare_event, event
 
 # What the hook adds to each line of `background_move.jsonl`, as it found
 # them: the old session in pane %1, the other two in the daemon, no pane.
@@ -141,8 +141,7 @@ def test_the_hook_says_which_session_a_background_fork_carries_on(ws, tmp_path):
         if host:
             command = [str(claude), str(folder / "host.py"), "host", "--bg-pty-host",
                        "/tmp/cc-daemon-0/x/pty/new.sock", "200", "50", "--", *command]
-        payload = json.dumps({"session_id": "new", "hook_event_name": name,
-                              "source": "fork"})
+        payload = json.dumps(bare_event(name, sid="new", source="fork"))
         done = subprocess.run(command, input=payload, capture_output=True, text=True,
                               env=env, timeout=60)
         assert (done.returncode, done.stdout, done.stderr) == (0, "", "")

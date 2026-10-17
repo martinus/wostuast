@@ -7,7 +7,7 @@ import time
 import pytest
 
 
-from conftest import event
+from conftest import bare_event, event
 
 
 @pytest.fixture
@@ -75,8 +75,7 @@ def test_a_resume_outside_tmux_takes_the_old_pane_and_pid_away(ws, store):
 
     ws.append_event(event("SessionStart", source="resume", pane="%9", pid=77,
                           ts=1003.0))
-    ws.append_event({"session_id": "s1", "hook_event_name": "Declined",
-                     "key": "1.000000", "ts": 1004.0})
+    ws.append_event(bare_event("Declined", key="1.000000", ts=1004.0))
     store.refresh(now=1004.0, alive=lambda pid: True)
     assert (session.pane, session.pid) == ("%9", 77)
 

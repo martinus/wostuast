@@ -202,6 +202,16 @@ def event(name, sid="s1", **extra):
     return base
 
 
+def bare_event(name, sid="s1", **extra):
+    """One hook event with only the fields named (#599). It is what Claude
+    Code hands the hook, which adds `pane`, `pid` and `ts` itself, so a
+    test of the hook file sends this. And it is an event that must not
+    carry a field `event` would add: a `PreToolUse` with no pane, after a
+    `SessionStart` that has one, is how a test proves the pane came from
+    the start. `event`'s `pane: "%1"` would stand in for it."""
+    return {"session_id": sid, "hook_event_name": name, **extra}
+
+
 #: Which input field each tool's one-line target is read from, so that a
 #: record built here draws the way a real one does (see `tool_target`).
 TARGET_FIELD = {"Read": "file_path", "Write": "file_path", "Edit": "file_path",

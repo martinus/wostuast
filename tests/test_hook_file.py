@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from conftest import ROOT, as_claude
+from conftest import ROOT, as_claude, bare_event
 
 SOURCE = (ROOT / "wostuast").read_text(encoding="utf-8")
 
@@ -40,8 +40,7 @@ def test_an_agent_that_reads_no_terminal_has_no_pane(ws, tmp_path, keys, pane):
     screen, or into another agent's prompt. With no pane, nothing is typed
     into it, and the page says why (`reads_terminal`)."""
     path = written(ws, tmp_path)
-    done = run_hook(path, tmp_path, {"session_id": "s1",
-                                     "hook_event_name": "UserPromptSubmit"}, keys)
+    done = run_hook(path, tmp_path, bare_event("UserPromptSubmit"), keys)
     assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
     line = json.loads((tmp_path / "state" / "events.jsonl").read_text())
     assert line["pid"] > 0, "the stand-in was not taken for the agent"
@@ -69,7 +68,7 @@ def test_a_remote_control_worker_is_the_agent_under_its_version_name(ws, tmp_pat
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
            "WOSTUAST_STATE": str(tmp_path / "state"), "TMUX_PANE": "%3"}
     folder = tmp_path / "stand-in"
-    payload = json.dumps({"session_id": "s1", "hook_event_name": "UserPromptSubmit"})
+    payload = json.dumps(bare_event("UserPromptSubmit"))
     done = as_claude([str(worker), str(folder / "stand_in.py"), "pipe", str(path)],
                      payload, env, folder, "terminal")
     assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
@@ -125,9 +124,8 @@ def test_the_hook_file_records_an_event_and_says_nothing(ws, tmp_path):
     all: that is the hook's answer (topics/safety, the first bullet)."""
     path = written(ws, tmp_path)
     for name in ("PreToolUse", "PermissionRequest"):
-        done = run_hook(path, tmp_path, {"session_id": "s1", "hook_event_name": name,
-                                         "tool_name": "Bash",
-                                         "tool_input": {"command": "rm -rf /"}})
+        done = run_hook(path, tmp_path, bare_event(name, tool_name="Bash",
+                                                   tool_input={"command": "rm -rf /"}))
         assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
     lines = (tmp_path / "state" / "events.jsonl").read_text().splitlines()
     first = json.loads(lines[0])

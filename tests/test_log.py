@@ -11,10 +11,12 @@ import time
 
 import pytest
 
+from conftest import bare_event
+
 
 def test_append_and_read_round_trip(ws):
-    ws.append_event({"session_id": "s1", "hook_event_name": "Stop", "ts": 1.0})
-    ws.append_event({"session_id": "s1", "hook_event_name": "SessionEnd", "ts": 2.0})
+    ws.append_event(bare_event("Stop", ts=1.0))
+    ws.append_event(bare_event("SessionEnd", ts=2.0))
     events = list(ws.read_events())
     assert [e["hook_event_name"] for e in events] == ["Stop", "SessionEnd"]
 
@@ -40,8 +42,9 @@ def test_the_log_rotates_when_it_grows(ws, monkeypatch):
 
 
 def test_the_payload_is_kept_whole(ws):
-    payload = {"session_id": "s", "hook_event_name": "PostToolUse",
-               "tool_response": {"deep": {"list": [1, 2, 3]}}, "brand_new_field": "keep me"}
+    payload = bare_event("PostToolUse", sid="s",
+                         tool_response={"deep": {"list": [1, 2, 3]}},
+                         brand_new_field="keep me")
     ws.append_event(dict(payload, ts=1.0))
     stored = list(ws.read_events())[0]
     assert stored["brand_new_field"] == "keep me"
@@ -58,7 +61,7 @@ def test_hook_writes_ts_pane_and_pid(run_installed, tmp_path):
     always there. test_state.py walks a real chain and checks the agent is
     found when there is one.
     """
-    payload = {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/w"}
+    payload = bare_event("Stop", cwd="/w")
     done = run_installed(["hook"], json.dumps(payload))
     assert done.returncode == 0
     line = json.loads((tmp_path / "state" / "events.jsonl").read_text().strip())
@@ -226,11 +229,11 @@ def test_the_rotated_log_is_still_history(ws, monkeypatch):
     cwd, the pane and the pid are ever recorded.
     """
     monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 3000)
-    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": "/w/repo/dir", "pane": "%7", "pid": 1, "ts": 1000.0})
-    fill_until_one_rotation(ws, lambda i: {
-        "session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
-        "tool_input": {"command": "x" * 60}, "pid": 1, "ts": 1001.0 + i})
+    ws.append_event(bare_event("SessionStart", cwd="/w/repo/dir", pane="%7", pid=1,
+                               ts=1000.0))
+    fill_until_one_rotation(ws, lambda i: bare_event("PreToolUse", tool_name="Bash",
+                                                     tool_input={"command": "x" * 60},
+                                                     pid=1, ts=1001.0 + i))
 
     sessions = ws.build_sessions(now=1200.0, alive=lambda pid: True)
     assert len(sessions) == 1
@@ -251,8 +254,7 @@ def test_the_hook_says_nothing_at_all(run_installed):
     """Claude Code reads a hook's stdout as its answer, and for PreToolUse that
     answer can allow or deny a tool. wostuast must never answer."""
     done = run_installed(["hook"], json.dumps(
-        {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
-         "tool_input": {"command": "rm -rf /"}}))
+        bare_event("PreToolUse", tool_name="Bash", tool_input={"command": "rm -rf /"})))
     assert done.returncode == 0
     assert done.stdout == ""
     assert done.stderr == ""
@@ -319,10 +321,9 @@ def test_the_hook_says_nothing_to_a_permission_request(run_installed):
     """PermissionRequest takes a decision to allow or deny. Our silence is what
     makes it "no opinion", so this is the most important assertion in the suite.
     """
-    done = run_installed(["hook"], json.dumps({
-        "session_id": "s1", "hook_event_name": "PermissionRequest",
-        "tool_name": "Bash", "tool_input": {"command": "rm -rf /"},
-    }))
+    done = run_installed(["hook"], json.dumps(bare_event("PermissionRequest",
+                                                         tool_name="Bash",
+                                                         tool_input={"command": "rm -rf /"})))
     assert done.returncode == 0
     assert done.stdout == ""
     assert done.stderr == ""
@@ -419,8 +420,7 @@ def test_a_lone_surrogate_does_not_lose_the_event(ws):
     file: that would put a real one in the source, and Python 3.13 cannot
     write a module holding one into a bytecode cache."""
     lonely = "before" + chr(0xD800) + "after"
-    ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
-                     "cwd": "/w/one", "tool_response": lonely})
+    ws.append_event(bare_event("SessionStart", cwd="/w/one", tool_response=lonely))
     events = list(ws.read_events())
     assert len(events) == 1
     assert events[0]["cwd"] == "/w/one"
@@ -567,6 +567,63 @@ def test_no_name_is_defined_twice():
                    for name, count in Counter(found).items() if count > 1)
     assert not twice, f"defined more than once: {twice}"
     assert len(names) > 100 and len(script) > 100, "the patterns stopped matching"
+
+
+#: Tests that write a hook event as a dict, each with why (#599). May only
+#: get shorter (CLAUDE.md, the ratchet).
+EVENTS_BY_HAND: dict[tuple[str, str], str] = {
+    ("test_state.py", "test_event_without_a_session_id_is_ignored"):
+        "an event with no session_id at all, which bare_event cannot build",
+}
+
+
+def events_by_hand() -> set[tuple[str, str]]:
+    """Each test file and function that writes a dict with a
+    `hook_event_name` key, or `dict(hook_event_name=...)`. The files git
+    tracks: a throwaway test kept out of git is no one else's concern.
+    A copy of an event with changes -- `dict(recorded, hook_event_name=...)`
+    or `{**recorded, ...}` -- is not written by hand: it keeps the fields
+    of an event that exists, a recorded `Stop` turned into a
+    `SubagentStop` (`test_subagents.py`)."""
+    import ast
+    import pathlib
+    import subprocess
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    listed = subprocess.run(["git", "-C", str(root), "ls-files", "tests/test_*.py"],
+                            capture_output=True, text=True).stdout.split()
+    paths = [root / one for one in listed] or sorted(root.glob("tests/test_*.py"))
+    found = set()
+    for path in paths:
+        def visit(node, where):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                where = node.name
+            keys = (node.keys if isinstance(node, ast.Dict) and None not in node.keys
+                    else [ast.Constant(one.arg) for one in node.keywords]
+                    if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "dict"
+                    and not node.args
+                    else [])
+            if any(isinstance(key, ast.Constant) and key.value == "hook_event_name"
+                   for key in keys):
+                found.add((path.name, where))
+            for child in ast.iter_child_nodes(node):
+                visit(child, where)
+        visit(ast.parse(path.read_text(encoding="utf-8")), "")
+    return found
+
+
+def test_no_test_writes_a_hook_event_by_hand():
+    """`conftest.event` builds an event as the log holds it, and
+    `conftest.bare_event` one with only the fields named (#599). CLAUDE.md
+    said never to write the dict by hand, and nothing checked it: 41 stood
+    in 11 files, some of them a shape `event` would have got wrong, since
+    it adds a pane the test was about. `EVENTS_BY_HAND` holds the ones
+    that cannot be built, each with why."""
+    found = events_by_hand()
+    new = sorted(found - EVENTS_BY_HAND.keys())
+    gone = sorted(EVENTS_BY_HAND.keys() - found)
+    assert not new, f"build these with conftest.event or conftest.bare_event: {new}"
+    assert not gone, f"no longer written by hand, so off EVENTS_BY_HAND: {gone}"
 
 
 #: A function this long is read in pieces and changed in pieces, and its
