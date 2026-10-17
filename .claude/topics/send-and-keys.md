@@ -42,6 +42,17 @@ The send box and the question bar, a send that lands, completing a `/`, a rename
   prompt, or every sending page test gets its text back.
   `test_a_send_claude_code_never_took_is_said_and_given_back`,
   `test_a_send_to_a_busy_agent_is_not_watched`.
+  - **In a test, an empty send box is the send starting, not landing**:
+    `sendTyped` empties `#say` with the Enter, before the POST, so words
+    typed meanwhile survive (topics/safety-typing, "One send at a time").
+    `test_the_enter_that_ends_a_composition_sends_nothing` read the fake
+    tmux's `seen` after the empty box, before the `send-keys` came (holding
+    `**/send` 300 ms makes it red every time). Wait for the keys in `seen`
+    (`wait_until`), then `sending.size === 0`: the lock goes in the same
+    turn that puts a refused text back.
+    `test_the_send_box_types_into_the_terminal` waits so too. Conversely, a
+    box still full right after a composing Enter proves nothing was sent,
+    with no sleep.
   - **Up in an empty send box recalls what this browser sent** (`keepSent`,
     `recallSent`, `SENT_KEPT`, `wostuast-sent`); Down goes newer, then
     empty. Only while the box is empty or holds a recall: the reader's words
@@ -52,8 +63,8 @@ The send box and the question bar, a send that lands, completing a `/`, a rename
   length. "2.4k lines", "112 KB" (`roughly`, `sizeOf`) in sans: the reader
   refused the fixed face and "2,400" (two rows).
   - **In a column with the button, `.sendside`, not over the bar**: over
-    it, a wide size ran past the box. `.sendside > .verb` keeps the button
-    32 px, level with the last line (`.say + .verb` no longer reaches it).
+    it, a wide size ran past the box. There the button is
+    `.sendside > .verb`, kept level with the box (the Ctrl+Enter bullet).
   - **From `fitSay`**, which every change passes: key, paste, the send that
     empties, the refusal that refills.
   `test_a_tall_send_box_says_how_much_it_holds`,
@@ -62,8 +73,11 @@ The send box and the question bar, a send that lands, completing a `/`, a rename
   review comment, reason for a No, whole-review comment; the reader's usual
   key did nothing there. `submitOnCtrlEnter` only clicks, so the button's
   checks run and a disabled one ignores it. **The button stands level with
-  the box's first line**: `.say { line-height: 18px }` makes a line 32 px,
-  as `.say + .verb` is (it was 26 beside 32; `line-height: 1.5` 1.5 px off).
+  the box's first line, and stays on its last as the box grows**:
+  `.say { line-height: 18px }` makes a line 32 px, as the button is
+  (`.say + .verb`; the send box's, in `.sendside`, is `.sendside > .verb`,
+  which `.say + .verb` no longer reaches). It was 26 beside 32;
+  `line-height: 1.5` was 1.5 px off.
   `test_ctrl_enter_saves_a_comment_and_sends_the_review`,
   `test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level`.
   - **Every one of these boxes shows all it holds, its placeholder too**:

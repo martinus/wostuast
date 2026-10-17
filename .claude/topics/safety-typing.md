@@ -22,8 +22,9 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
   (#226): `paintPicks`, on a pick or a tab switch, turned submit back on while
   keys went in `KEY_GAP` apart (`3 1 2 2 Enter Enter`). `paintPicks` keeps
   submit off while anything is on its way, and after the keys
-  (`state.answered`): the question stays until its `PostToolUse`, and more
-  keys land on the agent's next step. `drawAsking` repaints when a send
+  (`state.answered`, until the `PostToolUse`: topics/state, "Submit does
+  not clear the question"), or more keys land on the agent's next step.
+  `drawAsking` repaints when a send
   starts or ends, as a waiting agent pushes nothing.
   **The send box empties the moment the text goes**, and a refusal puts it
   back before what was typed since: clearing on the answer lost new words,
@@ -37,9 +38,11 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
     one tab's, and two tabs or a script mixed two sends into one prompt, or
     an answer's keys with a send.
     `Daemon.claim` takes the session for `send`, `answer` and `decline`;
-    `release` gives it back in a `finally`. The second is refused with 409,
-    never queued: what it would type into is not what its sender saw.
-    `claim` sets `declining` for a No, so a send is refused meanwhile.
+    `release` gives it back in a `finally`, and the claim is a `with`
+    (`Daemon.holding`), so no verb leaves it held. The second is refused
+    with 409, never queued: what it would type into is not what its sender
+    saw. `claim` sets `Daemon.declining` for a No, so a send is refused
+    meanwhile.
     `test_two_sends_at_once_do_not_mix_in_the_pane`,
     `test_nothing_else_is_typed_while_an_answer_or_a_no_goes_in`.
     **The claims have their own lock, `typing_lock`, and the transcript
@@ -59,7 +62,9 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
     paste lost its markers and the mode ate the Enter; bash ran one line of
     two. It fails in no mode, as usual, and the send goes on.
   - **`-r`**, or tmux pastes every newline as Enter.
-  - **`-p`, so every send is one bracketed paste, one line too**: 100 KB
+  - **`-p`, so every send is one bracketed paste, one line too**: a
+    newline sent to a terminal is Enter, and without markers a real shell
+    ran the first line of a text; 100 KB
     on one line without markers reached Claude Code as several pastes,
     unsubmitted; with `-p`, 930 KB arrived whole. `-p` adds markers only
     for a program that asked (`ESC [ ? 2004 h`); one that did not cannot
@@ -94,7 +99,9 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
   arrives as keystrokes. `POST_MAX` holds a `SEND_MAX` body as JSON six
   times over (`\u001b` is six bytes);
   `test_sending_more_than_fits_is_refused_not_cut` keeps it above
-  `SEND_MAX`. A No's reason goes through `tmux_send` and this cap too.
+  `SEND_MAX`; a body over it is refused, never read as empty (topics/safety,
+  "An empty body and a refused body"). A No's reason goes through
+  `tmux_send` and this cap too.
   **The cap counts what is pasted**, `typed(text)`, not stripped colour codes. `test_the_cap_counts_what_is_pasted_not_the_controls`.
 - **A verb tmux refused says so, and says only what it knows.** `send` and
   `jump` answered `{"done": false}` with no `error`, and `said` cleared the
@@ -102,32 +109,6 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
   **`send`'s message never claims nothing landed**: a failed Enter leaves
   the pasted text on the prompt, and "nothing went in" would have it sent
   twice.
-- **An empty body and a refused body are different answers.** `asked()`
-  never reads a body over `POST_MAX`, so routes saw `{}`. **Every route
-  that reads `{}` as an answer checks it**: `send` said
-  "nothing to send", `name` cleared the name (#235), `answer` said the
-  question no longer waited (#254). `too_big` marks it, cleared at the top
-  of `asked()`, as one keep-alive handler serves a whole connection. **`Serving.route` refuses
-  `too_big` before any verb runs**, with the noun each `POST_VERBS` entry
-  carries (#287), so no new verb can forget. The rename box's `maxLength`
-  is `NAME_MAX` too (`test_a_row_is_renamed_where_it_stands`). A body not
-  read because its end is not known (`unread`) is refused there too.
-  **Every route is found after the other checks and before that one, in
-  one place** (#545): `Serving.route` runs one order of checks for every
-  request, and `find_route` looks in `ROUTES`, `GET_VERBS`, `POST_VERBS`;
-  a route with its own size check is one a new route forgets.
-  `test_every_route_refuses_what_it_must` walks the three tables: foreign
-  Host, no token, too large. **A verb is a function `verb_<name>`, never a
-  handler method**: `http.server` sets `command`, `path`, `headers`,
-  `request` per request, and `self.command` hid `Serving.command`.
-  `test_no_verb_is_an_attribute_of_the_handler`. **A verb returns
-  `(code, payload)`, and `dispatch` sends it with the session's `id`**:
-  only `refuse` added it, and one refusal went round. `raw` and `diff`
-  send bytes and reply themselves.
-  `test_every_verb_says_whose_answer_it_is`,
-  `test_a_name_too_large_to_read_keeps_the_name_there_was`,
-  `test_an_answer_too_large_to_read_says_that`,
-  `test_a_body_that_is_not_read_is_not_taken_for_an_empty_one`.
 - **Interrupt is Escape, and never Ctrl-C.** Escape stops a turn and
   keeps the work; Ctrl-C on an idle prompt clears it and a second exits
   (Claude Code's documentation). A turn can end before the key lands, so
@@ -159,9 +140,9 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
   is refused**: a Yes in the terminal leaves the row amber (no hook says
   Yes), and Escape would stop the agent's next step. **An approved call
   still running looks like an open dialog**, so Escape stops it; the page
-  says so before every press. **One decline at a time**: the page's
-  `sending` guard, shared with the send box, and `Daemon.claim`, setting
-  `Daemon.declining`, for a second tab. **No is off while something else
+  says so before every press. **One decline at a time**, held as a send is
+  ("One send at a time"): the page's `sending` guard, shared with the send
+  box, and `Daemon.claim` for a second tab. **No is off while something else
   is on its way, and says so** (`paintDecline`): a refused
   `submitPermission` did nothing, silently. Its own No is marked (`dataset.busy`) before it
   takes the guard, so it does not wait for itself. A half-written reason is
@@ -185,8 +166,7 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
     answer's keys are digits and Enter. **One test, `cannot_type`, for
     `answer`, `decline` and `send`, and its twin `whyNotTyped` on the page
     for every control that types** (#287): over, then a dialog up (not for
-    a No); separate copies drifted and offered what the daemon refused. The
-    claim is a `with` (`Daemon.holding`), so no verb leaves it held.
+    a No); separate copies drifted and offered what the daemon refused.
     `test_the_review_is_not_offered_to_a_session_that_is_over`,
     `test_a_question_is_not_answered_into_a_permission_dialog`,
     `test_an_answer_never_goes_into_a_permission_dialog`,
@@ -199,9 +179,8 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
   an answer, a No, a review's submit. Jump (`#jump`) and the send box are
   absent with no pane; `paintPicks` once offered submit, "`presses 1`",
   into no terminal. **Reading is not acting**: the question bar stays, and
-  only the press is refused. Grep `whyNotTyped`. **`#jump` wears `.theme`,
-  which sets `display`**, so the one `[hidden]` rule (`daemon-and-page.md`)
-  is what hides it.
+  only the press is refused. Grep `whyNotTyped`. `#jump` is hidden by the
+  one `[hidden]` rule (topics/daemon-and-page).
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters except tab and newline, including the C1 block above `\x7f`
   (NEL, CSI) and U+2028, a line break `"\n" in text` misses. **And every
@@ -211,9 +190,6 @@ Every text and key the page sends to a pane: one at a time, through a paste buff
   `test_a_lone_surrogate_never_reaches_a_terminal`. A review quotes agent
   text, and `ESC [ 2 0 1 ~` ends a bracketed paste, leaving the rest as
   keystrokes, newlines as Enter; an escape byte is invisible in a preview.
-- **A newline sent to a terminal is Enter.** Without bracketed paste
-  markers a real shell ran the first line. Every send pastes with `-p`; see
-  the paste buffer bullet.
 - **Anything printed to a terminal is scrubbed, like anything sent to
   one.** `ls`'s last column is agent text (a `Notification` or a tool
   summary); one control set the terminal title and reddened the output,

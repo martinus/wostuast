@@ -53,7 +53,9 @@ Comments, the review's send bar, and the draft.
     `drawReviewBar`), pinned under the pane, only on this tab and only
     while there is a review: the whole-review comment
     (`state.review.overall`), the message after it, `reviewText(false)`,
-    not editable (a comment is edited where it stands), and **Send**.
+    and **Send**. **The message is the preview: it cannot be skipped, and it
+    is not editable** (a comment is edited where it stands): a quoted line
+    is agent text about to be pasted into a terminal. One text, one source.
     **Both boxes stay short and scroll**, four lines and five: at 40vh they
     took two fifths of a notebook screen.
     `test_the_send_bar_stays_short_and_scrolls`.
@@ -63,8 +65,7 @@ Comments, the review's send bar, and the draft.
       next review. `submitReview` sets the box from what `unsent` leaves,
       and blurs it when empty, so the bar goes.
       `test_ctrl_enter_in_the_whole_review_box_empties_it`.
-    The message beside the button is what "the preview cannot be skipped"
-    means now. `reviewText` has no heading: the reader asked for "# Review"
+    `reviewText` has no heading: the reader asked for "# Review"
     to go, and the task-name box went too. `blankReview` is an empty one.
 - **A removed diff line gets no `+`**: it has no line in the file, so the
   comment can be neither drawn nor put back. One anchored with a side was
@@ -134,7 +135,8 @@ Comments, the review's send bar, and the draft.
   text and moves the code. **Every control that rebuilds waits and says
   why** (`busyWriting`): a pick, the column switch, the base picker, "+" on
   another line, "edit" and "delete" on another comment, and Send; else the
-  box went with its text, Send's silently. Wait, never save the box first:
+  box went with its text, Send's silently, and a silent no-op reads as
+  broken. Wait, never save the box first:
   it may hold half a sentence nobody meant to send. **The `storage` event
   waits too**: it rebuilt a box open with focus elsewhere from the stored
   note. Closing the box draws the tab.
@@ -150,5 +152,3 @@ Comments, the review's send bar, and the draft.
   nothing is being typed. A two-window test waits for the write:
   `localStorage` reaches another renderer a moment later.
   `test_a_second_window_takes_up_what_the_first_one_kept`.
-- **The preview cannot be skipped, and it is not editable**: a quoted line
-  is agent text about to be pasted into a terminal. One text, one source.

@@ -209,7 +209,8 @@ The groups, `settled`, alerts, the tab's title and icon, the settings menu, a ro
     showing the state, which cannot say if it is the state now or after a
     click. The menu keeps its parts with words. Icons only, words in
     `aria-label` and, with ": on" or ": off", in `title`: with words the
-    Review bar ran out of room on a notebook. They are the menu's settings,
+    Review bar ran out of room on a notebook; icons fit at 1366 px. They are
+    the menu's settings,
     not copies: `paintSettings` paints the menu's `.choice` and every
     `.toggle` from `settingsNow`, and a click paints at once (`keepWidth`,
     `keepWrap`, `keepSides`, `keepSpace`), not on the push, a second later
@@ -315,9 +316,8 @@ The groups, `settled`, alerts, the tab's title and icon, the settings menu, a ro
   only on a row that offers any), and they are `margin: -3px 0` because 22
   px is taller than the line: the row keeps its height. Where the age was
   short ("3s") they take under 60 px of the name's room, half what words
-  took. **Not there at all until the hover** (`display:
-  none`, not `opacity: 0`): an invisible link kept its room and cut a long
-  name. **The snooze's moon is hover-only too**: the word "snoozed" marks
+  took. **Not there at all until the hover** (CLAUDE.md's CSS rule:
+  `display: none`, never `opacity: 0`). **The snooze's moon is hover-only too**: the word "snoozed" marks
   the row, and `z` works without the pointer. `setIcon` keeps the kind in
   `data-icon`, which a test reads.
   `test_the_row_offers_unread_on_a_read_row_only`,

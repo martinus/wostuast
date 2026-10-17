@@ -71,16 +71,15 @@ stopping them, a throwaway home, and edit scripts for the one large file.
 - **Edit nothing the tests read while they run in the background.** They
   read the working tree and each run starts later than the last, so an edit
   between them splits the runs across old and new code, and the counts say
-  nothing about either. Meanwhile write the rule and the pull request's
-  text, which no test reads; to change code, stop the run (`TaskStop`),
-  edit, and start it again.
+  nothing about either. To change code, stop the run (`TaskStop`), edit,
+  and start it again.
 - **Run a long thing in the background, and work while it runs.** A loop of
   `until grep …; sleep` holds the turn, does nothing else, and is killed at
   the tool's time limit; `run_in_background` wakes you when it ends. **A
   `&` inside the command is not that**: nothing wakes you, the output lands
   only where you sent it, and stopping it means finding its shell's number
-  by hand. Meanwhile write the rule and the pull request's text; while CI
-  runs, reproduce the next issue, reading only.
+  by hand. Meanwhile write the rule and the pull request's text, which no
+  test reads; while CI runs, reproduce the next issue, reading only.
 - **Stop a process by its number, never by `pkill -f`.** The pattern is in
   the command line of the shell running `pkill`, so it killed that shell.
   Find the number in one call (a loop over `/proc/*/cmdline` printing those
@@ -149,10 +148,10 @@ before every `replace` is the reliable shape. Its scars:
 
 None is a test. They stood in `CLAUDE.md`'s Layout table, loaded at every start.
 
-- `tests/shot.py`: Not a test. Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `--eval JS` runs in the page first: a click, a scroll. `tests/test_shot.py` keeps it working.
-- `tests/stage.py`: Not a test. Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working.
-- `tests/tour.py`: Not a test. Six sessions, one in each state a row can be in -- unread with a plan, working with subagents under it, needing you, a reminder, over -- saved turns of each kind, and a status line each; then a PNG of each view: `transcript`, `later` (the remind menu), `unread`, `saved`, `search`, `permission`. `--view` picks, `--light`, `--width`, `--height`, `--eval JS` (or a file of it) and `--hover SELECTOR` before each picture, which is how a mockup of the sidebar or the views is drawn. `tests/test_tour.py` keeps it working.
-- `tests/scale.py`: Not a test. Writes a synthetic history of `--sessions` and `--turns` into a throwaway home and prints one line of JSON: the first fold of a start, a quiet tick, a tick after one event, a push and a stream's opening, and with `--page` one push's redraw in Chromium. Run it before and after a change to the fold, a row, the stream or the sidebar's draw (#430, #431). `tests/test_scale.py` keeps it working.
-- `tests/claude_pane.py`: Not a test. A real Claude Code in a tmux pane of its own, against a fake Messages API that keeps every request and can answer once with a tool call: `send`, `paste`, `ask`, `busy` (a turn still running), `turns`, `statuses`, `hooks`, `settings`. How a question about what Claude Code does is measured, not guessed (topics/payloads). `tests/test_claude_pane.py` keeps the fake API working.
-- `tests/page_coverage.py`: Not a test. Runs the browser tests -- all, or the ones named -- with `WOSTUAST_COVERAGE` set, so that `cover` in `tests/browser.py` has Chromium count what each page ran of the page script, and prints the share of its lines that ran and each named function that never did, at its line in `wostuast`. `--lines` adds the lines, `--from DIR` reads a run again, and `--check` fails on a named function that never ran and is not in `UNRUN_ALREADY`, a ratchet that started empty (#579), and on one whose lines that never ran are more than `UNRUN_LINES_ALREADY` allows it, naming them (#600); CI's `browser` job runs it over the four shards. A function it names is dead code or a test nobody wrote (topics/testing). `tests/test_page_coverage.py` keeps it working.
-- `tests/perturb.py`: Not a test. Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working.
+- `tests/shot.py`: Draws a transcript case on the page, saves a PNG, and with `--measure` prints each gap from the text, not the box. `--eval JS` runs in the page first: a click, a scroll. `tests/test_shot.py` keeps it working.
+- `tests/stage.py`: Makes a repository with a branch of four commits, a change and a Markdown document, and draws any part of the page over it to a PNG: `--tab`, `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands` (skills and used commands for the send box), then `--click`, `--type SELECTOR=TEXT` (and Enter), `--keys SELECTOR=TEXT` (no Enter) and `--eval JS` in order, and `--part`. `tests/test_stage.py` keeps it working.
+- `tests/tour.py`: Six sessions, one in each state a row can be in -- unread with a plan, working with subagents under it, needing you, a reminder, over -- saved turns of each kind, and a status line each; then a PNG of each view: `transcript`, `later` (the remind menu), `unread`, `saved`, `search`, `permission`. `--view` picks, `--light`, `--width`, `--height`, `--eval JS` (or a file of it) and `--hover SELECTOR` before each picture, which is how a mockup of the sidebar or the views is drawn. `tests/test_tour.py` keeps it working.
+- `tests/scale.py`: Writes a synthetic history of `--sessions` and `--turns` into a throwaway home and prints one line of JSON: the first fold of a start, a quiet tick, a tick after one event, a push and a stream's opening, and with `--page` one push's redraw in Chromium. Run it before and after a change to the fold, a row, the stream or the sidebar's draw (#430, #431). `tests/test_scale.py` keeps it working.
+- `tests/claude_pane.py`: A real Claude Code in a tmux pane of its own, against a fake Messages API that keeps every request and can answer once with a tool call: `send`, `paste`, `ask`, `busy` (a turn still running), `turns`, `statuses`, `hooks`, `settings`. How a question about what Claude Code does is measured, not guessed (topics/payloads). `tests/test_claude_pane.py` keeps the fake API working.
+- `tests/page_coverage.py`: Runs the browser tests -- all, or the ones named -- with `WOSTUAST_COVERAGE` set, so that `cover` in `tests/browser.py` has Chromium count what each page ran of the page script, and prints the share of its lines that ran and each named function that never did, at its line in `wostuast`. `--lines` adds the lines, `--from DIR` reads a run again, and `--check` is the ratchet CI's `browser` job runs over the four shards (topics/testing, "It is a ratchet in CI": `UNRUN_ALREADY`, `UNRUN_LINES_ALREADY`). `tests/test_page_coverage.py` keeps it working.
+- `tests/perturb.py`: Applies each break in a JSON list, runs only the tests the break names, puts the file back, and prints red or GREEN a line. `tests/test_perturb.py` keeps it working.

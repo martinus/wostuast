@@ -235,8 +235,9 @@
     apart. **A test of a row the reader just left reads it after the
     daemon's next pass**: a push on its way can carry it as before the read
     -- bold -- though the daemon's `unread` is already False.
-  - "Unread" on a read row is a dot icon on hover (#389); `u` toggles the
-    chosen one. The tab's title says "2 unread ·" after who needs you.
+  - `u` toggles the chosen one; the row's own way is its hover icons
+    (topics/sidebar, #389). The tab's title says "2 unread ·" after who
+    needs you.
   `test_a_turn_that_ends_after_the_reader_looked_is_unread`,
   `test_turns_that_ended_before_the_file_was_made_are_read`,
   `test_a_turn_that_ends_off_screen_is_unread_until_it_is_opened`.

@@ -21,8 +21,8 @@ Chosen, not learned from a bug. Weigh the reason before undoing one.
   approved `cmake --build` leaves the row amber until its `PostToolUse`. A
   No fires nothing. The row says what is known; the pane settles it. Invent
   no event. **The one record of our own is `Declined`**, and it is no
-  guess: the transcript shows the call rejected, whether the page or the
-  reader in the terminal pressed Escape.
+  guess: the transcript shows the call rejected (topics/state, "The daemon
+  writes a `Declined` record").
 - **Search is a plain scan of the event log: no index, no transcript**
   (#379). The log holds the reader's prompts (`UserPromptSubmit`'s
   `prompt`) and each turn's last answer (`Stop`'s `last_assistant_message`),
@@ -128,8 +128,8 @@ Chosen, not learned from a bug. Weigh the reason before undoing one.
 **Serving**
 
 - **Polling, not inotify.** No dependency; the scale is tens of files. The
-  daemon polls the log and transcripts; the Files and Diff tabs poll from
-  the browser, only while on screen.
+  daemon polls the log and transcripts; the tabs poll from the browser
+  (topics/daemon-and-page).
 - **Port 7331, on 127.0.0.1 only** (`DEFAULT_PORT`, `BIND_HOST`).
   `--port 0` lets the system pick, and the start prints the port the socket
   got (`server_address`) in the address and the `ssh -L` line; it had
@@ -175,10 +175,9 @@ Chosen, not learned from a bug. Weigh the reason before undoing one.
   theme is the same variables on a light ground.
 - **State reaches the page by one channel: the push.** A POST's answer says
   only what the push cannot: whether it worked, what was refused. Two
-  channels for one state land in either order: a settings answer landed
-  before an older push and was undone by it; it took three guards and a
-  numbering of pushes (`keepSetting`, `tell_config`; topics/sidebar has the
-  scar).
+  channels for one state land in either order (`keepSetting`,
+  `tell_config`; topics/sidebar, "Every setting is one menu", has the
+  scar: three guards and a numbering of pushes).
 - **The transcript keeps its two channels, a GET and the push.** It is the
   one state that comes both ways: the GET is the snapshot, the push what
   came after, and guards order them (`state.turns.early`, `told`,

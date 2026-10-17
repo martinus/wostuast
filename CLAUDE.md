@@ -172,15 +172,12 @@ is rewritten here in the same pull request.
   `capture-pane` went with it.
 - **A Yes the reader did not give, or one that keys carry.** The page says
   Yes only as the reader's click, and only through that dialog's own hook
-  (`approve`, `wait_for_yes`). Keys land on whichever dialog is up when they
-  arrive, so a Yes typed for `git status` could approve an `rm -rf` that came
-  up meanwhile; the hook is called for one dialog, and Claude Code applies
-  its allow to that one only. The reader asked for Yes once the page showed
-  the whole request, and chose the hook. **"Yes, and don't ask again" is
-  Claude Code's own suggestion, never a rule of ours** (`always_offered`,
-  `allow_for`): each `permission_suggestions` entry that allows something is
-  one button; the page sends only which, and the hook takes the rule from its
-  own payload. No mode that turns every prompt off, no plan, no question. An
+  (`approve`, `wait_for_yes`): keys land on whichever dialog is up, and the
+  hook's allow on its own dialog only (topics/safety, first bullet, says
+  how). The reader asked for Yes once the page showed the whole request, and
+  chose the hook. **"Yes, and don't ask again" is Claude Code's own
+  suggestion, never a rule of ours** (`always_offered`, `allow_for`; the
+  same bullet). No mode that turns every prompt off, no plan, no question. An
   `AskUserQuestion` is the agent's own question: the page types nothing until
   the reader submits.
 - **Agent-to-agent messaging, teams, orchestration, cache telemetry.** Showing
@@ -410,13 +407,12 @@ python3 tests/shot.py case.txt out.png --measure  # a report about the transcrip
 python3 tests/stage.py out.png --commit 2 --review  # a report about the Review or Files tab (--tab files --open PATH)
 python3 tests/tour.py out/ --view later --eval mock.js  # the sidebar and the views: every row state, each view a PNG
 python3 tests/scale.py --sessions 500 --page  # how a start, a tick, a push and a redraw scale: before and after
-WOSTUAST_WAIT=5000 python3 -m pytest tests/test_page_review.py -q -k name  # while working: a lost wait fails in 5 s
+WOSTUAST_WAIT=5000 python3 -m pytest tests/test_page_review.py -q -k name  # while working; topics/working says when not
 python3 -m pytest tests/test_page_review.py -q  # the subject you are changing. Do this first.
 python3 tests/perturb.py breaks.json            # prove the new tests: each break runs only the tests it names
 python3 tests/page_coverage.py                  # what no browser test runs of the page script: the browser suite, once
-# before the push, both of these; run them in the background and write the rule meanwhile.
-# -rf names each failure; pipefail stops a chain on a red count; tee keeps
-# the traceback (below). $S is the session's scratchpad:
+# before the push, both of these, in the background ("Before the push", below,
+# says what each flag is for). $S is the session's scratchpad:
 set -o pipefail; for i in 1 2 3; do python3 -m pytest -q -n 12 -rf tests/test_page_review.py | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"; done
 set -o pipefail; python3 -m pytest -q -n auto -rf --ignore-glob='tests/test_page_*' | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"
 set -o pipefail; python3 -m pytest -q -n auto -rf | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"  # the whole suite: only when a shared part changed (below)
