@@ -4771,7 +4771,10 @@ class GitReader:
         if not wanted:
             return
         if not self.behind:
-            facts = (self.read or git_facts_many)(wanted)
+            # The Files tab's timeout here too: this is `ls` and a test,
+            # which wait for the answer, and `git status` lists every
+            # untracked file now (#550), past two seconds in a large tree.
+            facts = (self.read or git_facts_many)(wanted, timeout=LIST_TIMEOUT)
             with self.lock:
                 self.came.update(facts)
             return
@@ -4806,8 +4809,12 @@ class GitReader:
 def add_git_facts(sessions: Sequence[Session]) -> None:
     """Fill in git facts for every session. It never raises, because
     `git_facts_many` does not: `ls` ended in a traceback when one
-    directory's facts raised."""
-    facts = git_facts_many([session.cwd for session in sessions])
+    directory's facts raised. With the Files tab's timeout, as the daemon
+    reads them (`GitReader`): `git status` lists every untracked file
+    (#550), and under the tick's two seconds an un-ignored virtualenv
+    left `ls` and `wait` with no branch and no changes (#592)."""
+    facts = git_facts_many([session.cwd for session in sessions],
+                           timeout=LIST_TIMEOUT)
     for one in {one.raised for one in facts.values() if one.raised}:
         log(f"git facts raised: {one}")
     apply_git_facts(sessions, facts)
@@ -5273,8 +5280,7 @@ class GitStatus:
 
 
 def git_status(cwd: str, runner: Callable[..., str | None] = run,
-               timeout: float = RUN_TIMEOUT,
-               untracked: str = "all") -> GitStatus | None:
+               timeout: float = RUN_TIMEOUT) -> GitStatus | None:
     """The one reader of `git status` (#537). None when git did not answer.
 
     The row and the Files tab parsed it each in a way of their own. Both
@@ -5294,7 +5300,7 @@ def git_status(cwd: str, runner: Callable[..., str | None] = run,
     `--branch` puts the `## ` line first; no file record starts with `#`.
     """
     out = runner(["git", "-C", cwd, "status", "--porcelain", "-z", "--branch",
-                  f"--untracked-files={untracked}"], timeout=timeout)
+                  "--untracked-files=all"], timeout=timeout)
     if out is None:
         return None
     status = GitStatus()
