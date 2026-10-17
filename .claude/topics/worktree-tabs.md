@@ -714,6 +714,11 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   put the pick back and not the text, and nothing asked for it: "reading…"
   for ever. Now an unread file says why, and `loadDiff` asks again on every
   poll until it is read; one that really went leaves `untracked` and is let
-  go. `test_an_untracked_file_is_read_again_when_its_session_comes_back`,
+  go. **`loadDiff` lets it go, where the answer is taken** (#542):
+  `drawDiff` did it, a write in a draw that no test reached, so the draw
+  guard never named it. `loosePick` keeps a draw from showing a pick the
+  diff on screen does not list.
+  `test_an_untracked_file_picked_and_then_added_lets_go_of_the_pick`,
+  `test_an_untracked_file_is_read_again_when_its_session_comes_back`,
   `test_an_untracked_file_that_could_not_be_read_says_so`,
   `test_an_untracked_file_git_would_not_list_is_not_its_one_line`.

@@ -22491,6 +22491,12 @@ function diffKey() {
   ]);
 }
 
+// The untracked file picked, while the diff on screen still lists it.
+function loosePick(report) {
+  const pick = state.diffs.loose;
+  return pick && (report.untracked || []).includes(pick) ? pick : null;
+}
+
 function drawDiff(box) {
   const [list, pane, note, foot] = split(box, "diff", "diffbody");
   if (!pane.firstChild) putDiffBar(pane);
@@ -22504,11 +22510,6 @@ function drawDiff(box) {
   const again = !box.dataset.bodyKey;
   if (!fresh(box, "bodyKey", diffKey())) return;
   const report = state.diff || { sections: [], untracked: [] };
-  // A file the agent has since committed is no longer untracked, so the pick
-  // goes with it rather than pointing at a section that no longer names it.
-  if (state.diffs.loose && !(report.untracked || []).includes(state.diffs.loose)) {
-    state.diffs.loose = null;
-  }
   const found = diffShown(report);
   // Both places are read before either column is rebuilt, while nothing on
   // the page needs laying out again to answer.
@@ -22541,10 +22542,11 @@ function drawDiff(box) {
   putDiffNotesAbove(next);
   const shown = putDiffBlocks(next, scroll, found, report.body, had, kept);
   const loose = found.loose;
+  const pick = loosePick(report);
   let picked = null;
-  if (state.diffs.loose) {
-    picked = drawLooseFile(next, state.diffs.loose);
-    scroll.blocks.set("untracked\n" + state.diffs.loose, picked);
+  if (pick) {
+    picked = drawLooseFile(next, pick);
+    scroll.blocks.set("untracked\n" + pick, picked);
   } else if (loose.length) {
     put(next, "div", "note", loose.length + " untracked file" +
         (loose.length > 1 ? "s are" : " is") + " named on the left. git has no" +
@@ -25077,6 +25079,12 @@ async function loadDiff() {
     state.diffs.tag = body.tag || "";
     state.diff = body;
     forgetChanged(body);
+    // A file the agent has since committed is no longer untracked, so the
+    // pick goes with it rather than pointing at a section that no longer
+    // names it. Here, where the answer is taken: `drawDiff` did it, and a
+    // draw only reads (#542). Before the answer comes, `loosePick` keeps
+    // the draw from showing a pick the diff on screen does not list.
+    state.diffs.loose = loosePick(body);
   }
   draw();
   // An untracked file picked and not read: coming back to the session puts
