@@ -592,9 +592,6 @@ DRAW_EFFECTS_ALREADY = {
     # Timers that touch only the page: a highlight that fades, a diff
     # painted in slices.
     "draw: setTimeout",
-    # The question's picks start again when a new question is drawn.
-    "drawHeader: state.picked", "drawHeader: state.picked.at",
-    "drawHeader: state.picked.id",
 }
 
 

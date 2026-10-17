@@ -133,6 +133,12 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   picking never rebuilds the bar: a rebuild under the hand is how a click
   lands on the wrong option. Submit waits until every question has an answer,
   because the agent asks them one after the other.
+  - **The picks start again where a question arrives, never where it is
+    drawn** (`fitPicks`, #573): `onSessions` and `choose` call it, and
+    `drawAsking` only reads `state.picked`. It was the draw's one write to
+    `state`. A second question on the session on screen comes in a push,
+    with no `choose`, so `onSessions` is the call that matters there.
+    `test_a_new_question_on_screen_starts_with_no_picks`.
 - **A button that types into a terminal says what it types, before it is
   pressed.** Each option carries its number, and the submit says `presses 2,
   then 2 4 Tab, then Enter` -- `askKeys` on the page, which is only the
