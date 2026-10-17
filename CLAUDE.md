@@ -238,16 +238,18 @@ request, and name the principle.
    drawing is `onSessions`. Every browser test that opens a page with
    `opened` checks it: `guard_draws` in `tests/browser.py` wraps `paint`,
    `drawSessions`, `drawHeader` and `drawFeed`, writes down each fetch,
-   timer, alert, storage write and change to `state` they make, and fails
-   on one not in `DRAW_EFFECTS_ALREADY`, a ratchet with its reasons. Every
+   alert, storage write and change to `state` they make -- and each change
+   to `state` a timer they set makes when it fires, since a timer that
+   touches only the page is no effect (#573) -- and fails on one not in
+   `DRAW_EFFECTS_ALREADY`, a ratchet that #573 emptied. Every
    field of `state` is declared in its literal:
    `test_every_field_of_the_pages_state_is_declared`. **`draw()` is two
    steps, `paint` and then `land`** (#573), as `Store.refresh`'s are: a
    mark of where to go -- a link to a block, a file asked for, the "new"
    line -- is used up once it is landed on, and that write is the land's,
    each tab's own in `TABS` (`landTranscript`, `landFiles`, `landDiff`).
-   A build leaves where to land on the pane (`toLand`), so a land happens
-   once for each build and not on every push.
+   A build leaves what its land needs on the pane (`toLand`); the Review
+   tab's lands once a build, not on every push.
 4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
    session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`), views
    (`VIEWS`), routes (`ROUTES`). A test walks the table, so a new entry is
