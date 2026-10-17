@@ -378,8 +378,12 @@ This list exists because each entry was re-implemented once already.
 **Test helpers**: `run_installed(["hook"], stdin)` runs the hook file or the
 status file this checkout makes, as Claude Code does -- the hook under a
 stand-in `claude` whose stdin is a terminal, or a pipe with `keys="pipe"`
-(`as_claude`). `conftest.event(name, sid=..., **extra)` builds a hook event —
-never hand-write the dict. **To call the program from a scratch script,
+(`as_claude`). `conftest.event(name, sid=..., **extra)` builds a hook event
+as the log holds it, with a `cwd`, a `pane`, a `pid` and a `ts`;
+`conftest.bare_event` builds one with only the fields named, which is what
+Claude Code hands the hook, and an event that must carry no pane. Never
+hand-write the dict: `test_no_test_writes_a_hook_event_by_hand` fails on
+one that `EVENTS_BY_HAND` does not hold (#599). **To call the program from a scratch script,
 `sys.path.insert(0, "tests")` and `from conftest import wostuast`**: a
 `SourceFileLoader` of its own, without the module in `sys.modules`, failed
 at the first `@dataclass`. `conftest.record(kind, text, ...)` builds a

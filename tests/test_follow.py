@@ -6,6 +6,8 @@ import errno
 import json
 from pathlib import Path
 
+from conftest import bare_event
+
 
 def test_it_reads_each_line_once(ws, tmp_path):
     path = tmp_path / "f.jsonl"
@@ -125,13 +127,12 @@ def test_a_daemon_started_after_a_rotation_still_sees_the_history(ws, monkeypatc
     """It used to tail only the live file, so every session that started before
     the rotation lost its cwd, its pane and its pid."""
     monkeypatch.setattr(ws, "EVENTS_MAX_BYTES", 900)
-    ws.append_event({"session_id": "s", "hook_event_name": "SessionStart",
-                     "cwd": "/w/repo/dir", "pane": "%7", "pid": 1, "ts": 1000.0})
+    ws.append_event(bare_event("SessionStart", sid="s", cwd="/w/repo/dir", pane="%7", pid=1,
+                               ts=1000.0))
     n = 0
     while not ws.archived_events_paths():
-        ws.append_event({"session_id": "s", "hook_event_name": "PreToolUse",
-                         "tool_name": "Bash", "tool_input": {"command": "x" * 60},
-                         "pid": 1, "ts": 1001.0 + n})
+        ws.append_event(bare_event("PreToolUse", sid="s", tool_name="Bash",
+                                   tool_input={"command": "x" * 60}, pid=1, ts=1001.0 + n))
         n += 1
         assert n < 200
 

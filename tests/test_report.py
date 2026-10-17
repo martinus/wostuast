@@ -9,6 +9,8 @@ import time
 
 import pytest
 
+from conftest import bare_event
+
 
 def events(ws, *found, at=None):
     """Write these events into the log, stamped now unless they say."""
@@ -28,16 +30,13 @@ def test_the_report_never_holds_the_readers_text(ws, tmp_path, monkeypatch):
     stand -- a prompt, a command, a path, a message, a kind that is not a
     name, a line of the error log -- is written here, and none comes out."""
     events(ws,
-           {"session_id": "s1", "hook_event_name": "SessionStart",
-            "source": "startup", "cwd": "/home/Secretive/proj"},
-           {"session_id": "s1", "hook_event_name": "UserPromptSubmit",
-            "prompt": "SECRETIVE prompt"},
-           {"session_id": "s1", "hook_event_name": "PreToolUse",
-            "tool_name": "Bash", "tool_input": {"command": "rm -rf secretive"}},
-           {"session_id": "s1", "hook_event_name": "Notification",
-            "notification_type": "a secretive kind", "message": "secretive"},
-           {"session_id": "s1", "hook_event_name": "PreToolUse",
-            "tool_name": "secretive tool with spaces"})
+           bare_event("SessionStart", source="startup", cwd="/home/Secretive/proj"),
+           bare_event("UserPromptSubmit", prompt="SECRETIVE prompt"),
+           bare_event("PreToolUse", tool_name="Bash",
+                      tool_input={"command": "rm -rf secretive"}),
+           bare_event("Notification", notification_type="a secretive kind",
+                      message="secretive"),
+           bare_event("PreToolUse", tool_name="secretive tool with spaces"))
     ws.log("could not read /home/secretive/file: PermissionError(13, 'denied')")
     said = ws.build_report(7, measure=False)
     assert "secretive" not in said.lower(), said
@@ -56,8 +55,7 @@ def test_what_the_review_found_does_not_leak_either(ws, tmp_path, monkeypatch):
     a log line that names a folder ending in "Error", a line a newline began,
     an MCP server's name, a bad ticket-link pattern quoted back, a folder of
     ours that holds home, a path no swap knows, a nested line that crashed."""
-    events(ws, {"session_id": "s1", "hook_event_name": "PreToolUse",
-                "tool_name": "mcp__acmecorp-jira__create_issue"})
+    events(ws, bare_event("PreToolUse", tool_name="mcp__acmecorp-jira__create_issue"))
     with open(ws.events_path(), "a", encoding="utf-8") as handle:
         handle.write("[" * 100000 + "\n")
     ws.log("listing /home/m/AcmeCorpError/src failed: OSError(5, 'io')")
@@ -89,8 +87,8 @@ def test_a_new_event_and_a_new_field_are_named(ws):
     """What wostuast does not read yet is what an agent can add. An event
     Claude Code sends that no handler takes is marked new, and every field
     an event carried is listed by name."""
-    events(ws, {"session_id": "s1", "hook_event_name": "Stop"},
-           {"session_id": "s1", "hook_event_name": "BrandNewEvent", "shiny_field": 1})
+    events(ws, bare_event("Stop"),
+           bare_event("BrandNewEvent", shiny_field=1))
     said = ws.build_report(7, measure=False)
     assert "| BrandNewEvent | 1 | **new** |" in said, said
     assert "| Stop | 1 | yes |" in said, said
@@ -99,8 +97,8 @@ def test_a_new_event_and_a_new_field_are_named(ws):
 
 def test_only_the_days_asked_for_are_counted(ws):
     old = time.time() - 10 * 86400
-    events(ws, {"session_id": "s1", "hook_event_name": "Stop"}, at=old)
-    events(ws, {"session_id": "s2", "hook_event_name": "SessionEnd", "reason": "clear"})
+    events(ws, bare_event("Stop"), at=old)
+    events(ws, bare_event("SessionEnd", sid="s2", reason="clear"))
     said = ws.build_report(7, measure=False)
     assert "| SessionEnd | 1 | yes |" in said
     assert "| Stop |" not in said
@@ -135,7 +133,7 @@ def test_the_cost_is_measured_on_the_installed_files(ws, tmp_path, monkeypatch):
 def test_files_lists_what_is_there_and_what_uninstall_does(ws, tmp_path,
                                                            monkeypatch, capsys):
     installed(ws, tmp_path, monkeypatch)
-    events(ws, {"session_id": "s1", "hook_event_name": "Stop"})
+    events(ws, bare_event("Stop"))
     capsys.readouterr()
     assert ws.cmd_files(argparse.Namespace()) == 0
     said = capsys.readouterr().out
@@ -203,6 +201,6 @@ def test_a_value_is_shown_only_when_it_is_a_name(ws, value, shown):
 
 def test_the_report_reads_the_log_it_writes(ws):
     """The report and the hook agree on the shape of a line."""
-    events(ws, {"session_id": "s1", "hook_event_name": "Stop"})
+    events(ws, bare_event("Stop"))
     assert [e["hook_event_name"] for e in ws.recent_events(1)] == ["Stop"]
     assert json.loads(ws.events_path().read_text().splitlines()[0])["session_id"] == "s1"
