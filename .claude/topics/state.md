@@ -151,7 +151,7 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   that happens when the daemon sees the `PostToolUse`, because clearing on
   the click would hide a question a missed keystroke left standing. Submit
   stays off meanwhile (`state.answered`), and the bar says to answer
-  in the terminal if the question stays: `safety.md`, "One send at a time".
+  in the terminal if the question stays: `safety-typing.md`, "One send at a time".
   - **An answered question is kept by its ask id, outside
     `state.picked`.** The picks are one for the whole page, and a flag in
     them (`state.picked.pressed`) did not survive a look at another

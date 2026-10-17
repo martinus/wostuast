@@ -455,7 +455,7 @@ was shorter than a first frame under two loaded runs at once.
 
 - **An empty send box is the send starting, not landing.** `sendTyped`
   empties `#say` in the same call as the Enter, before the POST leaves --
-  on purpose, so words typed meanwhile are not lost (topics/safety, "One
+  on purpose, so words typed meanwhile are not lost (topics/safety-typing, "One
   send at a time"). `test_the_enter_that_ends_a_composition_sends_nothing`
   waited for the empty box and then read the fake tmux's `seen`: 20 runs in
   144 red at `-n 12`, every one with `seen` empty at the assert and both

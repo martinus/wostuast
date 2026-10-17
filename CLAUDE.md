@@ -73,50 +73,52 @@ bullets beside it are the same part's other scars.
 | --- | --- |
 | a new feature, or a request that bends what the program is | **Goals and non-goals** below — a feature that needs a non-goal is left out |
 | where new code goes: a route, a view, a field the page reads, a second way to read a fact | **Principles** below, and the test that holds each one |
-| `install`, `bring_up_to_date`, `setup_checks`, `SETUP_CHECKS`, `Check`, `SetupFacts`, `START_FIRST`, `START_AFTER`, `fetch_newest`, `newest_program`, `runs_installed`, `own_version`, `unreadable`, `cmd_serve`'s start, `one_daemon`, `daemon_lock_path`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety: Claude Code's `settings.json` is the user's file, not ours |
-| `hook_source`, `HOOK_PARTS`, `HOOK_HEAD`, `hook_path`, `hook_command`, `is_hook_file`, `write_program`, `install_behind`, `hook_files_missing`, `program_files`, `GONE_VERBS`, `runs_hook_file`, `STATUS_PARTS`, `status_program_path`, `is_status_file`, `then_in` | topics/safety: the hooks run the installed copy, and the hook file is made from it |
-| `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety: our `settings.json`, written from the page; topics/sidebar for the menu |
+| `install`, `bring_up_to_date`, `setup_checks`, `SETUP_CHECKS`, `Check`, `SetupFacts`, `START_FIRST`, `START_AFTER`, `fetch_newest`, `newest_program`, `runs_installed`, `own_version`, `unreadable`, `cmd_serve`'s start, `one_daemon`, `daemon_lock_path`, `save_settings`, `write_atomic`, `remove_status_line`, `then_of`, `shell_words` | topics/safety-install: Claude Code's `settings.json` is the user's file, not ours |
+| `hook_source`, `HOOK_PARTS`, `HOOK_HEAD`, `hook_path`, `hook_command`, `is_hook_file`, `write_program`, `install_behind`, `hook_files_missing`, `program_files`, `GONE_VERBS`, `runs_hook_file`, `STATUS_PARTS`, `status_program_path`, `is_status_file`, `then_in` | topics/safety-install: the hooks run the installed copy, and the hook file is made from it |
+| `config_path`, `load_config`, `save_config`, `config_payload`, `tell_config`, `page_json`, `POST /api/settings`, `keepSetting`, `takeSettings`, `putLinkRows`, `saveLinks` | topics/safety-install: our `settings.json`, written from the page; topics/sidebar for the menu |
 | `cmd_hook`, anything on the hook path | topics/safety, first two bullets. It must never print and never block. |
 | a hook or status-line field name | topics/payloads, and `tests/fixtures/README.md` |
 | `session_json`, `cmd_wait`, `pick_session`, `wait_states`, `agent_pid`, `cmd_status`, the event log's shape, polling, a library, SQLite, the Agent SDK, stream-json, channels, an `http` hook, a hook decision, OpenTelemetry | topics/decisions |
 | `getJson`, `ask`, `post`, a fetch of the page | topics/daemon-and-page: the page asks the daemon one way |
-| `tmux_send`, `ROUTES`, `find_route`, `Serving.route`, `Serving.dispatch`, `Answer`, a `verb_` function, `SEND_MAX`, `POST_MAX`, `typing_trouble`, `prompt_landed`, `whyNoText`, `recallSent`, `tmux_jump`, `tmux_interrupt`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `sending`, `startSending`, `claim`, `typing_lock`, `CONTROL_CHARS`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing, what may reach a terminal |
+| `ROUTES`, `find_route`, `Serving.route`, `Serving.dispatch`, `Answer`, a `verb_` function, `POST_MAX`, any `POST`, `allowed`, `origin_ours`, `Serving`, `reply`, `another_user`, `socket_owner`, `asked`, `body_length`, `too_big` | topics/safety: the token, localhost, the uid of who connects, framing |
+| `tmux_send`, `SEND_MAX`, `typing_trouble`, `prompt_landed`, `whyNoText`, `recallSent`, `tmux_jump`, `tmux_interrupt`, `sending`, `startSending`, `claim`, `typing_lock`, `CONTROL_CHARS` | topics/safety-typing: what may reach a terminal, one send at a time |
 | `answer`, `fitPicks`, `ask_keys`, `shows_preview`, `preview_kind`, `tmux_keys`, `askKeys`, `previewText`, `submitAsk`, `state.picked`, `state.answered`, `forgetAnswered` | topics/state: the question bar's bullets — the keys are measured |
-| `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Session.dialog`, `cannot_type`, `whyNotTyped`, `Declined` | topics/safety: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
+| `decline`, `read_permission`, `call_answered`, `drawPermission`, `paintDecline`, `Session.permission`, `Session.dialog`, `cannot_type`, `whyNotTyped`, `Declined` | topics/safety-typing: a No is Escape, and the reason waits for proof; topics/state for `Session.permission` |
 | `approve`, `give_yes`, `wait_for_yes`, `hook_waits`, `lock_held`, `daemon_running`, `always_offered`, `allow_for`, `always_label`, `ALWAYS_MODES`, `approvals_dir`, `ALLOW`, `NOT_APPROVED`, `APPROVE_WAIT`, `ASK_SHAPE`, `submitPermission`, `permissionPick`, `Approved` | topics/safety, its first bullet: the hook says allow only for its own dialog, after the reader's Yes |
 | `plan_of`, `lastPlan`, a block of kind `plan`, `ExitPlanMode` | topics/state, the plan under `Session.permission`; topics/payloads for what the request carries |
 | the Markdown scrub (`scrub`, `KEPT`, `textFor`, `safeLinks`), `linkTickets`, `linkOne`, `nextMatch`, anything that inserts what an agent wrote | topics/safety: the page never trusts what an agent wrote |
 | `remote_url`, `config_entries`, `config_section`, `config_value`, `CONFIG_MAX`, `hide_secrets`, `clip_hidden`, `SECRET_SHAPES`, `tool_target` | topics/safety: a remote URL and a command reach the page without their secrets, and a long one costs no time |
-| `build_report`, `named`, `tool_named`, `labelled`, `exception_named`, `REPORT_KINDS`, `private_paths`, `installed_files`, `cmd_files` | topics/safety: the report holds names and counts only, and one list of the files |
+| `build_report`, `named`, `tool_named`, `labelled`, `exception_named`, `REPORT_KINDS`, `private_paths`, `installed_files`, `cmd_files` | topics/safety-install: the report holds names and counts only, and one list of the files |
 | `resume_command`, `drawResume`, `read_worktree_file`, `why_unread`, `is_listed`, `worktree_target`, `inside`, `SHOWN_AS`, the `raw` route, `askFile`, `FileText.stamp` | topics/safety: a path out of the page is input |
 | `Store`, `Session`, `_on_*`, `become`, `save_names`, `_clear_attention`, `running_tasks`, `TASK_ENDED`, `read_ask`, `place`, `home`, `link_clear`, `link_move`, `background_start`, `untasked`, `followClear`, `Session.pane`, `Session.pid`, `reads_terminal`, `looks_like_claude` | topics/state |
-| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/daemon-and-page: what a `user` record really is, and the queued `attachment` |
+| `Transcript.add`, `add_queued`, `user_block`, `read_user_text`, `isMeta`, `shell_output`, `command_output`, `putShell`, `transcript_shapes`, `SILENT_RECORDS`, `read_patch`, `putToolDiff`, `PATCH_SHOWN` | topics/transcript: what a `user` record really is, and the queued `attachment` |
 | `Tail`, `EventFollower`, `archive_log`, `archived_events_paths`, `log_handles`, `HISTORY_FOLDED`, `folded_long_ago`, `append_event`'s `stamp`, `fold`, `forget_quiet`, `reload_git` | topics/state: the log is never thrown away, and every line is folded once, in order |
-| `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/sidebar: a snooze is a mark on one wait |
-| `Marks`, `Marks.load`, `Marks.onto`, `read_json`, `read_moments`, `is_number`, a sixth kind of mark | topics/sidebar, the snooze bullet: the reader's marks are one store; `tests/test_marks.py` walks every kind |
-| `Session.unread`, `ended_at`, `seen_at`, `Store.see`, `seen_path`, `read_seen`, `setUnread`, `markSeen`, `keptUnread` | topics/sidebar: unread is a mark on a finished turn |
-| `putNewLine`, `landOnNew`, `paint`, `land`, `landTranscript`, `landFiles`, `landDiff`, `toLand`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |
+| `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/marks: a snooze is a mark on one wait |
+| `Marks`, `Marks.load`, `Marks.onto`, `read_json`, `read_moments`, `is_number`, a sixth kind of mark | topics/marks: the reader's marks are one store; `tests/test_marks.py` walks every kind |
+| `Session.unread`, `ended_at`, `seen_at`, `Store.see`, `seen_path`, `read_seen`, `setUnread`, `markSeen`, `keptUnread` | topics/marks: unread is a mark on a finished turn |
+| `putNewLine`, `landOnNew`, `paint`, `land`, `landTranscript`, `landFiles`, `landDiff`, `toLand`, `newSince`, `newDown`, `.newline` | topics/transcript: the "new" line, and where a transcript lands |
 | `search_log`, `prompt_said`, `parse_search`, `search_day`, `SEARCH_MAX`, `SEARCH_FILTERS`, `drawSearch`, `runSearch`, `drawResults`, `goToNear` | topics/decisions: search is a scan of the event log |
-| `saved_path`, `saved_entry`, `Store.save`, `SAVED_MAX`, `SAVED_PREVIEW`, `putSave`, `drawSaved`, `takeSaved`, `askSaved`, `goToTs` | topics/sidebar: a saved turn |
-| `last_answer`, `verb_last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `VIEWS`, `toggleView`, `drawUnread`, `drawFeedLink`, `viewLink`, `fitViews`, `VIEW_FITS`, `drawViewTitle`, `leaveFeed`, `putCard`, `unmarked`, `state.feed`, `infeed`, `putBoard`, `layoutCards`, `CARD_MIN` | topics/sidebar: "All unreads" |
-| `remind_at`, `Store.remind`, `reminders_path`, `REMIND_MOST`, `reminderDue`, `reminderSet`, `armReminders`, `endReminder`, `serverNow`, `openReminders`, `REMIND_IN`, `remindMoment`, `customReminder`, `REMIND_DAYS`, `dayName`, `readTime` | topics/sidebar: a reminder is the snooze's twin with a clock |
-| `Session.title`, `first_prompt`, `Marks.page_name`, `Marks.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/sidebar, the name bullet; topics/daemon-and-page for `name`; topics/safety for the typing |
+| `saved_path`, `saved_entry`, `Store.save`, `SAVED_MAX`, `SAVED_PREVIEW`, `putSave`, `drawSaved`, `takeSaved`, `askSaved`, `goToTs` | topics/marks: a saved turn |
+| `last_answer`, `verb_last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `VIEWS`, `toggleView`, `drawUnread`, `drawFeedLink`, `viewLink`, `fitViews`, `VIEW_FITS`, `drawViewTitle`, `leaveFeed`, `putCard`, `unmarked`, `state.feed`, `infeed`, `putBoard`, `layoutCards`, `CARD_MIN` | topics/marks: "All unreads" |
+| `remind_at`, `Store.remind`, `reminders_path`, `REMIND_MOST`, `reminderDue`, `reminderSet`, `armReminders`, `endReminder`, `serverNow`, `openReminders`, `REMIND_IN`, `remindMoment`, `customReminder`, `REMIND_DAYS`, `dayName`, `readTime` | topics/marks: a reminder is the snooze's twin with a clock |
+| `Session.title`, `first_prompt`, `Marks.page_name`, `Marks.over`, `Store.rename`, `clean_name`, `type_rename`, `read_name_entries`, `keepRename` | topics/marks, the store of names; topics/send-and-keys for `name`; topics/safety-typing for the typing |
 | `fillKids`, `kidsOf`, `putKid`, `topSessions`, `childIds`, `Subagent`, `note_subagent`, `end_subagents`, `SUBAGENTS_HELD`, `Store.parent_of`, `claude_from`, `started_by` | topics/sidebar: what an agent starts is a line under its row; topics/state for the hook's `started_by` |
 | `onSessions`, `askUnread`, a draw that fetches, rings or writes, the draw guard in tests/browser.py | **Principles**, 3; topics/sidebar, "The counts are about every session" |
 | `newRow`, `fillRow`, `setIcon`, `rowName`, `renameRow`, `BANDS`, `listedSessions`, `notifyAbout`, `dragWidth`, `dragHeight`, `dragEdge`, `putFold`, `paintFold`, `unfold`, `FOLDS`, `markRow`, `tileTitle`, `tileCard`, `settled`, `remote_url`, `openGrip`, `.row.chosen`, `tabTitle`, `paintIcon`, `iconPicture`, `robotPicture`, `drawLogo`, `ALERT_ICON`, `tellAbout`, `waitsFor`, `shown_prompt`, `putSettings`, `paintSettings`, `putQuick`, `QUICK`, `settingsNow`, `keepWidth`, `keepWrap`, `measureScrollbar`, `drawBell`, `putChoice` | topics/sidebar |
-| `.turn`, `.bubble`, `.turnacts`, `putCopy`, `putTurnRow`, `mapDays`, `GLIMPSE`, `putToFoot`, `putCodeCopies`, `foldedHead`, `putFoldBar`, `foldRun`, `runOf`, `fillCallSum`, `RUN_FOLDS` | topics/daemon-and-page: the transcript's shape; a run of calls is one line |
-| `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `plugin_dirs`, `enabled_plugins`, `commandKey`, `projectSessions`, `projectName`, `useTarget`, `toggleView`, `project_dirs`, `claude_dir`, `slashSpot`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/daemon-and-page: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
+| `.turn`, `.bubble`, `.turnacts`, `putCopy`, `putTurnRow`, `mapDays`, `GLIMPSE`, `putToFoot`, `putCodeCopies`, `foldedHead`, `putFoldBar`, `foldRun`, `runOf`, `fillCallSum`, `RUN_FOLDS` | topics/transcript-look: the transcript's shape; a run of calls is one line |
+| `Commands`, `command_used`, `front_matter`, `read_command`, `command_text`, `after_front`, `front_end`, `real_md`, `COMMAND_TEXT_MAX`, `drawCommands`, `useCommand`, `putCommand`, `commandOf`, `blankCommands`, `plugin_dirs`, `enabled_plugins`, `commandKey`, `projectSessions`, `projectName`, `useTarget`, `toggleView`, `project_dirs`, `claude_dir`, `slashSpot`, `followSlash`, `takeSlash`, `slashKey`, `enterTakes`, `closeSlash`, `#slash`, `sizeSay`, `.sendside` | topics/send-and-keys: completing a `/` in the send box, and its size; topics/safety for `COMMAND_SHAPE` |
 | `state.files`, `state.turns`, `state.diffs`, `savePlace`, `usePlace`, `PLACE_FIELDS`, `blank…()`, `diffKey` | topics/tab-state |
 | `git_facts_many`, `git_facts_or_failed`, `GitReader`, `worktree_doing`, `own_git_dir`, `worktree_files`, `walk_ignored`, `written_since`, `hex_dump`, `hexWide`, `onlyChanged`, `openDirs`, `dirsWithChanges`, `git_status`, `apply_git_facts`, `Files`, `fillList`, `fuzzy`, `putName`, a diff, `parse_diff`, `join_type_change`, `statusWord`, a git call, `ICONS`, a file's drawing (`fillCode`, `CODE_WHOLE`, `PAINT_MAX`, `tooDenseToPaint`) | topics/worktree-tabs; topics/state for how a file is drawn |
 | `worktree_diff`'s `of`, `base` and `held`, `DiffBuild`, `branch_log`, `one_commit`, `committed_half`, `Daemon.diffs`, `pick_base`, `list_refs`, `head_branch`, `ahead_behind`, `rank_bases`, `recallBase`, `branch_commits`, `since`, `pickDiff`, `putDiffTree`, `pairRow`, `wordDiff`, `paintDiff`, `markSpaces`, `SPACE_ARGS`, `openInFiles`, `.dtext`, `putMessage`, `putReadAs`, `stepat`, `blockSig`, `settle`, `readerAt` | topics/worktree-tabs, the Diff tab's own bullets; topics/decisions for the base |
 | `putComment`, `anchorOf`, a review comment, `putCommentList`, `putElsewhere`, `diffAnchors`, `inWorktree`, `diffLineAnchor`, `drawReviewBar`, `reviewText`, `unsent` | topics/review |
 | `row`, `blocks_json`, `session_json`, `wire_fields`, `sse`, `EVENTS`, `transcript_head`, `git_fields`, `worktree_path`, a field the page reads | **Principles**, 2, and the wire section's head comment; `tests/test_wire.py` |
 | `sessions_change`, `mergeSessions`, `takeSessions`, `sameOrNew`, `patchSession`, `redrawRows`, `dataset.sig`, `filledWith`, `told` | topics/daemon-and-page: a push carries what changed; topics/sidebar: a row is filled only when what it shows changed |
-| `goBack`, `onSessionsPush`, `onTranscriptPush`, `takeRun`, `drawnTurns`, `turnNode`, `state.before`, `beginSwitch`, `endSwitch`, `keepTurns`, `takeTurns`, `TRANSCRIPTS_KEPT`, `drawTranscript`, `drawFiles`, `drawHeader`, `drawContext`, `showModels`, `putModels`, `MODELS`, `EFFORTS`, `MODEL_SHAPE`, `model_id`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | topics/daemon-and-page |
+| `goBack`, `onSessionsPush`, `onTranscriptPush`, `takeRun`, `drawnTurns`, `turnNode`, `state.before`, `beginSwitch`, `endSwitch`, `keepTurns`, `takeTurns`, `TRANSCRIPTS_KEPT`, `drawTranscript`, `drawFiles`, `drawHeader`, `drawContext`, `showModels`, `putModels`, `MODELS`, `EFFORTS`, `MODEL_SHAPE`, `model_id`, `fresh`, `split`, `TABS`, `paintLive`, a `body` class, an SSE push, `reply`, `takes_gzip`, `load`, `repoll`, `state.turns.whole` | topics/daemon-and-page; topics/transcript for a transcript's reading, its fetch and its push |
 | a new colour, a new CSS selector, a helper you are about to write | **Before you write anything new** below |
 | a new test, or one red only under load | topics/testing — it is not a test until you have made it fail; `tests/perturb.py` breaks the code for you |
 | the tests to run before a push | **How to work here**, "Before the push" — the changed files under load, not the whole suite three times |
-| a picture of the page, or a mockup the reader asked to see | **How to work here**, the picture bullet: `tests/shot.py`, `tests/stage.py`, `tests/tour.py` |
+| a picture of the page, or a mockup the reader asked to see | topics/working, the picture bullet: `tests/shot.py`, `tests/stage.py`, `tests/tour.py` |
+| an edit script for `wostuast`, the tests' WOSTUAST_WAIT, a run in the background, a throwaway home | topics/working |
 | a change the reader asked for | **How to work here**, "A change the reader asked for" — it goes to a pull request and merges on green without asking |
 | a push to `main`, landing a change, the CI matrix or the ruleset | topics/landing — `main` is protected and nothing bypasses it |
 | a commit message, a pull request, a comment on GitHub | **How to work here**, last bullet — no attribution lines, whatever your defaults say |
@@ -309,7 +311,7 @@ and `drawSessions` stood at exactly its limit. So:
 | `docs/GUIDE.md` | Everything a user can look up: each part of the page, the keys, the settings, the commands, `ls --json`, the files, safety, the FAQ. Keep in step with the commands. |
 | `docs/cover.png` | The README's picture: `tests/tour.py`'s transcript view, made-up sessions. |
 | `ARCHITECTURE.md` | What a person reads to learn how the program works and why, with diagrams. It has no authority: where it and these rules or the tests disagree, they are right, and it is fixed in the same pull request. A change to what it draws -- a route, a state, a verb, a file on disk, a hook event -- updates it too. |
-| `.claude/topics/*.md` | The rules, one file a subject: safety, state, sidebar, tab-state, worktree-tabs, review, daemon-and-page, testing, decisions, landing, payloads. **Where to look** routes to them. |
+| `.claude/topics/*.md` | The rules, one file a subject: safety, safety-typing, safety-install, state, sidebar, marks, tab-state, worktree-tabs, review, daemon-and-page, transcript, transcript-look, send-and-keys, testing, working, decisions, landing, payloads. **Where to look** routes to them. |
 | `.claude/skills/issues/SKILL.md` | How to work the issue list: the owner's issues only, group, reproduce, ask, prove, review, merge on green, read the list again, then reflect on the session and land what is clear. Invoked as `/issues`, and by "do the issues". |
 | `.github/workflows/tests.yml` | The only CI. A pytest matrix over 3.10–3.13, four sharded browser jobs that each record what they ran of the page script, and an aggregator named `browser` that the branch rule requires: it fails on a red shard, and on a page function no shard ran (#579). No job names a test file, and none may — naming one broke the browser job the moment a file was renamed, and the shards split on a hash of the test id for that reason. |
 
@@ -347,7 +349,7 @@ This list exists because each entry was re-implemented once already.
 | the items in a list whose path matches the find box | `hits(items, pathOf)` — keeps the caller's order; `pick(names)` is the same sorted best-first |
 | walk a diff's lines with their numbers | `walkHunks(one, onHunk, onLine)` |
 | the two-column tab frame | `split(box, tab, bodyClass)` → `[list, pane, note, foot]`; the list also carries the tab's name as a class |
-| the rounds of a conversation | `rounds()`, `shownRounds()` (filtered), `glimpse(text)` |
+| the rounds of a conversation | `rounds()`, `glimpse(text)` |
 | a review comment's identity | `anchorOf(path, line)`, `lineAnchor`, `commentAt`; a line of a drawn diff, `diffLineAnchor` |
 | "3 min ago" | `ago(when)` — `40s`, `4min`, `2h 15min`, `2d 6h`; two units once the first is coarse |
 | one session's route | `apiUrl(id, what, query)` |
@@ -472,74 +474,10 @@ in a line of dots, not as an `F`. A perturbation run through it proves
 nothing. `python3 -m pytest` runs the interpreter that has Playwright; read
 the count of passed tests, and run with `-rs` when any skipped.
 
-**A report about how the page looks starts with a picture of the reader's
-case, and ends with another one.** Write the case from their screenshot — a
-few lines of `you:`, `claude:`, `think:`, `tool:` — run `tests/shot.py` with
-`--measure`, and look at the PNG before reading any code. For anything
-else -- the Files or the Review tab, the settings menu -- `tests/stage.py`
-makes the repository, the settings and the clicks, and draws the part;
-for the sidebar and the views over it, `tests/tour.py` draws every row
-state and each view at once; a
-session wrote that script from nothing each time, in a scratchpad that
-stays behind on the machine, and one lost it when the session restarted.
-**Draw a look change with text that runs to the edge, as well as a short
-case.** #526 put a saved bookmark at a turn's top right, drawn over replies
-of a few words; the cover picture of #521, real-length text, showed it
-standing on the words of a reply's first line, and #529 fixed it after the
-merge. `tests/tour.py`'s transcript is the long case, ready-made.
-**A mockup is drawn the same way**: `--eval` builds the proposal inside the
-real page, with its real CSS. **`--eval` is handed to `page.evaluate`, so it
-is one expression**: statements go in `(() => { … })()`, and a list of them
-with a `const` drew nothing and said nothing. A change to a session is undone
-by the next push (`patchSession` then a push), so a picture of a state the
-daemon does not hold keeps patching on an interval; and the bars over the
-transcript -- the question, the send box -- are drawn by `drawHeader()`,
-not `draw()`. `tour.py --hover SELECTOR` is for what only a hover shows: a
-`mouseover` sent from `--eval` drew nothing, because the tour moves the
-pointer itself. A standalone HTML file with the CSS copied by
-hand drifts from the page, and needs the browser path that `browser.py`
-already knows. **Every tool keeps to its own home, through `conftest.isolate(home)`**,
-called by each function that writes -- `stage.serve`, `shot.serve`,
-`tour.make_sessions`, `scale.measure` -- not only by its `main`: a script that called
-`stage.serve` by itself wrote the command fixtures into the real
-`~/.claude`, and the session's own skill list showed them. A new tool
-calls it too; `test_the_tools_write_nothing_outside_their_own_home`
-holds the four. It reads the checkout when it starts, so run
-it again after an edit. A spacing report
-went round three times, and three pull requests, because every fix was
-proven by a test measuring the box around each block, which said 6 px, while
-the reader looked at the text, which stood 39 px from what came next. The
-picture shows that in one look and `--measure` prints both numbers. It is
-done when the new picture looks right, not when a test is green — then pin
-it with a test that measures what the picture showed. **The picture before a change is the new tool on the old code**:
-`git worktree add --detach <dir> origin/main`, copy the new `tests/tour.py`
-(or `stage.py`) into it, and run it there. The new state the change
-draws -- children under a row, a finished session -- is in the new tool
-only, so the old tool cannot draw "before" (#422, #427). **Send the reader the
-picture, and wait for their yes, before the pull request.** `SendUserFile`
-the PNG, beside the old one, **from `pictures/` in the checkout**, kept out
-of git by `.git/info/exclude`: the app opens files in the working
-directory, and pictures sent from the scratchpad after the session
-restarted reached the reader as nothing ("I do not see any pictures").
-Put before and after in one PNG, each labelled, so one look compares
-them. The spacing fix was merged before the reader
-had looked, and came back as "I'm running the latest pushed branch, and the
-spacing is still not ok": a round of review, CI and merge for a question
-one picture answers. **While you wait, the stop hook asks for a commit and a
-push**: push the branch, which starts nothing, and open the pull request
-after the yes.
-
-**Work in one file.** While working, run the one test and the one file,
-with `WOSTUAST_WAIT=5000`: a wait for something that never comes then fails
-in five seconds rather than thirty, which is three of them a minute and a
-half in one sitting. `WOSTUAST_WAIT` is for a desk, never CI: the 15 s and
-30 s waits are what a loaded runner needs. **Not for a test that waits on the
-Review tab's poll**: it comes every five seconds, so such a test fails at
-5,000 ms and passes without it. Run those without the variable. **And
-`tests/perturb.py` sets it to 5000 when it is not set**, so a break of
-such a test is red whatever the break does, and the red proves nothing:
-run it as `WOSTUAST_WAIT=30000 python3 tests/perturb.py …`, as the proof
-of `test_an_untracked_file_picked_and_then_added_lets_go_of_the_pick` did.
+**Read topics/working before a task it covers**: a picture or a mockup of
+the page, `WOSTUAST_WAIT` and the Review tab's poll, a run in the background
+and stopping one, a throwaway home, and an edit script for `wostuast` -- so
+before almost any edit of the program.
 
 **Before the push, run what you changed under load, and let CI run the
 rest.** CI runs the whole suite on every push, sharded, and CI is the gate.
@@ -585,94 +523,6 @@ and the tests with no browser run once more before the push.
 A red CI after that is still work now, and it costs one push; the old rule
 paid seven minutes on every pull request to save it.
 
-**Edit nothing the tests read while they run in the background.** They read
-the working tree, and each of the three runs starts later than the one
-before it: an edit in between left run one on the old code and runs two and
-three on the new, and their counts said nothing about either. Write the
-rule and the pull request's text meanwhile, which no test reads; for a
-change to code, stop the run (`TaskStop`), edit, and start it again.
-
-**Run a long thing in the background, and work while it runs.** A loop of
-`until grep …; sleep` holds the turn, does nothing else, and is killed at
-the tool's time limit — eight commands ended that way in that session. `run_in_background` wakes
-you when it ends. **A `&` inside the command is not that**: nothing wakes
-you, the output lands only where you sent it, and stopping it meant
-finding its shell's number by hand, after an edit had already made its
-counts worthless. Meanwhile write the rule for this file and the pull
-request's text; while CI runs, reproduce the next issue, reading only.
-
-**Stop a process by its number, never by `pkill -f`.** The pattern is in the
-command line of the shell that runs `pkill`, so it matched that shell and
-killed it, twice in one session. Find the number in one call -- a loop over
-`/proc/*/cmdline` that prints the ones whose command line starts with what
-you ran -- and `kill` it in the next.
-
-Throwaway home, never your own, and a new one each time:
-
-```
-T=$(mktemp -d) && export HOME=$T WOSTUAST_STATE=$T/state CLAUDE_CONFIG_DIR=$T/claude WOSTUAST_CONFIG=$T/config
-```
-
-**Commit in a shell that did not export it.** git reads its identity from
-`$HOME`, so a `git commit` after the export fails with no name, and a
-chained command after the commit does not run.
-
-**Never `rm -rf $HOME` to empty it, and never chain anything before a
-removal.** The safety check refuses an `rm` of a home, and a refused
-command runs none of its parts: an edit chained in front of it did not
-happen, and the next tests ran the old code and passed. A new `mktemp -d`
-needs no removal.
-
-`WOSTUAST_STATE` and `CLAUDE_CONFIG_DIR` are test seams, not user settings. Do
-not document them as settings.
-
-**Editing one very large file.** Anchor on a unique string and assert you hit
-it exactly once; a sloppy replace in a file of this size fails silently. A small
-Python script with `assert s.count(old) == 1` before every `replace` is the
-reliable shape when making several edits at once. Three scars on that shape:
-
-- **Write its old and new text as raw strings, `r'''…'''`, when they
-  hold a backslash.** `PAGE` is a raw string, so `\\d` in the program is
-  `\\d` in the JavaScript; a plain `'''` in the edit script turned it into
-  `\d`, and the page read `NO-(d+)`.
-  **And write that script with the Write tool, not as a heredoc inside a
-  Bash command**: twice in one session a `\\` in the command reached the
-  file as `\`, raw string or not -- a test's list held `"path\;"`, an
-  invalid escape -- and only a warning said so.
-  - **The Write tool writes `\uXXXX` as the character itself.** The
-    program spells its middle dot `\u00b7`; an anchor copied from it
-    into an edit script reached the file as `·`, matched nothing, and the
-    script stopped at its `assert`. `grep -c u00b7 script.py` after writing
-    it says whether it survived; a script that must hold one builds it with
-    `chr(92) + "u00b7"`.
-- **Chain the tests after the script with `&&`.** A failed `assert` stops
-  the script before its later edits, and three runs under load then tested
-  code that had not changed. A pipe in that chain needs `set -o pipefail`:
-  the bullet under "Before the push" says why.
-- **An offset taken before a replace is wrong after it.** An edit
-  script for #548 found a function's start and end, then changed the
-  imports at the top, then cut by the offsets it held: the cut landed
-  short, and the file ended in `ield from`. Make every whole-file replace
-  last, or find the offsets again after it.
-- **A replace from one anchor to another deletes all that stands between
-  them.** A slice from `dayValue` to the next function's comment took
-  `setReminder` with it; the page still parsed, no name was defined twice,
-  and only the reminder tests, failing in a way that pointed elsewhere,
-  said so. After such an edit, compare the names defined before and after:
-  `diff <(git show HEAD:wostuast | grep -o "^\(async \)\?function [a-zA-Z]*" | sort) <(grep -o "^\(async \)\?function [a-zA-Z]*" wostuast | sort)`
-  -- every line it prints is a function gone or added.
-- **Take a debug line out with an edit, never with `git checkout <file>`**:
-  that takes every change not committed with it. Two `print`s were taken
-  out of a test file that way, and the new test written beside them went
-  too (#422); it was written a second time from memory. Commit first, or
-  edit the lines out.
-- **Grep for a name before you define it**: a second top-level `def` or
-  `function` silently replaces the first. `test_no_name_is_defined_twice`
-  holds it now; `load_settings` was written twice in one session. It runs
-  with the tests that drive no browser, so run those first: a browser run
-  spent minutes on a second `KEPT` (the scrub's, and then a new table's)
-  that this test names in seconds.
-
 **A new test is not a test until you have made it fail**, by breaking what it
 claims to guard, with `tests/perturb.py`. `.claude/topics/testing.md` says how,
 and holds the scars of tests that passed alone and went red under load: read
@@ -682,7 +532,7 @@ it before you write a browser test.
 green, without asking.** The reader typed some form of "create a PR, watch
 it and merge when green" more than thirty times in one session, ten of them
 as "yes" to being asked. Ask first only for: a design choice with two readings, anything
-in `.claude/topics/safety.md`, a file outside `wostuast` and `tests/`, a dependency, or
+in `.claude/topics/safety*.md`, a file outside `wostuast` and `tests/`, a dependency, or
 a tmux verb beyond the four. A change to how the page looks goes after the
 reader's yes on the picture (above). Then it is the issue loop's merge:
 one subject, one pull request, CI green, merge, the branch back onto
@@ -723,14 +573,21 @@ before you edit its part:
 
 | File | Holds |
 | --- | --- |
-| `safety.md` | the token, localhost, the uid of who connects, framing, what may reach a terminal, a No, paths out of the log and the page, our `settings.json` and its links, the `raw` route, the state directory, Claude Code's `settings.json`, surrogates |
+| `safety.md` | the hook's answer, the token, localhost, the uid of who connects, framing, what the page may trust of what an agent wrote, paths out of the log and the page, the `raw` route, the state directory, surrogates |
+| `safety-typing.md` | what may reach a terminal: one send at a time, the paste buffer, control characters, a No, an interrupt |
+| `safety-install.md` | install and update, the hook and status files, Claude Code's `settings.json` and ours, the daemon's lock, the report, the list of files |
 | `state.md` | amber, questions and their keys, the permission dialog, `/clear`, the log and `Tail`, `seq` and `run`, pids, how the Files tab draws a file |
 | `sidebar.md` | the groups, `settled`, alerts, the tab's title and icon, the settings menu, a row's four lines, the chosen row |
+| `marks.md` | the reader's marks (`Marks`): names, snoozes, unread, saved turns, reminders, and the views made of them |
 | `tab-state.md` | what a session keeps, and who writes the places |
 | `worktree-tabs.md` | git calls and their failures, the file tree, the Diff tab: bases, commits, the message, context, columns |
 | `review.md` | comments, their anchors, the send bar, the draft |
-| `daemon-and-page.md` | routes, the tmux verbs, the stream, what a `user` record is, the transcript's shape and gaps, the send box, the live slot, the ssh tunnel |
+| `daemon-and-page.md` | routes, polling, the stream and its pushes, the tab frame, the find box, the ssh tunnel, the context bar, the live slot |
+| `transcript.md` | what a `user` record is, how a transcript is read and followed, a link to a turn, the "new" line |
+| `transcript-look.md` | the transcript's shape and gaps, Markdown, runs of calls, folds, the map |
+| `send-and-keys.md` | the send box, a send that lands, completing a `/`, a rename, the keys |
 | `testing.md` | a test that holds under load, parallel runs, git identity in CI, proving a test by breaking the code |
+| `working.md` | a picture or mockup of the page, `WOSTUAST_WAIT`, background runs, a throwaway home, edit scripts for the large file |
 | `decisions.md` | choices with no bug behind them: recording, serving, the page, git |
 | `landing.md` | `main`'s ruleset: no bypass, no required review, the checks named one by one |
 | `payloads.md` | hook and status-line fields, and why none is guessed |
@@ -761,7 +618,7 @@ before you edit its part:
   not in the menu stays in `localStorage` and needs no file: the column
   widths a drag sets, the history's fold, a review's draft. **Two files are
   called `settings.json`**: ours, and Claude Code's, which `install`
-  touches. topics/safety's "the user's file" bullet is about Claude
+  touches. topics/safety-install's "the user's file" bullet is about Claude
   Code's.
 - **No module-level mutable state.** The daemon owns a `Store` and a `Hub`. One
   thread writes the Store; readers take `rows`, replaced whole, so no lock.

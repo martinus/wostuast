@@ -339,7 +339,7 @@ session, and it touches only `CLAUDE.md`, `.claude/` or a tool script in
 
 **Ask about the rest first**, with `AskUserQuestion`: two or three options,
 their cost, one recommended. That includes anything that bends a goal or a
-non-goal, anything in `.claude/topics/safety.md`, and a change to
+non-goal, anything in `.claude/topics/safety*.md`, and a change to
 `wostuast` itself — a bug found here is an issue, not a reflection.
 
 If nothing went wrong, say so in one line. A PR made only to have one costs
