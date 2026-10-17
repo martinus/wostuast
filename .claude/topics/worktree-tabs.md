@@ -236,8 +236,8 @@
   the row hid its second line: `head-name` names the branch. Conflicts are
   `status`'s `UNMERGED` lines. **Read only when git is read**, after an
   event that can touch the tree: a rebase begun by hand shows after the
-  agent's next one. Page tests stub git (`stub_git`), so the page's test
-  passes the real `git_facts`.
+  agent's next one. Its page test hands the real `git_facts` back in
+  (topics/testing, "Under `served`").
   `test_a_rebase_says_how_far_and_keeps_its_branch`,
   `test_a_linked_worktree_is_read_in_its_own_git_folder`,
   `test_a_worktree_git_has_not_finished_with_says_so`.
@@ -358,9 +358,8 @@
 - **The picker is built once with the pane, and refilled only when the
   commits change** (`fresh(bar, "key", …)`): a `select` whose options are
   replaced closes, and the tab polls every five seconds. Picking and the
-  column switch rebuild the diff, so both refuse, and say so, while a
-  comment box is open (`busyWriting`): a rebuild takes what is typed, and
-  a silent no-op reads as broken. **Between older and newer, "5 / 9"**
+  column switch rebuild the diff, so both wait while a comment box is open
+  (`busyWriting`; topics/review, "The diff does not rebuild"). **Between older and newer, "5 / 9"**
   (`.stepat`), oldest first, so the first commit is 1. The three are one control
   (`.choice.stepper`): two arrows with words in `title` and `aria-label`,
   the count between with no button; the reader chose it from pictures
@@ -490,11 +489,10 @@
     cut a short line's colour at its edge when scrolled;
     `minmax(100%, max-content)` never grows past the pane. A comment stays
     readable because `.onLine` is sticky and 680 px at most.
-  - **How the diff is drawn is in the settings menu** (`sidebar.md`,
-    `putSettings`): columns, tab width, long lines; the column switch
-    alone, in words, cramped the Review bar on a notebook. The bar holds
-    three buttons, columns, whitespace and the code's width, each lit while
-    on (`putQuick`) and fitting at 1366 px; they set the menu's settings.
+  - **How the diff is drawn is in the settings menu** (`putSettings`):
+    columns, tab width, long lines; the column switch alone, in words,
+    cramped the Review bar on a notebook. The bar's three buttons are
+    topics/sidebar's (`putQuick`, "Five settings are also beside the code").
   - **Whitespace is two settings, and only one asks git** (#449).
     `diff_space` "hide" is `git diff -w` (`SPACE_ARGS`), sent as
     `space=hide` on the diff *and* the whole-file route, as the lines

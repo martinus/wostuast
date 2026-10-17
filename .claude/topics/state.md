@@ -58,10 +58,11 @@ The session model, the log, and what the Files tab draws.
     `test_a_plan_is_read_as_markdown_and_the_dialog_points_at_it`.
   - **Its `key` is when the dialog came up**, so a No for one dialog is
     refused once another is up. **Its `call` comes from `Session.calls` by
-    `tool_summary`, empty when two match.** `calls` is cleared at a turn's
-    end and a new prompt: a call declined in the terminal never reports
-    back, and made the next same call two matches.
-    `test_a_request_two_open_calls_could_be_has_no_call`.
+    `tool_summary`, empty when two match**: `PermissionRequest` has no
+    `tool_use_id`, so two identical commands at one moment cannot be told
+    apart. `calls` is cleared at a turn's end and a new prompt: a call
+    declined in the terminal never reports back, and made the next same
+    call two matches. `test_a_request_two_open_calls_could_be_has_no_call`.
   - **The daemon writes a `Declined` record of its own** once the
     transcript shows the decline, and `_on_declined` ends that one dialog's
     wait: a No fires no hook. **A No in the terminal too**: each tick,
@@ -163,17 +164,15 @@ The session model, the log, and what the Files tab draws.
   layout's spaces; one code fence round the whole comes off, as in the
   dialog. `test_the_preview_stands_beside_the_options_and_follows_the_pick`.
 - **A call starting clears the attention; a call finishing clears only its
-  own.** Two tools do run at once (1 in 233 calls measured, both `Bash`),
+  own**: the dialog's call, paired by `tool_summary` (the `Session.permission`
+  item). Two tools do run at once (1 in 233 calls measured, both `Bash`),
   both `PreToolUse` before the dialog, so the other's result turned the row
   green over a blocked agent. Nothing starts while a dialog is up, so a
-  `PreToolUse` means the agent moved on: the only sign of a denial, as a No
-  fires no hook. With no
-  `tool_use_id` on `PermissionRequest`, pairing goes by `tool_summary`; two
-  identical commands at one moment cannot be told apart. **A result reuses
-  its call's summary** (`calls`, by `tool_use_id`): recomputing it, secrets
-  hidden, was a fifth of a start's fold (#430). Not lazily at the row: the
-  pairing compares summaries during the fold.
-  `test_a_result_reuses_its_calls_summary`.
+  `PreToolUse` means the agent moved on: the only sign of a denial (the
+  `Declined` item says why). **A result reuses its call's summary**
+  (`calls`, by `tool_use_id`): recomputing it, secrets hidden, was a fifth
+  of a start's fold (#430). Not lazily at the row: the pairing compares
+  summaries during the fold. `test_a_result_reuses_its_calls_summary`.
   - **A subagent's call is not the agent moving on** (`mine_alone`, in
     `_on_pre_tool` and `_on_tool_failed`): subagents fire hooks under the
     agent's session id with an `agent_id` (#422, topics/payloads), and a
@@ -303,8 +302,8 @@ The session model, the log, and what the Files tab draws.
     error but a missing folder, and `new_lines` then reads nothing, the
     live file included, until a listing works. **Every caller says what
     None means**: `archive_log` does not rotate and the hook writes into the
-    file it holds (a second `open` waits on its own `flock`: the lock is the
-    open file's); `read_events` raises, and `ls` and `doctor` say they
+    file it holds (topics/safety, "A `flock` is on an inode", says why);
+    `read_events` raises, and `ls` and `doctor` say they
     cannot read the log. The hook's deadline `TimeoutError` is an `OSError`
     but no failed listing: it goes on out.
     `test_a_listing_that_fails_reads_nothing_until_it_works`,

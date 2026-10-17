@@ -47,7 +47,6 @@ The hook's answer, who may ask the daemon, what the page may trust, what a path 
     the reader asked, except where no reason can be typed, or that No could
     never be given. Submit stands at the
     foot's right, on the question bar too.
-    `test_a_reason_half_written_survives_a_look_at_another_tab`.
 - **The hook must never block Claude Code.** try/except around everything,
   a `give_up_after` deadline over every wait (a stdin that never closes
   too), always exit 0: keep all three. **Arm `LOG_TIMEOUT` again over the
@@ -112,10 +111,38 @@ The hook's answer, who may ask the daemon, what the page may trust, what a path 
   `Origin: http://[::1` or a byte above 0x7f in the token killed the thread
   before the `try`, a traceback into `wostuast`'s terminal, unauthenticated. Checks refuse what they cannot read; `guarded()` wraps
   the whole request.
-- **A POST that may not act is refused before its body is read**
-  (`Serving.route`: `ours`, `allowed`, then `asked`): `POST_MAX` is
-  megabytes and any site can POST. The connection then closes.
-  `test_a_post_that_may_not_act_is_refused_before_its_body_is_read`.
+- **`Serving.route` runs one order of checks for every request, in one
+  place** (#545): `ours`, `allowed`, then `asked`, and every route is
+  found by `find_route` (in `ROUTES`, `GET_VERBS`, `POST_VERBS`) after
+  those and before the size check: a route with its own size check is one
+  a new route forgets. **A POST that may not act is refused before its
+  body is read**: `POST_MAX` is megabytes and any site can POST. The
+  connection then closes (the next bullet says why).
+  `test_a_post_that_may_not_act_is_refused_before_its_body_is_read`;
+  `test_every_route_refuses_what_it_must` walks the three tables: foreign
+  Host, no token, too large.
+  - **An empty body and a refused body are different answers.** `asked()`
+    never reads a body over `POST_MAX`, so routes saw `{}`. **Every route
+    that reads `{}` as an answer checks it**: `send` said "nothing to
+    send", `name` cleared the name (#235), `answer` said the question no
+    longer waited (#254). `too_big` marks it, cleared at the top of
+    `asked()`, as one keep-alive handler serves a whole connection.
+    **`Serving.route` refuses `too_big`, and `unread` (a body whose end is
+    not known, below), before any verb runs**, with the noun each
+    `POST_VERBS` entry carries (#287), so no new verb can forget. The
+    rename box's `maxLength` is `NAME_MAX` too
+    (`test_a_row_is_renamed_where_it_stands`).
+    `test_a_name_too_large_to_read_keeps_the_name_there_was`,
+    `test_an_answer_too_large_to_read_says_that`,
+    `test_a_body_that_is_not_read_is_not_taken_for_an_empty_one`.
+  - **A verb is a function `verb_<name>`, never a handler method**:
+    `http.server` sets `command`, `path`, `headers`, `request` per request,
+    and `self.command` hid `Serving.command`.
+    `test_no_verb_is_an_attribute_of_the_handler`. **A verb returns
+    `(code, payload)`, and `dispatch` sends it with the session's `id`**:
+    only `refuse` added it, and one refusal went round. `raw` and `diff`
+    send bytes and reply themselves.
+    `test_every_verb_says_whose_answer_it_is`.
 - **A body not read stays in the socket, so the connection closes.**
   Kept alive, the rest of a body `asked()` refused over `POST_MAX` was
   served as the next request: a `GET` inside it. A socket timeout ends a `Content-Length`

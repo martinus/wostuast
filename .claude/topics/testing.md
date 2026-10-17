@@ -353,29 +353,21 @@ session switch in between saved the top.
 `test_open_page_returns_once_the_transcript_has_answered` slows the answer
 three seconds (one was shorter than a first frame under two loaded runs).
 
-- **An empty send box is the send starting, not landing**: `sendTyped`
-  empties `#say` with the Enter, before the POST, so words typed meanwhile
-  survive (topics/safety-typing, "One send at a time").
-  `test_the_enter_that_ends_a_composition_sends_nothing` read the fake
-  tmux's `seen` after the empty box, before the `send-keys` came (holding
-  `**/send` 300 ms makes it red every time). Wait for the keys in `seen`
-  (`wait_until`), then `sending.size === 0`: the lock goes in the same turn
-  that puts a refused text back. `test_the_send_box_types_into_the_terminal`
-  waits so too. Conversely, a box still full right after a composing Enter
-  proves nothing was sent, with no sleep.
+An empty send box is the send starting, not landing: topics/send-and-keys
+says how a test of a send waits.
 
-**To hold what a key *says*, spy on `note`, not on `#live`**: the slot is
-repainted on every push and may lose a passing word, so reading it races.
-A `note` reassigned to keep every word holds both that the key is bound to
-what speaks and what it said; calling the function proves only the second.
-`spy_on_note(page)` in `tests/browser.py` keeps them in `window.__said`.
-**A refusal is not a note**: `said(answer)` writes `state.trouble`, which
-`spy_on_note` never sees; wait for `state.trouble`.
-
-**Read the live slot in the same `evaluate` that writes it**: `note()`
-borrows it and every push repaints it (one painter), so a
-`wait_for_function` for the word can wait out its timeout. JavaScript is
-single-threaded: no push lands inside one `evaluate`.
+**Never wait on the live slot: every push repaints it** (`paintLive`, one
+painter; `note()` borrows it), so a passing word may be gone before a
+`wait_for_function` sees it, and the wait runs out its timeout.
+- **To hold what a key *says*, spy on `note`, not on `#live`.** A `note`
+  reassigned to keep every word holds both that the key is bound to what
+  speaks and what it said; calling the function proves only the second.
+  `spy_on_note(page)` in `tests/browser.py` keeps them in `window.__said`.
+  **A refusal is not a note**: `said(answer)` writes `state.trouble`, which
+  `spy_on_note` never sees; wait for `state.trouble`.
+- **To read the slot itself, read it in the same `evaluate` that writes
+  it**: JavaScript is single-threaded, so no push lands inside one
+  `evaluate`.
 
 **This scar keeps coming back: recognise its shape, not its names.** A test
 reads `.turn`, `.prose`, `.who`, `state.turns.blocks` or the find box on
