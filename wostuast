@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from collections import Counter, deque
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import (TYPE_CHECKING, Any, Callable, Generator, Iterable,
                     Iterator, Sequence)
@@ -6869,10 +6869,21 @@ def status_from_payload(payload: dict[str, Any], now: float | None = None) -> St
 
 
 def write_status(session_id: str, status: Status) -> None:
-    """Overwrite the status file of a session. It holds the latest value only."""
+    """Overwrite the status file of a session. It holds the latest value only.
+
+    Key by key, the keys `read_status` reads: only the wire section turns a
+    dataclass whole into JSON (#576), so a field added to `Status` is
+    written here by choice, not by accident.
+    `test_the_status_file_keeps_every_field` fails when one is left out.
+    """
     if not session_id:
         return
-    write_atomic(status_path(session_id), json.dumps(asdict(status)), private=True)
+    write_atomic(status_path(session_id), json.dumps({
+        "ts": status.ts, "name": status.name, "model": status.model,
+        "context_pct": status.context_pct, "cost_usd": status.cost_usd,
+        "agent": status.agent, "model_id": status.model_id,
+        "effort": status.effort,
+    }), private=True)
 
 
 #: How long a name may be. Longer than `label` shows, so nothing is lost by
@@ -12158,7 +12169,7 @@ import os
 import re
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 '''
