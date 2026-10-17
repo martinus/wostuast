@@ -953,6 +953,18 @@ obvious alternative is wrong, then the symbols and the test that holds it.
   arriving block's `fresh` class on it for ever: drawing a block again is not
   the block arriving again, and
   `test_only_a_block_that_has_just_arrived_slides_in` says so.
+  - **The nodes drawn live on the pane, not in `state`** (#573):
+    `pane.nodes`, a node for each block, and `pane.heads`, the line over
+    each run of calls. They are what was drawn, and `drawTranscript`
+    wrote them into `state.turns`, which principle 3 forbids a draw.
+    **The pane says which transcript it was drawn from** (`drawnFrom`,
+    read through `drawnTurns` and `turnNode`): `choose` blanks
+    `state.turns` and keeps the pane, which holds the last session's
+    nodes until the fetch lands, and a push in that gap is patched at
+    once. `patchTranscript` draws the whole tab again for a pane drawn
+    from other turns; when `blankTurns` held the nodes, blanking them did
+    this without saying so.
+    `test_a_push_after_a_switch_patches_no_node_of_the_last_session`.
 - **`state.turns.down` is read before the pane is emptied.**
   `replaceChildren` puts the scrollbar back to nought and the scroll listener
   would write that down as the place the reader was. The listener is attached
