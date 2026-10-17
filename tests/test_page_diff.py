@@ -1072,6 +1072,25 @@ def test_an_untracked_file_is_read_again_when_its_session_comes_back(
         page.wait_for_selector(".dfile .dtext:text-is('# Notes')")
 
 
+def test_an_untracked_file_picked_and_then_added_lets_go_of_the_pick(repo_page):
+    """A file the agent adds is no longer untracked, and the pick goes with
+    it. `drawDiff` let it go, a write in a draw that the draw guard would
+    have named had a test come this way (#542): `loadDiff` does it now,
+    where the answer is taken. Not under `WOSTUAST_WAIT`: the change
+    arrives with the tab's poll, every five seconds."""
+    repo, _ = repo_page
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.click(".filelist button:has-text('NOTES.md')")
+        page.wait_for_selector(".dfile .dtext:text-is('# Notes')")
+        assert page.evaluate("state.diffs.loose") == "NOTES.md"
+        conftest.git_in(repo, "add", "NOTES.md")
+        page.wait_for_function("state.diffs.loose === null")
+        page.wait_for_selector(".dfile:has(.path:text-is('NOTES.md'))"
+                               ":not(:has(.what:text-is('untracked')))")
+        assert untracked_block(page).count() == 0
+
+
 def test_an_untracked_file_that_could_not_be_read_says_so(repo_page):
     """A failed fetch was drawn as "This file is empty.", and it was kept:
     the failure stayed on screen as the file's content."""
