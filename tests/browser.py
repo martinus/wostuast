@@ -559,7 +559,7 @@ DRAW_GUARD = r"""(() => {
     Object.assign(window.Notification, { permission: Real.permission,
                                          requestPermission: Real.requestPermission });
   }
-  for (const name of ["draw", "drawSessions", "drawHeader", "drawFeed"]) {
+  for (const name of ["paint", "drawSessions", "drawHeader", "drawFeed"]) {
     const real = window[name];
     window[name] = function (...args) {
       if (!depth) { top = name; before = snap(); }
@@ -583,13 +583,9 @@ DRAW_GUARD = r"""(() => {
 #: only get shorter (CLAUDE.md, **Principles**, the ratchet): an entry is
 #: taken off when the code it names moves out of the draw.
 DRAW_EFFECTS_ALREADY = {
-    # A one-shot mark of where to land, used up by the draw that lands there.
-    "draw: state.turns.goTo", "draw: state.turns.goToTs",
-    "draw: state.turns.goToNear", "draw: state.files.goTo",
-    "draw: state.diffs.goTo", "draw: state.turns.newLanded",
     # Timers that touch only the page: a highlight that fades, a diff
     # painted in slices.
-    "draw: setTimeout",
+    "paint: setTimeout",
 }
 
 

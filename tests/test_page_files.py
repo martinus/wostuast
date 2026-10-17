@@ -692,6 +692,23 @@ def test_a_tall_file_tree_is_drawn_to_its_foot(big_page):
         assert at["rows"] >= at["view"], at
 
 
+def test_a_row_asked_for_is_scrolled_to_once(big_page):
+    """`revealInTree` asks the list to move to a row (`state.files.goTo`),
+    and the land after the draw goes there and uses the mark up
+    (`landFiles`, #573): a draw only reads `state`. Once: a later draw
+    leaves the list where the reader took it."""
+    with opened(big_page) as page:
+        show_tab(page, "files")
+        page.wait_for_selector(".filelist.files button")
+        page.evaluate("revealInTree('f04000.txt')")
+        page.wait_for_function(
+            "document.querySelector('.filelist.files').scrollTop > 1000")
+        assert page.evaluate("state.files.goTo") is None
+        page.evaluate("document.querySelector('.filelist.files').scrollTop = 0")
+        page.evaluate("draw()")
+        assert page.evaluate("document.querySelector('.filelist.files').scrollTop") == 0
+
+
 def test_picking_a_file_opens_it_and_shows_where_it_sits(big_page):
     with opened(big_page) as page:
         show_tab(page, "files")

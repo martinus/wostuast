@@ -709,7 +709,7 @@ def test_a_reply_is_a_link_you_can_open_in_another_tab(page_at):
 
         marked = page.evaluate("""(wanted) => {
           state.turns.goTo = Number(wanted.split('/').pop());
-          drawTranscript($('content'));
+          draw();
           const one = document.querySelector('.turn.linked');
           return one && one.querySelector('.self').getAttribute('href');
         }""", wanted)
@@ -727,7 +727,7 @@ def test_a_link_to_a_block_this_session_no_longer_has_moves_nothing(page_at):
         page.wait_for_selector(".turn")
         # There is no block 900, so the draw must fall through to its
         # usual landing rather than reaching into an empty slot.
-        page.evaluate("drawTranscript($('content'))")
+        page.evaluate("draw()")
         page.wait_for_timeout(300)      # proving something did not happen
         assert not blew_up, blew_up
         assert page.locator(".turn.linked").count() == 0
@@ -3143,7 +3143,7 @@ def test_landing_on_a_folded_call_opens_its_run(page_at):
         shown = page.evaluate("""() => {
           const at = state.turns.blocks.findIndex((one) => one && one.target === 'beta.py');
           state.turns.goTo = at;
-          drawTranscript($('content'));
+          draw();
           return [state.turns.goTo, !!turnNode(at).getClientRects().length];
         }""")
         assert shown == [None, True]

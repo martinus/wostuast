@@ -95,7 +95,7 @@ bullets beside it are the same part's other scars.
 | `needsYou`, `toggleSnooze`, `Session.snoozed`, `snoozed_at`, `Store.snooze`, `snoozed_path`, `read_snoozed` | topics/sidebar: a snooze is a mark on one wait |
 | `Marks`, `Marks.load`, `Marks.onto`, `read_json`, `read_moments`, `is_number`, a sixth kind of mark | topics/sidebar, the snooze bullet: the reader's marks are one store; `tests/test_marks.py` walks every kind |
 | `Session.unread`, `ended_at`, `seen_at`, `Store.see`, `seen_path`, `read_seen`, `setUnread`, `markSeen`, `keptUnread` | topics/sidebar: unread is a mark on a finished turn |
-| `putNewLine`, `landOnNew`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |
+| `putNewLine`, `landOnNew`, `paint`, `land`, `landTranscript`, `landFiles`, `landDiff`, `toLand`, `newSince`, `newDown`, `.newline` | topics/daemon-and-page: the "new" line, and where a transcript lands |
 | `search_log`, `prompt_said`, `parse_search`, `search_day`, `SEARCH_MAX`, `SEARCH_FILTERS`, `drawSearch`, `runSearch`, `drawResults`, `goToNear` | topics/decisions: search is a scan of the event log |
 | `saved_path`, `saved_entry`, `Store.save`, `SAVED_MAX`, `SAVED_PREVIEW`, `putSave`, `drawSaved`, `takeSaved`, `askSaved`, `goToTs` | topics/sidebar: a saved turn |
 | `last_answer`, `verb_last`, `LAST_MAX`, `askLast`, `drawFeed`, `openFeed`, `closeFeed`, `VIEWS`, `toggleView`, `drawUnread`, `drawFeedLink`, `viewLink`, `fitViews`, `VIEW_FITS`, `drawViewTitle`, `leaveFeed`, `putCard`, `unmarked`, `state.feed`, `infeed`, `putBoard`, `layoutCards`, `CARD_MIN` | topics/sidebar: "All unreads" |
@@ -236,12 +236,18 @@ request, and name the principle.
 3. **A draw only reads state.** Only the code that loads data or handles
    a click changes `state`. What a change to the sessions does besides
    drawing is `onSessions`. Every browser test that opens a page with
-   `opened` checks it: `guard_draws` in `tests/browser.py` wraps `draw`,
+   `opened` checks it: `guard_draws` in `tests/browser.py` wraps `paint`,
    `drawSessions`, `drawHeader` and `drawFeed`, writes down each fetch,
    timer, alert, storage write and change to `state` they make, and fails
    on one not in `DRAW_EFFECTS_ALREADY`, a ratchet with its reasons. Every
    field of `state` is declared in its literal:
-   `test_every_field_of_the_pages_state_is_declared`.
+   `test_every_field_of_the_pages_state_is_declared`. **`draw()` is two
+   steps, `paint` and then `land`** (#573), as `Store.refresh`'s are: a
+   mark of where to go -- a link to a block, a file asked for, the "new"
+   line -- is used up once it is landed on, and that write is the land's,
+   each tab's own in `TABS` (`landTranscript`, `landFiles`, `landDiff`).
+   A build leaves where to land on the pane (`toLand`), so a land happens
+   once for each build and not on every push.
 4. **Every extension point is a table**: hook handlers (`_HANDLERS`),
    session verbs (`GET_VERBS`, `POST_VERBS`), tabs (`TABS`), views
    (`VIEWS`), routes (`ROUTES`). A test walks the table, so a new entry is
