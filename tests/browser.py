@@ -105,6 +105,7 @@ def fresh_context(scheme="dark", with_marked=True):
     context.route("**/highlight.min.js", lambda route: route.abort())
     context.route("**/fonts.googleapis.com/**", lambda route: route.fulfill(
         status=200, content_type="text/css", body=""))
+    context.add_init_script(DRAW_GUARD)
     if os.environ.get("WOSTUAST_COVERAGE"):
         cover(context, Path(os.environ["WOSTUAST_COVERAGE"]))
     return context
@@ -526,71 +527,104 @@ def open_code(page, stub, name="code.py"):
 #: `drawFeed` -- and all they call while they run counts as theirs, so a
 #: helper's name does not hide it. `state` is compared two levels down,
 #: before and after the outermost draw.
+#: The draw guard (#542, #577): an init script of every context
+#: (`fresh_context`), so the draws at load are watched as well -- the three
+#: at the end of the page script, and the first ones the stream brings. It
+#: cannot wrap the draws before the page script has defined them, and
+#: cannot wrap them after its first draw: a function declaration replaces
+#: anything an init script put under its name. Between the two, the script's
+#: first top-level `addEventListener` (`LIGHT`'s) runs with every function
+#: of the script defined, so that call installs it.
+#:
+#: It wraps `paint` and every `draw…` but `draw` itself, which is `paint`
+#: then `land`, and a land may write. The outermost one names what it saw.
+#: `state` is compared four levels deep: a plain object by its members,
+#: and an array, a `Set` or a `Map` by its members too, by identity, so an
+#: `add` into `state.turns.open` is a change.
 DRAW_GUARD = r"""(() => {
-  if (window.__drawSeen) return;
-  const seen = window.__drawSeen = new Set();
-  let depth = 0, top = "", before = null;
-  const snap = () => {
-    const out = new Map();
-    for (const [k, v] of Object.entries(state)) {
-      out.set(k, v);
-      if (v && typeof v === "object" && v.constructor === Object) {
-        for (const [j, w] of Object.entries(v)) out.set(k + "." + j, w);
-      }
+  const install = () => {
+    if (window.__drawSeen) return;
+    const seen = window.__drawSeen = new Set();
+    let depth = 0, top = "", before = null;
+    const snap = () => {
+      const out = new Map();
+      const walk = (path, value, level) => {
+        out.set(path, value);
+        if (!value || typeof value !== "object" || level > 3) return;
+        if (Array.isArray(value)) out.set(path + "[]", [...value]);
+        else if (value instanceof Set) out.set(path + "{}", [...value]);
+        else if (value instanceof Map) out.set(path + "{}", [...value].flat());
+        else if (value.constructor === Object) {
+          for (const [k, v] of Object.entries(value)) walk(path + "." + k, v, level + 1);
+        }
+      };
+      for (const [k, v] of Object.entries(state)) walk(k, v, 1);
+      return out;
+    };
+    const same = (a, b) => a === b || (Array.isArray(a) && Array.isArray(b)
+      && a.length === b.length && a.every((one, at) => one === b[at]));
+    const changes = (was, now) => [...new Set([...was.keys(), ...now.keys()])]
+      .filter((key) => !same(was.get(key), now.get(key)));
+    const note = (what) => { if (depth) seen.add(top + ": " + what); };
+    const wrap = (owner, name, what) => {
+      const real = owner[name];
+      owner[name] = function (...args) { note(what(args)); return real.apply(this, args); };
+    };
+    wrap(window, "fetch", (a) => "fetch " + String(a[0]).split("?")[0].replace(/session\/[^/]+/, "session/*"));
+    // A timer a draw sets is no effect of its own: a highlight that fades or
+    // a diff painted in slices touches only the page (#573). What its
+    // callback does to `state` when it fires is, so the callback is watched,
+    // under the name of the draw that set it.
+    for (const name of ["setTimeout", "setInterval"]) {
+      const real = window[name];
+      window[name] = function (fn, ...rest) {
+        if (!depth || typeof fn !== "function") return real.call(this, fn, ...rest);
+        const owner = top;
+        return real.call(this, function (...args) {
+          const was = snap();
+          try { return fn.apply(this, args); }
+          finally {
+            for (const key of changes(was, snap())) seen.add(owner + ": timer: state." + key);
+          }
+        }, ...rest);
+      };
     }
-    return out;
-  };
-  const note = (what) => { if (depth) seen.add(top + ": " + what); };
-  const wrap = (owner, name, what) => {
-    const real = owner[name];
-    owner[name] = function (...args) { note(what(args)); return real.apply(this, args); };
-  };
-  wrap(window, "fetch", (a) => "fetch " + String(a[0]).split("?")[0].replace(/session\/[^/]+/, "session/*"));
-  // A timer a draw sets is no effect of its own: a highlight that fades or
-  // a diff painted in slices touches only the page (#573). What its
-  // callback does to `state` when it fires is, so the callback is watched,
-  // under the name of the draw that set it.
-  const changes = (before, after) => [...new Set([...before.keys(), ...after.keys()])]
-    .filter((key) => before.get(key) !== after.get(key));
-  for (const name of ["setTimeout", "setInterval"]) {
-    const real = window[name];
-    window[name] = function (fn, ...rest) {
-      if (!depth || typeof fn !== "function") return real.call(this, fn, ...rest);
-      const owner = top;
-      return real.call(this, function (...args) {
-        const was = snap();
-        try { return fn.apply(this, args); }
+    wrap(Storage.prototype, "setItem", () => "storage");
+    wrap(Storage.prototype, "removeItem", () => "storage");
+    // A test that stubs `Notification` replaces the wrapper below, so the
+    // page's one alert, `tellAbout`, is watched as well.
+    wrap(window, "tellAbout", () => "alert");
+    if (window.Notification) {
+      const Real = window.Notification;
+      window.Notification = function (...args) { note("notification"); return new Real(...args); };
+      Object.defineProperty(window.Notification, "permission", { get: () => Real.permission });
+      window.Notification.requestPermission = (...args) => Real.requestPermission(...args);
+    }
+    const draws = Object.keys(window).filter((name) => /^(paint|draw[A-Z]\w*)$/.test(name)
+      && typeof window[name] === "function");
+    for (const name of draws) {
+      const real = window[name];
+      window[name] = function (...args) {
+        if (!depth) { top = name; before = snap(); }
+        depth += 1;
+        try { return real.apply(this, args); }
         finally {
-          for (const key of changes(was, snap())) seen.add(owner + ": timer: state." + key);
+          depth -= 1;
+          if (!depth) {
+            for (const key of changes(before, snap())) seen.add(name + ": state." + key);
+          }
         }
-      }, ...rest);
-    };
-  }
-  wrap(Storage.prototype, "setItem", () => "storage");
-  wrap(Storage.prototype, "removeItem", () => "storage");
-  // A test that stubs `Notification` replaces the wrapper below, so the
-  // page's one alert, `tellAbout`, is watched as well.
-  wrap(window, "tellAbout", () => "alert");
-  if (window.Notification) {
-    const Real = window.Notification;
-    window.Notification = function (...args) { note("notification"); return new Real(...args); };
-    Object.assign(window.Notification, { permission: Real.permission,
-                                         requestPermission: Real.requestPermission });
-  }
-  for (const name of ["paint", "drawSessions", "drawHeader", "drawFeed"]) {
-    const real = window[name];
-    window[name] = function (...args) {
-      if (!depth) { top = name; before = snap(); }
-      depth += 1;
-      try { return real.apply(this, args); }
-      finally {
-        depth -= 1;
-        if (!depth) {
-          for (const key of changes(before, snap())) seen.add(name + ": state." + key);
-        }
-      }
-    };
-  }
+      };
+    }
+  };
+  const add = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function (...args) {
+    if (typeof window.paint === "function") {
+      EventTarget.prototype.addEventListener = add;
+      install();
+    }
+    return add.apply(this, args);
+  };
 })()"""
 
 
@@ -602,11 +636,6 @@ DRAW_GUARD = r"""(() => {
 DRAW_EFFECTS_ALREADY: frozenset[str] = frozenset()
 
 
-def guard_draws(page):
-    """Wrap the page's draws to write down what they do besides drawing."""
-    page.evaluate(DRAW_GUARD)
-
-
 def check_draws(page):
     """Fail when a draw did more than draw, past `DRAW_EFFECTS_ALREADY`.
     `opened` asks it of every page; a helper that builds its own context,
@@ -616,7 +645,7 @@ def check_draws(page):
 
 
 def draw_effects(page):
-    """What the page's draws did besides drawing, since `guard_draws`."""
+    """What the page's draws did besides drawing, since the page loaded."""
     try:
         return set(page.evaluate("[...(window.__drawSeen || [])]"))
     except Exception:           # the page went away; nothing to read
@@ -638,7 +667,6 @@ def opened(where, scheme="dark", with_marked=True, wait="transcript", *,
     a test that needs the context before the page uses `own_context` and
     `load`."""
     browser, page = open_page(where, scheme, with_marked, wait)
-    guard_draws(page)
     # A session is frozen on the page, and changed only by `patchSession`
     # (#435): a write in place throws in the strict script. Any test that
     # reaches one fails here, whatever it was about -- four such writes

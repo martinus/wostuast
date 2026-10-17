@@ -236,9 +236,11 @@ request, and name the principle.
 3. **A draw only reads state.** Only the code that loads data or handles
    a click changes `state`. What a change to the sessions does besides
    drawing is `onSessions`. Every browser test that opens a page with
-   `opened` checks it: `guard_draws` in `tests/browser.py` wraps `paint`,
-   `drawSessions`, `drawHeader` and `drawFeed`, writes down each fetch,
-   alert, storage write and change to `state` they make -- and each change
+   `opened` checks it: `DRAW_GUARD` in `tests/browser.py`, an init script
+   of every context, so the draws at load count too (#577), wraps `paint`
+   and every `draw…` but `draw`, writes down each fetch, alert, storage
+   write and change to `state` they make, four levels deep and into each
+   array, `Set` and `Map` -- and each change
    to `state` a timer they set makes when it fires, since a timer that
    touches only the page is no effect (#573) -- and fails on one not in
    `DRAW_EFFECTS_ALREADY`, a ratchet that #573 emptied. Every

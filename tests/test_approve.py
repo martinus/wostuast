@@ -62,7 +62,15 @@ def asking(ws, served, monkeypatch):
     assert until(lambda: ws.hook_waits(ASK)), "the hook never took its lock"
     daemon.store.refresh()
     key = daemon.store.sessions["s1"].permission["key"]
-    return daemon, base, seen, key, hook, took
+    yield daemon, base, seen, key, hook, took
+    # A hook still waiting outlives its test by `APPROVE_WAIT`, and sleeps
+    # through the next test's patched `time.sleep`: `test_wait` counted its
+    # polls as its own steps, and failed on another test's thread (#584's
+    # CI). The test is over, so a Yes of its own ends the wait.
+    if hook.is_alive():
+        (ws.approvals_dir() / f"{ASK}.yes").write_text(ASK, encoding="utf-8")
+        hook.join(5)
+    assert not hook.is_alive(), "the hook outlived its test"
 
 
 def test_a_yes_goes_to_the_dialogs_own_hook_and_never_to_the_pane(ws, asking):

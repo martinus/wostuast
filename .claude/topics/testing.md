@@ -122,12 +122,19 @@ Keep the breaks list in the scratchpad; it is about one fix.
   - **Two edits are one break when the old code was both**: `perturb.py`
     takes one edit a break, so apply both by hand, run the test, and copy
     the file back from a copy made first. #573's picks: the draw's reset
-    alone stayed green, because `fitPicks` had already run.
-  - **The draw guard sees only what is drawn after `opened` installs
-    it.** A question there at load was drawn before the guard, so the old
-    reset in `drawAsking` passed every test that opened on a question;
-    only a question that arrives after the page is open turned it red.
-    A test of a draw's write brings the change in after `opened`.
+    alone stayed green, because `fitPicks` had already run. Put back all
+    of what the old code did not have: #577's proof of the same reset
+    stayed green with `fitPicks` gone from `onSessions`, because
+    `choose()` calls it too, and went red with both calls gone.
+  - **The draw guard is installed before the page's first draw, not
+    after `opened`** (#577). Installed after, it missed a question there
+    at load, so the old reset in `drawAsking` passed every test that
+    opened on a question. `DRAW_GUARD` is now an init script of every
+    context (`fresh_context`), and installs itself on the page script's
+    first top-level `addEventListener`: earlier, the draws are not yet
+    defined, and a function declaration replaces any wrapper an init
+    script set under its name. A function a test replaces after load is
+    still not watched.
 - **A GREEN may be code nothing needs: then delete the code, not add a
   test.** A break that took the list of gone rows out of a push stayed
   green under every test, because a row that goes always moves the order,
@@ -324,6 +331,14 @@ luck, and on `main` too, to tell whose it is.
   Its sibling `test_yes_shows_while_the_hook_waits_and_goes_to_it` started
   the hook inside the `with`, and was never red. Start a thread with a
   deadline of its own inside `opened`, never before it.
+  - **And end it with the test.** The `asking` fixture of
+    `tests/test_approve.py` left its `wait_for_yes` waiting out a 20 s
+    `APPROVE_WAIT` after two of its tests, on the same worker as the next
+    tests. `test_it_waits_for_the_state_to_come` patches `time.sleep`;
+    the old thread slept through the patch, which does not sleep, and
+    spun to twenty "steps" of the other test's wait (#584's CI, red on
+    3.10 only, by where the shards fell). The fixture's teardown now
+    writes the hook's Yes and asserts the thread is gone.
 - **In a browser test, `wait_for_watching(daemon)` comes before the first
   `daemon.tick()`.** `open_page` and `wait_for_map` prove the fetch
   answered, not that the stream listens: `showTab` fetches and *then*

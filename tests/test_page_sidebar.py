@@ -14,7 +14,6 @@ import pytest
 import conftest
 from browser import (
     check_draws,
-    guard_draws,
     hold,
     renew_stream,
     pixels,
@@ -41,11 +40,18 @@ def test_a_row_is_not_rebuilt_every_second(page_at, ws, tmp_path):
         # CI runner took longer than that to open the page: the fixture's
         # event read "1min" twice. A fresh `Stop` starts the count again
         # and leaves the session where it was, so the row stays in place.
+        stop = round(time.time(), 3)
         ws.append_event(conftest.event("Stop", sid="s1", cwd=str(tmp_path),
-                                       pane="%7", pid=1, ts=time.time()))
+                                       pane="%7", pid=1, ts=stop))
         daemon.tick()
+        # The age counts from that `Stop`: its push has landed. Waiting
+        # for any age in seconds was not that, since the fixture's own
+        # event reads in seconds too. The push then set the age back
+        # after `first` was read, and on a loaded machine "2s" before it
+        # was "2s" again 2.4 s after it (#577).
         page.wait_for_function(
-            r"/^\d+s$/.test(document.querySelector('.row .age').textContent)")
+            "t => Number(document.querySelector('.row .age').dataset.since) >= t",
+            arg=stop)
         page.evaluate("window.__row = document.querySelector('.row .line1')")
         first = page.locator(".row .age").first.inner_text()
         page.wait_for_timeout(2400)
@@ -891,7 +897,6 @@ def alerts_page(where):
         page.goto(where, wait_until="domcontentloaded")
         page.wait_for_selector(".row", timeout=15000)
         page.wait_for_function("!!window.marked", timeout=15000)
-        guard_draws(page)
         yield page
         check_draws(page)
 
