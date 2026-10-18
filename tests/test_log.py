@@ -525,9 +525,10 @@ def test_the_names_in_claude_md_are_real():
     none: it is believed. Three numbers in that file once went stale by
     40% before anybody noticed.
 
-    A name is a backticked word that reads as code: one with an
-    underscore, a capital inside it, or all capitals. It must be in the
-    program or in `tests/`."""
+    A name is a backticked call, as `fresh(box, which, key)`, or a
+    backticked word that reads as code: one with an underscore, a capital
+    inside it, or all capitals. It must be in the program or in
+    `tests/`."""
     import pathlib
     import re
 
@@ -536,9 +537,11 @@ def test_the_names_in_claude_md_are_real():
     code = (root / "wostuast").read_text(encoding="utf-8") + "".join(
         path.read_text(encoding="utf-8") for path in (root / "tests").glob("*.py"))
     words = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", doc))
-    named = sorted(word for word in words
-                   if "_" in word.strip("_") or re.search(r"[a-z][A-Z]", word)
-                   or (word.isupper() and len(word) > 3))
+    called = set(re.findall(r"`(?:\w+\.)*([A-Za-z_]\w*)\(", doc))
+    named = sorted(called | {word for word in words
+                             if "_" in word.strip("_")
+                             or re.search(r"[a-z][A-Z]", word)
+                             or (word.isupper() and len(word) > 3)})
     assert len(named) > 50, "the pattern stopped matching"
     missing = [one for one in named if one not in code]
     assert not missing, f"CLAUDE.md names what the code does not have: {missing}"
