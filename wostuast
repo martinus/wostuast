@@ -5787,7 +5787,7 @@ def why_unread(
     return "that file could not be read"
 
 
-# --- diffs: parse_diff, the bases, commits, and the Review tab's diff [topics/git, topics/diff-tab]
+# --- diffs: a diff's shapes (DiffReport, Commit) and parse_diff [topics/git, topics/diff-tab]
 
 
 #: A diff longer than this is cut. No page can show more, and parsing the rest
@@ -13816,7 +13816,7 @@ body.dragging.rowdrag { cursor: row-resize; }
 }
 .row .remindmenu button.remindset:hover { color: var(--needs); }
 
-/* --- the views: Unread, Saved and Search [topics/marks] */
+/* --- the views over every session: their links, title and cards; the Commands body is under the tab bodies [topics/marks] */
 
 /* The three views over the groups -- unread (issue 376), saved (377) and
    search (379) -- in one row of equal buttons (issue 391), each always
@@ -16808,7 +16808,7 @@ function markSeen() {
   setUnread(s.id, false);
 }
 
-// --- the views: Unread, Saved and Search, over every session (VIEWS) [topics/marks]
+// --- the views over every session: VIEWS, and Unread, Saved and Search; Commands has its own section [topics/marks]
 
 // The last answer of every unread session, one under the other, newest
 // first: coming back from a break is one scroll, not a click a session.
