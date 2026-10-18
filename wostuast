@@ -26,15 +26,18 @@ from typing import (TYPE_CHECKING, Any, Callable, Generator, Iterable,
 if TYPE_CHECKING:  # only the annotations need these; the hot paths must not pay
     import argparse
 
-# --- constants: paths, hook names, limits -----------------------------------
+# --- constants: names and limits that several parts read; a part's own stand with it
+
 
 RAW_URL = "https://raw.githubusercontent.com/martinus/wostuast/main/wostuast"
+
 #: The last commit on main that changed the program, which `install` asks
 #: for, and the program as that commit left it (#345). Raw `main` is cached
 #: for five minutes, so the bytes are fetched at the commit's SHA: they and
 #: the commit's date are then of one commit.
 COMMITS_URL = ("https://api.github.com/repos/martinus/wostuast/commits"
                "?sha=main&path=wostuast&per_page=1")
+
 RAW_AT = "https://raw.githubusercontent.com/martinus/wostuast/{}/wostuast"
 
 #: The hook events wostuast records. Claude Code sends one JSON object per event.
@@ -78,31 +81,6 @@ HOOK_TIMEOUT = 5
 #: a filesystem that is not answering.
 LOG_TIMEOUT = 1
 
-#: How long a `PermissionRequest` hook waits for a Yes from the page, in
-#: seconds. It holds no terminal while it waits: measured on 2.1.286 and
-#: 2.1.292, the dialog is on screen as without the hook, and an answer in the
-#: terminal stops the hook at once. Measured on 2.1.292, a hook with no
-#: `timeout` of its own was still waited for at 90 s; if Claude Code stops
-#: it sooner, its lock goes with it and the page's Yes goes away.
-APPROVE_WAIT = 590
-
-#: How often a waiting hook looks for the page's Yes, in seconds.
-APPROVE_POLL = 0.2
-
-#: Dialogs the page never says Yes to: a question has its own answers
-#: (`answer`), and a plan is approved in the terminal, where its options are.
-NOT_APPROVED = frozenset({"AskUserQuestion", "ExitPlanMode"})
-
-#: The one thing the hook ever prints: Claude Code's "allow" for the
-#: dialog the hook was called for, read off 2.1.292's own schema.
-ALLOW = ('{"hookSpecificOutput": {"hookEventName": "PermissionRequest",'
-         ' "decision": {"behavior": "allow"}}}\n')
-
-#: The modes a suggestion may switch to from the page. Measured on 2.1.292,
-#: Claude Code suggests `acceptEdits` for a file and nothing else; a mode
-#: that turns every prompt off is not offered from here.
-ALWAYS_MODES = frozenset({"acceptEdits"})
-
 #: A directory's git facts are read again when an event asks for it, but never
 #: more often than this. git status on a large worktree is not cheap.
 GIT_MIN_INTERVAL = 10.0
@@ -116,6 +94,7 @@ COUNTED_TOOLS = frozenset({"Edit", "MultiEdit", "NotebookEdit"})
 #: Tools whose change the transcript shows under the call, from the patch
 #: Claude Code writes beside the result (`read_patch`).
 PATCHED_TOOLS = frozenset({"Edit", "MultiEdit", "Write"})
+
 #: How many lines of one such change the page is sent. A Write over a file
 #: sends a patch over all of it, and five hundred lines under one tool call
 #: is the Diff tab's job; the rest is counted, and the page says so.
@@ -131,36 +110,8 @@ PROMPT_WIDTH = 500
 #: never be offered to the network. .claude/topics/safety.md: "The daemon answers on
 #: localhost only".
 BIND_HOST = "127.0.0.1"
+
 DEFAULT_PORT = 7331
-
-#: Where Linux lists every TCP socket with the user that owns it. The daemon
-#: reads the line of the other end of each connection and answers only its
-#: own user: 127.0.0.1 is open to every account on the machine.
-#: `/proc/net/tcp6` is there because a client on an IPv6 socket reaches
-#: 127.0.0.1 as `::ffff:127.0.0.1`. .claude/topics/safety.md: "The daemon
-#: answers on localhost only, and only to its own user".
-TCP_TABLES = ("/proc/net/tcp", "/proc/net/tcp6")
-
-#: How many times a connection's owner is looked for before the connection
-#: is refused. The kernel writes the table a page at a time and resumes by
-#: position, so a table that changes during the read can skip a line.
-PEER_READS = 3
-
-#: The inode column of a socket that no process holds, in `TCP_TABLES`. The
-#: kernel writes uid 0 on such a line, so it is never the answer: a
-#: connection in `TIME_WAIT`, and a client that closed its end after it sent
-#: a request (#254). Measured as `nobody` on 6.18: connect, send and close
-#: leave `05 uid 0 inode 0`; open, `01 uid 65534`; a client that only shut
-#: down its write half, `05 uid 65534` and its inode. So not "state `01`
-#: only": that refused a client of our own that can still read the answer.
-NO_INODE = "0"
-
-#: The one user let in besides the daemon's own. In WSL2's default NAT mode
-#: a Windows browser reaches 127.0.0.1 in the Linux VM through a relay that
-#: runs as root inside the VM, and other root forwarders do the same. Root
-#: gains nothing by it: it can read the token, the state files and every
-#: transcript already, and it can attach to the daemon itself.
-ROOT_UID = 0
 
 #: How often the daemon looks for new events.
 TICK = 1.0
@@ -203,7 +154,9 @@ SUBAGENTS_HELD = 12
 
 #: The tool that starts a subagent: `Agent` on 2.1.289, `Task` before it.
 AGENT_TOOLS = frozenset({"Agent", "Task"})
+
 LOG_MAX_BYTES = 5 * 1024 * 1024
+
 #: How long a session that says nothing stays in the list, under "history":
 #: a month, as far back as a start folds the log (`HISTORY_FOLDED`). It was
 #: a week, and the reader's history shrank under the turns they had saved,
@@ -225,6 +178,7 @@ HISTORY_FOLDED = 30 * 24 * 3600
 #: sessions `SESSION_MAX_AGE` quiet. An hour of history is a few hundred
 #: events, and a look is one pass over a week of sessions.
 FORGET_EVERY = 3600.0
+
 RUN_TIMEOUT = 2.0
 
 #: Every state, in the order the sidebar shows them: the word and the colour.
@@ -262,9 +216,13 @@ GONE_STATES = frozenset({"ended", "dead"})
 #: list as though it were still running, for a week. Long enough that an agent
 #: left waiting overnight is not buried; that one has a pid, and is checked.
 QUIET_MAX = 12 * 3600
+
 #: How far apart the two events of one `/clear` may be folded. Measured a
 #: tenth of a second; the slack is for a loaded machine.
 CLEAR_GAP = 5.0
+
+
+# --- state directory: where wostuast keeps its files, written whole [topics/safety, topics/safety-install]
 
 
 def state_dir() -> Path:
@@ -394,122 +352,6 @@ def approvals_dir() -> Path:
     return state_dir() / "approvals"
 
 
-def lock_held(path: Path) -> bool:
-    """Whether another process holds a `flock` on this file. Only a lock
-    that refuses ours says yes: no file, or a file system with no locks,
-    says no, as in `one_daemon`."""
-    try:
-        held = os.open(path, os.O_RDONLY)
-    except OSError:
-        return False
-    try:
-        fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return True
-    except OSError:
-        return False
-    finally:
-        os.close(held)
-    return False
-
-
-def daemon_running() -> bool:
-    """Whether a daemon holds its lock (`one_daemon`): only then can a Yes
-    come, so only then does a `PermissionRequest` hook wait for one."""
-    return lock_held(daemon_lock_path())
-
-
-def always_offered(suggestions: Any) -> list[tuple[int, dict[str, Any]]]:
-    """The "Yes, and ..." choices the page may offer for a dialog: each of
-    Claude Code's own `permission_suggestions`, by its place in the list,
-    that allows something -- a rule, a folder, `acceptEdits`.
-
-    Measured on 2.1.292: a command suggests `addRules` (`Bash(npm test *)`,
-    kept in the project's `.claude/settings.local.json`), a fetch a domain
-    rule, a file `setMode acceptEdits`, and `rm -rf build` a folder and the
-    mode. An allow that carries one of them as `updatedPermissions` does
-    what the CLI's option does (`tests/fixtures/README.md`). Only these are
-    offered: the page never makes a rule of its own, and never one that
-    asks, denies, removes or replaces.
-    """
-    if not isinstance(suggestions, list):
-        return []
-    out = []
-    for at, one in enumerate(suggestions):
-        if not isinstance(one, dict):
-            continue
-        kind = one.get("type")
-        rules = one.get("rules")
-        if kind == "addRules" and one.get("behavior") == "allow" and isinstance(rules, list) \
-                and rules and all(isinstance(rule, dict) and rule.get("toolName")
-                                  for rule in rules):
-            out.append((at, one))
-        elif kind == "addDirectories" and isinstance(one.get("directories"), list) \
-                and one["directories"]:
-            out.append((at, one))
-        elif kind == "setMode" and one.get("mode") in ALWAYS_MODES:
-            out.append((at, one))
-    return out
-
-
-def allow_for(record: dict[str, Any], said: str) -> str:
-    """The allow to print for the Yes the page wrote: once, or with the one
-    suggestion it chose, taken from this hook's own payload -- never from
-    the page. A choice this dialog was not offered gets no answer at all:
-    the reader asked for something else than a plain Yes."""
-    pick = said.partition(":")[2]
-    if not pick:
-        return ALLOW
-    chosen = dict(always_offered(record.get("permission_suggestions"))).get(int(pick))
-    if chosen is None:
-        return ""
-    return json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PermissionRequest",
-        "decision": {"behavior": "allow", "updatedPermissions": [chosen]}}}) + "\n"
-
-
-def wait_for_yes(ask: str) -> str:
-    """Wait for the page's Yes to this one dialog: what it said, or "".
-    `<ask>` is a Yes once; `<ask>:<n>` a Yes with the n-th suggestion
-    (`allow_for`).
-
-    **The Yes is bound to the dialog by the hook itself.** Claude Code calls
-    this hook for one dialog and takes its answer for that dialog only, so
-    the Yes cannot land on another: keys typed into the pane could, which is
-    why the page never types one. `ask` is a nonce the hook made and wrote
-    into its own line of the log; the daemon writes `<ask>.yes` holding it,
-    and nothing else here says allow.
-
-    The lock on `<ask>.wait` says the hook still waits. It is taken on a
-    name of its own and then renamed, so the daemon never sees the file
-    unlocked and takes it for one left behind. Claude Code stops the hook
-    when the terminal answers first, and the lock goes with the process.
-    """
-    folder = approvals_dir()
-    private_dir(folder)
-    waiting, yes = folder / f"{ask}.wait", folder / f"{ask}.yes"
-    taking = folder / f"{ask}.take"
-    held = os.open(taking, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        fcntl.flock(held, fcntl.LOCK_EX)
-        os.rename(taking, waiting)
-        deadline = time.monotonic() + APPROVE_WAIT
-        while time.monotonic() < deadline:
-            try:
-                said = yes.read_text(encoding="utf-8")
-            except OSError:
-                said = ""
-            head, colon, pick = said.partition(":")
-            if head == ask and (not colon or pick.isdigit()):
-                return said
-            time.sleep(APPROVE_POLL)
-        return ""
-    finally:
-        for one in (yes, waiting, taking):
-            one.unlink(missing_ok=True)
-        os.close(held)
-
-
 def names_path() -> Path:
     """The names the reader gave sessions, all of them in one file.
 
@@ -631,22 +473,6 @@ def status_command(target: Path) -> str:
     return shlex.quote(str(target))
 
 
-# --- log: a plain text log, so a broken hook leaves a trace ------------------
-
-
-def log(message: str) -> None:
-    """Append one line to the log file. Never raise."""
-    try:
-        path = log_path()
-        private_dir(path.parent)
-        rotate(path, LOG_MAX_BYTES, path.with_name(path.name + ".1"))
-        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        with open_private(path) as handle:
-            handle.write(f"{stamp} {message}\n")
-    except Exception:
-        pass
-
-
 def write_atomic(path: Path, text: str, private: bool = False,
                  mode: int | None = None, sync: bool = False) -> None:
     """Write the whole file or none of it, so a reader never sees half a file.
@@ -716,6 +542,167 @@ def write_atomic(path: Path, text: str, private: bool = False,
             pass
 
 
+# --- the hook's Yes: it waits for the reader's click, and allows its own dialog only [topics/safety]
+
+
+#: How long a `PermissionRequest` hook waits for a Yes from the page, in
+#: seconds. It holds no terminal while it waits: measured on 2.1.286 and
+#: 2.1.292, the dialog is on screen as without the hook, and an answer in the
+#: terminal stops the hook at once. Measured on 2.1.292, a hook with no
+#: `timeout` of its own was still waited for at 90 s; if Claude Code stops
+#: it sooner, its lock goes with it and the page's Yes goes away.
+APPROVE_WAIT = 590
+
+#: How often a waiting hook looks for the page's Yes, in seconds.
+APPROVE_POLL = 0.2
+
+#: Dialogs the page never says Yes to: a question has its own answers
+#: (`answer`), and a plan is approved in the terminal, where its options are.
+NOT_APPROVED = frozenset({"AskUserQuestion", "ExitPlanMode"})
+
+#: The one thing the hook ever prints: Claude Code's "allow" for the
+#: dialog the hook was called for, read off 2.1.292's own schema.
+ALLOW = ('{"hookSpecificOutput": {"hookEventName": "PermissionRequest",'
+         ' "decision": {"behavior": "allow"}}}\n')
+
+#: The modes a suggestion may switch to from the page. Measured on 2.1.292,
+#: Claude Code suggests `acceptEdits` for a file and nothing else; a mode
+#: that turns every prompt off is not offered from here.
+ALWAYS_MODES = frozenset({"acceptEdits"})
+
+
+def lock_held(path: Path) -> bool:
+    """Whether another process holds a `flock` on this file. Only a lock
+    that refuses ours says yes: no file, or a file system with no locks,
+    says no, as in `one_daemon`."""
+    try:
+        held = os.open(path, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(held)
+    return False
+
+
+def daemon_running() -> bool:
+    """Whether a daemon holds its lock (`one_daemon`): only then can a Yes
+    come, so only then does a `PermissionRequest` hook wait for one."""
+    return lock_held(daemon_lock_path())
+
+
+def always_offered(suggestions: Any) -> list[tuple[int, dict[str, Any]]]:
+    """The "Yes, and ..." choices the page may offer for a dialog: each of
+    Claude Code's own `permission_suggestions`, by its place in the list,
+    that allows something -- a rule, a folder, `acceptEdits`.
+
+    Measured on 2.1.292: a command suggests `addRules` (`Bash(npm test *)`,
+    kept in the project's `.claude/settings.local.json`), a fetch a domain
+    rule, a file `setMode acceptEdits`, and `rm -rf build` a folder and the
+    mode. An allow that carries one of them as `updatedPermissions` does
+    what the CLI's option does (`tests/fixtures/README.md`). Only these are
+    offered: the page never makes a rule of its own, and never one that
+    asks, denies, removes or replaces.
+    """
+    if not isinstance(suggestions, list):
+        return []
+    out = []
+    for at, one in enumerate(suggestions):
+        if not isinstance(one, dict):
+            continue
+        kind = one.get("type")
+        rules = one.get("rules")
+        if kind == "addRules" and one.get("behavior") == "allow" and isinstance(rules, list) \
+                and rules and all(isinstance(rule, dict) and rule.get("toolName")
+                                  for rule in rules):
+            out.append((at, one))
+        elif kind == "addDirectories" and isinstance(one.get("directories"), list) \
+                and one["directories"]:
+            out.append((at, one))
+        elif kind == "setMode" and one.get("mode") in ALWAYS_MODES:
+            out.append((at, one))
+    return out
+
+
+def allow_for(record: dict[str, Any], said: str) -> str:
+    """The allow to print for the Yes the page wrote: once, or with the one
+    suggestion it chose, taken from this hook's own payload -- never from
+    the page. A choice this dialog was not offered gets no answer at all:
+    the reader asked for something else than a plain Yes."""
+    pick = said.partition(":")[2]
+    if not pick:
+        return ALLOW
+    chosen = dict(always_offered(record.get("permission_suggestions"))).get(int(pick))
+    if chosen is None:
+        return ""
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PermissionRequest",
+        "decision": {"behavior": "allow", "updatedPermissions": [chosen]}}}) + "\n"
+
+
+def wait_for_yes(ask: str) -> str:
+    """Wait for the page's Yes to this one dialog: what it said, or "".
+    `<ask>` is a Yes once; `<ask>:<n>` a Yes with the n-th suggestion
+    (`allow_for`).
+
+    **The Yes is bound to the dialog by the hook itself.** Claude Code calls
+    this hook for one dialog and takes its answer for that dialog only, so
+    the Yes cannot land on another: keys typed into the pane could, which is
+    why the page never types one. `ask` is a nonce the hook made and wrote
+    into its own line of the log; the daemon writes `<ask>.yes` holding it,
+    and nothing else here says allow.
+
+    The lock on `<ask>.wait` says the hook still waits. It is taken on a
+    name of its own and then renamed, so the daemon never sees the file
+    unlocked and takes it for one left behind. Claude Code stops the hook
+    when the terminal answers first, and the lock goes with the process.
+    """
+    folder = approvals_dir()
+    private_dir(folder)
+    waiting, yes = folder / f"{ask}.wait", folder / f"{ask}.yes"
+    taking = folder / f"{ask}.take"
+    held = os.open(taking, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        os.rename(taking, waiting)
+        deadline = time.monotonic() + APPROVE_WAIT
+        while time.monotonic() < deadline:
+            try:
+                said = yes.read_text(encoding="utf-8")
+            except OSError:
+                said = ""
+            head, colon, pick = said.partition(":")
+            if head == ask and (not colon or pick.isdigit()):
+                return said
+            time.sleep(APPROVE_POLL)
+        return ""
+    finally:
+        for one in (yes, waiting, taking):
+            one.unlink(missing_ok=True)
+        os.close(held)
+
+
+# --- text log: wostuast's own log, so a broken hook leaves a trace [topics/safety]
+
+
+def log(message: str) -> None:
+    """Append one line to the log file. Never raise."""
+    try:
+        path = log_path()
+        private_dir(path.parent)
+        rotate(path, LOG_MAX_BYTES, path.with_name(path.name + ".1"))
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open_private(path) as handle:
+            handle.write(f"{stamp} {message}\n")
+    except Exception:
+        pass
+
+
 def rotate(path: Path, limit: int, backup: Path) -> None:
     """Move the file aside when it grows past the limit. Never raise."""
     try:
@@ -725,7 +712,7 @@ def rotate(path: Path, limit: int, backup: Path) -> None:
         pass
 
 
-# --- event log: append only, one JSON object per line ------------------------
+# --- event log: append only, one JSON object per line, never thrown away [topics/log]
 
 
 def still_the_file(handle: Any, target: Path) -> bool:
@@ -946,7 +933,7 @@ def json_objects(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
             yield record
 
 
-# --- following files: read what is new, keep a half-written last line --------
+# --- following files: Tail and EventFollower read what is new, in order [topics/log]
 
 
 @dataclass
@@ -1239,7 +1226,7 @@ class EventFollower:
         return count, size
 
 
-# --- session model: the state machine of section 4.3 -------------------------
+# --- session model: the dataclasses a session is made of, and a payload's numbers [topics/state]
 
 
 @dataclass
@@ -1554,6 +1541,37 @@ class Session:
         return self.state_since or self.last_ts
 
 
+def to_float(value: Any) -> float:
+    """A number, or nought for anything that is not a finite one.
+
+    `float` takes "nan" and "inf", and `json.loads` makes them out of `NaN`
+    and `1e999`. `json.dumps` then writes `NaN` and `Infinity`, which are not
+    JSON, and the page's `JSON.parse` threw on every sessions push (#235).
+    """
+    import math
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
+def opt_float(value: Any) -> float | None:
+    """A number that may be absent. Missing stays missing, it does not become 0."""
+    return None if value is None else to_float(value)
+
+
+def to_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+# --- one-line summaries: a call, a command or a path, its secrets hidden [topics/safety]
+
+
 def path_label(cwd: str, repo: str = "") -> str:
     """`repo/dirname` for a worktree, plain `dirname` when both are the same."""
     if not cwd:
@@ -1650,20 +1668,6 @@ def clip_hidden(text: str, width: int) -> str:
     return clip(hide_secrets(text), width)
 
 
-def plan_of(tool_name: str, tool_input: Any) -> str:
-    """The plan an `ExitPlanMode` call asks to start on, or "".
-
-    The tool's own schema takes no plan: the model writes it to a file and
-    calls the tool with `{}`. Claude Code then puts the file's text in
-    `tool_input.plan`, with `planFilePath`, in the hooks and in the
-    transcript alike (measured on 2.1.288, `tests/fixtures/plan_*.jsonl`).
-    """
-    if tool_name != "ExitPlanMode" or not isinstance(tool_input, dict):
-        return ""
-    plan = tool_input.get("plan")
-    return plan if isinstance(plan, str) and plan.strip() else ""
-
-
 def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
     """What a call worked on: the path, the command, or the pattern.
 
@@ -1709,10 +1713,41 @@ def tool_target(tool_name: str, tool_input: Any, cwd: str = "") -> str:
     return clip_hidden(json.dumps(data, ensure_ascii=False, default=str), 80)
 
 
+def tool_summary(tool_name: str, tool_input: Any, cwd: str = "") -> str:
+    """One short line for a tool call: the tool, then what it worked on."""
+    return f"{tool_name or 'tool'} {tool_target(tool_name, tool_input, cwd)}".strip()
+
+
+def clip(text: str, width: int) -> str:
+    """Cut text to width and mark the cut."""
+    text = " ".join(text.split())
+    if len(text) <= width:
+        return text
+    return text[: width - 1] + "…"
+
+
+# --- questions and plans: what an agent asks, its preview, and the keys that answer it [topics/state]
+
+
+def plan_of(tool_name: str, tool_input: Any) -> str:
+    """The plan an `ExitPlanMode` call asks to start on, or "".
+
+    The tool's own schema takes no plan: the model writes it to a file and
+    calls the tool with `{}`. Claude Code then puts the file's text in
+    `tool_input.plan`, with `planFilePath`, in the hooks and in the
+    transcript alike (measured on 2.1.288, `tests/fixtures/plan_*.jsonl`).
+    """
+    if tool_name != "ExitPlanMode" or not isinstance(tool_input, dict):
+        return ""
+    plan = tool_input.get("plan")
+    return plan if isinstance(plan, str) and plan.strip() else ""
+
+
 #: The most of one question, and of one ask, that is kept. A question is
 #: written to be read on a terminal, so these are generous; the cap is here
 #: because this goes into every row, to every browser, on every push.
 ASK_TEXT_MAX = 2000
+
 ASK_MAX = 8
 
 #: Claude Code keeps a preview longer than this without looking at it, and
@@ -1893,17 +1928,7 @@ def ask_keys(ask: dict[str, Any], picks: Any) -> tuple[list[str], str]:
     return keys, ""
 
 
-def tool_summary(tool_name: str, tool_input: Any, cwd: str = "") -> str:
-    """One short line for a tool call: the tool, then what it worked on."""
-    return f"{tool_name or 'tool'} {tool_target(tool_name, tool_input, cwd)}".strip()
-
-
-def clip(text: str, width: int) -> str:
-    """Cut text to width and mark the cut."""
-    text = " ".join(text.split())
-    if len(text) <= width:
-        return text
-    return text[: width - 1] + "…"
+# --- the store: Store, the one piece of state; the fold does no I/O [topics/state, topics/marks]
 
 
 class Store:
@@ -2452,53 +2477,6 @@ def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
     return False
 
 
-def cannot_type(session: Session, no: bool = False, text: bool = False) -> str:
-    """Why nothing may be typed into this session now, or "" when it may.
-
-    The one test `answer`, `decline` and `send` make, after `in_tmux`; the
-    page's `whyNotTyped` makes the same one from the row, so a control is
-    off where this would refuse it. Each verb wrote it out for itself, and
-    a guard added to one was missing from the next (#254, #287).
-
-    A session that is over has moved its pane on to whatever runs there
-    now. A dialog that is up has its cursor on "1. Yes", so the Enter after
-    a message, or an answer's digit, would approve it; `no` is a No, which
-    is meant for that dialog.
-    """
-    if session.state in GONE_STATES:
-        return "this session is over"
-    if not no and session.dialog:
-        return "a permission dialog is open in the terminal: answer it there first"
-    # A question's dialog takes keys as the permission's does: a text that
-    # starts with a digit picks an option, and its Enter submits (#483).
-    # `text` is a send or a rename; `answer` is meant for the question.
-    if text and session.asking:
-        return "a question is open in the terminal: answer it first"
-    return ""
-
-
-def typed(text: str) -> str:
-    """What `tmux_send` would type of this text: the controls taken out.
-
-    A text with nothing else in it is nothing to send, and the routes ask
-    this rather than what arrived: a paste of controls was refused as "tmux
-    did not answer", although tmux was never asked.
-    """
-    return CONTROL_CHARS.sub("", text)
-
-
-def typing_trouble(text: str, what: str) -> str:
-    """Why this text is too long to type, or "". Bytes, because that is what
-    everything on the way counts: see `SEND_MAX`. Handed what `typed` keeps,
-    because that is what is pasted: a log full of colour codes is smaller
-    once they are out."""
-    size = len(text.encode("utf-8", "replace"))
-    if size > SEND_MAX:
-        return (f"{what} is {size} bytes, and the most that can be typed is"
-                f" {SEND_MAX}")
-    return ""
-
-
 #: How much of the last prompt the page is sent for an alert that says a
 #: session has finished: the start of what was asked, not the whole of it.
 PROMPT_SHOWN = 120
@@ -2535,6 +2513,64 @@ def model_id(session: Session) -> str:
     changes it mid-session; else the one it started with."""
     found = session.status.model_id or session.started_model
     return found if MODEL_SHAPE.fullmatch(found) else ""
+
+
+def build_sessions(
+    events: Sequence[dict[str, Any]] | Iterator[dict[str, Any]] | None = None,
+    now: float | None = None,
+    alive: Callable[[int], bool] | None = None,
+) -> list[Session]:
+    """Replay the whole log once, for a command that runs and exits.
+
+    The daemon does not use this: it keeps a Store and folds only what is new.
+    Both go through the same Store, so "which sessions are shown, and in what
+    order" is written down once.
+
+    Git facts cost a subprocess, so they are left to add_git_facts, which only
+    the commands that show them call.
+    """
+    store = Store()
+    store.fold(events if events is not None else read_events())
+    moment = now if now is not None else time.time()
+    return sort_sessions(store.settle(moment, alive))
+
+
+def sort_sessions(sessions: list[Session]) -> list[Session]:
+    """Newest first, with the ended and the dead last.
+
+    `settled` is the moment a session last became what it is, and it is the
+    right number precisely because it is not the last event: sorting a
+    working session by its last hook event would have two busy agents
+    swapping places every few seconds while you read them. It moves when a
+    turn begins, ends, or stops on a question -- which is when the row
+    changes band anyway, so the list moves once rather than twice.
+
+    This replaces sorting by worktree. That was chosen when the alternative
+    was sorting by *state*, which put every row somewhere new on every tool
+    call; a name does not move, so it did not churn. But a name is also not
+    what anyone is looking for in a list of twenty: the session you touched
+    last is, and it was somewhere in the middle under `a`.
+
+    Sorting on `label` is still wrong, for the reason it always was: the name
+    arrives from the status line a second after the session starts, and
+    `/rename` changes it later. The worktree is the tiebreaker only.
+
+    A session nobody can talk to any more still sinks to the bottom: it is
+    dimmed, it is often the larger half of a long list, and it is never what
+    you came to look at.
+    """
+    return sorted(
+        sessions,
+        key=lambda s: (
+            s.state in GONE_STATES,
+            -s.settled,
+            s.place.lower(),
+            s.session_id,
+        ),
+    )
+
+
+# --- hook handlers: one function an event, in _HANDLERS; a change of state is become [topics/state]
 
 
 def become(session: Session, state: str, since: float | None = None) -> None:
@@ -2783,6 +2819,12 @@ def _on_permission_request(session: Session, event: dict[str, Any], ts: float) -
 #: The shape of a hook's nonce (`wait_for_yes`): the daemon makes a path
 #: of it, so nothing else is taken for one.
 ASK_SHAPE = re.compile(r"[0-9a-f]{16}")
+
+#: How much of a permission request the page is sent, counted over every
+#: field of its input. A `Write` carries a whole file, and a row goes to
+#: every browser on every push; past this the page says the request is too
+#: long to show and points at the pane, where the whole of it is.
+PERMISSION_SHOWN = 8000
 
 
 def hook_waits(ask: str) -> bool:
@@ -3209,32 +3251,7 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
 }
 
 
-def to_float(value: Any) -> float:
-    """A number, or nought for anything that is not a finite one.
-
-    `float` takes "nan" and "inf", and `json.loads` makes them out of `NaN`
-    and `1e999`. `json.dumps` then writes `NaN` and `Infinity`, which are not
-    JSON, and the page's `JSON.parse` threw on every sessions push (#235).
-    """
-    import math
-
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return 0.0
-    return number if math.isfinite(number) else 0.0
-
-
-def opt_float(value: Any) -> float | None:
-    """A number that may be absent. Missing stays missing, it does not become 0."""
-    return None if value is None else to_float(value)
-
-
-def to_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
+# --- processes: which Claude Code fired a hook, its pane, and whether it lives [topics/state]
 
 
 #: What the Claude Code process is called. `claude` is the usual name; a
@@ -3460,62 +3477,7 @@ def _bury(session: Session, moment: float, why: str) -> None:
         session.end_reason = why
 
 
-def build_sessions(
-    events: Sequence[dict[str, Any]] | Iterator[dict[str, Any]] | None = None,
-    now: float | None = None,
-    alive: Callable[[int], bool] | None = None,
-) -> list[Session]:
-    """Replay the whole log once, for a command that runs and exits.
-
-    The daemon does not use this: it keeps a Store and folds only what is new.
-    Both go through the same Store, so "which sessions are shown, and in what
-    order" is written down once.
-
-    Git facts cost a subprocess, so they are left to add_git_facts, which only
-    the commands that show them call.
-    """
-    store = Store()
-    store.fold(events if events is not None else read_events())
-    moment = now if now is not None else time.time()
-    return sort_sessions(store.settle(moment, alive))
-
-
-def sort_sessions(sessions: list[Session]) -> list[Session]:
-    """Newest first, with the ended and the dead last.
-
-    `settled` is the moment a session last became what it is, and it is the
-    right number precisely because it is not the last event: sorting a
-    working session by its last hook event would have two busy agents
-    swapping places every few seconds while you read them. It moves when a
-    turn begins, ends, or stops on a question -- which is when the row
-    changes band anyway, so the list moves once rather than twice.
-
-    This replaces sorting by worktree. That was chosen when the alternative
-    was sorting by *state*, which put every row somewhere new on every tool
-    call; a name does not move, so it did not churn. But a name is also not
-    what anyone is looking for in a list of twenty: the session you touched
-    last is, and it was somewhere in the middle under `a`.
-
-    Sorting on `label` is still wrong, for the reason it always was: the name
-    arrives from the status line a second after the session starts, and
-    `/rename` changes it later. The worktree is the tiebreaker only.
-
-    A session nobody can talk to any more still sinks to the bottom: it is
-    dimmed, it is often the larger half of a long list, and it is never what
-    you came to look at.
-    """
-    return sorted(
-        sessions,
-        key=lambda s: (
-            s.state in GONE_STATES,
-            -s.settled,
-            s.place.lower(),
-            s.session_id,
-        ),
-    )
-
-
-# --- transcript: the session's own jsonl, turned into blocks -----------------
+# --- transcript: the session's own jsonl, turned into blocks [topics/transcript]
 
 
 @dataclass
@@ -3563,6 +3525,7 @@ class Block:
 MACHINE_TAG = re.compile(
     r"<(command-name|command-message|command-args|local-command-stdout"
     r"|local-command-caveat|system-reminder)>.*?</\1>", re.S)
+
 #: A command the reader ran with `!` in Claude Code. Measured on 2.1.282:
 #: two `user` records, neither `isMeta`, so both were drawn as prompts, tags
 #: and all. The first is `<bash-input>git up</bash-input>`, as typed. The
@@ -3570,8 +3533,10 @@ MACHINE_TAG = re.compile(
 #: with `<`, `>` and `&` written as HTML entities and quotes left alone --
 #: and stderr, in that run, inside stdout. `tests/fixtures/bash_mode.jsonl`.
 BASH_INPUT = re.compile(r"\s*<bash-input>(.*?)</bash-input>\s*", re.S)
+
 BASH_OUTPUT = re.compile(r"\s*<bash-stdout>(.*?)</bash-stdout>\s*"
                          r"(?:<bash-stderr>(.*?)</bash-stderr>\s*)?", re.S)
+
 #: What a slash command answered, written as the record after the command's.
 #: Measured on 2.1.283: `/model opus` answers "Set model to `Opus 5.5`...",
 #: a `/model` closed without a pick "Kept model as ...", and `/context`
@@ -3580,14 +3545,19 @@ BASH_OUTPUT = re.compile(r"\s*<bash-stdout>(.*?)</bash-stdout>\s*"
 #: `tests/fixtures/local_command.jsonl`.
 LOCAL_OUTPUT = re.compile(
     r"\s*<local-command-stdout>(.*?)</local-command-stdout>\s*", re.S)
+
 #: What a command writes for "nothing to say".
 NO_OUTPUT = "(no content)"
+
 #: Colour and cursor codes, which a terminal acts on and a page would show as
 #: `[38;5;244m`: CSI sequences, OSC sequences, and the two-byte kind.
 ESCAPE_CODES = re.compile(
     r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]")
+
 COMMAND_NAME = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
+
 COMMAND_ARGS = re.compile(r"<command-args>\s*(.*?)\s*</command-args>", re.S)
+
 TASK_NOTE = re.compile(r"^<task-notification>\s*(.*?)\s*</task-notification>$",
                        re.S)
 
@@ -3620,12 +3590,14 @@ NOTED = ("<task-notification>", "Another Claude session sent a message:")
 #: by `wostuast shapes`. What a reader wants is the summary, and the result
 #: when there is one. `tests/fixtures/notes.jsonl`.
 TASK_FIELD = re.compile(r"<(status|summary|result)>\s*(.*?)\s*</\1>", re.S)
+
 #: Another session's message: a header line in a `user` record (none in a
 #: queued one), the words inside the tag, and after it a paragraph Claude
 #: Code writes to the agent about who sent it. Only the words are news.
 AGENT_MESSAGE = re.compile(
     r"\A\s*(?:Another Claude session sent a message:\s*)?"
     r"<agent-message\b[^>]*>\s*(.*?)\s*</agent-message>", re.S)
+
 #: The same, as a hook's prompt sees it: only its start is asked for, so a
 #: message cut short, or one with the paragraph after it, is still one.
 AGENT_SENT = re.compile(
@@ -3669,6 +3641,7 @@ def strip_reminder(text: str) -> str:
 #: from 2.1.281's own source: the id is four lowercase hex digits, the same
 #: on both tags, and each tag ends its line.
 PASTE_OPEN = '<pasted_content id="'
+
 PASTE_ID = re.compile(r"[0-9a-f]{4}")
 
 
@@ -4204,7 +4177,7 @@ class Transcript:
         return self.keep(block)
 
 
-# --- git facts: what git says about the agent's directory --------------------
+# --- git facts: run, and what git says about the agent's directory [topics/git, topics/safety]
 
 
 def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT,
@@ -4362,15 +4335,20 @@ def remote_url(git_dir: str) -> str:
 #: What git counts as white space in a config file (its own `isspace`):
 #: not the vertical tab or the form feed, which C's `isspace` takes.
 CONFIG_SPACE = " \t\r\n"
+
 #: Space and comments between entries, in one step.
 CONFIG_GAP = re.compile(r"(?:[ \t\r\n]+|[#;][^\n]*)+")
+
 #: A key: a letter, then letters, digits and `-`.
 CONFIG_KEY = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
+
 #: A section's name in `[name]` or `[name "sub"]`; a `.` in it is the old
 #: `[name.sub]` form.
 CONFIG_SECTION = re.compile(r"[A-Za-z0-9.-]*")
+
 #: A run of characters with no meaning of their own inside a value.
 CONFIG_PLAIN = re.compile(r'[^\n\\"#; \t\r]+')
+
 #: What a backslash in a value may stand before. git refuses the file for
 #: any other.
 CONFIG_ESCAPES = {"n": "\n", "t": "\t", "b": "\b", "\\": "\\", '"': '"'}
@@ -4824,7 +4802,8 @@ def apply_git_facts(sessions: Sequence[Session],
             session.git = one
 
 
-# --- files and diffs: what the worktree holds --------------------------------
+# --- worktree files: the listing, a file's text, a binary's hex [topics/files-tab, topics/safety]
+
 
 #: These come first in the Files tab, in this order. They say what the work is.
 PINNED_FILES = ("PLAN.md", "CLAUDE.md", "README.md")
@@ -4928,117 +4907,6 @@ def hex_dump(raw: bytes) -> str:
         text = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in row)
         rows.append(f"{at:08x}: {pairs:<39}  {text}")
     return "\n".join(rows) + "\n" if rows else ""
-
-
-#: A diff longer than this is cut. No page can show more, and parsing the rest
-#: would cost more than it is worth.
-DIFF_MAX_BYTES = 2 * 1024 * 1024
-
-#: git diff takes longer than git status on a large repository. It runs in a
-#: request thread, never in the tick, so waiting here holds up nothing else.
-DIFF_TIMEOUT = 8.0
-
-#: What `tmux_send` takes out of anything on its way to a terminal: everything
-#: below a space except tab and newline, the delete character, and the C1
-#: block above it. C1 holds NEL (U+0085) and CSI (U+009B), controls a terminal
-#: may act on and an agent may write; U+2028 and U+2029 are line breaks that
-#: `"\n" in text` does not see, so they would have gone out unpasted. The rule
-#: is "nothing below a space reaches a terminal", and these are below one.
-#:
-#: **And every lone surrogate.** JSON can carry one, and `subprocess` hands
-#: an argument to tmux with `surrogateescape`, so the pair U+DCC2 U+DC9B
-#: left as the bytes c2 9b -- which is U+009B, CSI -- measured in a real
-#: pane. A high one made the encode fail and the send with it. No character
-#: a person typed is one. The pattern is a raw string, so the source holds
-#: the escape and `re` reads it: in a plain string it would be the character
-#: itself, which Python 3.13 will not put in a bytecode cache.
-CONTROL_CHARS = re.compile(
-    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
-
-#: The header a POST carries its token in. A cross-origin request cannot add a
-#: header of its own without asking us first, and we never say yes — so a page
-#: that has not read ours cannot even reach the code that checks it.
-TOKEN_HEADER = "X-Wostuast-Token"
-
-#: Where the token goes into the page, replaced as the page is served.
-TOKEN_MARK = "__WOSTUAST_TOKEN__"
-
-#: Where the running copy's version goes, beside the name at the top of the
-#: session list.
-VERSION_MARK = "__WOSTUAST_VERSION__"
-
-#: Where the reader's settings go into the page, so the first paint already
-#: has their colours. The marks are put in in one pass (`Serving.page`).
-SETTINGS_MARK = '"__WOSTUAST_SETTINGS__"'
-
-#: How Claude Code answers a call whose dialog was told No, as the call's
-#: result in the transcript. Measured on 2.1.282; the tool_result goes on
-#: "The tool use was rejected (eg. if it was a file edit, …)".
-REJECTED = "The user doesn't want to proceed with this tool use"
-
-#: The most a POST body may be. It holds a send of `SEND_MAX` bytes as JSON:
-#: a newline or a tab is two bytes there, and a control character six
-#: (`\u001b`), which a log with colours is full of -- `tmux_send` takes them
-#: out, but they come in the body first. Six times `SEND_MAX`, and room for
-#: the rest of the body. Only a request that passed `allowed` is read at
-#: all (`Serving.route`), so a site in the reader's browser cannot make the
-#: daemon read this much.
-POST_MAX = 8 * 1024 * 1024
-
-#: Which answers are packed with gzip: text, never a picture or a video,
-#: which are packed already. Measured on 53,000 made-up file names, 2.4 MB:
-#: level 1 took 20 ms for 548 KB, level 6 79 ms for 397 KB, level 9 242 ms
-#: for 380 KB. At 200 KiB/s the 150 KB between 1 and 6 is most of a second,
-#: and the 79 ms is paid once, on the first visit to the Files tab.
-PACKED_KINDS = ("application/json", "text/")
-PACK_LEVEL = 6
-#: Below this an answer goes as it is: the header and the packing cost more
-#: than they save.
-PACK_MIN = 1024
-
-#: The most text one `send` may type, **in bytes**. Longer is refused rather
-#: than cut: what arrives in the terminal must be what the user wrote, or
-#: nothing.
-#:
-#: tmux sets no number any more: `tmux_send` hands the text to `load-buffer`
-#: on stdin, not as an argument, and a command line was what tmux 3.4 cut
-#: off at 16,341 bytes (`send-keys -l`). So the number is what the agent
-#: takes. Measured with Claude Code 2.1.287 in tmux 3.4, against a fake
-#: Messages API that recorded each request: 17 KB, 136 KB and 1.36 MB of
-#: log lines each arrived as the one user turn, every byte, the largest in
-#: 1.2 s from the paste to the request. The cap is 1 MiB, under that: a
-#: long log is a few hundred KB, and a megabyte is some 300,000 tokens,
-#: more than most models take, so more would be refused by the API instead.
-#:
-#: Bytes and not characters, because a byte is what everything on the way
-#: counts, and a cap on `len()` lets three times as much through in Japanese.
-SEND_MAX = 1024 * 1024
-
-#: How much of a permission request the page is sent, counted over every
-#: field of its input. A `Write` carries a whole file, and a row goes to
-#: every browser on every push; past this the page says the request is too
-#: long to show and points at the pane, where the whole of it is.
-PERMISSION_SHOWN = 8000
-
-#: How long a send to an agent at its prompt waits to see the prompt in the
-#: transcript (#489), and the blocks that say something was typed. Claude
-#: Code writes the record a few milliseconds after the Enter; the rest is
-#: room for a loaded machine.
-SEND_WAIT = 5.0
-TYPED_KINDS = ("prompt", "shell", "command")
-
-#: How long a decline waits to see its dialog close, in the transcript,
-#: before it will type the reason. Measured against 2.1.282: the rejection
-#: is written a few milliseconds after the Escape.
-DECLINE_WAIT = 3.0
-
-#: How long a Yes waits for the dialog's hook to take it, in seconds. The
-#: hook looks every `APPROVE_POLL`.
-APPROVE_SEEN = 3.0
-
-#: How many untracked files the Diff tab names. git diff shows none of them,
-#: so the tab says they are there rather than leaving a hole.
-UNTRACKED_SHOWN = 50
 
 @dataclass
 class FileEntry:
@@ -5647,6 +5515,7 @@ class Files:
             for root in list(self.held):
                 if self.held[root].read_at < cutoff:
                     del self.held[root]
+
         # Only the names go. A gate is a lock and a root is a short string,
         # both bounded by how many worktrees this daemon has ever been asked
         # about, and dropping a gate a background reader still holds would
@@ -5695,6 +5564,9 @@ def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) ->
     out = runner(["git", "-C", cwd, "ls-files", "-z", "--others", "--ignored",
                   "--exclude-standard", *asked])
     return wanted in (out or "").split("\0")
+
+
+# --- reading a file: its kind, its bytes, and why it is not shown [topics/files-tab, topics/safety]
 
 
 #: What `file --mime-type` answers, and the highlighter's name for it.
@@ -5913,6 +5785,22 @@ def why_unread(
     except (OSError, RuntimeError, ValueError):
         pass
     return "that file could not be read"
+
+
+# --- diffs: parse_diff, the bases, commits, and the Review tab's diff [topics/git, topics/diff-tab]
+
+
+#: A diff longer than this is cut. No page can show more, and parsing the rest
+#: would cost more than it is worth.
+DIFF_MAX_BYTES = 2 * 1024 * 1024
+
+#: git diff takes longer than git status on a large repository. It runs in a
+#: request thread, never in the tick, so waiting here holds up nothing else.
+DIFF_TIMEOUT = 8.0
+
+#: How many untracked files the Diff tab names. git diff shows none of them,
+#: so the tab says they are there rather than leaving a hole.
+UNTRACKED_SHOWN = 50
 
 
 @dataclass
@@ -6285,6 +6173,9 @@ def name_change(one: DiffFile) -> None:
         one.status = "modified"
 
 
+# --- bases: which branch a diff is taken against [topics/git, topics/decisions]
+
+
 #: How many branches the Diff tab's base picker offers, best first.
 BASES_OFFERED = 50
 
@@ -6516,6 +6407,9 @@ def git_diff(
     return (whole + b"\n" if whole else b"").decode("utf-8", "replace"), True
 
 
+# --- commits and the build: DiffBuild, worktree_diff, a whole file [topics/diff-tab, topics/git]
+
+
 #: How many commits the Diff tab offers. A branch longer than this is read
 #: from the top: the newest work is the work being asked about.
 COMMITS_SHOWN = 100
@@ -6539,6 +6433,7 @@ COMMIT_BODY_MAX = 20_000
 #: Between the fields of one commit, and after each commit, in `git log`.
 #: Neither can be in a name or a subject a person typed.
 LOG_FIELD = "\x1f"
+
 LOG_END = "\x1e"
 
 
@@ -6900,7 +6795,7 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
     return found
 
 
-# --- status: the status line payload, which carries name and context ---------
+# --- status line: its payload, the file it keeps, and the line it prints [topics/payloads]
 
 
 def status_from_payload(payload: dict[str, Any], now: float | None = None) -> Status:
@@ -6941,11 +6836,63 @@ def write_status(session_id: str, status: Status) -> None:
     }), private=True)
 
 
-#: How long a name may be. Longer than `label` shows, so nothing is lost by
-#: being clipped on screen, and short enough that the file cannot be used as a
-#: place to keep something else. The rename box on the page has the same
-#: number as its `maxLength`; `test_a_row_is_renamed_where_it_stands` holds them.
-NAME_MAX = 120
+def read_status(session_id: str) -> Status:
+    """Read the status file of a session. A missing file gives an empty status."""
+    try:
+        payload = json.loads(status_path(session_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return Status()
+    if not isinstance(payload, dict):
+        return Status()
+    return Status(
+        ts=to_float(payload.get("ts")),
+        name=str(payload.get("name") or ""),
+        model=str(payload.get("model") or ""),
+        context_pct=opt_float(payload.get("context_pct")),
+        cost_usd=opt_float(payload.get("cost_usd")),
+        agent=str(payload.get("agent") or ""),
+        effort=str(payload.get("effort") or ""),
+        model_id=str(payload.get("model_id") or ""),
+    )
+
+
+def money(dollars: float) -> str:
+    """What a session has spent, short enough for a status line.
+
+    Cents below ten dollars, because that is where the difference between one
+    prompt and the next shows; whole dollars above it, because by then the
+    cents are noise. It is Claude Code's own estimate at list price either
+    way -- see `Status.cost_usd`.
+    """
+    return f"${dollars:.2f}" if dollars < 10 else f"${dollars:.0f}"
+
+
+def status_line(status: Status, cwd: str) -> str:
+    """The one line wostuast prints as the status line."""
+    parts = [status.name or path_label(cwd)]
+    if status.agent:
+        parts.append(status.agent)
+    if status.model:
+        parts.append(status.model)
+    if status.context_pct is not None:
+        parts.append(f"{status.context_pct:.0f}% ctx")
+    if status.cost_usd is not None:
+        parts.append(money(status.cost_usd))
+    return " · ".join(parts)
+
+
+def drop_old_status(now: float | None = None) -> None:
+    """Remove status files of sessions that are long gone."""
+    moment = now if now is not None else time.time()
+    try:
+        for entry in status_dir().glob("*.json"):
+            if moment - entry.stat().st_mtime > SESSION_MAX_AGE:
+                entry.unlink()
+    except OSError:
+        pass
+
+
+# --- our settings.json: what the settings menu sets, and the ticket links [topics/safety-install, topics/settings]
 
 
 #: A pattern longer than this is refused. It is not a safety property --
@@ -7196,6 +7143,16 @@ def save_config(change: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     return "", refused
 
 
+# --- the reader's marks: names, snoozes, unread, saved turns, reminders (Marks) [topics/marks]
+
+
+#: How long a name may be. Longer than `label` shows, so nothing is lost by
+#: being clipped on screen, and short enough that the file cannot be used as a
+#: place to keep something else. The rename box on the page has the same
+#: number as its `maxLength`; `test_a_row_is_renamed_where_it_stands` holds them.
+NAME_MAX = 120
+
+
 def clean_name(text: str) -> str:
     """A name as it is kept and typed: one line, no controls, `NAME_MAX` at
     most. It goes into a pane after `/rename`, so a newline in it would be
@@ -7345,7 +7302,9 @@ def write_snoozed(snoozes: dict[str, float]) -> None:
 #: kept with it: enough to know it again in the list, not a copy of it --
 #: the words stay in the transcript, and "open" goes there.
 SAVED_MAX = 500
+
 SAVED_PREVIEW = 300
+
 #: Who said a saved turn: an answer (None, or "claude", kept as nothing),
 #: the reader's prompt, their `!` or slash command, or the harness (#424).
 SAVED_WHO = (None, "claude", "me", "shell", "system")
@@ -7387,11 +7346,72 @@ def write_saved(saved: list[dict[str, Any]]) -> None:
     write_atomic(saved_path(), json.dumps(saved), private=True)
 
 
+def read_reminders() -> dict[str, float]:
+    """Every reminder kept, or none: the same shape as the snoozes."""
+    return read_moments(reminders_path(), positive=True)
+
+
+def write_reminders(reminders: dict[str, float]) -> None:
+    write_atomic(reminders_path(), json.dumps(reminders), private=True)
+
+
+def read_seen() -> tuple[float, dict[str, float]]:
+    """The floor and the moment each session was last seen, or now and none.
+
+    The floor is when the file was first written. With no file there is no
+    floor yet, and now stands in for it: else every session that ended a
+    turn before this feature was there would come up unread at once. A value
+    that is not a number is left out, as `read_snoozed` leaves one out.
+    """
+    now = time.time()
+    payload = read_json(seen_path())
+    if not isinstance(payload, dict):
+        return now, {}
+    floor = payload.get("floor")
+    seen = payload.get("seen")
+    return (float(floor) if is_number(floor) else now,
+            {str(key): float(value) for key, value in seen.items()
+             if isinstance(key, str) and is_number(value)}
+            if isinstance(seen, dict) else {})
+
+
+def write_seen(floor: float, seen: dict[str, float]) -> None:
+    write_atomic(seen_path(), json.dumps({"floor": floor, "seen": seen}),
+                 private=True)
+
+
+def read_names() -> dict[str, str]:
+    """Every name the reader has given, or an empty map."""
+    return {key: name for key, (name, _) in read_name_entries().items()}
+
+
+def read_names_over() -> dict[str, str]:
+    """Claude Code's name just before the page typed each, for the names
+    it typed."""
+    return {key: over for key, (_, over) in read_name_entries().items()
+            if over is not None}
+
+
+def write_names(names: dict[str, str], over: dict[str, str] | None = None) -> None:
+    """Keep them. The file is ours and nobody else reads it, so it is one map
+    rather than a file per session: there is no hook writing it in parallel."""
+    over = over or {}
+    write_atomic(names_path(), json.dumps(
+        {key: {"name": name, "over": over[key]} if key in over else name
+         for key, name in names.items()}), private=True)
+
+
+# --- search: a scan of the event log [topics/decisions, topics/marks]
+
+
 #: Search (#379): the most results, the longest query, and how much of the
 #: words round a hit each result carries.
 SEARCH_MAX = 100
+
 SEARCH_QUERY_MAX = 200
+
 SEARCH_AROUND = 120
+
 #: The filters a query may carry, as Slack's search has them.
 SEARCH_FILTERS = ("in", "from", "before", "after", "is")
 
@@ -7538,79 +7558,7 @@ def search_piece(said: str, words: list[str]) -> str:
             + (" …" if at + SEARCH_AROUND < len(said) else ""))
 
 
-def read_reminders() -> dict[str, float]:
-    """Every reminder kept, or none: the same shape as the snoozes."""
-    return read_moments(reminders_path(), positive=True)
-
-
-def write_reminders(reminders: dict[str, float]) -> None:
-    write_atomic(reminders_path(), json.dumps(reminders), private=True)
-
-
-def read_seen() -> tuple[float, dict[str, float]]:
-    """The floor and the moment each session was last seen, or now and none.
-
-    The floor is when the file was first written. With no file there is no
-    floor yet, and now stands in for it: else every session that ended a
-    turn before this feature was there would come up unread at once. A value
-    that is not a number is left out, as `read_snoozed` leaves one out.
-    """
-    now = time.time()
-    payload = read_json(seen_path())
-    if not isinstance(payload, dict):
-        return now, {}
-    floor = payload.get("floor")
-    seen = payload.get("seen")
-    return (float(floor) if is_number(floor) else now,
-            {str(key): float(value) for key, value in seen.items()
-             if isinstance(key, str) and is_number(value)}
-            if isinstance(seen, dict) else {})
-
-
-def write_seen(floor: float, seen: dict[str, float]) -> None:
-    write_atomic(seen_path(), json.dumps({"floor": floor, "seen": seen}),
-                 private=True)
-
-
-def read_names() -> dict[str, str]:
-    """Every name the reader has given, or an empty map."""
-    return {key: name for key, (name, _) in read_name_entries().items()}
-
-
-def read_names_over() -> dict[str, str]:
-    """Claude Code's name just before the page typed each, for the names
-    it typed."""
-    return {key: over for key, (_, over) in read_name_entries().items()
-            if over is not None}
-
-
-def write_names(names: dict[str, str], over: dict[str, str] | None = None) -> None:
-    """Keep them. The file is ours and nobody else reads it, so it is one map
-    rather than a file per session: there is no hook writing it in parallel."""
-    over = over or {}
-    write_atomic(names_path(), json.dumps(
-        {key: {"name": name, "over": over[key]} if key in over else name
-         for key, name in names.items()}), private=True)
-
-
-def read_status(session_id: str) -> Status:
-    """Read the status file of a session. A missing file gives an empty status."""
-    try:
-        payload = json.loads(status_path(session_id).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return Status()
-    if not isinstance(payload, dict):
-        return Status()
-    return Status(
-        ts=to_float(payload.get("ts")),
-        name=str(payload.get("name") or ""),
-        model=str(payload.get("model") or ""),
-        context_pct=opt_float(payload.get("context_pct")),
-        cost_usd=opt_float(payload.get("cost_usd")),
-        agent=str(payload.get("agent") or ""),
-        effort=str(payload.get("effort") or ""),
-        model_id=str(payload.get("model_id") or ""),
-    )
+# --- paths from outside: checked before anything opens them [topics/safety]
 
 
 def inside(root: Path | str, path: Path | str) -> Path | None:
@@ -7655,43 +7603,7 @@ def safe_name(session_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:128] or "unknown"
 
 
-def money(dollars: float) -> str:
-    """What a session has spent, short enough for a status line.
-
-    Cents below ten dollars, because that is where the difference between one
-    prompt and the next shows; whole dollars above it, because by then the
-    cents are noise. It is Claude Code's own estimate at list price either
-    way -- see `Status.cost_usd`.
-    """
-    return f"${dollars:.2f}" if dollars < 10 else f"${dollars:.0f}"
-
-
-def status_line(status: Status, cwd: str) -> str:
-    """The one line wostuast prints as the status line."""
-    parts = [status.name or path_label(cwd)]
-    if status.agent:
-        parts.append(status.agent)
-    if status.model:
-        parts.append(status.model)
-    if status.context_pct is not None:
-        parts.append(f"{status.context_pct:.0f}% ctx")
-    if status.cost_usd is not None:
-        parts.append(money(status.cost_usd))
-    return " · ".join(parts)
-
-
-def drop_old_status(now: float | None = None) -> None:
-    """Remove status files of sessions that are long gone."""
-    moment = now if now is not None else time.time()
-    try:
-        for entry in status_dir().glob("*.json"):
-            if moment - entry.stat().st_mtime > SESSION_MAX_AGE:
-                entry.unlink()
-    except OSError:
-        pass
-
-
-# --- settings.json: add and remove our hooks without touching anything else --
+# --- Claude Code's settings.json: add and remove our hooks and nothing else [topics/safety-install]
 
 
 def detect_indent(text: str) -> int | str:
@@ -8038,7 +7950,7 @@ def save_settings(path: Path, data: dict[str, Any], indent: int | str, newline: 
     write_atomic(path, text + "\n" if newline else text, mode=mode, sync=True)
 
 
-# --- output helpers ----------------------------------------------------------
+# --- output helpers: what the commands print
 
 
 def counted(n: int, one: str, many: str) -> str:
@@ -8137,7 +8049,91 @@ def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
     return "\n".join(lines)
 
 
-# --- tmux: the verbs, and nothing else ----------------------------------------
+# --- tmux: the four verbs and what may reach a terminal, one send at a time [topics/safety-typing]
+
+
+#: What `tmux_send` takes out of anything on its way to a terminal: everything
+#: below a space except tab and newline, the delete character, and the C1
+#: block above it. C1 holds NEL (U+0085) and CSI (U+009B), controls a terminal
+#: may act on and an agent may write; U+2028 and U+2029 are line breaks that
+#: `"\n" in text` does not see, so they would have gone out unpasted. The rule
+#: is "nothing below a space reaches a terminal", and these are below one.
+#:
+#: **And every lone surrogate.** JSON can carry one, and `subprocess` hands
+#: an argument to tmux with `surrogateescape`, so the pair U+DCC2 U+DC9B
+#: left as the bytes c2 9b -- which is U+009B, CSI -- measured in a real
+#: pane. A high one made the encode fail and the send with it. No character
+#: a person typed is one. The pattern is a raw string, so the source holds
+#: the escape and `re` reads it: in a plain string it would be the character
+#: itself, which Python 3.13 will not put in a bytecode cache.
+CONTROL_CHARS = re.compile(
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
+
+#: The most text one `send` may type, **in bytes**. Longer is refused rather
+#: than cut: what arrives in the terminal must be what the user wrote, or
+#: nothing.
+#:
+#: tmux sets no number any more: `tmux_send` hands the text to `load-buffer`
+#: on stdin, not as an argument, and a command line was what tmux 3.4 cut
+#: off at 16,341 bytes (`send-keys -l`). So the number is what the agent
+#: takes. Measured with Claude Code 2.1.287 in tmux 3.4, against a fake
+#: Messages API that recorded each request: 17 KB, 136 KB and 1.36 MB of
+#: log lines each arrived as the one user turn, every byte, the largest in
+#: 1.2 s from the paste to the request. The cap is 1 MiB, under that: a
+#: long log is a few hundred KB, and a megabyte is some 300,000 tokens,
+#: more than most models take, so more would be refused by the API instead.
+#:
+#: Bytes and not characters, because a byte is what everything on the way
+#: counts, and a cap on `len()` lets three times as much through in Japanese.
+SEND_MAX = 1024 * 1024
+
+
+def cannot_type(session: Session, no: bool = False, text: bool = False) -> str:
+    """Why nothing may be typed into this session now, or "" when it may.
+
+    The one test `answer`, `decline` and `send` make, after `in_tmux`; the
+    page's `whyNotTyped` makes the same one from the row, so a control is
+    off where this would refuse it. Each verb wrote it out for itself, and
+    a guard added to one was missing from the next (#254, #287).
+
+    A session that is over has moved its pane on to whatever runs there
+    now. A dialog that is up has its cursor on "1. Yes", so the Enter after
+    a message, or an answer's digit, would approve it; `no` is a No, which
+    is meant for that dialog.
+    """
+    if session.state in GONE_STATES:
+        return "this session is over"
+    if not no and session.dialog:
+        return "a permission dialog is open in the terminal: answer it there first"
+    # A question's dialog takes keys as the permission's does: a text that
+    # starts with a digit picks an option, and its Enter submits (#483).
+    # `text` is a send or a rename; `answer` is meant for the question.
+    if text and session.asking:
+        return "a question is open in the terminal: answer it first"
+    return ""
+
+
+def typed(text: str) -> str:
+    """What `tmux_send` would type of this text: the controls taken out.
+
+    A text with nothing else in it is nothing to send, and the routes ask
+    this rather than what arrived: a paste of controls was refused as "tmux
+    did not answer", although tmux was never asked.
+    """
+    return CONTROL_CHARS.sub("", text)
+
+
+def typing_trouble(text: str, what: str) -> str:
+    """Why this text is too long to type, or "". Bytes, because that is what
+    everything on the way counts: see `SEND_MAX`. Handed what `typed` keeps,
+    because that is what is pasted: a log full of colour codes is smaller
+    once they are out."""
+    size = len(text.encode("utf-8", "replace"))
+    if size > SEND_MAX:
+        return (f"{what} is {size} bytes, and the most that can be typed is"
+                f" {SEND_MAX}")
+    return ""
+
 
 # wostuast reads; the user types. These are the only commands it runs: jump,
 # send, interrupt, and the keys that answer a question.
@@ -8334,16 +8330,20 @@ def tmux_send(pane: str, text: str,
             and tmux_paste(pane, b"\r", False, runner))
 
 
-# --- slash commands: what the send box can complete ---------------------------
+# --- slash commands: the skills and commands the send box can complete [topics/send-and-keys]
+
 
 #: How much of a skill or command file is read: the frontmatter is at the top,
 #: and the body -- a whole skill's instructions -- is never needed.
 FRONT_MAX = 8192
+
 #: The most of one command's file the Commands tab is sent (#367). A skill
 #: is a page or two; one larger than this is cut, and says so.
 COMMAND_TEXT_MAX = 256 * 1024
+
 #: A description is a line in a list, not the skill's documentation.
 ABOUT_MAX = 160
+
 #: What Claude Code accepts as a command's name, and so all this takes from a
 #: file. A name is drawn with `textContent`, but it is also what the box gets
 #: when a suggestion is taken, and from there it is typed into a terminal.
@@ -8689,7 +8689,8 @@ class Commands:
         return sorted(found.values(), key=lambda one: (-one.uses, one.name))
 
 
-# --- wire: every shape the page receives ------------------------------------
+# --- wire: every shape the page receives [CLAUDE.md Principles 2]
+
 
 # One place for what goes to the page (#540, CLAUDE.md, **Principles**, 2):
 # the rows, the blocks, the settings, the stream's events and their names,
@@ -8704,8 +8705,11 @@ class Commands:
 #: The events the stream sends. The page listens for exactly these
 #: (`test_the_page_listens_for_every_event_the_stream_sends`).
 EVENT_SESSIONS = "sessions"
+
 EVENT_TRANSCRIPT = "transcript"
+
 EVENT_SETTINGS = "settings"
+
 EVENTS = (EVENT_SESSIONS, EVENT_TRANSCRIPT, EVENT_SETTINGS)
 
 
@@ -9043,7 +9047,13 @@ def listing_tag(names: str) -> str:
     return hashlib.sha1(names.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-# --- the daemon: one page, a little JSON, and a stream of changes ------------
+# --- the daemon: Client, Hub and Daemon; the tick, Store.refresh's steps, the stream [topics/daemon-and-page]
+
+
+#: How Claude Code answers a call whose dialog was told No, as the call's
+#: result in the transcript. Measured on 2.1.282; the tool_result goes on
+#: "The tool use was rejected (eg. if it was a file edit, …)".
+REJECTED = "The user doesn't want to proceed with this tool use"
 
 
 class Client:
@@ -9508,6 +9518,39 @@ class Daemon:
             self.stopping.wait(TICK)
 
 
+# --- who connects: the uid behind a socket on localhost [topics/safety]
+
+
+#: Where Linux lists every TCP socket with the user that owns it. The daemon
+#: reads the line of the other end of each connection and answers only its
+#: own user: 127.0.0.1 is open to every account on the machine.
+#: `/proc/net/tcp6` is there because a client on an IPv6 socket reaches
+#: 127.0.0.1 as `::ffff:127.0.0.1`. .claude/topics/safety.md: "The daemon
+#: answers on localhost only, and only to its own user".
+TCP_TABLES = ("/proc/net/tcp", "/proc/net/tcp6")
+
+#: How many times a connection's owner is looked for before the connection
+#: is refused. The kernel writes the table a page at a time and resumes by
+#: position, so a table that changes during the read can skip a line.
+PEER_READS = 3
+
+#: The inode column of a socket that no process holds, in `TCP_TABLES`. The
+#: kernel writes uid 0 on such a line, so it is never the answer: a
+#: connection in `TIME_WAIT`, and a client that closed its end after it sent
+#: a request (#254). Measured as `nobody` on 6.18: connect, send and close
+#: leave `05 uid 0 inode 0`; open, `01 uid 65534`; a client that only shut
+#: down its write half, `05 uid 65534` and its inode. So not "state `01`
+#: only": that refused a client of our own that can still read the answer.
+NO_INODE = "0"
+
+#: The one user let in besides the daemon's own. In WSL2's default NAT mode
+#: a Windows browser reaches 127.0.0.1 in the Linux VM through a relay that
+#: runs as root inside the VM, and other root forwarders do the same. Root
+#: gains nothing by it: it can read the token, the state files and every
+#: transcript already, and it can attach to the daemon itself.
+ROOT_UID = 0
+
+
 def table_address(host: str, port: int, six: bool = False) -> str:
     """An IPv4 address and a port as `/proc/net/tcp` writes them.
 
@@ -9614,6 +9657,65 @@ def another_user(peer: tuple[str, int], ours: tuple[str, int], uid: int,
 #: What a connection from another user gets, on every route. It says why, so
 #: a reader whose own browser runs as another account can tell what happened.
 STRANGER = "wostuast answers only the user who runs it"
+
+
+# --- serving: Serving reads a request, checks the token and origin, and routes it [topics/safety, topics/daemon-and-page]
+
+
+#: The header a POST carries its token in. A cross-origin request cannot add a
+#: header of its own without asking us first, and we never say yes — so a page
+#: that has not read ours cannot even reach the code that checks it.
+TOKEN_HEADER = "X-Wostuast-Token"
+
+#: Where the token goes into the page, replaced as the page is served.
+TOKEN_MARK = "__WOSTUAST_TOKEN__"
+
+#: Where the running copy's version goes, beside the name at the top of the
+#: session list.
+VERSION_MARK = "__WOSTUAST_VERSION__"
+
+#: Where the reader's settings go into the page, so the first paint already
+#: has their colours. The marks are put in in one pass (`Serving.page`).
+SETTINGS_MARK = '"__WOSTUAST_SETTINGS__"'
+
+#: The most a POST body may be. It holds a send of `SEND_MAX` bytes as JSON:
+#: a newline or a tab is two bytes there, and a control character six
+#: (`\u001b`), which a log with colours is full of -- `tmux_send` takes them
+#: out, but they come in the body first. Six times `SEND_MAX`, and room for
+#: the rest of the body. Only a request that passed `allowed` is read at
+#: all (`Serving.route`), so a site in the reader's browser cannot make the
+#: daemon read this much.
+POST_MAX = 8 * 1024 * 1024
+
+#: Which answers are packed with gzip: text, never a picture or a video,
+#: which are packed already. Measured on 53,000 made-up file names, 2.4 MB:
+#: level 1 took 20 ms for 548 KB, level 6 79 ms for 397 KB, level 9 242 ms
+#: for 380 KB. At 200 KiB/s the 150 KB between 1 and 6 is most of a second,
+#: and the 79 ms is paid once, on the first visit to the Files tab.
+PACKED_KINDS = ("application/json", "text/")
+
+PACK_LEVEL = 6
+
+#: Below this an answer goes as it is: the header and the packing cost more
+#: than they save.
+PACK_MIN = 1024
+
+#: How long a send to an agent at its prompt waits to see the prompt in the
+#: transcript (#489), and the blocks that say something was typed. Claude
+#: Code writes the record a few milliseconds after the Enter; the rest is
+#: room for a loaded machine.
+SEND_WAIT = 5.0
+
+TYPED_KINDS = ("prompt", "shell", "command")
+
+#: How long a decline waits to see its dialog close, in the transcript,
+#: before it will type the reason. Measured against 2.1.282: the rejection
+#: is written a few milliseconds after the Escape.
+DECLINE_WAIT = 3.0
+
+#: How long a Yes waits for the dialog's hook to take it, in seconds. The
+#: hook looks every `APPROVE_POLL`.
+APPROVE_SEEN = 3.0
 
 
 class Serving:
@@ -10318,7 +10420,8 @@ class Serving:
             self.daemon.hub.drop(client)
 
 
-# --- the verbs: what one session's routes do ---------------------------------
+# --- the verbs: what one session's routes do (GET_VERBS, POST_VERBS, ROUTES) [topics/daemon-and-page, topics/safety-typing]
+
 
 #: What a verb answers: a status and a payload, which `Serving.dispatch`
 #: sends with the session's `id`; None for `raw` and `diff`, which send
@@ -10865,7 +10968,7 @@ def make_server(daemon: Daemon, port: int) -> Any:
     return server
 
 
-# --- commands ----------------------------------------------------------------
+# --- the hook: cmd_hook runs on every event; it never prints and never blocks [topics/safety]
 
 
 def give_up_after(seconds: int) -> None:
@@ -10999,6 +11102,9 @@ def note_agent(record: dict[str, Any]) -> None:
     record["shell_pid"] = os.getppid()
 
 
+# --- the status command: cmd_status runs on every redraw of the status line [topics/payloads]
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Read the status line JSON from stdin, keep it, and print one line.
 
@@ -11059,6 +11165,9 @@ def run_status_line(command: str, payload: str) -> str:
         log(f"the status line {command!r} failed: {error!r}")
         return ""
     return done.stdout
+
+
+# --- ls: the sessions as a table or as JSON [topics/decisions]
 
 
 def print_json(sessions: Sequence[Session]) -> None:
@@ -11127,12 +11236,17 @@ def which_tmux() -> bool:
     return shutil.which("tmux") is not None
 
 
+# --- transcript shapes: which records Claude Code writes, counted [topics/transcript]
+
+
 #: What the transcript reader turns into something on the page. Anything
 #: else it leaves out, which is right for the lists below and wrong for any
 #: shape nobody has looked at yet.
 READ_RECORDS = {"user", "assistant", "summary", "attachment/queued_command",
                 "system/compact_boundary", "system/local_command"}
+
 READ_PIECES = {"text", "thinking", "tool_use", "tool_result"}
+
 #: Records the reader leaves out on purpose: bookkeeping, and the harness
 #: talking to the agent. Read on real transcripts of 2.1.276 to 2.1.283.
 #: `queue-operation` carries a queued message, which arrives again as the
@@ -11156,10 +11270,12 @@ SILENT_RECORDS = {
     "attachment/command_permissions", "attachment/invoked_skills",
     "attachment/task_status", "attachment/thinking_drop",
 }
+
 #: A tag Claude Code wraps its own text in: lowercase, with a hyphen or an
 #: underscore -- `bash-input`, `pasted_content`, `system-reminder`. HTML a
 #: person types has neither, so a prompt about a `<div>` is not reported.
 MACHINE_TAG_NAME = re.compile(r"</?([a-z][a-z0-9]*[-_][a-z0-9_-]*)[\s>]")
+
 #: How far back `shapes` reads by default.
 SHAPES_DAYS = 7
 
@@ -11276,6 +11392,9 @@ def recent_transcripts(days: float, now: float | None = None) -> list[Path]:
     return sorted(found)
 
 
+# --- files and the report: what is installed, and what a bug report may hold [topics/safety-install]
+
+
 @dataclass
 class Installed:
     """One thing wostuast put on the disk, for `files` and `report` (#321)."""
@@ -11389,7 +11508,9 @@ REPORT_KINDS = {
     "Notification": ("notification_type",),
     "PostToolUseFailure": ("error_type",),
 }
+
 REPORT_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+
 #: What the transcript section's labels may hold: "attachment/new_thing",
 #: "<task-id> in a note", "user piece: image".
 REPORT_LABEL = re.compile(r"[A-Za-z0-9_.:<>/ -]{1,64}")
@@ -11715,6 +11836,9 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- wait: block until a session needs you [topics/decisions]
+
+
 #: How often `wait` looks at the log again. It reads only what was appended
 #: (`EventFollower`), so this is a cheap look, not a read of the history.
 WAIT_STEP = 0.5
@@ -11815,6 +11939,9 @@ def cmd_wait(args: argparse.Namespace) -> int:
             time.sleep(WAIT_STEP)
     except KeyboardInterrupt:
         return 130
+
+
+# --- doctor: the setup checks, also run at every start [topics/safety-install]
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -12003,6 +12130,7 @@ SETUP_CHECKS: tuple[tuple[str, Callable[[SetupFacts], Check | None]], ...] = (
 #: it prints the python it runs, and `bring_up_to_date` mends the hooks,
 #: the status line and the install rather than saying they are wrong.
 START_FIRST = ("tmux", "state")
+
 START_AFTER = ("config", "behind", "events")
 
 
@@ -12021,6 +12149,9 @@ def setup_checks(built: tuple[str, str] | None = None,
     keys = [key for key, _ in SETUP_CHECKS] if only is None else only
     found = (makers[key](facts) for key in keys)
     return [check for check in found if check is not None]
+
+
+# --- install and update: the program, the hook file and the status file [topics/safety-install]
 
 
 def own_version(path: Path | None = None) -> str:
@@ -12498,6 +12629,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- serve: a bare wostuast checks, updates and starts one daemon [topics/safety-install, topics/daemon-and-page]
+
+
 #: How each line of the start begins, and its colour: green for what is
 #: right, yellow for what changed or is worth a look, grey for a passing
 #: word, red for what stops it. The issue asked for a start where "one
@@ -12727,7 +12861,7 @@ def open_browser(where: str) -> None:
         log(f"could not open a browser: {error!r}")
 
 
-# --- command line ------------------------------------------------------------
+# --- command line: the parser and main
 
 
 def port_number(text: str) -> int:
@@ -12844,8 +12978,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return handler(args)
 
 
-
-# --- the page: one HTML file, and nothing else -------------------------------
+# --- the page: PAGE holds the HTML, the CSS (sections /* --- */) and the script (sections // ---) [topics/safety]
 
 #: Everything the browser gets. It fetches two scripts and nothing else:
 #: `marked` renders the transcript and `highlight.js` paints code. Both are
@@ -12878,6 +13011,8 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Noto+Sans+Mono:wdth,wght@62.5,400;62.5,600;100,400;100,600&display=swap">
 <style>
+/* --- palette: every colour is a variable, and :root is the only place one is a number [CLAUDE.md Style] */
+
 :root {
   --bg: var(--dark-bg); --panel: #191a20; --raised: #1f2129; --chosen: #262834;
   --edge: #2a2c36; --edge-bright: #3a3d4a;
@@ -13031,6 +13166,8 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
 :root { --split-grip-w: 1px; }
 
 * { box-sizing: border-box; }
+/* --- the frame: body, the name and version */
+
 /* `hidden` hides, whatever else the element sets. A rule that sets
    `display` beats the browser's own rule for the attribute, and twelve
    controls each needed an `X[hidden]` of their own: one forgotten was a
@@ -13058,6 +13195,8 @@ body {
 .brand .logo { width: 18px; height: 18px; flex: none; }
 .version { color: var(--ink-faint); font-size: 11px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
+/* --- the settings menu (.setpop) and .choice [topics/settings] */
+
 /* Jump and the settings, as icons at the end of the tab row. */
 .theme {
   flex-shrink: 0; align-self: center; margin-left: 6px; width: 26px;
@@ -13228,7 +13367,8 @@ body {
 }
 .setpop .wherecopy:hover { color: var(--needs); }
 
-/* body */
+/* --- the sidebar's column: grips, edges, folded columns and tiles [topics/sidebar] */
+
 /* What the chosen row meets beside the list: the column every tab has (the
    map, a file tree, the comments). Its fade and the grip's opening end in
    this, so the row flows into what is there. */
@@ -13405,6 +13545,8 @@ body.dragging.rowdrag { cursor: row-resize; }
    is long. The bar draws no line there (issue 443: its ground parts it from
    the pane), so this handle shows only under the pointer. */
 .hgrip { inset: -3px 0 auto; height: 7px; cursor: row-resize; z-index: 3; }
+/* --- rows: a row's lines, groups, children, reminders [topics/sidebar] */
+
 /* No margin under it: the filter box then stands on the line of the find
    box beside it, 8 px higher than it stood (issue 469). */
 .sidebar-head {
@@ -13674,6 +13816,8 @@ body.dragging.rowdrag { cursor: row-resize; }
 }
 .row .remindmenu button.remindset:hover { color: var(--needs); }
 
+/* --- the views: Unread, Saved and Search [topics/marks] */
+
 /* The three views over the groups -- unread (issue 376), saved (377) and
    search (379) -- in one row of equal buttons (issue 391), each always
    there, so the list does not move when a count comes to nought. Three
@@ -13822,7 +13966,8 @@ body.switching #content::after {
   }
 }
 
-/* main */
+/* --- the main column: tabs, .verb, the send bar, the slash menu, the context bar [topics/send-and-keys] */
+
 /* A grid, so that a split tab's map and its grip can run down beside the
    question bar and the send box, which stand under the transcript alone.
    The columns are the split tab's own: the map, the grip, the rest. A tab
@@ -14043,9 +14188,10 @@ body.switching #content::after {
   color: var(--ink-faint); font-size: 12px; white-space: nowrap; }
 mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0 1px; }
 .nohits { color: var(--ink-mute); padding: 4px 0; }
+/* --- the transcript: turns, bubbles, a turn's acts [topics/transcript-look] */
+
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 24px; min-height: 0; }
 
-/* transcript */
 /* `flex-start`, not the default stretch. `.who` carries a name, a day, a time
    and a copy button -- 71 px of them -- and a stretched bubble is as tall as
    that whatever is in it. One line of text then sat 14 px below the top of a
@@ -14141,6 +14287,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   border: 1px solid var(--edge); line-height: 1.5; min-width: 0;
   white-space: pre-wrap; word-wrap: break-word;
 }
+/* --- the question bar and the permission dialog [topics/state] */
+
 /* The question an agent is stopped on. It wears the needs-you colour,
    because it is the same news the amber row carries and reading the two as
    one thing is the point. */
@@ -14248,6 +14396,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   line-height: 1.5; white-space: pre;
 }
 .askprevbody.none { color: var(--ink-faint); font-style: italic; }
+/* --- the transcript's kinds of turn: asides, plans, yours, prose, folds, calls [topics/transcript-look] */
+
 /* Something the harness said: a background task finishing, a message from
    another session. It is real news and it is not a prompt, so it gets a quiet
    block rather than your rail and your tint. It was drawn as though you had
@@ -14459,6 +14609,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .newline::after { content: ""; flex-grow: 1; height: 1px; background: var(--done); }
 
+/* --- the tab frame: split, the find box, go to file [topics/daemon-and-page, topics/files-tab] */
+
 /* files and diff: a list on the left, what it names on the right */
 /* `relative` for the Transcript tab's "latest" button, which is the one
    thing on a split tab that stands over the pane rather than in it.
@@ -14526,6 +14678,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    closes it: a line between them was the second of two 27 px apart, and
    the reader found the page busy with lines (issue 443). */
 .side > .findslot { border-bottom: 0; }
+/* --- the lists on the left: files, the diff's files, commands [topics/files-tab] */
+
 .filelist {
   flex-grow: 1; overflow-y: auto; padding: 8px 0;
   font-family: var(--narrow); font-size: 13px; letter-spacing: .01em;
@@ -14611,6 +14765,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .filelist .lit { color: var(--needs-warm); font-weight: 600; }
 .filelist button.chosen .lit { color: var(--needs); }
+/* --- code and its colours [topics/files-tab] */
+
 /* No box. A file that is not Markdown is the whole page here, not a quotation
    inside a document that does not exist, and the border made a shell script
    look like one. It is drawn as diff rows, so it shares their ramp too. */
@@ -14640,6 +14796,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .hljs-deletion { color: var(--cut-ink); }
 .plus { color: var(--working); }
 .minus { color: var(--cut-ink); }
+/* --- the tab bodies: Commands, the transcript's map, a file, media [topics/files-tab] */
+
 /* What a tab's body is: the column that scrolls. The diff sets its own
    padding, because its rows run to the edge. */
 .filebody, .diffbody, .turnbody, .cmdbody {
@@ -14739,6 +14897,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    and not a padding: it is the block that has to move, and a padded box
    still starts at the edge. */
 .diffscroll > .empty { margin: 16px 20px; }
+/* --- the Diff tab: its bar, pickers, heads and files [topics/diff-tab] */
+
 /* Two children, like the Files tab's: the bar, which does not move, and the
    diff, which does. `relative` so a block's `offsetTop` is measured from the
    scroller -- `markDiffFile` reads it. */
@@ -14916,6 +15076,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .dfile > .openfile .icon {
   width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3;
 }
+/* --- a diff's lines: spaces, hunks, columns, word marks [topics/diff-tab] */
+
 /* A tab, and a space at a line's end, drawn faintly when the reader asks
    (`markSpaces`, issue 449). Over the character and out of the flow, so the tab
    keeps its width and a copy takes the text as it is. */
@@ -15034,6 +15196,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: repeating-linear-gradient(135deg, transparent 0 5px,
                                         var(--tint) 5px 7px);
 }
+
+/* --- review comments and the review bar [topics/review] */
 
 /* The review. The `+` sits over the first characters of the gutter and shows
    on hover, the way a pull request does it. `user-select: none` keeps it out
@@ -15178,6 +15342,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* The Diff tab's tree: a little tighter than a block row, the count at its end. */
 .filelist.diff button { padding-top: 4px; padding-bottom: 4px; }
 .filelist.diff .counts { margin: 0 0 0 8px; flex-shrink: 0; }
+/* --- notes, empty states, offline, the help dialog */
+
 .note {
   padding: 14px 20px; font-family: var(--sans); font-size: 13px;
   line-height: 1.6; color: var(--ink-mute);
@@ -15338,6 +15504,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
 <script>
 "use strict";
 
+// --- state: the page's one state literal; every field is declared in it [CLAUDE.md Principles 3, topics/tab-state]
+
 const state = {
   sessions: [],
   chosen: null,
@@ -15450,7 +15618,7 @@ state.review = blankReview();
 
 const $ = (id) => document.getElementById(id);
 
-// --- asking the daemon to do something --------------------------------------
+// --- asking the daemon: getJson is the one fetch; post, apiUrl, tell [topics/daemon-and-page]
 
 // Everything else on this page reads. These two write, into a live terminal,
 // so the daemon wants proof the request came from a page it served: a token it
@@ -15528,373 +15696,7 @@ async function keepRename(box, id) {
   drawSessions();
 }
 
-// --- the context bar and the live slot --------------------------------------
-
-// Whether the status line has told us how full the window is. It is the one
-// number here that only the status line carries, so a session whose status
-// line is not registered has none and nothing about it is drawn.
-function hasContext(s) {
-  return !!s && s.context_pct !== null && s.context_pct !== undefined;
-}
-
-// The bar, not a number: how full a context window is reads at a glance and
-// does not at a count.
-function putContext(parent, percent) {
-  const pct = Math.round(percent);
-  const ctx = put(parent, "span",
-                  "ctx" + (pct >= 85 ? " hot" : pct >= 60 ? " warm" : ""));
-  const bar = put(ctx, "span", "bar");
-  put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
-  put(ctx, "span", null, pct + "% ctx");
-  return ctx;
-}
-
-// What the daemon answered, on the one line the page keeps for saying
-// things. A failure stays.
-//
-// It used to fade after four seconds, like everything else on this strip,
-// and it is not like everything else: it is about a thing you tried and did
-// not get. A reader whose page had gone stale saw "that did not come from
-// this page" flash while they were looking at the terminal, and then a strip
-// reading "live" over a page where nothing worked. It stays until the next
-// message replaces it, or until something works.
-function said(answer) {
-  // A page from an earlier `serve` cannot do anything at all, and no strip
-  // this small can carry that. The bar says it, and only a reload clears it.
-  if (answer && answer.stale) document.body.classList.add("outdated");
-  // Kept, not painted and forgotten: the stream writes "live" into this slot
-  // on every push, which is about once a second while an agent works, so a
-  // failure written straight in was wiped within a second. The thing the
-  // reader most needed to read was the thing that lasted least. An answer
-  // that worked clears it, which is the other half of "until something
-  // replaces it".
-  state.trouble = (answer && answer.error) || "";
-  paintLive();
-}
-
-// The one line the page keeps for saying things, and the four things that
-// want it: what the stream is doing, something you asked for and did not
-// get, a `settings.json` that cannot be used, and a passing word that borrows
-// the slot over all three.
-//
-// The file's trouble stands last, and in a few words, with the whole of it
-// on a hover: nothing the reader does on the page mends it, so an answer
-// that works must not clear it the way it clears `state.trouble`, and the
-// daemon's sentence about bad JSON runs to 150 characters on a line that
-// does not wrap.
-//
-// One painter, because four writers raced for it.
-//
-// A stream that is working says nothing. The slot read "live" on every page
-// all day, which is the one thing a reader never needs told -- they can see
-// the page moving -- and a word that is always there is a word nobody reads,
-// so "reconnecting" in the same place went unseen too. `state.live` still
-// holds "live"; it is only not painted.
-function paintLive(borrowed) {
-  const stream = state.live === "live" ? "" : state.live;
-  const links = state.linkTrouble.length
-    ? "settings.json has a problem · wostuast doctor" : "";
-  const slot = $("live");
-  slot.textContent = borrowed || state.trouble || stream || links;
-  slot.title = links && slot.textContent === links
-    ? state.linkTrouble.join("\n") : "";
-}
-
-// Our own word about what just happened -- "review sent", "pressed 2, 1".
-// News, so it goes stale, so it fades; nothing was asked for and refused.
-function note(text) {
-  paintLive(text);
-  setTimeout(() => {
-    // Only when the slot still holds this line. Assigning unconditionally
-    // would wipe whatever the stream has put there since.
-    if ($("live").textContent === text) paintLive();
-  }, 4000);
-}
-
-// --- dragging a column edge -------------------------------------------------
-
-// Paths are long, screens differ, and the alternative to a handle is a config
-// option, which this program prefers to delete. The width goes into a CSS
-// variable rather than onto the element, so a column that is rebuilt keeps it,
-// and into this browser's storage, so a reload does too.
-
-// What this browser keeps for the page: "" when nothing is held, or when
-// storage cannot be read -- a private window refuses it -- and never a throw.
-// Each caller wrote its own `try` before (#298).
-function stored(key) {
-  try { return localStorage.getItem(key) || ""; } catch (error) { return ""; }
-}
-
-// Keep a value, or forget the key for an empty one. A refusal, a private
-// window or the quota, changes nothing the reader can see, so it is dropped.
-function store(key, value) {
-  try {
-    if (value) localStorage.setItem(key, value);
-    else localStorage.removeItem(key);
-  } catch (error) { }
-}
-
-function rememberWidth(name, px) {
-  const root = document.documentElement;
-  if (px) root.style.setProperty(name, px + "px");
-  else root.style.removeProperty(name);
-  store("wostuast" + name, px ? String(px) : "");   // a private window: the drag still works
-}
-
-function dragWidth(grip, name, least, most) {
-  return dragEdge(grip, name, least, () => most, (at) => at.clientX,
-                  () => grip.previousElementSibling.getBoundingClientRect().width);
-}
-
-// --- folding a column away (#464) -------------------------------------------
-
-// On a laptop the session list and a split tab's list took 615 of 1366 px,
-// and the diff beside them the rest. Each folds to a strip that holds only
-// the button that brings it back, and this browser keeps which, as it keeps
-// the widths: what is not in the settings menu stays in `localStorage`.
-//
-// A split tab's list is one column for all three tabs, as its width is: the
-// map, the file tree and the review's list fold together.
-//
-// It is a class on `body`, not on the column: `split` builds the list column
-// again on every tab switch, and the sidebar's grip and `.main`'s grid have
-// to know too. The class is never one an element wears (daemon-and-page).
-const FOLDS = {
-  sessions: { cls: "foldsessions", what: "the session list" },
-  list: { cls: "foldlist", what: "this list" },
-};
-
-function folded(which) { return stored("wostuast-fold-" + which) === "1"; }
-
-// The button, beside the column's find box: the find box is moved in and
-// out of a split tab's slot, so the button is ordered after it by CSS.
-function putFold(slot, which, button) {
-  const fold = button || put(slot, "button", "theme fold");
-  fold.dataset.fold = which;
-  fold.addEventListener("click", () => {
-    store("wostuast-fold-" + which, folded(which) ? "" : "1");
-    paintFold(which);
-  });
-  paintButton(fold, which);
-  return fold;
-}
-
-function paintButton(fold, which) {
-  const shut = folded(fold.dataset.fold || which);
-  fold.replaceChildren();
-  putIcon(fold, shut ? "foldOut" : "foldIn");
-  fold.title = (shut ? "show " : "fold away ") + FOLDS[which].what;
-  fold.setAttribute("aria-expanded", String(!shut));
-}
-
-function paintFold(which) {
-  document.body.classList.toggle(FOLDS[which].cls, folded(which));
-  for (const fold of document.querySelectorAll(`.fold[data-fold="${which}"]`)) {
-    paintButton(fold, which);
-  }
-  // No `openGrip` here: the chosen row goes and comes back with its list,
-  // and the observer on it (`gripWatch`) redraws the opening then.
-  if (which === "sessions") {
-    document.querySelectorAll("#rows .row").forEach(tileTitle);
-    tileCard(null);
-  }
-}
-
-// A key that puts the cursor into a folded column: nothing can be focused
-// in a column that is not drawn, so the key did nothing at all.
-function unfold(which) {
-  if (!folded(which)) return;
-  store("wostuast-fold-" + which, "");
-  paintFold(which);
-}
-
-// The send bar's top edge, which drags the height of `box` (issue 442). Up
-// is taller, so the distance is the pointer's height turned round. At most
-// most of the window: a box that took all of it left no transcript, and no
-// edge above it to drag back.
-function dragHeight(grip, box, name) {
-  return dragEdge(grip, name, 32, () => Math.max(32, window.innerHeight * 0.7),
-                  (at) => -at.clientY, () => box.getBoundingClientRect().height,
-                  () => fitSay(box));
-}
-
-// One drag, for a width or a height: `where` reads the pointer along the
-// edge's axis, `size` what the dragged thing measures when the press
-// begins, and `after` runs after each step.
-function dragEdge(grip, name, least, most, where, size, after) {
-  grip.title = "drag to resize, double-click to reset";
-  // Each handle brings its own size back, so a third one is one call and
-  // not two. The file column's is built when its tab first opens, which is
-  // when it is wanted.
-  const saved = stored("wostuast" + name);
-  if (saved) rememberWidth(name, Number(saved));
-  let from = 0;
-  let was = 0;
-  const rows = grip.classList.contains("hgrip");
-  const move = (at) => {
-    rememberWidth(name,
-                  Math.round(Math.min(most(), Math.max(least, was + where(at) - from))));
-    if (after) after();
-  };
-  // A drag ends on every way a press can end, not on `pointerup` alone. A
-  // right-click opens the context menu on Linux and macOS, and the menu took
-  // the `pointerup`: the column then followed the mouse with no button held
-  // until the next click. A touch the browser takes for a scroll ends in
-  // `pointercancel`. So only the main button starts a drag, the grip
-  // captures the pointer, and losing the capture ends it too.
-  const ends = ["pointerup", "pointercancel", "lostpointercapture"];
-  const stop = () => {
-    document.body.classList.remove("dragging", "rowdrag");
-    grip.classList.remove("dragging");
-    window.removeEventListener("pointermove", move);
-    for (const end of ends) window.removeEventListener(end, stop);
-  };
-  grip.addEventListener("pointerdown", (at) => {
-    if (at.button !== 0) return;
-    from = where(at);
-    was = size();
-    document.body.classList.add("dragging");
-    document.body.classList.toggle("rowdrag", rows);
-    grip.classList.add("dragging");
-    window.addEventListener("pointermove", move);
-    for (const end of ends) window.addEventListener(end, stop);
-    try {
-      grip.setPointerCapture(at.pointerId);
-    } catch (error) {
-      // A pointer that is already gone. `pointerup` still ends the drag.
-    }
-    at.preventDefault();          // no text selection while dragging
-  });
-  grip.addEventListener("dblclick", () => {
-    rememberWidth(name, 0);
-    if (after) after();
-  });
-  return grip;
-}
-
-// --- the two scripts that come from the web --------------------------------
-
-// Nothing else is fetched at runtime. Both are pinned: `integrity` is the hash
-// of the exact bytes and `crossorigin` is what lets the browser check it. Any
-// script on this page can POST to /send, which types into the user's terminal,
-// so a script from someone else's server without a hash would be a way into
-// it. A CDN that has been tampered with gets you the plain fallback, never
-// other code.
-//
-// `marked` v12.0.2 renders the transcript. MIT, Christopher Jeffrey.
-// https://github.com/markedjs/marked
-const MARKED_SRC =
-  "https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js";
-const MARKED_HASH =
-  "sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi";
-// `highlight.js` v11.9.0 paints code. BSD-3-Clause, Ivan Sagalaev.
-const HLJS_SRC =
-  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js";
-const HLJS_HASH =
-  "sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp";
-
-function fetchScript(src, hash) {
-  return new Promise((settle) => {
-    const tag = document.createElement("script");
-    tag.src = src;
-    tag.integrity = hash;
-    tag.crossOrigin = "anonymous";
-    // Offline, blocked, or bytes that do not match the hash all land here.
-    tag.addEventListener("error", () => settle(false));
-    tag.addEventListener("load", () => settle(true));
-    document.head.appendChild(tag);
-  });
-}
-
-// --- the reader's settings ---------------------------------------------------
-//
-// Everything the settings menu sets, and the ticket links, are one file of
-// the reader's, `settings.json`, which the daemon reads and writes. It was
-// this browser's `localStorage`, and the reader asked for a file instead:
-// one place, the same in every browser, and one they can read. A choice is
-// made on this page at once and then sent; every page, this one too, then
-// hears of it from the `settings` push and `takeSettings` applies it.
-
-function setting(key) {
-  return state.settings[key];
-}
-
-// Send one change. It is shown already, and the push that follows makes it
-// so on every page. The answer carries no settings, only whether it worked
-// and which links were refused: the settings come by the push alone, one
-// line in the order the file was written. An answer on its own connection
-// landed before an older push, and that push put the page back.
-// One change at a time, each after the last has been answered. Two quick
-// clicks sent two POSTs on two connections, and the first could land after
-// the second: `settings.json` kept the older choice, the push then put it
-// back on the page, and `test_the_two_switches_are_remembered_apart` went
-// red under load.
-let settingsSent = Promise.resolve();
-
-async function keepSetting(change) {
-  state.settings = { ...state.settings, ...change };
-  const answer = settingsSent.then(() => post("/api/settings", change));
-  settingsSent = answer.catch(() => null);
-  said(await answer);
-  return answer;
-}
-
-// Make the page what the file says. `first` is the page starting: nothing is
-// drawn yet, so nothing is drawn again.
-function takeSettings(body, first) {
-  const hid = spaceHidden();
-  state.settings = body;
-  // Another page chose it: this one asks for the other diff too.
-  if (!first && hid !== spaceHidden()) respace();
-  const colours = setting("colours");
-  showTheme(colours === "light" || colours === "dark" ? colours : "system");
-  applyReading(readingWanted());
-  takeSides(!first);
-  takeLinks(!first);
-  drawBell();
-  paintSettings();
-}
-
-// --- colours ----------------------------------------------------------------
-// Three choices: follow the system, or pin one. Kept in `settings.json`, as
-// "auto", "light" or "dark": the words the menu shows.
-
-const THEME_ORDER = ["system", "light", "dark"];
-
-// The browser's own light or dark, asked of one query. The head script asks
-// it once more for itself, because it runs before this one exists.
-const LIGHT = window.matchMedia("(prefers-color-scheme: light)");
-
-function systemTheme() {
-  return LIGHT.matches ? "light" : "dark";
-}
-
-function themeChoice() {
-  return document.documentElement.dataset.themeChoice || "system";
-}
-
-// The colours only. Whoever changed them paints the menu, once.
-function showTheme(choice) {
-  document.documentElement.dataset.themeChoice = choice;
-  document.documentElement.dataset.theme = choice === "system" ? systemTheme() : choice;
-  drawLogo();            // the name's colour is the theme's
-}
-
-// The reader's pick: shown, and kept.
-function applyTheme(choice) {
-  showTheme(choice);
-  keepSetting({ colours: choice === "system" ? "auto" : choice });
-}
-
-function nextTheme() {
-  applyTheme(THEME_ORDER[(THEME_ORDER.indexOf(themeChoice()) + 1) % THEME_ORDER.length]);
-  paintSettings();
-}
-
-LIGHT.addEventListener("change", () => {
-  if (themeChoice() === "system") showTheme("system");
-  redrawIcon();          // the tab bar changed colour, whatever this page shows
-});
+// --- page helpers: CLAUDE.md's reuse table names them; look here before writing one
 
 // A folder and a page, drawn rather than fetched: no icon font, no image, and
 // `currentColor` means each one is already the right colour in both themes
@@ -16112,7 +15914,568 @@ function dayOf(when) {
   return at.getDate() + " " + MONTHS[at.getMonth()];
 }
 
-// --- the sidebar ------------------------------------------------------------
+// Paths are long, screens differ, and the alternative to a handle is a config
+// option, which this program prefers to delete. The width goes into a CSS
+// variable rather than onto the element, so a column that is rebuilt keeps it,
+// and into this browser's storage, so a reload does too.
+
+// What this browser keeps for the page: "" when nothing is held, or when
+// storage cannot be read -- a private window refuses it -- and never a throw.
+// Each caller wrote its own `try` before (#298).
+function stored(key) {
+  try { return localStorage.getItem(key) || ""; } catch (error) { return ""; }
+}
+
+// Keep a value, or forget the key for an empty one. A refusal, a private
+// window or the quota, changes nothing the reader can see, so it is dropped.
+function store(key, value) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch (error) { }
+}
+
+// One control in parts, the part in force pressed: the settings menu's, and
+// Markdown or text over a document and over a commit message. One builder,
+// so they look and answer alike. `paintChoice` says which is in force.
+function putChoice(parent, name, options, pick) {
+  const group = put(parent, "span", "choice " + name);
+  group.setAttribute("role", "group");
+  for (const [value, word, icon, title] of options) {
+    const button = put(group, "button", "verb quiet");
+    button.dataset.value = String(value);
+    if (title) button.title = title;
+    if (icon) putIcon(button, icon);
+    put(button, "span", null, word);
+    button.addEventListener("click", () => pick(value));
+  }
+  return group;
+}
+
+function paintChoice(group, value) {
+  for (const button of group.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.value === String(value)));
+  }
+}
+
+// Markdown or the text as it was written, at the right end of the line that
+// names what is read: a document's path on the Files tab, a commit's subject
+// on the Review tab. The reader asked for the two to look and feel the same.
+// One button, "txt", lit while the text is shown as written, as the buttons
+// beside the code are (`putQuick`): it was "md | txt", two buttons, and the
+// reader asked for one click. Markdown is what is drawn when it is not lit.
+function putReadAs(parent, asText, pick, textTitle) {
+  const button = put(parent, "button", "verb quiet toggle readas", "txt");
+  button.setAttribute("aria-label", textTitle);
+  paintToggle(button, asText);
+  button.addEventListener("click", () => {
+    const next = button.getAttribute("aria-pressed") !== "true";
+    paintToggle(button, next);
+    pick(next);
+  });
+  return button;
+}
+
+// One button lit while what it says is on, and its title saying which.
+function paintToggle(button, on) {
+  button.setAttribute("aria-pressed", String(on));
+  button.title = button.getAttribute("aria-label") + (on ? ": on" : ": off");
+}
+
+// Onto the clipboard, with the old way behind it. A loopback origin counts
+// as secure, so `navigator.clipboard` is usually there -- but it is refused
+// often enough (a page that never had the focus, a browser that wants a
+// permission) that the answer has to be checked rather than assumed. Neither
+// path may throw: this runs from a click handler.
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (error) {
+    // the old way, below
+  }
+  try {
+    const holder = document.createElement("textarea");
+    holder.value = text;
+    holder.setAttribute("readonly", "");
+    holder.style.position = "fixed";
+    holder.style.top = "-1000px";
+    document.body.appendChild(holder);
+    holder.select();
+    const done = document.execCommand("copy");
+    holder.remove();
+    return done;
+  } catch (error) {
+    return false;
+  }
+}
+
+// A count read at a glance: "2.4k" for 2,401, "12k", "1.2M", and below a
+// thousand the number. "2,401 lines" was too long for the reader, in the
+// fold bar and over the send button.
+function roughly(n) {
+  if (n < 1000) return String(n);
+  const [size, unit] = n < 1e6 ? [n / 1e3, "k"] : [n / 1e6, "M"];
+  return String(size < 10 ? Math.round(size * 10) / 10 : Math.round(size)) + unit;
+}
+
+// How many lines a text has, without an array of them.
+function lineCount(text) {
+  let lines = 1;
+  for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) {
+    lines += 1;
+  }
+  return lines;
+}
+
+// A button that did its job says so for a moment: a tick in the working
+// colour, then its own icon and words again. One helper, so "it went" looks
+// the same on every button that has nothing else to show for it -- a copy,
+// and a jump, whose result is in another window. A press while it shows
+// starts the moment again rather than ending it early. A button that is a
+// word passes `words`, what it says when it went and when it did not, and
+// `icon` is then the word it goes back to (`putCopy`, which had a timer of
+// its own that a second press could cut short).
+function flashOutcome(button, icon, title, done, saying, words) {
+  const show = (what) => {
+    button.replaceChildren();
+    if (words) button.textContent = what;
+    else putIcon(button, what);
+  };
+  show(words ? words[done ? 0 : 1] : done ? "check" : icon);
+  button.title = saying;
+  button.classList.toggle("done", done);
+  clearTimeout(button.flashing);
+  button.flashing = setTimeout(() => {
+    show(icon);
+    button.title = title;
+    button.classList.remove("done");
+  }, 1400);
+}
+
+// A count and its noun: "1 reply", "3 replies". One spelling, which nine
+// places wrote out for themselves, two of them with `> 1` (#298).
+function counted(n, one, many) {
+  return n + " " + (n === 1 ? one : many);
+}
+
+// How big a file is, in the units a person reads. Bytes on disk, which is not
+// what the text length says once it has been decoded or cut.
+function sizeOf(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+// `21 Sep 07:20`, which is short enough to sit in a header and exact enough
+// to tell two saves apart. The day is always in it: a file's mtime is read
+// against other files' mtimes, not against the time of day.
+function whenOf(seconds) {
+  if (!seconds) return "";
+  const at = new Date(seconds * 1000);
+  return at.getDate() + " " + MONTHS[at.getMonth()] + " " + clock(seconds);
+}
+
+// Everything whose path matches what is typed, in the order it came, each one
+// with where the letters landed. `pathOf` says how to get a path out of an
+// item, because a file list holds names and a diff holds files. Named `hits`
+// because `matches` is the transcript's and `matching` is the tree's, and a
+// third word for the same idea in one scope is how one of them gets shadowed.
+//
+// Every list on screen goes through here, so `findPath` is called in one place
+// and the lists cannot come to disagree about what a query means. They did:
+// two of them threw the matched letters away and called `findPath` a second
+// time, per row, to get them back.
+//
+// The order is the caller's. A diff's order is git's and must not be
+// shuffled; a file list wants the best match first, which is what `pick` adds.
+function hits(items, pathOf) {
+  const found = [];
+  for (const one of items) {
+    const hit = findPath(pathOf(one), state.find);
+    if (hit) found.push({ one, at: hit.at, score: hit.score });
+  }
+  return found;
+}
+
+// The files a query finds, best match first. It is only ever called with one.
+//
+// It runs over every name the worktree holds, not over a slice of them. The
+// first version searched the first five thousand of 52,799, so typing
+// `libcorrelation` found 16 files and missed more than a thousand — a wrong
+// answer that looked exactly like a right one.
+function pick(names) {
+  const found = hits(names, (name) => name);
+  found.sort((a, b) => b.score - a.score);
+  return found;
+}
+
+// The lines of a file. An empty file has none, where splitting a string that
+// is empty gives one empty line.
+function linesOf(text) {
+  return text === "" ? [] : text.split("\n");
+}
+
+// A file, or a slice of one, in the shape `fillDiffFile` wants. `from` is the
+// number of the first line, which is 1 unless only part of the file is drawn.
+function asLines(path, lines, from = 1) {
+  return { path, hunks: [{ header: "", from,
+    lines: lines.map((one) => ({ kind: "plain", text: one })) }] };
+}
+
+// --- the context bar and the live slot [topics/daemon-and-page]
+
+// Whether the status line has told us how full the window is. It is the one
+// number here that only the status line carries, so a session whose status
+// line is not registered has none and nothing about it is drawn.
+function hasContext(s) {
+  return !!s && s.context_pct !== null && s.context_pct !== undefined;
+}
+
+// The bar, not a number: how full a context window is reads at a glance and
+// does not at a count.
+function putContext(parent, percent) {
+  const pct = Math.round(percent);
+  const ctx = put(parent, "span",
+                  "ctx" + (pct >= 85 ? " hot" : pct >= 60 ? " warm" : ""));
+  const bar = put(ctx, "span", "bar");
+  put(bar, "span", "fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
+  put(ctx, "span", null, pct + "% ctx");
+  return ctx;
+}
+
+// What the daemon answered, on the one line the page keeps for saying
+// things. A failure stays.
+//
+// It used to fade after four seconds, like everything else on this strip,
+// and it is not like everything else: it is about a thing you tried and did
+// not get. A reader whose page had gone stale saw "that did not come from
+// this page" flash while they were looking at the terminal, and then a strip
+// reading "live" over a page where nothing worked. It stays until the next
+// message replaces it, or until something works.
+function said(answer) {
+  // A page from an earlier `serve` cannot do anything at all, and no strip
+  // this small can carry that. The bar says it, and only a reload clears it.
+  if (answer && answer.stale) document.body.classList.add("outdated");
+  // Kept, not painted and forgotten: the stream writes "live" into this slot
+  // on every push, which is about once a second while an agent works, so a
+  // failure written straight in was wiped within a second. The thing the
+  // reader most needed to read was the thing that lasted least. An answer
+  // that worked clears it, which is the other half of "until something
+  // replaces it".
+  state.trouble = (answer && answer.error) || "";
+  paintLive();
+}
+
+// The one line the page keeps for saying things, and the four things that
+// want it: what the stream is doing, something you asked for and did not
+// get, a `settings.json` that cannot be used, and a passing word that borrows
+// the slot over all three.
+//
+// The file's trouble stands last, and in a few words, with the whole of it
+// on a hover: nothing the reader does on the page mends it, so an answer
+// that works must not clear it the way it clears `state.trouble`, and the
+// daemon's sentence about bad JSON runs to 150 characters on a line that
+// does not wrap.
+//
+// One painter, because four writers raced for it.
+//
+// A stream that is working says nothing. The slot read "live" on every page
+// all day, which is the one thing a reader never needs told -- they can see
+// the page moving -- and a word that is always there is a word nobody reads,
+// so "reconnecting" in the same place went unseen too. `state.live` still
+// holds "live"; it is only not painted.
+function paintLive(borrowed) {
+  const stream = state.live === "live" ? "" : state.live;
+  const links = state.linkTrouble.length
+    ? "settings.json has a problem · wostuast doctor" : "";
+  const slot = $("live");
+  slot.textContent = borrowed || state.trouble || stream || links;
+  slot.title = links && slot.textContent === links
+    ? state.linkTrouble.join("\n") : "";
+}
+
+// Our own word about what just happened -- "review sent", "pressed 2, 1".
+// News, so it goes stale, so it fades; nothing was asked for and refused.
+function note(text) {
+  paintLive(text);
+  setTimeout(() => {
+    // Only when the slot still holds this line. Assigning unconditionally
+    // would wipe whatever the stream has put there since.
+    if ($("live").textContent === text) paintLive();
+  }, 4000);
+}
+
+// --- dragging an edge, and folding a column away (FOLDS) [topics/sidebar]
+
+function rememberWidth(name, px) {
+  const root = document.documentElement;
+  if (px) root.style.setProperty(name, px + "px");
+  else root.style.removeProperty(name);
+  store("wostuast" + name, px ? String(px) : "");   // a private window: the drag still works
+}
+
+function dragWidth(grip, name, least, most) {
+  return dragEdge(grip, name, least, () => most, (at) => at.clientX,
+                  () => grip.previousElementSibling.getBoundingClientRect().width);
+}
+
+// On a laptop the session list and a split tab's list took 615 of 1366 px,
+// and the diff beside them the rest. Each folds to a strip that holds only
+// the button that brings it back, and this browser keeps which, as it keeps
+// the widths: what is not in the settings menu stays in `localStorage`.
+//
+// A split tab's list is one column for all three tabs, as its width is: the
+// map, the file tree and the review's list fold together.
+//
+// It is a class on `body`, not on the column: `split` builds the list column
+// again on every tab switch, and the sidebar's grip and `.main`'s grid have
+// to know too. The class is never one an element wears (daemon-and-page).
+const FOLDS = {
+  sessions: { cls: "foldsessions", what: "the session list" },
+  list: { cls: "foldlist", what: "this list" },
+};
+
+function folded(which) { return stored("wostuast-fold-" + which) === "1"; }
+
+// The button, beside the column's find box: the find box is moved in and
+// out of a split tab's slot, so the button is ordered after it by CSS.
+function putFold(slot, which, button) {
+  const fold = button || put(slot, "button", "theme fold");
+  fold.dataset.fold = which;
+  fold.addEventListener("click", () => {
+    store("wostuast-fold-" + which, folded(which) ? "" : "1");
+    paintFold(which);
+  });
+  paintButton(fold, which);
+  return fold;
+}
+
+function paintButton(fold, which) {
+  const shut = folded(fold.dataset.fold || which);
+  fold.replaceChildren();
+  putIcon(fold, shut ? "foldOut" : "foldIn");
+  fold.title = (shut ? "show " : "fold away ") + FOLDS[which].what;
+  fold.setAttribute("aria-expanded", String(!shut));
+}
+
+function paintFold(which) {
+  document.body.classList.toggle(FOLDS[which].cls, folded(which));
+  for (const fold of document.querySelectorAll(`.fold[data-fold="${which}"]`)) {
+    paintButton(fold, which);
+  }
+  // No `openGrip` here: the chosen row goes and comes back with its list,
+  // and the observer on it (`gripWatch`) redraws the opening then.
+  if (which === "sessions") {
+    document.querySelectorAll("#rows .row").forEach(tileTitle);
+    tileCard(null);
+  }
+}
+
+// A key that puts the cursor into a folded column: nothing can be focused
+// in a column that is not drawn, so the key did nothing at all.
+function unfold(which) {
+  if (!folded(which)) return;
+  store("wostuast-fold-" + which, "");
+  paintFold(which);
+}
+
+// The send bar's top edge, which drags the height of `box` (issue 442). Up
+// is taller, so the distance is the pointer's height turned round. At most
+// most of the window: a box that took all of it left no transcript, and no
+// edge above it to drag back.
+function dragHeight(grip, box, name) {
+  return dragEdge(grip, name, 32, () => Math.max(32, window.innerHeight * 0.7),
+                  (at) => -at.clientY, () => box.getBoundingClientRect().height,
+                  () => fitSay(box));
+}
+
+// One drag, for a width or a height: `where` reads the pointer along the
+// edge's axis, `size` what the dragged thing measures when the press
+// begins, and `after` runs after each step.
+function dragEdge(grip, name, least, most, where, size, after) {
+  grip.title = "drag to resize, double-click to reset";
+  // Each handle brings its own size back, so a third one is one call and
+  // not two. The file column's is built when its tab first opens, which is
+  // when it is wanted.
+  const saved = stored("wostuast" + name);
+  if (saved) rememberWidth(name, Number(saved));
+  let from = 0;
+  let was = 0;
+  const rows = grip.classList.contains("hgrip");
+  const move = (at) => {
+    rememberWidth(name,
+                  Math.round(Math.min(most(), Math.max(least, was + where(at) - from))));
+    if (after) after();
+  };
+  // A drag ends on every way a press can end, not on `pointerup` alone. A
+  // right-click opens the context menu on Linux and macOS, and the menu took
+  // the `pointerup`: the column then followed the mouse with no button held
+  // until the next click. A touch the browser takes for a scroll ends in
+  // `pointercancel`. So only the main button starts a drag, the grip
+  // captures the pointer, and losing the capture ends it too.
+  const ends = ["pointerup", "pointercancel", "lostpointercapture"];
+  const stop = () => {
+    document.body.classList.remove("dragging", "rowdrag");
+    grip.classList.remove("dragging");
+    window.removeEventListener("pointermove", move);
+    for (const end of ends) window.removeEventListener(end, stop);
+  };
+  grip.addEventListener("pointerdown", (at) => {
+    if (at.button !== 0) return;
+    from = where(at);
+    was = size();
+    document.body.classList.add("dragging");
+    document.body.classList.toggle("rowdrag", rows);
+    grip.classList.add("dragging");
+    window.addEventListener("pointermove", move);
+    for (const end of ends) window.addEventListener(end, stop);
+    try {
+      grip.setPointerCapture(at.pointerId);
+    } catch (error) {
+      // A pointer that is already gone. `pointerup` still ends the drag.
+    }
+    at.preventDefault();          // no text selection while dragging
+  });
+  grip.addEventListener("dblclick", () => {
+    rememberWidth(name, 0);
+    if (after) after();
+  });
+  return grip;
+}
+
+// --- the two scripts from the web: marked and highlight.js, pinned by hash [topics/safety]
+
+// Nothing else is fetched at runtime. Both are pinned: `integrity` is the hash
+// of the exact bytes and `crossorigin` is what lets the browser check it. Any
+// script on this page can POST to /send, which types into the user's terminal,
+// so a script from someone else's server without a hash would be a way into
+// it. A CDN that has been tampered with gets you the plain fallback, never
+// other code.
+//
+// `marked` v12.0.2 renders the transcript. MIT, Christopher Jeffrey.
+// https://github.com/markedjs/marked
+const MARKED_SRC =
+  "https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js";
+
+const MARKED_HASH =
+  "sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi";
+
+// `highlight.js` v11.9.0 paints code. BSD-3-Clause, Ivan Sagalaev.
+const HLJS_SRC =
+  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js";
+
+const HLJS_HASH =
+  "sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp";
+
+function fetchScript(src, hash) {
+  return new Promise((settle) => {
+    const tag = document.createElement("script");
+    tag.src = src;
+    tag.integrity = hash;
+    tag.crossOrigin = "anonymous";
+    // Offline, blocked, or bytes that do not match the hash all land here.
+    tag.addEventListener("error", () => settle(false));
+    tag.addEventListener("load", () => settle(true));
+    document.head.appendChild(tag);
+  });
+}
+
+// --- the reader's settings: setting, keepSetting, takeSettings [topics/settings, topics/safety-install]
+
+//
+// Everything the settings menu sets, and the ticket links, are one file of
+// the reader's, `settings.json`, which the daemon reads and writes. It was
+// this browser's `localStorage`, and the reader asked for a file instead:
+// one place, the same in every browser, and one they can read. A choice is
+// made on this page at once and then sent; every page, this one too, then
+// hears of it from the `settings` push and `takeSettings` applies it.
+
+function setting(key) {
+  return state.settings[key];
+}
+
+// Send one change. It is shown already, and the push that follows makes it
+// so on every page. The answer carries no settings, only whether it worked
+// and which links were refused: the settings come by the push alone, one
+// line in the order the file was written. An answer on its own connection
+// landed before an older push, and that push put the page back.
+// One change at a time, each after the last has been answered. Two quick
+// clicks sent two POSTs on two connections, and the first could land after
+// the second: `settings.json` kept the older choice, the push then put it
+// back on the page, and `test_the_two_switches_are_remembered_apart` went
+// red under load.
+let settingsSent = Promise.resolve();
+
+async function keepSetting(change) {
+  state.settings = { ...state.settings, ...change };
+  const answer = settingsSent.then(() => post("/api/settings", change));
+  settingsSent = answer.catch(() => null);
+  said(await answer);
+  return answer;
+}
+
+// Make the page what the file says. `first` is the page starting: nothing is
+// drawn yet, so nothing is drawn again.
+function takeSettings(body, first) {
+  const hid = spaceHidden();
+  state.settings = body;
+  // Another page chose it: this one asks for the other diff too.
+  if (!first && hid !== spaceHidden()) respace();
+  const colours = setting("colours");
+  showTheme(colours === "light" || colours === "dark" ? colours : "system");
+  applyReading(readingWanted());
+  takeSides(!first);
+  takeLinks(!first);
+  drawBell();
+  paintSettings();
+}
+
+// --- colours: the theme in force [topics/settings]
+
+// Three choices: follow the system, or pin one. Kept in `settings.json`, as
+// "auto", "light" or "dark": the words the menu shows.
+
+const THEME_ORDER = ["system", "light", "dark"];
+
+// The browser's own light or dark, asked of one query. The head script asks
+// it once more for itself, because it runs before this one exists.
+const LIGHT = window.matchMedia("(prefers-color-scheme: light)");
+
+function systemTheme() {
+  return LIGHT.matches ? "light" : "dark";
+}
+
+function themeChoice() {
+  return document.documentElement.dataset.themeChoice || "system";
+}
+
+// The colours only. Whoever changed them paints the menu, once.
+function showTheme(choice) {
+  document.documentElement.dataset.themeChoice = choice;
+  document.documentElement.dataset.theme = choice === "system" ? systemTheme() : choice;
+  drawLogo();            // the name's colour is the theme's
+}
+
+// The reader's pick: shown, and kept.
+function applyTheme(choice) {
+  showTheme(choice);
+  keepSetting({ colours: choice === "system" ? "auto" : choice });
+}
+
+function nextTheme() {
+  applyTheme(THEME_ORDER[(THEME_ORDER.indexOf(themeChoice()) + 1) % THEME_ORDER.length]);
+  paintSettings();
+}
+
+LIGHT.addEventListener("change", () => {
+  if (themeChoice() === "system") showTheme("system");
+  redrawIcon();          // the tab bar changed colour, whatever this page shows
+});
+
+// --- a session's state as the page reads it: gone, needs you, why it cannot be typed into [topics/state, topics/safety-typing]
 
 // A session nobody can talk to any more. The daemon sorts these to the end;
 // the page folds them away under "history".
@@ -16179,7 +16542,7 @@ function needsYou(s) {
     || (s.state === "needs_you" && !s.snoozed && !reminderSet(s));
 }
 
-// --- reminders ----------------------------------------------------------------
+// --- reminders: the snooze's twin with a clock [topics/marks]
 
 // The daemon keeps the moment; the page decides when it has come, by the
 // daemon's clock (`skew`), because a row must not change by itself (#375).
@@ -16214,6 +16577,7 @@ function reminderAt(s) {
 const REMIND_IN = [["In 30 minutes", 30 * 60], ["In 1 hour", 3600],
                    ["In 3 hours", 3 * 3600], ["Tomorrow at 08:00", "tomorrow"],
                    ["Monday at 08:00", "monday"]];
+
 // How far ahead a custom day may be. The daemon takes 31 days
 // (`REMIND_MOST`), so the last evening of the 30th fits.
 const REMIND_DAYS = 30;
@@ -16354,6 +16718,7 @@ function endReminder(s) {
 // The page's clock moves a row into "needs you" with no push: wake at the
 // next reminder and draw again, which rings it (`notifyAbout`).
 let reminderTimer = null;
+
 function armReminders() {
   clearTimeout(reminderTimer);
   const next = state.sessions.filter(reminderSet).map((s) => s.remind_at);
@@ -16380,6 +16745,8 @@ async function toggleSnooze(id) {
   patchSession(id, { snoozed: !!(answer && answer.snoozed) });
   drawSessions();
 }
+
+// --- unread: a mark on a finished turn [topics/marks]
 
 // A session is unread when a turn ended since the reader last had it on
 // screen, or when they marked it so (#373). What is on screen, in a window
@@ -16441,55 +16808,7 @@ function markSeen() {
   setUnread(s.id, false);
 }
 
-// The line over the first block the reader has not seen (#374), as Slack
-// draws one over the first message. Put again on every draw, so a redraw
-// keeps it; the blocks' own nodes do not carry it, so redrawing one leaves
-// it standing. Returns the line, or null when there is none to draw.
-function putNewLine(pane) {
-  const old = pane.querySelector(":scope > .newline");
-  if (old) old.remove();
-  const since = state.turns.newSince;
-  if (since === undefined || since === null) return null;
-  const blocks = state.turns.blocks;
-  for (let at = 0; at < blocks.length; at += 1) {
-    const block = blocks[at];
-    if (!block || !(block.ts > since)) continue;
-    // A block with no node here is passed over, not the end of the search:
-    // the line goes over the first one there is.
-    const node = (pane.nodes || [])[at];
-    if (!node || node.parentNode !== pane) continue;
-    const line = document.createElement("div");
-    line.className = "newline";
-    // A call in a folded run is not on screen: the line goes over the
-    // run's own line, or it would stand under it with nothing to point at.
-    const run = node.hidden ? runOf(at) : null;
-    const over = run && pane.heads && pane.heads.get(run[0]);
-    // Since when (#398): "new" alone did not say how much was missed.
-    line.textContent = "new since " + (dayOf(since) ? dayOf(since) + ", " : "")
-      + clock(since);
-    pane.insertBefore(line, over || node);
-    return line;
-  }
-  return null;
-}
-
-// Opening a session with something new lands on the line, not the foot,
-// and once: landing again on every draw would drag the reader back up. A
-// draw the reader has not scrolled since is still that landing: the
-// transcript is drawn as text and again as Markdown, much taller, and the
-// place kept from the first put the line far down the second.
-function landOnNew(pane) {
-  if (state.turns.goTo !== null) return false;
-  if (state.turns.newLanded && state.turns.down !== state.turns.newDown) return false;
-  const line = pane.querySelector(":scope > .newline");
-  if (!line) return false;
-  state.turns.newLanded = true;
-  line.scrollIntoView({ block: "start" });
-  state.turns.down = state.turns.newDown = nearBottom(pane) ? null : pane.scrollTop;
-  return true;
-}
-
-// --- all unreads (#376) ------------------------------------------------------
+// --- the views: Unread, Saved and Search, over every session (VIEWS) [topics/marks]
 
 // The last answer of every unread session, one under the other, newest
 // first: coming back from a break is one scroll, not a click a session.
@@ -16618,6 +16937,7 @@ function putCard(list, id, s, open) {
 // 480, not 340 (#403): at 340 a card held a few words a line, and the
 // reader could see too little of what was saved.
 const CARD_MIN = 480;
+
 const CARD_GAP = 12;
 
 function putBoard(parent, cls) {
@@ -16882,6 +17202,8 @@ function viewLink(button, icon, word, count, feed) {
   if (count !== null) put(button, "span", count ? "n" : "n none", String(count));
 }
 
+// --- sessions on the page: a push merged, patchSession, which are listed [topics/daemon-and-page, topics/sidebar]
+
 function bandOf(s) {
   for (const band of BANDS) if (band[2](s)) return band[0];
   return "ready";                    // a state nobody here knows is not urgent
@@ -17011,6 +17333,8 @@ function listedSessions() {
   const rank = (s) => BANDS.findIndex((band) => band[0] === bandOf(s));
   return listed.slice().sort((a, b) => rank(a) - rank(b));
 }
+
+// --- the sidebar: rows kept and refilled, children under a row, the chosen row, onSessions [topics/sidebar]
 
 // One empty row, built once and then only filled in. Every row has the same
 // parts whether or not it has anything to put in them, so `fillRow` can reach
@@ -17568,9 +17892,11 @@ function openGrip() {
     gripRow = row;
   }
 }
+
 // A row grows when a line is added to it, and every row moves when the
 // fonts arrive; neither is a draw.
 const gripWatch = new ResizeObserver(() => openGrip());
+
 let gripRow = null;
 
 // Only the ages change by themselves. Rebuilding the rows to advance them
@@ -17619,6 +17945,8 @@ function onSessions() {
   armReminders();
   askUnread();
 }
+
+// --- the question bar and the permission dialog: picks, keys, Yes and No [topics/state, topics/safety-typing, topics/safety]
 
 // A pick belongs to the question it was made for. A different question
 // arriving takes the old picks with it rather than submitting them. An ask
@@ -18132,6 +18460,8 @@ async function submitAsk(id, ask, box) {
   if (answer && !answer.error) note("pressed " + (answer.keys || []).join(" "));
 }
 
+// --- the header over the transcript: resume, context, model [topics/daemon-and-page]
+
 function drawHeader() {
   // All that is left of a bar that used to stand over every tab saying the
   // branch, the pane, the model and the state — which the chosen row already
@@ -18247,6 +18577,7 @@ function drawContext() {
 // in typed, and `default` takes the choice out of Claude Code's settings
 // again. Its own menu lists the same five models.
 const MODELS = ["default", "opus", "fable", "sonnet", "haiku"];
+
 // Only aliases here. A full id comes from the sessions (`model_id`).
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
@@ -18331,7 +18662,8 @@ function money(dollars) {
                       : "$" + Math.round(dollars);
 }
 
-// --- the tab icon and the tab's title --------------------------------------
+// --- the tab's title and icon: the robot is the state [topics/alerts]
+
 //
 // The tab is what the reader sees from another tab, so it says who needs
 // them in its words and what state the lot is in in its colour. It was a
@@ -18464,7 +18796,8 @@ function drawLogo() {
   logo.src = robotPicture(colour, 64);
 }
 
-// --- telling you when an agent wants you ------------------------------------
+// --- alerts: telling you when an agent wants you [topics/alerts]
+
 //
 // Two things are worth being told about, and they are not the same thing. An
 // agent that needs you cannot go on without you; an agent that has finished
@@ -18540,6 +18873,95 @@ async function setAlert(which, on) {
   }
   drawBell();
 }
+
+function notifyAbout(sessions) {
+  const want = alertsWanted();
+  const on = alertsCan();
+  const now = new Set(sessions.filter(needsYou).map((s) => s.id));
+  for (const id of waiting) if (!now.has(id)) waiting.delete(id);
+
+  // Read before anything is sent, and written on every pass whatever the
+  // switches say. Two things rest on that. Ticking the box while an agent is
+  // working still tells you when it stops, which is the turn you ticked it
+  // for -- record only while the switch is on and that one alert goes
+  // missing. And a session that reached "done" while nobody was listening is
+  // then already at "done" rather than a change waiting to be announced, so
+  // switching on does not bring an hour of news with it. `waiting` is the
+  // same promise for the amber one.
+  const before = new Map(wasDoing);
+  wasDoing.clear();
+  for (const session of sessions) wasDoing.set(session.id, session.state);
+  const live = new Set(sessions.map((one) => one.id));
+  for (const id of [...before.keys()]) if (!live.has(id)) before.delete(id);
+
+  // Do not shout about a backlog later: an amber row that nobody was told
+  // about -- alerts not allowed, or this one switched off -- is not news
+  // when the switch comes on.
+  if (!on || !want.needs) for (const id of now) waiting.add(id);
+  if (!on) return;
+  // Each alert names the session by `rowName`, as the row and the tab's
+  // title do. `label` leads with the title Claude Code writes from the first
+  // prompt, which `/rename` never reaches, so the alert named a session that
+  // was not in the list.
+  for (const session of sessions) {
+    if (want.needs && needsYou(session) && !waiting.has(session.id)) {
+      waiting.add(session.id);
+      tellAbout(session, rowName(session) + " needs you", waitsFor(session),
+                true);
+    }
+    // A change, not a state: "done" is where a session sits between turns,
+    // so the news is the moment it got there. A session this page has not
+    // seen before has no entry, which is why one already finished when you
+    // opened the page says nothing.
+    if (want.done && session.state === "done"
+        && before.get(session.id) === "working") {
+      tellAbout(session, rowName(session) + " has finished",
+                session.prompt || "ready for you");
+    }
+  }
+}
+
+// What a session that needs you is waiting for, in the alert's words: the
+// question it asks, from `asking` -- the row's `reason` names only its
+// header -- or else the `reason`, the permission it wants and for what,
+// with its secrets hidden already: an alert can stand on a locked screen.
+function waitsFor(session) {
+  if (reminderDue(session) && session.state !== "needs_you") {
+    return "the reminder you set";
+  }
+  const asked = session.asking && session.asking.questions;
+  const first = asked && asked[0] && asked[0].question;
+  if (first) return clip(first, 200);
+  return session.reason || "waiting for you";
+}
+
+// One alert (issue 330). It says what the session wants, and where the
+// session stands -- the folder and the branch, the row's second line --
+// and it wears the tab's robot in the colour of what it says. An alert
+// that needs you stays until it is clicked or closed (`urgent`): it is
+// what this program is for, and one that went away on its own while the
+// reader was in another room said nothing to them. A click opens the
+// session, as it always did.
+function tellAbout(session, title, body, urgent = false) {
+  const where = [session.place, session.branch].filter(Boolean).join(" · ");
+  try {
+    const note = new Notification(title, {
+      body: where ? body + "\n" + where : body,
+      icon: iconPicture(urgent ? "needs" : "ready", ALERT_ICON),
+      tag: "wostuast-" + session.id,
+      // One tag per session, so a second alert replaces the first -- and a
+      // replacement makes no sound and shows no banner unless it says so.
+      // An agent that stopped on a second question went unsaid.
+      renotify: true,
+      requireInteraction: urgent,
+    });
+    note.onclick = () => { window.focus(); choose(session.id); note.close(); };
+  } catch (error) {
+    // Some browsers refuse without a service worker. Nothing else breaks.
+  }
+}
+
+// --- the settings menu, and the settings beside the code [topics/settings]
 
 function showSettings(open) {
   // The link rows are the file's when the menu opens, and the reader's
@@ -18692,7 +19114,6 @@ function paintSettings() {
   $("settingspath").textContent = setting("path") || "";
 }
 
-// --- the settings beside the code ---------------------------------------------
 //
 // Four settings are changed while reading, not once: the diff's columns,
 // whitespace in a diff, how wide code is drawn, and whether long lines wrap.
@@ -18745,7 +19166,8 @@ function putQuick(parent, names) {
   return box;
 }
 
-// --- the ticket links, in the settings menu ---------------------------------
+// --- ticket links: their rows in the settings menu, and linkTickets [topics/settings, topics/safety]
+
 //
 // One row a link: what to find, a regular expression, and where it links
 // to, with `$1` for its first group. A row is saved when the reader leaves
@@ -18872,142 +19294,6 @@ function paintExamples() {
     opensAway(link);
   }
 }
-
-// One control in parts, the part in force pressed: the settings menu's, and
-// Markdown or text over a document and over a commit message. One builder,
-// so they look and answer alike. `paintChoice` says which is in force.
-function putChoice(parent, name, options, pick) {
-  const group = put(parent, "span", "choice " + name);
-  group.setAttribute("role", "group");
-  for (const [value, word, icon, title] of options) {
-    const button = put(group, "button", "verb quiet");
-    button.dataset.value = String(value);
-    if (title) button.title = title;
-    if (icon) putIcon(button, icon);
-    put(button, "span", null, word);
-    button.addEventListener("click", () => pick(value));
-  }
-  return group;
-}
-
-function paintChoice(group, value) {
-  for (const button of group.querySelectorAll("button")) {
-    button.setAttribute("aria-pressed", String(button.dataset.value === String(value)));
-  }
-}
-
-// Markdown or the text as it was written, at the right end of the line that
-// names what is read: a document's path on the Files tab, a commit's subject
-// on the Review tab. The reader asked for the two to look and feel the same.
-// One button, "txt", lit while the text is shown as written, as the buttons
-// beside the code are (`putQuick`): it was "md | txt", two buttons, and the
-// reader asked for one click. Markdown is what is drawn when it is not lit.
-function putReadAs(parent, asText, pick, textTitle) {
-  const button = put(parent, "button", "verb quiet toggle readas", "txt");
-  button.setAttribute("aria-label", textTitle);
-  paintToggle(button, asText);
-  button.addEventListener("click", () => {
-    const next = button.getAttribute("aria-pressed") !== "true";
-    paintToggle(button, next);
-    pick(next);
-  });
-  return button;
-}
-
-// One button lit while what it says is on, and its title saying which.
-function paintToggle(button, on) {
-  button.setAttribute("aria-pressed", String(on));
-  button.title = button.getAttribute("aria-label") + (on ? ": on" : ": off");
-}
-
-function notifyAbout(sessions) {
-  const want = alertsWanted();
-  const on = alertsCan();
-  const now = new Set(sessions.filter(needsYou).map((s) => s.id));
-  for (const id of waiting) if (!now.has(id)) waiting.delete(id);
-
-  // Read before anything is sent, and written on every pass whatever the
-  // switches say. Two things rest on that. Ticking the box while an agent is
-  // working still tells you when it stops, which is the turn you ticked it
-  // for -- record only while the switch is on and that one alert goes
-  // missing. And a session that reached "done" while nobody was listening is
-  // then already at "done" rather than a change waiting to be announced, so
-  // switching on does not bring an hour of news with it. `waiting` is the
-  // same promise for the amber one.
-  const before = new Map(wasDoing);
-  wasDoing.clear();
-  for (const session of sessions) wasDoing.set(session.id, session.state);
-  const live = new Set(sessions.map((one) => one.id));
-  for (const id of [...before.keys()]) if (!live.has(id)) before.delete(id);
-
-  // Do not shout about a backlog later: an amber row that nobody was told
-  // about -- alerts not allowed, or this one switched off -- is not news
-  // when the switch comes on.
-  if (!on || !want.needs) for (const id of now) waiting.add(id);
-  if (!on) return;
-  // Each alert names the session by `rowName`, as the row and the tab's
-  // title do. `label` leads with the title Claude Code writes from the first
-  // prompt, which `/rename` never reaches, so the alert named a session that
-  // was not in the list.
-  for (const session of sessions) {
-    if (want.needs && needsYou(session) && !waiting.has(session.id)) {
-      waiting.add(session.id);
-      tellAbout(session, rowName(session) + " needs you", waitsFor(session),
-                true);
-    }
-    // A change, not a state: "done" is where a session sits between turns,
-    // so the news is the moment it got there. A session this page has not
-    // seen before has no entry, which is why one already finished when you
-    // opened the page says nothing.
-    if (want.done && session.state === "done"
-        && before.get(session.id) === "working") {
-      tellAbout(session, rowName(session) + " has finished",
-                session.prompt || "ready for you");
-    }
-  }
-}
-
-// What a session that needs you is waiting for, in the alert's words: the
-// question it asks, from `asking` -- the row's `reason` names only its
-// header -- or else the `reason`, the permission it wants and for what,
-// with its secrets hidden already: an alert can stand on a locked screen.
-function waitsFor(session) {
-  if (reminderDue(session) && session.state !== "needs_you") {
-    return "the reminder you set";
-  }
-  const asked = session.asking && session.asking.questions;
-  const first = asked && asked[0] && asked[0].question;
-  if (first) return clip(first, 200);
-  return session.reason || "waiting for you";
-}
-
-// One alert (issue 330). It says what the session wants, and where the
-// session stands -- the folder and the branch, the row's second line --
-// and it wears the tab's robot in the colour of what it says. An alert
-// that needs you stays until it is clicked or closed (`urgent`): it is
-// what this program is for, and one that went away on its own while the
-// reader was in another room said nothing to them. A click opens the
-// session, as it always did.
-function tellAbout(session, title, body, urgent = false) {
-  const where = [session.place, session.branch].filter(Boolean).join(" · ");
-  try {
-    const note = new Notification(title, {
-      body: where ? body + "\n" + where : body,
-      icon: iconPicture(urgent ? "needs" : "ready", ALERT_ICON),
-      tag: "wostuast-" + session.id,
-      // One tag per session, so a second alert replaces the first -- and a
-      // replacement makes no sound and shows no banner unless it says so.
-      // An agent that stopped on a second question went unsaid.
-      renotify: true,
-      requireInteraction: urgent,
-    });
-    note.onclick = () => { window.focus(); choose(session.id); note.close(); };
-  } catch (error) {
-    // Some browsers refuse without a service worker. Nothing else breaks.
-  }
-}
-
-// --- the transcript ---------------------------------------------------------
 
 //: At most this many links in one block. A pattern that matches everything
 //: would otherwise build a link per word, and every one of them is a DOM
@@ -19155,6 +19441,8 @@ function nextMatch(re, text, from) {
   return hit;
 }
 
+// --- what an agent wrote: the scrub, safe links, Markdown [topics/safety, topics/transcript-look]
+
 //: What may be a link on this page. A page an agent wrote is not a place to
 //: follow a `javascript:` or a `data:` from.
 const LINKABLE = /^https?:/i;
@@ -19230,6 +19518,7 @@ const ALLOWED = new Set([
 //: Maps and not objects: an attribute named `constructor` found the one
 //: every object has, and kept itself.
 const SIDES = ["left", "center", "right"];
+
 const KEPT = new Map([
   // Where an `href` may go is for `safeLinks` to say.
   ["A", new Map([["href", () => true]])],
@@ -19347,7 +19636,7 @@ function markdown(parent, text, breaks = false) {
   return node;
 }
 
-// --- painting code ----------------------------------------------------------
+// --- painting code: the language, the highlighter, cut into lines [topics/files-tab]
 
 // 122 KB of highlighter inside the program would be more than half of it
 // again, to paint code that reads perfectly well unpainted. So it is fetched,
@@ -19360,6 +19649,7 @@ const BY_NAME = {
   ".bashrc": "bash", ".bash_profile": "bash", ".zshrc": "bash",
   ".profile": "bash", ".gitconfig": "ini", ".gitignore": "plaintext",
 };
+
 const BY_SUFFIX = {
   h: "c", hpp: "cpp", hh: "cpp", hxx: "cpp", cc: "cpp", cxx: "cpp",
   mk: "makefile", cmake: "cmake", sh: "bash", zsh: "bash",
@@ -19548,35 +19838,7 @@ function paintedLines(lib, language, text, want) {
   return lines.length === want ? lines : null;
 }
 
-// Onto the clipboard, with the old way behind it. A loopback origin counts
-// as secure, so `navigator.clipboard` is usually there -- but it is refused
-// often enough (a page that never had the focus, a browser that wants a
-// permission) that the answer has to be checked rather than assumed. Neither
-// path may throw: this runs from a click handler.
-async function copyToClipboard(text) {
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (error) {
-    // the old way, below
-  }
-  try {
-    const holder = document.createElement("textarea");
-    holder.value = text;
-    holder.setAttribute("readonly", "");
-    holder.style.position = "fixed";
-    holder.style.top = "-1000px";
-    document.body.appendChild(holder);
-    holder.select();
-    const done = document.execCommand("copy");
-    holder.remove();
-    return done;
-  } catch (error) {
-    return false;
-  }
-}
+// --- a link to a block, and a turn's acts [topics/transcript]
 
 // A link to one reply: `#<session>/<seq>`.
 //
@@ -19782,13 +20044,17 @@ function blockTurn(block, index) {
   return node;
 }
 
+// --- a block's parts: folds, shell output, copies, saves [topics/transcript-look, topics/marks]
+
 // A message too long to read in the transcript is drawn folded: its first
 // lines, faded out, and a bar under it that opens it. A log pasted into a
 // prompt ran to 140 KB (#329), and the transcript drew all of it -- fifty
 // screens to scroll past to reach the answer under it. Lines and characters
 // both: a log is many short lines, a minified file one long one.
 const FOLD_LINES = 40;
+
 const FOLD_CHARS = 6000;
+
 // What a folded message shows: enough to tell which one it is.
 const FOLD_SHOWN = 12;
 
@@ -19809,24 +20075,6 @@ function foldedHead(text) {
   if (lines < FOLD_LINES && text.length <= FOLD_CHARS) return null;
   const head = cut >= 0 ? text.slice(0, cut) : text;
   return head.slice(0, FOLD_SHOWN * 100);
-}
-
-// A count read at a glance: "2.4k" for 2,401, "12k", "1.2M", and below a
-// thousand the number. "2,401 lines" was too long for the reader, in the
-// fold bar and over the send button.
-function roughly(n) {
-  if (n < 1000) return String(n);
-  const [size, unit] = n < 1e6 ? [n / 1e3, "k"] : [n / 1e6, "M"];
-  return String(size < 10 ? Math.round(size * 10) / 10 : Math.round(size)) + unit;
-}
-
-// How many lines a text has, without an array of them.
-function lineCount(text) {
-  let lines = 1;
-  for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) {
-    lines += 1;
-  }
-  return lines;
 }
 
 // The bar under a long message. Folded, it says how much there is; open, it
@@ -19892,31 +20140,6 @@ function putCodeCopies(node) {
                    done ? "copied" : "the browser would not copy it");
     });
   }
-}
-
-// A button that did its job says so for a moment: a tick in the working
-// colour, then its own icon and words again. One helper, so "it went" looks
-// the same on every button that has nothing else to show for it -- a copy,
-// and a jump, whose result is in another window. A press while it shows
-// starts the moment again rather than ending it early. A button that is a
-// word passes `words`, what it says when it went and when it did not, and
-// `icon` is then the word it goes back to (`putCopy`, which had a timer of
-// its own that a second press could cut short).
-function flashOutcome(button, icon, title, done, saying, words) {
-  const show = (what) => {
-    button.replaceChildren();
-    if (words) button.textContent = what;
-    else putIcon(button, what);
-  };
-  show(words ? words[done ? 0 : 1] : done ? "check" : icon);
-  button.title = saying;
-  button.classList.toggle("done", done);
-  clearTimeout(button.flashing);
-  button.flashing = setTimeout(() => {
-    show(icon);
-    button.title = title;
-    button.classList.remove("done");
-  }, 1400);
 }
 
 // The Markdown an agent wrote, as it wrote it. The page shows it drawn; this
@@ -19989,6 +20212,8 @@ async function askSaved() {
   const got = await getJson("/api/saved");
   if (got.body) takeSaved(got.body.saved);
 }
+
+// --- the transcript: rounds, the map, the draw and the land, the "new" line [topics/transcript, topics/transcript-look]
 
 function nearBottom(box) {
   return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -20473,7 +20698,55 @@ function putToolDiff(parent, block) {
   }
 }
 
-// --- runs of calls (#465) ----------------------------------------------------
+// The line over the first block the reader has not seen (#374), as Slack
+// draws one over the first message. Put again on every draw, so a redraw
+// keeps it; the blocks' own nodes do not carry it, so redrawing one leaves
+// it standing. Returns the line, or null when there is none to draw.
+function putNewLine(pane) {
+  const old = pane.querySelector(":scope > .newline");
+  if (old) old.remove();
+  const since = state.turns.newSince;
+  if (since === undefined || since === null) return null;
+  const blocks = state.turns.blocks;
+  for (let at = 0; at < blocks.length; at += 1) {
+    const block = blocks[at];
+    if (!block || !(block.ts > since)) continue;
+    // A block with no node here is passed over, not the end of the search:
+    // the line goes over the first one there is.
+    const node = (pane.nodes || [])[at];
+    if (!node || node.parentNode !== pane) continue;
+    const line = document.createElement("div");
+    line.className = "newline";
+    // A call in a folded run is not on screen: the line goes over the
+    // run's own line, or it would stand under it with nothing to point at.
+    const run = node.hidden ? runOf(at) : null;
+    const over = run && pane.heads && pane.heads.get(run[0]);
+    // Since when (#398): "new" alone did not say how much was missed.
+    line.textContent = "new since " + (dayOf(since) ? dayOf(since) + ", " : "")
+      + clock(since);
+    pane.insertBefore(line, over || node);
+    return line;
+  }
+  return null;
+}
+
+// Opening a session with something new lands on the line, not the foot,
+// and once: landing again on every draw would drag the reader back up. A
+// draw the reader has not scrolled since is still that landing: the
+// transcript is drawn as text and again as Markdown, much taller, and the
+// place kept from the first put the line far down the second.
+function landOnNew(pane) {
+  if (state.turns.goTo !== null) return false;
+  if (state.turns.newLanded && state.turns.down !== state.turns.newDown) return false;
+  const line = pane.querySelector(":scope > .newline");
+  if (!line) return false;
+  state.turns.newLanded = true;
+  line.scrollIntoView({ block: "start" });
+  state.turns.down = state.turns.newDown = nearBottom(pane) ? null : pane.scrollTop;
+  return true;
+}
+
+// --- runs of calls (#465): a run of calls is one line [topics/transcript-look]
 
 // The agent says a line and then makes ten calls, says a line and makes nine:
 // drawn one row a call, the words were islands in a list nobody reads. Two
@@ -20585,7 +20858,7 @@ function fillCallSum(button, blocks, open) {
   if (failed) put(button, "span", "failed", failed + " failed");
 }
 
-// --- the Files tab ----------------------------------------------------------
+// --- the tab frame: split, fresh, the find box [topics/daemon-and-page]
 
 // Both split tabs keep their two columns and rebuild a column only when what
 // it shows has changed. The box used to be emptied on every poll, which threw
@@ -20676,7 +20949,7 @@ function fresh(box, which, key) {
   return true;
 }
 
-// --- finding a file by typing ----------------------------------------------
+// --- finding a file by typing: fuzzy [topics/files-tab]
 
 // Every row is the same height, so where you are in the list is arithmetic
 // rather than a measurement, and only the rows on screen have to exist. Two
@@ -20684,6 +20957,7 @@ function fresh(box, which, key) {
 // Ten thousand matches then cost the same as ten, and no answer has to be cut
 // short to keep the tab quick.
 const ROW_H = 28;
+
 // The fewest rows a window holds: a tall screenful, and some either side.
 // A list taller than this gets as many rows as it can show, and eight more
 // at each end (`fillList`). A fixed 80 was 2,240 px, and a portrait or 4K
@@ -20793,7 +21067,7 @@ function findPath(path, query) {
   return span <= query.length * TIGHT ? wide : null;
 }
 
-// --- the tree ---------------------------------------------------------------
+// --- the tree [topics/files-tab]
 
 // Every directory, with what it holds. One pass over the names, which arrive
 // in name order, so each directory's children come out in order too. It is
@@ -20914,7 +21188,8 @@ function treeRows(dirs, open) {
   return rows;
 }
 
-// --- go to file --------------------------------------------------------------
+// --- go to file, and the Files tab's list [topics/files-tab]
+
 //
 // What you type opens a list under the box; picking one opens that file and
 // shows it in the tree. The tree itself never moves, which is the point: it
@@ -21019,40 +21294,6 @@ function putOnlyChanged(slot) {
     });
   }
   paintToggle(button, onlyChanged());
-}
-
-// Everything whose path matches what is typed, in the order it came, each one
-// with where the letters landed. `pathOf` says how to get a path out of an
-// item, because a file list holds names and a diff holds files. Named `hits`
-// because `matches` is the transcript's and `matching` is the tree's, and a
-// third word for the same idea in one scope is how one of them gets shadowed.
-//
-// Every list on screen goes through here, so `findPath` is called in one place
-// and the lists cannot come to disagree about what a query means. They did:
-// two of them threw the matched letters away and called `findPath` a second
-// time, per row, to get them back.
-//
-// The order is the caller's. A diff's order is git's and must not be
-// shuffled; a file list wants the best match first, which is what `pick` adds.
-function hits(items, pathOf) {
-  const found = [];
-  for (const one of items) {
-    const hit = findPath(pathOf(one), state.find);
-    if (hit) found.push({ one, at: hit.at, score: hit.score });
-  }
-  return found;
-}
-
-// The files a query finds, best match first. It is only ever called with one.
-//
-// It runs over every name the worktree holds, not over a slice of them. The
-// first version searched the first five thousand of 52,799, so typing
-// `libcorrelation` found 16 files and missed more than a thousand — a wrong
-// answer that looked exactly like a right one.
-function pick(names) {
-  const found = hits(names, (name) => name);
-  found.sort((a, b) => b.score - a.score);
-  return found;
 }
 
 // The name, with the letters that matched picked out. Every piece is a text
@@ -21183,13 +21424,8 @@ function countNote(note, many) {
   put(note, "span", null, counted(many, "file", "files"));
 }
 
-// A count and its noun: "1 reply", "3 replies". One spelling, which nine
-// places wrote out for themselves, two of them with `> 1` (#298).
-function counted(n, one, many) {
-  return n + " " + (n === 1 ? one : many);
-}
+// --- a file too long to draw whole: windows and rows of CODE_H [topics/files-tab]
 
-// --- a file too long to draw whole ------------------------------------------
 //
 // Measured on a file of 76,000 short lines: 306,000 nodes and about a second
 // to build them, and the colouring another second and a quarter on top. That
@@ -21226,6 +21462,7 @@ let CODE_WHOLE = 5000;
 // library: the scar CODE_WHOLE already carries. `paintedLines` asks, so the
 // Files tab, a diff and a slice all keep to it.
 let PAINT_MAX = 100000;
+
 const LONG_LINE = 1000;
 
 function tooDenseToPaint(text) {
@@ -21240,6 +21477,7 @@ function tooDenseToPaint(text) {
 }
 
 const CODE_H = 21;          // one row, exactly. `.dlines` sets the same number
+
 const CODE_SHOWN = 160;     // a tall screenful, and some either side
 
 // A line with a comment under it is taller than a row, and a row's height is
@@ -21335,6 +21573,8 @@ function measureTall(code, tall, first, last) {
   if (blocks.length !== shown.length) return;
   shown.forEach(([line], at) => code.tall.set(line, blocks[at].offsetHeight));
 }
+
+// --- the Files tab: drawFiles, landFiles, the pane and the file's head [topics/files-tab]
 
 // The tree on the left, when what it draws has moved.
 function drawFileList(box, list, note) {
@@ -21628,255 +21868,6 @@ function putMedia(parent, path, found) {
   box.appendChild(node);
 }
 
-
-
-// An empty Files tab. One place, so that choosing a session, choosing a file
-// and starting up cannot drift apart about what "nothing is open" means.
-// The Transcript tab's whole state, so that choosing a session is one
-// assignment rather than six that could forget the seventh -- which is the
-// reason `blankFiles` exists, in a second place.
-//
-// The blocks are in here too. Nothing outside this tab reads them: the
-// sidebar's counts come from the session rows, and the daemon pushes blocks
-// at a browser without asking which tab it is on.
-function blankTurns() {
-  return {
-    blocks: [],         // what the daemon has pushed, by seq
-    run: -1,            // which reading of this transcript those are from
-    open: new Set(),    // blocks the reader opened: a tool, a long message
-    goTo: null,         // a block a link asked for, until it is on screen
-    goToTs: null,       // and its moment, for a saved turn (#377)
-    goToNear: null,     // or about when, for a search result (#379)
-    at: null,           // the block the list marks: the last place you went
-    down: null,         // how far down the transcript you were; null is none
-    early: null,        // pushes that land while a fetch is on its way
-    told: null,         // how long the stream said the transcript is, meanwhile
-    failed: false,      // the last fetch failed; "nothing yet" would lie
-    version: 0,         // the daemon's count of changes read, as far as held
-    whole: false,       // blocks are a fetch and every push since, no gap
-    // Whether a fetch has answered for this session yet, with blocks, with
-    // none, or with a failure. A session with no transcript is answered
-    // with no `run`, so nothing else tells "empty" from "not asked yet" --
-    // and the tests wait on it before they read the tab.
-    landed: false,
-    // When the reader last had this session on screen, taken once, before
-    // it is read (#374): the "new" line stands over the first block after
-    // it. `undefined` is not taken yet, null is no line.
-    newSince: undefined,
-    newLanded: false,   // the line was scrolled to, once
-    newDown: null,      // where that left the pane, to tell a scroll since
-  };
-}
-
-// Everything the Diff tab holds for one session. A choice here is one the
-// session keeps (`KEPT`); the rest is what the daemon sent, or what a read
-// is doing. The fields were flat on `state`, and `choose` reset them in
-// eighteen lines that a new one had to join (#300).
-function blankDiff() {
-  return {
-    // What the tab shows: "" for all changes, "uncommitted", or one
-    // commit's sha.
-    of: "",
-    gone: false,        // the commit picked went away; the tab says so
-    shut: new Set(),    // folders in the tab's tree the reader shut
-    open: new Map(),    // files the reader opened or shut by hand
-    // Lines the reader asked to see between the changes, as `[from, to]`
-    // runs by `moreKey`, and the whole files fetched to show them. See
-    // `withMore`.
-    more: new Map(),
-    whole: new Map(),
-    tag: "",            // the tag of the answer held, sent back as `have`
-    loose: null,        // an untracked file picked
-    found: null,        // the daemon's answer for it; null while it is read
-    asking: null,       // the path a read is out for, so a poll asks once
-    trouble: "",        // why it is not read yet, when a read failed
-    goTo: false,        // whether the pane still has to move to it
-  };
-}
-
-function blankFiles() {
-  return {
-    names: [],          // every path in the worktree, in the order sent
-    known: new Set(),   // the same paths, for asking whether one is still there
-    places: [],         // the names and the directories, for "go to file"
-    tree: new Map(),    // every directory, with what it holds
-    marked: new Set(),  // the directories holding something that changed
-    dirs: new Map(),    // the ones the reader opened or closed by hand
-    changed: new Map(), // the ones git says the agent touched, and when
-    total: 0,           // how many the worktree holds
-    cut: false,         // more than the daemon will send
-    failed: false,      // git did not answer; "no files" would lie
-    // Ignored directories the daemon declined to walk, and the number it
-    // declined them at. They hold nothing, so the tree is told their names
-    // and the row says why it cannot be opened.
-    skipped: new Set(),
-    ignoredMax: 0,
-    tag: "",            // the daemon's name for the listing we hold
-    path: null,         // the file it shows
-    // The row the list marks: the last place the reader went. Usually the
-    // open file, and a directory when they asked for one by name or by
-    // clicking a part of the path above the file. Marking only the open file
-    // meant clicking a part of a path that was already on screen answered
-    // with nothing at all.
-    at: null,
-    text: "",
-    binary: false,
-    hex: false,         // `text` is a binary file's hex, not its text (#487)
-    // What the daemon will serve this one as, when the page may show it as
-    // it is -- `image/png`, and so on -- and whether it is past the cap. The
-    // list is the daemon's; see `putMedia`.
-    shown: "",
-    oversize: false,
-    lang: "",           // what `file` made of it, when the name said nothing
-    mtime: 0,           // which version of that text is loaded
-    stamp: "",          // the daemon's name for that version, sent back (#292)
-    size: 0,            // its bytes on disk, which the decoded text does not say
-    // Whether any answer for this file has landed. Not `mtime`, which a
-    // file can really have as nought. Until one lands the pane says it is
-    // reading, or why it could not -- `trouble` -- and never draws the empty
-    // text above as the file: that read as a file with nothing in it.
-    read: false,
-    trouble: "",
-    // Markdown reads as Markdown, which has no lines to comment on. This
-    // turns it back into the rows every other file gets. It is remembered
-    // across files, because a reader who wants to review one document
-    // usually wants to review the next one too.
-    asText: false,
-    goTo: null,         // a path the list has been asked to move to
-    // How far down the open file the reader was, kept across a tab switch
-    // and across a visit to another session. Put back once, when there is
-    // something under the scrollbar to put it back into.
-    down: 0,
-  };
-}
-
-// --- how a file is drawn -----------------------------------------------------
-//
-// Two choices the reader makes about reading, not about a session: how wide a
-// tab is, and whether a long line wraps. In `settings.json`, like the theme,
-// as `tab_width` and `long_lines`.
-
-const TAB_WIDTHS = [2, 4, 8];
-
-// Both live on the root element, the theme's pattern, and for the same
-// reason: the cascade does the work, so neither control has to rebuild
-// anything to be obeyed. What they are is the settings' to say
-// (`readingWanted`); the root was read back as a second copy of it (#299).
-function applyReading(next) {
-  const root = document.documentElement;
-  root.style.setProperty("--tab-w", String(next.tab));
-  root.dataset.wrap = next.wrap ? "yes" : "no";
-  root.dataset.marks = next.marks ? "on" : "off";
-  root.dataset.code = next.narrow ? "narrow" : "normal";
-}
-
-// What the file says. Whatever it did not answer for, the default stands --
-// and the default is applied either way, so the gutter and the label cannot
-// disagree.
-function readingWanted() {
-  const tab = setting("tab_width");
-  return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
-           wrap: setting("long_lines") === "wrap",
-           marks: setting("space_marks") === "on",
-           narrow: setting("code_width") === "narrow" };
-}
-
-// How wide code is drawn, and whether a long line wraps: the menu's
-// choices and the buttons beside the code (`putQuick`) both pick through
-// these. On the root, so nothing is drawn again.
-function keepWidth(narrow) {
-  keepSetting({ code_width: narrow ? "narrow" : "normal" });
-  applyReading(readingWanted());
-}
-
-function keepWrap(wrap) {
-  keepSetting({ long_lines: wrap ? "wrap" : "scroll" });
-  applyReading(readingWanted());
-}
-
-// Whether a change of whitespace alone is left out of the Review tab
-// (`git diff -w`, #449). Unlike the marks it is not the cascade's: the
-// daemon answers another diff, so a change asks again.
-function spaceHidden() {
-  return setting("diff_space") === "hide";
-}
-
-// The held diff and the whole files read for it came from the other
-// answer: the tag would say "the same" for a diff that is not, and lines
-// shown between two changes must come from the same diff as the changes.
-function respace() {
-  state.diffs.tag = "";
-  state.diffs.whole.clear();
-  if (state.tab === "diff") loadDiff();
-}
-
-function keepSpace(hide) {
-  if (spaceHidden() === hide || busyWriting()) return;
-  keepSetting({ diff_space: hide ? "hide" : "show" });
-  respace();
-}
-
-// A space at a line's end as a box of its own, and an empty box before
-// every tab, so the CSS can draw a faint mark there when the reader asks
-// (#449). Always
-// wrapped and only shown by the cascade (`data-marks`), as the tab width
-// is, so a change of the setting rebuilds nothing. Run after the word
-// marks, wherever a line's text is drawn or painted: it counts characters
-// across whatever spans are already in the cell, and a mark draws nothing
-// that a copy takes.
-function markSpaces(cell) {
-  const text = cell.textContent;
-  const trail = text.search(/[ \t]+$/);
-  if (trail < 0 && !text.includes("\t")) return;
-  let at = 0;
-  overText(cell, (data) => {
-    const start = at;
-    at += data.length;
-    if (!/[ \t]/.test(data)) return null;
-    const made = document.createDocumentFragment();
-    let plain = "";
-    for (let i = 0; i < data.length; i += 1) {
-      const char = data[i];
-      const late = trail >= 0 && start + i >= trail;
-      if (char === "\t") {
-        // An empty mark before the tab, and the tab left in the text: a
-        // tab in a span of its own was measured from elsewhere, and a tab
-        // of four columns drew three. Not `.tab`: that is a tab of the tab
-        // row, whose padding made the empty mark 24 px wide, so a tab of
-        // two columns, or one in a narrower face, ran to the next stop.
-        if (plain) made.appendChild(document.createTextNode(plain));
-        put(made, "span", "ws tabmark");
-        plain = char;
-      } else if (char === " " && late) {
-        if (plain) made.appendChild(document.createTextNode(plain));
-        plain = "";
-        put(made, "span", "ws spacemark", char);
-      } else {
-        plain += char;
-      }
-    }
-    if (plain) made.appendChild(document.createTextNode(plain));
-    return made;
-  });
-}
-
-// How big a file is, in the units a person reads. Bytes on disk, which is not
-// what the text length says once it has been decoded or cut.
-function sizeOf(bytes) {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + " KB";
-  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-}
-
-// `21 Sep 07:20`, which is short enough to sit in a header and exact enough
-// to tell two saves apart. The day is always in it: a file's mtime is read
-// against other files' mtimes, not against the time of day.
-function whenOf(seconds) {
-  if (!seconds) return "";
-  const at = new Date(seconds * 1000);
-  return at.getDate() + " " + MONTHS[at.getMonth()] + " " + clock(seconds);
-}
-
 // The path of the open file, one clickable piece per part of it, and still
 // one string to select and copy: the separators are text nodes and nothing in
 // here is a block, so a selection across the whole line yields the path.
@@ -22003,7 +21994,240 @@ function chooseFile(path) {
   load();
 }
 
-// --- the Diff tab -----------------------------------------------------------
+// --- how a file is drawn: tab width, wrap, spaces, as the reader set them [topics/files-tab, topics/settings]
+
+//
+// Two choices the reader makes about reading, not about a session: how wide a
+// tab is, and whether a long line wraps. In `settings.json`, like the theme,
+// as `tab_width` and `long_lines`.
+
+const TAB_WIDTHS = [2, 4, 8];
+
+// Both live on the root element, the theme's pattern, and for the same
+// reason: the cascade does the work, so neither control has to rebuild
+// anything to be obeyed. What they are is the settings' to say
+// (`readingWanted`); the root was read back as a second copy of it (#299).
+function applyReading(next) {
+  const root = document.documentElement;
+  root.style.setProperty("--tab-w", String(next.tab));
+  root.dataset.wrap = next.wrap ? "yes" : "no";
+  root.dataset.marks = next.marks ? "on" : "off";
+  root.dataset.code = next.narrow ? "narrow" : "normal";
+}
+
+// What the file says. Whatever it did not answer for, the default stands --
+// and the default is applied either way, so the gutter and the label cannot
+// disagree.
+function readingWanted() {
+  const tab = setting("tab_width");
+  return { tab: TAB_WIDTHS.includes(tab) ? tab : 4,
+           wrap: setting("long_lines") === "wrap",
+           marks: setting("space_marks") === "on",
+           narrow: setting("code_width") === "narrow" };
+}
+
+// How wide code is drawn, and whether a long line wraps: the menu's
+// choices and the buttons beside the code (`putQuick`) both pick through
+// these. On the root, so nothing is drawn again.
+function keepWidth(narrow) {
+  keepSetting({ code_width: narrow ? "narrow" : "normal" });
+  applyReading(readingWanted());
+}
+
+function keepWrap(wrap) {
+  keepSetting({ long_lines: wrap ? "wrap" : "scroll" });
+  applyReading(readingWanted());
+}
+
+// Whether a change of whitespace alone is left out of the Review tab
+// (`git diff -w`, #449). Unlike the marks it is not the cascade's: the
+// daemon answers another diff, so a change asks again.
+function spaceHidden() {
+  return setting("diff_space") === "hide";
+}
+
+// The held diff and the whole files read for it came from the other
+// answer: the tag would say "the same" for a diff that is not, and lines
+// shown between two changes must come from the same diff as the changes.
+function respace() {
+  state.diffs.tag = "";
+  state.diffs.whole.clear();
+  if (state.tab === "diff") loadDiff();
+}
+
+function keepSpace(hide) {
+  if (spaceHidden() === hide || busyWriting()) return;
+  keepSetting({ diff_space: hide ? "hide" : "show" });
+  respace();
+}
+
+// A space at a line's end as a box of its own, and an empty box before
+// every tab, so the CSS can draw a faint mark there when the reader asks
+// (#449). Always
+// wrapped and only shown by the cascade (`data-marks`), as the tab width
+// is, so a change of the setting rebuilds nothing. Run after the word
+// marks, wherever a line's text is drawn or painted: it counts characters
+// across whatever spans are already in the cell, and a mark draws nothing
+// that a copy takes.
+function markSpaces(cell) {
+  const text = cell.textContent;
+  const trail = text.search(/[ \t]+$/);
+  if (trail < 0 && !text.includes("\t")) return;
+  let at = 0;
+  overText(cell, (data) => {
+    const start = at;
+    at += data.length;
+    if (!/[ \t]/.test(data)) return null;
+    const made = document.createDocumentFragment();
+    let plain = "";
+    for (let i = 0; i < data.length; i += 1) {
+      const char = data[i];
+      const late = trail >= 0 && start + i >= trail;
+      if (char === "\t") {
+        // An empty mark before the tab, and the tab left in the text: a
+        // tab in a span of its own was measured from elsewhere, and a tab
+        // of four columns drew three. Not `.tab`: that is a tab of the tab
+        // row, whose padding made the empty mark 24 px wide, so a tab of
+        // two columns, or one in a narrower face, ran to the next stop.
+        if (plain) made.appendChild(document.createTextNode(plain));
+        put(made, "span", "ws tabmark");
+        plain = char;
+      } else if (char === " " && late) {
+        if (plain) made.appendChild(document.createTextNode(plain));
+        plain = "";
+        put(made, "span", "ws spacemark", char);
+      } else {
+        plain += char;
+      }
+    }
+    if (plain) made.appendChild(document.createTextNode(plain));
+    return made;
+  });
+}
+
+// --- what a session's tabs start with (blank…) [topics/tab-state]
+
+// An empty Files tab. One place, so that choosing a session, choosing a file
+// and starting up cannot drift apart about what "nothing is open" means.
+// The Transcript tab's whole state, so that choosing a session is one
+// assignment rather than six that could forget the seventh -- which is the
+// reason `blankFiles` exists, in a second place.
+//
+// The blocks are in here too. Nothing outside this tab reads them: the
+// sidebar's counts come from the session rows, and the daemon pushes blocks
+// at a browser without asking which tab it is on.
+function blankTurns() {
+  return {
+    blocks: [],         // what the daemon has pushed, by seq
+    run: -1,            // which reading of this transcript those are from
+    open: new Set(),    // blocks the reader opened: a tool, a long message
+    goTo: null,         // a block a link asked for, until it is on screen
+    goToTs: null,       // and its moment, for a saved turn (#377)
+    goToNear: null,     // or about when, for a search result (#379)
+    at: null,           // the block the list marks: the last place you went
+    down: null,         // how far down the transcript you were; null is none
+    early: null,        // pushes that land while a fetch is on its way
+    told: null,         // how long the stream said the transcript is, meanwhile
+    failed: false,      // the last fetch failed; "nothing yet" would lie
+    version: 0,         // the daemon's count of changes read, as far as held
+    whole: false,       // blocks are a fetch and every push since, no gap
+    // Whether a fetch has answered for this session yet, with blocks, with
+    // none, or with a failure. A session with no transcript is answered
+    // with no `run`, so nothing else tells "empty" from "not asked yet" --
+    // and the tests wait on it before they read the tab.
+    landed: false,
+    // When the reader last had this session on screen, taken once, before
+    // it is read (#374): the "new" line stands over the first block after
+    // it. `undefined` is not taken yet, null is no line.
+    newSince: undefined,
+    newLanded: false,   // the line was scrolled to, once
+    newDown: null,      // where that left the pane, to tell a scroll since
+  };
+}
+
+// Everything the Diff tab holds for one session. A choice here is one the
+// session keeps (`KEPT`); the rest is what the daemon sent, or what a read
+// is doing. The fields were flat on `state`, and `choose` reset them in
+// eighteen lines that a new one had to join (#300).
+function blankDiff() {
+  return {
+    // What the tab shows: "" for all changes, "uncommitted", or one
+    // commit's sha.
+    of: "",
+    gone: false,        // the commit picked went away; the tab says so
+    shut: new Set(),    // folders in the tab's tree the reader shut
+    open: new Map(),    // files the reader opened or shut by hand
+    // Lines the reader asked to see between the changes, as `[from, to]`
+    // runs by `moreKey`, and the whole files fetched to show them. See
+    // `withMore`.
+    more: new Map(),
+    whole: new Map(),
+    tag: "",            // the tag of the answer held, sent back as `have`
+    loose: null,        // an untracked file picked
+    found: null,        // the daemon's answer for it; null while it is read
+    asking: null,       // the path a read is out for, so a poll asks once
+    trouble: "",        // why it is not read yet, when a read failed
+    goTo: false,        // whether the pane still has to move to it
+  };
+}
+
+function blankFiles() {
+  return {
+    names: [],          // every path in the worktree, in the order sent
+    known: new Set(),   // the same paths, for asking whether one is still there
+    places: [],         // the names and the directories, for "go to file"
+    tree: new Map(),    // every directory, with what it holds
+    marked: new Set(),  // the directories holding something that changed
+    dirs: new Map(),    // the ones the reader opened or closed by hand
+    changed: new Map(), // the ones git says the agent touched, and when
+    total: 0,           // how many the worktree holds
+    cut: false,         // more than the daemon will send
+    failed: false,      // git did not answer; "no files" would lie
+    // Ignored directories the daemon declined to walk, and the number it
+    // declined them at. They hold nothing, so the tree is told their names
+    // and the row says why it cannot be opened.
+    skipped: new Set(),
+    ignoredMax: 0,
+    tag: "",            // the daemon's name for the listing we hold
+    path: null,         // the file it shows
+    // The row the list marks: the last place the reader went. Usually the
+    // open file, and a directory when they asked for one by name or by
+    // clicking a part of the path above the file. Marking only the open file
+    // meant clicking a part of a path that was already on screen answered
+    // with nothing at all.
+    at: null,
+    text: "",
+    binary: false,
+    hex: false,         // `text` is a binary file's hex, not its text (#487)
+    // What the daemon will serve this one as, when the page may show it as
+    // it is -- `image/png`, and so on -- and whether it is past the cap. The
+    // list is the daemon's; see `putMedia`.
+    shown: "",
+    oversize: false,
+    lang: "",           // what `file` made of it, when the name said nothing
+    mtime: 0,           // which version of that text is loaded
+    stamp: "",          // the daemon's name for that version, sent back (#292)
+    size: 0,            // its bytes on disk, which the decoded text does not say
+    // Whether any answer for this file has landed. Not `mtime`, which a
+    // file can really have as nought. Until one lands the pane says it is
+    // reading, or why it could not -- `trouble` -- and never draws the empty
+    // text above as the file: that read as a file with nothing in it.
+    read: false,
+    trouble: "",
+    // Markdown reads as Markdown, which has no lines to comment on. This
+    // turns it back into the rows every other file gets. It is remembered
+    // across files, because a reader who wants to review one document
+    // usually wants to review the next one too.
+    asText: false,
+    goTo: null,         // a path the list has been asked to move to
+    // How far down the open file the reader was, kept across a tab switch
+    // and across a visit to another session. Put back once, when there is
+    // something under the scrollbar to put it back into.
+    down: 0,
+  };
+}
+
+// --- the Diff tab: its bar, the base, the commits, the message [topics/diff-tab]
 
 // A long file starts closed. Building ten thousand lines nobody asked to see
 // makes the whole tab slow to open. How much DOM is too much is the page's
@@ -22300,6 +22524,8 @@ function putMessage(head, body) {
   };
   fill();
 }
+
+// --- the Diff tab's list and pane: the tree, drawDiff, landDiff, a loose file [topics/diff-tab]
 
 // A diff's files in the order its tree reads: at each level the folders
 // first, then the files, each by name. The pane follows the tree, so the
@@ -22828,6 +23054,8 @@ async function readLoose(path) {
   draw();
 }
 
+// --- a diff's lines: hunks, the two columns, word marks [topics/diff-tab]
+
 // What happened to a file, in the header's words. A type change is one
 // entry for both halves (`join_type_change`), and says what the path was
 // and what it is: "file \u2192 link". The CSS writes it in capitals.
@@ -23133,6 +23361,7 @@ function putLineReview(lines, where, one, line, now, atHead) {
 // change and not of the line -- most edits are a word or two in the middle.
 // Past `WORDS_MAX` characters it is not asked at all.
 const WORDS_MAX = 400;
+
 // `u`, or an emoji is two halves of a pair, and a mark on one half draws
 // two broken glyphs.
 const WORD = /\w+|\s+|[^\w\s]/gu;
@@ -23271,20 +23500,8 @@ async function paintDiff(body, path, painting) {
   }
 }
 
-// The lines of a file. An empty file has none, where splitting a string that
-// is empty gives one empty line.
-function linesOf(text) {
-  return text === "" ? [] : text.split("\n");
-}
+// --- more of a file, between its changes [topics/diff-tab]
 
-// A file, or a slice of one, in the shape `fillDiffFile` wants. `from` is the
-// number of the first line, which is 1 unless only part of the file is drawn.
-function asLines(path, lines, from = 1) {
-  return { path, hunks: [{ header: "", from,
-    lines: lines.map((one) => ({ kind: "plain", text: one })) }] };
-}
-
-// --- more of a file, between its changes -------------------------------------
 //
 // git shows three lines either side of a change and hides the rest. A band
 // stands where lines are hidden, says how many, and shows them twenty at a
@@ -23491,7 +23708,8 @@ function putMore(band, file, from, to, { up, down }) {
   }
 }
 
-// --- the review ---------------------------------------------------------------
+// --- the review: a comment's anchor [topics/review]
+
 //
 // A comment is one note on one place: a line of the diff, or a file. The place
 // is written down rather than pointed at, because the diff is rebuilt whenever
@@ -23583,7 +23801,8 @@ function commentAt(anchor) {
   return state.review.comments.find((one) => one.anchor === anchor) || null;
 }
 
-// --- keeping a review ---------------------------------------------------------
+// --- keeping a review: the draft, and the text that is sent [topics/review]
+
 //
 // In this browser, and nowhere else. A review is yours until you submit it,
 // and the daemon serves the same page to every browser, so a draft it held
@@ -23818,7 +24037,8 @@ function reviewText(withOverall = true) {
   return parts.join("\n\n") + "\n";
 }
 
-// --- the review on the Review tab ------------------------------------------
+// --- the review on the Review tab: the list, the bar, the send [topics/review, topics/safety-typing]
+
 //
 // The Diff tab is where a review is written, read back and sent, and its
 // label says Review. There was a tab of its own for the last two, and the
@@ -24232,7 +24452,7 @@ function drawDiffCount() {
   badge.textContent = "+" + added + " \u2212" + removed;
 }
 
-// --- the Commands view --------------------------------------------------------
+// --- the Commands view [topics/send-and-keys]
 
 // The skills and commands your sessions can run, to read and to use again
 // (#367). A view, not a tab (#411): a tab belongs to the chosen session,
@@ -24445,7 +24665,7 @@ function drawCommand(pane) {
   }
 }
 
-// --- the tabs ---------------------------------------------------------------
+// --- the tabs: TABS; draw is paint, then land [topics/daemon-and-page]
 
 // `finds` is what the find box is for on that tab, and a tab that does not
 // use it says so with `null` -- the box then goes away rather than standing
@@ -24464,8 +24684,6 @@ const TABS = {
   diff: { draw: drawDiff, land: landDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /", name: "Review" },
 };
-
-// --- a switch that takes a while --------------------------------------------
 
 // A switch to another session or tab leaves the last one's drawing in the
 // box until the new one is fetched and drawn, because the box is built by
@@ -24569,7 +24787,7 @@ function drawEmpty(box) {
   p.appendChild(document.createTextNode(" to see what is missing."));
 }
 
-// --- talking to the daemon --------------------------------------------------
+// --- the place a session keeps, and choosing a session [topics/tab-state]
 
 // What a session remembers between visits: what the reader chose, and never
 // what the daemon sent. The listing, the file's text and the diff are fetched
@@ -24589,6 +24807,7 @@ function drawEmpty(box) {
 // the DOM here instead meant a second writer, and it wrote the outgoing
 // session's place over the one just restored for the new session.
 const asIs = (value) => value;
+
 const PLACE_FIELDS = [
   ["turns", "at", asIs], ["turns", "down", asIs], ["turns", "run", asIs],
   ["turns", "open", (value) => new Set(value)],
@@ -24702,6 +24921,8 @@ function choose(id) {
   showTab(back && TABS[back.tab] ? back.tab : state.tab);
   markSeen();
 }
+
+// --- loading: the transcript, the files and the diff, and the stream's pushes [topics/daemon-and-page, topics/transcript]
 
 //: How many sessions' transcripts the page keeps after the reader leaves
 //: them. A transcript of seven hundred blocks is under a megabyte here.
@@ -25217,7 +25438,7 @@ function resubscribe() {
   };
 }
 
-// --- keys --------------------------------------------------------------------
+// --- keys [topics/send-and-keys]
 
 // Few keys, on purpose. `j` `k` walked the list, `n` went to the next
 // session that needs you, `r` opened the review and `t` showed thinking;
@@ -25326,6 +25547,7 @@ for (const button of document.querySelectorAll(".tab")) {
 }
 putSettings();
 measureScrollbar();
+
 // Defined before the first line that reads it: a `const` read earlier is an
 // error that stops the page.
 const JUMP_TITLE = "jump to its tmux pane  ⏎";
@@ -25344,6 +25566,7 @@ $("alertneeds").addEventListener("change", (press) => {
 $("alertdone").addEventListener("change", (press) => {
   setAlert("done", press.target.checked);
 });
+
 // A panel that only its own button can close is a panel you have to go back
 // to. Anywhere else on the page, and Escape, shut it.
 //
@@ -25384,12 +25607,13 @@ async function jumpToPane() {
   }
 }
 
+// --- the send box: completing a slash command, sending, the box's size [topics/send-and-keys, topics/safety-typing]
+
 // The box is cleared the moment the text goes, and a refusal puts the text
 // back in front of whatever was typed since, so a failure loses nothing the
 // reader typed at a terminal they cannot see. An empty box is therefore the
 // send starting, not the send landing: `sending` is what says it is still on
 // its way.
-// --- completing a slash command ---------------------------------------------
 
 // A `/` at the start of the send box, or after a space in it (#368), opens
 // a list of the commands this session has: its skills and command files, yours, and the commands its
@@ -25608,6 +25832,7 @@ async function sendTyped() {
 // shell's history is. This browser's, as a draft is; never written down
 // anywhere else.
 const SENT_KEPT = 50;
+
 let sentAt = -1;           // which one Up brought back, from the newest; -1 none
 
 function sentList() {
@@ -25687,6 +25912,8 @@ function sizeSay(box) {
   put(out, "span", null, roughly(lines) + (lines === 1 ? " line" : " lines"));
   put(out, "span", null, sizeOf(new TextEncoder().encode(text).length));
 }
+
+// --- start: what runs once, when the script has loaded; the listeners and the first draw
 
 $("say").addEventListener("input", () => { sentAt = -1; fitSay(); followSlash(); });
 $("say").addEventListener("blur", closeSlash);

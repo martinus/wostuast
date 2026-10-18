@@ -518,28 +518,30 @@ def test_two_threads_writing_one_file_do_not_unlink_each_other(ws, tmp_path):
     assert target.read_text() in ("one", "two")
 
 
-def test_the_map_in_claude_md_points_at_real_symbols():
-    """`CLAUDE.md` opens with a table routing "about to touch X" to the
-    section that holds the rules for it. A router that names a symbol the
-    program no longer has sends an agent grepping for nothing, and a wrong
-    map is worse than none: it is believed.
+def test_the_names_in_claude_md_are_real():
+    """`CLAUDE.md` names the helpers to reuse, the tables of the
+    principles, the tests that hold them. A name the code no longer has
+    sends an agent grepping for nothing, and a wrong map is worse than
+    none: it is believed. Three numbers in that file once went stale by
+    40% before anybody noticed.
 
-    Three numbers in that file went stale by 40% before anybody noticed. The
-    table is the part most likely to go the same way, because it is the part
-    that names code.
-    """
+    A name is a backticked word that reads as code: one with an
+    underscore, a capital inside it, or all capitals. It must be in the
+    program or in `tests/`."""
     import pathlib
     import re
 
     root = pathlib.Path(__file__).resolve().parent.parent
     doc = (root / "CLAUDE.md").read_text(encoding="utf-8")
-    program = (root / "wostuast").read_text(encoding="utf-8")
-    start = doc.index("## Where to look")
-    table = doc[start:doc.index("\n## ", start + 4)]
-    named = sorted(set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", table)))
-    assert len(named) > 20, "the table stopped naming symbols"
-    missing = [one for one in named if one not in program]
-    assert not missing, f"CLAUDE.md routes to symbols that are gone: {missing}"
+    code = (root / "wostuast").read_text(encoding="utf-8") + "".join(
+        path.read_text(encoding="utf-8") for path in (root / "tests").glob("*.py"))
+    words = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", doc))
+    named = sorted(word for word in words
+                   if "_" in word.strip("_") or re.search(r"[a-z][A-Z]", word)
+                   or (word.isupper() and len(word) > 3))
+    assert len(named) > 50, "the pattern stopped matching"
+    missing = [one for one in named if one not in code]
+    assert not missing, f"CLAUDE.md names what the code does not have: {missing}"
 
 
 def test_no_name_is_defined_twice():
@@ -702,10 +704,11 @@ def test_no_function_grows_past_the_limit():
 
 def test_every_rules_file_is_routed_to_and_every_route_is_a_file():
     """The rules are one file a subject in `.claude/topics/`, read only when
-    `CLAUDE.md` sends an agent there. A file nothing routes to is a subject
-    nobody reads before editing it, and a route to a file that is gone sends
-    an agent to read nothing -- both silent. So the table and the list under
-    **Rules** name every file, and name nothing else."""
+    a section header of the program or `CLAUDE.md` sends an agent there. A
+    file nothing routes to is a subject nobody reads before editing it, and
+    a route to a file that is gone sends an agent to read nothing -- both
+    silent. So the headers and **Where to look** together, and the list
+    under **Rules**, name every file, and name nothing else."""
     import pathlib
     import re
 
@@ -714,7 +717,11 @@ def test_every_rules_file_is_routed_to_and_every_route_is_a_file():
     there = {one.stem for one in (root / ".claude" / "topics").glob("*.md")}
     start = doc.index("## Where to look")
     table = doc[start:doc.index("\n## ", start + 4)]
-    routed = set(re.findall(r"topics/([a-z-]+)", table))
+    import where
+
+    headers = where.sections(where.PROGRAM.read_text(encoding="utf-8"))
+    routed = set(re.findall(r"topics/([a-z-]+)", table)) | {
+        name for one in headers for name in one.topics}
     listed = set(re.findall(r"^\| `([a-z-]+)\.md` \|", doc, re.M))
     assert there, "no rules files"
     assert routed == there, (sorted(routed ^ there))

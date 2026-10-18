@@ -1,47 +1,214 @@
 # The daemon and the page
 
-Routes, polling, the stream and its pushes, the tab frame, the find box, the context bar and the live slot.
+Routes, polling, the stream and its pushes, the tab frame, the find box,
+the ssh tunnel, the context bar, the live slot, and the tab row: jump and
+the loaders.
 
-- **Every route lives in `Serving`**, a module-level class subclassing nothing; `make_server` mixes it with `BaseHTTPRequestHandler` and puts the daemon on it (`self.daemon`). **The `http.server` import stays inside `make_server`**: the hook pays for every import on every tool call (10.8 ms bare, 49.5 ms with it). `test_the_hook_does_not_import_what_it_does_not_need`.
-- **Never write to the terminal except through the four tmux verbs**: `tmux_jump`, `tmux_send`, `tmux_interrupt`, `tmux_keys`. Each looks `run` up when called, not as a default, so a test can fake tmux.
-- **The Files and Diff tabs poll from the browser, only while on screen.** The daemon pushes only the transcript and does not know a browser's tab, so `Hub` stays small. `TABS` holds one entry per tab (draw, load, interval): a new tab is one entry, not six edits.
-- **One lock around the transcript readers, and the push goes out under it.** Two `read_new` at once move the offset twice, which looks like a shrinking file. Sent after the lock, a request thread's block 2 overtook the tick's block 1, and the page, patching by index, never drew block 1. `Hub.send` only queues, so nothing waits on a socket. `test_a_transcript_push_leaves_under_the_lock`.
-- **The one find box must leave before its parent is cleared.** It lives in a split tab's content box; a tab emptying the box destroys it, `$("find")` is null, `showTab` throws before `load`, and the page is broken until a reload. `draw()` takes it home when `box.dataset.tab` names another tab; `split()` takes it back. `test_every_way_from_one_tab_to_another_works`.
-- **Ask the box which tab it holds, not `state.tab`.** `showTab` sets the name, then awaits `load()` while the box holds the old tab: a push then appended a turn as a fourth column of the Files tab. `draw()` does it right.
-- **A session can be chosen before the session list exists.** A link runs `choose` at startup with `state.sessions` empty, so `current()` is null and every tab draws empty. The `sessions` event draws again once the session is real; without it a linked page stayed empty until a click.
-- **Each push has its own handler**, `onSessionsPush` and `onTranscriptPush` (#544); `resubscribe` only opens the stream. Inline, it was past the 100-line limit.
-- **A list of one-line rows joins the one rule that groups them**, because `.filelist button` is a block: `.fixed` (file tree), `.diff` (Diff tab's tree), `.transcript` (the map). Without it the icon sits on a line above the text. A new list joins the group, never a copy of the rule.
-- **A `sessions` push carries what changed, never every row** (#431, `sessions_change`, `mergeSessions`): new or changed rows, and the id order when it moved (a gone row moves it). Every row was 111 KB a push at 100 sessions, ~1/s, over the tunnel. A stream still opens with every row (`sessions_payload`). **Safe only because a stream has no gaps**: one that cannot keep a push closes (topics/transcript). A push says "these rows now read so", so pushes queued behind a newer opening still end on the newest rows. Only the tick writes `told`. `test_a_push_carries_only_what_changed`, `test_a_push_fills_only_the_rows_it_changed`.
-- **The page is read over an ssh tunnel, so nothing big goes twice.** At 200 KiB/s a first Files tab of 53,000 files took 20 s, back to the Transcript 5 s.
-  - **`reply` gzips text** (`takes_gzip`, `PACKED_KINDS`, `PACK_MIN`): 2.5 MB of names went as 109 KB. Only text; a `raw` picture is packed already. The import is inside `reply`, for the hook. An `Accept-Encoding` it cannot read is a no.
-  - **The transcript fetch says what it holds** (`?have=<run>.<version>`); the daemon answers `same`, no blocks. **Only `state.turns.whole` may send it**: pushes are pieces with the daemon's version, so pushes gathered on another tab, or a stream opened on more than is held, came back `same` and showed pieces. Any gap clears `whole`; only a landed fetch sets it.
-  - **The Review tab's poll is answered `same` while the diff stands** (`answer_tag`, `state.diffTag`), not the whole diff every 5 s. The tag hashes the answer itself, so nothing drawn is left out and a tag for another question never matches. Sent only while `diffTag` holds one; whatever drops the answer empties it. A `same` still reaches the untracked file's retry at the end of `loadDiff`. The tag is the only comparison: `diffRaw` beside it cost megabytes (#291). **The answer is written once**: `wire_json` writes the dataclass fields in place, hashes those bytes and sets the tag before the last brace; `asdict` and two `dumps` were 431 of 715 ms a poll of a 2,500-file branch.
-  - **What a branch committed is kept** (`Daemon.diffs`, `worktree_diff`'s `held`) under the base's sha and HEAD's, which `pick_base` reads from its listing (`BaseChoice.head`, `tip`): the log and `git diff <base>...HEAD` ran every poll for an answer that moves only with those. Only what git gave whole is kept, as `ranks` keeps only a count git gave; the uncommitted part is read every time. `test_a_branch_that_did_not_move_is_not_diffed_again`.
-  - **The open file goes back as a `stamp`** (`FileText.stamp`: mtime in ns, size); a file that still has it is answered `same` unread (#292), not up to 512 KB every 2 s. Only after `worktree_target`, which asks `is_listed` every time. **One reader of that answer, `askFile`**: a `missing` taken for text was a bug in each of `loadFiles`, `readLoose`, `readElsewhere`. `test_a_file_that_did_not_move_is_not_sent_again`, `test_a_file_nobody_touched_is_not_sent_again`.
-  - **File names are kept per worktree, not per session** (`keepListing`, `adoptListing`, `state.listings`, by `worktree_path`): blanked on a choice, every switch fetched them all again.
-  - **The last sessions' transcripts are kept** (`keepTurns`, `takeTurns`, `state.heldTurns`, `TRANSCRIPTS_KEPT`): a return fetched it whole, 869 KB for 704 blocks. Now it is drawn at once (`drewHeld` in `loadTranscript`), and the fetch carries `have`, answered `same` in 51 bytes. **A `same` after that draw draws nothing**: a rebuild cost 70–90 ms. Only a `whole` reading is kept, as only it may send `have`. **`keepTurns` runs before `state.chosen` moves**: after, the last transcript was kept and drawn under the new session, and the daemon said `same`, as two sessions often both sit at run 0, version 1. `test_a_session_gone_back_to_is_drawn_from_what_the_page_kept`, `test_the_page_keeps_the_last_transcripts_and_no_more`.
-  - **`load` clears the last tab's poll timer first**, and re-arms only the loaded tab's. Cleared after (`repoll`), the Files tab's 2 s poll fired into the Transcript tab mid-fetch and refetched it, and a Files load out at the switch armed the next tab's timer.
-  - **A test matches the transcript route with `TRANSCRIPT`**, which takes a query; the glob `**/transcript` held nothing once `?have=` was there.
-  - Tests: `test_text_is_packed_for_a_client_that_takes_gzip`, `test_a_picture_is_never_packed`, `test_a_transcript_the_page_holds_whole_is_not_sent_again`, `test_coming_back_to_the_transcript_fetches_only_what_moved`, `test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole`, `test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole`, `test_the_last_tabs_poll_does_not_fetch_the_transcript_again`, `test_a_load_that_ends_after_the_switch_sets_no_timer`, `test_a_diff_the_page_holds_is_not_sent_again`, `test_a_poll_of_a_diff_that_stands_is_answered_short`, `test_another_session_in_the_worktree_does_not_fetch_its_names_again`.
-- **A switch not drawn within `SWITCH_SHOWN` says it is loading** (`beginSwitch`, `endSwitch`, `body.switching`, `data-loading`): the box kept the old drawing until the answer, which over a slow tunnel read as done. `showTab` begins it, `draw` ends it; between, the old content is dimmed, takes no click, and says "loading <session> · <tab>…". **Not at once**, or every switch flickers; the test checks at half the delay. `test_a_slow_switch_says_it_is_loading_and_a_quick_one_says_nothing`.
-- **The page asks the daemon one way: `getJson`, the one `fetch`** (#541). With four (`ask` gave null, `post` an `{error}`, `runSearch` and `askSaved` their own try), each new caller picked one. It gives `{ok, body}` or `{ok: false, body: null, why}`; `ask` and `post` keep their answers on top, as many callers read them. Its `wanted` gives null for an answer no longer wanted. **A loader whose check reads its own state (session, base, ticket) keeps that check after `ask`**: null from `ask` must mean only "no answer", not "too late". `test_only_get_json_calls_fetch`, `test_the_page_asks_the_daemon_one_way`.
-- **A scrollbar is the browser's, so the page tells it which way round it is: set both `color-scheme` and `scrollbar-color`.** Without `color-scheme` a dark page had the system's bright bar (measured: `color-scheme: normal`, `scrollbar-color: auto` in both themes). `scrollbar-color` is the hue, `--edge-bright` like every edge, transparent track; `color-scheme` is the fallback and fixes form controls (the search box's clear button, the send box's bar). `scrollbar-color` inherits, so `:root` says it once.
-- **Every tab says what its find box is for, in `TABS.finds`.** A ternary in `showTab` named three tabs, so others got the last arm, and a tab with no list offered "find a file". One entry per tab like `draw`, `load`, `poll`; `TAB_KEYS` is `Object.keys(TABS)`. Every tab is split with a list, so none hides the box.
-- **`hidden` hides whatever else is set: one rule, `[hidden] { display: none !important; }`; never write another** (#296). A rule setting `display` beats the browser's own: the send box never went (the `.sendbar` scar), and twelve controls grew an `X[hidden]` each (`#jump` (`.theme`), row lines, the arrow to the foot, the find box, the settings menu); one forgotten is a control that will not go. `test_hidden_is_one_rule`.
-- **A class put on `body` is never a class an element wears.** `stream.onerror` did `classList.add("lost")` while `.lost { display: none }` hid a bar, so the page went to `display: none` on every stream hiccup until reconnect or F5. Body states are `offline` and `outdated`; the bars stay `.lost` and `.stale`. `test_no_state_on_the_body_can_make_the_page_vanish` checks every state, each and all at once; **a new state goes in its list**.
-- **A restarted daemon leaves every open page dead, and only the page can say so.** `Daemon.__init__` makes a fresh token, printed into the page; the stream is a GET and reconnects, so the page looks alive while every send, jump and answer is refused, in every session. `stale_page()` only words a refusal `allowed()` already made: no decision changes, and a caller failing `origin_ours` learns nothing new. The page raises a bar only a reload clears, right anyway: after an upgrade its JavaScript is old.
-- **The strip shows the session's spend and says it is an estimate.** Claude Code computes `cost.total_cost_usd` on the client at list price, says it may differ from the bill, and zeroes it on `/clear`. The caveat is the number's `title`: no width for a sentence. **`None` is "not said", `0` is "spent nothing"**: an API-key session gets no `cost`, and `$0.00` would be unmeasured, so `drawContext` tests for null, no default.
-- **`money` is a name on both sides; shadowing it is a `ReferenceError`.** `drawContext` calls `money()` then builds an element from it; naming that element `money` puts the call in the temporal dead zone, and every draw throws. Same scar as `matches` / `matching` / `hits`.
-- **A tab's name never wraps; the tab row asks itself how wide it is** (#397): `.tabs` is a query container, since the sidebar moves its room as much as the window. At ≤760 px the key numbers (`.tabkey`) go (the key works, the title names it); at ≤560 px the context bar and spend step aside. At 1024 px "1 Transcript" wrapped and the icons cut the cost; tabs have no icons to fall back on. **The test needs the status line's model, context and cost in the row** (`page_at` writes them): an empty row fits anyway. `test_the_tab_names_stay_on_one_line_in_a_narrow_window`.
-- **The context bar is its own slot, beside `#live`, never in it**: a fifth writer for `#live` is the race the live-slot bullet (below) came from. `drawContext` is called from `drawHeader`, so it comes with every push and no call site forgets it; it redraws only when the number moves, not on every push (~1/s). `putContext` builds it. No registered status line, no `context_pct`, no bar: nought would read as an empty window. **The model stands left of the bar**, in the same redraw key: the percentage is of its window, and `/model` changes it mid-session. `tests/shot.py` writes a status line, so its strip shows all three. `test_the_model_stands_left_of_the_context_bar`.
-  - **The effort follows it, "Opus 5.5 · high"** (issue 337): the status line's `effort.level` (2.1.287); `/effort` moves it; Haiku has none and shows nothing. In the redraw key with the model.
-  - **The two are a button opening `#modelpop`** (`showModels`, `putModels`, issue 338): aliases (`MODELS`), full ids the page's sessions ran (each row's `model_id`, kept a week), and efforts (`EFFORTS`) while the session has one. A pick types `/model <name>` or `/effort <level>` through `send` and shuts the menu. **It says Claude Code makes the choice the default for new sessions too**: on 2.1.287 a typed `/model sonnet` writes `"model": "sonnet"` into Claude Code's own `settings.json`, `/effort` its `modelSettings`; only its terminal menu offers "this session only". The reader chose this over opening that menu.
-  - **An alias is never pressed; the full id is**: an alias names the newest of a family as this Claude Code maps it (`opus` gave Opus 5.5, `/model claude-opus-5` Opus 5), so only the id says what runs.
-  - **A full id reaches the page through `MODEL_SHAPE`**, as `COMMAND_SHAPE` holds a command's name: the page types it into a terminal.
-  - **Off where nothing can be typed** (`whyNotTyped`), saying why; Escape or a click elsewhere shuts it, as for the settings.
-  - Tests: `test_the_model_says_its_effort_and_a_pick_types_the_command`, `test_an_older_model_is_offered_by_its_full_id`, `test_a_model_with_no_effort_offers_none`, `test_the_model_menu_shuts_and_types_nothing_it_cannot`.
-- **One painter for the live slot: `paintLive` decides; nothing else assigns to `#live`.** It weighs `state.live` (the stream), `state.trouble` (asked for, not got), `state.linkTrouble` (the reader's own file unusable) and `note`, which borrows the slot over all three for 4 s. With four writers, the stream's word on every push (~1/s) wiped a failure within a second. **`paintLive` runs whatever the find box holds**: handlers skipping it then left a drop unsaid and "reconnecting" over a working page.
-  - **A working stream says nothing**: a word always there is never read, and "reconnecting" in its place went unseen. `state.live` still holds "live", unpainted, so a test asks `state.live`, not the slot. `test_a_working_stream_says_nothing_and_a_lost_one_says_so`.
-  - **`said` is the daemon's answer and stays; `note` is our word and fades.** "Review sent" goes stale in 4 s; a faded refusal left a calm strip over a page where nothing worked (a restarted daemon). **A send that worked calls `said` before its `note`**, or the earlier refusal came back after the note over a review that went through. `test_a_review_that_goes_through_clears_an_earlier_refusal`.
-- **No JavaScript library is vendored.** `marked` and `highlight.js` come through the one `fetchScript`, pinned by the hash of their bytes, with `crossorigin` so the browser checks it: any script here can POST to `/send`. **Each must degrade**: no `marked`, the transcript is its source as text; no `highlight.js`, code has no colour. Tests hold both; page tests serve `tests/fixtures/marked.min.js`, so none needs a network.
-- **Motion: a row fades on a state change, a *new* transcript block slides in 4 px, the needs-you row pulses. Nothing else moves.** "New" is arriving in `patchTranscript`, never a redraw. One `prefers-reduced-motion` block turns it all off.
+- **Every route lives in `Serving`**, a module-level class; `make_server`
+  mixes it with `BaseHTTPRequestHandler` and sets `self.daemon`. **The
+  `http.server` import stays inside `make_server`**: the hook pays for
+  every import on every tool call (49.5 ms with it, 10.8 without).
+  `test_the_hook_does_not_import_what_it_does_not_need`.
+- **Write to a terminal only through the four tmux verbs**: `tmux_jump`,
+  `tmux_send`, `tmux_interrupt`, `tmux_keys`. Each looks up `run` when
+  called, so a test can fake tmux.
+- **The Files and Diff tabs poll from the browser, only while on screen**:
+  the daemon knows no browser's tab, so `Hub` stays small. `TABS` holds
+  one entry per tab.
+- **One lock around the transcript readers, and the push goes out under
+  it.** Two `read_new` at once move the offset twice: a shrinking file.
+  Sent after the lock, a request's block 2 overtook the tick's block 1,
+  and the page, patching by index, lost block 1. `Hub.send` only queues.
+  `test_a_transcript_push_leaves_under_the_lock`.
+- **The one find box leaves before its parent is cleared**: else
+  `$("find")` is null and `showTab` throws until a reload. `draw()` takes
+  it home when `box.dataset.tab` names another tab; `split()` takes it
+  back. `test_every_way_from_one_tab_to_another_works`.
+- **Ask the box which tab it holds, not `state.tab`**: `showTab` sets the
+  name, then awaits `load()` while the box holds the old tab, and a push
+  appended a turn to the Files tab. `draw()` does it right.
+- **A session can be chosen before the session list exists**: a link runs
+  `choose` with `state.sessions` empty, so `current()` is null. The
+  `sessions` event draws again once the session is real.
+- **Each push has its own handler**, `onSessionsPush` and
+  `onTranscriptPush` (#544); `resubscribe` only opens the stream.
+- **A list of one-line rows joins the one rule that groups them**
+  (`.fixed`, `.diff`, `.transcript`), never a copy: `.filelist button` is
+  a block, so without it the icon sits a line above the text.
+- **A `sessions` push carries what changed, never every row** (#431,
+  `sessions_change`, `mergeSessions`): new or changed rows, and the id
+  order when it moved. Every row was 111 KB a push at 100 sessions. A
+  stream opens with every row (`sessions_payload`). **Safe only because a
+  stream has no gaps**: one that cannot keep a push closes
+  (topics/transcript). A push says "these rows now read so", so pushes
+  queued behind a newer opening still end right. Only the tick writes
+  `told`. `test_a_push_carries_only_what_changed`,
+  `test_a_push_fills_only_the_rows_it_changed`.
+- **The page is read over an ssh tunnel, so nothing big goes twice**: at
+  200 KiB/s, 53,000 file names took 20 s.
+  - **`reply` gzips text** (`takes_gzip`, `PACKED_KINDS`, `PACK_MIN`),
+    never a `raw` picture. The import is inside `reply`, for the hook. An
+    `Accept-Encoding` it cannot read is a no.
+  - **The transcript fetch says what it holds** (`?have=<run>.<version>`),
+    and the daemon answers `same`. **Only `state.turns.whole` may send
+    it**: pushes are pieces with the daemon's version, so pushes gathered
+    on another tab came back `same` and showed pieces. Any gap clears
+    `whole`; only a landed fetch sets it.
+  - **The Review tab's poll is answered `same` while the diff stands**
+    (`answer_tag`, `state.diffTag`). The tag hashes the answer itself, so
+    nothing drawn is left out. It goes only while `diffTag` holds one;
+    whatever drops the answer empties it. A `same` still reaches the
+    untracked file's retry in `loadDiff`. The tag is the only comparison
+    (#291). **The answer is written once**: `wire_json` writes the fields
+    in place and hashes those bytes; `asdict` and two `dumps` took 431 of
+    715 ms a poll.
+  - **What a branch committed is kept** (`Daemon.diffs`, `worktree_diff`'s
+    `held`) under the base's sha and HEAD's, from `pick_base`'s listing
+    (`BaseChoice.head`, `tip`): `git diff <base>...HEAD` moves only with
+    those. Only what git gave whole is kept, as `ranks` keeps only a count
+    git gave; the uncommitted part is read every time.
+    `test_a_branch_that_did_not_move_is_not_diffed_again`.
+  - **The open file goes back as a `stamp`** (`FileText.stamp`: mtime in
+    ns, size); one that still has it is answered `same` unread (#292),
+    only after `worktree_target` asks `is_listed`. **One reader of that
+    answer, `askFile`**: a `missing` taken for text was a bug in each of
+    `loadFiles`, `readLoose`, `readElsewhere`.
+    `test_a_file_that_did_not_move_is_not_sent_again`,
+    `test_a_file_nobody_touched_is_not_sent_again`.
+  - **File names are kept per worktree** (`keepListing`, `adoptListing`,
+    `state.listings`, by `worktree_path`), not fetched on each switch.
+  - **The last sessions' transcripts are kept** (`keepTurns`,
+    `takeTurns`, `state.heldTurns`, `TRANSCRIPTS_KEPT`), drawn at once
+    (`drewHeld` in `loadTranscript`), and the fetch carries `have`. **A
+    `same` after that draw draws nothing**: a rebuild cost 70-90 ms. Only
+    a `whole` reading is kept. **`keepTurns` runs before `state.chosen`
+    moves**: after, the old transcript was drawn under the new session,
+    as two sessions often sit at the same run and version.
+    `test_a_session_gone_back_to_is_drawn_from_what_the_page_kept`,
+    `test_the_page_keeps_the_last_transcripts_and_no_more`.
+  - **`load` clears the last tab's poll timer first**, and re-arms only
+    the loaded tab's. Cleared after (`repoll`), the Files poll refetched
+    the Transcript tab, and a late Files load armed the next tab's timer.
+  - **A test matches the transcript route with `TRANSCRIPT`**: the glob
+    `**/transcript` matches no query.
+  - Tests: `test_text_is_packed_for_a_client_that_takes_gzip`,
+    `test_a_picture_is_never_packed`,
+    `test_a_transcript_the_page_holds_whole_is_not_sent_again`,
+    `test_coming_back_to_the_transcript_fetches_only_what_moved`,
+    `test_pushes_gathered_on_another_tab_are_not_taken_for_the_whole`,
+    `test_a_stream_that_opened_on_more_off_the_tab_fetches_it_whole`,
+    `test_the_last_tabs_poll_does_not_fetch_the_transcript_again`,
+    `test_a_load_that_ends_after_the_switch_sets_no_timer`,
+    `test_a_diff_the_page_holds_is_not_sent_again`,
+    `test_a_poll_of_a_diff_that_stands_is_answered_short`,
+    `test_another_session_in_the_worktree_does_not_fetch_its_names_again`.
+- **A switch not drawn within `SWITCH_SHOWN` says it is loading**
+  (`beginSwitch`, `endSwitch`, `body.switching`, `data-loading`): an old
+  drawing over a slow tunnel read as done. `showTab` begins it, `draw`
+  ends it; between, the old content is dimmed and takes no click. **Not
+  at once**, or every switch flickers.
+  `test_a_slow_switch_says_it_is_loading_and_a_quick_one_says_nothing`.
+- **The page asks the daemon one way: `getJson`, the one `fetch`** (#541):
+  with four (`ask`, `post`, `runSearch`, `askSaved`), each caller picked
+  one. It gives `{ok, body}` or `{ok: false, body: null, why}`; `ask`
+  (null) and `post` (an `{error}`) stay on top. `wanted` gives null for an
+  answer no longer wanted. **A loader whose check reads its own state
+  keeps that check after `ask`**: null from `ask` means only "no answer",
+  not "too late". `test_only_get_json_calls_fetch`,
+  `test_the_page_asks_the_daemon_one_way`.
+- **Set both `color-scheme` and `scrollbar-color`, once on `:root`**:
+  without `color-scheme` a dark page had a bright system scrollbar and
+  form controls. `scrollbar-color` is `--edge-bright` on no track.
+- **Every tab says what its find box is for, in `TABS.finds`**, beside
+  `draw`, `load`, `poll`: a ternary in `showTab` offered "find a file" on
+  a tab with no files. `TAB_KEYS` is `Object.keys(TABS)`.
+- **`hidden` is one rule, `[hidden] { display: none !important; }`; never
+  write another** (#296): any rule that sets `display` beats the
+  browser's own (the `.sendbar` scar), and an `X[hidden]` per control
+  (`#jump`, `.theme`, the find box) is one forgotten.
+  `test_hidden_is_one_rule`.
+- **A class put on `body` is never a class an element wears**:
+  `stream.onerror` put `lost` on `body`, `.lost { display: none }` hid a
+  bar, and the page vanished on every stream hiccup. Body states are
+  `offline` and `outdated`; the bars are `.lost` and `.stale`.
+  `test_no_state_on_the_body_can_make_the_page_vanish`; **a new state
+  goes in its list**.
+- **A restarted daemon leaves every open page dead, and the page says
+  so.** `Daemon.__init__` makes a fresh token; the stream reconnects, so
+  the page looks alive while every send is refused. `stale_page()` only
+  words a refusal `allowed()` already made: a caller failing
+  `origin_ours` learns nothing new. Only a reload clears the bar.
+- **The strip's spend says in its `title` that it is an estimate**:
+  Claude Code computes `cost.total_cost_usd` at list price and zeroes it
+  on `/clear`. **`None` is "not said", `0` is "spent nothing"**: an
+  API-key session gets no `cost`, so `drawContext` tests for null.
+- **Never shadow `money`**: an element named `money` in `drawContext` puts
+  the call `money()` in the temporal dead zone, a `ReferenceError` on
+  every draw. Same scar as `matches` / `matching` / `hits`.
+- **A tab's name never wraps** (#397): `.tabs` is a query container, as
+  the sidebar moves its room. At ≤760 px `.tabkey` goes; at ≤560 px the
+  context bar and spend step aside. **The test needs the model, context
+  and cost in the row** (`page_at` writes them): an empty row fits.
+  `test_the_tab_names_stay_on_one_line_in_a_narrow_window`.
+- **The context bar is its own slot, never in `#live`**: a fifth writer
+  for `#live` is the race the next bullet ends. `drawHeader` calls
+  `drawContext`, which redraws only when the number moves; `putContext`
+  builds it. No `context_pct`, no bar: nought reads as an empty window.
+  **The model stands left of the bar**, in its redraw key: `/model`
+  changes the window mid-session. `tests/shot.py` writes a status line
+  for it.
+  `test_the_model_stands_left_of_the_context_bar`.
+  - **The effort follows it, "Opus 5.5 · high"** (issue 337), from
+    `effort.level`, in the same redraw key.
+  - **The two are a button that opens `#modelpop`** (`showModels`,
+    `putModels`, issue 338): aliases (`MODELS`), full ids the sessions ran
+    (`model_id`, kept a week), and efforts (`EFFORTS`). A pick types
+    `/model <name>` or `/effort <level>` through `send`. **It says the
+    pick becomes Claude Code's default too**: `/model` writes its
+    `settings.json`, `/effort` its `modelSettings`. The reader chose this
+    over Claude Code's own menu.
+  - **Never press an alias; press the full id**: an alias names whatever
+    this Claude Code maps it to.
+  - **A full id passes `MODEL_SHAPE`**, as a command's name passes
+    `COMMAND_SHAPE`: the page types it into a terminal.
+  - **Off where nothing can be typed** (`whyNotTyped`), saying why.
+  - Tests: `test_the_model_says_its_effort_and_a_pick_types_the_command`,
+    `test_an_older_model_is_offered_by_its_full_id`,
+    `test_a_model_with_no_effort_offers_none`,
+    `test_the_model_menu_shuts_and_types_nothing_it_cannot`.
+- **Only `paintLive` assigns to `#live`.** It weighs `state.live` (the
+  stream), `state.trouble` (asked for, not got), `state.linkTrouble` (the
+  reader's file unusable) and `note`, which borrows the slot for 4 s. With
+  four writers, the stream's word on every push wiped a failure. **It runs
+  whatever the find box holds**: else a drop went unsaid.
+  - **A working stream says nothing**: a word always there is never read.
+    A test asks `state.live`, not the slot.
+    `test_a_working_stream_says_nothing_and_a_lost_one_says_so`.
+  - **`said` is the daemon's answer and stays; `note` is ours and fades**:
+    a faded refusal left a calm strip over a dead page. **A send that
+    worked calls `said` before its `note`**, or the old refusal came back.
+    `test_a_review_that_goes_through_clears_an_earlier_refusal`.
+- **No JavaScript library is vendored.** `marked` and `highlight.js` come
+  through `fetchScript`, pinned by the hash of their bytes, with
+  `crossorigin`: any script here can POST to `/send`. **Each degrades**:
+  no `marked`, plain text; no `highlight.js`, no colour. Page tests serve
+  `tests/fixtures/marked.min.js`, so none needs a network.
+- **Only three things move**: a row fades on a state change, a new
+  transcript block slides in 4 px, the needs-you row pulses. "New" is
+  arriving in `patchTranscript`, never a redraw. One
+  `prefers-reduced-motion` block stops it all.
+- **There is no Session tab, and no bar over the tabs**: it cost 56 px on
+  every tab for what the row shows. Jump is an icon at the end of the tab
+  row (`#jump`, `ICONS.terminal`); the name is changed on the row.
+  `drawHeader` is the send box, the review's send bar, the question bar,
+  the context strip and jump, and nothing else.
+  - **A jump that went says so** (`jumpToPane`, `flashOutcome`): a tick,
+    and the live slot says "jumped to" and the row's name; it lands in
+    another window, so it looked like nothing. A refused jump shows tmux's
+    error and never ticks.
+    `test_a_jump_says_it_went_and_a_failed_one_does_not`. `JUMP_TITLE`
+    stands above the start-up line that reads it: a `const` read earlier
+    stops the page.
+- **Every tab has a loader, and a tab switch goes through it, not
+  `draw`**: an empty loader left the old tab on screen. A tab that fetches
+  nothing gives a loader that draws.

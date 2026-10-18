@@ -200,20 +200,23 @@ where new code goes, and a test holds each one.
 
 The whole program is one file, `wostuast`. It starts with Python and ends with
 a long string, `PAGE`, that holds the HTML, the CSS and the JavaScript of the
-page. The file has sections. Each one starts with a marker line, so one command
-prints the map:
+page. The file has sections. Each one starts with a marker line (`# --- ` in
+the Python, `/* --- ` in the CSS, `// --- ` in the script) that says what the
+section holds and, in brackets, which rules file in `.claude/topics/` covers
+it. One command prints the map:
 
 ```sh
-grep -n "^# --- \|^// --- " wostuast
+python3 tests/where.py
 ```
 
 The Python sections follow the data, in the order of the first principle:
-the log, the session model, transcripts, git, then `wire` (every shape the
-page receives), `the daemon` (the request gate and the stream) and
-`the verbs` (what one session's routes do). The page's sections follow the
-screen: the sidebar, the transcript, the Files tab, the Diff tab, the
-review, the views and the keys. The command above prints the whole list as
-it is today.
+the log, the session model, the store and its hook handlers, transcripts,
+git, then `wire` (every shape the page receives), `the daemon` (the tick and
+the stream), `serving` (the request gate) and `the verbs` (what one
+session's routes do), and last the commands: the hook, install, serve. The
+page's sections follow the screen: the sidebar, the question bar, the
+transcript, the Files tab, the Diff tab, the review, the views and the keys.
+The command above prints the whole list as it is today.
 
 > [!NOTE]
 > Why one file? The install command downloads one file from one URL. Two files

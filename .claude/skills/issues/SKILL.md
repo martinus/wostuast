@@ -99,8 +99,8 @@ finds the conflict after their yes (#525).
 ### 4. Build it
 
 **Read the rules file before editing, not after the tests go red.**
-`CLAUDE.md` **Where to look** routes from what you are about to touch to its
-file in `.claude/topics/`.
+`python3 tests/where.py NAME` names the section of the code and, in its
+brackets, the file in `.claude/topics/` to read.
 
 **Prove every test by perturbation**: `.claude/topics/testing.md` says how
 and why. Read the count pytest prints, not the colour: a test that a `-k`
@@ -123,9 +123,9 @@ did; what it left undone was the issue's own condition.
 **The rule and the code that keeps it land together**, or the rule is not
 true yet. **Grep for the symbol before adding a bullet** (`grep -rn <symbol>
 CLAUDE.md .claude/topics`): the same kind of bug again goes into the bullet
-that already holds it, as `CLAUDE.md`'s header says. Add the symbol to
-`CLAUDE.md`'s **Where to look** table if the rule is about code an agent
-would go looking for.
+that already holds it, as `CLAUDE.md`'s header says. A rule for code
+whose section header does not name its file adds that file to the header's
+brackets.
 
 ### 6. Review it when review is worth it
 
@@ -304,8 +304,8 @@ or went wrong:
 - a test or a CI run that went red, and what had to happen before it was
   green;
 - a question the reader had to answer twice, or a correction they made;
-- a file read whole to find one fact, or a symbol that `grep` on `CLAUDE.md`
-  and `.claude/topics` did not find;
+- a file read whole to find one fact, or a symbol that `tests/where.py`
+  and `grep` on `.claude/topics` did not find;
 - a command or a script written from nothing that a script in `tests/`
   could hold;
 - a rule that was wrong, stale, or not followed because nothing routed to
