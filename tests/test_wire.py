@@ -81,8 +81,9 @@ def test_only_the_wire_section_turns_a_dataclass_into_json(ws):
     not one."""
     text = inspect.getsource(ws)
     lines = text[:text.index('PAGE = r"""')].count("\n")
-    start = text[:text.index("# --- wire: every shape the page receives")].count("\n")
-    end = text[:text.index("# --- the daemon: one page")].count("\n")
+    head = text.index("# --- wire: every shape the page receives")
+    start = text[:head].count("\n")
+    end = text[:text.index("\n# --- ", head)].count("\n")
     tree = ast.parse(text)
     functions = [node for node in ast.walk(tree)
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]

@@ -1,42 +1,174 @@
 # The transcript: how it looks
 
-Turns, Markdown, runs of tool calls, folds, the map down the side, and gaps measured as the reader sees them.
+Turns, Markdown, runs of tool calls, folds, the map, and gaps measured as
+the reader sees them.
 
-- **An edit opens onto what it changed, under the call that made it.** The reader wanted words and change read together, and turned down a transcript column beside the tabs: the diff lost half its width. The record answering an `Edit` or `Write` carries `toolUseResult.structuredPatch`, on the record, not the piece, so it goes to the record's one `tool_result`. `read_patch` keeps its hunks in the Diff tab's shape, `PATCH_SHOWN` lines, and none of `originalFile`, `content` or `gitDiff`: the file's size, on every edit, and every block goes to the page. A `create` has an empty patch; its text is the change, split on `\n` only. **The counts come from the patch**: from the strings, an Edit said "+3 −2" for one added line, as the strings carry the lines round the change. A failed call keeps none. `putToolDiff` draws it via `fillDiffFile` with `atEdit`: one column whatever the Diff tab says, no review `+`, no more of the file, since the numbers are the file's then, not now. `test_an_edit_keeps_what_it_changed_and_nothing_of_the_whole_file`, `test_a_long_change_is_cut_and_says_how_much_is_left`, `test_an_edit_opens_onto_what_it_changed`.
-- **A code block copies itself, from a box round it** (`putCodeCopies`, `.codebox`, `.copycode`). The reader asked: a fence most often holds a command or file to take elsewhere, and selecting by hand takes the line above. **The button is a child of the box, not the `pre`**: inside, a long line scrolls it away. **An icon, not the word** (`ICONS.copy`, then `ICONS.check` on success), so a search for "copy" does not mark every block. It shows on the block's hover and keyboard focus, as a reply's copy does. `markdown` adds it, so a Files tab document has it too. `test_a_code_block_copies_itself_from_a_button_that_shows_on_hover`.
-- **A `note` is neither a round nor a reply**: `rounds()` takes only prompts and the agent's text, so the map stays a map of the conversation. **A `plan` is a reply** (#372): the agent's words, named on the map by its title.
-- **What the agent, the harness and the reader wrote is Markdown, and its text is one click away.** A `note` was text in a dashed box, so a subagent's report was a wall of `##` and `|` (#490); it is `markdown` in `.bubble.prosebox`, whose `white-space` is normal, because `.bubble`'s `pre-wrap` turned the newlines between blocks into blank lines.
-  - **Every Markdown block has the Files tab's "txt"** (`putReadAs`, #493), kept in `state.turns.open` under `textKey` so `forgetPlaces` forgets it with the rest. Lit, the block is `.source`, **and only its text changes** (#509): an answer's source had a bordered box of its own; `.bubble` goes only on a prompt's and a note's. **Lit, the button stays put** (#510): it stepped 6 px in, and a second press missed. **It stands at the block's top right, out of the flow** (`.turnacts`): under the time it sat on the next turn's name after a one-line reply; on the time's line it ran past `.who`'s 64 px into the pane's edge and was cut.
-  - **A prompt is Markdown too** (#500), the reader's default, after a first round that kept it as typed. Drawn with `breaks` (`markdown(..., true)`), as a chat box or a GitHub comment: without, a pasted log ran into one paragraph and the fold counted 1 line. A `!` or slash command stays as typed, in the fixed face.
-  - `test_a_message_of_the_harness_is_markdown`, `test_a_block_shows_its_text_as_written_from_txt`, `test_a_prompt_is_markdown_in_its_own_box`.
-  - **"context compacted" says when** (#499): the divider carries the record's `timestamp`, the line its `clock`, with `dayOf` when not today, as the "new" line says since when. `test_a_compaction_carries_its_moment`, `test_the_compaction_line_says_when`.
-- **A `.turn` lays out from the top, not stretched: `align-items: flex-start` on `.turn`.** `.who` holds a name, a day, a time and a copy button (71 px, measured), and a flex item stretches to its row, so a one-line bubble was 71 px tall, text 14 px from the top over 41 px of nothing. `test_a_one_line_message_sits_in_the_middle_of_its_block` compares the two gaps, not either number.
-- **A group of tool calls belongs to the words above it: gaps 6 px above, 22 below.** The agent says what it will do, then does it; at 16 and 16 the group belonged to neither and read with the reply below. **The CSS numbers are not the gaps**: margins collapse against `.turn`'s own 22, so above is 22 + (−16), below max(5, 22). Change one and measure it; do not read it off.
-  - **Two or more calls in a row are one line until the reader opens them** (#465, `foldRun`, `foldRuns`, `runOf`, `fillCallSum`, `.callrun`, `.callsum`, `RUN_FOLDS`): sentence, ten calls, sentence, nine made the words islands in a list nobody reads. The line counts the calls, names the most used tools first, sums the edits' `+`/`−`, and says how many failed. **The calls stay flat siblings and the line is one more `.turn.toolrow` before them, never a box round them**: `patchTranscript` appends a block by index, and the gaps rest on `+` between turns. A folded call is `hidden`; the gap rules hold for the line shut or open, and the gap tests measure both.
-    - **Which runs are open is `state.turns.open`, under `runKey`**, beside the opened calls, so a session keeps it and a rewrite forgets it. A mark on the node was lost on the next draw, and a find-box key is one. `test_a_run_opened_stays_open_through_a_redraw`.
-    - **Everything that reaches a call opens its run, or points at its line**: a matching find (the folded message's scar), `landOnBlock` (a hidden node has nowhere to scroll), and the "new" line, which goes over the run's line, not under it.
-    - **A call folded on arrival loses `fresh`**: shown later, it slid in then, and the gap test measured it 4 px off mid-slide.
+- **An edit opens onto what it changed, under the call that made it.** The
+  reader turned down a diff column beside the tabs: it halved the diff's
+  width. An `Edit` or `Write` answer carries `toolUseResult.structuredPatch`
+  on the record, not the piece, so it goes to the record's one
+  `tool_result`. `read_patch` keeps the hunks in the Diff tab's shape, at
+  most `PATCH_SHOWN` lines, and none of `originalFile`, `content` or
+  `gitDiff`: each is the file's size, on every edit. A `create`'s text is
+  the change, split on `\n` only. **The counts come from the patch**: the
+  strings carry the lines round the change. A failed call keeps none.
+  `putToolDiff` draws it through `fillDiffFile` with `atEdit`: one column,
+  no review `+`, no more of the file, since the numbers are the file's then,
+  not now.
+  `test_an_edit_keeps_what_it_changed_and_nothing_of_the_whole_file`,
+  `test_a_long_change_is_cut_and_says_how_much_is_left`,
+  `test_an_edit_opens_onto_what_it_changed`.
+- **A code block copies itself, from a box round it** (`putCodeCopies`,
+  `.codebox`, `.copycode`). **The button is a child of the box, not the
+  `pre`**: inside, a long line scrolls it away. **An icon, not the word**
+  (`ICONS.copy`, then `ICONS.check`), so a search for "copy" does not mark
+  every block. `markdown` adds it, so a Files tab document has it too.
+  `test_a_code_block_copies_itself_from_a_button_that_shows_on_hover`.
+- **A `note` is neither a round nor a reply**: `rounds()` takes only prompts
+  and the agent's text, so the map is a map of the conversation. **A `plan`
+  is a reply** (#372), named on the map by its title.
+- **What the agent, the harness and the reader wrote is Markdown, and its
+  text is one click away.** A `note` is `markdown` in `.bubble.prosebox`
+  (#490), not a wall of `##` and `|`. Its `white-space` is normal:
+  `.bubble`'s `pre-wrap` made the newlines between blocks blank lines.
+  - **Every Markdown block has the Files tab's "txt"** (`putReadAs`, #493),
+    kept in `state.turns.open` under `textKey`, so `forgetPlaces` forgets
+    it. Lit, the block is `.source`, **and only its text changes** (#509):
+    `.bubble` goes only on a prompt's and a note's. **Lit, the button stays
+    put** (#510), or a second press misses.
+  - **A prompt is Markdown too** (#500), with `breaks`
+    (`markdown(..., true)`): without, a pasted log ran into one paragraph. A
+    `!` or slash command stays as typed, in the fixed face.
+  - `test_a_message_of_the_harness_is_markdown`,
+    `test_a_block_shows_its_text_as_written_from_txt`,
+    `test_a_prompt_is_markdown_in_its_own_box`.
+  - **"context compacted" says when** (#499): the divider carries the
+    record's `timestamp`, the line its `clock`, and `dayOf` when not today.
+    `test_a_compaction_carries_its_moment`,
+    `test_the_compaction_line_says_when`.
+- **`.turn` has `align-items: flex-start`**: a flex item stretches to its
+  row, so a tall `.who` left a one-line bubble's text over empty space.
+  `test_a_one_line_message_sits_in_the_middle_of_its_block` compares the two
+  gaps, not either number.
+- **A group of tool calls belongs to the words above it: gaps 6 px above, 22
+  below.** The agent says what it will do, then does it. **The CSS numbers
+  are not the gaps**: margins collapse against `.turn`'s own 22, so above is
+  22 + (−16), below max(5, 22). Change one and measure it.
+  - **Two or more calls in a row are one line until the reader opens them**
+    (#465, `foldRun`, `foldRuns`, `runOf`, `fillCallSum`, `.callrun`,
+    `.callsum`, `RUN_FOLDS`), or the words are islands in a list of calls.
+    The line counts the calls, names the most used tools, sums the edits'
+    `+`/`−`, and counts the failures. **The line is one more `.turn.toolrow`
+    before the calls, which stay flat siblings, never a box round them**:
+    `patchTranscript` appends a block by index, and the gaps rest on `+`. A
+    folded call is `hidden`; the gap tests measure the line shut and open.
+    - **Which runs are open is `state.turns.open`, under `runKey`**: a mark
+      on the node is lost on the next draw.
+      `test_a_run_opened_stays_open_through_a_redraw`.
+    - **Everything that reaches a call opens its run, or points at its
+      line**: a find that matches, `landOnBlock` (a hidden node has nowhere
+      to scroll), and the "new" line, which goes over the run.
+    - **A call folded on arrival loses `fresh`**, or it slides in when shown
+      later.
     - **A run of one is not folded**: its line would be as tall as the call.
-    - `test_calls_in_a_row_are_one_line_until_the_reader_opens_them`, `test_a_run_grows_as_its_calls_arrive`, `test_a_find_that_matches_a_folded_call_shows_its_run`, `test_landing_on_a_folded_call_opens_its_run`, `test_the_new_line_over_a_folded_call_stands_over_its_run`.
-- **A message too long to read is drawn folded** (`foldedHead`, `putFoldBar`, issue 329): a 140 KB log pasted into a prompt put fifty screens between question and answer. Past `FOLD_LINES` or `FOLD_CHARS`, a prompt, note, reply or `!` command's output shows its first `FOLD_SHOWN` lines, faded, in a `.foldbox` with a `.foldbar` under it ("show all 2.4k lines · 188 KB", `roughly`); a short one is drawn as always, with no box.
-  - **Counted with `indexOf`, never a split**: splitting 140 KB on every redraw is what the fold saves. `lineCount` too.
-  - **A find that matches the message draws it whole**, or the hit is hidden. `test_a_search_opens_a_folded_message_where_it_matches`.
-  - **Open, the bar is sticky at the pane's foot, at the right**, so a log folds from its middle, not its end 2,000 lines down; at the left it covered a line's start. **Folding calls `scrollIntoView`**, or the reader was left far below the rest. `test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight`.
-  - **The bar is in the sans face, and the count is "2.4k"**: the reader refused the fixed face and "2,401", which took two rows over the send button (issue 332).
-  - **It opens through `state.turns.open`**, the set a tool call opens with, so a session keeps it (`PLACE_FIELDS`).
-  - `test_a_long_message_is_drawn_folded_and_opens_and_folds_again`, `test_a_message_short_enough_is_drawn_as_it_always_was`.
-- **Measure a gap from what the reader sees, not from the box.** Box to box said 6 px three times while the reader saw 39. `.who` (name, time, copy button, a day when not today) was 55 px on one day and 71 across two; a text line is 22, so the column set every one-line turn's height.
-  - **When a call comes next, the column may run down beside it**, as the call's `.who` is empty: `:has(+ .turn.toolrow)` says so and re-answers when a block arrives. **The overhang is capped at 36 px**, what one call and its gap hold; more ran into the next turn's name. **It carries `z-index`**, or the calls (later, positioned siblings) cover the copy button.
-  - **A test measuring straight after a push waits for `document.getAnimations()` to be empty**: a sliding block is a stacking context for 0.15 s.
-  - `test_a_group_of_calls_sits_under_the_line_that_announced_it` measures from the text; each of its five parts fails it.
-- **What a turn can do is one row at its top right, and `.who` holds words only** (`.turnacts`, #520, #522). Copy, "txt" and bookmark, in the reader's order (#527); a lit one never moves (#510), since a hidden one keeps its room. In `.who` the bookmark and "copy" held the column at 64 px, room a small screen needs for text; it is 44 now, the width of "system", with `nowrap`, because a bold "14 Oct" broke at 40. **Each button is hidden, not removed** (`visibility`): the row is out of the flow, so a hidden one takes no room from the text, and a saved bookmark, shown without hover, stands where hover shows it. **The row has a ground only on hover**: without it, text showed through the 4 px between buttons. The copy is the code block's icon, ticked by `flashOutcome`. **The day wears the time's colour and weight** (#519): "14 Oct 09:10" is one moment, and faint it read as a note. `test_what_a_turn_can_do_is_one_row_at_its_top_right`, `test_a_day_wears_the_time_s_colour`.
-  - **A turn with a mark that stays keeps the row's room on its right** (`.turn:has(> .turnacts > :is(.on, [aria-pressed="true"]))`): a saved bookmark, shown without hover, stood on a reply's first line that ran to the edge (#521's cover, after #526). **Only such a turn**: 92 px on every turn would take back what the narrow column gave. `test_a_saved_mark_stands_on_no_words`.
-  - **The row's ground is the ground under it** (`--acts-ground`, #527). On a prompt it was the page's dark `--bg`, showing between buttons over the box's tint. The tint (`--mine-soft`) is see-through, so the row lays it over `--bg` as a gradient, as the box does: the tint alone lets the page through, the tint over the box doubles it. `test_the_row_of_buttons_wears_the_ground_under_it` reads drawn pixels, as a ground is in no computed style.
-- **A column may hang 10 px past its turn.** With the copy button on a line under the time, `.who` was 55 px, taller than a text line (22) or a prompt's bubble (45), so the gaps seen were 32 px after a prompt and 59 after a one-line reply before a prompt, not the 22 and 26 meant. What is still past the words hangs into the gap: 10 px, because the next prompt's rule is 12 px down (its `::before`, 26 − 14) and the next turn's name 25; more runs into the rule. `test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant` measures from the bubble and text, and fails with a larger overhang.
-- **The way back to the transcript's end hangs off the content box, and `split` builds it.** A new block carries you along only while `nearBottom`, which is right, and nothing said how to follow again. `.tofoot` cannot be in `.turnbody`, whose children `drawTranscript` replaces wholesale, so it is a child of the box, built by `split` like every part of the frame; built in `drawTranscript`, half the box's positional contract sat in another function. **So `split` returns `box.children[2]`, not `box.lastChild`**: the last child is this button. A `.verb` (border, background, hover); `.tofoot` makes it a round button mid-foot of the pane with `ICONS.down`, the words in `title` and `aria-label`: the reader asked for the arrow alone. It sets `display` to centre the arrow; the one `[hidden]` rule still hides it. `test_the_way_back_is_an_arrow_in_the_middle`.
-- **`showToFoot` is handed both nodes; never look the button up.** It runs on every scroll event (dozens a gesture) and pushed block, and `box.querySelector(".tofoot")` is a pre-order walk across the whole transcript first: on a long one, a hundred thousand nodes for one boolean. Every caller already holds the button and pane.
-- **`GLIMPSE` is not where the map's preview ends; it must clear what the widest column can show.** `.filelist .name` clips with an ellipsis at the dragged width; `GLIMPSE` only bounds what enters the DOM for a reply of kilobytes. At 44, narrower than the default column, every row ended in a needless "…". Measured at `dragWidth`'s cap of 700 px (name box 639 px): 49 of the widest glyphs, 176 of the narrowest. **Measure it; do not divide**: the thin end sets it, and 120, reasoned from monospace widths, would clip narrow letters. The map wears the lists' condensed face again (#448), the face measured, so 200 still clears 176; a narrower face would not.
-- **The map wears the lists' face, and its rows stay close.** Every list on the left (map, file trees, comments) is `--narrow` at 13 px (#448): at the transcript's 14 px the map read as another page beside the Files and Review lists, and the reader asked for one face. That reversed an older rule, set because the lists' 29 px rows read as another page; so rows keep 1 px above and below, about one a line. `test_the_map_wears_the_lists_face_and_a_prompt_is_round` compares the map's computed face with a bare `.filelist`'s, so the lists move together.
-- **A round on the map does not fold, and a prompt is in bold** (#512). A chevron folded each prompt's replies (`state.turns.shut` in the redraw key and `savePlace`); the reader never used it, and it pushed every row one tree step right. The whole row goes to that place in the transcript; bold sets the reader's words apart from the replies. **Ask the reader before putting a fold back**: it went on their word. `test_a_round_on_the_map_does_not_fold_and_a_prompt_is_bold`.
-- **The map marks where each day starts** (`mapDays`, `.mapday`, #512): a long session was a column of prompts with no day breaks. A line names the day ("Today", "Yesterday", "Fri 18 Sep") over each day's first round, by the round's own time, so one past midnight stays under the day it was asked. **Only when the rounds span more than one day**: "Today" over one afternoon says nothing. **Today is in `drawTurnList`'s redraw key**, or "Today" stays after midnight. `test_the_map_marks_where_each_day_starts`.
-- **The map's icons say who spoke**: a prompt is `ICONS.person`, a reply `ICONS.robot` one tree step in, under the words it answers. A folder and a page said "a round holds replies", the list's shape, not what a row is. `test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt`.
+    - `test_calls_in_a_row_are_one_line_until_the_reader_opens_them`,
+      `test_a_run_grows_as_its_calls_arrive`,
+      `test_a_find_that_matches_a_folded_call_shows_its_run`,
+      `test_landing_on_a_folded_call_opens_its_run`,
+      `test_the_new_line_over_a_folded_call_stands_over_its_run`.
+- **A message too long to read is drawn folded** (`foldedHead`,
+  `putFoldBar`, issue 329), or a pasted log puts fifty screens between
+  question and answer. Past `FOLD_LINES` or `FOLD_CHARS`, a prompt, note,
+  reply or `!` output shows its first `FOLD_SHOWN` lines, faded, in a
+  `.foldbox` over a `.foldbar` ("show all 2.4k lines · 188 KB", `roughly`);
+  a short one has no box.
+  - **Counted with `indexOf`, never a split**, as `lineCount` does: a split
+    on every redraw is the cost the fold saves.
+  - **A find that matches the message draws it whole**, or the hit is
+    hidden. `test_a_search_opens_a_folded_message_where_it_matches`.
+  - **Open, the bar is sticky at the pane's foot, at the right**, so a log
+    folds from its middle; at the left it covered a line's start. **Folding
+    calls `scrollIntoView`**, or the reader is left far below.
+    `test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight`.
+  - **The bar is in the sans face, and the count is "2.4k"**: the fixed face
+    and "2,401" took two rows (issue 332).
+  - **It opens through `state.turns.open`** (`PLACE_FIELDS`).
+  - `test_a_long_message_is_drawn_folded_and_opens_and_folds_again`,
+    `test_a_message_short_enough_is_drawn_as_it_always_was`.
+- **Measure a gap from what the reader sees, not from the box.** Box to box
+  said 6 px while the reader saw 39: `.who` set the height of every one-line
+  turn.
+  - **When a call comes next, the column may run down beside it**, as the
+    call's `.who` is empty: `:has(+ .turn.toolrow)`. **The overhang is
+    capped at 36 px**, what one call and its gap hold. **It carries
+    `z-index`**, or the calls, later positioned siblings, cover it.
+  - **A test that measures straight after a push waits for
+    `document.getAnimations()` to be empty**: a sliding block is a stacking
+    context for 0.15 s.
+  - `test_a_group_of_calls_sits_under_the_line_that_announced_it` measures
+    from the text; each of its five parts fails it.
+- **What a turn can do is one row at its top right, out of the flow, and
+  `.who` holds words only** (`.turnacts`, #520, #522): in `.who` the buttons
+  sat on the next turn and took width a small screen needs. Copy, "txt" and
+  bookmark, in the reader's order (#527). `.who` is 44 px with `nowrap`: a
+  bold "14 Oct" broke at 40. **Each button is hidden, not removed**
+  (`visibility`), so a lit one never moves (#510) and a saved bookmark
+  stands where hover shows it. **The row has a ground only on hover**, or
+  text shows between the buttons. The copy is the code block's icon, ticked
+  by `flashOutcome`. **The day wears the time's colour and weight** (#519):
+  "14 Oct 09:10" is one moment.
+  `test_what_a_turn_can_do_is_one_row_at_its_top_right`,
+  `test_a_day_wears_the_time_s_colour`.
+  - **Only a turn with a mark that stays keeps the row's room on its right**
+    (`.turn:has(> .turnacts > :is(.on, [aria-pressed="true"]))`), or a saved
+    bookmark stands on a long first line (#521, #526). Room on every turn
+    would take back the narrow column's width.
+    `test_a_saved_mark_stands_on_no_words`.
+  - **The row's ground is the ground under it** (`--acts-ground`, #527): the
+    prompt's tint (`--mine-soft`) is see-through, so the row lays it over
+    `--bg` as a gradient, as the box does.
+    `test_the_row_of_buttons_wears_the_ground_under_it` reads drawn pixels,
+    as a ground is in no computed style.
+- **A column may hang 10 px past its turn, no more**: the next prompt's rule
+  is 12 px down (its `::before`, 26 − 14). A taller `.who` made the gaps
+  seen 32 and 59 px, not the 22 and 26 meant.
+  `test_the_gap_a_reader_sees_after_a_prompt_or_a_line_is_the_gap_meant`
+  fails with a larger overhang.
+- **The way back to the transcript's end hangs off the content box, and
+  `split` builds it.** A new block carries the reader along only while
+  `nearBottom`. `.tofoot` cannot be in `.turnbody`, whose children
+  `drawTranscript` replaces. **So `split` returns `box.children[2]`, not
+  `box.lastChild`**: the last child is this button. A round `.verb`
+  mid-foot, `ICONS.down` alone as the reader asked, the words in `title` and
+  `aria-label`. It sets `display`; the one `[hidden]` rule still hides it.
+  `test_the_way_back_is_an_arrow_in_the_middle`.
+- **`showToFoot` is handed both nodes; never look the button up.** It runs
+  on every scroll event and push, and `box.querySelector(".tofoot")` walks
+  the whole transcript first.
+- **`GLIMPSE` must clear what the widest map column can show.**
+  `.filelist .name` clips with an ellipsis; `GLIMPSE` only bounds what
+  enters the DOM, and at 44 every row ended in a needless "…". **Measure it;
+  do not divide**: at `dragWidth`'s cap of 700 px, 176 of the narrowest
+  glyphs fit in the `--narrow` face, so 200 clears it.
+- **The map wears the lists' face, and its rows stay close.** Every list on
+  the left (map, file trees, comments) is `--narrow` at 13 px (#448), as the
+  reader asked, with 1 px above and below a row.
+  `test_the_map_wears_the_lists_face_and_a_prompt_is_round` compares the
+  map's face with a bare `.filelist`'s, so the lists move together.
+- **A round on the map does not fold, and a prompt is in bold** (#512). The
+  fold, kept by `savePlace`, went on the reader's word. **Ask the reader
+  before putting it back.**
+  `test_a_round_on_the_map_does_not_fold_and_a_prompt_is_bold`.
+- **The map marks where each day starts** (`mapDays`, `.mapday`, #512), over
+  each day's first round by its own time, **only when the rounds span more
+  than one day**. **Today is in `drawTurnList`'s redraw key**, or "Today"
+  stays after midnight. `test_the_map_marks_where_each_day_starts`.
+- **The map's icons say who spoke**: a prompt is `ICONS.person`, a reply
+  `ICONS.robot` one step in, under the words it answers.
+  `test_the_map_says_who_spoke_and_a_reply_stands_under_its_prompt`.
+- **The find box narrows the map, never the transcript**: taking turns out
+  took away the conversation round a hit. `onlyMatching` filters the map;
+  `markHits` marks hits in place, or a hit scrolled past is missed.
+- **One block redrawn alone is still marked.** `redrawBlock` is the
+  Transcript tab's `fillDiffFile`: it does to a node all that
+  `drawTranscript` does.
