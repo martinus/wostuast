@@ -100,6 +100,14 @@ before every `replace`. Its scars:
   took `setReminder`, and the page still parsed. After such an edit,
   every line this prints is a function gone or added:
   `diff <(git show HEAD:wostuast | grep -o "^\(async \)\?function [a-zA-Z]*" | sort) <(grep -o "^\(async \)\?function [a-zA-Z]*" wostuast | sort)`
+- **Cut a function past `LINES_MOST` with an edit script that asserts no
+  comment line is lost or doubled, `#` and `//` both** (#578). A change
+  that would pass the limit first moves the part it touches into a helper,
+  with its comments and its tests green (`CLAUDE.md`, **Style**). Split by
+  job, not by length (#548): `drawDiff` became `putDiffNotesAbove`,
+  `putDiffNotesBelow`, `putDiffBlocks` and `putDiffPlace`. A part cut only
+  to be under the limit is the same jobs in two places. A new function's
+  own head comment is the only line that may be new.
 - **Take a debug line out with an edit, never `git checkout <file>`**:
   that drops every change not committed, a new test too (#422).
 - **Grep for a name before you define it**: a second top-level `def` or

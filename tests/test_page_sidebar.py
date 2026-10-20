@@ -65,10 +65,11 @@ def test_a_row_is_not_rebuilt_every_second(page_at, ws, tmp_path):
 
 
 def test_a_row_is_kept_when_the_state_changes(page_at, ws):
-    """A row that changes state fades into its new colour (CLAUDE.md,
-    **Motion**). A fade needs the same row on both sides of the change, and
-    the sidebar used to be rebuilt whole, so the one change the fade is for
-    was the one that threw it away."""
+    """A row that changes state fades into its new colour
+    (topics/daemon-and-page, "Only three things move"). A fade needs the
+    same row on both sides of the change, and the sidebar used to be
+    rebuilt whole, so the one change the fade is for was the one that threw
+    it away."""
     daemon, path = page_at
     with opened(path) as page:
         page.evaluate("window.__dot = document.querySelector('.row')")

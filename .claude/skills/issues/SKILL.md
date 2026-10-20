@@ -1,6 +1,6 @@
 ---
 name: issues
-description: Work every open GitHub issue that martinus filed to done — grouped into PRs by subject, each merged when CI is green, re-reading the issue list after every merge — then reflect on the session and land what would make the next one better. Use when the reader says "do the issues", "work the issues", or asks to keep going until nothing is left.
+description: Works every open GitHub issue that martinus filed to done. Groups the issues into pull requests by subject, merges each when CI is green, and reads the issue list again after every merge; then reflects on the session and lands what would make the next one better. Use when the reader says "do the issues", "work the issues", or asks to keep going until nothing is left.
 argument-hint: "[optional: an issue number or subject to start with]"
 ---
 
@@ -17,7 +17,8 @@ moment CI is green, and only then.** Nothing else is relaxed.
 
 **This file is the order of the work; `CLAUDE.md` and `.claude/topics/` are
 the rules.** A rule they hold is not restated here: one rule in two files is
-two rules that drift.
+two rules that drift. [pull-request-loop.md](pull-request-loop.md) holds the
+calls of steps 7 and 8.
 
 ## Only the owner's issues
 
@@ -42,6 +43,20 @@ the risk, so do not read it.
   author.
 
 ## One pass
+
+Copy this list into your notes, and tick each step as you finish it, for
+each pull request:
+
+```
+- [ ] 1. Read the owner's issues, group them, say the order
+- [ ] 2. Reproduce the bug; measure, do not guess
+- [ ] 3. Ask about a design choice before you build
+- [ ] 4. Build; prove each new test by perturbation
+- [ ] 5. Write the scar into the rules, in the same commit
+- [ ] 6. Review, when the change is worth it
+- [ ] 7. Run the changed files under load, push, watch CI
+- [ ] 8. Merge on green, reset the branch, read the issues again
+```
 
 ### 1. Read them all, then group
 
@@ -79,10 +94,10 @@ design question answered after the code is written is a question you
 answered yourself.
 
 **Ask one level up when the request fights a goal or a non-goal**
-(`CLAUDE.md`, **Goals and non-goals**). "Where should `links.json` live" hid
-the question that mattered, whether a config file may exist at all, and
-goal 4 had said no. If a goal has to bend, that is the question, and the
-goal is rewritten in the same PR.
+(topics/goals). "Where should `links.json` live" hid the question that
+mattered, whether a config file may exist at all, and goal 4 had said no.
+If a goal has to bend, that is the question, and the goal is rewritten in
+the same PR.
 
 **Stop and ask for**: a new file outside `wostuast` and `tests/`, a
 dependency, a new tmux verb (`CLAUDE.md`, **Shape**, names the four and the
@@ -116,15 +131,15 @@ did; what it left undone was the issue's own condition.
 
 | Where | What |
 | --- | --- |
-| `.claude/topics/<subject>.md` | a rule the next agent needs, in the shape `CLAUDE.md`'s header sets; a decision with no scar behind it goes in `decisions.md`; a way of working goes in `CLAUDE.md` itself |
+| `.claude/topics/<subject>.md` | a rule the next agent needs, written as `.claude/topics/writing-rules.md` says; a decision with no scar behind it goes in `decisions.md`; a way of working goes in `CLAUDE.md` itself |
 | `tests/fixtures/README.md` | a payload shape, read off a real payload |
 | `docs/GUIDE.md` | anything a reader of the program sees; `README.md` only when it changes what wostuast is, why, or how to install it |
 
 **The rule and the code that keeps it land together**, or the rule is not
 true yet. **Grep for the symbol before adding a bullet** (`grep -rn <symbol>
 CLAUDE.md .claude/topics`): the same kind of bug again goes into the bullet
-that already holds it, as `CLAUDE.md`'s header says. A rule for code
-whose section header does not name its file adds that file to the header's
+that already holds it (topics/writing-rules). A rule for code whose
+section header does not name its file adds that file to the header's
 brackets.
 
 ### 6. Review it when review is worth it
@@ -132,8 +147,8 @@ brackets.
 Judgement, not ceremony. A two-line fix needs neither.
 
 - **`/code-review`** before opening a PR that touches the token, the tmux
-  verbs, the scrub, a file read, or the hook — anything on the safety list
-  in `CLAUDE.md` — or one whose diff runs past a few hundred lines. **Tell
+  verbs, the scrub, a file read, or the hook — anything the three safety
+  topics cover — or one whose diff runs past a few hundred lines. **Tell
   it that the page has `[hidden] { display: none !important; }`**: without
   that, it reports a hidden menu as drawn, and proving it wrong takes a
   browser run.
@@ -162,10 +177,11 @@ the push, or it describes what the code no longer does (#367, after
 `CLAUDE.md`, **How to work here**, "Before the push", is the list: the test
 files you changed, three times at `-n 12`; every test with no browser; the
 whole suite only when a shared part changed. Run them in the background and
-write the rule and the pull request's text meanwhile. **Green locally is
-not the gate; CI is.** It catches races no local run can: a browser test
-that fails only on a loaded runner, a failure message wiped by a push a
-quiet machine never sends.
+write the rule and the pull request's text meanwhile. Then push and open
+the pull request through [pull-request-loop.md](pull-request-loop.md),
+steps 1 to 5. **Green locally is not the gate; CI is.** It catches races
+no local run can: a browser test that fails only on a loaded runner, a
+failure message wiped by a push a quiet machine never sends.
 
 **A red CI on a PR you opened is work now, not news.** Re-diagnose and push
 again until it is green.
@@ -197,78 +213,13 @@ is merged.
 
 ### 8. Merge, reset, and read the list again
 
-**Green means merge.** Then reset the working branch onto `main`, and
+**Green means merge** ([pull-request-loop.md](pull-request-loop.md), steps
+6 to 9). Then reset the working branch onto `main`, and
 **read every open issue again**, with the same author filter: the reader
 files them while you work, and so do you. The next pass starts from the
 list as it is now, not the list you sorted an hour ago.
 
 Stop watching the merged PR and cancel any check-in you armed for it.
-
-## The pull request loop
-
-The same calls every time; each went wrong at least once, and a wrong one
-costs a round trip. **Owner `martinus` and repo `wostuast` go in separate
-fields**: `martinus/wostuast` as the repo asked for
-`martinus/martinus/wostuast`.
-
-0. **Load the tools in one call**: `ToolSearch` with `select:mcp__github__create_pull_request,mcp__github__update_pull_request,mcp__github__pull_request_read,mcp__github__merge_pull_request,mcp__github__actions_list,mcp__github__get_job_logs,mcp__github__list_issues,mcp__github__issue_read,mcp__github__issue_write`
-   and `max_results` 9. `subscribe_pr_activity`, `send_later` and
-   `delete_trigger` are loaded already.
-   - **When the github server did not connect, read through `gh api`, and
-     wait for nothing**: the server can come back minutes later. The
-     owner's issues are
-     `gh api 'repos/martinus/wostuast/issues?state=open&per_page=100'
-     --jq '.[] | select(.pull_request|not) | "\(.number) \(.user.login)"'`,
-     then a body is `gh api repos/martinus/wostuast/issues/N --jq .body`
-     for a number whose author was `martinus`; a check run is
-     `gh api repos/martinus/wostuast/commits/<sha>/check-runs`. **Create,
-     update and merge a pull request through the server once it is back**:
-     the footer rule below is written for its calls.
-1. **Push**: `git push -u origin <branch>`.
-2. **Create**: `create_pull_request` with head `<branch>`, base `main`, and
-   the body. The server adds a footer and a session link to it.
-3. **Take the footer off**: `update_pull_request` with the very same body,
-   then `pull_request_read` method `get`, and read the body back. `CLAUDE.md`
-   says why, in its last bullet of **How to work here**.
-4. **Watch**: `subscribe_pr_activity`, and a `send_later` about six minutes
-   out, because a green run may send no event.
-5. **Read CI**: `pull_request_read` method `get_check_runs`. Done means every
-   run completed and none failed, `browser` among them. For a red one:
-   `actions_list` method `list_workflow_jobs` with the run id as
-   `resource_id`, then `get_job_logs` with `job_id`, `return_content: true`,
-   `tail_lines`. Every `actions_*` method takes its id as `resource_id`,
-   and refuses without it.
-6. **Merge**: `merge_pull_request` with `merge_method: "merge"`,
-   `commit_title: "Merge pull request #<n> from martinus/<branch>"`, and
-   `expectedHeadSha` from `git rev-parse HEAD` — all 40 characters; a short
-   sha is refused. Run the command and copy what it prints: a sha written
-   from memory, even right in its first seven characters, gets the 409
-   below. A 409 "Head branch was modified" means the head is not the one CI
-   checked: read the checks again on the new head, never force.
-7. **Close what it closed**: `list_issues`, and close each issue the pull
-   request names with `issue_write` method `update`, `state: "closed"`,
-   `state_reason: "completed"`. "Closes #N" in the body that created the
-   pull request has left the issues open after the merge, so read the list,
-   never assume. **Write `Closes #N` only for an issue the pull request
-   finishes**: in a commit message GitHub does close it on the merge. A pull
-   request that does part of an issue says "Does item 2 of #N", and the
-   issue's body is rewritten to what is left, with why. **A quote counts
-   too.** GitHub finds the keyword and a number anywhere in a body or a
-   commit message: in quotes, in a table, in a story about a mistake. A
-   quoted commit message in #318's body closed #301, meant to stay open.
-   Name an issue you
-   do not close by its number alone, never after "close", "fix" or
-   "resolve" in any form.
-8. **Let go**: `delete_trigger` the check-in, `unsubscribe_pr_activity`.
-9. **Back onto main**: `git fetch origin main && git checkout -B <branch>
-   origin/main`, then `git push -u origin <branch>`. The merge commit holds
-   the branch's head, so this is a fast-forward and needs no force.
-   - **A stack that lands in a row through the one branch skips this until
-     its last pull request**: after each merge, `git checkout -B <branch>
-     <next commit>` and push. The next commit is a child of the head just
-     merged, so that is a fast-forward too, and its pull request shows only
-     its own change. The session may push to one branch only, so the stack
-     cannot go up side by side.
 
 ## While looping
 
@@ -313,15 +264,15 @@ or went wrong:
 
 For each item, the change that stops it: add, change or **remove** a bullet
 in `CLAUDE.md` or `.claude/topics/`, a step in this skill, or a script in
-`tests/`. Removing counts as much as adding. Write it as `CLAUDE.md`'s
-header says: for an agent that finds a rule by `grep` and acts on it, never
+`tests/`. Removing counts as much as adding. Write it as
+`.claude/topics/writing-rules.md` says: for an agent that finds a rule by `grep` and acts on it, never
 in machine-local memory, because the owner works from more than one
 computer.
 
 **Land the clear ones in one PR, merged on green without asking**, through
-**The pull request loop**. Clear means one reading, the evidence is in this
-session, and it touches only `CLAUDE.md`, `.claude/` or a tool script in
-`tests/`.
+[pull-request-loop.md](pull-request-loop.md). Clear means one reading,
+the evidence is in this session, and it touches only `CLAUDE.md`,
+`.claude/` or a tool script in `tests/`.
 
 **Ask about the rest first**, with `AskUserQuestion`: two or three options,
 their cost, one recommended. That includes anything that bends a goal or a

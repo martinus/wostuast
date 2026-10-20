@@ -13011,7 +13011,7 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Noto+Sans+Mono:wdth,wght@62.5,400;62.5,600;100,400;100,600&display=swap">
 <style>
-/* --- palette: every colour is a variable, and :root is the only place one is a number [CLAUDE.md Style] */
+/* --- palette: every colour is a variable, and :root is the only place one is a number [topics/reuse] */
 
 :root {
   --bg: var(--dark-bg); --panel: #191a20; --raised: #1f2129; --chosen: #262834;
@@ -15696,7 +15696,7 @@ async function keepRename(box, id) {
   drawSessions();
 }
 
-// --- page helpers: CLAUDE.md's reuse table names them; look here before writing one
+// --- page helpers: topics/reuse names them; look here before writing one [topics/reuse]
 
 // A folder and a page, drawn rather than fetched: no icon font, no image, and
 // `currentColor` means each one is already the right colour in both themes
