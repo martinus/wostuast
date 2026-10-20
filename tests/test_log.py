@@ -518,12 +518,18 @@ def test_two_threads_writing_one_file_do_not_unlink_each_other(ws, tmp_path):
     assert target.read_text() in ("one", "two")
 
 
+#: The map: `CLAUDE.md`, and the topics files that stand for parts of it.
+MAP_FILES = ("CLAUDE.md", ".claude/topics/reuse.md",
+             ".claude/topics/principles.md", ".claude/topics/goals.md",
+             ".claude/topics/writing-rules.md")
+
+
 def test_the_names_in_claude_md_are_real():
-    """`CLAUDE.md` names the helpers to reuse, the tables of the
-    principles, the tests that hold them. A name the code no longer has
-    sends an agent grepping for nothing, and a wrong map is worse than
-    none: it is believed. Three numbers in that file once went stale by
-    40% before anybody noticed.
+    """`CLAUDE.md` and the topics files of `MAP_FILES` name the helpers to
+    reuse, the tables of the principles, the tests that hold them. A name
+    the code no longer has sends an agent grepping for nothing, and a wrong
+    map is worse than none: it is believed. Three numbers in that file once
+    went stale by 40% before anybody noticed.
 
     A name is a backticked call, as `fresh(box, which, key)`, or a
     backticked word that reads as code: one with an underscore, a capital
@@ -533,7 +539,7 @@ def test_the_names_in_claude_md_are_real():
     import re
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    doc = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    doc = "".join((root / one).read_text(encoding="utf-8") for one in MAP_FILES)
     code = (root / "wostuast").read_text(encoding="utf-8") + "".join(
         path.read_text(encoding="utf-8") for path in (root / "tests").glob("*.py"))
     words = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", doc))
@@ -544,7 +550,32 @@ def test_the_names_in_claude_md_are_real():
                              or (word.isupper() and len(word) > 3)})
     assert len(named) > 50, "the pattern stopped matching"
     missing = [one for one in named if one not in code]
-    assert not missing, f"CLAUDE.md names what the code does not have: {missing}"
+    assert not missing, f"the map names what the code does not have: {missing}"
+
+
+def test_claude_md_stays_short():
+    """Claude Code loads `CLAUDE.md` at every launch, and a long one makes
+    an agent miss the rule that counts: Anthropic's target is under 200
+    lines. A skill loads whole when it runs; its target is under 500 lines,
+    and its `description` is all an agent sees before that, so it must be
+    there, in one line, within the 1,024 characters the format allows
+    (topics/writing-rules)."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    lines = (root / "CLAUDE.md").read_text(encoding="utf-8").count("\n")
+    assert lines < 200, f"CLAUDE.md is {lines} lines; move a part to a topics file"
+    skills = sorted((root / ".claude" / "skills").glob("*/SKILL.md"))
+    assert skills, "no skills found"
+    for path in skills:
+        text = path.read_text(encoding="utf-8")
+        assert text.count("\n") < 500, f"{path.parent.name}: 500 lines or more"
+        head = text.split("---")[1]
+        name = re.search(r"^name: ([a-z0-9-]{1,64})$", head, re.M)
+        described = re.search(r"^description: (.+)$", head, re.M)
+        assert name and name.group(1) == path.parent.name, path
+        assert described and len(described.group(1)) <= 1024, path
 
 
 def test_no_name_is_defined_twice():
@@ -710,8 +741,9 @@ def test_every_rules_file_is_routed_to_and_every_route_is_a_file():
     a section header of the program or `CLAUDE.md` sends an agent there. A
     file nothing routes to is a subject nobody reads before editing it, and
     a route to a file that is gone sends an agent to read nothing -- both
-    silent. So the headers and **Where to look** together, and the list
-    under **Rules**, name every file, and name nothing else."""
+    silent. So the headers and **Where to look** together route to every
+    file, the table there lists every file by name, and both name nothing
+    else."""
     import pathlib
     import re
 
@@ -723,9 +755,9 @@ def test_every_rules_file_is_routed_to_and_every_route_is_a_file():
     import where
 
     headers = where.sections(where.PROGRAM.read_text(encoding="utf-8"))
-    routed = set(re.findall(r"topics/([a-z-]+)", table)) | {
+    listed = set(re.findall(r"^\| `([a-z-]+)\.md` \|", table, re.M))
+    routed = set(re.findall(r"topics/([a-z-]+)", table)) | listed | {
         name for one in headers for name in one.topics}
-    listed = set(re.findall(r"^\| `([a-z-]+)\.md` \|", doc, re.M))
     assert there, "no rules files"
     assert routed == there, (sorted(routed ^ there))
     assert listed == there, (sorted(listed ^ there))

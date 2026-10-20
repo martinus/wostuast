@@ -3,6 +3,14 @@
 `putSettings`, `paintSettings`, the quick settings beside the code, the
 ticket links rows. topics/safety-install holds the file it writes.
 
+- **What the settings menu sets is kept in one file,
+  `~/.config/wostuast/settings.json`** (`config_path`), which every browser
+  shares and a person can read. **Every setting in it is a control in the
+  menu**, so nobody has to write the file and goal 4 holds; a setting only
+  the file can set is a config option (`CLAUDE.md`, **Shape**). What is
+  not in the menu stays in `localStorage`: column widths, the history's
+  fold, a review's draft. **Two files are called `settings.json`**: ours,
+  and Claude Code's, which `install` touches (topics/safety-install).
 - **Every setting is one menu** (`putSettings`, `paintSettings`,
   `#setpop`): colours, the two alerts, tab width, long lines, the diff's
   columns, ticket links, and the file's path at its foot (`#settingspath`,

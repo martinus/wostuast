@@ -194,7 +194,7 @@ where new code goes, and a test holds each one.
    `git status`, `apply_git_facts` for a reading of git, and `getJson` for
    an answer of the daemon.
 
-[`CLAUDE.md`](CLAUDE.md), **Principles**, names the test that holds each one.
+[`.claude/topics/principles.md`](.claude/topics/principles.md) names the test that holds each one.
 
 ### A tour in one file
 
@@ -1350,7 +1350,7 @@ You now know the shape of the whole program. Some good next steps:
   handler → `drawSessions`. It is the "who needs me?" path, and it fits in one
   afternoon.
 - **Read [`CLAUDE.md`](CLAUDE.md).** It is the map for changing the code: where
-  each rule lives, which helpers already exist, and how to work.
+  each rule lives, where the helpers that exist are listed, and how to work.
 - **Read one file in [`.claude/topics/`](.claude/topics/)** before you touch its part.
   Each rule there is a bug that already happened once.
 - **Run `wostuast doctor`.** It explains your own install in a few lines.

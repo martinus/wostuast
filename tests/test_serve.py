@@ -30,7 +30,7 @@ def get(url, timeout=5):
         return response.status, json.loads(response.read())
 
 
-# --- the rules for the HTTP surface: CLAUDE.md, the Safety section ----------
+# --- the rules for the HTTP surface: topics/safety -------------------------
 
 
 def test_it_listens_on_loopback_only(ws):
@@ -955,7 +955,7 @@ def test_a_new_file_moves_the_tag(ws, repo_session, monkeypatch):
 # --- the tmux verbs over HTTP -----------------------------------------------
 
 # Every POST here types into a terminal, which is why each carries a token and
-# an Origin check (CLAUDE.md: "Every POST carries a token"). These tests are
+# an Origin check (topics/safety: "Every POST carries a token"). These tests are
 # that rule.
 
 
@@ -1570,7 +1570,7 @@ def test_every_colour_outside_the_palette_is_named(ws):
     loose = sorted(set(COLOUR.findall(stylesheet(ws.PAGE))))
     # An issue's number in a CSS comment reads as a colour too: "(#352)"
     # and "(#355)" each failed this in one session, with the rule already
-    # in CLAUDE.md. Say so, and the fix is one word.
+    # in topics/reuse. Say so, and the fix is one word.
     issues = [one for one in loose if re.fullmatch(r"#\d{3,4}", one)]
     assert not issues, (f"an issue in a CSS comment is written `issue 352`,"
                         f" not `#352`, or it reads as a colour: {issues}")
