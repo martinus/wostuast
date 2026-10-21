@@ -81,6 +81,14 @@ ticket links rows. topics/safety-install holds the file it writes.
   page), or why it is not saved, in red, on its box (`sayLink`,
   `data-bad`). The daemon names the box as `field` (`trouble_field`): read
   from the message's words, the wrong box went red.
+  - **A link may name the session's repository** (#623, `LINK_VARIABLES`,
+    `linkVars`, `linkSession`): `{repo}`, `{owner}` (the one folder above
+    it) and `{path}`, from the remote of the session the text stands in --
+    its row or card (`data-id`), else the chosen one. Each is
+    `encodeURIComponent`ed; a name with no value makes no link, never a
+    link to the wrong place. The daemon refuses an unknown name.
+    `test_a_link_names_the_repository_of_the_session_it_stands_in`,
+    `test_a_link_that_names_an_unknown_part_of_the_repository_is_refused`.
   - **The page checks only what only it can**: a half row, and a pattern
     this browser will not compile (`linkProblem`). The rest is
     `link_trouble` in the daemon; `save_config` keeps the good links and

@@ -459,3 +459,13 @@ def test_uninstall_keeps_an_empty_group_of_the_users(ws):
     assert {"matcher": "Bash", "hooks": [
         {"type": "command", "command": "/home/m/mine.sh"}]} \
         in settings["hooks"]["PreToolUse"]
+
+
+def test_a_link_that_names_an_unknown_part_of_the_repository_is_refused(ws):
+    """`{repo}`, `{owner}` and `{path}` are what a link may name (#623). A
+    misspelt one stayed in the address and the link led nowhere."""
+    good = {"match": r"PR #(\d+)", "url": "https://code.example/{owner}/{repo}/pull/$1"}
+    assert ws.link_trouble(good) == ""
+    assert ws.link_trouble(dict(good, url="https://code.example/{path}/pull/$1")) == ""
+    said = ws.link_trouble(dict(good, url="https://code.example/{repos}/pull/$1"))
+    assert said == "`url` names {repos}, which is not one of {repo}, {owner}, {path}"
