@@ -119,7 +119,7 @@ rename, and the keys.
     `test_a_slash_inside_a_word_opens_nothing`.
   - **`followSlash` checks focus and session after its fetch**: an answer
     for a box the reader left opens nothing.
-  - **Commands is a view, not a tab** (#411, `toggleView`, key `4`): most
+  - **Commands is a view, not a tab** (#411, `toggleView`, key `5` since #622): most
     commands belong to no one session. `loadCommands` asks one session per
     worktree (`projectSessions`, on the row's `root`); yours and built-ins
     once, then each project under `projectName`. **A project's command is

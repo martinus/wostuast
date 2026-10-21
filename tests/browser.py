@@ -74,7 +74,8 @@ WAIT = int(os.environ.get("WOSTUAST_WAIT") or 0) or None
 # child" is already true while the file columns are still standing in it. It
 # has to have stopped being split as well.
 DRAWN = {"transcript": ".turnbody > *", "files": ".filebody > *",
-         "diff": ".diffbody > *", "commands": ".cmdbody > *"}
+         "diff": ".diffbody > *", "summary": ".summary > .sumhead",
+         "commands": ".cmdbody > *"}
 
 HOSTILE = (
     "Read from a README:\n\n"

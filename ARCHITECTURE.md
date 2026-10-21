@@ -726,6 +726,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/saved` | Every saved turn, of every session. |
 | GET | `/api/session/ID/last` | What the agent said last, for "All unreads". |
 | GET | `/api/session/ID/places` | The folders the Files and Review tabs may show: the session's own first, then each other repository its agent stood in or touched a file in, then each folder the reader added to the worktree (`plain` when git knows nothing of it). |
+| GET | `/api/session/ID/summary` | Where the session's tokens and time went, for the Summary tab: the status line's spend and times, busy time, the costliest turns, subagents by kind, calls by tool. |
 | GET | `/api/session/ID/files` | The file list of the worktree. With `place=…`, one of `places`; the same for `file`, `raw`, `diff` and `whole`. |
 | GET | `/api/session/ID/file?path=…` | One file's text. |
 | GET | `/api/session/ID/raw?path=…` | One file's bytes (for images). |

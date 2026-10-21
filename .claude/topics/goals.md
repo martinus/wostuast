@@ -47,10 +47,13 @@ If a feature needs one of these, leave the feature out.
   ours** (`always_offered`, `allow_for`). No mode that turns every prompt
   off, no plan, no question. An `AskUserQuestion` is the agent's own
   question: the page types nothing until the reader submits.
-- **Agent-to-agent messaging, teams, orchestration, cache telemetry.**
-  Showing the spend the status line sends is in; accounting is out. **So is
-  a spend limit**: one shipped, typed into a terminal with nobody watching,
-  and went with the Session tab that set it.
+- **Agent-to-agent messaging, teams, orchestration, accounting across
+  sessions.** Showing the spend the status line sends is in, and so is
+  where one session's tokens went, read off its own transcript (#622, the
+  Summary tab, topics/summary): the reader asked for it to make the next
+  session churn less. A bill, a budget, a total across sessions is out.
+  **So is a spend limit**: one shipped, typed into a terminal with nobody
+  watching, and went with the Session tab that set it.
 - **Knowing a worktree layout.** A session is an agent standing in a
   directory, nothing more. No dependency on `gra`.
 - **Electron, Tauri, React, or any build step**, a Python dependency outside

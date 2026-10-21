@@ -59,7 +59,8 @@ def test_the_status_file_keeps_every_field(ws):
     from dataclasses import fields
     status = ws.Status(ts=5.0, name="a name", model="Opus 5", context_pct=41.0,
                        cost_usd=1.25, agent="code-architect",
-                       model_id="claude-opus-5", effort="high")
+                       model_id="claude-opus-5", effort="high", wall_ms=9000.0,
+                       api_ms=3000.0, lines_added=12.0, lines_removed=3.0)
     blank = ws.Status()
     assert all(getattr(status, one.name) != getattr(blank, one.name)
                for one in fields(ws.Status))

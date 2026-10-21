@@ -233,7 +233,7 @@ rm -r ~/.local/state/wostuast    # removes the history too, if you want that
 
 ## The page
 
-The page shows one session at a time, in three tabs. Each session remembers
+The page shows one session at a time, in four tabs. Each session remembers
 where you left it: the tab, the open file, and your place in it.
 
 | Tab | What it shows |
@@ -241,6 +241,7 @@ where you left it: the tab, the open file, and your place in it.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
+| **Summary** | Where the session's tokens and time went: what it spent, how long it was busy, its costliest turns, its subagents and its calls by tool. |
 
 When a switch to another session or tab takes a moment, for example over a
 slow ssh tunnel, the old content dims and a label says what is loading. The
@@ -253,8 +254,8 @@ back. The session list folds on its own. Folded, it shows a narrow tab
 for each session, as tall as a row, with the name turned on its side and in
 the colour of its state. Click a tab to open that session, and point at it
 to see its whole row, opened out in its place. The list beside a tab (the map,
-the files, the changed files) is one column for all three tabs, so it folds
-on all three. The browser remembers what you folded. Press <kbd>f</kbd> or
+the files, the changed files) is one column for the first three tabs, so it
+folds on all three. The browser remembers what you folded. Press <kbd>f</kbd> or
 <kbd>/</kbd> to bring back the column you type into.
 
 <details>
@@ -410,6 +411,20 @@ words marked.
 - **Untracked files** are listed on their own, because git has no diff for
   them.
 
+#### Summary
+
+What the session spent, as Claude Code estimates it, how long it has run,
+how long it was busy (from each prompt to the end of its turn), how long
+the model worked, its turns, and the lines its edits added and removed.
+Under them, the tokens it used: input, cache written, cache read and
+output.
+
+Then its costliest turns. A turn's share of what was spent is marked
+"≈": the status line says only the whole, so each turn gets its share by
+the tokens its replies used, output weighing most and a cache read least.
+Click a turn to read it in the transcript. Then its subagents by kind, and
+its calls by tool.
+
 #### Commands
 
 A stored prompt is a Claude Code command: a Markdown file in
@@ -530,8 +545,8 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>z</kbd> | Snooze the chosen session that needs you, or wake it |
 | <kbd>u</kbd> | Mark the chosen session unread, or read |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
-| <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
-| <kbd>4</kbd> | Commands, the view of every project's skills and commands |
+| <kbd>1</kbd> – <kbd>4</kbd> | Transcript, Files, Review, Summary |
+| <kbd>5</kbd> | Commands, the view of every project's skills and commands |
 | <kbd>t</kbd> | The transcript beside Files or Review, with the send box under it; press again to put it away |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |

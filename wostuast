@@ -1332,6 +1332,14 @@ class Status:
     #: where `model` is its display name, "Opus 5.5". An alias names only the
     #: newest of a family, so an older one is reached by this (`row`).
     model_id: str = ""
+    #: How long the session has run, and how much of that the API worked,
+    #: in milliseconds; the lines its edits added and removed. The status
+    #: line's `cost` holds all four, as it holds the dollars (#622). `None`
+    #: is "not said".
+    wall_ms: float | None = None
+    api_ms: float | None = None
+    lines_added: float | None = None
+    lines_removed: float | None = None
     #: How hard the model thinks: `effort.level` of the status line --
     #: "low", "medium", "high", "xhigh" or "max", measured on 2.1.287. ""
     #: when the payload has none, as for Haiku, which has no effort at all.
@@ -1503,6 +1511,17 @@ class Session:
     #: The folders its agent stood in or touched a file in, with when: see
     #: `note_dirs` (#616).
     dirs: dict[str, float] = field(default_factory=dict)
+    #: How long its turns ran, prompt to `Stop`, in seconds, and when the
+    #: one running began, or 0 (#622). The status line's time is the
+    #: session's whole life, idle hours too.
+    busy: float = 0.0
+    turn_began: float = 0.0
+    #: The last moment the running turn was heard from: where a turn the
+    #: reader interrupted ends, as it sends no `Stop`.
+    turn_last: float = 0.0
+    #: Where the last turn counted ended: the same events read again count
+    #: nothing twice (`note_busy`).
+    busy_upto: float = 0.0
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -2129,6 +2148,7 @@ class Store:
         note_subagent(session, event, name, ts)
         note_shells(session, event, name, ts)
         note_dirs(session, event, name, ts)
+        note_busy(session, name, ts)
         # Only a change. Every handler assigns a state whether or not it is a
         # new one -- `_on_pre_tool` writes "working" on every tool call -- and
         # moving this each time would put the list back to sorting by the last
@@ -3467,6 +3487,45 @@ def note_agent_ended(session: Session, prompt: str) -> None:
         one.said = clip(said.group(1), AGENT_SAID)
 
 
+def note_busy(session: Session, name: str, ts: float) -> None:
+    """Count the time its turns ran, prompt to end (#622). A turn the
+    reader interrupts sends no `Stop`: it ends at the last event it sent,
+    not at the next prompt, as nothing ran in between that a hook saw.
+
+    A sum, where every other handler assigns: so the same events read
+    again count nothing twice, as folding twice must be folding once. A
+    turn counts only past `busy_upto`, and the running turn's own prompt is
+    not a new turn. Only work moves a turn's end (`BUSY_WORK`): an idle
+    notification, a resume or a `SessionEnd` hours after an interrupt
+    counted the hours. An event older than the running turn is skipped."""
+    if ts <= session.busy_upto or (session.turn_began and ts < session.turn_began) or (
+            name == "UserPromptSubmit" and ts == session.turn_began):
+        return
+    if name == "UserPromptSubmit":
+        if session.turn_began:
+            count_turn(session, session.turn_last)
+        session.turn_began = session.turn_last = ts
+    elif session.turn_began:
+        if name in BUSY_WORK:
+            session.turn_last = ts
+        if name in ("Stop", "StopFailure"):
+            count_turn(session, ts)
+        elif name == "SessionEnd":
+            count_turn(session, session.turn_last)
+
+
+#: The events that are the agent at work, and move a turn's end (#622).
+BUSY_WORK = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure",
+                       "SubagentStart", "SubagentStop"})
+
+
+def count_turn(session: Session, end: float) -> None:
+    """The running turn ends at `end`, and its time counts (`note_busy`)."""
+    session.busy += max(0.0, end - session.turn_began)
+    session.busy_upto = end
+    session.turn_began = 0.0
+
+
 def note_dirs(session: Session, event: dict[str, Any], name: str, ts: float) -> None:
     """Keep the folders the agent stood in or touched a file in (#616).
 
@@ -4206,6 +4265,73 @@ def call_text(tool_name: str, tool_input: Any, target: str) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
+#: What a token costs against an input token, as Anthropic prices every
+#: model so far: a cache read a tenth, a cache write a quarter more, an
+#: output token five times. Only to share the status line's dollars out
+#: among the turns (#622): it names no price, and a model priced otherwise
+#: moves the shares, never the total.
+TOKEN_WEIGHTS = {"input_tokens": 1.0, "cache_creation_input_tokens": 1.25,
+                 "cache_read_input_tokens": 0.1, "output_tokens": 5.0}
+
+#: How many of the costliest turns the summary names.
+COSTLY_SHOWN = 8
+
+
+@dataclass
+class TurnCost:
+    """One turn of a transcript by what its replies used (#622): from the
+    reader's prompt to the next one."""
+
+    seq: int = -1               # the prompt's block, for a link to it
+    said: str = ""              # the prompt's start
+    ts: float = 0.0
+    tokens: dict[str, int] = field(default_factory=dict)
+    weight: float = 0.0         # tokens by `TOKEN_WEIGHTS`
+    replies: int = 0
+
+
+@dataclass
+class Costs:
+    """Where a transcript's tokens went (#622), kept as the reader reads.
+
+    Measured on 2.1.306: one reply spans a record a content block, up to
+    five, and each repeats the reply's `usage`. So a reply counts once, by
+    its `message.id`."""
+
+    turns: list[TurnCost] = field(default_factory=list)
+    tools: dict[str, int] = field(default_factory=dict)
+    seen: set[str] = field(default_factory=set)
+
+    def take(self, record: dict[str, Any], blocks: list["Block"]) -> None:
+        """One record of the transcript, and the blocks it made."""
+        for block in blocks:
+            if block.kind == "prompt":
+                self.turns.append(TurnCost(seq=block.seq, said=clip(block.text, 120),
+                                           ts=block.ts))
+        if record.get("type") != "assistant":
+            return
+        message = record.get("message")
+        if not isinstance(message, dict):
+            return
+        for part in message.get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "tool_use":
+                tool = str(part.get("name") or "?")
+                self.tools[tool] = self.tools.get(tool, 0) + 1
+        mid, used = str(message.get("id") or ""), message.get("usage")
+        if not mid or mid in self.seen or not isinstance(used, dict):
+            return
+        self.seen.add(mid)
+        if not self.turns:
+            self.turns.append(TurnCost(said="(before the first prompt)"))
+        turn = self.turns[-1]
+        turn.replies += 1
+        for key, weight in TOKEN_WEIGHTS.items():
+            count = used.get(key)
+            if isinstance(count, int) and count > 0:
+                turn.tokens[key] = turn.tokens.get(key, 0) + count
+                turn.weight += weight * count
+
+
 class Transcript:
     """Reads a session's transcript into blocks, and follows it as it grows.
 
@@ -4240,6 +4366,8 @@ class Transcript:
         #: When something last asked for this reader (`Daemon.transcript`),
         #: on the monotonic clock. `forget_gone` drops one idle that long.
         self.used = time.monotonic()
+        #: Where its tokens went, turn by turn (#622).
+        self.costs = Costs()
 
     def read_new(self) -> list[Block]:
         """Parse whatever has been appended. Returns every block that changed.
@@ -4254,10 +4382,13 @@ class Transcript:
         if self.tail.restarted:
             self.blocks.clear()
             self.by_tool_use.clear()
+            self.costs = Costs()
             self.run += 1
         touched: list[Block] = []
         for record in json_objects(lines):
-            touched += self.add(record)
+            made = self.add(record)
+            self.costs.take(record, made)
+            touched += made
         return touched
 
     def keep(self, block: Block) -> Block:
@@ -7343,6 +7474,10 @@ def status_from_payload(payload: dict[str, Any], now: float | None = None) -> St
         agent=str(nested("agent").get("name") or ""),
         effort=str(nested("effort").get("level") or ""),
         model_id=str(nested("model").get("id") or ""),
+        wall_ms=opt_float(nested("cost").get("total_duration_ms")),
+        api_ms=opt_float(nested("cost").get("total_api_duration_ms")),
+        lines_added=opt_float(nested("cost").get("total_lines_added")),
+        lines_removed=opt_float(nested("cost").get("total_lines_removed")),
     )
 
 
@@ -7360,7 +7495,8 @@ def write_status(session_id: str, status: Status) -> None:
         "ts": status.ts, "name": status.name, "model": status.model,
         "context_pct": status.context_pct, "cost_usd": status.cost_usd,
         "agent": status.agent, "model_id": status.model_id,
-        "effort": status.effort,
+        "effort": status.effort, "wall_ms": status.wall_ms, "api_ms": status.api_ms,
+        "lines_added": status.lines_added, "lines_removed": status.lines_removed,
     }), private=True)
 
 
@@ -7381,6 +7517,10 @@ def read_status(session_id: str) -> Status:
         agent=str(payload.get("agent") or ""),
         effort=str(payload.get("effort") or ""),
         model_id=str(payload.get("model_id") or ""),
+        wall_ms=opt_float(payload.get("wall_ms")),
+        api_ms=opt_float(payload.get("api_ms")),
+        lines_added=opt_float(payload.get("lines_added")),
+        lines_removed=opt_float(payload.get("lines_removed")),
     )
 
 
@@ -9469,6 +9609,49 @@ def resume_command(session: Session) -> str:
 JSON_VERSION = 1
 
 
+def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
+    """Where a session's tokens and time went, for the Summary tab (#622).
+
+    The dollars are the status line's, Claude Code's own estimate; a turn's
+    share of them is its tokens by `TOKEN_WEIGHTS`, so a turn is "about".
+    """
+    status = session.status
+    total = sum(turn.weight for turn in costs.turns)
+    tokens: dict[str, int] = {}
+    for turn in costs.turns:
+        for key, count in turn.tokens.items():
+            tokens[key] = tokens.get(key, 0) + count
+    worst = sorted(costs.turns, key=lambda turn: -turn.weight)[:COSTLY_SHOWN]
+    share = (lambda turn: round(status.cost_usd * turn.weight / total, 4)
+             if total and status.cost_usd is not None else None)
+    kinds: dict[str, dict[str, Any]] = {}
+    for one in session.subagents.values():
+        held = kinds.setdefault(one.kind or "subagent",
+                                {"kind": one.kind or "subagent", "ran": 0, "tokens": 0,
+                                 "calls": 0, "seconds": 0.0})
+        held["ran"] += 1
+        held["tokens"] += one.tokens
+        held["calls"] += one.calls
+        if one.ended:
+            held["seconds"] += max(0.0, one.ended - one.started)
+    return {
+        "id": session.session_id,
+        "cost_usd": status.cost_usd, "wall_ms": status.wall_ms, "api_ms": status.api_ms,
+        "lines_added": status.lines_added, "lines_removed": status.lines_removed,
+        "busy": round(session.busy + (max(0.0, session.turn_last - session.turn_began)
+                                      if session.turn_began else 0.0), 1),
+        "turns": len([turn for turn in costs.turns if turn.seq >= 0]),
+        "tokens": tokens,
+        "costly": [{"seq": turn.seq, "said": turn.said, "ts": turn.ts,
+                    "tokens": turn.tokens, "replies": turn.replies, "usd": share(turn)}
+                   for turn in worst if turn.weight],
+        "subagents": sorted(kinds.values(), key=lambda one: -one["tokens"]),
+        # Subagents run before #618 counted no calls; `agents_ran` counts all.
+        "agents_ran": session.agents_ran,
+        "tools": sorted(costs.tools.items(), key=lambda one: (-one[1], one[0])),
+    }
+
+
 def session_json(session: Session) -> dict[str, Any]:
     """One session as a script reads it: `ls --json` and `wait --json` (#353).
 
@@ -9848,6 +10031,16 @@ class Daemon:
             self.transcripts[session_id] = held
         held.used = time.monotonic()
         return held
+
+    def summary(self, session: Session) -> dict[str, Any]:
+        """Where a session's tokens and time went (#622), after reading
+        what is new, as `read_transcript` does. Built under the reader's
+        lock, as the tick may add to the counts: a copy of them, every id
+        it has seen included, cost 64 ms a poll on a long session."""
+        self.read_transcript(session.session_id)
+        with self.reading:
+            reader = self.transcripts.get(session.session_id)
+            return summary_json(session, reader.costs if reader else Costs())
 
     def read_transcript(
         self, session_id: str
@@ -11186,6 +11379,13 @@ def verb_transcript(serving: Serving, session_id: str, session: Session | None,
                          blocks=blocks_json(blocks))
 
 
+def verb_summary(serving: Serving, session_id: str, session: Session,
+            query: dict[str, str]) -> Answer:
+    """Where the session's tokens and time went (#622). Its transcript is
+    read as the Transcript tab reads it, and only what is new."""
+    return 200, serving.daemon.summary(session)
+
+
 def verb_places(serving: Serving, session_id: str, session: Session,
            query: dict[str, str]) -> Answer:
     """The repositories the Files and Review tabs may show (#616)."""
@@ -11668,6 +11868,7 @@ GET_VERBS: dict[str, tuple[Any, str]] = {
     "diff": (verb_diff, "known"),
     "whole": (verb_whole, "known"),
     "places": (verb_places, "known"),
+    "summary": (verb_summary, "known"),
 }
 
 # Four of these reach a terminal -- jump, send, answer and decline, which is
@@ -14816,6 +15017,38 @@ body.switching #content::after {
 /* Which repository the Files and Review tabs show (issue 616), beside the
    tabs: the commit picker's look (`.pickof`). */
 .tabs .pickplace { align-self: center; max-width: 32ch; flex-shrink: 0; }
+/* The Summary tab (issue 622): the numbers, then the lists. */
+.summary { max-width: 980px; }
+/* The tab has no list column, so no find box: its home stays empty. */
+body:has(.content[data-tab="summary"]) .findhome { display: none; }
+.sumhead { display: flex; flex-wrap: wrap; gap: 10px; }
+.sumstat {
+  padding: 10px 14px; min-width: 96px; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--edge);
+}
+.sumvalue { font-size: 20px; font-weight: 600; color: var(--ink); }
+.sumwhat { font-size: 12px; color: var(--ink-faint); }
+.sumtokens { margin: 12px 0 0; font-size: 13px; color: var(--ink-faint); }
+.sumnote { margin: 0 0 6px; font-size: 12px; color: var(--ink-faint); }
+.sumtitle {
+  margin: 22px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.sumlist { display: flex; flex-direction: column; }
+.sumline {
+  display: grid; grid-template-columns: 80px 200px 1fr; gap: 12px; align-items: baseline;
+  padding: 5px 8px; border: 0; border-radius: 4px; background: none;
+  color: var(--ink); font: inherit; font-size: 13px; text-align: left;
+}
+button.sumline:not(:disabled) { cursor: pointer; }
+button.sumline:not(:disabled):hover { background: var(--raised); }
+.sumnum { font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
+.sumsub { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.sumsaid { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sumbar {
+  display: inline-block; height: 8px; border-radius: 4px; background: var(--needs);
+  opacity: 0.7; vertical-align: middle;
+}
 /* A folder to add (issue 624): typed beside the picker, in its face. */
 .tabs .placeadd { align-self: center; display: flex; }
 .placeadd input {
@@ -16295,7 +16528,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         <button type="button" class="feedlink" id="searchlink"
           title="Search every session: what you typed and what each agent answered"></button>
         <button type="button" class="feedlink" id="cmdlink"
-          title="Commands: the skills and commands of every project  ·  4"></button>
+          title="Commands: the skills and commands of every project  ·  5"></button>
       </div>
       <div class="rows" id="rows"></div>
     </div>
@@ -16311,6 +16544,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           title="Review  ·  3"><span class="tabkey">3</span>Review<span
           class="badge" id="diffcount" hidden></span><span
           class="badge notes" id="reviewcount" hidden></span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="summary"
+          title="Summary  ·  4"><span class="tabkey">4</span>Summary</button>
         <button type="button" class="theme" id="chatbtn" aria-pressed="false"></button>
         <select class="pickplace" id="placepick" hidden
                 title="which folder the Files and Review tabs show"></select>
@@ -16377,8 +16612,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>z</dt><dd>snooze the session that needs you, or wake it</dd>
     <dt>u</dt><dd>mark the session unread, or read</dd>
     <dt>/</dt><dd>find in the transcript</dd>
-    <dt>1 – 3</dt><dd>transcript, files, review</dd>
-    <dt>4</dt><dd>commands, of every project</dd>
+    <dt>1 – 4</dt><dd>transcript, files, review, summary</dd>
+    <dt>5</dt><dd>commands, of every project</dd>
     <dt>t</dt><dd>the transcript beside Files or Review, or away</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>jump to the send box</dd>
@@ -16410,6 +16645,9 @@ const state = {
   place: "",
   places: [],
   placesAt: 0,
+  // Where the chosen session's tokens and time went (#622), as the daemon
+  // last said, or null.
+  summary: null,
   find: "",
   pick: "",             // what the sidebar filter box holds
   history: false,       // whether the finished sessions are unfolded
@@ -17787,8 +18025,8 @@ const VIEWS = {
               count: () => null, open: loadCommands, draw: drawCommands },
 };
 
-// A view, or back to the session it stands over: its link, and `4` for
-// Commands (#411). It was written four times, one a view.
+// A view, or back to the session it stands over: its link, and `5` for
+// Commands (#411, #622). It was written four times, one a view.
 function toggleView(kind) {
   if (state.feed === kind) { if (state.chosen) choose(state.chosen); }
   else openFeed(kind);
@@ -25794,6 +26032,8 @@ const TABS = {
            finds: "go to file  /", name: "Files" },
   diff: { draw: drawDiff, land: landDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /", name: "Review" },
+  summary: { draw: drawSummary, land: () => {}, load: loadSummary, poll: 10000,
+             finds: "", name: "Summary" },
 };
 
 // A switch to another session or tab leaves the last one's drawing in the
@@ -26041,7 +26281,8 @@ function drawPlaces() {
   const pick = $("placepick");
   const places = state.places;
   // Shown with the own place alone too: its last choice adds one (#624).
-  const away = state.tab === "transcript" || !!state.feed;
+  // Only on the two tabs that show a place.
+  const away = (state.tab !== "files" && state.tab !== "diff") || !!state.feed;
   pick.hidden = away || !places.length;
   if (fresh(pick, "key", JSON.stringify(places))) {
     pick.replaceChildren();
@@ -26109,6 +26350,122 @@ function pickPlace(value) {
   drawHeader();
   draw();
   load();
+}
+
+// --- the Summary tab: where a session's tokens and time went (#622) [topics/summary]
+
+async function loadSummary() {
+  const want = state.chosen;
+  const body = await ask(want, "summary", "");
+  if (!body || state.chosen !== want || body.id !== want) return;
+  state.summary = body;
+  draw();
+}
+
+function drawSummary(box) {
+  const got = state.summary && state.summary.id === state.chosen ? state.summary : null;
+  // The box is the tabs' own, as `split` hands it over: the next tab must
+  // see that its frame is gone, and the find box must not go with it.
+  // One column, not the split tabs' list and body: `content split` laid
+  // the summary into the list's narrow column.
+  box.className = "content summarybox";
+  if (box.dataset.tab !== "summary") {
+    homeFind($("findhome"));
+    box.dataset.tab = "summary";
+    box.dataset.listKey = box.dataset.bodyKey = box.dataset.summaryKey = "";
+  }
+  if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got]))) return;
+  box.replaceChildren();
+  const pane = put(box, "div", "summary");
+  if (!got) { put(pane, "p", "sumnote", "Reading the transcript\u2026"); return; }
+  putSumHead(pane, got);
+  putCostly(pane, got);
+  putSumAgents(pane, got);
+  putSumTools(pane, got);
+}
+
+// The few numbers that say the most, each over what it is.
+function putSumHead(pane, got) {
+  const head = put(pane, "div", "sumhead");
+  const stat = (value, what, title) => {
+    const one = put(head, "div", "sumstat");
+    put(one, "div", "sumvalue", value);
+    put(one, "div", "sumwhat", what);
+    if (title) one.title = title;
+  };
+  stat(got.cost_usd === null || got.cost_usd === undefined ? "\u2014" : money(got.cost_usd),
+       "spent", "Claude Code's own estimate, at list price. It starts again at /clear.");
+  if (got.wall_ms) stat(lasted(got.wall_ms / 1000), "since it started");
+  stat(lasted(got.busy), "busy", "prompt to end, every turn");
+  if (got.api_ms) stat(lasted(got.api_ms / 1000), "the model worked");
+  stat(String(got.turns), got.turns === 1 ? "turn" : "turns");
+  if (got.lines_added || got.lines_removed) {
+    stat("+" + (got.lines_added || 0) + " \u2212" + (got.lines_removed || 0), "lines");
+  }
+  const t = got.tokens || {};
+  put(pane, "p", "sumtokens", ["input " + roughly(t.input_tokens || 0),
+    "cache written " + roughly(t.cache_creation_input_tokens || 0),
+    "cache read " + roughly(t.cache_read_input_tokens || 0),
+    "output " + roughly(t.output_tokens || 0)].join(" \u00b7 ") + " tokens");
+}
+
+// The turns that used the most, each a link to it in the transcript.
+function putCostly(pane, got) {
+  const turns = got.costly;
+  if (!turns.length) return;
+  put(pane, "h3", "sumtitle", "costliest turns");
+  put(pane, "p", "sumnote", "\u2248 is each turn's share of what was spent, by the tokens"
+      + " its replies used: output weighs most, a cache read least. What was spent"
+      + " holds the subagents' too, so a session that ran many makes each share larger.");
+  const list = put(pane, "div", "sumlist");
+  for (const one of turns) {
+    const line = put(list, "button", "sumline turnlink");
+    put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + money(one.usd));
+    const t = one.tokens || {};
+    put(line, "span", "sumsub", roughly(t.output_tokens || 0) + " out \u00b7 "
+        + roughly((t.input_tokens || 0) + (t.cache_creation_input_tokens || 0)
+                  + (t.cache_read_input_tokens || 0)) + " in");
+    put(line, "span", "sumsaid", one.said);
+    if (one.seq < 0) { line.disabled = true; continue; }
+    line.title = "show this turn in the transcript";
+    line.addEventListener("click", () => {
+      state.turns.goTo = one.seq;
+      state.turns.goToTs = one.ts;
+      showTab("transcript");
+    });
+  }
+}
+
+function putSumAgents(pane, got) {
+  const kinds = got.subagents;
+  if (!kinds.length) return;
+  put(pane, "h3", "sumtitle", "subagents");
+  const list = put(pane, "div", "sumlist");
+  for (const one of kinds) {
+    const line = put(list, "div", "sumline");
+    put(line, "span", "sumnum", "\u00d7" + one.ran);
+    const parts = [counted(one.calls, "call", "calls")];
+    if (one.tokens) parts.push(roughly(one.tokens) + " tokens");
+    if (one.seconds) parts.push(lasted(one.seconds));
+    put(line, "span", "sumsub", parts.join(" \u00b7 "));
+    put(line, "span", "sumsaid", one.kind);
+  }
+}
+
+// Calls by tool, each with a bar as long as its share of the most.
+function putSumTools(pane, got) {
+  const tools = got.tools;
+  if (!tools.length) return;
+  put(pane, "h3", "sumtitle", "calls by tool");
+  const list = put(pane, "div", "sumlist");
+  const most = tools[0][1];
+  for (const [name, count] of tools) {
+    const line = put(list, "div", "sumline");
+    put(line, "span", "sumnum", String(count));
+    const bar = put(put(line, "span", "sumsub"), "span", "sumbar");
+    bar.style.width = Math.max(2, Math.round(100 * count / most)) + "%";
+    put(line, "span", "sumsaid", name);
+  }
 }
 
 function drawEmpty(box) {
@@ -26243,6 +26600,7 @@ function choose(id) {
   state.place = "";
   state.places = [];
   state.placesAt = 0;
+  state.summary = null;
   state.files = blankFiles();
   state.diffs = blankDiff();
   state.diff = null;
@@ -26877,8 +27235,9 @@ document.addEventListener("keydown", (press) => {
     case "u": if (state.chosen) toggleUnread(state.chosen); break;
     case "?": help.open ? help.close() : help.showModal(); break;
     case "t": toggleChat(); break;
-    // The Commands view (#411): it was the fourth tab, and its key stays.
-    case "4": toggleView("commands"); break;
+    // The Commands view (#411): it was the fourth tab, and kept its key
+    // until the Summary tab took it (#622), as the reader chose.
+    case "5": toggleView("commands"); break;
     default: {
       // A tab per number key, in the order the tabs are drawn. The list is
       // the one in `TAB_KEYS`, so a new tab is an entry there and nothing

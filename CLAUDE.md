@@ -52,6 +52,7 @@ rest, read the file in `.claude/topics/` before you start:
 | `transcript.md` | touch what a `user` record is, how a transcript is read and followed, a link to a turn, the "new" line |
 | `transcript-look.md` | touch the transcript's shape and gaps, Markdown, runs of calls, folds, the map |
 | `send-and-keys.md` | touch the send box, a send that lands, completing a `/`, a rename, the keys |
+| `summary.md` | touch the Summary tab: what a turn cost, busy time, the tokens a reply used |
 | `.claude/skills/issues/pull-request-loop.md` | open, update or merge a pull request: the calls, in order |
 
 ## The program in five lines
@@ -59,8 +60,8 @@ rest, read the file in `.claude/topics/` before you start:
 Claude Code hooks append one JSON line per event to
 `~/.local/state/wostuast/events.jsonl`. A bare `wostuast` (`cmd_serve`)
 checks the setup, writes what is behind (`bring_up_to_date`), tails the log
-into a `Store`, and serves one page over HTTP + SSE: a session list, three
-tabs (Transcript, Files, and Review, which is `data-tab="diff"`), and four
+into a `Store`, and serves one page over HTTP + SSE: a session list, four
+tabs (Transcript, Files, Review, which is `data-tab="diff"`, and Summary), and four
 views over them (Unread, Saved, Search, Commands; #411). Four things go
 back to the terminal, all through tmux: jump, send, the keys that answer a
 question, and a No (an Escape, then a send); a rename is a send of
@@ -82,8 +83,8 @@ fights one, ask whether the goal bends before you build. Keep the numbers.
 **Non-goals. If a feature needs one of these, leave the feature out**:
 owning the agent process (a keystroke into a pane is allowed, a signal is
 not); a terminal emulator; a Yes the reader did not give, or one that keys
-carry; agent-to-agent messaging, teams, orchestration, cache telemetry, or
-a spend limit; knowing a worktree layout; Electron, React, any build step,
+carry; agent-to-agent messaging, teams, orchestration, accounting across
+sessions, or a spend limit; knowing a worktree layout; Electron, React, any build step,
 a dependency, or a vendored JavaScript library; a review that goes
 anywhere but the agent's pane.
 
@@ -96,9 +97,8 @@ cannot keep one names it in its pull request.
    fold does no I/O; a change of state is `become`.
 2. **Each shape the page receives is defined in one place**: the wire
    section (`row`, `blocks_json`, `session_json`, `wire_fields`, `EVENTS`).
-3. **A draw only reads state.** Only code that loads data or handles a
-   click changes `state`. `draw()` is `paint`, then `land`; `DRAW_GUARD`
-   holds it.
+3. **A draw only reads state.** Only loading data or handling a click
+   changes `state`. `draw()` is `paint`, then `land`; `DRAW_GUARD` holds it.
 4. **Every extension point is a table** (`_HANDLERS`, `GET_VERBS`,
    `POST_VERBS`, `TABS`, `VIEWS`, `ROUTES`), and a test walks each one.
 5. **One reader for each fact**: `prompt_said`, `git_status`,

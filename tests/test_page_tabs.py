@@ -349,7 +349,7 @@ def test_a_key_leaves_no_ring_on_a_tab_that_was_clicked(page_at):
 def test_the_tab_names_stay_on_one_line_in_a_narrow_window(page_at):
     """At 1024 px "1 Transcript" broke over two lines (#397). A name never
     wraps; short of room the key's number goes, and the tab's title still
-    names the key. Wide, the numbers are there."""
+    names the key. Wide, the numbers are there. Four tabs since #622."""
     with opened(page_at) as page:
         look = """() => [...document.querySelectorAll('.tab')].map((tab) => ({
           lines: Math.round(tab.getBoundingClientRect().height),
@@ -369,19 +369,19 @@ def test_the_tab_names_stay_on_one_line_in_a_narrow_window(page_at):
           const text = [...tab.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
           const range = document.createRange(); range.selectNodeContents(text);
           return range.getClientRects().length; })"""
-        assert page.evaluate(names) == [1, 1, 1]
+        assert page.evaluate(names) == [1, 1, 1, 1]
         # The settings button is still on screen, at the row's right.
         assert narrow[0]["right"] <= 1024, narrow
         assert [one["title"] for one in narrow] == [
-            "Transcript  ·  1", "Files  ·  2", "Review  ·  3"]
+            "Transcript  ·  1", "Files  ·  2", "Review  ·  3", "Summary  ·  4"]
         assert page.evaluate("[...document.querySelectorAll('.tab')].map("
-                             "(tab) => getComputedStyle(tab).whiteSpace)") == ["nowrap"] * 3
+                             "(tab) => getComputedStyle(tab).whiteSpace)") == ["nowrap"] * 4
         # Narrower still, the context bar and the spend step aside, and the
         # names and the buttons at the end still fit.
         assert page.is_visible(".ctxslot .spent")
         page.set_viewport_size({"width": 860, "height": 768})
         page.wait_for_function("getComputedStyle(document.querySelector('.ctxslot .spent')).display === 'none'")
-        assert page.evaluate(names) == [1, 1, 1]
+        assert page.evaluate(names) == [1, 1, 1, 1]
         assert page.evaluate(look)[0]["right"] <= 860
 
 
@@ -749,3 +749,62 @@ def test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it(repo_page
               return [low('#chat .chathead'), low('#content ' + bar)];
             }""", bar)
             assert lines[0] == lines[1], (tab, lines)
+
+
+def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
+    """The fourth tab (#622): what was spent, the costliest turns with
+    their share, the calls by tool; a turn is a link to it in the
+    transcript. Key 4, as the reader chose; the
+    Commands view moved to 5."""
+    daemon, path = page_at
+
+    def reply(made, mid, **used):
+        made["message"]["id"] = mid
+        made["message"]["usage"] = used
+        return made
+
+    write_records(daemon,
+                  conftest.record("you", "Rename the parser."),
+                  reply(conftest.record("tool", "grep -r parse", tool_id="g1"), "m9",
+                        input_tokens=40, output_tokens=9000, cache_read_input_tokens=50000),
+                  conftest.record("result", "src/parse.py", tool_id="g1"),
+                  # Turns after it, so the tab's own landing, at the foot,
+                  # shows it nowhere: only the link can.
+                  *[conftest.record(*one) for at in range(30) for one in (
+                      ("you", f"Next step {at}."), ("claude", "Done.\n\n" * 6))])
+    # A subagent that ran, and the lines the status line counts.
+    now = time.time()
+    for name, at in (("SubagentStart", now), ("PreToolUse", now + 1), ("SubagentStop", now + 2)):
+        ws.append_event(conftest.event(name, ts=at, pane="%7", pid=1, agent_id="ag1",
+                                       agent_type="Explore", tool_name="Grep",
+                                       tool_input={"pattern": "parse"}))
+    ws.write_status("s1", ws.Status(ts=1.0, name="A session", model="Opus 5",
+                                    cost_usd=1.8342, lines_added=12, lines_removed=3))
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".summary > .sumhead")
+        assert page.evaluate("state.tab") == "summary"
+        head = page.locator(".sumhead").inner_text()
+        assert "$1.83" in head and "spent" in head and "+12 \u22123" in head, head
+        lines = page.locator(".sumline.turnlink").all_inner_texts()
+        assert "Rename the parser." in lines[0] and "\u2248$" in lines[0], lines
+        assert "Bash" in page.locator(".summary").inner_text()
+        agents = page.locator(".sumline", has_text="Explore").inner_text()
+        assert "\u00d71" in agents and "1 call" in agents, agents
+        # No place to pick: that is the Files and Review tabs'.
+        assert page.locator("#placepick").is_hidden()
+        page.locator(".sumline.turnlink", has_text="Rename the parser.").click()
+        page.wait_for_function("state.tab === 'transcript'")
+        page.wait_for_function("""() => {
+          const box = document.getElementById('content').getBoundingClientRect();
+          return [...document.querySelectorAll('#content .turn')].some((one) => {
+            const at = one.getBoundingClientRect();
+            return one.textContent.includes('Rename the parser.')
+              && at.top >= box.top - 1 && at.top < box.bottom;
+          });
+        }""")
+        page.keyboard.press("Escape")
+        page.keyboard.press("5")
+        page.wait_for_function("state.feed === 'commands'")
