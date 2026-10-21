@@ -15148,8 +15148,14 @@ button.sumline:not(:disabled):hover { background: var(--raised); }
 .chat { display: none; }
 body.sidechat .main {
   grid-template-columns: var(--side-w, 268px) var(--split-grip-w) minmax(0, 1fr)
-                         minmax(340px, 38%);
+                         var(--chat-w, minmax(340px, 38%));
 }
+/* Its edge drags its width (issue 641), over the column's border. */
+.chat > .chatgrip {
+  position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; z-index: 4;
+  background: transparent;
+}
+.chat > .chatgrip:hover, .chat > .chatgrip.dragging { background: var(--needs); }
 body.sidechat .main > .content { grid-column: 1 / 4; }
 body.sidechat .main > .chat {
   display: flex; flex-direction: column; grid-column: 4; grid-row: 2 / -1; min-height: 0;
@@ -26262,22 +26268,13 @@ function transcriptShown() {
 // a pane nobody could see and missed the one on screen.
 function turnsHost() { return chatShown() ? $("chat") : $("content"); }
 
-// `t` and the button. Four columns need the room, so turning it on folds
-// the session list to its tiles, and turning it off unfolds it again, when
-// this was what folded it. On the Transcript tab it goes to Review, where
-// the transcript stands beside the diff.
+// `t` and the button. On the Transcript tab it goes to Review, where the
+// transcript stands beside the diff. The session list stays as the reader
+// left it (#641): it folded on its own, and the reader wanted it there; the
+// column's own edge gives the room back instead.
 function toggleChat() {
   const on = !chatWanted();
   store("wostuast-chat", on ? "1" : "");
-  if (on && !folded("sessions")) {
-    store("wostuast-fold-sessions", "1");
-    store("wostuast-chatfold", "1");
-    paintFold("sessions");
-  } else if (!on && stored("wostuast-chatfold") === "1") {
-    store("wostuast-chatfold", "");
-    store("wostuast-fold-sessions", "");
-    paintFold("sessions");
-  }
   paintChatButton();
   if (on && state.tab === "transcript") { showTab("diff"); return; }
   drawHeader();
@@ -26295,6 +26292,11 @@ function paintChatButton() {
   button.setAttribute("aria-label", button.title);
   button.setAttribute("aria-pressed", String(on));
 }
+
+//: The narrowest the transcript column is dragged to, and what it leaves
+//: of the window for the rest, in px (#641).
+const CHAT_LEAST = 300;
+const CHAT_LEAVES = 600;
 
 // The column, drawn from `state` as the tab is: built once, and the
 // transcript in it drawn again only when it is another reading -- the
@@ -26321,6 +26323,11 @@ function paintChat() {
     shut.addEventListener("click", toggleChat);
     put(chat, "div", "turnbody");
     putToFoot(chat);
+    // Its left edge drags its width, as the session column's does (#641);
+    // dragged left, it grows. Kept by this browser, a double click forgets.
+    dragEdge(put(chat, "div", "grip chatgrip"), "--chat-w", CHAT_LEAST,
+             () => Math.max(CHAT_LEAST, window.innerWidth - CHAT_LEAVES),
+             (at) => -at.clientX, () => chat.getBoundingClientRect().width);
   }
   carryBars(chat);
   const pane = chat.querySelector(":scope > .turnbody");

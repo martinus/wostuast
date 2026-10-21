@@ -670,9 +670,9 @@ def test_the_page_keeps_the_last_transcripts_and_no_more(page_at):
 def test_the_transcript_stands_beside_the_review_and_follows_the_agent(page_at):
     """The reader chats with an agent while reading its review (#625): `t`
     puts the transcript in a column on the right, with the send box under
-    it, as the reader chose from pictures. It is the live transcript, the
-    session list folds to make room, `t` puts it away and unfolds the list
-    again, and this browser keeps the choice."""
+    it, as the reader chose from pictures. It is the live transcript, `t`
+    puts it away, and this browser keeps the choice. The session list stays
+    as the reader left it (#641)."""
     daemon, path = page_at
     with opened(path) as page:
         wait_for_map(page)
@@ -695,7 +695,7 @@ def test_the_transcript_stands_beside_the_review_and_follows_the_agent(page_at):
         }""")
         assert place["chatLeft"] >= place["contentRight"] - 1, place
         assert place["send"] == "chat" and place["sendShown"], place
-        assert place["folded"] and place["pressed"] == "true", place
+        assert not place["folded"] and place["pressed"] == "true", place
         # A push lands in the column, as it lands in the tab.
         write_records(daemon, conftest.record(
             "claude", "A reply beside the diff.", ts="2026-09-18T15:00:00.000Z"))
@@ -908,3 +908,28 @@ def test_a_running_subagent_s_transcript_follows_it(ws, page_at):
         with agent.open("a") as handle:
             handle.write(conftest.records(conftest.record("claude", "Two tests fail.")))
         page.wait_for_function(f"{in_view}('Two tests fail.')")
+
+
+def test_the_transcript_column_is_as_wide_as_its_edge_is_dragged(page_at):
+    """The transcript beside a tab takes a drag of its left edge (#641), as
+    the session column does: left, it grows, and this browser keeps the
+    width; a double click forgets it. It never folds the session list."""
+    daemon, path = page_at
+    with opened(path) as page:
+        page.set_viewport_size({"width": 1440, "height": 800})
+        wait_for_map(page)
+        page.keyboard.press("t")
+        page.wait_for_function("document.body.classList.contains('sidechat')")
+        width = "() => Math.round(document.getElementById('chat').getBoundingClientRect().width)"
+        before = page.evaluate(width)
+        grip = page.locator("#chat > .chatgrip").bounding_box()
+        x, y = grip["x"] + grip["width"] / 2, grip["y"] + 200
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x - 120, y, steps=6)
+        page.mouse.up()
+        assert abs(page.evaluate(width) - (before + 120)) <= 2, (before, page.evaluate(width))
+        assert page.evaluate("localStorage.getItem('wostuast--chat-w')") == str(before + 120)
+        assert not page.evaluate("document.body.classList.contains('foldsessions')")
+        page.locator("#chat > .chatgrip").dblclick()
+        assert abs(page.evaluate(width) - before) <= 2

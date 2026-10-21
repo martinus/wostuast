@@ -335,8 +335,9 @@ To read the transcript while you read files or a review, press <kbd>t</kbd>
 or click the two-column button beside the tabs. The transcript then stands
 in a column on the right of the Files and Review tabs, with the question bar
 and the send box under it, and it follows the agent as the Transcript tab
-does. The session list folds to its tiles to make room. Press <kbd>t</kbd>
-again to put it away; your browser remembers the choice.
+does. Drag its left edge to make it wider or narrower, and double-click
+the edge to go back to the width it started with. Press <kbd>t</kbd> again
+to put it away; your browser remembers the choice and the width.
 
 An edit shows how many lines it added and removed. Click it to see the change
 under it, drawn as the Review tab draws it, with the line numbers the file had at

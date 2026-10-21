@@ -203,8 +203,12 @@ the loaders.
     `#reviewbar`.
   - **The column loads the transcript once** (`load`, `!state.turns.whole`):
     the pushes keep it, and the Files tab's poll must not fetch it again.
-  - **Turning it on folds the session list** to its tiles, and off unfolds
-    it, when this was what folded it (`wostuast-chatfold`).
+  - **It folds nothing; its own edge gives the room** (#641, `.chatgrip`,
+    `--chat-w`, `CHAT_LEAST`): turning it on folded the session list, and
+    the reader wanted the list. Its left edge drags its width, as the
+    session column's does; dragged left, it grows (`dragEdge` with
+    `-clientX`).
+    `test_the_transcript_column_is_as_wide_as_its_edge_is_dragged`.
   - **Its head's rule lines up with the bar beside it** (`fitChatHead`, in
     `land`): it stood 4 px above the commit picker's, and the reader saw it.
     Measured, not set: Review's bar and the Files tab's path (which wraps)
