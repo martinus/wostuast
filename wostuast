@@ -1316,6 +1316,16 @@ class Subagent:
     started: float = 0.0
     #: When it ended, or 0 while it runs.
     ended: float = 0.0
+    #: The tool calls it started, counted from its own `PreToolUse`s (#618):
+    #: a line that said "subagent" and a time said nothing of what it did.
+    calls: int = 0
+    #: Its last words: `SubagentStop`'s `last_assistant_message`, or the
+    #: `<result>` of the notification of its end.
+    said: str = ""
+    #: What it cost: `<subagent_tokens>` in the `<usage>` of the
+    #: notification of its end, measured on 2.1.306. 0 when none came: a
+    #: subagent in the foreground ends with no notification.
+    tokens: int = 0
 
 
 @dataclass
@@ -3191,6 +3201,8 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
             # boundary is where what it asked for is let go: its subagent
             # started at once, or never.
             session.agent_asks = []
+            if name == "UserPromptSubmit":
+                note_agent_ended(session, str(event.get("prompt") or ""))
             if name == "Stop":
                 end_unlisted_subagents(session, event, ts)
         elif tool in AGENT_TOOLS and name == "PostToolUse":
@@ -3216,8 +3228,13 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
         if not one.ended:
             one.ended = ts or session.last_ts
             session.agents_ran += 1
+        said = event.get("last_assistant_message")
+        if isinstance(said, str) and said.strip():
+            one.said = clip(said, AGENT_SAID)
     elif name in ("PreToolUse", "PostToolUse") and tool:
         one.doing = session.last_tool        # `_on_pre_tool` made it
+        if name == "PreToolUse":
+            one.calls += 1
     elif name == "PostToolUseFailure" and tool:
         one.doing = tool_summary(tool, event.get("tool_input"), session.cwd)
 
@@ -3267,6 +3284,34 @@ def note_shells(session: Session, event: dict[str, Any], name: str, ts: float) -
             session.shells.pop(ended.group(1).strip(), None)
     elif name == "SessionEnd":
         session.shells = {}
+
+
+#: How much of a subagent's last words its line keeps, for its hover.
+AGENT_SAID = 300
+
+#: What the notification of a subagent's end says it cost, measured on
+#: 2.1.306: `<usage><subagent_tokens>11</subagent_tokens><tool_uses>0
+#: </tool_uses><duration_ms>1698</duration_ms></usage>`, and its last
+#: words in `<result>`.
+AGENT_TOKENS = re.compile(r"<subagent_tokens>\s*(\d+)\s*</subagent_tokens>")
+AGENT_RESULT = re.compile(r"<result>(.*?)</result>", re.S)
+
+
+def note_agent_ended(session: Session, prompt: str) -> None:
+    """What the `<task-notification>` of a subagent's end says of it: its
+    tokens, and its last words when no `SubagentStop` gave them (#618)."""
+    if not TASK_ENDED.match(prompt):
+        return
+    task = TASK_ID.search(prompt)
+    one = session.subagents.get(task.group(1).strip()) if task else None
+    if one is None:
+        return
+    tokens = AGENT_TOKENS.search(prompt)
+    if tokens:
+        one.tokens = int(tokens.group(1))
+    said = AGENT_RESULT.search(prompt)
+    if said and said.group(1).strip() and not one.said:
+        one.said = clip(said.group(1), AGENT_SAID)
 
 
 def end_subagents(session: Session, moment: float,
@@ -8964,7 +9009,8 @@ def agent_fields(session: Session) -> dict[str, Any]:
         "started_at": round(session.started_at, 3),
         "subagents": [
             {"id": key, "kind": one.kind, "what": one.what, "doing": one.doing,
-             "started": round(one.started, 3), "ended": round(one.ended, 3)}
+             "started": round(one.started, 3), "ended": round(one.ended, 3),
+             "calls": one.calls, "said": one.said, "tokens": one.tokens}
             for key, one in session.subagents.items()
         ],
         "agents_ran": session.agents_ran,
@@ -13863,6 +13909,14 @@ body.dragging.rowdrag { cursor: row-resize; }
 .row .kid.shell .kidwhat { font-family: var(--mono); font-size: 11px; }
 .row .kid .kidwhat { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
 .row .kid .kiddoing { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
+/* What a subagent that ended did (issue 618), on a line of its own under
+   what it was asked, starting where those words start. */
+.row .kid { flex-wrap: wrap; }
+.row .kid .kidstats {
+  flex: 1 0 100%; padding-left: 18px; margin-top: -1px; font-size: 11px;
+  color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
 .row .kid.opens:hover .kidwhat { color: var(--ink); text-decoration: underline; }
 .row .kid.chosen .kidwhat { color: var(--ink); font-weight: 600; }
 .row .kidsran { margin-top: 0; align-self: flex-start; }
@@ -16017,7 +16071,12 @@ function put(parent, tag, cls, text) {
 // which is not an answer to "when did this last do something". The second is
 // left off when it is nought, so `2d` still means exactly two days.
 function ago(when) {
-  const seconds = Math.floor(Math.max(0, (Date.now() / 1000 + state.skew) - when));
+  return lasted(Math.max(0, (Date.now() / 1000 + state.skew) - when));
+}
+
+// How long something took, in `ago`'s words: a subagent that ran (#618).
+function lasted(span) {
+  const seconds = Math.floor(span);
   const two = (big, bigUnit, small, smallUnit) =>
     small ? big + bigUnit + " " + small + smallUnit : big + bigUnit;
   if (seconds < 60) return seconds + "s";
@@ -17548,8 +17607,10 @@ function kidsOf(s) {
     ended: ["working", "waiting", "needs_you"].includes(one.state) ? 0 : one.since,
   }));
   const agents = (s.subagents || []).map((one) => ({
-    id: one.id, session: false, what: one.what || one.kind || "subagent",
-    kind: one.kind, doing: one.doing, started: one.started, ended: one.ended,
+    id: one.id, session: false, agent: true, what: one.what || one.kind || "subagent",
+    kind: one.what ? one.kind : "", doing: one.doing, started: one.started,
+    ended: one.ended, calls: one.calls || 0, tokens: one.tokens || 0,
+    said: one.said || "",
   }));
   // A command in the background (#617) runs until the daemon lets it go:
   // its end is the line going.
@@ -17611,15 +17672,36 @@ function putKid(box, one) {
   const since = one.ended || one.started;
   const age = put(line, "span", "age", ago(since));
   age.dataset.since = since;
+  // What a subagent that ended did, on a line of its own under what it was
+  // asked (#618): beside it, "general-purpose" took the narrow line, and the
+  // numbers were cut off. Only the ended ones, which the reader unfolds; a
+  // running one says what it does now, on its one line.
+  if (one.agent && one.ended) put(line, "span", "kidstats", agentStats(one));
   if (one.session) {
     line.title = "open its transcript";
     line.addEventListener("click", (press) => {
       press.stopPropagation();
       choose(one.id);
     });
+  } else if (one.agent) {
+    // Its last words on the hover: the line has no room for a sentence.
+    line.title = (one.kind || "a") + " subagent of this session"
+      + (one.said ? ":\n" + one.said : "");
   } else {
-    line.title = (one.kind || "a") + " subagent of this session";
+    line.title = "runs in the background";
   }
+}
+
+// What a subagent that ended did (#618): "Explore · 12 calls · 41k tokens
+// · 2min", its kind first, as Claude Code names it.
+// Tokens only when Claude Code said them: a subagent in the foreground
+// ends with no notification to say them.
+function agentStats(one) {
+  const parts = one.kind ? [one.kind] : [];
+  parts.push(counted(one.calls, "call", "calls"));
+  if (one.tokens) parts.push(roughly(one.tokens) + " tokens");
+  if (one.started && one.ended >= one.started) parts.push(lasted(one.ended - one.started));
+  return parts.join(" \u00b7 ");
 }
 
 // A row says what nothing else on the page says: the name you know the

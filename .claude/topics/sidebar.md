@@ -32,6 +32,16 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
     pane, one that waits, or one working under a parent that is over is a
     row, or its dialog had no row, title or alert. **The chosen child stays
     in sight when it ends.**
+  - **A subagent's line says what it did** (#618, `Subagent.calls`,
+    `said`, `tokens`, `note_agent_ended`, `agentStats`): "subagent" and a
+    time said nothing. Once over, a second line under what it was asked
+    (`.kidstats`): its kind, calls, tokens and how long it ran (`lasted`).
+    Beside it, "general-purpose" took the narrow line and cut the numbers.
+    Its last words are on the hover. Calls count its `PreToolUse`s only. Tokens come from the
+    `<usage>` of the `<task-notification>` of its end (2.1.306), so a
+    subagent in the foreground has none, and the line leaves them out.
+    `test_a_subagent_says_what_it_did_and_what_it_cost`,
+    `test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words`.
   - **Let go of what an Agent call asked for at a turn's edge**
     (`agent_asks`): a declined call fires no hook and a failed one starts
     nothing, so their descriptions named later subagents. A failed call
