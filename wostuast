@@ -14408,6 +14408,33 @@ body.switching #content::after {
    every sibling that is not -- so every click on an answer or into the
    send box went to the box under it. */
 .main > .asking { grid-row: 3; grid-column: 3; position: relative; }
+/* The transcript beside the Files or Review tab (issue 625): a fourth
+   column, with the question bar and the send box under it, as the reader
+   chose from pictures (on the right; on the left it parted the file list
+   from its session). Off until asked for (`t`, `#chatbtn`). The tab keeps
+   its three columns: `.content` spans them, and `.split`'s subgrid with
+   it. */
+.chat { display: none; }
+body.sidechat .main {
+  grid-template-columns: var(--side-w, 268px) var(--split-grip-w) minmax(0, 1fr)
+                         minmax(340px, 38%);
+}
+body.sidechat .main > .content { grid-column: 1 / 4; }
+body.sidechat .main > .chat {
+  display: flex; flex-direction: column; grid-column: 4; grid-row: 2 / -1; min-height: 0;
+  position: relative; border-left: 1px solid var(--edge-bright); background: var(--bg);
+}
+/* The question bar and the send box stand under the transcript, in its
+   column (`paintChat` moves them in): left in `.main`'s rows, they kept an
+   empty strip under the tab's pane. */
+.chat > :is(.asking, .sendbar) { position: relative; flex-shrink: 0; }
+.chat > .chathead {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 16px;
+  box-sizing: border-box; flex-shrink: 0;
+  border-bottom: 1px solid var(--edge); font: 12px var(--sans); color: var(--ink-mute);
+}
+.chat > .chathead b { color: var(--ink); font-weight: 600; flex: 1 1 auto; }
+.chat > .turnbody { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 14px 16px; }
 .main > .sendbar { grid-row: 4; grid-column: 3; position: relative; }
 /* The page's one button shape. A full-strength `.verb` reaches the terminal —
    jump, send, submit a review — and there are only a few of those. `.quiet` is
@@ -15867,6 +15894,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           title="Review  ·  3"><span class="tabkey">3</span>Review<span
           class="badge" id="diffcount" hidden></span><span
           class="badge notes" id="reviewcount" hidden></span></button>
+        <button type="button" class="theme" id="chatbtn" aria-pressed="false"></button>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -15886,6 +15914,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         </div>
       </div>
       <div class="content" id="content"></div>
+      <div class="chat" id="chat" hidden></div>
       <div class="asking" id="asking" hidden></div>
       <form class="sendbar" id="sendbar" hidden>
         <div class="hgrip" id="saygrip"></div>
@@ -15925,6 +15954,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
     <dt>/</dt><dd>find in the transcript</dd>
     <dt>1 – 3</dt><dd>transcript, files, review</dd>
     <dt>4</dt><dd>commands, of every project</dd>
+    <dt>t</dt><dd>the transcript beside Files or Review, or away</dd>
     <dt>Enter</dt><dd>jump to that agent's tmux pane</dd>
     <dt>s</dt><dd>jump to the send box</dd>
     <dt>c</dt><dd>colours: auto, light, dark</dd>
@@ -17237,8 +17267,8 @@ function markSeen() {
   if (state.turns.newSince === undefined) {
     state.turns.newSince = s.unread && s.seen_at > 0 ? s.seen_at : null;
     if (state.turns.newSince !== null) {
-      const pane = $("content").querySelector(".turnbody");
-      if (pane && state.tab === "transcript") {
+      const pane = turnsHost().querySelector(".turnbody");
+      if (pane && transcriptShown()) {
         putNewLine(pane);
         landOnNew(pane);
       }
@@ -18954,7 +18984,7 @@ function drawHeader() {
   // And away while a permission dialog is up: its cursor starts on "1. Yes",
   // so the Enter after a message approves, and a digit picks an option. The
   // dialog's bar says so where the box stood; the daemon refuses it anyway.
-  $("sendbar").hidden = state.tab !== "transcript" || !!whyNoText(s);
+  $("sendbar").hidden = !transcriptShown() || !!whyNoText(s);
   drawResume(s);
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
@@ -18969,7 +18999,7 @@ function drawHeader() {
 // starts nothing and types nothing: the reader runs it, where they want it.
 function drawResume(s) {
   const bar = $("resumebar");
-  const line = state.tab === "transcript" && s && isGone(s) ? s.resume || "" : "";
+  const line = transcriptShown() && s && isGone(s) ? s.resume || "" : "";
   bar.hidden = !line;
   if (!fresh(bar, "line", line) || !line) return;
   bar.replaceChildren();
@@ -20974,7 +21004,7 @@ function putToFoot(box) {
   button.title = "go to the latest, and follow it again";
   button.setAttribute("aria-label", "go to the latest");
   button.addEventListener("click", () => {
-    const pane = box.children[2];
+    const pane = box.querySelector(":scope > .turnbody");
     pane.scrollTop = pane.scrollHeight;
     button.hidden = true;        // it is the foot now; no need to measure
   });
@@ -20995,6 +21025,11 @@ function drawTranscript(box) {
   const [list, pane, note] = split(box, "transcript", "turnbody");
   const foot = box.children[3];      // built by `split`; see `putToFoot`
   drawTurnList(list, note);
+  fillTurns(pane, foot);
+}
+
+// The turns, into a pane: the tab's, or the column beside a tab (#625).
+function fillTurns(pane, foot) {
   // The whole transcript, always. The find box narrows the list beside it and
   // nothing else: you keep your place and the conversation around it, which
   // is what a transcript is for. It still marks what matched, because a hit
@@ -21073,7 +21108,7 @@ function landTranscript(box) {
   if (!landOnBlock(pane) && !landOnNew(pane)) {
     pane.scrollTop = place ?? pane.scrollHeight;
   }
-  showToFoot(box.children[3], pane);
+  showToFoot(box.querySelector(":scope > .tofoot"), pane);
 }
 
 // How much of the conversation the list is showing. It is handed what the
@@ -21100,7 +21135,7 @@ function noteTurns(note, found, replies, all) {
 // the pane, which holds the last session's nodes until the new fetch
 // lands, and a push meanwhile must not patch them.
 function drawnTurns() {
-  const pane = $("content").querySelector(".turnbody");
+  const pane = turnsHost().querySelector(".turnbody");
   return pane && pane.drawnFrom === state.turns ? pane : null;
 }
 
@@ -21126,20 +21161,23 @@ function redrawBlock(index) {
 }
 
 function patchTranscript(indexes) {
-  const box = $("content");
+  // The column beside a tab (#625), or the tab's own box.
+  const side = chatShown();
+  const box = turnsHost();
   // `state.tab` is set the moment a tab is picked, but the box still holds the
   // tab before it until `load()` comes back. Asking the box, the way `draw()`
   // does, is the difference between appending a turn to the transcript and
   // appending it as a fourth column of the Files tab.
-  if (state.tab !== "transcript" || box.dataset.tab !== "transcript") return;
+  if ((!side && state.tab !== "transcript") || box.dataset.tab !== "transcript") return;
   const pane = box.querySelector(".turnbody");
   const list = box.querySelector(".filelist.transcript");
-  if (!pane || !list) return;
+  if (!pane || (!list && !side)) return;
   // The list is a map of the whole conversation, so a new block changes it
   // whatever the find box holds. It is cheap: a row per prompt and reply.
-  redrawMap(box);
+  // The column has none.
+  if (list) redrawMap(box);
   if (pane.drawnFrom !== state.turns || !pane.nodes.length) {
-    drawTranscript(box);
+    if (side) draw(); else drawTranscript(box);
     landTranscript(box);
     return;
   }
@@ -21169,7 +21207,7 @@ function patchTranscript(indexes) {
   if (!landOnBlock(pane) && stick) pane.scrollTop = pane.scrollHeight;
   // A block arriving makes the transcript taller, so a reader who was at the
   // foot and is no longer carried there has somewhere to go back to.
-  showToFoot(box.children[3], pane);
+  showToFoot(box.querySelector(":scope > .tofoot"), pane);
 }
 
 // Three places show how far a file moved. They say it the same way.
@@ -25350,6 +25388,10 @@ function draw() {
 // The tab's own landing, after `paint`: each tab says in `TABS` what it
 // goes to and when.
 function land() {
+  if (chatShown()) {
+    landTranscript($("chat"));
+    fitChatHead();
+  }
   const box = $("content");
   if (state.feed || !current() || box.dataset.tab !== state.tab) return;
   TABS[state.tab].land(box);
@@ -25357,6 +25399,7 @@ function land() {
 
 function paint() {
   endSwitch();
+  paintChat();
   const box = $("content");
   if (state.feed) { drawFeed(box); return; }
   box.className = "content split";
@@ -25389,6 +25432,122 @@ function showTab(name) {
   beginSwitch();
   load();
   resubscribe();
+}
+
+// --- the transcript beside a tab (#625) [topics/transcript-look, topics/daemon-and-page]
+
+// The reader chats with an agent while reading its files or its review:
+// the transcript stands beside the Files or the Review tab, as a column of
+// its own on the right (the reader chose it from pictures), with the
+// question bar and the send box under it. This browser keeps the choice,
+// as it keeps a folded column: what is not in the settings menu stays in
+// `localStorage`. Never over a view, and never beside the transcript.
+function chatWanted() { return stored("wostuast-chat") === "1"; }
+
+function chatShown() {
+  return chatWanted() && !!current() && !state.feed && state.tab !== "transcript";
+}
+
+// Whether the transcript is on screen: its own tab, or the column.
+function transcriptShown() { return state.tab === "transcript" || chatShown(); }
+
+// The box the transcript is drawn in: its tab's, or the column beside a
+// tab. Every reader of the drawn transcript asks this, or a push patched
+// a pane nobody could see and missed the one on screen.
+function turnsHost() { return chatShown() ? $("chat") : $("content"); }
+
+// `t` and the button. Four columns need the room, so turning it on folds
+// the session list to its tiles, and turning it off unfolds it again, when
+// this was what folded it. On the Transcript tab it goes to Review, where
+// the transcript stands beside the diff.
+function toggleChat() {
+  const on = !chatWanted();
+  store("wostuast-chat", on ? "1" : "");
+  if (on && !folded("sessions")) {
+    store("wostuast-fold-sessions", "1");
+    store("wostuast-chatfold", "1");
+    paintFold("sessions");
+  } else if (!on && stored("wostuast-chatfold") === "1") {
+    store("wostuast-chatfold", "");
+    store("wostuast-fold-sessions", "");
+    paintFold("sessions");
+  }
+  paintChatButton();
+  if (on && state.tab === "transcript") { showTab("diff"); return; }
+  drawHeader();
+  draw();
+  if (chatShown() && !state.turns.whole) loadTranscript();
+}
+
+function paintChatButton() {
+  const button = $("chatbtn");
+  const on = chatWanted();
+  button.replaceChildren();
+  putIcon(button, "twoColumns");
+  button.title = (on ? "put the transcript away" : "the transcript beside this tab")
+    + "  \u00b7  t";
+  button.setAttribute("aria-label", button.title);
+  button.setAttribute("aria-pressed", String(on));
+}
+
+// The column, drawn from `state` as the tab is: built once, and the
+// transcript in it drawn again only when it is another reading -- the
+// pushes patch it (`patchTranscript`), as they patch the tab's.
+function paintChat() {
+  const chat = $("chat");
+  const on = chatShown();
+  document.body.classList.toggle("sidechat", on);
+  chat.hidden = !on;
+  if (!on) {
+    carryBars($("reviewbar").parentNode, $("reviewbar"));
+    if (chat.dataset.tab) { chat.replaceChildren(); chat.dataset.tab = ""; }
+    return;
+  }
+  if (chat.dataset.tab !== "transcript") {
+    chat.replaceChildren();
+    chat.dataset.tab = "transcript";
+    const head = put(chat, "div", "chathead");
+    put(head, "b", null, "Transcript");
+    const shut = put(head, "button", "theme");
+    putIcon(shut, "close");
+    shut.title = "put the transcript away  \u00b7  t";
+    shut.setAttribute("aria-label", shut.title);
+    shut.addEventListener("click", toggleChat);
+    put(chat, "div", "turnbody");
+    putToFoot(chat);
+  }
+  carryBars(chat);
+  const pane = chat.querySelector(":scope > .turnbody");
+  if (pane.drawnFrom === state.turns && pane.drawnBlocks === state.turns.blocks
+      && pane.drawnSession === state.chosen) return;
+  pane.drawnBlocks = state.turns.blocks;
+  pane.drawnSession = state.chosen;
+  fillTurns(pane, chat.querySelector(":scope > .tofoot"));
+}
+
+// The column's head ends where the bar of the tab beside it ends (#625):
+// its rule stood 4 px above the commit picker's, and the reader saw it.
+// The bars differ -- Review's picker, the Files tab's path, which wraps on
+// a narrow pane -- so it is measured after the draw, not set in CSS.
+function fitChatHead() {
+  const head = $("chat").querySelector(":scope > .chathead");
+  if (!head) return;
+  head.style.minHeight = "";
+  const bar = $("content").querySelector(".diffbar, .filebody > .where");
+  if (!bar) return;
+  const want = bar.getBoundingClientRect().bottom - head.getBoundingClientRect().top;
+  if (want > 0) head.style.minHeight = Math.round(want) + "px";
+}
+
+// The question bar, the send box and the line that brings a session back
+// go where the transcript is: under it in the column, or back into `.main`
+// before the review bar, where its rows place them. Moved, never built
+// again: each keeps what is typed in it and every listener on it.
+function carryBars(into, before = null) {
+  for (const id of ["asking", "sendbar", "resumebar"]) {
+    const bar = $(id);
+    if (bar.parentNode !== into) into.insertBefore(bar, before);
+  }
 }
 
 function drawEmpty(box) {
@@ -25620,6 +25779,9 @@ async function load() {
   state.poll = 0;
   if (!state.chosen) { draw(); return; }
   const tab = state.tab;
+  // The column beside the tab (#625) holds the transcript too. Once: the
+  // pushes keep it, and the tab's poll must not fetch it again.
+  if (chatShown() && !state.turns.whole) loadTranscript();
   try {
     await TABS[tab].load();
   } finally {
@@ -25689,8 +25851,8 @@ async function loadTranscript() {
   // What is held and not on screen is drawn now, not after the answer: a
   // session kept from an earlier visit (`takeTurns`), or this tab come back
   // to. The answer then only says whether it moved.
-  const pane = $("content").querySelector(".turnbody");
-  const onScreen = $("content").dataset.tab === "transcript" && pane
+  const pane = turnsHost().querySelector(".turnbody");
+  const onScreen = turnsHost().dataset.tab === "transcript" && pane
     && pane.dataset.session === want;
   const drewHeld = turns.whole && turns.blocks.length > 0 && !onScreen;
   if (drewHeld) draw();
@@ -25707,7 +25869,7 @@ async function loadTranscript() {
     state.turns.landed = true;
     draw();
     state.transcriptRetry = setTimeout(() => {
-      if (state.chosen === want && state.tab === "transcript") loadTranscript();
+      if (state.chosen === want && transcriptShown()) loadTranscript();
     }, TRANSCRIPT_RETRY);
     return;
   }
@@ -26005,7 +26167,7 @@ function onTranscriptPush(message) {
     const behind = body.run !== state.turns.run
                    || body.version > state.turns.version;
     if (behind) state.turns.whole = false;
-    if (state.tab !== "transcript") return;   // fetched when it is shown
+    if (!transcriptShown()) return;   // fetched when it is shown
     if (state.turns.early) { state.turns.told = body; return; }
     if (behind) loadTranscript();
     return;
@@ -26127,6 +26289,7 @@ document.addEventListener("keydown", (press) => {
     case "z": if (state.chosen) toggleSnooze(state.chosen); break;
     case "u": if (state.chosen) toggleUnread(state.chosen); break;
     case "?": help.open ? help.close() : help.showModal(); break;
+    case "t": toggleChat(); break;
     // The Commands view (#411): it was the fourth tab, and its key stays.
     case "4": toggleView("commands"); break;
     default: {
@@ -26176,6 +26339,8 @@ putIcon($("viewclose"), "close");
 $("viewclose").addEventListener("click", leaveFeed);
 $("jump").title = JUMP_TITLE;
 $("jump").addEventListener("click", jumpToPane);
+$("chatbtn").addEventListener("click", toggleChat);
+paintChatButton();
 $("settings").addEventListener("click", (press) => {
   press.stopPropagation();            // or the listener below shuts it again
   showSettings($("setpop").hidden);

@@ -123,6 +123,15 @@ scratchpad.
       - **Three green runs do not prove a line is run on purpose** (#609):
         a line red in CI gets its own test before it is ever an allowance:
         `test_esc_in_the_find_box_empties_it_and_leaves_it`.
+      - **What a page ran before `page.reload()` may not count** (#625):
+        `cover` takes the coverage as the context closes, and the old
+        script's counts go once V8 collects it. A loaded CI runner does; a
+        quiet machine may not, so it passed here and failed in CI, twice.
+        Keep what a test means to cover on the page it ends on, and check
+        what the browser keeps by reading `localStorage`, not by a reload.
+        For a new page function, run `python3 tests/page_coverage.py
+        --lines <its test file> -q -n 12` before the push, and check that
+        it is not named.
     - **A branch no test runs is not dead because two tries missed it**
       (#600): `fillDiffBar`'s option for an unlisted pick looked
       unreachable, yet `loadDiff` keeps the pick when git fails. Try every

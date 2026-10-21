@@ -17,6 +17,10 @@ from browser import (
     show_tab,
     wait_for_map,
     stays,
+    wait_for_watching,
+    write_records,
+    own_context,
+    load,
 )
 
 pytestmark = skip_without_browser
@@ -661,3 +665,87 @@ def test_the_page_keeps_the_last_transcripts_and_no_more(page_at):
           }
           return [...state.heldTurns.keys()]; }""")
         assert kept == ["x" + str(at) for at in range(4, 12)], kept
+
+
+def test_the_transcript_stands_beside_the_review_and_follows_the_agent(page_at):
+    """The reader chats with an agent while reading its review (#625): `t`
+    puts the transcript in a column on the right, with the send box under
+    it, as the reader chose from pictures. It is the live transcript, the
+    session list folds to make room, `t` puts it away and unfolds the list
+    again, and this browser keeps the choice."""
+    daemon, path = page_at
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        turns = page.evaluate("document.querySelectorAll('#content .turnbody > .turn').length")
+        assert turns >= 2
+        page.keyboard.press("t")
+        page.wait_for_function("document.body.classList.contains('sidechat')")
+        assert page.evaluate("state.tab") == "diff"
+        page.wait_for_function(
+            f"document.querySelectorAll('#chat .turnbody > .turn').length === {turns}")
+        place = page.evaluate("""() => {
+          const at = (id) => document.getElementById(id).getBoundingClientRect();
+          return {chatLeft: Math.round(at('chat').left),
+                  contentRight: Math.round(at('content').right),
+                  send: document.getElementById('sendbar').parentNode.id,
+                  sendShown: !document.getElementById('sendbar').hidden,
+                  folded: document.body.classList.contains('foldsessions'),
+                  pressed: document.getElementById('chatbtn').getAttribute('aria-pressed')};
+        }""")
+        assert place["chatLeft"] >= place["contentRight"] - 1, place
+        assert place["send"] == "chat" and place["sendShown"], place
+        assert place["folded"] and place["pressed"] == "true", place
+        # A push lands in the column, as it lands in the tab.
+        write_records(daemon, conftest.record(
+            "claude", "A reply beside the diff.", ts="2026-09-18T15:00:00.000Z"))
+        daemon.tick()
+        page.wait_for_function("""[...document.querySelectorAll('#chat .turnbody > .turn')]
+          .some((one) => one.textContent.includes('A reply beside the diff.'))""")
+        # Kept by this browser: a page opened later puts it beside a tab
+        # again, as `test_the_transcript_is_never_beside_itself` shows. Not
+        # by a reload here: what the page ran before one may not count for
+        # the page's coverage (topics/testing).
+        assert page.evaluate("localStorage.getItem('wostuast-chat')") == "1"
+        # `t` puts it away and unfolds the list it folded.
+        page.keyboard.press("t")
+        page.wait_for_function("!document.body.classList.contains('sidechat')")
+        gone = page.evaluate("""() => ({
+          chat: document.getElementById('chat').hidden,
+          send: document.getElementById('sendbar').parentNode.className,
+          folded: document.body.classList.contains('foldsessions'),
+          kept: localStorage.getItem('wostuast-chat')})""")
+        assert gone == {"chat": True, "send": "main", "folded": False, "kept": None}, gone
+
+def test_the_transcript_is_never_beside_itself(page_at):
+    """On the Transcript tab the column would be the tab twice: wanted or
+    not, it stands only beside Files and Review."""
+    daemon, path = page_at
+    with own_context() as context:
+        context.add_init_script("localStorage.setItem('wostuast-chat', '1')")
+        page = context.new_page()
+        load(page, path)
+        show_tab(page, "files")
+        page.wait_for_function("document.body.classList.contains('sidechat')")
+        show_tab(page, "transcript")
+        page.wait_for_function("!document.body.classList.contains('sidechat')")
+        assert page.evaluate("document.getElementById('sendbar').parentNode.className") == "main"
+
+
+def test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it(repo_page):
+    """The rule under the column's head stood a few pixels above the rule
+    under the commit picker beside it (#625). It lines up with the bar of
+    the tab beside it, on Review and on Files, whose bars differ."""
+    with own_context() as context:
+        context.add_init_script("localStorage.setItem('wostuast-chat', '1')")
+        page = context.new_page()
+        load(page, repo_page)
+        for tab, bar in (("diff", ".diffbar"), ("files", ".where")):
+            show_tab(page, tab)
+            page.wait_for_selector(f"#chat .chathead")
+            page.wait_for_selector(f"#content {bar}")
+            lines = page.evaluate("""(bar) => {
+              const low = (one) => Math.round(document.querySelector(one).getBoundingClientRect().bottom);
+              return [low('#chat .chathead'), low('#content ' + bar)];
+            }""", bar)
+            assert lines[0] == lines[1], (tab, lines)

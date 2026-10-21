@@ -188,6 +188,29 @@ the loaders.
     a faded refusal left a calm strip over a dead page. **A send that
     worked calls `said` before its `note`**, or the old refusal came back.
     `test_a_review_that_goes_through_clears_an_earlier_refusal`.
+- **The transcript can stand beside the Files or Review tab** (#625,
+  `chatShown`, `paintChat`, `turnsHost`, `#chat`, `body.sidechat`): a
+  fourth column of `.main` on the right, as the reader chose from pictures
+  (on the left it parted the file list from its session). `t` or
+  `#chatbtn`; this browser keeps it (`wostuast-chat`), as a fold. Never
+  over a view or beside the Transcript tab itself.
+  - **Every reader of the drawn transcript asks `turnsHost()`**, never
+    `$("content")`: a push patched a pane nobody saw. `patchTranscript`,
+    `drawnTurns`, `loadTranscript`'s `onScreen`, `markSeen`.
+  - **The question bar, the send box and the resume line are moved into
+    the column** (`carryBars`), never built again: left in `.main`'s rows
+    they kept an empty strip under the tab's pane. They go back before
+    `#reviewbar`.
+  - **The column loads the transcript once** (`load`, `!state.turns.whole`):
+    the pushes keep it, and the Files tab's poll must not fetch it again.
+  - **Turning it on folds the session list** to its tiles, and off unfolds
+    it, when this was what folded it (`wostuast-chatfold`).
+  - **Its head's rule lines up with the bar beside it** (`fitChatHead`, in
+    `land`): it stood 4 px above the commit picker's, and the reader saw it.
+    Measured, not set: Review's bar and the Files tab's path (which wraps)
+    differ. `test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it`.
+  `test_the_transcript_stands_beside_the_review_and_follows_the_agent`,
+  `test_the_transcript_is_never_beside_itself`.
 - **No JavaScript library is vendored.** `marked` and `highlight.js` come
   through `fetchScript`, pinned by the hash of their bytes, with
   `crossorigin`: any script here can POST to `/send`. **Each degrades**:

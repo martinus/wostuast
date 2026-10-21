@@ -329,6 +329,13 @@ flag at its top right, and its text does not move. Point at a code block in a
 reply to show a copy button at the block's own top right. It copies the
 block and nothing else.
 
+To read the transcript while you read files or a review, press <kbd>t</kbd>
+or click the two-column button beside the tabs. The transcript then stands
+in a column on the right of the Files and Review tabs, with the question bar
+and the send box under it, and it follows the agent as the Transcript tab
+does. The session list folds to its tiles to make room. Press <kbd>t</kbd>
+again to put it away; your browser remembers the choice.
+
 An edit shows how many lines it added and removed. Click it to see the change
 under it, drawn as the Review tab draws it, with the line numbers the file had at
 that moment. A long change shows its first lines; the Review tab has all of it.
@@ -513,6 +520,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
 | <kbd>1</kbd> – <kbd>3</kbd> | Transcript, Files, Review |
 | <kbd>4</kbd> | Commands, the view of every project's skills and commands |
+| <kbd>t</kbd> | The transcript beside Files or Review, with the send box under it; press again to put it away |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | In a text box: send it, save the comment, or say no (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on a Mac) |
 | <kbd>s</kbd> | Jump to the send box, which sends what you write to the chosen agent (Transcript tab, while the box is there) |

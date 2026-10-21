@@ -1717,12 +1717,12 @@ def test_the_keys_nobody_pressed_are_gone(pair_at):
     you, `r` opened the review and `t` showed thinking. The reader used
     none of them, and a line in `?` for each hid the keys they do use.
     Pressed now, they change nothing and say nothing, and `?` lists none
-    of them."""
+    of them. `t` has a job again: the transcript beside the tab (#625)."""
     with opened(pair_at) as page:
         two_rows(page)
         spy_on_note(page)
         before = page.evaluate("[state.chosen, state.tab]")
-        for key in ("j", "k", "n", "r", "t", "j"):
+        for key in ("j", "k", "n", "r", "j"):
             page.press("body", key)
         assert page.evaluate("[state.chosen, state.tab]") == before
         assert page.evaluate("window.__said") == []
@@ -1731,7 +1731,8 @@ def test_the_keys_nobody_pressed_are_gone(pair_at):
             "#help dt", "els => els.map((one) => one.textContent.trim())")
         # Three tabs, and `4` is the Commands view now (#411).
         assert "s" in listed and "1 – 3" in listed and "4" in listed, listed
-        for gone in ("j / k", "n", "r", "t"):
+        assert "t" in listed, listed
+        for gone in ("j / k", "n", "r"):
             assert gone not in listed, listed
 
 
