@@ -221,6 +221,17 @@ def make_spending(ws, transcript: Path, repo: Path) -> None:
         ws.append_event({**agent, "hook_event_name": "PreToolUse", "tool_name": "Grep",
                          "tool_input": {"pattern": "ring"}, "ts": began + 710 + step})
     ws.append_event({**agent, "hook_event_name": "SubagentStop", "ts": began + 860})
+    # Its own transcript, where Claude Code writes it (#618).
+    own = transcript.with_suffix("") / "subagents" / "agent-ag1.jsonl"
+    own.parent.mkdir(parents=True)
+    own.write_text(records(
+        record("you", "Find every place that reads the ring, and say which ones lock it."),
+        record("tool", "ring_", tool="Grep", tool_id="a1"),
+        record("result", "src/ring.c\nsrc/parse.c\nsrc/net.c", tool_id="a1"),
+        record("tool", "src/parse.c", tool="Read", tool_id="a2"),
+        record("result", "…", tool_id="a2"),
+        record("claude", "Three files read the ring. **Only `net.c` takes the lock**;"
+                         " `parse.c` reads it bare, from the parser thread.")))
     ws.append_event({**base, "hook_event_name": "UserPromptSubmit", "ts": began + 4_300,
                      "prompt": "<task-notification>\n<task-id>ag1</task-id>\n"
                                "<status>completed</status>\n<usage><subagent_tokens>212000"

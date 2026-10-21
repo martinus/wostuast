@@ -1375,6 +1375,9 @@ class Subagent:
     #: notification of its end, measured on 2.1.306. 0 when none came: a
     #: subagent in the foreground ends with no notification.
     tokens: int = 0
+    #: Its own transcript, as `SubagentStop`'s `agent_transcript_path` names
+    #: it; "" until then (`agent_transcript_path`).
+    transcript: str = ""
 
 
 @dataclass
@@ -3404,6 +3407,9 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
         said = event.get("last_assistant_message")
         if isinstance(said, str) and said.strip():
             one.said = clip(said, AGENT_SAID)
+        path = event.get("agent_transcript_path")
+        if isinstance(path, str) and path:
+            one.transcript = path
     elif name in ("PreToolUse", "PostToolUse") and tool:
         one.doing = session.last_tool        # `_on_pre_tool` made it
         if name == "PreToolUse":
@@ -3468,6 +3474,30 @@ AGENT_SAID = 300
 #: words in `<result>`.
 AGENT_TOKENS = re.compile(r"<subagent_tokens>\s*(\d+)\s*</subagent_tokens>")
 AGENT_RESULT = re.compile(r"<result>(.*?)</result>", re.S)
+
+
+#: A subagent's id as Claude Code makes it: what may stand in a path.
+AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+#: How many subagents' transcripts the daemon keeps a reader of (#618).
+AGENTS_READ = 8
+
+
+def agent_transcript_path(session: Session, agent: str) -> str:
+    """Where a subagent's own transcript is, or "" (#618). Its
+    `SubagentStop` names it; until then, measured on 2.1.306, it is
+    `subagents/agent-<id>.jsonl` in the folder named for the session's own
+    transcript. Either is input: the reader opens only what
+    `safe_transcript` lets through."""
+    one = session.subagents.get(agent)
+    if one is None:
+        return ""
+    if one.transcript:
+        return one.transcript
+    base = session.transcript_path
+    if not AGENT_ID.fullmatch(agent) or not base.endswith(".jsonl"):
+        return ""
+    return f"{base[:-len('.jsonl')]}/subagents/agent-{agent}.jsonl"
 
 
 def note_agent_ended(session: Session, prompt: str) -> None:
@@ -9609,6 +9639,13 @@ def resume_command(session: Session) -> str:
 JSON_VERSION = 1
 
 
+def agent_transcript_json(agent: str, one: Subagent,
+                          blocks: Sequence[Block]) -> dict[str, Any]:
+    """A subagent's own transcript, for the Transcript tab (#618)."""
+    return {"agent": agent, "kind": one.kind, "what": one.what,
+            "running": not one.ended, "blocks": blocks_json(blocks)}
+
+
 def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
     """Where a session's tokens and time went, for the Summary tab (#622).
 
@@ -9921,6 +9958,8 @@ class Daemon:
         #: tick (`tell_config`).
         self.config_seen = config_stamp()
         self.transcripts: dict[str, Transcript] = {}
+        #: Subagents' own transcripts, by session and agent (#618).
+        self.agent_readers: dict[tuple[str, str], Transcript] = {}
         #: The rows as the last push left them, by id, and their order: what
         #: `sessions_change` compares with (#431).
         self.told: dict[str, dict[str, Any]] = {}
@@ -10031,6 +10070,26 @@ class Daemon:
             self.transcripts[session_id] = held
         held.used = time.monotonic()
         return held
+
+    def read_agent(self, session_id: str, agent: str) -> list[Block] | None:
+        """A subagent's own transcript, as blocks, or None (#618). Read as
+        a session's is, only what is new, by a reader kept for the last
+        `AGENTS_READ`; nobody is told of it, as only one page asks."""
+        session = self.session(session_id)
+        if session is None or agent not in session.subagents:
+            return None
+        path = safe_transcript(agent_transcript_path(session, agent))
+        if path is None:
+            return None
+        with self.reading:
+            held = self.agent_readers.pop((session_id, agent), None)
+            if held is None or held.tail.path != path:
+                held = Transcript(str(path), session.cwd)
+            self.agent_readers[(session_id, agent)] = held     # the latest last
+            while len(self.agent_readers) > AGENTS_READ:
+                del self.agent_readers[next(iter(self.agent_readers))]
+            held.read_new()
+            return list(held.blocks)
 
     def summary(self, session: Session) -> dict[str, Any]:
         """Where a session's tokens and time went (#622), after reading
@@ -11363,6 +11422,15 @@ def verb_command(serving: Serving, session_id: str, session: Session,
 
 def verb_transcript(serving: Serving, session_id: str, session: Session | None,
                query: dict[str, str]) -> Answer:
+    agent = query.get("agent", "")
+    if agent:
+        # A subagent's own (#618), only of one this session's events named.
+        # The route asks for no session (`GET_VERBS`), so it is looked up.
+        held = serving.daemon.session(session_id)
+        blocks = serving.daemon.read_agent(session_id, agent)
+        if blocks is None or held is None or agent not in held.subagents:
+            return 404, {"error": "no transcript for that subagent"}
+        return 200, agent_transcript_json(agent, held.subagents[agent], blocks)
     found = serving.daemon.read_transcript(session_id)
     if found is None:
         return 200, {"blocks": [],
@@ -15017,6 +15085,20 @@ body.switching #content::after {
 /* Which repository the Files and Review tabs show (issue 616), beside the
    tabs: the commit picker's look (`.pickof`). */
 .tabs .pickplace { align-self: center; max-width: 32ch; flex-shrink: 0; }
+/* A subagent's own transcript (issue 618): a bar, then its turns, read
+   only. */
+.agenthead {
+  display: flex; align-items: baseline; gap: 10px; padding: 0 0 12px;
+  margin-bottom: 12px; border-bottom: 1px solid var(--edge); color: var(--ink);
+}
+.agentname { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.agentrunning { font-size: 12px; color: var(--working); }
+.agentback { margin-left: auto; flex-shrink: 0; }
+/* No buttons on its turns: a bookmark or a "txt" would act on the
+   session's transcript. */
+.content.agentview .turnacts { display: none; }
+.content.agentview .who .self { cursor: default; }
 /* The Summary tab (issue 622): the numbers, then the lists. */
 .summary { max-width: 980px; }
 /* The tab has no list column, so no find box: its home stays empty. */
@@ -16648,6 +16730,11 @@ const state = {
   // Where the chosen session's tokens and time went (#622), as the daemon
   // last said, or null.
   summary: null,
+  // The subagent whose own transcript the Transcript tab shows (#618), or
+  // null: its session, id, kind, what it was asked, whether it runs, and
+  // the session's own turns, held aside while `state.turns` is its.
+  agent: null,
+  agentPoll: 0,
   find: "",
   pick: "",             // what the sidebar filter box holds
   history: false,       // whether the finished sessions are unfolded
@@ -18571,8 +18658,8 @@ function kidsOf(s) {
 // subagents ran", which unfolds the ones that ended. A child that ended is
 // gone from sight, as the reader chose: they ended in seconds, and as rows
 // they were most of what moved in the list. A child session is opened from
-// its line; a subagent of the Agent tool has no transcript the page reads,
-// and its line chooses the row it stands in.
+// its line, and a subagent of the Agent tool too: its own transcript, in
+// the Transcript tab, read only (#618, `openAgent`).
 function fillKids(box, s) {
   const kids = kidsOf(s);
   const open = state.kidsOpen.has(s.id);
@@ -18581,10 +18668,10 @@ function fillKids(box, s) {
                                          s.agents_ran]))) {
     box.replaceChildren();
     const ran = kids.filter((one) => one.ended);
-    for (const one of kids) if (!one.ended) putKid(box, one);
+    for (const one of kids) if (!one.ended) putKid(box, one, s);
     // The one being read stays in sight when it ends: the chosen session is
     // never hidden from the list it is chosen in.
-    if (!open) for (const one of ran) if (one.id === state.chosen) putKid(box, one);
+    if (!open) for (const one of ran) if (one.id === state.chosen) putKid(box, one, s);
     // Every one that ended, though the daemon keeps only the last few of
     // the Agent tool's: the count says how many there were.
     const many = (s.agents_ran || 0) + ran.filter((one) => one.session).length;
@@ -18599,7 +18686,7 @@ function fillKids(box, s) {
         redrawRows();
         drawSessions();
       });
-      if (open) for (const one of ran) putKid(box, one);
+      if (open) for (const one of ran) putKid(box, one, s);
     }
   }
   box.hidden = !box.children.length;
@@ -18607,7 +18694,7 @@ function fillKids(box, s) {
 
 // One line: what it was asked to do, what it does now while it runs, and
 // how long ago it started, or ended.
-function putKid(box, one) {
+function putKid(box, one, s) {
   const line = put(box, "div", "kid" + (one.ended ? "" : " running")
     + (one.shell ? " shell" : "")
     + (one.session ? " opens" : "") + (one.id === state.chosen ? " chosen" : ""));
@@ -18632,7 +18719,12 @@ function putKid(box, one) {
   } else if (one.agent) {
     // Its last words on the hover: the line has no room for a sentence.
     line.title = (one.kind || "a") + " subagent of this session"
-      + (one.said ? ":\n" + one.said : "");
+      + (one.said ? ":\n" + one.said : "") + "\n\nopen its transcript";
+    line.classList.add("opens");
+    line.addEventListener("click", (press) => {
+      press.stopPropagation();
+      openAgent(s.id, one);
+    });
   } else {
     line.title = "runs in the background";
   }
@@ -21223,9 +21315,11 @@ function blockTurn(block, index) {
   // The name is a link to this block, so the address bar holds one after a
   // click and the browser's own "open in a new tab" works on it. Nothing is
   // intercepted: a plain anchor is already all three of those things.
-  const name = put(who, "a", "self",
-                   mine ? "you" : aside ? "system" : plan ? "plan" : "claude");
-  name.href = blockHref(index);
+  // A subagent's first prompt is the agent's task for it, not the
+  // reader's, and a link would name a block of the session's (#618).
+  const name = put(who, "a", "self", mine ? (state.agent ? "task" : "you")
+                   : aside ? "system" : plan ? "plan" : "claude");
+  if (!state.agent) name.href = blockHref(index);
   name.title = "link to this " + (mine ? "prompt"
                                        : aside ? "message" : plan ? "plan" : "reply");
   if (block.ts) {
@@ -21702,8 +21796,11 @@ function showToFoot(button, pane) {
 function drawTranscript(box) {
   const [list, pane, note] = split(box, "transcript", "turnbody");
   const foot = box.children[3];      // built by `split`; see `putToFoot`
+  // A subagent's own (#618): its turns are `state.turns`, read only.
+  box.classList.toggle("agentview", !!state.agent);
   drawTurnList(list, note);
   fillTurns(pane, foot);
+  if (state.agent) putAgentBar(pane);
 }
 
 // The turns, into a pane: the tab's, or the column beside a tab (#625).
@@ -26026,7 +26123,10 @@ function drawCommand(pane) {
 // is one entry. The placeholder used to be a ternary in `showTab` naming
 // three tabs, so the two it did not name got whatever the last arm said.
 const TABS = {
-  transcript: { draw: drawTranscript, land: landTranscript, load: loadTranscript, poll: 0,
+  // A subagent's own stands in the tab alone (#618, `loadAgent`); every
+  // other reader of the transcript wants the session's.
+  transcript: { draw: drawTranscript, land: landTranscript,
+                load: () => (state.agent ? loadAgent() : loadTranscript()), poll: 0,
                 finds: "find a turn  /", name: "Transcript" },
   files: { draw: drawFiles, land: landFiles, load: loadFiles, poll: 2000,
            finds: "go to file  /", name: "Files" },
@@ -26121,6 +26221,9 @@ function showTab(name) {
   // or its key, leaves nothing: the box stayed, the flag went, and the
   // next poll or pick rebuilt the diff and took what was typed.
   if (name !== state.tab) state.writing = null;
+  // A subagent's transcript stands in the Transcript tab alone (#618), and
+  // whatever asks for a tab leaves it: a turn link, a card, a command.
+  dropAgent();
   state.tab = name;
 
   drawHeader();               // the send box belongs to the transcript only
@@ -26148,7 +26251,11 @@ function chatShown() {
 }
 
 // Whether the transcript is on screen: its own tab, or the column.
-function transcriptShown() { return state.tab === "transcript" || chatShown(); }
+function transcriptShown() {
+  // Not while a subagent's own stands there (#618): the session's is not on
+  // screen, and nothing is sent to a subagent.
+  return (state.tab === "transcript" && !state.agent) || chatShown();
+}
 
 // The box the transcript is drawn in: its tab's, or the column beside a
 // tab. Every reader of the drawn transcript asks this, or a push patched
@@ -26350,6 +26457,80 @@ function pickPlace(value) {
   drawHeader();
   draw();
   load();
+}
+
+// --- a subagent's own transcript, in the Transcript tab (#618) [topics/transcript, topics/sidebar]
+
+//: How often a running subagent's transcript is read again, in ms.
+const AGENT_POLL = 3000;
+
+// From its line under the row. Its session is chosen too, and any view
+// closed: the tab is that session's, and "back" goes to its transcript.
+// Its turns are `state.turns` while it is open, so everything the tab does
+// with a transcript -- a call opened, a run folded, the map, the find box --
+// works on them; the session's own wait aside (`dropAgent`).
+function openAgent(id, one) {
+  if (state.feed) closeFeed();
+  if (state.chosen !== id) choose(id);
+  showTab("transcript");              // which leaves a subagent open before
+  state.agent = { session: id, id: one.id, kind: one.kind || "", what: one.what || "",
+                  running: !one.ended, held: state.turns };
+  state.turns = blankTurns();
+  state.turns.newSince = null;        // no "new" line: it is no unread
+  drawHeader();
+  draw();
+  loadAgent();
+}
+
+// The session's own turns back, as they were. Its pushes went unheard
+// meanwhile, and its next load fetches what they said.
+function dropAgent() {
+  if (!state.agent) return;
+  state.turns = state.agent.held;
+  state.agent = null;
+  clearTimeout(state.agentPoll);
+}
+
+function leaveAgent() {
+  dropAgent();
+  drawHeader();                    // the send box is the header's
+  draw();
+  load();
+}
+
+async function loadAgent() {
+  const want = state.agent;
+  clearTimeout(state.agentPoll);
+  const body = await ask(want.session, "transcript", "?agent=" + encodeURIComponent(want.id));
+  if (state.agent !== want) return;
+  const read = !!body && Array.isArray(body.blocks);
+  if (read) {
+    state.turns.blocks = body.blocks;
+    // The daemon's words: a line under a row has no kind of its own.
+    want.running = !!body.running;
+    want.kind = body.kind || "";
+    want.what = body.what || "";
+  }
+  state.turns.failed = !read;
+  state.turns.whole = state.turns.landed = true;
+  draw();
+  // Again while it runs, or could not be read: only while it is on screen.
+  if (want.running || !read) {
+    state.agentPoll = setTimeout(() => { if (state.agent === want) loadAgent(); }, AGENT_POLL);
+  }
+}
+
+// Over its turns: what it is, and the way back.
+function putAgentBar(pane) {
+  const agent = state.agent;
+  const head = document.createElement("div");
+  head.className = "agenthead";
+  put(head, "span", "kidmark", "\u21b3");
+  put(head, "span", "agentname", (agent.kind || "subagent") + (agent.what ? ": " + agent.what : ""));
+  if (agent.running) put(head, "span", "agentrunning", "running");
+  const back = put(head, "button", "link agentback", "\u2190 back to the session");
+  back.addEventListener("click", leaveAgent);
+  pane.prepend(head);
 }
 
 // --- the Summary tab: where a session's tokens and time went (#622) [topics/summary]
@@ -26601,6 +26782,7 @@ function choose(id) {
   state.places = [];
   state.placesAt = 0;
   state.summary = null;
+  dropAgent();
   state.files = blankFiles();
   state.diffs = blankDiff();
   state.diff = null;
@@ -27099,7 +27281,9 @@ function onSessionsPush(message) {
 // A `transcript` push, for the session on screen (#544).
 function onTranscriptPush(message) {
   const body = JSON.parse(message.data);
-  if (body.id !== state.chosen) return;
+  // The session's, while a subagent's own is `state.turns` (#618): the
+  // next load of the session's fetches what this said.
+  if (body.id !== state.chosen || state.agent) return;
   // A stream opens by saying which reading the daemon holds, and its
   // `version`. What was read while no stream was open -- between a fetch's
   // snapshot and this stream joining, while a dropped one reconnected, or

@@ -2390,8 +2390,9 @@ def test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words(ws, pa
           return [stats.top >= what.bottom - 1, Math.round(stats.left + inset - what.left)];
         }""")
         assert where[0] and abs(where[1]) <= 2, where
+        # Its last words, then what a click does (#618).
         assert line.get_attribute("title") == (
-            "Explore subagent of this session:\nIt is in src/parse.c.")
+            "Explore subagent of this session:\nIt is in src/parse.c.\n\nopen its transcript")
 
 
 def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):

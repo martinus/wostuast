@@ -148,6 +148,11 @@ empty `agent_type`, and an `agent_transcript_path` under `subagents/`,
 then `SessionStart` (`source: compact`) and `PostCompact`. It is Claude
 Code's own agent, not one the agent started. The paths are invented.
 
+**A subagent's own transcript** (measured on 2.1.306, #618) is named by
+its `SubagentStop`'s `agent_transcript_path`: the session's transcript path
+without `.jsonl`, then `/subagents/agent-<agent_id>.jsonl`. `SubagentStart`
+has no path, so while it runs the page makes the same one.
+
 **A subagent the reader stops sends no `SubagentStop`** (measured on
 2.1.292, `subagent_killed.jsonl`). On 2.1.292 the Agent tool runs its
 subagent in the background with no `run_in_background`, and every `Stop`
