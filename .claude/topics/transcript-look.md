@@ -18,6 +18,19 @@ the reader sees them.
   `test_an_edit_keeps_what_it_changed_and_nothing_of_the_whole_file`,
   `test_a_long_change_is_cut_and_says_how_much_is_left`,
   `test_an_edit_opens_onto_what_it_changed`.
+- **An opened call shows its whole input over what it printed** (#619,
+  `call_text`, `Block.call`, `putCallText`): the line cuts a command at 60
+  characters and folds its lines, and opened, a call showed only the
+  answer. `call` is "" when the line already says it as it is, and a tool
+  in `CALL_SAID` keeps none (a path, a pattern, a plan, an edit's change).
+  A command is painted as `bash`, or `python` when Python runs it; any other
+  input is JSON. **Opening a call fetches the highlighter** (`paintCall`),
+  as opening a file does: the reader asked to read it. Cut at `CALL_SHOWN`
+  lines on the wire, as a result is. **Whole, secrets and all**: the reader
+  chose it (topics/safety). The colour replaces the text, so the find box
+  marks it again.
+  `test_a_call_keeps_its_whole_input_when_its_line_cuts_it`,
+  `test_an_opened_call_shows_its_whole_command_painted`.
 - **A code block copies itself, from a box round it** (`putCodeCopies`,
   `.codebox`, `.copycode`). **The button is a child of the box, not the
   `pre`**: inside, a long line scrolls it away. **An icon, not the word**
@@ -71,6 +84,13 @@ the reader sees them.
     - **A call folded on arrival loses `fresh`**, or it slides in when shown
       later.
     - **A run of one is not folded**: its line would be as tall as the call.
+    - **A run that forms round a call the reader opened is open** (#620,
+      `openFormedRuns`): the reader opened the lone call to read it, the
+      next call folded both, and the text went mid-read. Set in
+      `mergeBlocks`, where blocks arrive, never in `foldRun` (a draw only
+      reads). **Only a run that forms**: one the reader folded stays
+      folded when it grows, an open call in it or not.
+      `test_a_call_the_reader_opened_stays_open_when_the_next_call_comes`.
     - `test_calls_in_a_row_are_one_line_until_the_reader_opens_them`,
       `test_a_run_grows_as_its_calls_arrive`,
       `test_a_find_that_matches_a_folded_call_shows_its_run`,

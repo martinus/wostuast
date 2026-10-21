@@ -100,6 +100,10 @@ PATCHED_TOOLS = frozenset({"Edit", "MultiEdit", "Write"})
 #: is the Diff tab's job; the rest is counted, and the page says so.
 PATCH_SHOWN = 80
 
+#: How many lines of a call's whole input the page is sent (#619): a
+#: heredoc can carry a file. The rest is counted, as a result's is.
+CALL_SHOWN = 200
+
 #: A finished tool of one of these kinds probably changed the working tree.
 WRITING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"})
 
@@ -3496,6 +3500,10 @@ class Block:
     text: str = ""              # prompt and assistant text, as Markdown
     tool: str = ""              # the tool's name
     target: str = ""            # the path, command or pattern it worked on
+    #: The call's whole input, when `target` does not show it as it is: a
+    #: command cut, folded onto one line or with a secret hidden, or a
+    #: tool's input as JSON. "" when `target` says it all. See `call_text`.
+    call: str = ""
     added: int = 0              # lines an edit added
     removed: int = 0            # lines an edit removed
     result: str = ""            # the tool's output, shown when expanded
@@ -3867,6 +3875,35 @@ def result_text(content: Any) -> str:
     return json.dumps(content, ensure_ascii=False, default=str)
 
 
+#: Tools whose one line is all there is to their input worth reading: a
+#: path, a pattern, a plan or a question drawn on its own, or an edit that
+#: opens onto its change.
+CALL_SAID = frozenset({"Read", "Write", "Edit", "MultiEdit", "NotebookEdit",
+                       "Grep", "Glob", "ExitPlanMode", "AskUserQuestion"})
+
+
+def call_text(tool_name: str, tool_input: Any, target: str) -> str:
+    """A call's whole input, for the page to show when the call is opened,
+    or "" when its one line already says it as it is (#619).
+
+    The line is `tool_target`: a command cut at 60 characters, its lines
+    folded into one, a secret hidden. Opened, a call showed what it printed
+    and never what was run. **The whole is shown as it is, secrets and
+    all**: the reader opened it to read it, as the call's output and the
+    permission dialog are shown whole (the reader chose this). A command is
+    the shell's text; any other tool's input is JSON, set out.
+    """
+    data = tool_input if isinstance(tool_input, dict) else {}
+    if tool_name in CALL_SAID or not data:
+        return ""
+    if tool_name == "Bash":
+        whole = str(data.get("command") or "")
+        return "" if whole.strip() == target else whole
+    if json.dumps(data, ensure_ascii=False, default=str) == target:
+        return ""
+    return json.dumps(data, ensure_ascii=False, indent=2, default=str)
+
+
 class Transcript:
     """Reads a session's transcript into blocks, and follows it as it grows.
 
@@ -4151,8 +4188,9 @@ class Transcript:
                 block = Block(kind="plan", ts=ts, tool=name, text=plan,
                               tool_use_id=str(piece.get("id") or ""))
             else:
-                block = Block(kind="tool", ts=ts, tool=name,
-                              target=tool_target(name, tool_input, self.cwd),
+                target = tool_target(name, tool_input, self.cwd)
+                block = Block(kind="tool", ts=ts, tool=name, target=target,
+                              call=call_text(name, tool_input, target),
                               added=added, removed=removed,
                               tool_use_id=str(piece.get("id") or ""))
             if block.tool_use_id:
@@ -8947,6 +8985,7 @@ def blocks_json(blocks: Sequence[Block]) -> list[dict[str, Any]]:
         "text": block.text,
         "tool": block.tool,
         "target": block.target,
+        "call": clip_lines(block.call, CALL_SHOWN),
         "added": block.added,
         "removed": block.removed,
         "result": clip_lines(block.result, 40),
@@ -14585,12 +14624,21 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .tooldiff .toolmore {
   padding: 4px 12px; border-top: 1px solid var(--edge); color: var(--ink-faint);
 }
-.tool-result {
+/* A call's whole input over what it printed (issue 619): the same card,
+   so the two read as one call's question and answer. */
+.tool-call, .tool-result {
   margin: 2px 0 6px 18px; padding: 8px 12px; border-radius: 6px;
   background: var(--code); border: 1px solid var(--edge); color: var(--code-ink);
   font-family: var(--mono); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; word-wrap: break-word; max-height: 320px; overflow: auto;
 }
+/* A command and what it printed are one card, with a rule between: two
+   cards alike read as two calls. `.tools` is a column with a 4 px gap,
+   which no margin of 0 closes. */
+.tool-call:has(+ .tool-result) {
+  margin-bottom: 0; border-bottom: 0; border-radius: 6px 6px 0 0;
+}
+.tool-call + .tool-result { margin-top: -4px; border-radius: 0 0 6px 6px; }
 .divider {
   display: flex; align-items: center; gap: 10px; margin: 14px 0;
   font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
@@ -19657,10 +19705,11 @@ const BY_SUFFIX = {
   toml: "ini", cfg: "ini", conf: "ini",
 };
 
-// Asked for when the first file that is not Markdown opens, or the Diff tab
-// first draws a diff -- never on load. Reading transcripts all day then
-// reaches the network never. One promise, so
-// a second file does not start a second download.
+// Asked for when the first file that is not Markdown opens, the Diff tab
+// first draws a diff, or the reader opens a call onto its command (#619)
+// -- never on load. Reading transcripts all day then reaches the network
+// only for a call the reader opened. One promise, so a second file does
+// not start a second download.
 let hljsAsked = null;
 
 function hljsReady() {
@@ -20663,7 +20712,7 @@ function drawTool(parent, block, index) {
   // ("The file … has been updated successfully."), which the counts and the
   // change say better.
   const patch = block.patch && block.patch.length ? block.patch : null;
-  const opens = !!(patch || block.result);
+  const opens = !!(patch || block.result || block.call);
   const line = put(parent, "button", "tool" + (block.failed ? " failed" : ""));
   put(line, "span", "caret", opens ? (open ? "▾" : "▸") : " ");
   put(line, "span", "name", block.tool);
@@ -20678,8 +20727,37 @@ function drawTool(parent, block, index) {
     if (state.turns.open.has(index)) state.turns.open.delete(index); else state.turns.open.add(index);
     redrawBlock(index);        // this line only; the rest of the tab stays put
   });
+  if (open && block.call) putCallText(parent, block);
   if (open && patch) putToolDiff(parent, block);
   else if (open && block.result) put(parent, "div", "tool-result", block.result);
+}
+
+// The call's whole input, under its line and over what it printed (#619):
+// the line cuts a command at 60 characters and folds its lines into one,
+// so an opened call showed the answer and never the question. A command is
+// painted as the shell reads it, or as Python when Python runs it; any
+// other tool's input is JSON. The text is there before the colour, which
+// needs the highlighter: opening a call is the reader asking for it, as
+// opening a file is.
+function putCallText(parent, block) {
+  const box = put(parent, "div", "tool-call", block.call);
+  const language = block.tool !== "Bash" ? "json"
+    : /^\s*python[\d.]*\s/.test(block.call) ? "python" : "bash";
+  paintCall(box, language, block.call);
+}
+
+async function paintCall(box, language, text) {
+  const lib = await hljsReady();
+  if (!lib || !box.isConnected || !lib.getLanguage(language)) return;
+  const lines = paintedLines(lib, language, text, text.split("\n").length);
+  if (!lines || !box.isConnected) return;
+  box.replaceChildren();
+  lines.forEach((line, at) => {
+    if (at) box.appendChild(document.createTextNode("\n"));
+    box.appendChild(line);
+  });
+  // The colour replaced the text the find box had marked.
+  if (state.find) markHits(box, state.find);
 }
 
 // What one edit changed, under the call that made it: the words that
@@ -20778,6 +20856,30 @@ function runOf(at) {
   while (start > 0 && call(blocks[start - 1])) start -= 1;
   while (end + 1 < blocks.length && call(blocks[end + 1])) end += 1;
   return [start, end];
+}
+
+// A run that forms round a call the reader opened is open (#620). The
+// reader opened the one call after a line to read what it printed, the
+// agent ran its next command, and the two folded into one line: what was
+// being read was taken away. Here, where blocks arrive, and not in
+// `foldRun`: a draw only reads `state`. Only a run that forms now: one the
+// reader has folded stays folded, an open call in it or not. `added` holds
+// the indexes that were not held before.
+function openFormedRuns(added) {
+  const done = new Set();
+  for (const at of added) {
+    const run = runOf(at);
+    if (!run || done.has(run[0]) || run[1] - run[0] + 1 < RUN_FOLDS) continue;
+    done.add(run[0]);
+    let held = 0;
+    let opened = false;
+    for (let one = run[0]; one <= run[1]; one += 1) {
+      if (added.has(one)) continue;
+      held += 1;
+      if (state.turns.open.has(one)) opened = true;
+    }
+    if (opened && held < RUN_FOLDS) state.turns.open.add(runKey(run[0]));
+  }
 }
 
 // Every run, in one walk: a whole draw.
@@ -25324,10 +25426,13 @@ async function loadDiff() {
 // first fetch and the first push both carried.
 function mergeBlocks(blocks) {
   const moved = [];
+  const added = new Set();
   for (const block of blocks) {
+    if (!state.turns.blocks[block.seq]) added.add(block.seq);
     state.turns.blocks[block.seq] = block;
     moved.push(block.seq);
   }
+  openFormedRuns(added);
   return moved;
 }
 

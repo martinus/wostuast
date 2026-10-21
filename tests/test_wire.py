@@ -25,7 +25,7 @@ def test_a_block_sends_only_the_fields_it_names(ws):
     block.held_for_the_daemon = "never sent"
     sent = ws.blocks_json([block])[0]
     assert list(sent) == [
-        "seq", "kind", "ts", "text", "tool", "target", "added", "removed",
+        "seq", "kind", "ts", "text", "tool", "target", "call", "added", "removed",
         "result", "patch", "patch_more", "failed", "tool_use_id", "answered"]
     assert sent["result"].endswith("… 10 more lines")
 
