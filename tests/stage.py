@@ -34,7 +34,8 @@ it opens the list. `--merge` ends the branch in two more commits: one that
 renames the size, and a merge of `main`, which renamed it too, settled by
 hand (#621); `--commit 6` is the merge. `--elsewhere` is a second
 repository, `api`, with one commit and one change, that the agent edited a
-file in: the picker beside the tabs names it (#616).
+file in: the picker beside the tabs names it (#616). Beside it, `notes`, a
+folder git knows nothing of, for the reader to add (#624).
 
 Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
@@ -169,6 +170,11 @@ def make_elsewhere(api: Path) -> None:
     git(api, "commit", "-q", "-m", "The health route")
     (api / "routes.py").write_text(
         'def health():\n    return "ok"\n\n\ndef ready():\n    return "ready"\n')
+    # And a folder git knows nothing of, for the reader to add (#624).
+    notes = api.parent / "notes"
+    (notes / "meetings").mkdir(parents=True)
+    (notes / "ideas.md").write_text("# Ideas\n\n- a ring that grows\n- a ring that warns\n")
+    (notes / "meetings" / "monday.md").write_text("# Monday\n\nThe ring is full too often.\n")
 
 
 def serve(home: Path, commands: bool = False, merge: bool = False,

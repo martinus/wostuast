@@ -307,6 +307,23 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
     pick only `rev-parse` runs there**, which runs nothing a config names;
     `status` and `ls-files` run once the reader picks it, as the reader
     chose (#616).
+  - **A folder the reader adds is any folder, checked once and kept by
+    its real path** (#624, `added_folder`): absolute after `~`, no
+    control character, a folder after every link. Kept real, a link
+    changed later moves nothing. The reader chose any folder: whoever holds
+    the token reads what is added, and the token already types into the
+    agents' panes. **In a `plain` one there is no `is_listed`**, so
+    `worktree_target(plain=True)` checks `inside` and `.git` alone, and
+    `inside` catches `ValueError`: a NUL in a name raised, where git
+    refused it before.
+    - **No git directory, no system tree, and only as it was kept**
+      (`is_git_dir`, `SYSTEM_TREES`, `plain_root`): a review agent added
+      `repo/.git`, and a bare repository, which has no `.git` in its name,
+      and read the remote's token from `config`; a folder swapped for a
+      link later moved every read to where the link went; a read in
+      `/proc` blocked a thread for good. Each read and listing asks
+      `plain_root` again.
+    `test_a_folder_the_reader_added_is_a_place_git_need_not_know`.
     `test_another_repository_the_agent_worked_in_is_a_place_of_its_own`.
   - **Nothing inside a `.git` is read**: a tracked
     `notes.md -> ../.git/config` showed a remote's token. `worktree_target`

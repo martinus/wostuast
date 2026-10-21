@@ -373,6 +373,12 @@ Files and Review tabs show it. Another repository is "read only": you can
 read it, but not comment, as a review goes to the agent with paths from its
 own repository.
 
+You can add any folder, git or not: pick **add a folder…** at the end of
+the picker, type its path, from `/` or `~`, and press Enter. Every session
+in the same worktree offers it from then on. A folder that is no git
+repository has files to read and no changes to review. The cross beside
+the picker takes the folder off the list. An added folder is read only too.
+
 #### Review
 
 Changed files as a tree, and each file's diff in colour, with the changed
@@ -631,6 +637,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/state/wostuast/snoozed.json` | The sessions you snoozed on the page, until each moves on. |
 | `~/.local/state/wostuast/saved.json` | The turns you saved on the page, and the start of each. |
 | `~/.local/state/wostuast/reminders.json` | The reminders you set on the page, until each is read. |
+| `~/.local/state/wostuast/folders.json` | The folders you added to a worktree's Files tab on the page. |
 | `~/.local/state/wostuast/seen.json` | When you last read each session on the page, for its unread mark. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
 | `~/.local/state/wostuast/daemon.lock` | Held while `wostuast` runs, so a second start stops and says where the first one serves its page. It says the pid and the address. |

@@ -1,5 +1,5 @@
 """The reader's marks, in one store (#547): names, snoozes, what was seen,
-reminders, saved turns. Each test walks every kind, so a sixth mark that
+reminders, saved turns, added folders (#624). Each test walks every kind, so a sixth mark that
 `Marks.load` reads is tested by them as well."""
 
 from __future__ import annotations
@@ -32,6 +32,9 @@ KINDS = {
               lambda store: store.save({"id": "s1", "seq": 2, "ts": 1001.0,
                                         "text": "kept", "at": 1002.0}, True),
               lambda marks: [one["id"] for one in marks.saved] == ["s1"]),
+    "folders": ("folders_path",
+                lambda store: store.add_folder("/w/repo", "/home/you/notes", True),
+                lambda marks: marks.folders == {"/w/repo": ["/home/you/notes"]}),
 }
 
 
@@ -64,6 +67,18 @@ def test_a_broken_file_of_each_kind_is_no_marks(ws, kind, broken):
     path.write_text(broken)
     marks = ws.Marks.load()
     assert not getattr(marks, kind), (kind, broken)
+
+
+def test_a_worktree_keeps_the_latest_folders_added_and_only_whole_paths(ws):
+    """At most `FOLDERS_HELD` folders a worktree, the latest kept (#624);
+    a path in the file that is not absolute is none, as the daemon could
+    not say where it is."""
+    store = ws.Store()
+    for one in range(ws.FOLDERS_HELD + 2):
+        held = store.add_folder("/w/repo", f"/f{one}", True)
+    assert held == [f"/f{one}" for one in range(2, ws.FOLDERS_HELD + 2)]
+    ws.folders_path().write_text('{"/w/repo": ["notes", "/notes", 7]}')
+    assert ws.Marks.load().folders == {"/w/repo": ["/notes"]}
 
 
 def test_a_store_can_be_built_with_no_files(ws, monkeypatch):

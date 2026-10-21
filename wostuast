@@ -172,6 +172,25 @@ PLACES_SHOWN = 12
 #: The tools whose input names a file, and the key it is under.
 FILE_KEYS = ("file_path", "notebook_path", "path")
 
+#: How many folders the reader may add to one worktree (#624).
+FOLDERS_HELD = 12
+
+#: The most names a folder the reader added is listed with (#624): each of
+#: its folders is walked as an ignored one is, within `IGNORED_MAX`, until
+#: the whole holds this many. Every one is stat'ed, as a walked file is.
+FOLDER_MAX = 20_000
+
+#: The most entries one walk of such a folder reads, kept or not (#624).
+FOLDER_READS = 100_000
+
+#: How often such a folder is walked again while its tab asks, in seconds:
+#: not `LIST_FRESH`, as git does not do this walk for us.
+FOLDER_FRESH = 15.0
+
+#: Folders of the system's own that hold no files to read: a read of
+#: `/proc/kmsg` blocks for good (#624).
+SYSTEM_TREES = ("/proc", "/sys", "/dev")
+
 #: How long a folder git said is in no repository is not asked again, in
 #: seconds (`Files.root_kept`).
 NO_REPO_KEPT = 60.0
@@ -411,6 +430,12 @@ def saved_path() -> Path:
     block, when, and the start of its words. Ours, beside the snoozes, so
     every browser lists the same ones."""
     return state_dir() / "saved.json"
+
+
+def folders_path() -> Path:
+    """The folders the reader added to a worktree's places (#624), by the
+    worktree's top: every session there offers them, and every browser."""
+    return state_dir() / "folders.json"
 
 
 def reminders_path() -> Path:
@@ -2444,6 +2469,24 @@ class Store:
             write_saved(saved)
             self.marks.saved = saved
         return self.marks.saved
+
+    def add_folder(self, root: str, folder: str, on: bool) -> list[str]:
+        """Add a folder to a worktree's places, or take it off (#624).
+        Returns what that worktree holds now. The caller checked the
+        folder: this keeps what it is given."""
+        with self.marks.naming:
+            folders = dict(self.marks.folders)
+            held = [one for one in folders.get(root, []) if one != folder]
+            if on:
+                held.append(folder)
+            held = held[-FOLDERS_HELD:]
+            if held:
+                folders[root] = held
+            else:
+                folders.pop(root, None)
+            write_folders(folders)
+            self.marks.folders = folders
+        return held
 
     def remind(self, session_id: str, at: float) -> float:
         """Remind the reader of this session at `at`, or forget its
@@ -5168,6 +5211,9 @@ FILES_MAX = 200_000
 #: and neither is a place to browse.
 IGNORED_MAX = 2000
 
+#: How deep a walk goes (`walk_ignored`); a folder deeper is one name.
+WALK_DEPTH = 64
+
 #: How long a listing nobody has asked about is kept. It holds every name in
 #: a repository, so it does not sit there for the life of the daemon.
 LISTING_KEPT = 300.0
@@ -5270,8 +5316,8 @@ class FileText:
     same: bool = False
 
 
-def walk_ignored(root: str, top: str,
-                 budget: int) -> tuple[list[str], list[str]]:
+def walk_ignored(root: str, top: str, budget: int,
+                 reads: list[int] | None = None) -> tuple[list[str], list[str]]:
     """What is inside a wholly-ignored directory, and what was left out.
 
     `git ls-files --directory` hands over one entry for such a directory and
@@ -5295,16 +5341,27 @@ def walk_ignored(root: str, top: str,
     The budget is passed rather than read, so a test can set it to three
     files instead of building two thousand of them.
     """
-    def below(here: str) -> tuple[list[str] | None, list[str]]:
+    def below(here: str, depth: int) -> tuple[list[str] | None, list[str]]:
         """This directory's files, or None when it does not fit."""
+        # Past `WALK_DEPTH` folders deep it does not fit: a thousand nested
+        # folders raised RecursionError on every poll (#624).
+        if depth > WALK_DEPTH:
+            return None, []
         names: list[str] = []
         skipped: list[str] = []
         try:
             with os.scandir(os.path.join(root, here)) as reading:
                 for entry in reading:
+                    # Every entry read counts, kept or not, when the caller
+                    # keeps a count (`folder_files`): the names kept bound
+                    # what is sent, not what is read, and `/` took 18 s.
+                    if reads is not None:
+                        reads[0] -= 1
+                        if reads[0] < 0:
+                            return None, []
                     where = f"{here}/{entry.name}"
                     if entry.is_dir(follow_symlinks=False):
-                        found, left = below(where)
+                        found, left = below(where, depth + 1)
                         if found is None:
                             skipped.append(where)
                         else:
@@ -5324,11 +5381,83 @@ def walk_ignored(root: str, top: str,
         return names, skipped
 
     top = top.rstrip("/")
-    names, skipped = below(top)
+    names, skipped = below(top, 0)
     # The whole of it does not fit, so the whole of it is the one name the
     # reader is given -- a folder they can see, with nothing pretending to be
     # inside it.
     return ([], [top]) if names is None else (names, skipped)
+
+
+def in_git_dir(path: str) -> bool:
+    """Whether a path a walk found is in a `.git`, in any case (#624)."""
+    return any(part.lower() == ".git" for part in path.split("/"))
+
+
+def is_git_dir(folder: str) -> bool:
+    """Whether a folder is a git directory itself (#624): a `.git`, or a
+    bare repository, which has no `.git` in its name. Added, either served
+    its `config`, with a remote's token in it. The shape is the one git
+    looks for: `HEAD`, `objects` and `refs`."""
+    if in_git_dir(folder):
+        return True
+    here = Path(folder)
+    try:
+        return ((here / "HEAD").is_file() and (here / "objects").is_dir()
+                and (here / "refs").is_dir())
+    except (OSError, ValueError):
+        return True
+
+
+def plain_root(folder: str) -> str | None:
+    """A folder the reader added, as it may be read now, or None (#624).
+    It is still the real path it was kept as: a folder swapped for a link
+    later moved every read to where the link went, a `.git` too. And it is
+    no git directory."""
+    try:
+        if os.path.realpath(folder) != folder:
+            return None
+    except (OSError, ValueError):
+        return None
+    return None if is_git_dir(folder) else folder
+
+
+def folder_files(top: str, budget: int = IGNORED_MAX, most: int = FOLDER_MAX,
+                 reads: int = FOLDER_READS) -> Worktree:
+    """Every file in a folder the reader added that is no repository (#624).
+
+    No git to ask, so the walk is ours, as for an ignored folder
+    (`walk_ignored`): each folder in it within `budget`, until the whole
+    holds `most` names; a folder past either is one name in `skipped`. Every
+    file counts as walked, so one written since the session began is
+    changed (`written_since`). Nothing inside a `.git` is listed, as none
+    is read (`worktree_target`).
+    """
+    tree = Worktree(root=top)
+    names: set[str] = set()
+    if plain_root(top) is None:
+        tree.failed = True
+        return tree
+    left = [reads]
+    try:
+        with os.scandir(top) as reading:
+            entries = sorted(reading, key=lambda one: one.name)
+    except OSError:
+        tree.failed = True
+        return tree
+    for entry in entries:
+        if entry.name.lower() == ".git":
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            if len(names) >= most or left[0] < 0:
+                tree.skipped.append(entry.name)
+                continue
+            found, out = walk_ignored(top, entry.name, budget, left)
+            names.update(one for one in found if not in_git_dir(one))
+            tree.skipped.extend(one for one in out if not in_git_dir(one))
+        elif not entry.is_dir():
+            names.add(entry.name)       # a link to a folder is neither
+    put_entries(tree, names, set(), names)
+    return tree
 
 
 def in_order(names: set[str]) -> list[str]:
@@ -5769,9 +5898,11 @@ class Files:
                 self.gates[root] = gate = threading.Lock()
             return gate
 
-    def of(self, cwd: str, runner: Callable[..., str | None] = run) -> Listing:
-        """The listing for the worktree this directory sits in."""
-        root = self.root_of(cwd, runner)
+    def of(self, cwd: str, runner: Callable[..., str | None] = run,
+           plain: bool = False) -> Listing:
+        """The listing for the worktree this directory sits in, or, `plain`,
+        for the folder itself, which git knows nothing of (#624)."""
+        root = cwd if plain else self.root_of(cwd, runner)
         if not root:
             return Listing(tree=Worktree(failed=root is None))
         gate = self.gate(root)
@@ -5785,14 +5916,15 @@ class Files:
             with gate:                           # nothing to show; this waits
                 held = self.held.get(root)       # unless a reader got it first
                 if held is None:
-                    return self.read(root, runner)
-        if time.time() - held.read_at > LIST_FRESH:
-            self.behind(root, runner, gate)      # something to show already
+                    return self.read(root, runner, plain)
+        if time.time() - held.read_at > (FOLDER_FRESH if plain else LIST_FRESH):
+            self.behind(root, runner, gate, plain)   # something to show already
         return held
 
-    def read(self, root: str, runner: Callable[..., str | None]) -> Listing:
-        """Ask git. The caller holds this root's gate."""
-        tree = worktree_files(root, runner, root=root)
+    def read(self, root: str, runner: Callable[..., str | None],
+             plain: bool = False) -> Listing:
+        """Ask git, or walk a plain folder. The caller holds this root's gate."""
+        tree = folder_files(root) if plain else worktree_files(root, runner, root=root)
         # NUL is the separator git uses, and the only one a file name cannot
         # hold.
         names = "\0".join(one.path for one in tree.files)
@@ -5806,7 +5938,7 @@ class Files:
         return fresh
 
     def behind(self, root: str, runner: Callable[..., str | None],
-               gate: Any) -> None:
+               gate: Any, plain: bool = False) -> None:
         """Read it again in a thread of its own. The gate is what says one
         reader at a time, so nothing else has to say it."""
         import threading
@@ -5817,8 +5949,9 @@ class Files:
         def again() -> None:
             try:
                 held = self.held.get(root)
-                if held is None or time.time() - held.read_at > LIST_FRESH:
-                    self.read(root, runner)
+                fresh = FOLDER_FRESH if plain else LIST_FRESH
+                if held is None or time.time() - held.read_at > fresh:
+                    self.read(root, runner, plain)
             except Exception as error:   # a bad read must not stop the daemon
                 log(f"listing {root} failed: {error!r}")
             finally:
@@ -5937,7 +6070,7 @@ def sniff_language(
 
 def worktree_target(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run,
-    held: "Files | None" = None,
+    held: "Files | None" = None, plain: bool = False,
 ) -> Path | None:
     """The file a name from the page points at, or None.
 
@@ -5963,10 +6096,20 @@ def worktree_target(
     config -- with the token of a remote URL in it, which `remote_url` keeps
     off the page. Any part of the real path named `.git`, in any case: a
     filesystem that ignores case opens `.GIT/config` as `.git/config`.
+
+    **`plain` is a folder the reader added that git knows nothing of**
+    (#624): there is no git to offer the name, so `inside` and the `.git`
+    check are the checks. `cwd` is then the daemon's own answer
+    (`Serving.place_of`), never the page's.
     """
-    root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
-    if not root or not is_listed(root, wanted, runner):
-        return None
+    if plain:
+        root = plain_root(cwd)
+        if root is None:
+            return None
+    else:
+        root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
+        if not root or not is_listed(root, wanted, runner):
+            return None
     target = inside(root, Path(root) / wanted)
     if target is None:
         return None
@@ -5981,7 +6124,7 @@ def worktree_target(
 
 def read_worktree_bytes(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run,
-    held: "Files | None" = None,
+    held: "Files | None" = None, plain: bool = False,
 ) -> tuple[bytes, str] | None:
     """One file's own bytes and the type it is served with, or None.
 
@@ -5992,7 +6135,7 @@ def read_worktree_bytes(
     kind = shown_as(wanted)
     if not kind:
         return None
-    target = worktree_target(cwd, wanted, runner, held)
+    target = worktree_target(cwd, wanted, runner, held, plain)
     if target is None:
         return None
     try:
@@ -6005,7 +6148,7 @@ def read_worktree_bytes(
 
 def read_worktree_file(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run,
-    held: "Files | None" = None, have: str = "",
+    held: "Files | None" = None, have: str = "", plain: bool = False,
 ) -> FileText | None:
     """One file's content, or None.
 
@@ -6018,7 +6161,7 @@ def read_worktree_file(
     touched -- a third of an ssh link. **Only after `worktree_target`**,
     which asks `is_listed` every time and never remembers it.
     """
-    target = worktree_target(cwd, wanted, runner, held)
+    target = worktree_target(cwd, wanted, runner, held, plain)
     if target is None:
         return None
     try:
@@ -6067,7 +6210,7 @@ def read_worktree_file(
 
 def why_unread(
     cwd: str, wanted: str, runner: Callable[..., str | None] = run,
-    held: "Files | None" = None,
+    held: "Files | None" = None, plain: bool = False,
 ) -> str:
     """What the page says when `read_worktree_file` gave nothing.
 
@@ -6081,9 +6224,14 @@ def why_unread(
     gives nothing away that `git show` would not. A link into `.git` says
     only that: where in it is not the page's business.
     """
-    root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
-    if not root or not is_listed(root, wanted, runner):
-        return "that file is not in this worktree"
+    if plain:
+        root = plain_root(cwd)           # a folder the reader added (#624)
+        if root is None:
+            return "that folder is no longer the one that was added"
+    else:
+        root = held.root_of(cwd, runner) if held else worktree_root(cwd, runner)
+        if not root or not is_listed(root, wanted, runner):
+            return "that file is not in this worktree"
     place = Path(root) / wanted
     try:
         if inside(root, place.parent) is None or not place.is_symlink():
@@ -7602,6 +7750,8 @@ class Marks:
         self.seen: dict[str, float] = {}
         self.reminders: dict[str, float] = {}
         self.saved: list[dict[str, Any]] = []
+        #: The folders the reader added, by the worktree's top (#624).
+        self.folders: dict[str, list[str]] = {}
         self.naming = threading.Lock()
 
     @classmethod
@@ -7615,6 +7765,7 @@ class Marks:
         marks.seen_floor, marks.seen = read_seen()
         marks.reminders = read_reminders()
         marks.saved = read_saved()
+        marks.folders = read_folders()
         return marks
 
     def onto(self, session: Session) -> None:
@@ -7737,6 +7888,22 @@ def read_saved() -> list[dict[str, Any]]:
 
 def write_saved(saved: list[dict[str, Any]]) -> None:
     write_atomic(saved_path(), json.dumps(saved), private=True)
+
+
+def read_folders() -> dict[str, list[str]]:
+    """Every folder the reader added, by worktree, or none (#624). Only an
+    absolute path is kept; what it is is asked again when it is used."""
+    payload = read_json(folders_path())
+    if not isinstance(payload, dict):
+        return {}
+    found = {key: [one for one in held if isinstance(one, str) and one.startswith("/")]
+             for key, held in payload.items()
+             if isinstance(key, str) and isinstance(held, list)}
+    return {key: held[-FOLDERS_HELD:] for key, held in found.items() if held}
+
+
+def write_folders(folders: dict[str, list[str]]) -> None:
+    write_atomic(folders_path(), json.dumps(folders), private=True)
 
 
 def read_reminders() -> dict[str, float]:
@@ -7970,7 +8137,9 @@ def inside(root: Path | str, path: Path | str) -> Path | None:
         top = Path(root).resolve()
         target = Path(path).resolve()
         looped = target.is_symlink()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
+        # ValueError: a NUL in the name (#624). git refused one before it
+        # came here; in a folder the reader added, no git asks first.
         return None
     if looped:
         return None
@@ -10815,6 +10984,16 @@ class Serving:
             seen.add(root)
             out.append({"path": root, "name": os.path.basename(root.rstrip("/")) or root,
                         "own": False})
+        # Then the folders the reader added to this worktree (#624). One git
+        # has as a worktree's top is a repository; any other is `plain`: the
+        # Files tab walks it and the Review tab has nothing to show.
+        for folder in self.daemon.store.marks.folders.get(self.home_place(session), []):
+            if folder in seen:
+                continue
+            seen.add(folder)
+            out.append({"path": folder, "name": os.path.basename(folder.rstrip("/")) or folder,
+                        "own": False, "added": True,
+                        "plain": self.daemon.files.root_kept(folder, run) != folder})
         return out
 
     def own_place(self, session: Session) -> str:
@@ -10826,15 +11005,24 @@ class Serving:
         return (files.root_kept(session.cwd, run) or files.root_of(session.home, run)
                 or session.cwd)
 
-    def place_of(self, session: Session, query: dict[str, str]) -> str | None:
-        """The folder a Files or Review request is about: the session's own
-        when it names none, else one of `places_for`, as git said it, or None.
-        A path from the page is input (topics/safety): it is never handed to
-        git or opened unless it is one the session already holds."""
+    def home_place(self, session: Session) -> str:
+        """The worktree the session started in, which the folders the reader
+        added belong to (#624): not `own_place`, which follows the agent,
+        so a folder added while it stood elsewhere went to that worktree."""
+        start = session.home or session.cwd
+        return self.daemon.files.root_kept(start, run) or start
+
+    def place_of(self, session: Session,
+                 query: dict[str, str]) -> tuple[str, bool] | None:
+        """The folder a Files or Review request is about, and whether it is
+        `plain` (#624): the session's own when it names none, else one of
+        `places_for`, as git or the reader's add said it, or None. A path
+        from the page is input (topics/safety): it is never handed to git or
+        opened unless it is one the session already holds."""
         wanted = query.get("place", "")
         if not wanted:
-            return self.own_place(session)
-        return next((one["path"] for one in self.places_for(session)
+            return self.own_place(session), False
+        return next(((one["path"], bool(one.get("plain"))) for one in self.places_for(session)
                      if one["path"] == wanted), None)
 
     def command_root(self, session: Session) -> str:
@@ -11007,15 +11195,68 @@ def verb_places(serving: Serving, session_id: str, session: Session,
 #: What a request names that is none of the session's places.
 NOT_A_PLACE = "that folder is not one this session worked in"
 
+#: What the Review tab is told of a folder the reader added that git knows
+#: nothing of (#624): it has no changes to show.
+NOT_A_REPOSITORY = "that folder is no git repository, so it has no changes to review"
+
+
+def added_folder(asked: Any) -> tuple[str, str]:
+    """The folder a reader typed to add (#624), as the daemon will keep it,
+    or why not. A path from the page is input (topics/safety): it must name
+    a folder that exists, after `~` and every link, and is kept as that
+    real path, so a link changed later moves nothing. Any folder: the
+    reader chose that whoever holds the token may read what they add."""
+    if not isinstance(asked, str) or not asked.strip() or len(asked) > 4096:
+        return "", "name a folder"
+    if CONTROL_CHARS.search(asked) or "\0" in asked:
+        return "", "a folder's name has no control characters"
+    wanted = os.path.expanduser(asked.strip())
+    if not os.path.isabs(wanted):
+        return "", "name the folder from / or ~"
+    try:
+        real = os.path.realpath(wanted)
+        is_folder = os.path.isdir(real)
+    except (OSError, ValueError):
+        return "", "that folder could not be read"
+    if not is_folder:
+        return "", f"{wanted} is no folder"
+    if any(real == tree or real.startswith(tree + "/") for tree in SYSTEM_TREES):
+        return "", "that folder holds no files to read"
+    if is_git_dir(real):
+        return "", "a git directory is not shown: add the folder it belongs to"
+    return real, ""
+
+
+def verb_folders(serving: Serving, session_id: str, session: Session,
+            body: dict[str, Any]) -> Answer:
+    """Add a folder to the places of the session's worktree, or take one
+    off (#624). A file of ours, and no terminal, as `name` is."""
+    root = serving.home_place(session)
+    if "remove" in body:
+        gone = body.get("remove")
+        if not isinstance(gone, str):
+            return 400, {"error": "name the folder to take off"}
+        return 200, {"folders": serving.daemon.store.add_folder(root, gone, False),
+                     "done": True}
+    folder, why = added_folder(body.get("add"))
+    if why:
+        return 400, {"error": why}
+    if any(one["path"] == folder for one in serving.places_for(session)):
+        return 409, {"error": "that folder is on the list already"}
+    return 200, {"folders": serving.daemon.store.add_folder(root, folder, True),
+                 "path": folder, "done": True}
+
 
 def verb_files(serving: Serving, session_id: str, session: Session,
           query: dict[str, str]) -> Answer:
-    place = serving.place_of(session, query)
-    if place is None:
+    found = serving.place_of(session, query)
+    if found is None:
         return 404, {"error": NOT_A_PLACE}
-    held = serving.daemon.files.of(place)
+    place, plain = found
+    held = serving.daemon.files.of(place, plain=plain)
     tree = held.tree
     body = {
+        "plain": plain,
         "root": tree.root, "total": tree.total,
         "cut": tree.cut, "failed": tree.failed, "tag": held.tag,
         # The ignored directories too big to walk, and the number that
@@ -11038,15 +11279,16 @@ def verb_files(serving: Serving, session_id: str, session: Session,
 def verb_file(serving: Serving, session_id: str, session: Session,
          query: dict[str, str]) -> Answer:
     wanted = query.get("path", "")
-    place = serving.place_of(session, query)
-    if place is None:
+    at = serving.place_of(session, query)
+    if at is None:
         return 404, {"path": wanted, "missing": NOT_A_PLACE}
+    place, plain = at
     found = read_worktree_file(place, wanted,
                                held=serving.daemon.files,
-                               have=query.get("have", ""))
+                               have=query.get("have", ""), plain=plain)
     if found is None:
         return 404, {"path": wanted, "missing": why_unread(
-            place, wanted, held=serving.daemon.files)}
+            place, wanted, held=serving.daemon.files, plain=plain)}
     if found.same:
         return 200, {"path": wanted, "same": True,
                          "stamp": found.stamp}
@@ -11064,8 +11306,9 @@ def verb_raw(serving: Serving, session_id: str, session: Session,
     that holds the token, able to read both.
     """
     wanted = query.get("path", "")
-    place = serving.place_of(session, query)
-    found = place and read_worktree_bytes(place, wanted, held=serving.daemon.files)
+    at = serving.place_of(session, query)
+    found = at and read_worktree_bytes(at[0], wanted, held=serving.daemon.files,
+                                       plain=at[1])
     if not found:
         # Through `refuse`, as every other refusal of a verb: it alone
         # carried no `id` (#545).
@@ -11086,10 +11329,11 @@ def verb_diff(serving: Serving, session_id: str, session: Session,
     of = query.get("of", "")
     # The base the reader picked, used only if git lists that name.
     base = query.get("base", "")
-    place = serving.place_of(session, query)
-    if place is None:
-        serving.refuse(session_id, 404, NOT_A_PLACE)
+    at = serving.place_of(session, query)
+    if at is None or at[1]:
+        serving.refuse(session_id, 404, NOT_A_REPOSITORY if at else NOT_A_PLACE)
         return
+    place = at[0]
     report = worktree_diff(place, of=of, base=base,
                            ranks=serving.daemon.ranks, held=serving.daemon.diffs,
                            root=serving.daemon.files.root_of(place, run),
@@ -11118,9 +11362,10 @@ def verb_whole(serving: Serving, session_id: str, session: Session,
     """One file of the Diff tab with every line of it, for showing the
     lines between two changes. See `whole_file_diff`."""
 
-    place = serving.place_of(session, query)
-    if place is None:
-        return 404, {"error": NOT_A_PLACE}
+    at = serving.place_of(session, query)
+    if at is None or at[1]:
+        return 404, {"error": NOT_A_REPOSITORY if at else NOT_A_PLACE}
+    place = at[0]
     found = whole_file_diff(place, query.get("section", ""),
                             query.get("path", ""), query.get("old", ""),
                             query.get("of", ""), base=query.get("base", ""),
@@ -11453,6 +11698,8 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "remind": (verb_remind, "reminder", "known"),
     # And a turn saved for later (#377).
     "save": (verb_save, "saved turn", ""),
+    # And a folder added to the worktree's places (#624).
+    "folders": (verb_folders, "folder", "known"),
 }
 
 #: Every route outside a session, by method and path, each with what its
@@ -11993,6 +12240,8 @@ def installed_files() -> list[Installed]:
                   "the sessions you snoozed on the page, until each moves on"),
         Installed("History", saved_path(),
                   "the turns you saved on the page, and the start of each"),
+        Installed("History", folders_path(),
+                  "the folders you added to a worktree's Files tab on the page"),
         Installed("History", reminders_path(),
                   "the reminders you set on the page, until each is read"),
         Installed("History", seen_path(),
@@ -14566,7 +14815,15 @@ body.switching #content::after {
 .main > .asking { grid-row: 3; grid-column: 3; position: relative; }
 /* Which repository the Files and Review tabs show (issue 616), beside the
    tabs: the commit picker's look (`.pickof`). */
-.tabs .pickplace { align-self: center; max-width: 32ch; }
+.tabs .pickplace { align-self: center; max-width: 32ch; flex-shrink: 0; }
+/* A folder to add (issue 624): typed beside the picker, in its face. */
+.tabs .placeadd { align-self: center; display: flex; }
+.placeadd input {
+  width: 26ch; height: 26px; padding: 0 8px; border-radius: 5px;
+  border: 1px solid var(--edge-bright); background: var(--raised); color: var(--ink);
+  font-family: var(--narrow); font-size: 13px;
+}
+.placeadd input:focus { outline: none; border-color: var(--needs); }
 /* The transcript beside the Files or Review tab (issue 625): a fourth
    column, with the question bar and the send box under it, as the reader
    chose from pictures (on the right; on the left it parted the file list
@@ -15542,6 +15799,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   font-size: 13px; cursor: pointer;
 }
 .baseword { color: var(--ink-faint); font-family: var(--sans); font-size: 12px; }
+.diffbar.plain > * { visibility: hidden; }
 .pickof:focus, .pickbase:focus, .pickplace:focus { outline: none; border-color: var(--needs); }
 /* What the branch's work is measured against: a name, short, and read
    whole -- so it does not shrink, and the commit picker, whose subject can
@@ -16055,7 +16313,13 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           class="badge notes" id="reviewcount" hidden></span></button>
         <button type="button" class="theme" id="chatbtn" aria-pressed="false"></button>
         <select class="pickplace" id="placepick" hidden
-                title="which repository the Files and Review tabs show"></select>
+                title="which folder the Files and Review tabs show"></select>
+        <button type="button" class="theme" id="placedrop" hidden
+                title="take this folder off the list" aria-label="take this folder off the list"></button>
+        <form class="placeadd" id="placeadd" hidden>
+          <input id="placepath" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="a folder, from / or ~" aria-label="the folder to add">
+        </form>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -23180,6 +23444,9 @@ function stepCommit(by) {
 
 function fillDiffBar(bar) {
   const report = state.diff || {};
+  // A folder with no git (#624) has no commits, base or columns to pick.
+  // The bar stays, as tall as ever: the column beside lines up with it.
+  bar.classList.toggle("plain", !!report.plain);
   const commits = commitsOf(report);
   const pick = bar.querySelector(".pickof");
   const key = state.diffs.of + "\n" + (report.recent ? "recent" : "") + "\n"
@@ -23537,7 +23804,9 @@ function diffKey() {
   const runs = (map, word) => [...map].map(([key, one]) => key + "=" + word(one));
   const s = current();
   return JSON.stringify([
-    state.chosen, s && s.doing, s && s.conflicts, d.tag, d.of, d.gone, d.loose, d.trouble,
+    // The place too (#624): a folder with no git has no tag to move.
+    state.chosen, state.place, !!(state.diff && state.diff.plain),
+    s && s.doing, s && s.conflicts, d.tag, d.of, d.gone, d.loose, d.trouble,
     d.found ? d.found.stamp || "read" : "", state.find, state.sides,
     runs(d.open, String), runs(d.more, (ranges) => ranges.join(";")),
     runs(d.whole, (held) => held.asking ? "?" : held.file ? "+" : "-"),
@@ -23669,6 +23938,12 @@ function putDiffBlocks(next, scroll, found, message, had, kept) {
 // What stands below the blocks: why a half is missing, why nothing is
 // shown, and that the diff was cut. `files` is how many are listed.
 function putDiffNotesBelow(next, report, files) {
+  if (report.plain) {
+    const empty = put(next, "div", "empty");
+    put(empty, "p", null, "This folder is no git repository, so it has no"
+        + " changes to review. The Files tab shows what it holds.");
+    return;
+  }
   // Two sections or one, and which is which, is the whole of what this tab
   // was unclear about. When there is no base the committed half is missing
   // altogether, and nothing used to say so -- the tab simply showed less.
@@ -25759,21 +26034,64 @@ async function askPlaces() {
   drawPlaces();
 }
 
+//: The picker's last choice, to add a folder (#624). No path starts so.
+const ADD_PLACE = "+";
+
 function drawPlaces() {
   const pick = $("placepick");
   const places = state.places;
-  pick.hidden = places.length < 2 || state.tab === "transcript" || !!state.feed;
+  // Shown with the own place alone too: its last choice adds one (#624).
+  const away = state.tab === "transcript" || !!state.feed;
+  pick.hidden = away || !places.length;
   if (fresh(pick, "key", JSON.stringify(places))) {
     pick.replaceChildren();
     for (const one of places) {
       // Another one takes no comments (`putReview`), and says so here.
-      const option = put(pick, "option", null,
-                         one.name + (one.own ? " (its own)" : " (read only)"));
+      const option = put(pick, "option", null, one.name
+        + (one.own ? " (its own)" : one.added ? " (added)" : " (read only)"));
       option.value = one.own ? "" : one.path;
       option.title = one.path;
     }
+    put(pick, "option", null, "add a folder…").value = ADD_PLACE;
   }
   pick.value = state.place;
+  $("placedrop").hidden = away || !places.some((one) => one.added && one.path === state.place);
+  if (away) $("placeadd").hidden = true;
+}
+
+// Whether the place picked is a folder git knows nothing of (#624).
+function placePlain() {
+  const one = state.places.find((place) => !place.own && place.path === state.place);
+  return !!(one && one.plain);
+}
+
+function openAddPlace() {
+  $("placeadd").hidden = false;
+  $("placepath").value = "";
+  $("placepath").focus();
+}
+
+// The daemon checks the folder and keeps it for the worktree (#624); the
+// picker then shows it.
+async function addPlace(path) {
+  const id = state.chosen;
+  const answer = await tell(id, "folders", { add: path });
+  if (!answer.done) { said(answer); return; }
+  $("placeadd").hidden = true;
+  if (state.chosen !== id) return;
+  state.placesAt = 0;
+  await askPlaces();
+  pickPlace(answer.path);
+}
+
+async function dropPlace() {
+  const id = state.chosen;
+  const answer = await tell(id, "folders", { remove: state.place });
+  if (!answer.done) { said(answer); return; }
+  if (state.chosen !== id) return;
+  pickPlace("");
+  state.placesAt = 0;
+  askPlaces();
 }
 
 // Another repository is another listing and another diff, so what was
@@ -26299,6 +26617,15 @@ function takeFile(got) {
 }
 
 async function loadDiff() {
+  // A folder with no git (#624) has no diff to ask for.
+  if (placePlain()) {
+    if (!state.diff || !state.diff.plain) {
+      state.diff = { sections: [], untracked: [], plain: true };
+      state.diffs.tag = "";
+    }
+    draw();
+    return;
+  }
   const want = state.chosen;
   const of = state.diffs.of;
   const base = recallBase();
@@ -26600,7 +26927,22 @@ $("viewclose").addEventListener("click", leaveFeed);
 $("jump").title = JUMP_TITLE;
 $("jump").addEventListener("click", jumpToPane);
 $("chatbtn").addEventListener("click", toggleChat);
-$("placepick").addEventListener("change", (press) => pickPlace(press.target.value));
+$("placepick").addEventListener("change", (press) => {
+  if (press.target.value !== ADD_PLACE) { pickPlace(press.target.value); return; }
+  press.target.value = state.place;
+  openAddPlace();
+});
+putIcon($("placedrop"), "close");
+$("placedrop").addEventListener("click", dropPlace);
+$("placeadd").addEventListener("submit", (event) => {
+  event.preventDefault();
+  addPlace($("placepath").value);
+});
+$("placepath").addEventListener("keydown", (key) => {
+  if (key.key !== "Escape") return;
+  key.stopPropagation();
+  $("placeadd").hidden = true;
+});
 paintChatButton();
 $("settings").addEventListener("click", (press) => {
   press.stopPropagation();            // or the listener below shuts it again

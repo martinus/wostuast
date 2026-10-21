@@ -4,8 +4,10 @@
 of them.
 
 - **The reader's marks are one store, `Marks`** (#547): names and `over`,
-  snoozes, seen-since, reminders, saved turns. `Marks.load` reads the five
-  files through `read_json` and one number check (`is_number`);
+  snoozes, seen-since, reminders, saved turns, and the folders added to a
+  worktree (#624, `folders`, by the worktree's top, topics/files-tab).
+  `Marks.load` reads the six files through `read_json` and one number
+  check (`is_number`);
   `Marks.onto` is the one place they reach a `Session`; every writer takes
   the lock `naming`. Each mark once had its own reader and line in
   `settle`. A `Marks()` reads nothing, so a `Store` needs no files.

@@ -123,6 +123,10 @@ scratchpad.
       - **Three green runs do not prove a line is run on purpose** (#609):
         a line red in CI gets its own test before it is ever an allowance:
         `test_esc_in_the_find_box_empties_it_and_leaves_it`.
+      - **Patch for a while with `monkeypatch.context()`, never
+        `monkeypatch.undo()`** (#624): the fixtures share the test's
+        `monkeypatch`, and `undo` took theirs too; the daemon then lost its
+        session, and a check after it passed by chance in #616.
       - **What a page ran before `page.reload()` may not count** (#625):
         `cover` takes the coverage as the context closes, and the old
         script's counts go once V8 collects it. A loaded CI runner does; a
