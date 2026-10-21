@@ -540,7 +540,7 @@ and no line is read twice or lost.
 ### The session state machine
 
 Each session is a `Session` object. Its most important field is `state`. Hook
-events move it between five states:
+events move it between six states:
 
 ```mermaid
 stateDiagram-v2
@@ -552,7 +552,9 @@ stateDiagram-v2
         needs_you --> working : next PreToolUse<br/>(the agent moved on;<br/>a subagent's is not that)
         needs_you --> done : Declined (a No)
         needs_you --> working : Approved (a Yes)
-        working --> done : Stop<br/>(no background task running),<br/>or idle with only a command running
+        working --> done : Stop<br/>(no background task running)
+        working --> waiting : Stop<br/>(only a command still running)
+        waiting --> working : UserPromptSubmit<br/>(the task's end wakes it)
     }
     [*] --> alive
     alive --> ended : SessionEnd
@@ -567,6 +569,7 @@ The page shows the states with words and colours (`STATE_WORDS`):
 | --- | --- | --- | --- |
 | `needs_you` | needs you | amber | **needs you** (top) |
 | `working` | working | green | working |
+| `waiting` | waiting | violet | waiting |
 | `done` | ready | blue | ready |
 | `ended` | ended | grey | history |
 | `dead` | killed | grey | history |
@@ -905,8 +908,8 @@ appends the new ones.
 
 ### The sidebar
 
-The sidebar sorts sessions into four groups (`BANDS`), most urgent first:
-**needs you**, **working**, **ready**, and **history**. Rows are made once
+The sidebar sorts sessions into five groups (`BANDS`), most urgent first:
+**needs you**, **working**, **waiting**, **ready**, and **history**. Rows are made once
 (`newRow`) and then only filled (`fillRow`). A row is never rebuilt, so its
 colour can fade and its pulse can keep its rhythm.
 

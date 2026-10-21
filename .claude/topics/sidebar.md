@@ -4,7 +4,7 @@ The groups, `settled`, children under a row, the top of the page, a row's
 lines and icons, the chosen row, the grip, drags, folds, rows kept.
 
 - **Group by state, newest first inside a group.** `BANDS`, most urgent
-  first: needs you, working, ready, history (the reader's order: one at
+  first: needs you, working, waiting, ready, history (the reader's order: one at
   its prompt waits for nothing). A row moves only when a turn begins, ends
   or stops on a question, so the list does not churn. **Inside a group the
   daemon's order stands**: `Session.settled`, newest first.
@@ -52,8 +52,20 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
     child session's line opens it (`choose`); a subagent's opens nothing.
   `test_what_a_session_started_stands_under_its_row`,
   `tests/test_subagents.py`.
-- **There are four states, not five.** "starting" was ready told in a way
+- **There are five states, not six.** "starting" was ready told in a way
   that went stale. `SessionStart` sets `done`, whose word is "ready".
+  **"waiting" is a turn over with a command still running in the
+  background** (#617, topics/state): blue said ready over an agent waiting
+  on a build. Its colour is `--waiting`, violet: a teal between green and blue was
+  hard to tell from both, so the reader chose violet. It counts
+  in the title and icon after working, and is no alert.
+  - **A command in the background is a line under its row** (`Shell`,
+    `note_shells`, `kidsOf`, `.kid.shell`): from its call's result
+    (`backgroundTaskId`), kept while each `Stop` lists it as a running
+    `shell`, gone at its `<task-notification>` (`TASK_ID`) or `SessionEnd`.
+    A subagent's own command is not the row's.
+    `test_a_command_in_the_background_is_kept_until_it_ends`,
+    `test_a_waiting_row_has_its_own_group_colour_and_lines`.
 - **The fold is not a filter.** The filter still counts and searches the
   folded history, and the chosen row is never missing from its list.
 - **There is no bar across the top.** The name and version head the

@@ -5,6 +5,8 @@ from __future__ import annotations
 import pathlib
 import time
 
+from pathlib import Path
+
 import pytest
 from conftest import event as hook_event
 
@@ -1798,23 +1800,24 @@ def recorded_background(**changes):
 
 def test_a_turn_that_leaves_a_task_running_is_not_over(ws):
     """The row went to ready at the turn's `Stop`, said "has finished", and
-    went green again when the task's end woke the agent (#447). So it stays
-    green at the `Stop`. But a command in the background may never end -- a
-    server, a watch loop -- and the row stayed green for hours over an
-    agent idle at its prompt (#488): once Claude Code says the prompt is
-    idle, the turn is over, and the line says what still runs."""
+    went green again when the task's end woke the agent (#447). Green for
+    as long as a server ran was #488; ready a minute later said ready over
+    an agent waiting on a build (#617). So it is "waiting", a state of its
+    own, from the `Stop` until the work is over, idle prompt or not, with
+    no unread and no end until then: the reader chose no alert."""
     stop, woken, last = recorded_background()
     store = ws.Store()
     for one in (event("UserPromptSubmit", prompt="build it", ts=1999.0), stop):
         store.apply(one)
     session = store.sessions["s1"]
-    assert session.state == "working"
+    assert session.state == "waiting"
+    assert ws.STATE_WORDS[session.state] == "waiting"
     assert session.reason == "waiting on: build in the background"
     assert not session.ended_at and not session.unread
     store.apply(event("Notification", notification_type="idle_prompt",
                       message="Claude is waiting for your input", ts=2000.5))
-    assert session.state == "done" and session.ended_at == 2000.5
-    assert session.reason == "in the background: build in the background"
+    assert session.state == "waiting" and not session.ended_at
+    assert session.reason == "waiting on: build in the background"
     store.apply(woken)
     assert session.state == "working"
     assert session.last_prompt == "build it"          # the reader's, still
@@ -1836,6 +1839,70 @@ def test_a_subagent_in_the_background_holds_the_row_green_while_idle(ws):
                          message="Claude is waiting for your input", ts=2000.5))
     assert session.state == "working" and not session.ended_at
     assert session.reason.startswith("waiting on: ")
+
+
+def test_a_command_in_the_background_is_kept_until_it_ends(ws):
+    """What an agent waits on was a word on the row and nothing more
+    (#617). Each command in the background is kept, from its call's result
+    -- which names its task id (measured on 2.1.291) -- while each `Stop`
+    lists it as running, until its `<task-notification>` says it ended. A
+    subagent's own command is not the agent's."""
+    stop, woken, last = recorded_background()
+    started = event("PostToolUse", tool_name="Bash", tool_use_id="t1", ts=1999.5,
+                    tool_input={"command": "make -j8", "description": "build in the background",
+                                "run_in_background": True},
+                    tool_response={"backgroundTaskId": "b00lhcyf2"})
+    store = ws.Store()
+    store.apply(event("UserPromptSubmit", prompt="build it", ts=1999.0))
+    store.apply(started)
+    store.apply(dict(started, agent_id="a1", tool_use_id="t2",
+                     tool_response={"backgroundTaskId": "theirs"}))
+    session = store.sessions["s1"]
+    assert {key: (one.what, one.started) for key, one in session.shells.items()} == {
+        "b00lhcyf2": ("make -j8", 1999.5)}
+    # The `Stop` keeps it, with the moment it started; one it lists that
+    # started unseen is kept from the `Stop`.
+    other = {"id": "x9", "type": "shell", "status": "running", "command": "npm run dev"}
+    store.apply(dict(stop, background_tasks=stop["background_tasks"] + [other]))
+    assert {key: (one.what, one.started) for key, one in session.shells.items()} == {
+        "b00lhcyf2": ("make -j8", 1999.5), "x9": ("npm run dev", 2000.0)}
+    assert ws.agent_fields(session)["shells"] == [
+        {"id": "b00lhcyf2", "what": "make -j8", "started": 1999.5},
+        {"id": "x9", "what": "npm run dev", "started": 2000.0}]
+    store.apply(woken)
+    assert list(session.shells) == ["x9"]
+    # A `Stop` that no longer lists it ends it; one with no list says nothing.
+    store.apply(dict(last, background_tasks="nonsense"))
+    assert list(session.shells) == ["x9"]
+    store.apply(last)
+    assert session.shells == {}
+    store.apply(started)
+    store.apply(event("SessionEnd", reason="other", ts=2010.0))
+    assert session.shells == {}
+
+
+def test_a_send_to_a_waiting_agent_is_watched_as_one_at_its_prompt(ws):
+    """A waiting agent is at its prompt, so a send to it lands as one to a
+    ready agent does, and is watched for (#617)."""
+    import contextlib
+
+    pressed = []
+
+    class Daemon:
+        @contextlib.contextmanager
+        def holding(self, session_id, pane):
+            yield ""
+
+    class Serving:
+        daemon = Daemon()
+
+        def press_send(self, session_id, pane, text, watch=False):
+            pressed.append((session_id, watch))
+
+    for state in ("waiting", "done", "working"):
+        session = ws.Session(session_id=state, pane="%1", state=state)
+        ws.verb_send(Serving(), state, session, {"text": "go on"})
+    assert pressed == [("waiting", True), ("done", True), ("working", False)]
 
 
 def test_a_task_that_is_not_running_does_not_hold_the_turn(ws):

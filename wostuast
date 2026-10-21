@@ -156,6 +156,10 @@ CALLS_HELD = 32
 #: hundreds in a day, and the row goes out on every change.
 SUBAGENTS_HELD = 12
 
+#: How many commands in the background a session keeps (#617): a line
+#: each under its row, so the list has an end.
+TASKS_HELD = 12
+
 #: The tool that starts a subagent: `Agent` on 2.1.289, `Task` before it.
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 
@@ -186,13 +190,17 @@ FORGET_EVERY = 3600.0
 RUN_TIMEOUT = 2.0
 
 #: Every state, in the order the sidebar shows them: the word and the colour.
-#: Four things a session can be, and that is the whole list. "starting" was a
-#: fifth, and it was the first few minutes of a session that had said nothing
+#: Five things a session can be, and that is the whole list. "starting" was a
+#: sixth, and it was the first few minutes of a session that had said nothing
 #: else — which is the same as being ready, told in a way that went stale. A
-#: session that starts is a session waiting at its prompt.
+#: session that starts is a session waiting at its prompt. "waiting" is a
+#: turn that ended with a command still running in the background, which
+#: the agent waits for (#617): blue said ready over an agent waiting on a
+#: build, and green said it worked when it did not.
 STATE_WORDS = {
     "needs_you": "needs you",
     "working": "working",
+    "waiting": "waiting",
     "done": "ready",
     "ended": "ended",
     "dead": "killed",
@@ -201,6 +209,7 @@ STATE_WORDS = {
 STATE_COLORS = {
     "needs_you": "\033[33m",
     "working": "\033[32m",
+    "waiting": "\033[36m",
     "done": "\033[34m",
     "ended": "\033[90m",
     "dead": "\033[90m",
@@ -1310,6 +1319,24 @@ class Subagent:
 
 
 @dataclass
+class Shell:
+    """A command the agent runs in the background (#617), from the call
+    that started it to the news that it ended.
+
+    Measured on 2.1.291 (`tests/fixtures/background_task.jsonl`): the
+    call's `PostToolUse` names it in `tool_response` as `backgroundTaskId`;
+    each `Stop` lists it in `background_tasks` while it runs, as `{id,
+    type: "shell", status, description, command}`; its end wakes the agent
+    with a `<task-notification>` prompt that carries its `<task-id>`.
+    """
+
+    #: The command, or its description when it has none: the row's reason
+    #: says the description already ("waiting on: …").
+    what: str = ""
+    started: float = 0.0
+
+
+@dataclass
 class Session:
     """One Claude Code session, built from its events."""
 
@@ -1414,6 +1441,9 @@ class Session:
     #: for, oldest first. `SubagentStart` carries no description, and the
     #: subagents start in the order of the calls.
     agent_asks: list[str] = field(default_factory=list)
+    #: The commands the agent runs in the background, by task id, oldest
+    #: first: a line each under the row (#617). See `note_shells`.
+    shells: dict[str, Shell] = field(default_factory=dict)
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -1998,6 +2028,7 @@ class Store:
             session.last_event = name
         # After the handler: a subagent's tool call is summed up there once.
         note_subagent(session, event, name, ts)
+        note_shells(session, event, name, ts)
         # Only a change. Every handler assigns a state whether or not it is a
         # new one -- `_on_pre_tool` writes "working" on every tool call -- and
         # moving this each time would put the list back to sorting by the last
@@ -2987,20 +3018,14 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
         # idle, the agent is not, and the row's line says what it waits on.
         #
         # **Unless all it waits on is a command in the background** (#488).
-        # A server or a watch loop never ends, and the row stayed green for
-        # hours over an agent idle at its prompt. Claude Code says it is
-        # idle about a minute after the `Stop`, so that is when the turn
-        # ends here -- ready, unread, "has finished" -- and the line says
-        # what still runs. If the command ends and wakes the agent, its
-        # prompt makes the row green again. A subagent is the agent's next
-        # step, so a row that waits on one stays green. The reader chose
-        # this over ready at the `Stop` and over green until the end.
+        # #488 ended the turn here, a minute after the `Stop`: ready, unread,
+        # "has finished", so a server that never ends did not keep the row
+        # green for hours. #617 gave such a row a state of its own,
+        # "waiting", and the reader chose that it stays waiting, with no
+        # alert, until the work is over: blue said ready over an agent
+        # waiting on a build. A subagent is the agent's next step, so a row
+        # that waits on one stays green.
         if session.waits_on_tasks:
-            if session.state == "working" and not session.waits_on_agents:
-                session.state = "done"
-                session.ended_at = ts
-                session.reason = session.reason.replace("waiting on: ", "in the background: ", 1)
-                session.last_event = message or "waiting for input"
             return
         # An open dialog is the better reason, and it outranks this one.
         if session.state != "needs_you":
@@ -3067,7 +3092,6 @@ def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
     # server started in the background keeps the row green until it ends.
     waiting = running_tasks(event)
     if waiting:
-        session.state = "working"
         more = f" and {counted(len(waiting) - 1, 'more', 'more')}" if len(waiting) > 1 else ""
         session.reason = f"waiting on: {clip(waiting[0], 80)}{more}"
         session.last_event = session.reason
@@ -3076,6 +3100,9 @@ def _on_stop(session: Session, event: dict[str, Any], ts: float) -> None:
         session.waits_on_agents = any(
             isinstance(one, dict) and one.get("status") == "running"
             and one.get("type") == "subagent" for one in tasks)
+        # A subagent works on, so the row does; an agent that waits only on
+        # a command is "waiting" (#617), a colour of its own, no alert.
+        session.state = "working" if session.waits_on_agents else "waiting"
         return
     session.state = "done"
     session.last_event = "stopped"
@@ -3193,6 +3220,53 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
         one.doing = session.last_tool        # `_on_pre_tool` made it
     elif name == "PostToolUseFailure" and tool:
         one.doing = tool_summary(tool, event.get("tool_input"), session.cwd)
+
+
+#: The task a `<task-notification>` prompt says has ended.
+TASK_ID = re.compile(r"<task-id>(.*?)</task-id>", re.S)
+
+
+def note_shells(session: Session, event: dict[str, Any], name: str, ts: float) -> None:
+    """Keep the commands the agent runs in the background, for a line each
+    under its row (#617): the reader could not see what the agent waited on.
+
+    One starts with its call's result, which names its task id. A `Stop`
+    lists those still running, and one it does not list is over; a `Stop`
+    with no list -- an older build -- says nothing. A task's end comes as a
+    `<task-notification>` prompt with its id. A subagent's own calls are
+    its own: a line under the row is the agent's.
+    """
+    if event.get("agent_id"):
+        return
+    if name == "PostToolUse" and event.get("tool_name") == "Bash":
+        said = event.get("tool_response")
+        task = said.get("backgroundTaskId") if isinstance(said, dict) else None
+        if isinstance(task, str) and task and task not in session.shells:
+            given = event.get("tool_input")
+            given = given if isinstance(given, dict) else {}
+            what = given.get("command") or given.get("description") or "a command"
+            session.shells[task] = Shell(what=clip(str(what), 120), started=ts)
+            while len(session.shells) > TASKS_HELD:
+                del session.shells[next(iter(session.shells))]
+    elif name == "Stop":
+        tasks = event.get("background_tasks")
+        if not isinstance(tasks, list):
+            return
+        listed = {str(one.get("id")): one for one in tasks
+                  if isinstance(one, dict) and one.get("type") == "shell"
+                  and one.get("status") == "running"}
+        kept = {key: one for key, one in session.shells.items() if key in listed}
+        for key, one in listed.items():
+            if key not in kept:
+                what = one.get("command") or one.get("description") or "a command"
+                kept[key] = Shell(what=clip(str(what), 120), started=ts)
+        session.shells = dict(list(kept.items())[-TASKS_HELD:])
+    elif name == "UserPromptSubmit":
+        ended = TASK_ID.search(str(event.get("prompt") or ""))
+        if ended and TASK_ENDED.match(str(event.get("prompt") or "")):
+            session.shells.pop(ended.group(1).strip(), None)
+    elif name == "SessionEnd":
+        session.shells = {}
 
 
 def end_subagents(session: Session, moment: float,
@@ -8894,6 +8968,9 @@ def agent_fields(session: Session) -> dict[str, Any]:
             for key, one in session.subagents.items()
         ],
         "agents_ran": session.agents_ran,
+        # What runs in the background (#617), a line each under the row.
+        "shells": [{"id": key, "what": one.what, "started": round(one.started, 3)}
+                   for key, one in session.shells.items()],
     }
 
 
@@ -10681,7 +10758,8 @@ def verb_send(serving: Serving, session_id: str, session: Session,
     # queued, and reaches the transcript when the agent takes it, which
     # may be minutes on. A slash command may open a dialog of its own
     # and write nothing until it closes.
-    watch = session.state == "done" and not text.lstrip().startswith("/")
+    watch = (session.state in ("done", "waiting")
+             and not text.lstrip().startswith("/"))
     with serving.daemon.holding(session_id, pane) as busy:
         if busy:
             return 409, {"error": busy}
@@ -13059,6 +13137,11 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --ink-mute: #8b8f9e; --ink-faint: #6f7385;
   --needs: #e0a642; --needs-warm: #f0c068; --working: #6bbf8a; --done: #5b9bd5;
   --gone: #6f7385;
+  /* Waiting on work in the background (issue 617): violet, the reader's
+     choice. A teal between working's green and ready's blue was asked for
+     first, and was hard to tell from both, the more so for a reader who
+     does not see red and green apart. */
+  --waiting: #a98cf5; --waiting-soft: rgba(169,140,245,.16);
   --needs-soft: rgba(224,166,66,.28); --working-soft: rgba(107,191,138,.18);
   /* The browser tab's icon. It stands in the browser's tab bar, not on this
      page, so it follows the browser's colours and never the page's theme:
@@ -13068,6 +13151,7 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
      of tabs that are all blue. */
   --tab-ready-light: #3c4043; --tab-ready-dark: #e3e3e3;
   --tab-working-light: #1e8e3e; --tab-working-dark: #5bb974;
+  --tab-waiting-light: #6c45cf; --tab-waiting-dark: #b39cf8;
   --tab-needs-light: #e37400; --tab-needs-dark: #fcad4d;
   /* Each theme's ground and ink, by name, so the colours buttons can wear
      the colours they give whichever theme the page is in. The theme blocks
@@ -13170,6 +13254,7 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --ink-mute: #6a6d76; --ink-faint: #8b8e96;
   --needs: #a86c10; --needs-warm: #8a5709; --working: #2f7f52;
   --done: #2a6ea8; --gone: #8b8e96;
+  --waiting: #6c4bc7; --waiting-soft: rgba(108,75,199,.11);
   --needs-soft: rgba(168,108,16,.22); --working-soft: rgba(47,127,82,.14);
   --done-soft: rgba(42,110,168,.13);
   --cut-bg: rgba(178,74,42,.12); --cut-ink: #8c3a1f;
@@ -13611,6 +13696,7 @@ body.dragging.rowdrag { cursor: row-resize; }
 }
 .row.needs_you { --soft: var(--needs-soft); --hue: var(--needs); border-left-color: var(--needs); background: var(--needs-soft); }
 .row.working { --soft: var(--working-soft); --hue: var(--working); border-left-color: var(--working); background: var(--working-soft); }
+.row.waiting { --soft: var(--waiting-soft); --hue: var(--waiting); border-left-color: var(--waiting); background: var(--waiting-soft); }
 .row.done { --soft: var(--done-soft); --hue: var(--done); border-left-color: var(--done); background: var(--done-soft); }
 .row:hover { border-color: var(--edge-bright); border-left-width: 4px; }
 /* The chosen row is a tab of the content beside it, as in a browser: it
@@ -13771,6 +13857,10 @@ body.dragging.rowdrag { cursor: row-resize; }
 }
 .row .kid .kidmark { color: var(--ink-faint); flex-shrink: 0; }
 .row .kid.running .kidmark { color: var(--working); }
+/* A command in the background: its arrow the waiting colour, its text the
+   fixed face, as a command is everywhere else. */
+.row .kid.shell .kidmark { color: var(--waiting); }
+.row .kid.shell .kidwhat { font-family: var(--mono); font-size: 11px; }
 .row .kid .kidwhat { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
 .row .kid .kiddoing { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
 .row .kid.opens:hover .kidwhat { color: var(--ink); text-decoration: underline; }
@@ -13962,6 +14052,7 @@ body.switching #content::after {
 .feedentry:hover { border-color: var(--edge-bright); border-left-color: var(--hue); }
 .feedentry.needs { --hue: var(--needs); }
 .feedentry.working { --hue: var(--working); }
+.feedentry.waiting { --hue: var(--waiting); }
 .feedentry.gone { --hue: var(--gone); }
 .feedentry:not(:hover):not(:focus-within) .feedtop .link { display: none; }
 .feedwhere {
@@ -16575,6 +16666,9 @@ function whyNoText(s) {
 const BANDS = [
   ["needs", "needs you", needsYou],
   ["working", "working", (s) => s.state === "working"],
+  // Under working and over ready (#617): the agent is at its prompt, but
+  // what it waits on still runs.
+  ["waiting", "waiting", (s) => s.state === "waiting"],
   ["ready", "ready", (s) => s.state === "done"],
   ["history", "history", isGone],
 ];
@@ -16958,7 +17052,7 @@ function putCard(list, id, s, open) {
   const entry = put(list, "div", "feedentry");
   entry.dataset.id = id;
   const kind = !s || isGone(s) ? "gone" : needsYou(s) ? "needs"
-    : s.state === "working" ? "working" : "";
+    : s.state === "working" || s.state === "waiting" ? s.state : "";
   if (kind) entry.classList.add(kind);
   const top = put(entry, "div", "feedtop");
   put(top, "span", "feedname", s ? rowName(s) : "a session no longer listed");
@@ -17277,7 +17371,7 @@ function childIds() {
   return new Set(state.sessions.filter((s) => {
     const parent = s.started_by && byId.get(s.started_by);
     if (!parent || s.pane || s.state === "needs_you") return false;
-    return !(isGone(parent) && s.state === "working");
+    return !(isGone(parent) && (s.state === "working" || s.state === "waiting"));
   }).map((s) => s.id));
 }
 
@@ -17451,13 +17545,19 @@ function kidsOf(s) {
     id: one.id, session: true, what: rowName(one),
     doing: one.reason || one.last_event || "",
     started: one.started_at || one.since,
-    ended: one.state === "working" || one.state === "needs_you" ? 0 : one.since,
+    ended: ["working", "waiting", "needs_you"].includes(one.state) ? 0 : one.since,
   }));
   const agents = (s.subagents || []).map((one) => ({
     id: one.id, session: false, what: one.what || one.kind || "subagent",
     kind: one.kind, doing: one.doing, started: one.started, ended: one.ended,
   }));
-  return sessions.concat(agents).sort((a, b) => a.started - b.started);
+  // A command in the background (#617) runs until the daemon lets it go:
+  // its end is the line going.
+  const shells = (s.shells || []).map((one) => ({
+    id: "shell:" + one.id, session: false, shell: true, what: one.what,
+    doing: "", started: one.started, ended: 0,
+  }));
+  return sessions.concat(agents, shells).sort((a, b) => a.started - b.started);
 }
 
 // The lines under a row: one for each child still running, then "3
@@ -17502,6 +17602,7 @@ function fillKids(box, s) {
 // how long ago it started, or ended.
 function putKid(box, one) {
   const line = put(box, "div", "kid" + (one.ended ? "" : " running")
+    + (one.shell ? " shell" : "")
     + (one.session ? " opens" : "") + (one.id === state.chosen ? " chosen" : ""));
   line.dataset.kid = one.id;
   put(line, "span", "kidmark", "\u21b3");
@@ -17972,8 +18073,9 @@ function drawCounts() {
   }
   const needs = rows.filter(needsYou).length;
   const working = (tally.get("working") || { n: 0 }).n;
+  const waiting = (tally.get("waiting") || { n: 0 }).n;
   document.title = tabTitle(rows);
-  drawIcon(needs ? "needs_you" : working ? "working"
+  drawIcon(needs ? "needs_you" : working ? "working" : waiting ? "waiting"
     : rows.length ? "done" : "gone");
   drawFeedLink();
 }
@@ -18736,6 +18838,8 @@ function tabTitle(sessions) {
   const first = unread ? unread + " unread \u00b7 " : "";
   const working = sessions.filter((s) => s.state === "working").length;
   if (working) return first + working + " working \u00b7 wostuast";
+  const waiting = sessions.filter((s) => s.state === "waiting").length;
+  if (waiting) return first + waiting + " waiting \u00b7 wostuast";
   const ready = sessions.filter((s) => s.state === "done").length;
   return first + (ready ? ready + " ready \u00b7 wostuast" : "wostuast");
 }
@@ -18795,7 +18899,8 @@ function drawIcon(state_) {
   if (key === iconWas) return;
   iconWas = key;
   const shown = state_ === "needs_you" ? "needs"
-                : state_ === "working" ? "working" : "ready";
+                : state_ === "working" ? "working"
+                : state_ === "waiting" ? "waiting" : "ready";
   const picture = iconPicture(shown);
   if (!picture) return;
   let link = document.querySelector("link[rel='icon']");
@@ -18960,9 +19065,10 @@ function notifyAbout(sessions) {
     // A change, not a state: "done" is where a session sits between turns,
     // so the news is the moment it got there. A session this page has not
     // seen before has no entry, which is why one already finished when you
-    // opened the page says nothing.
+    // opened the page says nothing. From waiting too (#617): the work it
+    // waited on is over.
     if (want.done && session.state === "done"
-        && before.get(session.id) === "working") {
+        && ["working", "waiting"].includes(before.get(session.id))) {
       tellAbout(session, rowName(session) + " has finished",
                 session.prompt || "ready for you");
     }

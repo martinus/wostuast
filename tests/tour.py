@@ -11,7 +11,7 @@ they look together. A design review of the sidebar and the views drew this
 from nothing in a scratchpad, and used it five times: the pictures before,
 the mockup, and the pictures after each of three pull requests.
 
-Six sessions, one in each state a row can be in:
+Seven sessions, one in each state a row can be in:
 
 - s1 "Fix the cache race": unread, with tool rows, a plan it asked to
   have approved and a final answer in Markdown; it is chosen.
@@ -21,6 +21,7 @@ Six sessions, one in each state a row can be in:
 - s4 "Write the release notes": waiting on a permission.
 - s5 "Update the README": read, with a reminder 50 minutes out.
 - s6 "Try the old allocator": over, in the history (#427).
+- s7 "Run the benchmarks": waiting on a command in the background (#617).
 
 Two answers and a prompt are saved. Every session has a status line:
 model, context, spend.
@@ -60,7 +61,8 @@ NAMES = {"s1": ("Fix the cache race", "oans", "fix/cache"),
          "s3": ("Speed up the table", "unordered_dense", "main"),
          "s4": ("Write the release notes", "wostuast", "notes"),
          "s5": ("Update the README", "wostuast", "docs"),
-         "s6": ("Try the old allocator", "unordered_dense", "try/alloc")}
+         "s6": ("Try the old allocator", "unordered_dense", "try/alloc"),
+         "s7": ("Run the benchmarks", "unordered_dense", "bench")}
 
 SAID = {
     "s1": "The race is gone. `put` now takes the cache's lock, and `get` reads a copy.\n\n"
@@ -79,7 +81,7 @@ def stamp(at: float) -> str:
 
 
 def make_sessions(ws, home: Path) -> None:
-    """The six sessions, their transcripts, their events, and the marks:
+    """The seven sessions, their transcripts, their events, and the marks:
     seen, saved, the reminder."""
     from conftest import isolate, record, records
 
@@ -151,6 +153,18 @@ def make_sessions(ws, home: Path) -> None:
                           "destination": "localSettings",
                           "rules": [{"toolName": "Bash", "ruleContent": "make release *"}]}],
                      "cwd": str(home / "w" / "s4"), "pane": "%4", "pid": 1, "ts": now - 30})
+    # One that waits on a command in the background (#617): its call's
+    # result names the task, and the turn's `Stop` lists it as running.
+    bench = {"session_id": "s7", "cwd": str(home / "w" / "s7"), "pane": "%6", "pid": 1}
+    ws.append_event({**bench, "hook_event_name": "PostToolUse", "tool_name": "Bash",
+                     "tool_input": {"command": "./bench --all", "description": "run every benchmark",
+                                    "run_in_background": True},
+                     "tool_response": {"backgroundTaskId": "b7"}, "ts": now - 260})
+    ws.append_event({**bench, "hook_event_name": "Stop", "ts": now - 250,
+                     "last_assistant_message": "The benchmarks run; I go on when they end.",
+                     "background_tasks": [{"id": "b7", "type": "shell", "status": "running",
+                                           "description": "run every benchmark",
+                                           "command": "./bench --all"}]})
     # One that is over, for the history and its chosen row (#427).
     ws.append_event({"session_id": "s6", "hook_event_name": "SessionEnd", "reason": "logout",
                      "cwd": str(home / "w" / "s6"), "pane": "%5", "pid": 1, "ts": now - 900})
