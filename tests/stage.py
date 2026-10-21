@@ -35,7 +35,10 @@ renames the size, and a merge of `main`, which renamed it too, settled by
 hand (#621); `--commit 6` is the merge. `--elsewhere` is a second
 repository, `api`, with one commit and one change, that the agent edited a
 file in: the picker beside the tabs names it (#616). Beside it, `notes`, a
-folder git knows nothing of, for the reader to add (#624).
+folder git knows nothing of, for the reader to add (#624). `--summary` gives
+the session four turns that used something, their times, an Explore
+subagent and a status line that says what it cost, for the Summary tab
+(#622).
 
 Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
@@ -72,7 +75,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TABS = {"review": "diff", "files": "files", "transcript": "transcript",
-        "commands": "commands"}
+        "summary": "summary", "commands": "commands"}
 WIDE = "x" * 40
 MESSAGES = [
     "Add ring_push\n\nPushes one item.",
@@ -177,8 +180,59 @@ def make_elsewhere(api: Path) -> None:
     (notes / "meetings" / "monday.md").write_text("# Monday\n\nThe ring is full too often.\n")
 
 
+#: The turns `--summary` writes (#622): each prompt, its calls, and what its
+#: one reply used, as Claude Code writes `usage`.
+SPENT = [
+    ("Find where the ring is defined.", ["Grep", "Read"],
+     dict(input_tokens=30, cache_read_input_tokens=180_000, output_tokens=2_400)),
+    ("Refactor the parser to use the ring.", ["Read", "Read", "Edit", "Edit", "Bash"],
+     dict(input_tokens=90, cache_creation_input_tokens=60_000,
+          cache_read_input_tokens=1_900_000, output_tokens=41_000)),
+    ("Run the tests and fix what fails.", ["Bash", "Bash", "Edit", "Bash"],
+     dict(input_tokens=60, cache_read_input_tokens=1_200_000, output_tokens=18_000)),
+    ("Write the changelog.", ["Read", "Edit"],
+     dict(input_tokens=12, cache_read_input_tokens=300_000, output_tokens=3_100)),
+]
+
+
+def make_spending(ws, transcript: Path, repo: Path) -> None:
+    """Four turns that used something, their times, an Explore subagent
+    and a status line that says what it all cost (#622)."""
+    from conftest import record, records
+    made = []
+    for at, (said, tools, used) in enumerate(SPENT):
+        made.append(record("you", said))
+        for count, tool in enumerate(tools):
+            one = record("tool", "src/ring.c", tool=tool, tool_id=f"t{at}{count}")
+            one["message"].update(id=f"m{at}", usage=used)
+            made += [one, record("result", "ok", tool_id=f"t{at}{count}")]
+    with transcript.open("a") as handle:
+        handle.write(records(*made))
+    began = time.time() - 7_800
+    base = {"session_id": "s1", "cwd": str(repo), "pane": "%7"}
+    times = [(0, 300), (600, 1_900), (2_400, 3_500), (4_000, 4_200)]
+    for (start, end), (said, _, _) in zip(times, SPENT):
+        ws.append_event({**base, "hook_event_name": "UserPromptSubmit", "prompt": said,
+                         "ts": began + start})
+        ws.append_event({**base, "hook_event_name": "Stop", "ts": began + end})
+    agent = {**base, "agent_id": "ag1", "agent_type": "Explore"}
+    ws.append_event({**agent, "hook_event_name": "SubagentStart", "ts": began + 700})
+    for step in range(3):
+        ws.append_event({**agent, "hook_event_name": "PreToolUse", "tool_name": "Grep",
+                         "tool_input": {"pattern": "ring"}, "ts": began + 710 + step})
+    ws.append_event({**agent, "hook_event_name": "SubagentStop", "ts": began + 860})
+    ws.append_event({**base, "hook_event_name": "UserPromptSubmit", "ts": began + 4_300,
+                     "prompt": "<task-notification>\n<task-id>ag1</task-id>\n"
+                               "<status>completed</status>\n<usage><subagent_tokens>212000"
+                               "</subagent_tokens></usage>\n</task-notification>"})
+    ws.append_event({**base, "hook_event_name": "Stop", "ts": began + 4_320})
+    ws.write_status("s1", ws.Status(ts=time.time(), name="", model="Opus 5",
+                                    cost_usd=4.12, wall_ms=7_800_000, api_ms=2_310_000,
+                                    lines_added=156, lines_removed=23))
+
+
 def serve(home: Path, commands: bool = False, merge: bool = False,
-          elsewhere: bool = False) -> tuple[str, Path]:
+          elsewhere: bool = False, summary: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
     import shutil
 
@@ -205,6 +259,8 @@ def serve(home: Path, commands: bool = False, merge: bool = False,
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
                      "cwd": str(repo), "pane": "%7", "ts": time.time() - 1,
                      "transcript_path": str(transcript)})
+    if summary:
+        make_spending(ws, transcript, repo)
     if elsewhere:
         make_elsewhere(home / "api")
         ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
@@ -251,6 +307,7 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--commands", action="store_true")
     ask.add_argument("--merge", action="store_true")
     ask.add_argument("--elsewhere", action="store_true")
+    ask.add_argument("--summary", action="store_true")
     # One list, so the steps run in the order they were written.
     for flag in ("click", "type", "keys", "eval"):
         ask.add_argument(f"--{flag}", dest="steps", action="append",
@@ -274,7 +331,7 @@ def main(argv: list[str]) -> int:
         (home / "config" / "settings.json").write_text(
             json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
-    url, _ = serve(home, said.commands, said.merge, said.elsewhere)
+    url, _ = serve(home, said.commands, said.merge, said.elsewhere, said.summary)
 
     from browser import DRAWN, WAIT, opened, show_tab
     wait = WAIT or 15000

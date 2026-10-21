@@ -41,8 +41,8 @@ def ran(daemon, name):
 
 def on_the_view(page, by_key=True):
     if by_key:
-        page.keyboard.press("4")
-    else:                       # the focus is in a box, where 4 is a 4
+        page.keyboard.press("5")
+    else:                       # the focus is in a box, where 5 is a 5
         page.click("#cmdlink")
     page.wait_for_function("state.feed === 'commands'")
     page.wait_for_selector(".filelist.commands .cmdrow")
@@ -144,7 +144,7 @@ def test_use_on_a_session_nothing_can_be_typed_into_says_why(ws, no_pane, tmp_pa
 
 def test_the_view_keeps_the_command_it_had_chosen(ws, in_pane, tmp_path):
     """Chosen, left for the session, and come back to: the same command,
-    as a file stays open on the Files tab. `4` goes there and back, as the
+    as a file stays open on the Files tab. `5` goes there and back, as the
     view's button does."""
     daemon, base, _ = in_pane
     skill(tmp_path / ".claude", "review-pr", "Review a pull request", "Body.\n")
@@ -152,9 +152,9 @@ def test_the_view_keeps_the_command_it_had_chosen(ws, in_pane, tmp_path):
         on_the_view(page)
         page.click(".cmdrow:has-text('/review-pr')")
         page.wait_for_selector(".cmdbody .prose")
-        page.keyboard.press("4")
+        page.keyboard.press("5")
         page.wait_for_function("!state.feed && state.tab === 'transcript'")
-        page.keyboard.press("4")
+        page.keyboard.press("5")
         page.wait_for_selector(".cmdbody .prose")
         assert page.text_content(".cmdbody .cmdname") == "/review-pr"
 
@@ -204,7 +204,7 @@ def test_a_command_that_went_away_says_no_session_can_run_it(ws, in_pane, tmp_pa
         shutil.rmtree(tmp_path / ".claude" / "skills" / "review-pr")
         page.keyboard.press("Escape")
         page.wait_for_function("!state.feed")
-        page.keyboard.press("4")
+        page.keyboard.press("5")
         page.wait_for_function(
             "document.querySelector('.cmdbody .note')?.textContent"
             " === 'No session can run it any more.'")
