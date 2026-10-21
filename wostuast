@@ -3264,8 +3264,22 @@ def _on_subagent_start(session: Session, event: dict[str, Any], ts: float) -> No
 
 
 def _on_subagent_stop(session: Session, event: dict[str, Any], ts: float) -> None:
+    if is_own_agent(session, event):
+        return
     agent = str(event.get("agent_type") or "subagent")
     session.last_event = f"{agent} finished"
+
+
+def is_own_agent(session: Session, event: dict[str, Any]) -> bool:
+    """Whether a `SubagentStop` is Claude Code's own agent, not one the
+    agent started (#637): `/compact` fires one with an `agent_id`, an empty
+    `agent_type` and nothing before it (measured on 2.1.306,
+    `tests/fixtures/compact_agent.jsonl`). Each compaction stood under the
+    row as "subagent", 0 calls, 0 s. A subagent we already hold is one,
+    whatever its end says."""
+    return (event.get("hook_event_name") == "SubagentStop"
+            and not event.get("agent_type")
+            and str(event.get("agent_id") or "") not in session.subagents)
 
 
 def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float) -> None:
@@ -3307,6 +3321,8 @@ def note_subagent(session: Session, event: dict[str, Any], name: str, ts: float)
                     one.what = clip(said["description"], 120)
         elif name == "SessionEnd":
             end_subagents(session, ts)
+        return
+    if is_own_agent(session, event):
         return
     one = session.subagents.get(agent)
     if one is None:

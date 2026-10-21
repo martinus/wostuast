@@ -140,6 +140,14 @@ fires each time the subagent stops with no live children of its own. Its
 `SubagentStop` has `last_assistant_message` and `agent_transcript_path`
 (`<projects>/<project>/<session>/subagents/agent-<agent_id>.jsonl`).
 
+**A compaction fires a `SubagentStop` of its own** (measured on 2.1.306,
+`compact_agent.jsonl`, #637). After an Agent call's subagent and its
+`<task-notification>`, `/compact` sends `PreCompact` (`trigger: manual`),
+then a `SubagentStop` with an `agent_id` no `SubagentStart` named, an
+empty `agent_type`, and an `agent_transcript_path` under `subagents/`,
+then `SessionStart` (`source: compact`) and `PostCompact`. It is Claude
+Code's own agent, not one the agent started. The paths are invented.
+
 **A subagent the reader stops sends no `SubagentStop`** (measured on
 2.1.292, `subagent_killed.jsonl`). On 2.1.292 the Agent tool runs its
 subagent in the background with no `run_in_background`, and every `Stop`
