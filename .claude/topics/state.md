@@ -74,6 +74,31 @@ dialog, `/clear`, attention, pids and panes.
   `drawAsking`, so no call site forgets it.
   `test_a_question_stands_on_every_tab_and_nothing_else_types`,
   `test_no_text_is_typed_into_a_question`.
+- **Claude Code's "Switch model?" dialog is a question too** (#626,
+  `model_ask`, `ModelAsked`, `ModelAnswered`, `Daemon.model_answered`):
+  no hook reports it (topics/payloads), and the reader's next message went
+  into it. A send of `/model <name>` (`MODEL_SWITCH`, read off `typed`,
+  not what arrived) to an agent at its prompt with a reply behind it
+  (`replies_held`) writes `ModelAsked` from `press_send`'s `landed`,
+  **before the send's answer goes out**, or a reader of the log after it
+  found nothing. The fold makes an ask of `kind: "model"`, one
+  single-choice question whose digit `ask_keys` presses.
+  - **Nothing is typed until the question is folded**: a send in the tick's
+    second went into the dialog, and its Enter said Yes. `model_pending`
+    refuses text for `MODEL_PENDING` after the `/model`, until the session
+    holds that ask. **Its answer is pressed once** (`model_pressed`).
+  - **It ends by the next `/model` block in the transcript after
+    `model_after`**, whatever it says, given on the page or in the
+    terminal, or by a change of state. A moment was not enough: an earlier
+    `/model`'s answer ended a new question while its dialog stood. A
+    `/model` to the model in use asks nothing, measured; its answer comes
+    at once and ends the question within a tick. `/model` typed in the
+    terminal is not seen at all, nor one to a `waiting` agent.
+  `test_a_model_switch_is_asked_on_the_page_and_answered_with_its_digit`,
+  `test_a_model_question_holds_the_prompt_from_the_moment_it_is_typed`,
+  `test_only_a_model_switch_as_it_is_typed_asks`,
+  `test_a_model_switch_with_nothing_to_read_again_asks_nothing`,
+  `test_a_model_question_is_asked_of_an_idle_agent_and_ended_by_its_own_answer`.
 - **Picking types nothing; submit does**: a click into a terminal cannot be
   taken back. `state.picked` keeps the picks **with the ask's id**, so none
   goes to the next question, **and its shape**: an ask with no id matched

@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -2884,6 +2885,135 @@ def test_a_send_claude_code_never_took_is_said_and_given_back(ws, watched):
     status, body = post(f"{base}/api/session/s1/send", {"text": "/config"},
                         token=daemon.token)
     assert body.get("seen") is None, body
+
+
+def test_a_model_switch_is_asked_on_the_page_and_answered_with_its_digit(ws, watched):
+    """After the first reply, `/model <name>` opens Claude Code's "Switch
+    model?" dialog, which no hook reports (#626, measured on 2.1.306): the
+    reader's next message went into it. The page's `/model` makes it a
+    question on the page; its answer is one digit, as the dialog takes;
+    and it goes when the transcript holds the answer."""
+    daemon, base, seen, lands = watched
+    lands["on"] = False
+    path = Path(daemon.store.sessions["s1"].transcript_path)
+    with path.open("a") as out:
+        out.write(conftest.records(conftest.record("you", "hello"),
+                                   conftest.record("claude", "ok")))
+    status, body = post(f"{base}/api/session/s1/send", {"text": "/model sonnet"},
+                        token=daemon.token)
+    assert status == 200, body
+    daemon.store.refresh()
+    session = daemon.store.sessions["s1"]
+    assert session.state == "needs_you"
+    ask = session.asking
+    assert ask["kind"] == "model" and ask["answerable"]
+    assert [one["label"] for one in ask["questions"][0]["options"]] == [
+        "Yes, switch to sonnet", "No, go back"]
+    # Nothing else is typed while it stands, and the answer is one digit.
+    status, body = post(f"{base}/api/session/s1/send", {"text": "go on"},
+                        token=daemon.token)
+    assert status == 409, body
+    seen.clear()
+    status, body = post(f"{base}/api/session/s1/answer",
+                        {"ask": ask["id"], "picks": [[1]]}, token=daemon.token)
+    assert status == 200 and body["keys"] == ["1"], body
+    # The answer in the transcript, as Claude Code writes it when the
+    # dialog closes, ends the question.
+    moment = time.time() + 0.5
+    now = (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(moment))
+           + f".{int(moment % 1 * 1000):03d}Z")
+    with path.open("a") as out:
+        out.write(conftest.records(
+            conftest.record("you", "<command-name>/model</command-name>\n"
+                                   "<command-message>model</command-message>\n"
+                                   "<command-args>sonnet</command-args>", ts=now),
+            conftest.record("you", "<local-command-stdout>Set model to Sonnet 5.5"
+                                   "</local-command-stdout>", ts=now)))
+    daemon.tick()
+    assert session.state == "done" and session.asking is None
+    assert session.last_event == "Set model to Sonnet 5.5"
+
+
+def model_answer(path, model, said):
+    """The `/model` and its answer, as Claude Code writes them when its
+    dialog closes."""
+    with path.open("a") as out:
+        out.write(conftest.records(
+            conftest.record("you", "<command-name>/model</command-name>\n"
+                                   "<command-message>model</command-message>\n"
+                                   f"<command-args>{model}</command-args>"),
+            conftest.record("you", f"<local-command-stdout>{said}</local-command-stdout>")))
+
+
+def test_a_model_question_holds_the_prompt_from_the_moment_it_is_typed(ws, watched):
+    """The question is folded on the next tick, and a message sent in that
+    second went into the dialog, where its Enter said Yes. Nothing is typed
+    until it stands; a second press of its answer types nothing; and an
+    earlier `/model`'s answer does not end it."""
+    daemon, base, seen, lands = watched
+    lands["on"] = False
+    path = Path(daemon.store.sessions["s1"].transcript_path)
+    with path.open("a") as out:
+        out.write(conftest.records(conftest.record("you", "hello"),
+                                   conftest.record("claude", "ok")))
+    # An earlier `/model`, to the model in use, answered at once.
+    model_answer(path, "haiku", "Set model to Haiku 5.5")
+    status, _ = post(f"{base}/api/session/s1/send", {"text": "/model opus"},
+                     token=daemon.token)
+    assert status == 200
+    seen.clear()
+    status, body = post(f"{base}/api/session/s1/send", {"text": "/effort high"},
+                        token=daemon.token)
+    assert status == 409 and "question" in body["error"], body
+    assert seen == []
+    daemon.tick()
+    daemon.tick()
+    session = daemon.store.sessions["s1"]
+    assert session.state == "needs_you", "the earlier answer ended it"
+    ask = session.asking
+    status, body = post(f"{base}/api/session/s1/answer",
+                        {"ask": ask["id"], "picks": [[2]]}, token=daemon.token)
+    assert status == 200 and body["keys"] == ["2"], body
+    status, body = post(f"{base}/api/session/s1/answer",
+                        {"ask": ask["id"], "picks": [[2]]}, token=daemon.token)
+    assert status == 409, body
+    # An answer Claude Code words otherwise ends it all the same.
+    model_answer(path, "opus", "Model 'opus' is not available")
+    daemon.tick()
+    assert session.state == "done" and session.asking is None
+
+
+def test_only_a_model_switch_as_it_is_typed_asks(ws, watched):
+    """`typed` takes the controls out of a send: `/model\x0bsonnet` is
+    typed as `/modelsonnet`, which opens no dialog."""
+    daemon, base, seen, lands = watched
+    lands["on"] = False
+    path = Path(daemon.store.sessions["s1"].transcript_path)
+    with path.open("a") as out:
+        out.write(conftest.records(conftest.record("claude", "ok")))
+    post(f"{base}/api/session/s1/send", {"text": "/model\x0bsonnet"}, token=daemon.token)
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].asking is None
+
+
+def test_a_model_switch_with_nothing_to_read_again_asks_nothing(ws, watched):
+    """A session with no reply yet switches at once, measured: no dialog,
+    so no question. Nor one to a busy agent, whose `/model` waits."""
+    daemon, base, seen, lands = watched
+    lands["on"] = False
+    status, body = post(f"{base}/api/session/s1/send", {"text": "/model sonnet"},
+                        token=daemon.token)
+    assert status == 200, body
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].state == "done"
+    path = Path(daemon.store.sessions["s1"].transcript_path)
+    with path.open("a") as out:
+        out.write(conftest.records(conftest.record("claude", "ok")))
+    ws.append_event(event("UserPromptSubmit", prompt="go", pane="%7", pid=1))
+    daemon.store.refresh()
+    post(f"{base}/api/session/s1/send", {"text": "/model haiku"}, token=daemon.token)
+    daemon.store.refresh()
+    assert daemon.store.sessions["s1"].asking is None
 
 
 def test_a_send_to_a_busy_agent_is_not_watched(ws, watched):

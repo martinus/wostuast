@@ -1889,6 +1889,8 @@ def test_a_send_to_a_waiting_agent_is_watched_as_one_at_its_prompt(ws):
     pressed = []
 
     class Daemon:
+        model_pending: dict = {}
+
         @contextlib.contextmanager
         def holding(self, session_id, pane):
             yield ""
@@ -1896,7 +1898,7 @@ def test_a_send_to_a_waiting_agent_is_watched_as_one_at_its_prompt(ws):
     class Serving:
         daemon = Daemon()
 
-        def press_send(self, session_id, pane, text, watch=False):
+        def press_send(self, session_id, pane, text, watch=False, landed=None):
             pressed.append((session_id, watch))
 
     for state in ("waiting", "done", "working"):
@@ -2006,3 +2008,22 @@ def test_another_sessions_message_does_not_name_the_session(ws):
                    event("UserPromptSubmit", ts=2.0,
                          prompt="Another Claude session sent a message:\n" + said))
     assert session.first_prompt == "fix it" and session.last_prompt == "fix it"
+
+
+def test_a_model_question_is_asked_of_an_idle_agent_and_ended_by_its_own_answer(ws):
+    """`ModelAsked` and `ModelAnswered` are wostuast's own records (#626).
+    The question is asked only of an agent at its prompt, where the dialog
+    opens, and only the answer to that question ends it."""
+    asked = event("ModelAsked", model="sonnet", ask_id="model-1", after=4, ts=1001.0)
+    session = fold(ws, event("SessionStart", ts=1000.0), asked)
+    assert session.state == "needs_you" and session.asking["id"] == "model-1"
+    assert session.reason == "asks: switch model to sonnet?"
+    assert session.attention_since == 1001.0 and session.model_after == 4
+    other = event("ModelAnswered", ask_id="model-2", said="Set model to X", ts=1002.0)
+    assert fold(ws, event("SessionStart", ts=1000.0), asked, other).state == "needs_you"
+    mine = dict(other, ask_id="model-1")
+    session = fold(ws, event("SessionStart", ts=1000.0), asked, mine)
+    assert session.state == "done" and session.asking is None
+    assert session.last_event == "Set model to X"
+    busy = fold(ws, event("UserPromptSubmit", prompt="go", ts=1000.0), asked)
+    assert busy.state == "working" and busy.asking is None

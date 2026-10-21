@@ -552,6 +552,8 @@ stateDiagram-v2
         needs_you --> working : next PreToolUse<br/>(the agent moved on;<br/>a subagent's is not that)
         needs_you --> done : Declined (a No)
         needs_you --> working : Approved (a Yes)
+        done --> needs_you : ModelAsked<br/>(the page typed /model)
+        needs_you --> done : ModelAnswered<br/>(its answer in the transcript)
         working --> done : Stop<br/>(no background task running)
         working --> waiting : Stop<br/>(only a command still running)
         waiting --> working : UserPromptSubmit<br/>(the task's end wakes it)

@@ -70,6 +70,15 @@ is `<command-name>…<command-args>…` and then `<local-command-stdout>…`, or
 `system` records with `subtype: local_command` holding the same text in
 `content`. `/context`'s answer carries colour codes.
 
+**A `/model` to another model, after the first reply, opens a dialog**
+(measured on 2.1.306, #626): "Switch model? Your next response will be
+slower and use more tokens", "1. Yes, switch to …", "2. No, go back". It
+fires no hook, not even a `Notification` after 70 s, and the transcript
+holds nothing until it closes; then it holds the command and its answer,
+"Set model to …" for `1`, "Kept model as …" for `2` and for Escape. A
+session with no reply yet, and a `/model` to the model in use, ask
+nothing and answer "Set model to …" at once.
+
 `/clear` sends two events, measured on 2.1.282: `SessionEnd` with `reason:
 clear` for the old id, then `SessionStart` with `source: clear` for a new id
 and a new `transcript_path`, about 0.1 s later. They carry the same `pane`

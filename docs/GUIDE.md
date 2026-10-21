@@ -435,6 +435,12 @@ its family), the full names of the models your sessions ran this week, and the
 effort levels. Your pick is typed into the session as `/model` or `/effort`.
 Claude Code then also makes it the default for new sessions.
 
+After the agent's first reply, Claude Code asks before it changes the
+model: the next reply reads the whole conversation again, which is slower
+and uses more tokens. The page shows that question, as it shows the
+agent's own questions: pick **Yes, switch** or **No, go back**. You can
+also answer it in the terminal; the question then goes from the page.
+
 > [!WARNING]
 > The spend is Claude Code's own estimate at list price. It can differ from
 > your bill, and it starts again at zero after `/clear`.
