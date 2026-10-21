@@ -107,8 +107,8 @@ Choices, not lessons from a bug. Weigh the reason before undoing one.
 - **Markdown renders in the browser; the diff parser is our own.** The
   standard library has no Markdown renderer; a diff is small to parse.
 - **Syntax highlighting earned a second library.** `highlight.js` loads
-  when the first non-Markdown file opens or the Diff tab first draws,
-  never on load. `hljsReady`.
+  when the first non-Markdown file opens, the Diff tab first draws, or a
+  call is opened onto its command (#619), never on load. `hljsReady`.
 - **A path is found by scattered letters; text is found as typed.** A path
   is half remembered; prose means what was typed. `fuzzy`, `findPath`,
   `matches`.

@@ -31,7 +31,8 @@ what it shows -- its text, not its box -- to the top of the next block.
 `--hover WORDS` puts the pointer on WORDS first, which is what shows the
 copy button of their turn, and of their code block when they are in one.
 `--eval JS` runs in the page after that, and the picture waits for what it
-started to settle: a click on a button, a scroll of the pane. `--part SELECTOR` is what the picture is of: the
+started to settle (JS may be a file that holds it, as `tour.py` takes: a
+highlighter handed in for a picture is past what one argument may hold): a click on a button, a scroll of the pane. `--part SELECTOR` is what the picture is of: the
 transcript pane unless it says otherwise, `#content` for the map beside it
 too, `body` for the whole page.
 """
@@ -139,6 +140,12 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--measure", action="store_true")
     ask.add_argument("--part", default=".turnbody")
     said = ask.parse_args(argv)
+    # Code longer than a file's name may be is code, as in `tour.py`.
+    try:
+        if said.script and Path(said.script).is_file():
+            said.script = Path(said.script).read_text()
+    except OSError:
+        pass
 
     # Before anything is imported, so nothing can reach the reader's own
     # state directory or their Claude settings. `serve` does it again, for

@@ -267,7 +267,12 @@ Two or more tool calls in a row show as one line, such as
 calls, the tools most used first, the lines that edits added and removed,
 and how many calls failed. Click it to see each call, and click it again to
 fold them. While you search, a group that holds what you search for shows
-all its calls.
+all its calls. If you opened a call to read it and the agent then runs the
+next one, the group stays open.
+
+A call's line shows only the start of a command. Click the call to see the
+whole command, in colour, over what it printed. A call of another tool
+shows what it was given, as JSON.
 
 A command you run in Claude Code shows with its answer, in a fixed-width font:
 a `!` command with what it printed, and a slash command such as `/model opus`

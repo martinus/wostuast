@@ -3139,6 +3139,103 @@ def test_a_run_grows_as_its_calls_arrive(page_at):
         assert page.evaluate(SHOWN, "ls one") == [True]
 
 
+def test_an_opened_call_shows_its_whole_command_painted(page_at):
+    """The line cuts a command at 60 characters and folds its lines into
+    one, and opened, the call showed only what it printed (#619). Opened,
+    it shows the whole command over its output, painted as the shell reads
+    it, or as Python when Python runs it; a call whose line says it all
+    opens onto its output alone."""
+    daemon, path = page_at
+    long = ("for f in tests/*.py; do\n"
+            "  python3 -m pytest \"$f\" -q --maxfail=1 --durations=5 || break\n"
+            "done")
+    script = "python3 - <<'EOF'\nprint('hello')\nEOF"
+    write_records(
+        daemon,
+        conftest.record("claude", "Run them.", ts="2026-09-18T14:30:00.000Z"),
+        conftest.record("tool", long, ts="2026-09-18T14:30:01.000Z", tool_id="w1"),
+        conftest.record("result", "12 passed", ts="2026-09-18T14:30:02.000Z",
+                        tool_id="w1"),
+        conftest.record("claude", "And one script.", ts="2026-09-18T14:30:03.000Z"),
+        conftest.record("tool", script, ts="2026-09-18T14:30:04.000Z", tool_id="w2"),
+        conftest.record("claude", "And a short one.", ts="2026-09-18T14:30:05.000Z"),
+        conftest.record("tool", "make -j", ts="2026-09-18T14:30:06.000Z", tool_id="w3"),
+        conftest.record("result", "built", ts="2026-09-18T14:30:07.000Z",
+                        tool_id="w3"))
+    daemon.tick()
+    with opened(path) as page:
+        page.wait_for_selector(".tool:has-text('make -j')")
+        page.evaluate("""hljsAsked = Promise.resolve({
+          getLanguage: (name) => name === 'bash' || name === 'python',
+          highlight: (text, how) => ({ value: text.split('\\n').map((line) =>
+            '<span class="hljs-' + how.language + '">' + line.replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;') + '</span>').join('\\n') }),
+        });""")
+        assert page.locator(".tool-call").count() == 0
+        page.locator(".tool", has_text="for f in").click()
+        call = page.locator(".tool-call")
+        call.locator(".hljs-bash").first.wait_for()
+        assert call.inner_text() == long
+        assert call.locator(".hljs-bash").count() == 3
+        # The command over what it printed.
+        assert page.evaluate("""() => {
+          const call = document.querySelector('.tool-call');
+          return call.nextElementSibling.className + ':' + call.nextElementSibling.innerText;
+        }""") == "tool-result:12 passed"
+        # One card: no gap, and one rule, between the command and its output.
+        assert page.evaluate("""() => {
+          const call = document.querySelector('.tool-call').getBoundingClientRect();
+          const said = document.querySelector('.tool-result').getBoundingClientRect();
+          return [Math.round(said.top - call.bottom),
+                  getComputedStyle(document.querySelector('.tool-call')).borderBottomWidth];
+        }""") == [0, "0px"]
+        # A call with no output yet opens too: its command is the news.
+        page.locator(".tool", has_text="EOF").click()
+        page.locator(".tool-call .hljs-python").first.wait_for()
+        page.locator(".tool", has_text="make -j").click()
+        page.wait_for_selector(".tool-result:text('built')")
+        assert page.locator(".tool-call").count() == 2
+
+
+def test_a_call_the_reader_opened_stays_open_when_the_next_call_comes(page_at):
+    """The reader opens the one call after a line, to read what it printed,
+    and the agent runs its next command (#620). The two are a run now, and
+    a run is folded: the call the reader was reading was taken away. A run
+    that forms round a call the reader opened is open."""
+    daemon, path = page_at
+
+    def call(target, n, said):
+        write_records(daemon, conftest.record(
+            "tool", target, ts=f"2026-09-18T14:30:0{n}.000Z", tool_id=f"o{n}"),
+            conftest.record("result", said, ts=f"2026-09-18T14:30:0{n}.500Z",
+                            tool_id=f"o{n}"))
+        daemon.tick()
+
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        write_records(daemon, conftest.record(
+            "claude", "Now the build.", ts="2026-09-18T14:30:00.000Z"))
+        call("make one", 1, "built one")
+        page.locator(".tool", has_text="make one").click()
+        page.wait_for_selector(".tool-result:text('built one')")
+        call("make two", 2, "built two")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.callrun')]
+                .some((t) => t.innerText.includes('2 calls'))""")
+        assert page.evaluate(SHOWN, "make one") == [True]
+        assert page.locator(".tool-result:text('built one')").is_visible()
+        # Still the reader's run to fold, and folded, it stays so when the
+        # next call comes, though the call in it is still open.
+        page.locator(".callrun .callsum").click()
+        assert page.evaluate(SHOWN, "make one") == [False]
+        call("make three", 3, "built three")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.callrun')]
+                .some((t) => t.innerText.includes('3 calls'))""")
+        assert page.evaluate(SHOWN, "make one") == [False]
+
+
 def test_landing_on_a_folded_call_opens_its_run(page_at):
     """A search result lands on the block nearest its moment, and that can
     be a call (#379). A hidden node has no place to scroll to: its run

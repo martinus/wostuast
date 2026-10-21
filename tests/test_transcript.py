@@ -221,6 +221,47 @@ def test_the_target_is_the_summary_without_the_tool_name(ws):
     assert ws.tool_target("Mystery", {}, cwd) == ""
 
 
+def test_a_call_keeps_its_whole_input_when_its_line_cuts_it(ws, tmp_path):
+    """An opened call showed what it printed and never what ran: the line
+    cuts a command at 60 characters and folds its lines into one (#619).
+    The block keeps the whole command, as it is, secrets and all, which the
+    reader chose; a line that says it all keeps nothing more."""
+    long = "for f in *.py; do\n  python3 -m pytest \"$f\" -q --maxfail=1 || break\ndone"
+    secret = "curl -u me:hunter22 https://example.com"
+    tool = {"command": "x", "file_path": "/w/dir/a.py"}
+    path = tmp_path / "t.jsonl"
+    path.write_text("".join(json.dumps({
+        "type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": f"c{at}", "name": name, "input": given}]},
+    }) + "\n" for at, (name, given) in enumerate([
+        ("Bash", {"command": long}),
+        ("Bash", {"command": "make -j"}),
+        ("Bash", {"command": secret}),
+        ("Read", tool),
+        ("mcp__db__query", {"sql": "select 1", "limit": 5}),
+        ("mcp__db__query", {"sql": "select * from a_table_with_a_long_name "
+                                   "where one = 1 and two = 2 and three = 3"}),
+    ])))
+    blocks = ws.Transcript(str(path), "/w/dir").read_new()
+    assert [one.call for one in blocks] == [
+        long, "", secret, "", "",
+        '{\n  "sql": "select * from a_table_with_a_long_name where one = 1'
+        ' and two = 2 and three = 3"\n}']
+    # The line still hides the secret; only the opened call shows it.
+    assert "hunter22" not in blocks[2].target
+    assert "\n" not in blocks[0].target
+
+
+def test_a_long_command_is_cut_and_says_how_much_is_left(ws):
+    """A heredoc can carry a whole file: the page is sent `CALL_SHOWN`
+    lines of it, and the count of the rest."""
+    block = ws.Block(kind="tool", tool="Bash",
+                     call="\n".join(f"line {n}" for n in range(ws.CALL_SHOWN + 7)))
+    sent = ws.blocks_json([block])[0]["call"]
+    assert sent.splitlines()[ws.CALL_SHOWN - 1] == f"line {ws.CALL_SHOWN - 1}"
+    assert sent.endswith("… 7 more lines")
+
+
 def test_an_edit_block_carries_its_counts(ws, tmp_path):
     path = tmp_path / "t.jsonl"
     path.write_text(json.dumps({

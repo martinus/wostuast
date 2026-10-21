@@ -249,7 +249,9 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
   credential headers, `Bearer …`, a secret-named `=` value,
   `--password x`, token shapes), keeping the name, for every one-line
   summary: row, `ls`, transcript call line. Not the permission bar: a
-  request is judged whole. Unknown shapes still show; say so.
+  request is judged whole. **Nor a call the reader opened** (#619,
+  `call_text`): the reader chose to see it whole, as its output is shown.
+  Unknown shapes still show; say so.
   `test_a_summary_hides_what_looks_like_a_credential`,
   `test_a_secret_reaches_no_row_or_ls_but_the_dialog_stays_whole`.
   - **A long command costs the summary no time**: `[\w.-]*token[\w.-]*=`

@@ -85,3 +85,12 @@ def test_eval_runs_in_the_page_before_the_picture(tmp_path):
         capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     assert done.stdout.splitlines()[1:-1] == [], done.stdout
+    # Or from a file, for code longer than one argument may be.
+    held = tmp_path / "gone.js"
+    held.write_text(gone)
+    done = subprocess.run(
+        [sys.executable, str(HERE / "shot.py"), str(case), str(out),
+         "--measure", "--eval", str(held)],
+        capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[1:-1] == [], done.stdout
