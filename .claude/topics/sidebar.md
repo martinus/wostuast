@@ -42,6 +42,13 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
     subagent in the foreground has none, and the line leaves them out.
     `test_a_subagent_says_what_it_did_and_what_it_cost`,
     `test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words`.
+  - **A compaction's own agent is no subagent** (#637, `is_own_agent`):
+    `/compact` fires a `SubagentStop` with an `agent_id`, an empty
+    `agent_type` and nothing before it
+    (`tests/fixtures/compact_agent.jsonl`). Each one stood under the row
+    as "subagent", 0 calls, 0 s, and counted in "N subagents ran". One we
+    already hold stays a subagent, whatever its end says.
+    `test_a_compaction_s_own_agent_is_no_subagent`.
   - **Let go of what an Agent call asked for at a turn's edge**
     (`agent_asks`): a declined call fires no hook and a failed one starts
     nothing, so their descriptions named later subagents. A failed call

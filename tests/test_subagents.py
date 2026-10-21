@@ -184,6 +184,29 @@ def test_a_session_that_is_over_has_no_subagent_running(ws):
     assert (session.subagents["a1"].ended, session.agents_ran) == (1200.0, 1)
 
 
+def test_a_compaction_s_own_agent_is_no_subagent(ws):
+    """`/compact` fires a `SubagentStop` of its own, with an `agent_id`, an
+    empty `agent_type` and no `SubagentStart` (measured on 2.1.306,
+    `compact_agent.jsonl`). Taken for a subagent, each compaction stood
+    under the row as "subagent", "0 calls · 0s" (#637), and three made
+    "3 subagents ran". The Agent call's subagent before it stays one."""
+    lines = (FIXTURES / "compact_agent.jsonl").read_text().splitlines()
+    events = [dict(json.loads(line), session_id="s1", pane="%1", pid=4242,
+                   ts=3000.0 + at) for at, line in enumerate(lines)]
+    stop = next(at for at, one in enumerate(events)
+                if one["hook_event_name"] == "SubagentStop" and not one["agent_type"])
+    session = folded(ws, *events[:stop + 1]).sessions["s1"]
+    assert session.last_event != "subagent finished", "the row said a subagent ended"
+    session = folded(ws, *events).sessions["s1"]
+    kinds = [one.kind for one in session.subagents.values()]
+    assert (kinds, session.agents_ran) == (["general-purpose"], 1)
+    # A subagent already held is one, whatever its end says of its kind.
+    ended = next(at for at, one in enumerate(events) if one["hook_event_name"] == "SubagentStop")
+    events[ended]["agent_type"] = ""
+    session = folded(ws, *events).sessions["s1"]
+    assert [one.ended for one in session.subagents.values()] == [3000.0 + ended]
+
+
 def test_a_subagent_the_reader_stopped_is_over_at_the_next_stop(ws):
     """Stopped with `x` in the agents panel, a subagent sends no
     `SubagentStop` (measured on 2.1.292, `subagent_killed.jsonl`): its end
