@@ -124,6 +124,13 @@ agent's `Stop` came while it ran, with it in `background_tasks`, and its
 end came back as a new `UserPromptSubmit` whose prompt is a
 `<task-notification>`.
 
+On 2.1.306 the notification of a subagent's end carries what it did
+(#618): `<result>` holds its last words, and `<usage>` holds
+`<subagent_tokens>`, `<tool_uses>` and `<duration_ms>`; a `<note>` says it
+fires each time the subagent stops with no live children of its own. Its
+`SubagentStop` has `last_assistant_message` and `agent_transcript_path`
+(`<projects>/<project>/<session>/subagents/agent-<agent_id>.jsonl`).
+
 **A subagent the reader stops sends no `SubagentStop`** (measured on
 2.1.292, `subagent_killed.jsonl`). On 2.1.292 the Agent tool runs its
 subagent in the background with no `run_in_background`, and every `Stop`

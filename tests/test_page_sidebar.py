@@ -2315,6 +2315,50 @@ def test_a_waiting_row_has_its_own_group_colour_and_lines(ws, page_at, tmp_path)
         assert page.evaluate("iconWas.split(' ')[0]") == "waiting"
 
 
+def test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words(ws, page_at, tmp_path):
+    """"4 subagents ran", unfolded, said "subagent" and a time (#618). A
+    line says its kind, what it was asked, its calls, its tokens and how
+    long it ran, and its last words on the hover."""
+    daemon, url = page_at
+    now = time.time()
+    agent = {"cwd": str(tmp_path), "pane": "%7", "pid": 1}
+    sub = {"agent_id": "a1", "agent_type": "Explore", **agent}
+    ws.append_event(conftest.event("UserPromptSubmit", prompt="go", ts=now - 200, **agent))
+    ws.append_event(conftest.event("PreToolUse", tool_name="Agent", ts=now - 190,
+                                   tool_input={"description": "Find the parser"}, **agent))
+    ws.append_event(conftest.event("SubagentStart", ts=now - 189, **sub))
+    for at in range(3):
+        ws.append_event(conftest.event("PreToolUse", tool_name="Read", ts=now - 180 + at,
+                                       tool_input={"file_path": f"/w/{at}.c"}, **sub))
+    ws.append_event(conftest.event("SubagentStop", ts=now - 64, **sub,
+                                   last_assistant_message="It is in src/parse.c."))
+    ws.append_event(conftest.event(
+        "UserPromptSubmit", ts=now - 60, **agent,
+        prompt="<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n"
+               "<usage><subagent_tokens>41250</subagent_tokens></usage>\n</task-notification>"))
+    ws.append_event(conftest.event("Stop", ts=now - 50, background_tasks=[], **agent))
+    daemon.store.refresh()
+    with opened(url) as page:
+        page.wait_for_selector(".row .kidsran")
+        page.click(".row .kidsran")
+        line = page.locator(".row .kid").first
+        line.wait_for()
+        assert line.locator(".kidwhat").inner_text() == "Find the parser"
+        assert line.locator(".kidstats").inner_text() == (
+            "Explore \u00b7 3 calls \u00b7 41k tokens \u00b7 2min")
+        # On a line of its own, under what it was asked, from where it starts.
+        where = page.evaluate("""() => {
+          const line = document.querySelector('.row .kid');
+          const what = line.querySelector('.kidwhat').getBoundingClientRect();
+          const stats = line.querySelector('.kidstats').getBoundingClientRect();
+          const inset = parseFloat(getComputedStyle(line.querySelector('.kidstats')).paddingLeft);
+          return [stats.top >= what.bottom - 1, Math.round(stats.left + inset - what.left)];
+        }""")
+        assert where[0] and abs(where[1]) <= 2, where
+        assert line.get_attribute("title") == (
+            "Explore subagent of this session:\nIt is in src/parse.c.")
+
+
 def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):
     """A `claude -p` an agent ran, and its Agent tool's subagents, are lines
     under its row (#422), never rows of their own: they came and went in a

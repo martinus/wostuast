@@ -88,10 +88,58 @@ def test_the_agent_tool_s_subagents_are_kept_on_their_session(ws):
     row = ws.row(session)
     assert row["subagents"] == [
         {"id": "a1", "kind": "Explore", "what": "look around", "doing": "Bash ls -la",
-         "started": 1003.0, "ended": 0},
+         "started": 1003.0, "ended": 0, "calls": 1, "said": "", "tokens": 0},
         {"id": "a2", "kind": "general-purpose", "what": "read the docs", "doing": "",
-         "started": 1004.0, "ended": 1006.0}]
+         "started": 1004.0, "ended": 1006.0, "calls": 0, "said": "", "tokens": 0}]
     assert row["agents_ran"] == 1, "a second SubagentStop counted it twice"
+
+
+#: The notification of a subagent's end, as Claude Code 2.1.306 sent it
+#: (measured with `tests/claude_pane.py`; the paths invented).
+AGENT_ENDED = (
+    "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n"
+    "<output-file>/tmp/claude-1000/-w/s1/tasks/a1.output</output-file>\n"
+    "<status>completed</status>\n<summary>Agent \"look around\" finished</summary>\n"
+    "<note>A task-notification fires each time this agent stops with no live"
+    " background children of its own.</note>\n<result>The parser is in"
+    " src/parse.c.</result>\n<usage><subagent_tokens>41250</subagent_tokens>"
+    "<tool_uses>2</tool_uses><duration_ms>9120</duration_ms></usage>\n"
+    "</task-notification>")
+
+
+def test_a_subagent_says_what_it_did_and_what_it_cost(ws):
+    """A line that said "subagent" and a time said nothing of what it did
+    (#618). It counts its calls -- each `PreToolUse` once, not its result
+    too -- keeps its last words from `SubagentStop`, and its tokens from the
+    notification of its end (measured on 2.1.306), whose `<result>` gives
+    the last words when no `SubagentStop` did."""
+    sub = {"agent_id": "a1", "agent_type": "Explore"}
+    store = folded(
+        ws,
+        event("UserPromptSubmit", prompt="go"),
+        event("PreToolUse", tool_name="Agent", ts=1001.0,
+              tool_input={"description": "look around", "prompt": "run ls"}),
+        event("SubagentStart", ts=1002.0, **sub),
+        event("PreToolUse", tool_name="Grep", tool_input={"pattern": "parse"}, ts=1003.0, **sub),
+        event("PostToolUse", tool_name="Grep", tool_input={"pattern": "parse"}, ts=1004.0, **sub),
+        event("PreToolUse", tool_name="Read", tool_input={"file_path": "/w/src/parse.c"},
+              ts=1005.0, **sub),
+        event("SubagentStop", last_assistant_message="It is in src/parse.c, line 40.",
+              ts=1009.0, **sub),
+        event("UserPromptSubmit", prompt=AGENT_ENDED, ts=1010.0),
+    )
+    one = store.sessions["s1"].subagents["a1"]
+    assert (one.calls, one.said, one.tokens) == (2, "It is in src/parse.c, line 40.", 41250)
+    # With no `SubagentStop` -- one stopped from the agents panel sends none
+    # -- the notification's own result is its last words.
+    store = folded(ws, event("SubagentStart", ts=1002.0, **sub),
+                   event("UserPromptSubmit", prompt=AGENT_ENDED, ts=1010.0))
+    assert store.sessions["s1"].subagents["a1"].said == "The parser is in src/parse.c."
+    # A notification for no subagent held, or a prompt of the reader's
+    # that quotes one, changes nothing.
+    store = folded(ws, event("SubagentStart", ts=1002.0, **sub),
+                   event("UserPromptSubmit", prompt="look: " + AGENT_ENDED, ts=1010.0))
+    assert store.sessions["s1"].subagents["a1"].tokens == 0
 
 
 def test_a_subagent_is_named_by_its_call_s_result_and_found_without_its_start(ws):
