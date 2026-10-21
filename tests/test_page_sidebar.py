@@ -1518,6 +1518,40 @@ def test_the_enter_that_ends_a_composition_keeps_no_name(rows_at):
                .textContent === '\u65e5\u672c'""")
 
 
+def test_a_link_names_the_repository_of_the_session_it_stands_in(rows_at, ws):
+    """Agents in several repositories linked "PR #58" to one repository's
+    pull requests (#623). `{owner}` and `{repo}` come from the remote of the
+    session the text stands in; a session whose remote does not say makes
+    no link, rather than a link to the wrong place."""
+    daemon, url, places = rows_at
+    daemon.store.rename("named", "review PR #58")
+    daemon.store.rename("fresh", "review PR #7")
+    daemon.store.refresh()
+    ws.save_config({"links": [
+        {"match": r"PR #(\d+)", "url": "https://code.example/{owner}/{repo}/pull/$1"}]})
+    with opened(url) as page:
+        page.wait_for_function("document.querySelectorAll('.row').length >= 3")
+        page.wait_for_selector('.row[data-id="named"] .name a.ticket')
+        assert page.get_attribute('.row[data-id="named"] .name a.ticket', "href") \
+            == "https://code.example/team/agent/pull/58"
+        # `fresh` has no remote: its owner is not known.
+        assert page.locator('.row[data-id="fresh"] .name a.ticket').count() == 0
+        shapes = page.evaluate("""() => [
+          'git@github.com:martinus/wostuast.git',
+          'ssh://git@code.example:7999/proj/ring.git',
+          'https://code.example/scm/proj/ring.git',
+          'https://gitlab.example/group/sub/tool',
+          '/srv/git/plain.git',
+          ''].map((remote) => linkVars({remote, repo: 'here'}))""")
+        assert shapes == [
+            {"repo": "wostuast", "owner": "martinus", "path": "martinus/wostuast"},
+            {"repo": "ring", "owner": "proj", "path": "proj/ring"},
+            {"repo": "ring", "owner": "proj", "path": "scm/proj/ring"},
+            {"repo": "tool", "owner": "sub", "path": "group/sub/tool"},
+            {"repo": "plain", "owner": "git", "path": "srv/git/plain"},
+            {"repo": "here", "owner": "", "path": ""}]
+
+
 def test_a_ticket_in_a_rows_name_or_branch_is_a_link(rows_at, ws):
     """A branch is most often named after its ticket, and so is a session
     reviewing a pull request. The ticket links make both links, as they do

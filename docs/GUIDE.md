@@ -625,6 +625,12 @@ fields:
   `https://tickets.example.com/browse/$1-$2`. `$1` to `$9` are the groups of
   the match, and `$0` is all of it. It must start with `http://` or
   `https://`.
+- **link** can also name the session's repository, read from its remote:
+  `{repo}` is the repository, `{owner}` is the folder above it (the project
+  on Bitbucket, the group on GitLab), and `{path}` is the whole path. For
+  example, `https://bitbucket.example.com/projects/{owner}/repos/{repo}/pull-requests/$1`
+  links each session's pull requests to its own repository. A session whose
+  remote does not say the part makes no link.
 
 The page saves a link when you leave a field or press Enter. Under each
 link, the menu shows the first match on the page and where it goes. A link
