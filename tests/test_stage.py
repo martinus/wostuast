@@ -47,6 +47,22 @@ def test_the_tools_write_nothing_outside_their_own_home(tmp_path, monkeypatch):
     assert (tmp_path / "stage" / "claude" / "skills" / "notes" / "SKILL.md").is_file()
 
 
+def test_the_repository_can_end_in_a_merge_settled_by_hand(tmp_path):
+    """`--merge` (#621): the branch ends in a merge of `main` whose conflict
+    was settled by hand, so what it changed by hand is `ring.c` alone."""
+    repo = tmp_path / "proj"
+    stage.make_repo(repo, merge=True)
+    run = lambda *args: subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True,
+        check=True).stdout
+    assert len(run("log", "-1", "--format=%P").split()) == 2
+    assert run("log", "--reverse", "--format=%s", "main..feature").split("\n")[4:6] == [
+        "Call the size a length", "Merge main: keep the length"]
+    assert run("show", "--remerge-diff", "--format=", "--name-only", "HEAD").split() == [
+        "ring.c"]
+    assert run("status", "--porcelain").split("\n")[:-1] == [" M ring.c", "?? PLAN.md"]
+
+
 def test_the_repository_has_what_the_pictures_need(tmp_path):
     repo = tmp_path / "proj"
     stage.make_repo(repo)

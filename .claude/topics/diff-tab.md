@@ -30,6 +30,21 @@ Comments are topics/review; git is topics/git.
   `test_the_older_and_newer_buttons_step_through_the_commits`,
   `test_another_commit_is_read_from_its_top`,
   `test_another_sessions_diff_is_read_from_its_top`.
+- **A merge is shown by what it changed by hand** (#621, `merge_by_hand`,
+  `DiffReport.merge`, `putMergeAs`): against its first parent it showed the
+  other branch's whole work and no sign of what the merge did. `git show
+  --remerge-diff` (`git_diff(..., remerge=True)`; `git diff` has no such
+  option) merges again, conflicts and all, and shows what the commit holds
+  that differs; a clean merge shows nothing and says so. "all it brought
+  in" (`state.diffs.merge`, `merge=all`) is the first parent again. **The
+  hidden lines come from the same diff** (`whole_file_diff`, `merged_all`):
+  the conflict's lines are no lines of the first parent's diff. A git
+  before 2.36 refuses it: `merge` is "old", the head says why, no switch.
+  The picker says "merge ·" before the subject.
+  `test_a_merge_is_shown_by_what_it_changed_by_hand_or_all_it_brought_in`,
+  `test_a_merge_settled_by_hand_shows_how`,
+  `test_a_git_that_cannot_show_a_merge_by_hand_shows_all_and_says_why`,
+  `test_a_merge_is_marked_and_shown_by_hand_or_whole`.
 - **The pane reads in the tree's order, not git's** (`treeOrder`, folders
   first at every level).
 - **The file clicked in the tree keeps the mark while it is on screen**

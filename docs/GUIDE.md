@@ -370,6 +370,12 @@ words marked.
   the commits with the arrows **‹** (older) and **›** (newer); between them,
   "5 / 9" says which commit you read, counted from the oldest. Each commit
   starts at its top.
+- **A merge commit says "merge"** in the commit picker. When you pick one,
+  it shows what the merge changed by hand: the conflicts git could not
+  settle, and how they were settled. A merge that git made by itself shows
+  nothing. Click **all it brought in** to see everything the merge brought
+  from the other branch. This needs git 2.36 or newer; an older git shows
+  all it brought in, and says why.
 - **All changes has two halves**, and each half says what it is a diff of:
   what this branch committed that its base branch does not have, and what the
   files on disk hold that the last commit does not.

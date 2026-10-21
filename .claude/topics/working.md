@@ -132,7 +132,8 @@ None is a test. Each is kept working by its own test file:
 - `tests/stage.py`: a repository with a branch of four commits, a change
   and a Markdown document, and any part of the page over it: `--tab`,
   `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands`
-  (skills and used commands), then `--click`, `--type SELECTOR=TEXT` (and
+  (skills and used commands), `--merge` (the branch ends in a merge
+  settled by hand), then `--click`, `--type SELECTOR=TEXT` (and
   Enter), `--keys SELECTOR=TEXT` and `--eval JS` in order, and `--part`.
 - `tests/tour.py`: six sessions, one in each state a row can be in, with
   saved turns and status lines; a PNG of each view: `transcript`, `later`,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 
 import re
+import subprocess
 import time
 
 import pytest
@@ -495,6 +496,47 @@ def test_one_commit_is_shown_on_its_own(repo_page):
         # It is remembered as a choice, and the way back is the same box.
         pick(page, "")
         assert page.locator(".diffhead").count() == 2
+
+
+def test_a_merge_is_marked_and_shown_by_hand_or_whole(repo_page):
+    """A merge read as one more commit, and showed all the other branch
+    brought in (#621). The picker says "merge"; picked, it shows what the
+    merge changed by hand, and one press shows all it brought in."""
+    root, _ = repo_page
+    git = conftest.git_in
+    git(root, "stash", "-q", "-u")
+    git(root, "checkout", "-q", "main")
+    (root / "code.py").write_text("print(1)\nprint('main')\n")
+    (root / "other.txt").write_text("from main\n")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "on main")
+    git(root, "checkout", "-q", "side")
+    subprocess.run(["git", "-C", str(root), "merge", "-q", "main"], capture_output=True)
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint('main')\n")
+    git(root, "add", "code.py")
+    git(root, "commit", "-qm", "Take both prints")
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_function("(state.diff || {}).commits?.length >= 2")
+        options = page.eval_on_selector_all(
+            ".pickof option", "els => els.map(e => e.textContent)")
+        assert options[2].endswith("merge \u00b7 Take both prints"), options
+        assert not any("merge" in one for one in options[3:]), options
+        sha = page.evaluate("state.diff.commits[0].sha")
+        pick(page, sha)
+        paths = ".dfile .path"
+        assert page.eval_on_selector_all(paths, "els => els.map(e => e.textContent)") \
+            == ["code.py"]
+        assert "by hand" in page.locator(".diffhead .about").inner_text()
+        assert page.get_attribute(".mergeas button[data-value='']", "aria-pressed") == "true"
+        with page.expect_request(lambda one: "merge=all" in one.url):
+            page.click(".mergeas button[data-value='all']")
+        page.wait_for_function(
+            "document.querySelectorAll('.dfile .path').length === 2")
+        assert page.get_attribute(".mergeas button[data-value='all']", "aria-pressed") \
+            == "true"
+        assert sorted(page.eval_on_selector_all(
+            paths, "els => els.map(e => e.textContent)")) == ["code.py", "other.txt"]
 
 
 def test_only_what_is_not_committed(repo_page):

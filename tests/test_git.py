@@ -578,7 +578,11 @@ def test_a_commit_list_git_did_not_give_is_a_failure(ws, repo):
     assert report.commits == []
 
 
-def test_a_merge_is_shown_against_its_first_parent(ws, repo):
+def test_a_merge_is_shown_by_what_it_changed_by_hand_or_all_it_brought_in(ws, repo):
+    """Against its first parent a merge showed all it brought in, the other
+    branch's whole work, and no sign of what the merge itself did (#621).
+    By default it is what it changed beyond git's own merge: a clean merge,
+    nothing, and it says so; on the reader's word, all it brought in."""
     branch_of_three(repo)
     git(repo, "checkout", "-q", "main")
     (repo / "m.txt").write_text("m\n")
@@ -589,8 +593,74 @@ def test_a_merge_is_shown_against_its_first_parent(ws, repo):
     merge = ws.worktree_diff(str(repo)).commits[0]
     assert merge.merge is True
     shown = ws.worktree_diff(str(repo), of=merge.sha)
+    assert shown.merge == "hand" and not shown.failed
+    assert shown.sections[0].files == []
+    assert shown.sections[0].about.endswith("nothing, git merged it by itself")
+    shown = ws.worktree_diff(str(repo), of=merge.sha, merged_all=True)
+    assert shown.merge == "all"
     assert [one.path for one in shown.sections[0].files] == ["m.txt"]
-    assert "merge" in shown.sections[0].about
+    assert "all it brought in" in shown.sections[0].about
+    # A plain commit is no merge.
+    plain = ws.worktree_diff(str(repo)).commits[1]
+    assert ws.worktree_diff(str(repo), of=plain.sha).merge == ""
+
+
+def conflicted_merge(repo):
+    """A merge of `main` into `side` that both changed one line of, settled
+    by hand to a third text."""
+    (repo / "f.txt").write_text("one\ntwo\nthree\n")
+    git(repo, "add", "f.txt")
+    git(repo, "commit", "-qm", "base")
+    git(repo, "checkout", "-qb", "side")
+    (repo / "f.txt").write_text("one\nTWO side\nthree\n")
+    git(repo, "commit", "-qam", "side")
+    git(repo, "checkout", "-q", "main")
+    (repo / "f.txt").write_text("one\ntwo main\nthree\n")
+    (repo / "h.txt").write_text("h\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "main")
+    git(repo, "checkout", "-q", "side")
+    subprocess.run(["git", "-C", str(repo), "merge", "-q", "main"], capture_output=True)
+    (repo / "f.txt").write_text("one\nTWO both\nthree\n")
+    git(repo, "add", "f.txt")
+    git(repo, "commit", "-qm", "Merge main into side")
+
+
+def test_a_merge_settled_by_hand_shows_how(ws, repo):
+    """A merge that settled a conflict shows that file, from the conflict
+    git left to the text the merge holds, and not the file it took as git
+    merged it. The lines between its changes are the same diff's."""
+    conflicted_merge(repo)
+    merge = ws.worktree_diff(str(repo)).commits[0]
+    shown = ws.worktree_diff(str(repo), of=merge.sha)
+    files = shown.sections[0].files
+    assert [one.path for one in files] == ["f.txt"]
+    lines = [(line.kind, line.text) for hunk in files[0].hunks for line in hunk.lines]
+    assert ("added", "TWO both") in lines
+    assert ("removed", "two main") in lines and ("removed", "TWO side") in lines
+    whole = ws.whole_file_diff(str(repo), "commit", "f.txt", of=merge.sha)
+    # Main's side of the conflict: against the first parent it is no line.
+    assert ("removed", "two main") in [(line.kind, line.text)
+                                       for hunk in whole.file.hunks for line in hunk.lines]
+    assert [one.path for one in ws.worktree_diff(
+        str(repo), of=merge.sha, merged_all=True).sections[0].files] == ["f.txt", "h.txt"]
+
+
+def test_a_git_that_cannot_show_a_merge_by_hand_shows_all_and_says_why(ws, repo):
+    """`--remerge-diff` came in git 2.36. A git before it refuses it, and
+    the merge is shown against its first parent, with the reason."""
+    conflicted_merge(repo)
+
+    def old(args, **kwargs):
+        return None if "--remerge-diff" in args else ws.run(args, **kwargs)
+
+    merge = ws.worktree_diff(str(repo)).commits[0]
+    shown = ws.worktree_diff(str(repo), runner=old, of=merge.sha)
+    assert shown.merge == "old" and not shown.failed
+    assert [one.path for one in shown.sections[0].files] == ["f.txt", "h.txt"]
+    assert "git 2.36" in shown.sections[0].about
+    whole = ws.whole_file_diff(str(repo), "commit", "h.txt", of=merge.sha, runner=old)
+    assert whole.file is not None and not whole.failed
 
 
 def test_one_commit_carries_its_whole_message(ws, repo):
