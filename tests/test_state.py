@@ -2027,3 +2027,24 @@ def test_a_model_question_is_asked_of_an_idle_agent_and_ended_by_its_own_answer(
     assert session.last_event == "Set model to X"
     busy = fold(ws, event("UserPromptSubmit", prompt="go", ts=1000.0), asked)
     assert busy.state == "working" and busy.asking is None
+
+
+def test_the_folders_an_agent_worked_in_are_kept_the_latest_last(ws):
+    """Where the agent moved and the folders of the files it named are
+    what the Files and Review tabs offer as other places (#616), kept
+    without I/O and with an end."""
+    events = [event("SessionStart", cwd="/w/a", ts=1.0),
+              event("PreToolUse", cwd="/w/a", ts=2.0, tool_name="Edit",
+                    tool_input={"file_path": "/w/b/src/x.py"}),
+              event("PreToolUse", cwd="/w/a", ts=3.0, tool_name="Grep",
+                    tool_input={"pattern": "x", "path": "/w/c/"}),
+              event("PreToolUse", cwd="/w/a", ts=4.0, tool_name="Read",
+                    tool_input={"file_path": "relative.py"}),
+              event("UserPromptSubmit", cwd="/w/b/src", prompt="go", ts=5.0)]
+    session = fold(ws, *events)
+    assert list(session.dirs) == ["/w/c", "/w/a", "/w/b/src"]
+    many = [event("PreToolUse", cwd=f"/w/{n}", ts=float(n), tool_name="Bash",
+                  tool_input={"command": "ls"}) for n in range(ws.DIRS_HELD + 5)]
+    session = fold(ws, *many)
+    assert len(session.dirs) == ws.DIRS_HELD
+    assert f"/w/{ws.DIRS_HELD + 4}" in session.dirs and "/w/0" not in session.dirs

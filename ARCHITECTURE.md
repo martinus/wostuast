@@ -725,7 +725,8 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/search?q=…` | What was typed and answered in every session, from the event log. |
 | GET | `/api/saved` | Every saved turn, of every session. |
 | GET | `/api/session/ID/last` | What the agent said last, for "All unreads". |
-| GET | `/api/session/ID/files` | The file list of the worktree. |
+| GET | `/api/session/ID/places` | The repositories the Files and Review tabs may show: the session's own first, then each other one its agent stood in or touched a file in. |
+| GET | `/api/session/ID/files` | The file list of the worktree. With `place=…`, one of `places`; the same for `file`, `raw`, `diff` and `whole`. |
 | GET | `/api/session/ID/file?path=…` | One file's text. |
 | GET | `/api/session/ID/raw?path=…` | One file's bytes (for images). |
 | GET | `/api/session/ID/diff?of=…&base=…&space=hide` | The diff. `space=hide` leaves out a change of whitespace alone (`git diff -w`). |

@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -715,6 +716,60 @@ def test_the_file_listing_is_served(repo_session):
     assert body["total"] == 1
     assert body["cut"] is False
     assert body["failed"] is False
+
+
+def test_another_repository_the_agent_worked_in_is_a_place_of_its_own(ws, served, repo, tmp_path,
+                                                                      monkeypatch):
+    """An agent that worked in two repositories showed one (#616): the
+    Files and Review tabs read the worktree it started in. A folder it
+    stood in or read a file from is a place, by its repository's top, and
+    the tabs' routes read the place asked for -- only one of those: a path
+    from the page is input."""
+    daemon, base = served
+    other = tmp_path / "other"
+    other.mkdir()
+    conftest.git_in(other, "init", "-q", "-b", "main")
+    (other / "lib").mkdir()
+    (other / "lib" / "api.py").write_text("print('api')\n")
+    (tmp_path / "plain").mkdir()
+    now = time.time()
+    ws.append_event(event("SessionStart", cwd=str(repo), ts=now - 3))
+    ws.append_event(event("PreToolUse", cwd=str(repo), ts=now - 2, tool_name="Read",
+                          tool_input={"file_path": str(other / "lib" / "api.py")}))
+    ws.append_event(event("PreToolUse", cwd=str(tmp_path / "plain"), ts=now - 1,
+                          tool_name="Bash", tool_input={"command": "ls"}))
+    daemon.store.refresh()
+    status, body = get(f"{base}/api/session/s1/places")
+    assert status == 200
+    assert body["places"] == [
+        {"path": str(repo), "name": "myrepo", "own": True},
+        {"path": str(other), "name": "other", "own": False}]
+    # A folder in no repository is not asked about again each request: up
+    # to `DIRS_HELD` processes a poll.
+    asked: list[list[str]] = []
+    real = ws.run
+    monkeypatch.setattr(ws, "run", lambda args, *rest, **given: (
+        asked.append(list(args)) or real(args, *rest, **given)))
+    get(f"{base}/api/session/s1/places")
+    assert not [one for one in asked if str(tmp_path / "plain") in one], asked
+    monkeypatch.undo()
+    place = urllib.parse.quote(str(other))
+    status, body = get(f"{base}/api/session/s1/files?place={place}")
+    assert status == 200 and body["names"] == "lib/api.py", body
+    status, body = get(f"{base}/api/session/s1/file?path=lib/api.py&place={place}")
+    assert status == 200 and body["text"] == "print('api')\n"
+    status, body = get(f"{base}/api/session/s1/diff?place={place}")
+    assert status == 200 and body["untracked"] == ["lib/api.py"], body
+    # A folder git knows no repository for, and one the agent never stood
+    # in, are no place.
+    for wrong in (tmp_path / "plain", tmp_path, "/etc"):
+        refused = urllib.parse.quote(str(wrong))
+        with pytest.raises(urllib.error.HTTPError) as answer:
+            get(f"{base}/api/session/s1/files?place={refused}")
+        assert answer.value.code == 404
+    # No place is the session's own, as before.
+    status, body = get(f"{base}/api/session/s1/files")
+    assert body["names"] == "README.md"
 
 
 def test_every_name_is_served_and_the_changed_ones_are_named(repo_session):

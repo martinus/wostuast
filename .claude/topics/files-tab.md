@@ -4,6 +4,36 @@ The listing and the tree, find, icons, hex, and how a file is drawn.
 
 - **List every file; stat only the changed ones.** Tens of thousands of
   files, tens changed: statting all of them every poll is the mistake.
+- **Another repository the agent worked in is a place of its own** (#616,
+  `note_dirs`, `Session.dirs`, `Serving.places_for`, `place_of`,
+  `#placepick`): an agent that worked in two repositories showed one, as
+  the Files and Review tabs read the worktree it started in. The fold keeps
+  the folders the agent stood in (`cwd`) or touched a file in (an absolute
+  path in a call's input), the latest last, `DIRS_HELD` of them. Git turns
+  them into repositories only when the page asks `places`, as the fold does
+  no I/O; a folder that is in no repository is none. The picker beside the
+  tabs shows when there are two, and every Files and Review route reads
+  it through `apiUrl` (`PLACED`).
+  - **The own place is the repository the agent stands in, else the one it
+    started in** (`own_place`): the tabs read `cwd` before #616, and a `cd`
+    out of every repository left them empty under a picker that named the
+    own one.
+  - **A pick drops what was held and draws at once** (`pickPlace`), as a
+    change of session does: the old listing stood under the new name until
+    the answer came. **An answer asked under another place is dropped**
+    (`ask`): one in flight put the other repository's diff under the own
+    one's name, with a `+` on its lines. **A listing is kept under its
+    place** (`listingRoot`), or another repository's names stood in every
+    session of the own worktree.
+  - **A place the daemon no longer lists is left for the own one**
+    (`askPlaces`): after `DIRS_HELD` other folders it is refused, and every
+    route said 404 under a picker that had hidden itself.
+  - **A folder in no repository is asked about once a minute**
+    (`Files.root_kept`, `NO_REPO_KEPT`): each request that named a place
+    asked git about all of them, up to `DIRS_HELD` processes a poll.
+  `test_another_repository_the_agent_worked_in_is_a_place_of_its_own`,
+  `test_the_folders_an_agent_worked_in_are_kept_the_latest_last`,
+  `test_another_repository_the_agent_worked_in_is_one_pick_away`.
 - **A wholly-ignored directory is walked by us, within a budget**
   (`walk_ignored`): git's `--directory` makes it one entry, and dropping
   that hid the agent's plan folder. It is listed **only when it fits in

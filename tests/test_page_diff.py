@@ -2009,3 +2009,126 @@ def test_an_untracked_file_that_is_empty_says_so(repo_page):
         page.wait_for_function(
             "document.querySelector('.diffscroll')?.textContent"
             ".includes('This file is empty.')")
+
+
+def test_another_repository_the_agent_worked_in_is_one_pick_away(ws, served, repo_page,
+                                                                  tmp_path):
+    """An agent working in two repositories showed one on the Files and
+    Review tabs (#616). A picker beside the tabs names the session's own
+    and each other one it worked in; picked, both tabs read that one. A
+    review is of the session's own worktree, pasted into its agent with
+    paths from there, so another repository's lines take no comment."""
+    root, _ = repo_page
+    other = tmp_path / "other"
+    other.mkdir()
+    conftest.git_in(other, "init", "-q", "-b", "main")
+    (other / "api.py").write_text("print('api')\n")
+    ws.append_event(conftest.event("PreToolUse", cwd=str(root), ts=time.time(),
+                                   pane="%7", pid=1, tool_name="Read",
+                                   tool_input={"file_path": str(other / "api.py")}))
+    served[0].store.refresh()
+    with opened(repo_page) as page:
+        # A file of its own is open first: a pick drops it and the listing,
+        # as a change of session does, or the other one is asked for it.
+        show_tab(page, "files")
+        page.locator(".filelist.files button", has_text="README.md").first.click()
+        page.wait_for_function(
+            "document.querySelector('.filebody .where')?.textContent.includes('README.md')")
+        show_tab(page, "diff")
+        page.wait_for_selector(".dfile .addnote", state="attached")
+        page.wait_for_function(
+            "!document.getElementById('placepick').hidden"
+            " && document.getElementById('placepick').options.length === 2")
+        names = page.eval_on_selector_all("#placepick option", "els => els.map(e => e.textContent)")
+        assert names == ["myrepo (its own)", "other (read only)"], names
+        # Picked, the own listing is gone at once, not when the answer comes.
+        show_tab(page, "files")
+        left = page.evaluate("""(other) => {
+            const pick = document.getElementById('placepick');
+            pick.value = other;
+            pick.dispatchEvent(new Event('change'));
+            return document.querySelector('.main').textContent;
+        }""", str(other))
+        assert "README.md" not in left
+        show_tab(page, "diff")
+        page.locator(".filelist.diff button", has_text="api.py").first.click()
+        page.wait_for_function(
+            "[...document.querySelectorAll('.dfile, .filebody')]"
+            ".some((one) => one.textContent.includes(\"print('api')\"))")
+        assert page.locator(".addnote").count() == 0
+        show_tab(page, "files")
+        page.wait_for_function(
+            "[...document.querySelectorAll('.filelist.files button')]"
+            ".map((one) => one.textContent).join(' ').includes('api.py')")
+        assert "README.md" not in page.locator(".filelist.files").inner_text()
+        assert "README.md" not in page.locator(".filebody").inner_text()
+        page.locator(".filelist.files button", has_text="api.py").first.click()
+        page.wait_for_function(
+            "document.querySelector('.filebody')?.textContent.includes(\"print('api')\")")
+        assert page.locator(".addnote").count() == 0
+        # Its own again, and the comments are back.
+        page.select_option("#placepick", "")
+        show_tab(page, "diff")
+        page.wait_for_selector(".dfile .addnote", state="attached")
+
+
+def test_another_repository_keeps_its_answers_and_its_names_to_itself(
+        ws, served, repo_page, tmp_path):
+    """What a review agent found in #616. An answer asked under another
+    place, still on its way when the reader picked the own one again, put
+    the other repository's diff under the own one's name. Its listing was
+    kept under the own worktree's. The own review stood under another
+    repository's diff. And a place the agent had long left was refused
+    under a picker that had hidden itself."""
+    from browser import comment_on_first_line
+    root, _ = repo_page
+    other = tmp_path / "other"
+    other.mkdir()
+    conftest.git_in(other, "init", "-q", "-b", "main")
+    (other / "api.py").write_text("print('api')\n")
+    ws.append_event(conftest.event("PreToolUse", cwd=str(root), ts=time.time(),
+                                   pane="%7", pid=1, tool_name="Read",
+                                   tool_input={"file_path": str(other / "api.py")}))
+    served[0].store.refresh()
+    untracked = "() => (state.diff?.untracked || []).join(' ')"
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        comment_on_first_line(page, "an own note")
+        page.wait_for_function(
+            "document.getElementById('placepick').options.length === 2")
+        page.select_option("#placepick", str(other))
+        page.wait_for_function(f"({untracked})().includes('api.py')")
+        assert page.locator("#reviewbar").is_hidden()
+        assert page.locator(".filelist .said").count() == 0
+        show_tab(page, "files")
+        page.wait_for_function(
+            "document.querySelector('.filelist.files')?.textContent.includes('api.py')")
+        own_names = "() => state.listings.get(current().worktree_path)?.names || []"
+        assert "api.py" not in page.evaluate(own_names)
+        # The other one's diff, held back on its way, then the own one.
+        show_tab(page, "diff")
+        page.evaluate("""() => {
+            const fetched = window.__fetched = window.fetch;
+            window.fetch = (where, how) => String(where).includes("place=")
+              ? new Promise((done) => setTimeout(done, 800)).then(() => fetched(where, how))
+              : fetched(where, how);
+            state.diffs.tag = "";
+            window.__late = loadDiff();
+            pickPlace("");
+        }""")
+        page.evaluate("() => window.__late")     # the late answer has come
+        assert "api.py" not in page.evaluate(untracked)
+        assert page.locator(".dfile .addnote").count() > 0
+        # The agent moves on through `DIRS_HELD` folders; the place goes.
+        page.evaluate("() => { window.fetch = window.__fetched; }")
+        page.select_option("#placepick", str(other))
+        page.wait_for_function("state.place !== ''")
+        now = time.time()
+        for one in range(ws.DIRS_HELD):
+            ws.append_event(conftest.event("PreToolUse", cwd=str(root), ts=now + one,
+                                           pane="%7", pid=1, tool_name="Read",
+                                           tool_input={"path": str(tmp_path / f"f{one}")}))
+        served[0].store.refresh()
+        page.evaluate("() => { state.placesAt = 0; askPlaces(); }")
+        page.wait_for_function("state.place === ''")
+        page.wait_for_selector(".dfile .addnote", state="attached")

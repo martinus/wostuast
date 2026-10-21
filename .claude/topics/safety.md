@@ -298,6 +298,16 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
   catches it with OSError; **on 3.13 `resolve` returns a link**, so
   `inside` refuses when `is_symlink()`.
   `test_a_link_loop_is_not_inside_and_is_not_an_error`.
+  - **A place from the page is one the daemon listed** (#616,
+    `place_of`, `NOT_A_PLACE`): the `place` a Files or Review route names
+    is compared with `places_for`, the repositories git found for folders
+    the session's own events named, and the path used is the daemon's,
+    never the page's. Anything else is a 404, before any git run. The read
+    inside a place goes through `worktree_target` as before. **Before a
+    pick only `rev-parse` runs there**, which runs nothing a config names;
+    `status` and `ls-files` run once the reader picks it, as the reader
+    chose (#616).
+    `test_another_repository_the_agent_worked_in_is_a_place_of_its_own`.
   - **Nothing inside a `.git` is read**: a tracked
     `notes.md -> ../.git/config` showed a remote's token. `worktree_target`
     refuses a real path with a `.git` part in any case (`.GIT/config` is
