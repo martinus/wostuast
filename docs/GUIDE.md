@@ -9,12 +9,18 @@ Everything wostuast does, and how to use each part. The
 
 - **You see who needs you.** The session list is grouped by state, most urgent
   first. The browser tab tells you too, when it is in the background. Its
-  title names the sessions that need you, or else says how many are working
-  or ready. Its icon is a small robot with one big eye and one small eye.
-  The whole robot is grey when nothing waits, green while an agent works,
-  and amber when one needs you. Your browser can also notify you. An agent
+  title names the sessions that need you, or else says how many are working,
+  waiting or ready. Its icon is a small robot with one big eye and one small
+  eye. The whole robot is grey when nothing waits, green while an agent
+  works, violet while an agent waits for a command in the background, and
+  amber when one needs you. Your browser can also notify you. An agent
   that an API error stopped, for example a spend limit or a failed login,
   needs you too: its card says the error.
+- **You see what runs in the background.** An agent that ends its turn
+  while a command still runs in the background, such as a build, is
+  **waiting**: its card is violet, in a group between working and ready. It
+  does not alert you; you hear from it when the work is over. Each command
+  in the background is a line under its card, with how long it has run.
 - **You can say "not now".** Point at a card that needs you and click the
   moon (or press <kbd>z</kbd>). The session then stands with the ready
   ones, and the tab's title, its icon and the alerts leave it out. The
@@ -534,8 +540,8 @@ taken out without a new `version`. Times are seconds since 1970, as numbers.
 | `place` | Where it started, as the page shows it: `repo/folder`. |
 | `worktree_path` | The top of its git worktree, or the folder where it started. |
 | `cwd` | The folder the agent stands in now. |
-| `state` | `needs_you`, `working`, `done`, `ended` or `dead`. |
-| `state_word` | The same, as the page says it: `needs you`, `working`, `ready`, `ended`, `killed`. |
+| `state` | `needs_you`, `working`, `waiting`, `done`, `ended` or `dead`. |
+| `state_word` | The same, as the page says it: `needs you`, `working`, `waiting`, `ready`, `ended`, `killed`. |
 | `settled` | When it became what it is. `now - settled` is how long it has been so. |
 | `last_ts` | When its last event came. |
 | `branch` | The git branch. Empty outside git. |
@@ -561,7 +567,7 @@ state. It reads the event log, so the page does not have to be running.
 - `SESSION` is its id, the start of its id, its name, or its place. A name
   that fits two sessions is refused, and both are named. Without a session,
   the first session in that state will do.
-- `STATE` is `needs_you`, `working`, `done`, `ended`, `dead`, a word the page
+- `STATE` is `needs_you`, `working`, `waiting`, `done`, `ended`, `dead`, a word the page
   shows (`ready`, `killed`), or `over` for both ways a session ends. Give
   `--until` more than once for any of them.
 - A session that is already in the state returns at once. A `/clear` is

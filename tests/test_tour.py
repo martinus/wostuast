@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 
 @skip_without_browser
 def test_it_draws_the_views_it_is_asked_for_with_the_eval_run(tmp_path):
-    """Two views of the six, in the light, with a mockup's `--eval` run
+    """Two views of the seven, in the light, with a mockup's `--eval` run
     before each: a class it sets is in the page when the picture is taken,
     and only the views named are drawn."""
     done = subprocess.run(

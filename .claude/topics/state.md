@@ -206,11 +206,14 @@ dialog, `/clear`, attention, pids and panes.
     apart**, for search too (#536).
     `test_another_sessions_message_does_not_name_the_session`,
     `test_search_reads_a_prompt_as_the_fold_does`.
-  - **A task holds the row green only until the prompt is idle, when all
-    it waits on is a command** (#488, `waits_on_agents`): a server held a
-    row green for hours. The idle `Notification` ends the turn ("in the
-    background: …"); a wake turns it green again. Waiting on a subagent
-    stays green. The reader chose this.
+  - **A turn that waits only on a command is "waiting"** (#617, which
+    turned #488 round, `waits_on_agents`): #488 ended the turn at the idle
+    `Notification`, so a server did not hold a row green for hours, and
+    the row went blue over an agent waiting on a build. Now the `Stop`
+    sets "waiting", and the idle `Notification` changes nothing: no
+    `ended_at`, no unread, no alert, until a `Stop` with nothing running
+    (then "has finished", from waiting as from working). A server keeps a
+    row waiting; the reader chose this. Waiting on a subagent stays green.
     `test_a_turn_that_leaves_a_task_running_is_not_over`,
     `test_a_subagent_in_the_background_holds_the_row_green_while_idle`,
     `test_an_idle_prompt_still_speaks_for_a_row_with_no_task`.

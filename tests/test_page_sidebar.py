@@ -1045,6 +1045,32 @@ def test_a_finished_agent_says_what_it_finished_and_goes(ws, page_at):
         assert options["requireInteraction"] is False
 
 
+def test_an_agent_that_waited_says_it_has_finished_when_the_wait_is_over(ws, page_at):
+    """A waiting agent gives no alert (#617): what it waits on still runs.
+    When the work is over and the agent stops, it has finished, as from
+    working."""
+    daemon, path = page_at
+    with alerts_page(path) as page:
+        page.wait_for_function("state.sessions.length === 1")
+        page.click("#settings")
+        page.click("#alertdone")
+        page.wait_for_function("document.getElementById('alertdone').checked")
+        now = time.time()
+        ws.append_event(conftest.event("UserPromptSubmit", prompt="build it", ts=now))
+        ws.append_event(conftest.event("Stop", ts=now + 1, background_tasks=[
+            {"id": "b1", "type": "shell", "status": "running", "command": "make"}]))
+        daemon.tick()
+        page.wait_for_function(
+            "() => state.sessions.some((one) => one.state === 'waiting')")
+        ws.append_event(conftest.event(
+            "Notification", notification_type="idle_prompt",
+            message="Claude is waiting for your input", ts=now + 2))
+        ws.append_event(conftest.event("Stop", ts=now + 3, background_tasks=[]))
+        daemon.tick()
+        page.wait_for_function("window.__told.length === 1")
+        assert "has finished" in page.evaluate("window.__told")[0][0]
+
+
 def test_a_finished_agent_is_said_only_when_it_was_working(ws, page_at):
     """"done" is where a session sits between turns, so the news is the moment
     it gets there. A session already finished when the page opened is not
@@ -2243,6 +2269,50 @@ def test_all_unreads_is_one_scroll_through_the_last_answers(ws, pair_at):
         page.wait_for_function("state.chosen === 's2' && !state.feed")
         assert page.is_visible(".tabs .tab")
         page.wait_for_selector('.row[data-id="s2"]:not(.unread)')
+
+
+def test_a_waiting_row_has_its_own_group_colour_and_lines(ws, page_at, tmp_path):
+    """An agent that ended its turn with a build still running in the
+    background was blue, "ready", while it waited (#617). It is "waiting":
+    a group under working and over ready, a colour between the two, the tab
+    says so, and each command in the background is a line under its row."""
+    daemon, url = page_at
+    now = time.time()
+    where = {"cwd": str(tmp_path), "pane": "%1", "pid": 1}
+    ws.append_event(conftest.event("UserPromptSubmit", prompt="build it", ts=now - 60, **where))
+    ws.append_event(conftest.event(
+        "PostToolUse", tool_name="Bash", tool_use_id="t1", ts=now - 50,
+        tool_input={"command": "make -j8", "description": "build the release"},
+        tool_response={"backgroundTaskId": "b1"}, **where))
+    ws.append_event(conftest.event("Stop", ts=now - 40, background_tasks=[
+        {"id": "b1", "type": "shell", "status": "running",
+         "description": "build the release", "command": "make -j8"}], **where))
+    daemon.store.refresh()
+    with opened(url) as page:
+        row = '.row[data-id="s1"]'
+        page.wait_for_selector(f"{row}.waiting .kid.shell")
+        assert "make -j8" in page.locator(f"{row} .kid.shell").inner_text()
+        assert page.title() == "1 waiting \u00b7 wostuast"
+        look = page.evaluate("""() => {
+          const css = getComputedStyle(document.documentElement);
+          const row = getComputedStyle(document.querySelector('.row.waiting'));
+          return {edge: row.borderLeftColor, waiting: css.getPropertyValue('--waiting').trim(),
+                  working: css.getPropertyValue('--working').trim(),
+                  done: css.getPropertyValue('--done').trim()};
+        }""")
+        assert look["waiting"] not in (look["working"], look["done"]), look
+        probe = page.evaluate("""(colour) => {
+          const one = document.createElement('div');
+          one.style.color = colour;
+          document.body.appendChild(one);
+          const said = getComputedStyle(one).color;
+          one.remove();
+          return said;
+        }""", look["waiting"])
+        assert look["edge"] == probe, look
+        assert page.evaluate("BANDS.map((one) => one[0])") == [
+            "needs", "working", "waiting", "ready", "history"]
+        assert page.evaluate("iconWas.split(' ')[0]") == "waiting"
 
 
 def test_what_a_session_started_stands_under_its_row(ws, page_at, tmp_path):
