@@ -13448,6 +13448,9 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
      this, and amber is spoken for. */
   --mine: #8aa4d0; --mine-soft: rgba(138,164,208,.10);
   --code: #0f1014; --code-ink: #c9ccd8;
+  /* A command over what it printed (issue 631): a ground of its own, so
+     the eye finds where the command ends and its output begins. */
+  --cmd: #1d1f28;
   /* A context window nearly full. It is a warning, not a state, so it may not
      wear the amber; the dropped-connection bar uses --cut-bg, which is this
      same orange with the alpha a background wants. */
@@ -13542,6 +13545,7 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --sheet: #ffffff;
   --mine: #3c5a8c; --mine-soft: rgba(60,90,140,.09);
   --code: #eceae3; --code-ink: #33363d;
+  --cmd: #dedcd2;
   --hot: #b2452a;
   --tint: rgba(0,0,0,.05);
   --shadow: rgba(0,0,0,.18);
@@ -14662,13 +14666,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .turnacts .icon { width: 14px; height: 14px; fill: none; stroke: currentColor;
   stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; }
 .turnacts > .save.on .icon { fill: currentColor; }
-/* A mark that stays -- a saved bookmark, a lit "txt" -- stands over the
-   first line without the hover, and stood on the words of a reply that ran
-   to the edge. Such a turn keeps the row's room on its right, so its text
-   wraps before the row. Only such a turn: every turn keeping it would take
-   back the width the narrow name column gave (issue 520). */
-.turn:has(> .turnacts > :is(.on, [aria-pressed="true"])) > :not(.who):not(.turnacts) {
-  padding-right: 92px; }
+/* A saved bookmark keeps no room (issue 632, which turned 526 round): a
+   turn kept the row's room on its right once saved, and its text wrapped
+   further left the moment the reader saved it. The text wraps as it did,
+   and without the hover the flag stands alone over the first line's end,
+   with no box round it, small enough to read past. A lit "txt" needs no
+   room either: `.source` keeps its own. */
+.turn:not(:hover) > .turnacts > .save.on {
+  border-color: transparent; background: none; }
 /* What the agent wrote, as it wrote it: to select and copy, Markdown and
    all. Only the face changes (issue 509): an answer's source is no box,
    and a prompt's or a note's keeps the box it had. */
@@ -14999,21 +15004,24 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .tooldiff .toolmore {
   padding: 4px 12px; border-top: 1px solid var(--edge); color: var(--ink-faint);
 }
-/* A call's whole input over what it printed (issue 619): the same card,
-   so the two read as one call's question and answer. */
+/* A call opened (issues 619, 631): one card, so the two read as one
+   call's question and answer; two cards alike read as two calls. The
+   command on a ground of its own, then a rule, then what it printed: on one
+   ground, where one ended and the other began was hard to see. Each part
+   has the code block's copy button (`putCodeCopy`), in a box of its own, as
+   a part scrolls and the button must not. */
+.toolcard {
+  margin: 2px 0 6px 18px; border: 1px solid var(--edge); border-radius: 6px;
+  overflow: hidden;
+}
+.toolcard > .codebox { position: relative; }
+.toolcard > .codebox + .codebox { border-top: 1px solid var(--edge); }
 .tool-call, .tool-result {
-  margin: 2px 0 6px 18px; padding: 8px 12px; border-radius: 6px;
-  background: var(--code); border: 1px solid var(--edge); color: var(--code-ink);
+  margin: 0; padding: 8px 40px 8px 12px; background: var(--code); color: var(--code-ink);
   font-family: var(--mono); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; word-wrap: break-word; max-height: 320px; overflow: auto;
 }
-/* A command and what it printed are one card, with a rule between: two
-   cards alike read as two calls. `.tools` is a column with a 4 px gap,
-   which no margin of 0 closes. */
-.tool-call:has(+ .tool-result) {
-  margin-bottom: 0; border-bottom: 0; border-radius: 6px 6px 0 0;
-}
-.tool-call + .tool-result { margin-top: -4px; border-radius: 0 0 6px 6px; }
+.tool-call { background: var(--cmd); }
 .divider {
   display: flex; align-items: center; gap: 10px; margin: 14px 0;
   font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
@@ -20633,21 +20641,27 @@ function putShell(node, block, result = block.result) {
 // line, and its own text would be copied with the code. An icon and not the
 // word, so a search for "copy" does not mark every block.
 function putCodeCopies(node) {
-  for (const pre of node.querySelectorAll("pre")) {
-    const box = document.createElement("div");
-    box.className = "codebox";
-    pre.replaceWith(box);
-    box.appendChild(pre);
-    const copy = put(box, "button", "copycode");
-    copy.title = "copy this block";
-    copy.setAttribute("aria-label", "copy this block");
-    putIcon(copy, "copy");
-    copy.addEventListener("click", async () => {
-      const done = await copyToClipboard(pre.textContent);
-      flashOutcome(copy, "copy", "copy this block", done,
-                   done ? "copied" : "the browser would not copy it");
-    });
-  }
+  for (const pre of node.querySelectorAll("pre")) putCodeCopy(pre, "copy this block");
+}
+
+// One `pre` in a box with its copy button: a code block's, and each part of
+// an opened call (#631). Its text when pressed, so a part painted since is
+// copied as it reads.
+function putCodeCopy(pre, title) {
+  const box = document.createElement("div");
+  box.className = "codebox";
+  pre.replaceWith(box);
+  box.appendChild(pre);
+  const copy = put(box, "button", "copycode");
+  copy.title = title;
+  copy.setAttribute("aria-label", title);
+  putIcon(copy, "copy");
+  copy.addEventListener("click", async () => {
+    const done = await copyToClipboard(pre.textContent);
+    flashOutcome(copy, "copy", title, done,
+                 done ? "copied" : "the browser would not copy it");
+  });
+  return box;
 }
 
 // The Markdown an agent wrote, as it wrote it. The page shows it drawn; this
@@ -21186,9 +21200,16 @@ function drawTool(parent, block, index) {
     if (state.turns.open.has(index)) state.turns.open.delete(index); else state.turns.open.add(index);
     redrawBlock(index);        // this line only; the rest of the tab stays put
   });
-  if (open && block.call) putCallText(parent, block);
   if (open && patch) putToolDiff(parent, block);
-  else if (open && block.result) put(parent, "div", "tool-result", block.result);
+  else if (open && (block.call || block.result)) {
+    // A call that has a patch is an edit, whose input `call_text` keeps
+    // none of: the change says it.
+    const card = put(parent, "div", "toolcard");
+    if (block.call) putCallText(card, block);
+    if (block.result) {
+      putCodeCopy(put(card, "pre", "tool-result", block.result), "copy what it printed");
+    }
+  }
 }
 
 // The call's whole input, under its line and over what it printed (#619):
@@ -21199,7 +21220,8 @@ function drawTool(parent, block, index) {
 // needs the highlighter: opening a call is the reader asking for it, as
 // opening a file is.
 function putCallText(parent, block) {
-  const box = put(parent, "div", "tool-call", block.call);
+  const box = put(parent, "pre", "tool-call", block.call);
+  putCodeCopy(box, block.tool === "Bash" ? "copy the command" : "copy what it was given");
   const language = block.tool !== "Bash" ? "json"
     : /^\s*python[\d.]*\s/.test(block.call) ? "python" : "bash";
   paintCall(box, language, block.call);

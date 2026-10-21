@@ -29,6 +29,11 @@ the reader sees them.
   lines on the wire, as a result is. **Whole, secrets and all**: the reader
   chose it (topics/safety). The colour replaces the text, so the find box
   marks it again.
+  - **One card, the command on a ground of its own** (#631, `.toolcard`,
+    `--cmd`): on one ground the reader could not see where the command
+    ended and its output began. A rule between the two parts, and **each
+    part copies itself** (`putCodeCopy`, the code block's button, in a box
+    of its own, as a part scrolls and the button must not).
   `test_a_call_keeps_its_whole_input_when_its_line_cuts_it`,
   `test_an_opened_call_shows_its_whole_command_painted`.
 - **A code block copies itself, from a box round it** (`putCodeCopies`,
@@ -139,11 +144,12 @@ the reader sees them.
   "14 Oct 09:10" is one moment.
   `test_what_a_turn_can_do_is_one_row_at_its_top_right`,
   `test_a_day_wears_the_time_s_colour`.
-  - **Only a turn with a mark that stays keeps the row's room on its right**
-    (`.turn:has(> .turnacts > :is(.on, [aria-pressed="true"]))`), or a saved
-    bookmark stands on a long first line (#521, #526). Room on every turn
-    would take back the narrow column's width.
-    `test_a_saved_mark_stands_on_no_words`.
+  - **A saved bookmark keeps no room; it is a flag with no box** (#632,
+    which turned #526 round on the reader's word): kept room made the text
+    wrap further left the moment it was saved. Without the hover the flag
+    stands alone over the first line's end (`.turn:not(:hover) > .turnacts
+    > .save.on`). A lit "txt" needs none either: `.source` keeps its own.
+    `test_a_saved_mark_moves_no_words`.
   - **The row's ground is the ground under it** (`--acts-ground`, #527): the
     prompt's tint (`--mine-soft`) is see-through, so the row lays it over
     `--bg` as a gradient, as the box does.
