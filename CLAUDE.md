@@ -112,8 +112,7 @@ green, so each entry, and each pull request that adds one, says why.
 
 `wostuast` is the whole program: Python, then `PAGE = r"""` with the HTML,
 CSS and JS. Header lines (`# --- `, `/* --- `, `// --- `) cut it into
-sections; each says what its section holds and ends with the rules to
-read, in brackets:
+sections, each ending with the rules to read, in brackets:
 
 ```
 # --- the hook: cmd_hook runs on every event; it never prints and never blocks [topics/safety]
@@ -133,6 +132,7 @@ WOSTUAST_WAIT=5000 python3 -m pytest tests/test_page_review.py -q -k name  # whi
 python3 tests/perturb.py breaks.json            # prove the new tests
 # before the push, in the background; $S is the session's scratchpad:
 set -o pipefail; for i in 1 2 3; do python3 -m pytest -q -n 12 -rf tests/test_page_review.py | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"; done
+python3 tests/page_coverage.py --lines tests/test_page_review.py -q -n 12  # a new page function: not named (#622)
 set -o pipefail; python3 -m pytest -q -n auto -rf --ignore-glob='tests/test_page_*' | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"
 set -o pipefail; python3 -m pytest -q -n auto -rf | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"  # only when a shared part changed
 ```
@@ -148,7 +148,7 @@ set -o pipefail; python3 -m pytest -q -n auto -rf | tee -a $S/gate.txt | grep -E
   `draw`, `showTab`, `paintLive`, the stream, a CSS rule every tab wears).
 - **A gate starts with `set -o pipefail;`, uses `-rf`, and `tee`s all its
   output**: a gate was pushed after "1 failed" (#569), and the file keeps
-  each failure's traceback (#595). **One gate at a time on the machine.**
+  each failure's traceback (#595). **While a gate runs, run no other test.**
 - **Tests read the rules too** (`tests/test_log.py`, `tests/test_where.py`).
   After an edit to `CLAUDE.md` or `.claude/`, run the tests with no browser.
 - **A change the reader asked for goes to a pull request, one a subject,
