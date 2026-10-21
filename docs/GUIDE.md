@@ -24,7 +24,8 @@ Everything wostuast does, and how to use each part. The
 - **You see what each subagent did.** A line under its card gives its
   kind and what it was asked. Once it ended, the line gives its calls, its
   tokens when Claude Code says them, and how long it ran. Point at the line
-  to read its last words.
+  to read its last words, and click it to read its own transcript in the
+  Transcript tab: read only, with **back to the session** above it.
 - **You can say "not now".** Point at a card that needs you and click the
   moon (or press <kbd>z</kbd>). The session then stands with the ready
   ones, and the tab's title, its icon and the alerts leave it out. The

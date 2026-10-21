@@ -4,8 +4,8 @@ See tests/browser.py for the shared browser and the helpers."""
 
 from __future__ import annotations
 
-
 import time
+from pathlib import Path
 
 import pytest
 
@@ -808,3 +808,103 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         page.keyboard.press("Escape")
         page.keyboard.press("5")
         page.wait_for_function("state.feed === 'commands'")
+
+
+def test_a_subagent_s_line_opens_its_own_transcript_read_only(ws, page_at):
+    """A subagent's line under its row opens its own transcript in the
+    Transcript tab (#618): a bar names it and goes back. Its turns are the
+    tab's while it is open, so a call opens as any does -- in its view, not
+    the session's -- but they have no buttons, its first prompt is its
+    task, and the send box is away, as nothing is sent to a subagent.
+    Another tab, or back, is the session's transcript and its send box; a
+    view open is closed."""
+    daemon, path = page_at
+    own = Path(daemon.store.sessions["s1"].transcript_path)
+    agent = own.with_suffix("") / "subagents" / "agent-ag1.jsonl"
+    agent.parent.mkdir(parents=True)
+    agent.write_text(conftest.records(
+        conftest.record("you", "look around"),
+        conftest.record("tool", "ls -la", tool_id="a1"),
+        conftest.record("result", "three files here", tool_id="a1"),
+        conftest.record("claude", "Found three files.")))
+    now = time.time()
+    ws.append_event(conftest.event("SubagentStart", cwd=str(own.parent), pane="%7", pid=1,
+                                   ts=now, agent_id="ag1", agent_type="Explore"))
+    ws.append_event(conftest.event("SubagentStop", cwd=str(own.parent), pane="%7", pid=1,
+                                   ts=now + 1, agent_id="ag1", agent_type="Explore",
+                                   agent_transcript_path=str(agent)))
+    daemon.store.refresh()
+    in_view = "document.querySelector('.agentview .turnbody')?.textContent.includes"
+    with opened(path) as page:
+        wait_for_map(page)
+        wait_for_watching(daemon)
+        page.wait_for_selector("#sendbar", state="visible")
+        # A call the reader opened in the session's own, kept for the way back.
+        page.locator("#content .tool", has_text="pytest").click()
+        page.wait_for_function(
+            "document.querySelector('#content .turnbody').textContent.includes('all good')")
+        page.click(".row[data-id='s1'] .kidsran")
+        page.click("#feedlink")                    # a view, which it closes
+        page.wait_for_function("state.feed")
+        page.click(".row[data-id='s1'] .kid.opens")
+        page.wait_for_function(f"{in_view}('Found three files.')")
+        assert page.evaluate("state.feed") is False
+        page.wait_for_function(
+            "document.querySelector('.agenthead').textContent.startsWith('\\u21b3Explore')")
+        assert page.locator(".agentview .who .self").first.inner_text() == "task"
+        assert page.locator(".agentview .who .self[href]").count() == 0
+        assert page.locator("#sendbar").is_hidden()
+        assert all(not one.is_visible() for one in page.locator(".agentview .turnacts").all())
+        # A call opens in its view, and the session's own turns are untouched.
+        page.locator(".agentview .tool", has_text="ls -la").click()
+        page.wait_for_function(f"{in_view}('three files here')")
+        assert page.evaluate("[...state.agent.held.open]") == [2]
+        # What the session says meanwhile is not the subagent's; back is.
+        write_records(daemon, conftest.record("claude", "A reply while you were away."))
+        daemon.tick()
+        stays(page, 600)
+        assert "while you were away" not in page.locator("#content").inner_text()
+        # Another tab leaves it, as "back" does.
+        page.keyboard.press("2")
+        page.keyboard.press("1")
+        page.wait_for_function(
+            "document.querySelector('#content .turnbody')?.textContent.includes('Do the thing.')")
+        page.click(".row[data-id='s1'] .kid.opens")
+        page.wait_for_selector(".agenthead")
+        page.click(".agentback")
+        page.wait_for_function(
+            "document.querySelector('#content .turnbody')?.textContent.includes("
+            "'A reply while you were away.') && !document.querySelector('.agenthead')")
+        page.wait_for_selector("#sendbar", state="visible")
+        # Its second line: the first stands on the call's line when shut.
+        assert "all good" in page.locator("#content .turnbody").inner_text(), "the call shut"
+        # A link to a turn of the session leaves a subagent open, too.
+        page.click(".row[data-id='s1'] .kid.opens")
+        page.wait_for_selector(".agenthead")
+        page.evaluate("() => { location.hash = blockHref(0); }")
+        page.wait_for_function(
+            "!document.querySelector('.agenthead')"
+            " && document.querySelector('#content .turnbody')?.textContent.includes('Do the thing.')")
+
+
+def test_a_running_subagent_s_transcript_follows_it(ws, page_at):
+    """A subagent that still runs has no `SubagentStop` to name its
+    transcript: the page reads the one beside the session's (measured on
+    2.1.306), and again while it runs, so what it does next shows (#618)."""
+    daemon, path = page_at
+    own = Path(daemon.store.sessions["s1"].transcript_path)
+    agent = own.with_suffix("") / "subagents" / "agent-ag2.jsonl"
+    agent.parent.mkdir(parents=True)
+    agent.write_text(conftest.records(conftest.record("you", "read the tests")))
+    ws.append_event(conftest.event("SubagentStart", cwd=str(own.parent), pane="%7", pid=1,
+                                   ts=time.time(), agent_id="ag2", agent_type="Plan"))
+    daemon.store.refresh()
+    in_view = "document.querySelector('.agentview .turnbody')?.textContent.includes"
+    with opened(path) as page:
+        wait_for_map(page)
+        page.click(".row[data-id='s1'] .kid.running.opens")
+        page.wait_for_function(f"{in_view}('read the tests')")
+        assert "running" in page.locator(".agenthead").inner_text()
+        with agent.open("a") as handle:
+            handle.write(conftest.records(conftest.record("claude", "Two tests fail.")))
+        page.wait_for_function(f"{in_view}('Two tests fail.')")

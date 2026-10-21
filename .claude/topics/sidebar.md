@@ -49,6 +49,21 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
     as "subagent", 0 calls, 0 s, and counted in "N subagents ran". One we
     already hold stays a subagent, whatever its end says.
     `test_a_compaction_s_own_agent_is_no_subagent`.
+  - **A subagent's line opens its own transcript, read only** (#618,
+    `openAgent`, `dropAgent`, `state.agent`, `read_agent`): in the
+    Transcript tab, as the reader chose, under a bar that names it and goes
+    back. **Its turns are `state.turns` while it is open, and the
+    session's wait aside in `state.agent.held`**: drawn with the session's
+    machinery, a click on one of its calls opened the session's block at
+    that number, and its runs never folded. So the session's pushes are
+    not heard meanwhile (`onTranscriptPush`), and its next load fetches
+    them. Any `showTab` leaves it, so a turn link, a card or a command
+    lands in the session's; a view open is closed. No buttons on its turns
+    (`.agentview`), no send box (`transcriptShown`); its names link
+    nowhere, and its first prompt is "task", the agent's words, not yours.
+    `test_a_subagent_s_line_opens_its_own_transcript_read_only`,
+    `test_a_running_subagent_s_transcript_follows_it`,
+    `test_a_subagent_s_own_transcript_is_served_by_its_id`.
   - **Let go of what an Agent call asked for at a turn's edge**
     (`agent_asks`): a declined call fires no hook and a failed one starts
     nothing, so their descriptions named later subagents. A failed call

@@ -890,6 +890,48 @@ def test_a_folder_too_deep_or_too_wide_is_walked_within_bounds(ws, tmp_path):
     assert len(tree.files) < 6 and tree.skipped, (tree.files, tree.skipped)
 
 
+def test_a_subagent_s_own_transcript_is_served_by_its_id(ws, served, tmp_path):
+    """A subagent's own transcript, for the Transcript tab (#618): by the
+    path its `SubagentStop` named, or, while it runs, the one beside the
+    session's transcript (measured on 2.1.306). Only a subagent the
+    session's events named, and only a transcript `safe_transcript` lets
+    through: a path out of the Claude directory is no transcript."""
+    daemon, base = served
+    folder = ws.settings_path().parent / "projects" / "-w"
+    (folder / "s1" / "subagents").mkdir(parents=True)
+    own = folder / "s1.jsonl"
+    own.write_text(conftest.records(conftest.record("you", "go")))
+    done = folder / "s1" / "subagents" / "agent-ag1.jsonl"
+    done.write_text(conftest.records(conftest.record("you", "look around"),
+                                     conftest.record("claude", "Found three files.")))
+    running = folder / "s1" / "subagents" / "agent-ag2.jsonl"
+    running.write_text(conftest.records(conftest.record("you", "read the tests")))
+    outside = tmp_path / "agent-ag3.jsonl"
+    outside.write_text(conftest.records(conftest.record("you", "secret")))
+    now = time.time()
+    ws.append_event(event("SessionStart", ts=now - 9, transcript_path=str(own)))
+    for agent, path in (("ag1", done), ("ag3", outside)):
+        ws.append_event(event("SubagentStart", ts=now - 8, agent_id=agent,
+                              agent_type="Explore"))
+        ws.append_event(event("SubagentStop", ts=now - 7, agent_id=agent,
+                              agent_type="Explore", agent_transcript_path=str(path)))
+    ws.append_event(event("SubagentStart", ts=now - 6, agent_id="ag2", agent_type="Plan"))
+    # An id from an event is input too: one that climbs out of `subagents/`
+    # led to the session's own transcript.
+    ws.append_event(event("SubagentStart", ts=now - 5, agent_id="x/../../../s1",
+                          agent_type="Plan"))
+    daemon.store.refresh()
+    status, body = get(f"{base}/api/session/s1/transcript?agent=ag1")
+    assert (body["kind"], body["running"]) == ("Explore", False)
+    assert [one["text"] for one in body["blocks"]] == ["look around", "Found three files."]
+    status, body = get(f"{base}/api/session/s1/transcript?agent=ag2")
+    assert body["running"] is True and body["blocks"][0]["text"] == "read the tests"
+    for wrong in ("ag3", "ag9", "../s1", "x/../../../s1"):
+        with pytest.raises(urllib.error.HTTPError) as answer:
+            get(f"{base}/api/session/s1/transcript?agent={urllib.parse.quote(wrong)}")
+        assert answer.value.code == 404, wrong
+
+
 def test_every_name_is_served_and_the_changed_ones_are_named(repo_session):
     """The names go as one string because fifty thousand objects cost
     megabytes a poll. The changed ones are a short list of their own."""

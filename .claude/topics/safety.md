@@ -276,7 +276,11 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
   puts a `!` command's output and a slash command's answer in a `pre` as
   text.
 - **A path out of the event log is input, not fact.** `transcript_path`
-  goes through `safe_transcript`; `cwd` is for git and labels, never to
+  goes through `safe_transcript`, and so does a subagent's own
+  (`agent_transcript_path`, #618): its `agent_transcript_path`, or while it
+  runs a path made from the session's and its `agent_id`, which must be
+  `AGENT_ID`: `x/../../../s1` led back to the session's own. Only an agent
+  the session's events named is asked. `cwd` is for git and labels, never to
   open a file the page asked for.
   - **A line handed to the reader to run is quoted, every part, and typed
     nowhere** (#352, `resume_command`, `drawResume`):
