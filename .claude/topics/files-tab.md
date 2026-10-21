@@ -28,6 +28,26 @@ The listing and the tree, find, icons, hex, and how a file is drawn.
   - **A place the daemon no longer lists is left for the own one**
     (`askPlaces`): after `DIRS_HELD` other folders it is refused, and every
     route said 404 under a picker that had hidden itself.
+  - **A folder the reader adds is a place of the worktree, git or not**
+    (#624, `verb_folders`, `Store.add_folder`, `Marks.folders`,
+    `folders.json`): the picker's last choice ("add a folder…") opens a box
+    beside it; the cross takes one off. Every session of the worktree
+    offers it, as the reader chose. One git has as a worktree's top is a
+    repository; any other is `plain`: `folder_files` walks it, each folder
+    as an ignored one (`walk_ignored`, `IGNORED_MAX`) until `FOLDER_MAX`,
+    every file walked, so "changed" is written since the session began.
+    **No `.git` is walked or named** (`in_git_dir`): a top one is not even
+    walked. **The walk is bounded in work, not only in names**
+    (`FOLDER_READS`, `WALK_DEPTH`, `FOLDER_FRESH`): `/` took 18 s for
+    eight thousand names, again every three seconds, and a thousand nested
+    folders raised RecursionError, through an ignored folder too. The
+    folders are the worktree the session started in's (`home_place`), not
+    the one the agent stands in. The Review tab says it has nothing to
+    review (`placePlain`, `NOT_A_REPOSITORY`) rather than ask.
+    The picker shows with the own place alone, for its last choice.
+    `test_a_folder_the_reader_added_is_a_place_git_need_not_know`,
+    `test_a_folder_too_deep_or_too_wide_is_walked_within_bounds`,
+    `test_a_folder_added_from_the_picker_is_read_on_the_files_tab`.
   - **A folder in no repository is asked about once a minute**
     (`Files.root_kept`, `NO_REPO_KEPT`): each request that named a place
     asked git about all of them, up to `DIRS_HELD` processes a poll.

@@ -748,11 +748,11 @@ def test_another_repository_the_agent_worked_in_is_a_place_of_its_own(ws, served
     # to `DIRS_HELD` processes a poll.
     asked: list[list[str]] = []
     real = ws.run
-    monkeypatch.setattr(ws, "run", lambda args, *rest, **given: (
-        asked.append(list(args)) or real(args, *rest, **given)))
-    get(f"{base}/api/session/s1/places")
+    with monkeypatch.context() as patched:
+        patched.setattr(ws, "run", lambda args, *rest, **given: (
+            asked.append(list(args)) or real(args, *rest, **given)))
+        get(f"{base}/api/session/s1/places")
     assert not [one for one in asked if str(tmp_path / "plain") in one], asked
-    monkeypatch.undo()
     place = urllib.parse.quote(str(other))
     status, body = get(f"{base}/api/session/s1/files?place={place}")
     assert status == 200 and body["names"] == "lib/api.py", body
@@ -770,6 +770,124 @@ def test_another_repository_the_agent_worked_in_is_a_place_of_its_own(ws, served
     # No place is the session's own, as before.
     status, body = get(f"{base}/api/session/s1/files")
     assert body["names"] == "README.md"
+
+
+def test_a_folder_the_reader_added_is_a_place_git_need_not_know(ws, served, repo, tmp_path,
+                                                                 monkeypatch):
+    """A folder the reader adds is a place of the session's worktree (#624),
+    git or not. With no git, the Files tab walks it and a read is checked
+    by `inside` alone: a link out of it, `..`, a `.git` and an absolute
+    path are refused. The Review tab has nothing to show. It is kept over a
+    restart, under the worktree, and taken off again. Only a folder that
+    exists is added, kept as its real path."""
+    daemon, base = served
+    notes = tmp_path / "notes"
+    (notes / "sub").mkdir(parents=True)
+    (notes / "plan.md").write_text("# plan\n")
+    (notes / "sub" / "a.txt").write_text("a\n")
+    (notes / ".git").mkdir()
+    (notes / ".git" / "config").write_text("a token\n")
+    (notes / ".git" / "HEAD").write_text("ref\n")
+    (notes / "sub" / ".git").mkdir()
+    for name in ("a", "b"):
+        (notes / "sub" / ".git" / name).write_text("x\n")
+    # Past a budget, no `.git` is named as a folder too big to open either,
+    # and the one at the top is not walked at all: every three seconds.
+    walked: list[str] = []
+    real_walk = ws.walk_ignored
+    with monkeypatch.context() as patched:
+        patched.setattr(ws, "walk_ignored", lambda root, top, *rest: (
+            walked.append(top) or real_walk(root, top, *rest)))
+        assert ws.folder_files(str(notes), budget=1).skipped == []
+    assert walked == ["sub"], walked
+    (tmp_path / "secret.txt").write_text("secret\n")
+    (notes / "out.txt").symlink_to(tmp_path / "secret.txt")
+    other = tmp_path / "other"
+    other.mkdir()
+    conftest.git_in(other, "init", "-q", "-b", "main")
+    ws.append_event(event("SessionStart", cwd=str(repo), ts=time.time()))
+    daemon.store.refresh()
+    url, token = f"{base}/api/session/s1/folders", daemon.token
+    bare = tmp_path / "bare.git"
+    conftest.git_in(tmp_path, "init", "-q", "--bare", str(bare))
+    # Neither a git directory -- a `.git` or a bare repository, which served
+    # a remote's token -- nor a system tree, where a read blocks for good.
+    for wrong in ("notes", ".", str(tmp_path / "gone"), str(tmp_path / "secret.txt"),
+                  "", 7, "/tmp/a\nb", str(repo / ".git"), str(bare), "/proc", "/dev/shm"):
+        status, body = post(url, {"add": wrong}, token=token)
+        assert status == 400, (wrong, body)
+    assert post(url, {"add": str(repo)}, token=token)[0] == 409, "on the list already"
+    real = str(notes.resolve())
+    (tmp_path / "link").symlink_to(notes)
+    assert post(url, {"add": str(tmp_path / "link")}, token=token) == (
+        200, {"id": "s1", "folders": [real], "path": real, "done": True}), "kept as it is"
+    post(url, {"add": str(other)}, token=token)
+    status, body = get(f"{base}/api/session/s1/places")
+    assert body["places"][1:] == [
+        {"path": real, "name": "notes", "own": False, "added": True, "plain": True},
+        {"path": str(other.resolve()), "name": "other", "own": False, "added": True,
+         "plain": False}], body
+    place = urllib.parse.quote(real)
+    status, body = get(f"{base}/api/session/s1/files?place={place}")
+    assert status == 200 and body["plain"] is True
+    assert sorted(body["names"].split("\0")) == ["out.txt", "plan.md", "sub/a.txt"]
+    status, body = get(f"{base}/api/session/s1/file?path=plan.md&place={place}")
+    assert body["text"] == "# plan\n"
+    for wrong in ("out.txt", ".git/config", "../secret.txt", str(tmp_path / "secret.txt"),
+                  "sub/../../secret.txt", "a\0b"):
+        with pytest.raises(urllib.error.HTTPError) as answer:
+            get(f"{base}/api/session/s1/file?path={urllib.parse.quote(wrong)}&place={place}")
+        assert answer.value.code == 404, wrong
+    with pytest.raises(urllib.error.HTTPError) as answer:
+        get(f"{base}/api/session/s1/diff?place={place}")
+    assert answer.value.code == 404
+    # The folders belong to the worktree the session started in, wherever
+    # the agent stands now.
+    ws.append_event(event("PreToolUse", cwd=str(other), ts=time.time(),
+                          tool_name="Bash", tool_input={"command": "ls"}))
+    daemon.store.refresh()
+    status, body = get(f"{base}/api/session/s1/places")
+    assert real in [one["path"] for one in body["places"]], body
+    assert ws.Marks.load().folders == {str(repo): [real, str(other.resolve())]}
+    # Swapped for a link later, it is no longer the folder that was added:
+    # every read went where the link went, a `.git` too.
+    moved = tmp_path / "moved"
+    notes.rename(moved)
+    notes.symlink_to(tmp_path)
+    for wrong in ("secret.txt", "config"):
+        with pytest.raises(urllib.error.HTTPError) as answer:
+            get(f"{base}/api/session/s1/file?path={wrong}&place={place}")
+        assert answer.value.code == 404, wrong
+    notes.unlink()
+    notes.symlink_to(repo / ".git")
+    with pytest.raises(urllib.error.HTTPError) as answer:
+        get(f"{base}/api/session/s1/file?path=config&place={place}")
+    assert answer.value.code == 404
+    assert ws.folder_files(real).failed is True
+    notes.unlink()
+    moved.rename(notes)
+    assert post(url, {"remove": real}, token=token)[1]["folders"] == [str(other.resolve())]
+    with pytest.raises(urllib.error.HTTPError) as answer:
+        get(f"{base}/api/session/s1/files?place={place}")
+    assert answer.value.code == 404
+
+
+def test_a_folder_too_deep_or_too_wide_is_walked_within_bounds(ws, tmp_path):
+    """A walk of a folder the reader added is bounded in depth and in what
+    it reads (#624): a thousand nested folders raised RecursionError on
+    every poll, and `/` took 18 s to keep eight thousand names."""
+    deep = tmp_path / "deep"
+    (deep / "/".join(["a"] * (ws.WALK_DEPTH + 5))).mkdir(parents=True)
+    (deep / "top.md").write_text("x\n")
+    tree = ws.folder_files(str(deep))
+    assert [one.path for one in tree.files] == ["top.md"]
+    assert [one.count("/") for one in tree.skipped] == [ws.WALK_DEPTH + 1], tree.skipped
+    wide = tmp_path / "wide"
+    for one in range(6):
+        (wide / f"d{one}").mkdir(parents=True)
+        (wide / f"d{one}" / "f.txt").write_text("x\n")
+    tree = ws.folder_files(str(wide), reads=5)
+    assert len(tree.files) < 6 and tree.skipped, (tree.files, tree.skipped)
 
 
 def test_every_name_is_served_and_the_changed_ones_are_named(repo_session):

@@ -5,6 +5,7 @@ See tests/browser.py for the shared browser and the helpers."""
 from __future__ import annotations
 
 
+import json
 import re
 import subprocess
 import time
@@ -2038,9 +2039,9 @@ def test_another_repository_the_agent_worked_in_is_one_pick_away(ws, served, rep
         page.wait_for_selector(".dfile .addnote", state="attached")
         page.wait_for_function(
             "!document.getElementById('placepick').hidden"
-            " && document.getElementById('placepick').options.length === 2")
+            " && document.getElementById('placepick').options.length === 3")
         names = page.eval_on_selector_all("#placepick option", "els => els.map(e => e.textContent)")
-        assert names == ["myrepo (its own)", "other (read only)"], names
+        assert names == ["myrepo (its own)", "other (read only)", "add a folder…"], names
         # Picked, the own listing is gone at once, not when the answer comes.
         show_tab(page, "files")
         left = page.evaluate("""(other) => {
@@ -2072,6 +2073,52 @@ def test_another_repository_the_agent_worked_in_is_one_pick_away(ws, served, rep
         page.wait_for_selector(".dfile .addnote", state="attached")
 
 
+def test_a_folder_added_from_the_picker_is_read_on_the_files_tab(
+        ws, served, repo_page, tmp_path):
+    """A folder the reader adds (#624), git or not: the picker's last
+    choice opens a box, Enter adds it, and the Files tab shows what it
+    holds. The Review tab says it has nothing to review. A folder that is
+    not there is refused, in words. The cross takes it off the list."""
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "plan.md").write_text("# The plan\n")
+    with opened(repo_page) as page:
+        show_tab(page, "files")
+        page.wait_for_function(
+            "document.getElementById('placepick').options.length === 2")
+        assert page.locator("#placedrop").is_hidden()
+        page.select_option("#placepick", "+")
+        page.press("#placepath", "Escape")
+        assert page.locator("#placeadd").is_hidden()
+        page.select_option("#placepick", "+")
+        page.fill("#placepath", str(tmp_path / "gone"))
+        page.press("#placepath", "Enter")
+        page.wait_for_function("state.trouble.includes('no folder')")
+        page.fill("#placepath", str(notes))
+        page.press("#placepath", "Enter")
+        page.wait_for_function(f"state.place === {json.dumps(str(notes.resolve()))}")
+        assert page.locator("#placeadd").is_hidden()
+        names = page.eval_on_selector_all("#placepick option", "els => els.map(e => e.textContent)")
+        assert names == ["myrepo (its own)", "notes (added)", "add a folder…"], names
+        page.wait_for_function(
+            "document.querySelector('.filelist.files')?.textContent.includes('plan.md')")
+        show_tab(page, "diff")
+        says = "document.querySelector('.diffscroll')?.textContent.includes('no git repository')"
+        page.wait_for_function(says)
+        # Picked on the Review tab itself, the pane says it too.
+        page.select_option("#placepick", "")
+        page.wait_for_selector(".dfile .addnote", state="attached")
+        page.select_option("#placepick", str(notes.resolve()))
+        page.wait_for_function(says)
+        assert page.locator(".diffbar .pickof").is_hidden(), "commits to pick in no repository"
+        page.click("#placedrop")
+        page.wait_for_selector(".diffbar .pickof", state="visible")
+        page.wait_for_function("state.place === ''")
+        page.wait_for_function(
+            "document.getElementById('placepick').options.length === 2")
+        page.wait_for_selector(".dfile .addnote", state="attached")
+
+
 def test_another_repository_keeps_its_answers_and_its_names_to_itself(
         ws, served, repo_page, tmp_path):
     """What a review agent found in #616. An answer asked under another
@@ -2095,7 +2142,7 @@ def test_another_repository_keeps_its_answers_and_its_names_to_itself(
         show_tab(page, "diff")
         comment_on_first_line(page, "an own note")
         page.wait_for_function(
-            "document.getElementById('placepick').options.length === 2")
+            "document.getElementById('placepick').options.length === 3")
         page.select_option("#placepick", str(other))
         page.wait_for_function(f"({untracked})().includes('api.py')")
         assert page.locator("#reviewbar").is_hidden()
