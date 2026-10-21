@@ -6062,6 +6062,11 @@ class DiffReport:
     #: for that one commit only: a hundred bodies on every poll would be
     #: sent for the one the reader is looking at.
     body: str = ""
+    #: How the merge shown is shown (#621): "hand", what it changed beyond
+    #: git's own merge; "all", all it brought in, against its first parent;
+    #: "old", all of it because this git cannot say the first (2.36 can).
+    #: "" for a commit that is no merge.
+    merge: str = ""
 
 
 #: What git writes after a backslash inside a quoted path. Anything else it
@@ -6516,7 +6521,8 @@ def pick_base(cwd: str, runner: Callable[..., str | None] = run,
 
 
 def git_diff(
-    cwd: str, args: Sequence[str], runner: Callable[..., str | None] = run
+    cwd: str, args: Sequence[str], runner: Callable[..., str | None] = run,
+    remerge: bool = False,
 ) -> tuple[str | None, bool]:
     """Run one diff. Returns its text, and whether it had to be cut short.
 
@@ -6537,11 +6543,18 @@ def git_diff(
     (measured, git 2.43), when a file's stat moved and its bytes did not.
     That is the lock `run` keeps `status` off, and the agent's `git add`
     needs it. The diff is the same without the refresh.
+
+    `remerge` asks `git show --remerge-diff` of the one commit in `args`
+    (#621): what a merge changed beyond the merge git would have made by
+    itself -- the conflicts, and how they were settled. `git diff` has no
+    such option. It takes the same pinned options, and a git before 2.36
+    refuses it: None, as any failure.
     """
+    command = ["show", "--remerge-diff", "--format="] if remerge else ["diff"]
     out = runner(
         ["git", "-C", cwd, "-c", "core.quotePath=false",
          "-c", "diff.autoRefreshIndex=false",
-         "diff", "--no-color", "--no-ext-diff", "--no-textconv",
+         *command, "--no-color", "--no-ext-diff", "--no-textconv",
          "--src-prefix=a/", "--dst-prefix=b/", "-M", "--submodule=short",
          *args],
         timeout=DIFF_TIMEOUT,
@@ -6684,6 +6697,8 @@ class DiffBuild:
     runner: Callable[..., str | None]
     space: bool
     report: DiffReport
+    #: A merge shown whole, against its first parent, not by hand (#621).
+    merged_all: bool = False
 
     def ask(self, *args: str) -> tuple[str | None, bool]:
         # Three lines of context, said rather than assumed: the page reads
@@ -6743,12 +6758,18 @@ def one_commit(build: DiffBuild, one: Commit) -> None:
                          "--no-show-signature", "--format=%b", one.sha, "--"])
     report.failed = report.failed or body is None
     report.body = (body or "").strip()[:COMMIT_BODY_MAX]
-    files = build.section(
-        "commit", one.subject or one.short,
-        f"what {'merge' if one.merge else 'commit'} {one.short}"
-        f" by {one.author} changed"
-        + (", against its first parent" if one.merge else ""),
-        parent, one.sha)
+    files = merge_by_hand(build, one) if one.merge and not build.merged_all else None
+    if files is None:
+        if one.merge:
+            report.merge = report.merge or "all"
+        files = build.section(
+            "commit", one.subject or one.short,
+            f"what {'merge' if one.merge else 'commit'} {one.short}"
+            f" by {one.author} changed"
+            + (", against its first parent: all it brought in" if one.merge else "")
+            + (" (this git cannot show what was changed by hand: that needs"
+               " git 2.36)" if report.merge == "old" else ""),
+            parent, one.sha)
     # Only the files this commit touched, so the map costs what the
     # commit costs and not what every later commit does.
     paths = [":(literal)" + each.path for each in files
@@ -6757,6 +6778,33 @@ def one_commit(build: DiffBuild, one: Commit) -> None:
         text, _ = git_diff(build.root, [one.sha, "--", *paths], build.runner)
         report.failed = report.failed or text is None
         report.since = parse_diff(text or "")
+
+
+def merge_by_hand(build: DiffBuild, one: Commit) -> list[DiffFile] | None:
+    """A merge, as what it changed beyond the merge git makes by itself
+    (#621), or None when git could not say.
+
+    Against its first parent a merge shows all it brought in: the other
+    branch's whole work, which the reader saw where it was made, and among
+    it no sign of what the merge itself did. The reader had no way to
+    review one. `git show --remerge-diff` merges again, conflicts and all,
+    and shows what the commit holds that differs: the conflicts, and how
+    they were settled. A clean merge shows nothing, and says so.
+    """
+    report = build.report
+    text, cut = git_diff(build.root, [one.sha, *SPACE_ARGS[build.space],
+                                      f"-U{DIFF_CONTEXT}", "--"],
+                         build.runner, remerge=True)
+    if text is None:
+        report.merge = "old"
+        return None
+    report.merge = "hand"
+    return build.section(
+        "commit", one.subject or one.short,
+        f"what merge {one.short} by {one.author} changed by hand, beyond the"
+        " merge git makes by itself"
+        + ("" if text.strip() else ": nothing, git merged it by itself"),
+        answer=(text, cut))
 
 
 def committed_half(build: DiffBuild, choice: BaseChoice,
@@ -6793,7 +6841,8 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
                   of: str = "", base: str = "",
                   ranks: dict[Any, Any] | None = None,
                   held: dict[Any, Any] | None = None,
-                  root: str | None = None, space: bool = False) -> DiffReport:
+                  root: str | None = None, space: bool = False,
+                  merged_all: bool = False) -> DiffReport:
     """What this worktree has changed, in two parts, or one commit of it.
 
     Committed: `git diff <base>...HEAD`, the branch's own work. The three dots
@@ -6805,6 +6854,8 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
     `of` narrows it: "uncommitted" is the second part alone, and a sha is that
     one commit against its first parent. A sha is used only when it is one
     `branch_commits` listed -- it came from the page, and the page is input.
+    A merge is shown by what it changed by hand (`merge_by_hand`), or with
+    `merged_all` against its first parent.
 
     **What the branch committed is kept in `held`**, the daemon's, under the
     base's sha and HEAD's: the tab asks every five seconds, and on a branch
@@ -6821,7 +6872,7 @@ def worktree_diff(cwd: str, runner: Callable[..., str | None] = run,
         # as "nothing changed".
         report.failed = root is None
         return report
-    build = DiffBuild(root, runner, space, report)
+    build = DiffBuild(root, runner, space, report, merged_all)
     choice = pick_base(root, runner, base, ranks)
     report.base, lost = choice.name, choice.failed
     report.base_auto, report.bases = choice.detected, choice.offered
@@ -6896,7 +6947,7 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
                     runner: Callable[..., str | None] = run,
                     base: str = "",
                     ranks: dict[Any, Any] | None = None,
-                    space: bool = False) -> WholeFile:
+                    space: bool = False, merged_all: bool = False) -> WholeFile:
     """One file's diff in one section, with the whole file as context.
 
     `section`, `path` and `of` come from the page. The section picks the
@@ -6941,9 +6992,16 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
         return found
     # Both names of a renamed file, or git sees one added and nothing else.
     names = [path] + ([old_path] if old_path and old_path != path else [])
-    text, found.cut = git_diff(
-        root, [*spec, *SPACE_ARGS[space], f"-U{WHOLE_CONTEXT}", "--",
-               *(":(literal)" + name for name in names)], runner)
+    tail = [*SPACE_ARGS[space], f"-U{WHOLE_CONTEXT}", "--",
+            *(":(literal)" + name for name in names)]
+    text = None
+    if section == "commit" and one.merge and not merged_all:
+        # The lines between a merge's changes by hand are the same diff's
+        # (#621), or they would be another diff's lines between these hunks.
+        # A git that cannot falls back as `worktree_diff` did.
+        text, found.cut = git_diff(root, [one.sha, *tail], runner, remerge=True)
+    if text is None:
+        text, found.cut = git_diff(root, [*spec, *tail], runner)
     if text is None:
         found.failed = True
         return found
@@ -10742,7 +10800,8 @@ def verb_diff(serving: Serving, session_id: str, session: Session,
     report = worktree_diff(session.cwd, of=of, base=base,
                            ranks=serving.daemon.ranks, held=serving.daemon.diffs,
                            root=serving.daemon.files.root_of(session.cwd, run),
-                           space=query.get("space", "") == "hide")
+                           space=query.get("space", "") == "hide",
+                           merged_all=query.get("merge", "") == "all")
     # The tab asks every five seconds, and the answer is the whole diff:
     # on a slow link the one transfer that never stopped. The page sends
     # back the tag of the answer it holds, and one that still stands is
@@ -10770,7 +10829,8 @@ def verb_whole(serving: Serving, session_id: str, session: Session,
                             query.get("path", ""), query.get("old", ""),
                             query.get("of", ""), base=query.get("base", ""),
                             ranks=serving.daemon.ranks,
-                            space=query.get("space", "") == "hide")
+                            space=query.get("space", "") == "hide",
+                            merged_all=query.get("merge", "") == "all")
     return 200, wire_fields(found, id=session_id)
 
 
@@ -15213,7 +15273,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   display: grid; grid-template-columns: minmax(0, max-content) auto 1fr auto;
   align-items: baseline;
 }
-.diffhead.commit > :is(.about, .message) { grid-column: 1 / -1; }
+.diffhead.commit > :is(.about, .message, .mergeas) { grid-column: 1 / -1; }
+.diffhead.commit > .mergeas { justify-self: start; margin-top: 4px; }
 .diffhead .readas { grid-column: 4; grid-row: 1; margin-left: 12px; }
 /* On the Files tab it is the last thing on the path's line. */
 .filebody .where .readas { margin-left: auto; }
@@ -22453,6 +22514,9 @@ function blankDiff() {
     more: new Map(),
     whole: new Map(),
     tag: "",            // the tag of the answer held, sent back as `have`
+    // A merge shown by what it changed by hand (""), or all it brought in
+    // ("all"): #621.
+    merge: "",
     loose: null,        // an untracked file picked
     found: null,        // the daemon's answer for it; null while it is read
     asking: null,       // the path a read is out for, so a poll asks once
@@ -22692,8 +22756,11 @@ function fillDiffBar(bar) {
       // On the default branch itself there is no work of the branch's own,
       // and the last few commits are what the session did.
       group.label = report.recent ? "recent commits" : "commits on this branch";
+      // A merge says so (#621): among the others it read as one more
+      // commit, and showed all it brought in.
       for (const one of commits) {
-        option(group, one.sha, one.short + "  " + one.subject);
+        option(group, one.sha, one.short + "  " + (one.merge ? "merge \u00b7 " : "")
+               + one.subject);
       }
     }
     // A pick the list does not name: back on a session, its place keeps
@@ -22786,8 +22853,31 @@ function putSectionHead(next, section, one, body) {
   // The whole message, not only its subject: the why of a commit is in
   // the body, and a subject alone is the one line that says least.
   if (one && body) putMessage(head, body);
+  if (one && one.merge) putMergeAs(head);
   // The reader's ticket links, in the subject and the message alike.
   linkTickets(head);
+}
+
+// A merge is shown by what it changed by hand, or all it brought in (#621).
+// The first is a merge's review: the conflicts and how they were settled.
+// The second is the other branch's whole work, as a merge was shown before.
+// A git that cannot show the first (before 2.36) offers no choice.
+function putMergeAs(head) {
+  const how = state.diff && state.diff.merge;
+  if (how !== "hand" && how !== "all") return;
+  const group = putChoice(head, "mergeas", [
+    ["", "by hand", null, "what the merge changed beyond the merge git makes by itself"],
+    ["all", "all it brought in", null, "everything, against the first parent"]],
+    (value) => pickMergeAs(value));
+  paintChoice(group, how === "all" ? "all" : "");
+}
+
+function pickMergeAs(value) {
+  if (state.diffs.merge === value || busyWriting()) return;
+  state.diffs.merge = value;
+  state.diffs.tag = "";
+  state.diffs.whole.clear();
+  loadDiff();
 }
 
 function putMessage(head, body) {
@@ -23157,6 +23247,7 @@ function putDiffNotesBelow(next, report, files) {
     const empty = put(next, "div", "empty");
     put(empty, "p", null, state.find ? "No changed file matches."
       : report.of === "uncommitted" ? "Nothing is waiting to be committed."
+      : report.merge === "hand" ? "Nothing was changed by hand: git merged it by itself."
       : report.of ? "This commit changes no file."
       : report.unrelated ? "Nothing is waiting to be committed."
       : report.base ? "Nothing has changed against " + report.base + "."
@@ -23912,8 +24003,9 @@ async function fetchWhole(one, section) {
     // picked the daemon would find one again, and a different answer would
     // be a whole file against another base, drawn between these hunks.
     base: (state.diff && state.diff.base) || "",
-    // The same whitespace as the hunks it goes between.
-    space: spaceHidden() ? "hide" : "" }));
+    // The same whitespace as the hunks it goes between, and the same
+    // diff of a merge (#621).
+    space: spaceHidden() ? "hide" : "", merge: state.diffs.merge }));
   if (state.chosen !== want || state.diffs.whole.get(key) !== held) return;
   held.asking = false;
   held.file = body && !body.cut && !body.failed ? body.file : null;
@@ -25561,6 +25653,8 @@ async function loadDiff() {
   if (of) query.set("of", of);
   if (base) query.set("base", base);
   if (space) query.set("space", "hide");
+  const merge = state.diffs.merge;
+  if (merge) query.set("merge", merge);
   // The tag of the answer held. Only while one is: every place that drops
   // the answer empties `diffTag`, so none of them can send a tag for a diff
   // the page no longer has. The tag is the one comparison: the whole text
@@ -25569,7 +25663,8 @@ async function loadDiff() {
   const raw = await ask(want, "diff",
                         query.toString() ? "?" + query.toString() : "", true);
   if (raw === null || state.chosen !== want || state.diffs.of !== of
-      || recallBase() !== base || spaceHidden() !== space) return;
+      || recallBase() !== base || spaceHidden() !== space
+      || state.diffs.merge !== merge) return;
   let body = null;
   try { body = JSON.parse(raw); } catch (error) { return; }
   // The diff held still stands: nothing to take in and nothing new to draw,

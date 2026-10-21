@@ -2,7 +2,7 @@
 
     python3 tests/stage.py OUT.png [--tab review|files|transcript]
                           [--commit N] [--open PATH] [--review]
-                          [--settings JSON] [--commands]
+                          [--settings JSON] [--commands] [--merge]
                           [--click SELECTOR | --type SELECTOR=TEXT
                            | --keys SELECTOR=TEXT | --eval JS ...] [--light]
                           [--width 1366] [--height 768] [--part SELECTOR]
@@ -30,7 +30,9 @@ starts: the colours, the tab width, the ticket links. `--commands` gives
 the send box something to complete: the skills and command files of
 `tests/fixtures/commands`, in the repository and in the Claude Code
 directory, and a transcript that ran `/clear` and `/compact`; `--keys '#say=/'` after
-it opens the list.
+it opens the list. `--merge` ends the branch in two more commits: one that
+renames the size, and a merge of `main`, which renamed it too, settled by
+hand (#621); `--commit 6` is the merge.
 
 Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
@@ -90,7 +92,7 @@ def git(repo: Path, *args: str) -> None:
                    capture_output=True)
 
 
-def make_repo(repo: Path) -> None:
+def make_repo(repo: Path, merge: bool = False) -> None:
     """`main`, then `feature` four commits on, a change not committed, and a
     document nobody committed. Each commit adds one function, so a picked
     commit is a diff of one hunk and the whole branch is four."""
@@ -119,8 +121,32 @@ def make_repo(repo: Path) -> None:
                  f"\treturn {at};\n}}\n")
         (repo / "ring.c").write_text(body)
         git(repo, "commit", "-qam", message)
+    if merge:
+        body = merge_main(repo, body)
     (repo / "ring.c").write_text(body + "\n/* not committed yet */\n")
     (repo / "PLAN.md").write_text(PLAN)
+
+
+def merge_main(repo: Path, body: str) -> str:
+    """`main` and `feature` each rename the size, and `feature` merges
+    `main` and settles the conflict by hand, with a file `main` added
+    coming along (#621). Returns `ring.c` as the merge left it."""
+    git(repo, "checkout", "-q", "main")
+    start = (repo / "ring.c").read_text()
+    (repo / "ring.c").write_text(start.replace("r->size;", "r->count;", 1))
+    (repo / "CHANGES.md").write_text("# Changes\n\n- the size is a count\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "Call the size a count")
+    git(repo, "checkout", "-q", "feature")
+    (repo / "ring.c").write_text(body.replace("r->size;", "r->len;", 1))
+    git(repo, "commit", "-qam", "Call the size a length")
+    # It stops on the conflict, as it is meant to.
+    subprocess.run(["git", "-C", str(repo), "merge", "-q", "main"], capture_output=True)
+    body = body.replace("r->size;", "r->len; /* main calls it the count */", 1)
+    (repo / "ring.c").write_text(body)
+    git(repo, "add", "ring.c")
+    git(repo, "commit", "-qm", "Merge main: keep the length")
+    return body
 
 
 def ran(name: str) -> dict:
@@ -131,7 +157,7 @@ def ran(name: str) -> dict:
                          "<command-args></command-args>")
 
 
-def serve(home: Path, commands: bool = False) -> tuple[str, Path]:
+def serve(home: Path, commands: bool = False, merge: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
     import shutil
 
@@ -141,7 +167,7 @@ def serve(home: Path, commands: bool = False) -> tuple[str, Path]:
     isolate(home)
 
     repo = home / "proj"
-    make_repo(repo)
+    make_repo(repo, merge)
     folder = ws.settings_path().parent / "projects" / "-proj"
     folder.mkdir(parents=True)
     transcript = folder / "s1.jsonl"
@@ -196,6 +222,7 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--review", action="store_true")
     ask.add_argument("--settings")
     ask.add_argument("--commands", action="store_true")
+    ask.add_argument("--merge", action="store_true")
     # One list, so the steps run in the order they were written.
     for flag in ("click", "type", "keys", "eval"):
         ask.add_argument(f"--{flag}", dest="steps", action="append",
@@ -219,7 +246,7 @@ def main(argv: list[str]) -> int:
         (home / "config" / "settings.json").write_text(
             json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
-    url, _ = serve(home, said.commands)
+    url, _ = serve(home, said.commands, said.merge)
 
     from browser import DRAWN, WAIT, opened, show_tab
     wait = WAIT or 15000
@@ -238,11 +265,12 @@ def main(argv: list[str]) -> int:
             show_tab(page, tab)
         page.wait_for_selector(DRAWN[tab], timeout=wait)
         if tab == "diff":
-            page.wait_for_function("(state.diff || {}).commits?.length === 4",
-                                   timeout=wait)
+            count = 6 if said.merge else 4
+            page.wait_for_function("(n) => (state.diff || {}).commits?.length === n",
+                                   arg=count, timeout=wait)
             if said.commit:
-                sha = page.evaluate("(n) => state.diff.commits[4 - n].sha",
-                                    said.commit)
+                sha = page.evaluate("([n, count]) => state.diff.commits[count - n].sha",
+                                    [said.commit, count])
                 page.evaluate("(s) => pickDiff(s)", sha)
                 page.wait_for_function(
                     "(s) => state.diff && state.diff.of === s", arg=sha,
