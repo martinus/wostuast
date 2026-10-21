@@ -1411,6 +1411,11 @@ class Session:
     #: `read_ask`. It is cleared wherever the attention is, and precisely by
     #: its own `tool_use_id` when the answer lands.
     asking: dict[str, Any] | None = None
+    #: How many blocks the transcript held when the page typed the `/model`
+    #: whose dialog `asking` is (#626): its answer is looked for after them.
+    #: A moment was not enough: an answer written a second before, to the
+    #: `/model` before, ended this one while its dialog stood.
+    model_after: int = 0
     end_reason: str = ""
     #: How this session started: `startup`, `resume`, `clear`, `compact`.
     #: Kept for `link_clear`, which needs it whichever of the two events of
@@ -1920,6 +1925,46 @@ def read_ask(event: dict[str, Any]) -> dict[str, Any] | None:
     # that this question and not another one has been answered.
     return {"id": str(event.get("tool_use_id") or ""), "questions": questions,
             "answerable": whole}
+
+
+#: A `/model` with a model named, as `typed` leaves it (#626). Read off
+#: what is typed, not what arrived: `\s` matched a control character that
+#: `typed` takes out, so `/model\x0bsonnet` asked a question over a
+#: `/modelsonnet` that opened no dialog.
+MODEL_SWITCH = re.compile(r" */model +(\S+) *")
+
+#: How long after a `/model` the daemon refuses to type, until its question
+#: is folded (#626). The tick folds within a second; a message sent in that
+#: second went into the dialog, and its Enter said Yes.
+MODEL_PENDING = 3.0
+
+
+def model_ask(ask_id: str, model: str) -> dict[str, Any]:
+    # Measured on 2.1.306: Yes answers "Set model to …" in the transcript,
+    # No and Escape "Kept model as …", and a `/model` to the model in use
+    # asks nothing and answers "Set model to …" at once.
+    """Claude Code's "Switch model?" dialog as an ask the page draws (#626).
+
+    Measured on 2.1.306 with `tests/claude_pane.py`: after the first turn, a
+    `/model` to another model opens "Switch model? Your next response will
+    be slower and use more tokens", with "1. Yes, switch to …" and "2. No,
+    go back", and fires no hook at all, not even after 70 s; nothing went
+    into the transcript until it was answered. The page typed the command
+    and then said nothing, and the reader's next message went into the
+    dialog. A digit answers it, as a single-choice question's does, so
+    `ask_keys` presses `1` or `2` and nothing else.
+    """
+    return {"id": ask_id, "kind": "model", "answerable": True, "questions": [{
+        "question": f"Switch model to {model}? The conversation is cached for"
+                    " the model in use, so the next reply reads the whole"
+                    " history again: it is slower and uses more tokens.",
+        "header": "Switch model?", "many": False, "preview": False,
+        "options": [
+            {"label": f"Yes, switch to {model}", "description": "", "preview": "",
+             "withheld": False},
+            {"label": "No, go back", "description": "", "preview": "",
+             "withheld": False}],
+    }]}
 
 
 def ask_keys(ask: dict[str, Any], picks: Any) -> tuple[list[str], str]:
@@ -2979,6 +3024,35 @@ def _on_declined(session: Session, event: dict[str, Any], ts: float) -> None:
                           else "declined from the page")
 
 
+def _on_model_asked(session: Session, event: dict[str, Any], ts: float) -> None:
+    """wostuast's own record (#626): the page typed `/model <name>` into an
+    agent at its prompt with a conversation behind it, and Claude Code asks
+    whether to switch, in a dialog no hook reports. Amber, as any question
+    the agent cannot go on without: the prompt is the dialog's until it is
+    answered."""
+    model = clip(str(event.get("model") or ""), 80)
+    ask_id = str(event.get("ask_id") or "")
+    if not model or not ask_id or session.state != "done":
+        return
+    become(session, "needs_you")
+    session.attention_since = ts
+    session.asking = model_ask(ask_id, model)
+    session.model_after = to_int(event.get("after"))
+    session.reason = f"asks: switch model to {model}?"
+    session.last_event = f"typed /model {model}"
+
+
+def _on_model_answered(session: Session, event: dict[str, Any], ts: float) -> None:
+    """wostuast's own record (#626): the transcript holds the answer to the
+    "Switch model?" dialog, given on the page or in the terminal, or the
+    model was switched with no dialog at all. Only for the ask it names."""
+    ask = session.asking
+    if not ask or ask.get("id") != str(event.get("ask_id") or ""):
+        return
+    become(session, "done")
+    session.last_event = clip(str(event.get("said") or "model answered"), 120)
+
+
 def _on_approved(session: Session, event: dict[str, Any], ts: float) -> None:
     """wostuast's own record: the reader said Yes on the page, and the
     dialog's hook took it (`verb_approve`). A Yes fires no hook of its
@@ -3364,6 +3438,8 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "PermissionRequest": _on_permission_request,
     "Declined": _on_declined,
     "Approved": _on_approved,
+    "ModelAsked": _on_model_asked,
+    "ModelAnswered": _on_model_answered,
     "Notification": _on_notification,
     "Stop": _on_stop,
     "StopFailure": _on_stop_failure,
@@ -9415,6 +9491,13 @@ class Daemon:
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
         #: -- another tab -- would press a second Escape into what came next.
         self.declining: set[str] = set()
+        #: A `/model` typed whose question the tick has not folded yet, by
+        #: session: its ask id and when (#626). A send in that second went
+        #: into the dialog. See `MODEL_PENDING`.
+        self.model_pending: dict[str, tuple[str, float]] = {}
+        #: The model questions already answered from the page: a second
+        #: press typed another digit into the prompt.
+        self.model_pressed: set[str] = set()
         #: Sessions something is being typed into: a send, an answer or a No
         #: (`claim`). The page's `sending` guard is per browser tab, and two
         #: tabs -- or a tab and a script -- ran two HTTP threads at once: the
@@ -9625,6 +9708,44 @@ class Daemon:
             wrote = True
         return wrote
 
+    def model_answered(self) -> bool:
+        """Write `ModelAnswered` for a "Switch model?" dialog whose answer the
+        transcript holds (#626). Claude Code writes the `/model` and its
+        answer when the dialog closes, whichever side answered it, and at
+        once when there was no dialog: the model asked for was the one in
+        use. Any answer to a `/model` written after the ask ends it: one
+        that said something unforeseen left the question standing over an
+        empty prompt. True when one was written."""
+        wrote = False
+        for session in list(self.store.sessions.values()):
+            ask = session.asking
+            if not ask or ask.get("kind") != "model":
+                continue
+            found = self.read_transcript(session.session_id)
+            if found is None:
+                continue
+            for block in found[0][session.model_after:]:
+                if (block.kind == "command" and block.answered
+                        and block.text.startswith("/model")):
+                    append_event({"session_id": session.session_id,
+                                  "hook_event_name": "ModelAnswered",
+                                  "ts": time.time(), "ask_id": ask["id"],
+                                  "said": block.result.split("\n")[0]})
+                    wrote = True
+                    break
+        return wrote
+
+    def replies_held(self, session_id: str) -> int:
+        """How many blocks the transcript holds, when the agent has said
+        anything in it, else 0. A conversation is what Claude Code would
+        read again under another model, so a `/model` asks first (measured
+        on 2.1.306; a session with none switched at once); and the count is
+        where the answer to that `/model` is looked for from."""
+        found = self.read_transcript(session_id)
+        if found is None or not any(one.kind == "text" for one in found[0]):
+            return 0
+        return len(found[0])
+
     def sessions_change(self) -> dict[str, Any]:
         """What changed in the rows since the last push (#431): the rows that
         are new or differ, and the order of the ids whenever it moved --
@@ -9666,6 +9787,8 @@ class Daemon:
         # statement: `moved or self.store.refresh()` short-circuits, and on a
         # tick that had already changed something the read never ran.
         if self.declined_in_terminal():
+            moved = self.store.refresh() or moved
+        if self.model_answered():
             moved = self.store.refresh() or moved
         if moved:
             self.hub.send(EVENT_SESSIONS, self.sessions_change())
@@ -10507,7 +10630,8 @@ class Serving:
 
 
     def press_send(self, session_id: str, pane: str, text: str,
-                   watch: bool = False) -> None:
+                   watch: bool = False,
+                   landed: Callable[[], None] | None = None) -> None:
         """`send`'s keys, and the answer that says how they went.
 
         **A send to an agent at its prompt is seen to land, or said not to**
@@ -10534,6 +10658,10 @@ class Serving:
                                       " before sending again: the text may be"
                                       " on the prompt, unsent."}, 502)
             return
+        # Before any answer goes out: a reader of the log after the answer
+        # must find what `landed` writes (#626).
+        if landed is not None:
+            landed()
         if watch and self.daemon.prompt_landed(session_id, moment, SEND_WAIT) is False:
             self.reply_json({"id": session_id, "done": True, "seen": False,
                              "error": "Claude Code did not take it: a dialog of"
@@ -10879,10 +11007,33 @@ def verb_send(serving: Serving, session_id: str, session: Session,
     # and write nothing until it closes.
     watch = (session.state in ("done", "waiting")
              and not text.lstrip().startswith("/"))
+    # A `/model` to an agent at its prompt with a conversation behind it
+    # opens Claude Code's "Switch model?" dialog, which no hook reports
+    # (#626): the page is told of it by a record of our own, and answers it
+    # with its digit. Asked before the keys, while the agent is still idle.
+    switch = MODEL_SWITCH.fullmatch(typed(text))
+    after = (serving.daemon.replies_held(session_id)
+             if switch and session.state == "done" else 0)
     with serving.daemon.holding(session_id, pane) as busy:
         if busy:
             return 409, {"error": busy}
-        serving.press_send(session_id, pane, text, watch)
+        # Its question is in the log and not yet folded: the dialog is up,
+        # and `cannot_type` cannot see it yet.
+        pending = serving.daemon.model_pending.get(session_id)
+        if (pending and time.monotonic() - pending[1] < MODEL_PENDING
+                and not (session.asking and session.asking.get("id") == pending[0])):
+            return 409, {"error": "a question is open in the terminal: answer it first"}
+
+        def asked() -> None:
+            import secrets
+
+            ask_id = "model-" + secrets.token_hex(8)
+            append_event({"session_id": session_id, "hook_event_name": "ModelAsked",
+                          "ts": time.time(), "model": switch.group(1),
+                          "ask_id": ask_id, "after": after})
+            serving.daemon.model_pending[session_id] = (ask_id, time.monotonic())
+
+        serving.press_send(session_id, pane, text, watch, asked if after else None)
 
 
 def verb_answer(serving: Serving, session_id: str, session: Session,
@@ -10910,6 +11061,10 @@ def verb_answer(serving: Serving, session_id: str, session: Session,
     keys, why = ask_keys(ask, body.get("picks"))
     if why:
         return 400, {"error": why}
+    # A model question stands until the transcript says it was answered,
+    # a tick on: a second press meanwhile typed its digit into the prompt.
+    if ask.get("kind") == "model" and ask["id"] in serving.daemon.model_pressed:
+        return 409, {"error": "that question is answered already"}
     # A second submit, or a send, while these keys go in one at a time
     # `KEY_GAP` apart, mixed its keys with them in the pane.
     pane = session.pane
@@ -10917,6 +11072,8 @@ def verb_answer(serving: Serving, session_id: str, session: Session,
         if busy:
             return 409, {"error": busy}
         landed = tmux_keys(pane, keys)
+        if ask.get("kind") == "model" and landed:
+            serving.daemon.model_pressed.add(ask["id"])
     if landed < len(keys):
         # Some keys may have landed: say so, rather than "nothing went
         # in", which would send the reader back to answer twice.
@@ -18941,7 +19098,8 @@ function putModels(pop, button) {
   put(pop, "p", "modelnote", why
     ? "It cannot be changed from here: " + why + "."
     : "Typed into the session as /model or /effort. Claude Code also makes"
-      + " it the default for new sessions.");
+      + " it the default for new sessions, and after the first reply asks"
+      + " whether to switch: the question comes here.");
   for (const one of pop.querySelectorAll(".choice button")) one.disabled = !!why;
 }
 
