@@ -2,7 +2,7 @@
 
     python3 tests/stage.py OUT.png [--tab review|files|transcript]
                           [--commit N] [--open PATH] [--review]
-                          [--settings JSON] [--commands] [--merge]
+                          [--settings JSON] [--commands] [--merge] [--elsewhere]
                           [--click SELECTOR | --type SELECTOR=TEXT
                            | --keys SELECTOR=TEXT | --eval JS ...] [--light]
                           [--width 1366] [--height 768] [--part SELECTOR]
@@ -32,7 +32,9 @@ the send box something to complete: the skills and command files of
 directory, and a transcript that ran `/clear` and `/compact`; `--keys '#say=/'` after
 it opens the list. `--merge` ends the branch in two more commits: one that
 renames the size, and a merge of `main`, which renamed it too, settled by
-hand (#621); `--commit 6` is the merge.
+hand (#621); `--commit 6` is the merge. `--elsewhere` is a second
+repository, `api`, with one commit and one change, that the agent edited a
+file in: the picker beside the tabs names it (#616).
 
 Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
@@ -157,7 +159,20 @@ def ran(name: str) -> dict:
                          "<command-args></command-args>")
 
 
-def serve(home: Path, commands: bool = False, merge: bool = False) -> tuple[str, Path]:
+def make_elsewhere(api: Path) -> None:
+    """A second repository the agent worked in (#616)."""
+    api.mkdir()
+    git(api, "init", "-q", "-b", "main")
+    (api / "routes.py").write_text('def health():\n    return "ok"\n')
+    (api / "README.md").write_text("# api\n")
+    git(api, "add", "-A")
+    git(api, "commit", "-q", "-m", "The health route")
+    (api / "routes.py").write_text(
+        'def health():\n    return "ok"\n\n\ndef ready():\n    return "ready"\n')
+
+
+def serve(home: Path, commands: bool = False, merge: bool = False,
+          elsewhere: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
     import shutil
 
@@ -184,6 +199,12 @@ def serve(home: Path, commands: bool = False, merge: bool = False) -> tuple[str,
     ws.append_event({"session_id": "s1", "hook_event_name": "SessionStart",
                      "cwd": str(repo), "pane": "%7", "ts": time.time() - 1,
                      "transcript_path": str(transcript)})
+    if elsewhere:
+        make_elsewhere(home / "api")
+        ws.append_event({"session_id": "s1", "hook_event_name": "PreToolUse",
+                         "cwd": str(repo), "pane": "%7", "ts": time.time(),
+                         "tool_name": "Edit",
+                         "tool_input": {"file_path": str(home / "api" / "routes.py")}})
     (repo / ".oa-implement").mkdir()
     (repo / ".oa-implement" / "plan.md").write_text("# The plan\n")
     daemon = ws.Daemon()
@@ -223,6 +244,7 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--settings")
     ask.add_argument("--commands", action="store_true")
     ask.add_argument("--merge", action="store_true")
+    ask.add_argument("--elsewhere", action="store_true")
     # One list, so the steps run in the order they were written.
     for flag in ("click", "type", "keys", "eval"):
         ask.add_argument(f"--{flag}", dest="steps", action="append",
@@ -246,7 +268,7 @@ def main(argv: list[str]) -> int:
         (home / "config" / "settings.json").write_text(
             json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
-    url, _ = serve(home, said.commands, said.merge)
+    url, _ = serve(home, said.commands, said.merge, said.elsewhere)
 
     from browser import DRAWN, WAIT, opened, show_tab
     wait = WAIT or 15000

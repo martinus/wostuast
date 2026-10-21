@@ -788,6 +788,24 @@ def test_git_never_takes_the_index_lock_the_agent_needs(ws, repo):
     assert index.read_bytes() != before
 
 
+def test_git_runs_no_fsmonitor_a_repository_names(ws, repo, tmp_path):
+    """A repository's own config names a command for `core.fsmonitor`, and
+    `status` and `ls-files` run it. An agent that wrote one, into its own
+    repository or one in `/tmp` it then read a file from (#616), had the
+    daemon run it, outside the agent's sandbox. The last line shows that
+    plain git would."""
+    ran = tmp_path / "ran"
+    git(repo, "config", "core.fsmonitor", f"touch {ran}; false")
+    assert ws.git_facts(str(repo)).dirty is False
+    assert ws.changed_files(str(repo)) == set()
+    assert "README.md" in [one.path for one in ws.worktree_files(str(repo)).files]
+    ws.worktree_diff(str(repo))
+    assert not ran.exists()
+    subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                   check=True, capture_output=True)
+    assert ran.exists()
+
+
 def test_an_old_git_that_prints_path_format_back_keeps_the_repository(
         ws, repo, tmp_path):
     """git before 2.31 does not fail on `--path-format=absolute`: it prints

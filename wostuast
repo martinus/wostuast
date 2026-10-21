@@ -160,6 +160,22 @@ SUBAGENTS_HELD = 12
 #: each under its row, so the list has an end.
 TASKS_HELD = 12
 
+#: How many folders a session keeps that its agent stood in or touched a
+#: file in (#616), the latest kept: what the Files and Review tabs offer as
+#: other places is made from them.
+DIRS_HELD = 24
+
+#: How many places the picker offers: the session's own worktree first,
+#: then the other repositories, the latest first.
+PLACES_SHOWN = 12
+
+#: The tools whose input names a file, and the key it is under.
+FILE_KEYS = ("file_path", "notebook_path", "path")
+
+#: How long a folder git said is in no repository is not asked again, in
+#: seconds (`Files.root_kept`).
+NO_REPO_KEPT = 60.0
+
 #: The tool that starts a subagent: `Agent` on 2.1.289, `Task` before it.
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 
@@ -1459,6 +1475,9 @@ class Session:
     #: The commands the agent runs in the background, by task id, oldest
     #: first: a line each under the row (#617). See `note_shells`.
     shells: dict[str, Shell] = field(default_factory=dict)
+    #: The folders its agent stood in or touched a file in, with when: see
+    #: `note_dirs` (#616).
+    dirs: dict[str, float] = field(default_factory=dict)
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -2084,6 +2103,7 @@ class Store:
         # After the handler: a subagent's tool call is summed up there once.
         note_subagent(session, event, name, ts)
         note_shells(session, event, name, ts)
+        note_dirs(session, event, name, ts)
         # Only a change. Every handler assigns a state whether or not it is a
         # new one -- `_on_pre_tool` writes "working" on every tool call -- and
         # moving this each time would put the list back to sorting by the last
@@ -3388,6 +3408,34 @@ def note_agent_ended(session: Session, prompt: str) -> None:
         one.said = clip(said.group(1), AGENT_SAID)
 
 
+def note_dirs(session: Session, event: dict[str, Any], name: str, ts: float) -> None:
+    """Keep the folders the agent stood in or touched a file in (#616).
+
+    An agent that works in two repositories showed one: the Files and
+    Review tabs read the worktree it started in. Where it moved is the
+    event's `cwd`; where it worked is the folder of a path in a call's
+    input, a subagent's too. Only absolute paths: a relative one is the
+    agent's own folder again. What git makes of each is asked when the
+    page asks (`Serving.places_for`), never here: the fold does no I/O.
+    """
+    found = [str(event.get("cwd") or "")]
+    if name == "PreToolUse":
+        given = event.get("tool_input")
+        given = given if isinstance(given, dict) else {}
+        for key in FILE_KEYS:
+            value = given.get(key)
+            if isinstance(value, str):
+                found.append(value if key == "path" else os.path.dirname(value))
+    for one in found:
+        one = one.rstrip("/") or one
+        if not one.startswith("/") or len(one) > 4096:
+            continue
+        session.dirs.pop(one, None)
+        session.dirs[one] = ts
+    while len(session.dirs) > DIRS_HELD:
+        del session.dirs[next(iter(session.dirs))]
+
+
 def end_subagents(session: Session, moment: float,
                   keep: frozenset[str] = frozenset()) -> None:
     """A session that is over has no subagent running: one that was gone
@@ -4440,6 +4488,11 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
     catch, so it left the lock behind: every `git add` and `git commit`
     failed until somebody deleted the file by hand. Here, and not as a flag
     on each call, so a new git call cannot forget it.
+
+    And with `core.fsmonitor` off (#616): a repository's own config names a
+    command that `status` and `ls-files` run, and an agent that can write a
+    `.git/config` -- its own, or one in `/tmp` it then reads a file from --
+    had the daemon run it, outside the agent's sandbox.
     """
     import subprocess
 
@@ -4447,6 +4500,7 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
     env = None
     if command and os.path.basename(str(command[0])) == "git":
         env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+        command[1:1] = ["-c", "core.fsmonitor=false"]
     try:
         done = subprocess.run(
             command,
@@ -5606,6 +5660,7 @@ class Files:
 
         self.held: dict[str, Listing] = {}
         self.roots: dict[str, str] = {}     # a session's directory to its top
+        self.no_roots: dict[str, float] = {}  # a folder in no repository, and when
         self.langs: dict[str, str] = {}     # a file's bytes to what `file` said
         self.gates: dict[str, Any] = {}
         self.lock = threading.Lock()
@@ -5630,6 +5685,24 @@ class Files:
         if found:
             with self.lock:
                 self.roots[cwd] = found
+        return found
+
+    def root_kept(self, folder: str, runner: Callable[..., str | None]) -> str | None:
+        """`root_of` for a folder an agent only passed through (#616). Most
+        are in no repository (`~/.claude`, `/tmp`), and each request that
+        names a place asked git about every one again: up to `DIRS_HELD`
+        processes a poll. A no is kept for `NO_REPO_KEPT`, not for ever: a
+        `git init` makes a repository, and a call that failed is no answer."""
+        now = time.time()
+        with self.lock:
+            if now - self.no_roots.get(folder, 0.0) < NO_REPO_KEPT:
+                return None
+        found = self.root_of(folder, runner)
+        if not found:
+            with self.lock:
+                self.no_roots = {one: at for one, at in self.no_roots.items()
+                                 if now - at < NO_REPO_KEPT}
+                self.no_roots[folder] = now
         return found
 
     def language_of(
@@ -10705,6 +10778,49 @@ class Serving:
 
 
 
+    def places_for(self, session: Session) -> list[dict[str, Any]]:
+        """The repositories the Files and Review tabs may show for this
+        session (#616): its own worktree first, then each other one its
+        agent stood in or touched a file in, the latest first. A folder git
+        knows no repository for is none of them, and `Files.root_kept`
+        keeps that no a while. Only `rev-parse` runs here: it reads no
+        config that runs a command, and `status` runs only once the reader
+        picks a place."""
+        own = self.own_place(session)
+        out = [{"path": own, "name": os.path.basename(own.rstrip("/")) or own,
+                "own": True}]
+        seen = {own}
+        for folder in sorted(session.dirs, key=session.dirs.__getitem__, reverse=True):
+            if len(out) >= PLACES_SHOWN:
+                break
+            root = self.daemon.files.root_kept(folder, run)
+            if not root or root in seen:
+                continue
+            seen.add(root)
+            out.append({"path": root, "name": os.path.basename(root.rstrip("/")) or root,
+                        "own": False})
+        return out
+
+    def own_place(self, session: Session) -> str:
+        """The session's own repository: the one the agent stands in, else
+        the one it started in, else where it stands. `cwd` follows the
+        agent, and a `cd` out of every repository left the Files and
+        Review tabs empty although the picker named the session's own."""
+        files = self.daemon.files
+        return (files.root_kept(session.cwd, run) or files.root_of(session.home, run)
+                or session.cwd)
+
+    def place_of(self, session: Session, query: dict[str, str]) -> str | None:
+        """The folder a Files or Review request is about: the session's own
+        when it names none, else one of `places_for`, as git said it, or None.
+        A path from the page is input (topics/safety): it is never handed to
+        git or opened unless it is one the session already holds."""
+        wanted = query.get("place", "")
+        if not wanted:
+            return self.own_place(session)
+        return next((one["path"] for one in self.places_for(session)
+                     if one["path"] == wanted), None)
+
     def command_root(self, session: Session) -> str:
         """Where the session's worktree starts, from the answer the Files
         tab keeps: asked of git on every poll, it was a process each time."""
@@ -10866,9 +10982,22 @@ def verb_transcript(serving: Serving, session_id: str, session: Session | None,
                          blocks=blocks_json(blocks))
 
 
+def verb_places(serving: Serving, session_id: str, session: Session,
+           query: dict[str, str]) -> Answer:
+    """The repositories the Files and Review tabs may show (#616)."""
+    return 200, {"places": serving.places_for(session)}
+
+
+#: What a request names that is none of the session's places.
+NOT_A_PLACE = "that folder is not one this session worked in"
+
+
 def verb_files(serving: Serving, session_id: str, session: Session,
           query: dict[str, str]) -> Answer:
-    held = serving.daemon.files.of(session.cwd)
+    place = serving.place_of(session, query)
+    if place is None:
+        return 404, {"error": NOT_A_PLACE}
+    held = serving.daemon.files.of(place)
     tree = held.tree
     body = {
         "root": tree.root, "total": tree.total,
@@ -10893,12 +11022,15 @@ def verb_files(serving: Serving, session_id: str, session: Session,
 def verb_file(serving: Serving, session_id: str, session: Session,
          query: dict[str, str]) -> Answer:
     wanted = query.get("path", "")
-    found = read_worktree_file(session.cwd, wanted,
+    place = serving.place_of(session, query)
+    if place is None:
+        return 404, {"path": wanted, "missing": NOT_A_PLACE}
+    found = read_worktree_file(place, wanted,
                                held=serving.daemon.files,
                                have=query.get("have", ""))
     if found is None:
         return 404, {"path": wanted, "missing": why_unread(
-            session.cwd, wanted, held=serving.daemon.files)}
+            place, wanted, held=serving.daemon.files)}
     if found.same:
         return 200, {"path": wanted, "same": True,
                          "stamp": found.stamp}
@@ -10916,9 +11048,9 @@ def verb_raw(serving: Serving, session_id: str, session: Session,
     that holds the token, able to read both.
     """
     wanted = query.get("path", "")
-    found = read_worktree_bytes(session.cwd, wanted,
-                                held=serving.daemon.files)
-    if found is None:
+    place = serving.place_of(session, query)
+    found = place and read_worktree_bytes(place, wanted, held=serving.daemon.files)
+    if not found:
         # Through `refuse`, as every other refusal of a verb: it alone
         # carried no `id` (#545).
         serving.refuse(session_id, 404, "not a file this page shows")
@@ -10938,9 +11070,13 @@ def verb_diff(serving: Serving, session_id: str, session: Session,
     of = query.get("of", "")
     # The base the reader picked, used only if git lists that name.
     base = query.get("base", "")
-    report = worktree_diff(session.cwd, of=of, base=base,
+    place = serving.place_of(session, query)
+    if place is None:
+        serving.refuse(session_id, 404, NOT_A_PLACE)
+        return
+    report = worktree_diff(place, of=of, base=base,
                            ranks=serving.daemon.ranks, held=serving.daemon.diffs,
-                           root=serving.daemon.files.root_of(session.cwd, run),
+                           root=serving.daemon.files.root_of(place, run),
                            space=query.get("space", "") == "hide",
                            merged_all=query.get("merge", "") == "all")
     # The tab asks every five seconds, and the answer is the whole diff:
@@ -10966,7 +11102,10 @@ def verb_whole(serving: Serving, session_id: str, session: Session,
     """One file of the Diff tab with every line of it, for showing the
     lines between two changes. See `whole_file_diff`."""
 
-    found = whole_file_diff(session.cwd, query.get("section", ""),
+    place = serving.place_of(session, query)
+    if place is None:
+        return 404, {"error": NOT_A_PLACE}
+    found = whole_file_diff(place, query.get("section", ""),
                             query.get("path", ""), query.get("old", ""),
                             query.get("of", ""), base=query.get("base", ""),
                             ranks=serving.daemon.ranks,
@@ -11267,6 +11406,7 @@ GET_VERBS: dict[str, tuple[Any, str]] = {
     "raw": (verb_raw, "known"),
     "diff": (verb_diff, "known"),
     "whole": (verb_whole, "known"),
+    "places": (verb_places, "known"),
 }
 
 # Four of these reach a terminal -- jump, send, answer and decline, which is
@@ -14408,6 +14548,9 @@ body.switching #content::after {
    every sibling that is not -- so every click on an answer or into the
    send box went to the box under it. */
 .main > .asking { grid-row: 3; grid-column: 3; position: relative; }
+/* Which repository the Files and Review tabs show (issue 616), beside the
+   tabs: the commit picker's look (`.pickof`). */
+.tabs .pickplace { align-self: center; max-width: 32ch; }
 /* The transcript beside the Files or Review tab (issue 625): a fourth
    column, with the question bar and the send box under it, as the reader
    chose from pictures (on the right; on the left it parted the file list
@@ -15376,14 +15519,14 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 /* The narrow face, as file names wear: branch names and commit subjects
    are long, and a picker that shows more of one is read, not opened. */
-.pickof, .pickbase {
+.pickof, .pickbase, .pickplace {
   min-width: 0; max-width: 52ch; height: 26px; padding: 0 8px;
   border-radius: 5px; border: 1px solid var(--edge-bright);
   background: var(--raised); color: var(--ink); font-family: var(--narrow);
   font-size: 13px; cursor: pointer;
 }
 .baseword { color: var(--ink-faint); font-family: var(--sans); font-size: 12px; }
-.pickof:focus, .pickbase:focus { outline: none; border-color: var(--needs); }
+.pickof:focus, .pickbase:focus, .pickplace:focus { outline: none; border-color: var(--needs); }
 /* What the branch's work is measured against: a name, short, and read
    whole -- so it does not shrink, and the commit picker, whose subject can
    be cut and still be known, takes what room is left. */
@@ -15895,6 +16038,8 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           class="badge" id="diffcount" hidden></span><span
           class="badge notes" id="reviewcount" hidden></span></button>
         <button type="button" class="theme" id="chatbtn" aria-pressed="false"></button>
+        <select class="pickplace" id="placepick" hidden
+                title="which repository the Files and Review tabs show"></select>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -15979,6 +16124,12 @@ const state = {
     catch (error) { return ""; }
   })(),
   tab: "transcript",
+  // The repository the Files and Review tabs show (#616): "" for the
+  // session's own, else a path the daemon listed in `places`, which holds
+  // what it listed and when, for the chosen session.
+  place: "",
+  places: [],
+  placesAt: 0,
   find: "",
   pick: "",             // what the sidebar filter box holds
   history: false,       // whether the finished sessions are unfolded
@@ -16092,8 +16243,16 @@ const TOKEN = "__WOSTUAST_TOKEN__";
 // Where one session's routes live. Three callers: the two that fetch, and
 // `putMedia`, which wants an address for a `src` rather than an answer.
 function apiUrl(id, what, query) {
-  return "/api/session/" + encodeURIComponent(id) + "/" + what + (query || "");
+  // The Files and Review tabs' routes read the place picked (#616), all
+  // through here, so none of them can read another repository than the
+  // one the tab says.
+  const place = id === state.chosen && state.place && PLACED.has(what)
+    ? (query ? "&" : "?") + "place=" + encodeURIComponent(state.place) : "";
+  return "/api/session/" + encodeURIComponent(id) + "/" + what + (query || "") + place;
 }
+
+//: The routes that read a place (#616).
+const PLACED = new Set(["files", "file", "raw", "diff", "whole"]);
 
 async function tell(id, verb, body) {
   return post(apiUrl(id, verb), body);
@@ -18975,6 +19134,7 @@ function drawHeader() {
   // tab, and for the same reason: it belongs to the session, not to a tab.
   drawAsking();
   drawContext();
+  drawPlaces();
   const s = current();
   // Absent, not disabled, for a session with no pane: there is nothing to
   // jump to, and a button that cannot work is not offered.
@@ -23987,6 +24147,7 @@ function pairRow(lines, one, left, right, atHead, words, side) {
 // longer in the file gets neither.
 function putLineReview(lines, where, one, line, now, atHead) {
   if (one.atEdit) return;      // an edit in the transcript: see `putToolDiff`
+  if (state.place) return;     // another repository: see `putReview`
   const anchor = diffLineAnchor(one.path, line, now, atHead);
   if (anchor === null) return;
   // A slice under "commented elsewhere" reaches a line the diff above
@@ -24621,6 +24782,10 @@ function putCommentBox(parent, anchor, quoted) {
 // One function, because a line and a file header want exactly the same three
 // things and differ only in where they hang them.
 function putReview(parent, anchor, quoted, full) {
+  // A review is of the session's own worktree (#616): it is pasted into
+  // the agent's pane with paths from there. In another repository the tabs
+  // only show, and the picker says "read only".
+  if (state.place) return;
   const seen = commentAt(anchor);
   // One box per anchor, wherever the line first turns up. A file that is in
   // both sections has the same line twice, and the second box took the focus
@@ -24703,7 +24868,8 @@ function reviewText(withOverall = true) {
 // its rounds: who wrote it, the note's first line, and where. A click goes
 // to it in the pane.
 function putCommentList(list) {
-  if (!state.review.comments.length) return;
+  // In another place (#616) a comment's path names a file of the own one.
+  if (!state.review.comments.length || state.place) return;
   const head = put(list, "div", "head said");
   put(head, "span", null, "comments");
   putDropReview(head);
@@ -24807,6 +24973,7 @@ function diffAnchors(report) {
 // box of their own at the foot of the pane, so that the lines arriving fill
 // that box again and not the whole diff.
 function putElsewhere(scroll, report) {
+  if (state.place) return;     // the review is of the own worktree (#616)
   const holder = put(scroll, "div", "offdiff");
   holder.drawn = diffAnchors(report);
   fillElsewhere(holder);
@@ -24949,7 +25116,8 @@ function drawReviewBar() {
   const was = bar.hidden;
   // Kept while its box has the focus: emptying the one comment on the whole
   // review is not leaving it, and the bar went with the caret still in it.
-  bar.hidden = state.tab !== "diff"
+  // Not in another place (#616): the review is of the own worktree.
+  bar.hidden = state.tab !== "diff" || !!state.place
     || (!anyReview() && document.activeElement !== $("overall"));
   if (bar.hidden) return;
   const over = $("overall");
@@ -25550,6 +25718,65 @@ function carryBars(into, before = null) {
   }
 }
 
+// --- another repository the agent worked in (#616) [topics/files-tab, topics/diff-tab]
+
+// An agent that works in several repositories showed one: the Files and
+// Review tabs read the worktree it started in. The daemon lists the others
+// (`places`), and the picker beside the tabs shows one. Asked again at most
+// every `PLACES_EVERY`, from the tab's load, as the agent moves on.
+const PLACES_EVERY = 10000;
+
+async function askPlaces() {
+  const want = state.chosen;
+  if (Date.now() - state.placesAt < PLACES_EVERY) return;
+  state.placesAt = Date.now();
+  const body = await ask(want, "places", "");
+  if (state.chosen !== want || !body || !Array.isArray(body.places)) return;
+  state.places = body.places;
+  // The place picked has dropped off the list -- the agent has worked in
+  // `DIRS_HELD` folders since -- and the daemon refuses it: its own again,
+  // or every route said 404 under a picker that had hidden itself.
+  if (state.place && !body.places.some((one) => one.path === state.place && !one.own)) {
+    pickPlace("");
+    return;
+  }
+  drawPlaces();
+}
+
+function drawPlaces() {
+  const pick = $("placepick");
+  const places = state.places;
+  pick.hidden = places.length < 2 || state.tab === "transcript" || !!state.feed;
+  if (fresh(pick, "key", JSON.stringify(places))) {
+    pick.replaceChildren();
+    for (const one of places) {
+      // Another one takes no comments (`putReview`), and says so here.
+      const option = put(pick, "option", null,
+                         one.name + (one.own ? " (its own)" : " (read only)"));
+      option.value = one.own ? "" : one.path;
+      option.title = one.path;
+    }
+  }
+  pick.value = state.place;
+}
+
+// Another repository is another listing and another diff, so what was
+// held is dropped, as a change of session drops it.
+function pickPlace(value) {
+  if (state.place === value || busyWriting()) { drawPlaces(); return; }
+  state.place = value;
+  state.files = blankFiles();
+  state.diffs = blankDiff();
+  state.diff = null;
+  state.reviewFiles = new Map();
+  // At once: the old listing under the new name, until the answer, read as
+  // the other repository's. The header too, as `showTab` draws it: the
+  // review's bar is no part of another place.
+  drawHeader();
+  draw();
+  load();
+}
+
 function drawEmpty(box) {
   const empty = put(box, "div", "empty");
   put(empty, "h2", null, "No session selected");
@@ -25678,6 +25905,10 @@ function choose(id) {
   // added to either must not need a line here to be forgotten from.
   state.turns = blankTurns();
   takeTurns(id);
+  // Another session's repositories are its own (#616).
+  state.place = "";
+  state.places = [];
+  state.placesAt = 0;
   state.files = blankFiles();
   state.diffs = blankDiff();
   state.diff = null;
@@ -25765,8 +25996,12 @@ function repoll() {
 }
 
 async function ask(id, what, query, raw) {
-  // null when the daemon went away; try later.
-  return (await getJson(apiUrl(id, what, query), { raw })).body;
+  // null when the daemon went away; try later. And when another place was
+  // picked meanwhile (#616): taken in, the other repository's diff stood
+  // under the own one's name, with a `+` on its lines.
+  const place = state.place;
+  const body = (await getJson(apiUrl(id, what, query), { raw })).body;
+  return PLACED.has(what) && state.place !== place ? null : body;
 }
 
 async function load() {
@@ -25779,6 +26014,7 @@ async function load() {
   state.poll = 0;
   if (!state.chosen) { draw(); return; }
   const tab = state.tab;
+  if (tab !== "transcript") askPlaces();
   // The column beside the tab (#625) holds the transcript too. Once: the
   // pushes keep it, and the tab's poll must not fetch it again.
   if (chatShown() && !state.turns.whole) loadTranscript();
@@ -25920,10 +26156,18 @@ function keepListing(root) {
 }
 
 function adoptListing() {
-  const s = current();
-  const held = s && s.worktree_path ? state.listings.get(s.worktree_path) : null;
+  const root = listingRoot();
+  const held = root ? state.listings.get(root) : null;
   if (!held) return;
   Object.assign(state.files, held);
+}
+
+// What a listing is kept under: the place picked (#616), else the session's
+// worktree. Under the worktree alone, another repository's names stood in
+// the own one's Files tab, and in every session's in that worktree.
+function listingRoot() {
+  const s = current();
+  return state.place || (s && s.worktree_path) || "";
 }
 
 async function loadFiles() {
@@ -26004,7 +26248,7 @@ function takeListing(body) {
     // are not worth walking once per keystroke to add the folders back.
     state.files.places = state.files.names.concat(
       [...state.files.tree.keys()].filter(Boolean));
-    if (!body.failed) keepListing(current() && current().worktree_path);
+    if (!body.failed) keepListing(listingRoot());
   }
   state.files.marked = dirsWithChanges(state.files.changed);
   if (!state.files.known.has(state.files.path)
@@ -26340,6 +26584,7 @@ $("viewclose").addEventListener("click", leaveFeed);
 $("jump").title = JUMP_TITLE;
 $("jump").addEventListener("click", jumpToPane);
 $("chatbtn").addEventListener("click", toggleChat);
+$("placepick").addEventListener("change", (press) => pickPlace(press.target.value));
 paintChatButton();
 $("settings").addEventListener("click", (press) => {
   press.stopPropagation();            // or the listener below shuts it again

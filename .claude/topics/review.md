@@ -52,6 +52,12 @@ Comments, their anchors, the review's send bar, and the draft.
       `test_ctrl_enter_in_the_whole_review_box_empties_it`.
     `reviewText` has no heading and no task name, as the reader asked.
     `blankReview` is an empty one.
+- **A review is of the session's own worktree** (#616): it is pasted into
+  the agent's pane, with paths from there. In another place
+  (`state.place`), `putReview`, `putLineReview`, `putElsewhere`, the
+  comment list and the send bar draw nothing, so the tabs only show, and
+  the picker says "read only".
+  `test_another_repository_the_agent_worked_in_is_one_pick_away`.
 - **A removed diff line gets no `+`**: it has no line in the file, so the
   comment could be neither drawn on the Files tab nor put back.
 - **The committed section's new side is HEAD, not the worktree**:

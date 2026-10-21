@@ -16,6 +16,12 @@ diff.
   the index anyway** when a stat moved and the bytes did not, so `git_diff`
   also sets `diff.autoRefreshIndex=false`.
   `test_git_never_takes_the_index_lock_the_agent_needs`.
+- **The daemon's git runs no fsmonitor** (#616): `run` adds `-c
+  core.fsmonitor=false` to every git. A repository's own config can name a
+  command that `status` and `ls-files` run, and the daemon ran it outside
+  the agent's sandbox. A clean filter still runs, as one `-c` cannot name
+  every filter; the reader chose to accept that.
+  `test_git_runs_no_fsmonitor_a_repository_names`.
 - **Inside a hunk only a line's first character matters; only `diff --git`
   and `@@` start something new.** A removed `-- a comment` is
   `--- a comment`, which read as a header and swallowed the hunk.

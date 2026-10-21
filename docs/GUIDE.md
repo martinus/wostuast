@@ -367,6 +367,12 @@ The funnel button beside **go to file** shows only the changed files and
 the folders that hold them, and the line under it says how many of how
 many.
 
+When the agent also works in another repository, a picker beside the tabs
+names the session's own repository and each other one. Pick one, and the
+Files and Review tabs show it. Another repository is "read only": you can
+read it, but not comment, as a review goes to the agent with paths from its
+own repository.
+
 #### Review
 
 Changed files as a tree, and each file's diff in colour, with the changed
