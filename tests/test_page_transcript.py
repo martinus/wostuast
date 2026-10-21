@@ -3177,18 +3177,31 @@ def test_an_opened_call_shows_its_whole_command_painted(page_at):
         call.locator(".hljs-bash").first.wait_for()
         assert call.inner_text() == long
         assert call.locator(".hljs-bash").count() == 3
-        # The command over what it printed.
-        assert page.evaluate("""() => {
-          const call = document.querySelector('.tool-call');
-          return call.nextElementSibling.className + ':' + call.nextElementSibling.innerText;
-        }""") == "tool-result:12 passed"
-        # One card: no gap, and one rule, between the command and its output.
-        assert page.evaluate("""() => {
-          const call = document.querySelector('.tool-call').getBoundingClientRect();
-          const said = document.querySelector('.tool-result').getBoundingClientRect();
-          return [Math.round(said.top - call.bottom),
-                  getComputedStyle(document.querySelector('.tool-call')).borderBottomWidth];
-        }""") == [0, "0px"]
+        # The command over what it printed, in one card: a rule between,
+        # and the command on a ground of its own, so it is plain where one
+        # ends and the other begins (#631).
+        look = page.evaluate("""() => {
+          const card = document.querySelector('.toolcard');
+          const parts = [...card.children].map((box) => box.firstElementChild);
+          const [call, said] = parts.map((one) => one.getBoundingClientRect());
+          return {parts: parts.map((one) => one.className + ':' + one.innerText.slice(0, 9)),
+                  gap: Math.round(said.top - call.bottom),
+                  grounds: parts.map((one) => getComputedStyle(one).backgroundColor)};
+        }""")
+        assert look["parts"] == ["tool-call:for f in ", "tool-result:12 passed"], look
+        assert look["gap"] == 1, look
+        assert look["grounds"][0] != look["grounds"][1], look
+        # Each part copies itself, the command as it reads once painted.
+        page.evaluate("""() => { copyToClipboard = async (text) => {
+          (window.__copied = window.__copied || []).push(text); return true; }; }""")
+        buttons = page.locator(".toolcard .copycode")
+        assert buttons.count() == 2
+        assert [buttons.nth(at).get_attribute("title") for at in range(2)] == [
+            "copy the command", "copy what it printed"]
+        for at in range(2):
+            page.locator(".toolcard .codebox").nth(at).hover()
+            buttons.nth(at).click()
+        assert page.evaluate("window.__copied") == [long, "12 passed"]
         # A call with no output yet opens too: its command is the news.
         page.locator(".tool", has_text="EOF").click()
         page.locator(".tool-call .hljs-python").first.wait_for()
@@ -3470,32 +3483,37 @@ def test_what_a_turn_can_do_is_one_row_at_its_top_right(ws, page_at):
         assert row.locator(".save").bounding_box() == where
 
 
-def test_a_saved_mark_stands_on_no_words(ws, page_at):
-    """A saved bookmark shows without the hover, at the turn's top right, and
-    stood on the words of a reply whose first line ran to the edge (#526's
-    row). A turn with a mark that stays keeps the row's room on its right."""
+def test_a_saved_mark_moves_no_words(ws, page_at):
+    """Saving a reply made its text wrap further left (#632): the turn kept
+    room on its right for the mark. The text wraps as it did, and without
+    the hover the mark is the flag alone, with no box, over the first
+    line's end. #526 kept the room; the reader asked for this instead."""
     daemon, path = page_at
     long = ("Found it. `put` and `get` share `entries` with no lock, so a read "
             "during a write sees half an update, and the test sees it too. ") * 2
     write_records(daemon,
                   conftest.record("you", "why?", ts="2026-09-18T14:20:00.000Z"),
                   conftest.record("claude", long, ts="2026-09-18T14:21:00.000Z"))
+    lines = """(one) => {
+      const range = document.createRange();
+      range.selectNodeContents(one.querySelector('.prose'));
+      return [...new Set([...range.getClientRects()].filter((r) => r.width)
+        .map((r) => Math.round(r.right)))].sort((a, b) => b - a)[0];
+    }"""
     with opened(path) as page:
         turn = page.locator(".turn:not(.mine)", has_text="Found it")
         turn.locator(".prose code").first.wait_for()
+        before = turn.evaluate(lines)
         turn.locator(".prose").hover()
         turn.locator(".turnacts .save").click()
         turn.locator(".turnacts .save.on").wait_for()
         page.mouse.move(5, 5)
-        hit = turn.evaluate("""(one) => {
-          const mark = one.querySelector('.turnacts .save').getBoundingClientRect();
-          const range = document.createRange();
-          range.selectNodeContents(one.querySelector('.prose'));
-          return [...range.getClientRects()].filter((r) => r.width && r.height
-            && r.left < mark.right && r.right > mark.left
-            && r.top < mark.bottom && r.bottom > mark.top).length;
+        assert turn.evaluate(lines) == before
+        mark = turn.evaluate("""(one) => {
+          const save = getComputedStyle(one.querySelector('.turnacts .save'));
+          return [save.visibility, save.borderTopColor, save.backgroundColor];
         }""")
-        assert hit == 0, hit
+        assert mark == ["visible", "rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0)"], mark
 
 
 def test_the_row_of_buttons_wears_the_ground_under_it(ws, page_at):

@@ -281,8 +281,10 @@ all its calls. If you opened a call to read it and the agent then runs the
 next one, the group stays open.
 
 A call's line shows only the start of a command. Click the call to see the
-whole command, in colour, over what it printed. A call of another tool
-shows what it was given, as JSON.
+whole command, in colour, over what it printed. The command stands on a
+darker ground, so you can see where it ends. Point at either part to show a
+copy button at its top right. A call of another tool shows what it was
+given, as JSON.
 
 A command you run in Claude Code shows with its answer, in a fixed-width font:
 a `!` command with what it printed, and a slash command such as `/model opus`
@@ -322,7 +324,8 @@ start.
 
 Point at a message to show its buttons at its top right: the copy button
 copies it as the Markdown it was written in, **txt** shows that Markdown in
-place, and the bookmark keeps it for later. Point at a code block in a
+place, and the bookmark keeps it for later. A saved message shows a small
+flag at its top right, and its text does not move. Point at a code block in a
 reply to show a copy button at the block's own top right. It copies the
 block and nothing else.
 
