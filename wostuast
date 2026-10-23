@@ -4495,10 +4495,12 @@ class Transcript:
         answers = [piece for piece in content
                    if isinstance(piece, dict) and piece.get("type") == "tool_result"]
         made = record.get("toolUseResult") if len(answers) == 1 else None
+        # A thought Claude Code shows the reader as the agent's words.
+        shown = record.get("thinkingDisplay") == "updates"
         for piece in content:
             if not isinstance(piece, dict):
                 continue
-            block = self.add_piece(kind, piece, ts, bool(record.get("isMeta")), made)
+            block = self.add_piece(kind, piece, ts, bool(record.get("isMeta")), made, shown)
             if block is not None:
                 touched.append(block)
         return touched
@@ -4615,7 +4617,8 @@ class Transcript:
         return [block] if block else []
 
     def add_piece(self, role: str, piece: dict[str, Any], ts: float,
-                  theirs: bool = False, made: Any = None) -> Block | None:
+                  theirs: bool = False, made: Any = None,
+                  shown: bool = False) -> Block | None:
         kind = str(piece.get("type") or "")
         if kind == "text":
             text = str(piece.get("text") or "")
@@ -4628,12 +4631,20 @@ class Transcript:
             else:
                 block = Block(kind="text", ts=ts, text=text)
         elif kind == "thinking":
-            # Never shown. Claude Code keeps the text of most thoughts out of
-            # the transcript -- 4,274 of 4,785 blocks on one machine were a
-            # signature and nothing else -- so a switch to show them showed
-            # nothing most of the time, and read as broken. The reader chose
-            # to drop them, and the key that showed them.
-            return None
+            # A thought is not shown. Claude Code keeps the text of most
+            # thoughts out of the transcript -- 4,274 of 4,785 blocks on one
+            # machine were a signature and nothing else -- so a switch to
+            # show them showed nothing most of the time, and read as broken.
+            # The reader chose to drop them, and the key that showed them.
+            # But 2.1.306 writes what the agent tells the reader between its
+            # calls as a thought too, on a record that says
+            # `thinkingDisplay: "updates"`, and the console shows it: "The
+            # baseline shows 91% stability, so I will ...". Dropped, the page
+            # had the agent's plan and never what it found.
+            text = str(piece.get("thinking") or "")
+            if not shown or not text.strip():
+                return None
+            block = Block(kind="text", ts=ts, text=text)
         elif kind == "tool_use":
             name = str(piece.get("name") or "")
             tool_input = piece.get("input")

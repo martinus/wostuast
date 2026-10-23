@@ -258,6 +258,18 @@ answer (`Stop hook feedback:`), a whole skill's body (`Base directory for
 this skill:`), `Continue from where you left off.`, an image's caption. It
 is drawn as a note, never as a prompt.
 
+### A thought Claude Code shows
+
+`narration.jsonl`, the shape read off Claude Code 2.1.306 transcripts on
+two machines, with invented text and ids. An `assistant` record whose one
+piece is `thinking` carries `thinkingDisplay: "updates"` and
+`thinkingDurationMs` beside `message`; a record of `text` or `tool_use`
+carries neither. Of 1,762 such thoughts, 247 had text and 1,515 were a
+`signature` with `thinking: ""`. Each one with text was written to the
+reader ("The baseline shows …, so I will …"), and the console shows it
+as the agent's words between its calls. A thought from 2.1.276
+(`transcript.jsonl`) has text and no `thinkingDisplay`.
+
 ### A command run with `!`
 
 `bash_mode.jsonl`, read off Claude Code 2.1.282 with invented text. Typing
