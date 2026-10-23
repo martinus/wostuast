@@ -48,6 +48,24 @@ def test_thinking_is_never_a_block_even_with_text_in_it(parsed):
     assert not any("exact name" in b.text for b in got.blocks)
 
 
+def test_a_thought_claude_code_shows_as_an_update_is_the_agents_words(ws):
+    """Claude Code 2.1.306 writes what the agent tells the reader between
+    its calls as a thought, on a record with `thinkingDisplay: "updates"`,
+    and the console shows it. The page dropped every thought, and the
+    reader saw "Let me measure the baseline." and never what the baseline
+    was. A thought with text on such a record is the agent's words, in
+    its place; one that is a signature only is still nothing."""
+    got = ws.Transcript(str(FIXTURE.with_name("narration.jsonl")))
+    got.read_new()
+    said = [(b.kind, b.text.strip()) for b in got.blocks if b.kind != "tool"]
+    assert said == [
+        ("text", "Let me measure the baseline."),
+        ("text", "The baseline shows 91.09% stability, so I will warm up the statics first."),
+        ("text", "The warm-up brings stability to 95.70%. I am mapping the edges that still vary."),
+    ]
+    assert [b.kind for b in got.blocks] == ["text", "tool", "tool", "text", "tool", "text"]
+
+
 def test_assistant_text_is_kept_as_markdown(parsed):
     got = parsed
     text = [b for b in got.blocks if b.kind == "text"][0]

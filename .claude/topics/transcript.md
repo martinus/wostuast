@@ -133,6 +133,13 @@ line, and a fetch against a push.
   hold: a hidden thought was still a sibling.
   `test_thinking_is_never_a_block_even_with_text_in_it`,
   `test_a_thought_between_two_tool_calls_leaves_no_trace`.
+  - **But a thought the console shows is the agent's words, a `text`
+    block.** 2.1.306 writes what the agent tells the reader between its
+    calls as a thought, on a record with `thinkingDisplay: "updates"`; the
+    page had "Let me measure" and never what it measured. Only such a
+    record, and only with text: one with a signature only is nothing.
+    `tests/fixtures/narration.jsonl`,
+    `test_a_thought_claude_code_shows_as_an_update_is_the_agents_words`.
 - **Everything keyed on `seq` is forgotten together, in `forgetPlaces`.** A
   rewritten transcript leaves `state.turns.open` and `state.turns.at` on
   other blocks. **`run` is kept with a session's places**, or `usePlace`
