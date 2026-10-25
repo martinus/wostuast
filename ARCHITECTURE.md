@@ -216,7 +216,10 @@ the stream), `serving` (the request gate) and `the verbs` (what one
 session's routes do), and last the commands: the hook, install, serve. The
 page's sections follow the screen: the sidebar, the question bar, the
 transcript, the Files tab, the Diff tab, the review, the views and the keys.
-The command above prints the whole list as it is today.
+The command above prints the whole list as it is today. A test holds the
+direction of the Python sections: each one stands in a layer (`LAYERS` in
+`tests/test_where.py`), and no section uses a name from a layer above its
+own.
 
 > [!NOTE]
 > Why one file? The install command downloads one file from one URL. Two files

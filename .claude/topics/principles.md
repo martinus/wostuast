@@ -17,6 +17,12 @@ request, and names the principle.
    done (`save_names`). A change of state is `become`.
    `test_the_fold_does_no_io`,
    `test_the_guard_folds_every_handler_and_both_links`.
+   **The Python sections stand in layers, and none uses a name of a layer
+   above its own**: base, model, edges, fold, wire, store, serving,
+   commands (`LAYERS` in `tests/test_where.py`). A use upward is a helper
+   in the wrong section: move it down to the layer of its users, as
+   `tilde` went to the output helpers. A new section goes into a layer.
+   `test_no_section_uses_a_layer_above_its_own`, `UPWARD_ALREADY`.
 2. **Each shape the page receives is defined in one place**: the wire
    section (`row`, `blocks_json`, `session_json`, `wire_fields`, the
    `EVENTS`). Its head comment names the five dataclasses that go out whole;

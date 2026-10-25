@@ -269,6 +269,23 @@ QUIET_MAX = 12 * 3600
 #: tenth of a second; the slack is for a loaded machine.
 CLEAR_GAP = 5.0
 
+#: What `tmux_send` takes out of anything on its way to a terminal: everything
+#: below a space except tab and newline, the delete character, and the C1
+#: block above it. C1 holds NEL (U+0085) and CSI (U+009B), controls a terminal
+#: may act on and an agent may write; U+2028 and U+2029 are line breaks that
+#: `"\n" in text` does not see, so they would have gone out unpasted. The rule
+#: is "nothing below a space reaches a terminal", and these are below one.
+#:
+#: **And every lone surrogate.** JSON can carry one, and `subprocess` hands
+#: an argument to tmux with `surrogateescape`, so the pair U+DCC2 U+DC9B
+#: left as the bytes c2 9b -- which is U+009B, CSI -- measured in a real
+#: pane. A high one made the encode fail and the send with it. No character
+#: a person typed is one. The pattern is a raw string, so the source holds
+#: the escape and `re` reads it: in a plain string it would be the character
+#: itself, which Python 3.13 will not put in a bytecode cache.
+CONTROL_CHARS = re.compile(
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
+
 
 # --- state directory: where wostuast keeps its files, written whole [topics/safety, topics/safety-install]
 
@@ -2651,44 +2668,6 @@ def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
     if event_name in ("PostToolUse", "PostToolUseFailure"):
         return str(event.get("tool_name") or "") in WRITING_TOOLS
     return False
-
-
-#: How much of the last prompt the page is sent for an alert that says a
-#: session has finished: the start of what was asked, not the whole of it.
-PROMPT_SHOWN = 120
-
-
-def shown_prompt(session: Session) -> str:
-    """The last prompt as an alert shows it: cut, and its secrets hidden.
-
-    An alert can stand on a locked screen, so what it says goes through
-    `clip_hidden`, as a command on the row does. That costs 170 µs, measured
-    on 500 characters: on every row of every tick it was the dearest thing
-    in the row, and at the time of the prompt every prompt of a long log
-    paid it again when the daemon starts. So it is worked out when a row is
-    built and the prompt has changed since, and kept with the prompt it was
-    made from.
-    """
-    made_from, shown = session.prompt_shown
-    if made_from != session.last_prompt:
-        shown = clip_hidden(session.last_prompt, PROMPT_SHOWN)
-        session.prompt_shown = (session.last_prompt, shown)
-    return shown
-
-
-#: What a model id may look like to reach the page: the page types it into
-#: a terminal as `/model <id>` (issue 338), so it is held to a shape, as a
-#: command's name is (`COMMAND_SHAPE`). "claude-opus-5-5", and a context
-#: suffix such as "[1m]".
-MODEL_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}")
-
-
-def model_id(session: Session) -> str:
-    """The full id of the model a session runs, or "" when there is none or
-    it is not one. The status line's when it has spoken, since `/model`
-    changes it mid-session; else the one it started with."""
-    found = session.status.model_id or session.started_model
-    return found if MODEL_SHAPE.fullmatch(found) else ""
 
 
 def build_sessions(
@@ -6193,6 +6172,19 @@ def is_listed(cwd: str, wanted: str, runner: Callable[..., str | None] = run) ->
     return wanted in (out or "").split("\0")
 
 
+def listing_tag(names: str) -> str:
+    """A short name for one set of file names, given them already joined.
+
+    The browser sends back the tag it already holds, and an answer that still
+    has that tag carries no names at all. Names change when a file is added or
+    removed, which is rare; which files have changed moves every few seconds,
+    and that part is short.
+    """
+    import hashlib
+
+    return hashlib.sha1(names.encode("utf-8", "replace")).hexdigest()[:16]
+
+
 # --- reading a file: its kind, its bytes, and why it is not shown [topics/files-tab, topics/safety]
 
 
@@ -8792,25 +8784,17 @@ def table(rows: Sequence[tuple[str, Sequence[str]]], color: bool) -> str:
     return "\n".join(lines)
 
 
+def tilde(path: Path | str) -> str:
+    """A path as a person writes it: under the home, with `~`."""
+    text, home = str(path), str(Path.home()).rstrip("/")
+    # A home of "/" or "" would make every path "~something".
+    if not home:
+        return text
+    return "~" + text[len(home):] if text == home or text.startswith(home + "/") else text
+
+
 # --- tmux: the four verbs and what may reach a terminal, one send at a time [topics/safety-typing]
 
-
-#: What `tmux_send` takes out of anything on its way to a terminal: everything
-#: below a space except tab and newline, the delete character, and the C1
-#: block above it. C1 holds NEL (U+0085) and CSI (U+009B), controls a terminal
-#: may act on and an agent may write; U+2028 and U+2029 are line breaks that
-#: `"\n" in text` does not see, so they would have gone out unpasted. The rule
-#: is "nothing below a space reaches a terminal", and these are below one.
-#:
-#: **And every lone surrogate.** JSON can carry one, and `subprocess` hands
-#: an argument to tmux with `surrogateescape`, so the pair U+DCC2 U+DC9B
-#: left as the bytes c2 9b -- which is U+009B, CSI -- measured in a real
-#: pane. A high one made the encode fail and the send with it. No character
-#: a person typed is one. The pattern is a raw string, so the source holds
-#: the escape and `re` reads it: in a plain string it would be the character
-#: itself, which Python 3.13 will not put in a bytecode cache.
-CONTROL_CHARS = re.compile(
-    r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
 
 #: The most text one `send` may type, **in bytes**. Longer is refused rather
 #: than cut: what arrives in the terminal must be what the user wrote, or
@@ -9497,6 +9481,44 @@ def git_fields(facts: GitFacts) -> dict[str, Any]:
     }
 
 
+#: How much of the last prompt the page is sent for an alert that says a
+#: session has finished: the start of what was asked, not the whole of it.
+PROMPT_SHOWN = 120
+
+
+def shown_prompt(session: Session) -> str:
+    """The last prompt as an alert shows it: cut, and its secrets hidden.
+
+    An alert can stand on a locked screen, so what it says goes through
+    `clip_hidden`, as a command on the row does. That costs 170 µs, measured
+    on 500 characters: on every row of every tick it was the dearest thing
+    in the row, and at the time of the prompt every prompt of a long log
+    paid it again when the daemon starts. So it is worked out when a row is
+    built and the prompt has changed since, and kept with the prompt it was
+    made from.
+    """
+    made_from, shown = session.prompt_shown
+    if made_from != session.last_prompt:
+        shown = clip_hidden(session.last_prompt, PROMPT_SHOWN)
+        session.prompt_shown = (session.last_prompt, shown)
+    return shown
+
+
+#: What a model id may look like to reach the page: the page types it into
+#: a terminal as `/model <id>` (issue 338), so it is held to a shape, as a
+#: command's name is (`COMMAND_SHAPE`). "claude-opus-5-5", and a context
+#: suffix such as "[1m]".
+MODEL_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}")
+
+
+def model_id(session: Session) -> str:
+    """The full id of the model a session runs, or "" when there is none or
+    it is not one. The status line's when it has spoken, since `/model`
+    changes it mid-session; else the one it started with."""
+    found = session.status.model_id or session.started_model
+    return found if MODEL_SHAPE.fullmatch(found) else ""
+
+
 def row(session: Session) -> dict[str, Any]:
     """One session as the page wants it: flat, small, and ready to compare.
 
@@ -9830,19 +9852,6 @@ def answer_tag(text: str) -> str:
     import hashlib
 
     return hashlib.sha1(wire_bytes(text)).hexdigest()[:16]
-
-
-def listing_tag(names: str) -> str:
-    """A short name for one set of file names, given them already joined.
-
-    The browser sends back the tag it already holds, and an answer that still
-    has that tag carries no names at all. Names change when a file is added or
-    removed, which is rare; which files have changed moves every few seconds,
-    and that part is short.
-    """
-    import hashlib
-
-    return hashlib.sha1(names.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 # --- the daemon: Client, Hub and Daemon; the tick, Store.refresh's steps, the stream [topics/daemon-and-page]
@@ -13725,15 +13734,6 @@ def mark(kind: str, text: str, color: bool) -> str:
     if not color:
         return f"  {sign} {text}"
     return f"  {ink}{sign}{RESET} {text}"
-
-
-def tilde(path: Path | str) -> str:
-    """A path as a person writes it: under the home, with `~`."""
-    text, home = str(path), str(Path.home()).rstrip("/")
-    # A home of "/" or "" would make every path "~something".
-    if not home:
-        return text
-    return "~" + text[len(home):] if text == home or text.startswith(home + "/") else text
 
 
 def changed_parts(changes: list[str]) -> list[str]:
