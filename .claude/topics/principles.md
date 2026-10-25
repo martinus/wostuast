@@ -57,7 +57,12 @@ request, and names the principle.
 table; a differential test that gives two readers one hard case (write it
 first and see it fail); a guard at run time, which checks only the paths
 the tests run, so it comes with a test that each path is run; a static
-check of the source's form, which moving code satisfies.
+check of the source's form, which moving code satisfies. **The rules of
+`CLAUDE.md`'s Shape and Style that the form shows are held in
+`tests/test_shape.py`**: the standard library only, the `__main__` guard
+last, the six tmux commands, a timeout on every process, type hints, no
+signal, no module-level name changed, and no script without its hash
+(`PAGE_ADDRESSES`).
 
 **The ratchet** (`CLAUDE.md`, **Principles**): a list of known breaks that
 may only get shorter, like `LONGER_ALREADY`, `EVENTS_BY_HAND` and
