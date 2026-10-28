@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from collections import Counter, deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (TYPE_CHECKING, Any, Callable, Generator, Iterable,
                     Iterator, Sequence)
@@ -5676,15 +5676,6 @@ def git_answers(runner: Callable[..., str | None] = run) -> bool:
     return runner(["git", "--version"]) is not None
 
 
-def changed_files(
-    cwd: str, runner: Callable[..., str | None] = run
-) -> set[str] | None:
-    """The files git says differ from the last commit, untracked ones included.
-    None when git did not answer."""
-    told = status_names(cwd, runner)
-    return None if told is None else told[0]
-
-
 def status_names(
     cwd: str, runner: Callable[..., str | None] = run
 ) -> tuple[set[str], set[str]] | None:
@@ -8164,14 +8155,13 @@ def parse_search(query: str) -> tuple[list[str], dict[str, str]]:
     return words, filters
 
 
-def search_day(text: str, end: bool = False) -> float | None:
-    """The start of a day written `2026-10-01`, or of the next one, in the
-    machine's own time zone, which is the reader's. None for anything else."""
+def search_day(text: str) -> float | None:
+    """The start of a day written `2026-10-01`, in the machine's own time
+    zone, which is the reader's. None for anything else."""
     try:
-        day = time.mktime(time.strptime(text, "%Y-%m-%d"))
+        return time.mktime(time.strptime(text, "%Y-%m-%d"))
     except (ValueError, OverflowError):
         return None
-    return day + 86400 if end else day
 
 
 def search_log(query: str, sessions: dict[str, Session]) -> list[dict[str, Any]]:
@@ -8212,10 +8202,12 @@ def search_span(filters: dict[str, str]) -> tuple[float | None, float | None]:
     asked, once every filter is one that can be read."""
     # A filter that cannot be read is said, not dropped: dropped, a query
     # of `before:yesterday` alone answered with the newest of everything.
+    # Both are the start of their day: `after:` takes the day itself and
+    # `before:` stops short of it, so `after:D before:E` is D up to E.
     after = before = None
-    for key, end in (("after", False), ("before", True)):
+    for key in ("after", "before"):
         if key in filters:
-            day = search_day(filters[key], end=False)
+            day = search_day(filters[key])
             if day is None:
                 raise ValueError(f"{key}: is a day, written 2026-10-01")
             after, before = (day, before) if key == "after" else (after, day)
@@ -24172,7 +24164,7 @@ function loosePick(report) {
 }
 
 function drawDiff(box) {
-  const [list, pane, note, foot] = split(box, "diff", "diffbody");
+  const [list, pane, note] = split(box, "diff", "diffbody");
   if (!pane.firstChild) putDiffBar(pane);
   const [bar, scroll] = pane.children;
   fillDiffBar(bar);

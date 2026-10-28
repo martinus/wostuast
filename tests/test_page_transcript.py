@@ -22,7 +22,6 @@ from browser import (
     wait_for_watching,
     renew_stream,
     daemon_transcript,
-    spy_on_note,
     write_records,
     hold,
     wait_until,

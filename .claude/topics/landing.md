@@ -32,3 +32,12 @@ shows it.
     `tests/page_coverage.py --check`. **Each shard's files go into a folder
     of their own**: a file is named after its process, two runners can give
     two processes one number, and a shared folder would keep one of them.
+- **The `pytest` job lints with ruff's pyflakes rules and `B007` only, at
+  a pinned version**: `ruff check --isolated --target-version py310
+  --select F,B007 wostuast tests` after `pip install` of the version in
+  `tests.yml`. Run it before a push. pyright (52 errors), ruff's wide sets,
+  vulture, ESLint and a fuzzer found no real bug here; these rules found
+  dead code (a loop variable `search_span` never read, an unused import)
+  with no false alarm. **Add a rule only when it finds something real with
+  no noise**: a lint that cries wolf is switched off. It is a step of the
+  `pytest` job, so the ruleset needs no new check.

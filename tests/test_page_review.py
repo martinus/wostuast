@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 import conftest
 from browser import (
     comment_on_line,
@@ -17,7 +15,6 @@ from browser import (
     opened,
     own_context,
     show_tab,
-    numbers,
     comment_on_first_line,
     spy_on_note,
     stub_send,

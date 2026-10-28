@@ -9,8 +9,6 @@ import re
 import threading
 import time
 
-import pytest
-
 import conftest
 from browser import (
     skip_without_browser,

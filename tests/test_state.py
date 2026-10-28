@@ -5,8 +5,6 @@ from __future__ import annotations
 import pathlib
 import time
 
-from pathlib import Path
-
 import pytest
 from conftest import event as hook_event
 
@@ -371,7 +369,6 @@ def test_the_agent_pid_walks_past_the_shell(ws, tmp_path):
     shell and it dies with us. Taking it for the agent showed every session as
     killed seconds after it started.
     """
-    import os
     import subprocess
     import sys
 

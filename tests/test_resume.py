@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import shlex
 
-import pytest
-
-import conftest
-
 
 def over(ws, **fields):
     session = ws.Session(session_id=fields.pop("sid", "6fd6e34e-45f6-4953-a454-6c0d9ec151dc"),
