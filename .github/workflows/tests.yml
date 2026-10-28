@@ -45,6 +45,17 @@ jobs:
           python wostuast --version
           python wostuast --help
 
+      # Pyflakes' rules and a loop variable never read: an unused import, a
+      # name never defined, a variable the code forgot. A type checker, a
+      # wide rule set, ESLint and a fuzzer found nothing real here; these
+      # found dead code with no false alarm. A step of this job, not a job
+      # of its own, so the ruleset needs no new check. The version is pinned:
+      # a new release must not turn an unrelated pull request red.
+      - name: Lint
+        run: |
+          python -m pip install ruff==0.17.3
+          ruff check --isolated --target-version py310 --select F,B007 wostuast tests
+
   browser-shard:
     # The page renders text an agent wrote. The one bug that mattered there
     # could only be seen in a real browser, so the guard runs in one.

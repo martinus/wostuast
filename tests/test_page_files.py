@@ -19,7 +19,6 @@ from browser import (
     skip_without_browser,
     opened,
     show_tab,
-    numbers,
     open_code,
     wait_until,
     frames,

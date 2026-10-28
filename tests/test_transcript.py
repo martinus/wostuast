@@ -815,7 +815,7 @@ def test_a_task_notification_and_another_sessions_message_read_as_words(ws, tmp_
     assert short == ("note", 'Task "watch the build" was stopped')
     words = "From another session:\n\nThe migration script is written and its tests pass."
     assert sent == ("note", words) and sent_queued == ("note", words)
-    for kind, text in shown:
+    for _, text in shown:
         assert "<" not in text and "other Claude session" not in text
     # A notification in a shape nobody has measured is shown as it came.
     odd = ws.read_user_text("<task-notification><phase>3</phase></task-notification>")

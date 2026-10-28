@@ -7,8 +7,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pytest
-
 import conftest
 from browser import (
     skip_without_browser,
@@ -742,7 +740,7 @@ def test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it(repo_page
         load(page, repo_page)
         for tab, bar in (("diff", ".diffbar"), ("files", ".where")):
             show_tab(page, tab)
-            page.wait_for_selector(f"#chat .chathead")
+            page.wait_for_selector("#chat .chathead")
             page.wait_for_selector(f"#content {bar}")
             lines = page.evaluate("""(bar) => {
               const low = (one) => Math.round(document.querySelector(one).getBoundingClientRect().bottom);

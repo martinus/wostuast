@@ -1243,7 +1243,7 @@ def test_a_page_from_an_earlier_serve_is_told_to_reload(in_tmux):
     daemon, base, seen = in_tmux
     status, body = post(f"{base}/api/session/s1/send", {"text": "hello"},
                         token="the-token-from-the-last-serve",
-                        origin=f"http://127.0.0.1:1234")
+                        origin="http://127.0.0.1:1234")
     assert status == 403
     assert body["stale"] is True
     assert "restarted" in body["error"] and "Reload" in body["error"]

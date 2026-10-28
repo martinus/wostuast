@@ -4,7 +4,6 @@ See tests/browser.py for the shared browser and the helpers."""
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 from pathlib import Path
@@ -86,7 +85,6 @@ def test_a_row_shows_its_state_in_its_colour(page_at):
     """The row's edge and tint say the state, and there is no dot and no
     word beside them: nine sessions are hard to read from one small dot."""
     with opened(page_at) as page:
-        row = page.locator(".row").first
         edge = page.evaluate(
             "getComputedStyle(document.querySelector('.row')).borderLeftColor")
         # The tint is asked of the row itself: the chosen row wears its

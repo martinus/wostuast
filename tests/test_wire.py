@@ -8,8 +8,6 @@ import ast
 import inspect
 import re
 
-import conftest
-
 
 def page_source(ws) -> str:
     """The page: everything from `PAGE = r\"\"\"` on."""

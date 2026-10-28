@@ -781,14 +781,14 @@ def test_a_rename_keeps_the_old_name_whole(ws, seeded):
     """git writes the old name as a record of its own, with no status in front
     of it. Treating every record the same cut three characters off it."""
     git(seeded, "mv", "notes.md", "renamed_notes_file.md")
-    changed = ws.changed_files(str(seeded))
+    changed = ws.status_names(str(seeded))[0]
     assert "renamed_notes_file.md" in changed
     assert "notes.md" in changed
 
 
 def test_an_untracked_file_is_changed_too(ws, seeded):
     (seeded / "brand-new.txt").write_text("x")
-    assert "brand-new.txt" in ws.changed_files(str(seeded))
+    assert "brand-new.txt" in ws.status_names(str(seeded))[0]
 
 
 def test_the_root_is_found_from_a_subdirectory(ws, seeded):

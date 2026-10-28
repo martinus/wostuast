@@ -10,8 +10,6 @@ import re
 import subprocess
 import time
 
-import pytest
-
 import conftest
 from browser import (
     kept,
@@ -352,7 +350,7 @@ def test_a_diff_line_carries_the_number_it_had_on_each_side(repo_page):
                   e.children[0].textContent.slice(5, 11).trim(),
                   e.children[1].textContent])""")
         assert rows, "no diff lines at all"
-        for kind, old, now, text in rows:
+        for kind, old, now, _ in rows:
             if kind == "added":
                 assert old == "" and now != "", (kind, old, now)
             elif kind == "removed":
@@ -1323,7 +1321,6 @@ def test_a_commit_message_wraps_at_the_window_and_links_its_tickets(repo_page, w
     window. A paragraph's lines are joined now, so the window wraps them; a
     list item and a trailer keep their own lines. And the reader's ticket
     links reach the subject and the message, as they reach the transcript."""
-    import json
     root, _ = repo_page
     ws.save_config({"links": [
         {"match": "OA-(\\d+)", "url": "https://tickets.example.com/OA-$1"}]})

@@ -778,7 +778,7 @@ def test_git_never_takes_the_index_lock_the_agent_needs(ws, repo):
     index = repo / ".git" / "index"
     before = index.read_bytes()
     assert ws.git_facts(str(repo)).dirty is True
-    assert ws.changed_files(str(repo)) == {"README.md"}
+    assert ws.status_names(str(repo))[0] == {"README.md"}
     report = ws.worktree_diff(str(repo))
     assert [one.path for one in report.sections[-1].files] == ["README.md"]
     assert index.read_bytes() == before
@@ -797,7 +797,7 @@ def test_git_runs_no_fsmonitor_a_repository_names(ws, repo, tmp_path):
     ran = tmp_path / "ran"
     git(repo, "config", "core.fsmonitor", f"touch {ran}; false")
     assert ws.git_facts(str(repo)).dirty is False
-    assert ws.changed_files(str(repo)) == set()
+    assert ws.status_names(str(repo))[0] == set()
     assert "README.md" in [one.path for one in ws.worktree_files(str(repo)).files]
     ws.worktree_diff(str(repo))
     assert not ran.exists()

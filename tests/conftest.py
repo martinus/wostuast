@@ -332,8 +332,6 @@ def stub_git(ws, monkeypatch):
 @pytest.fixture
 def served(ws, stub_git):
     """A daemon on a free port. Yields (daemon, base url)."""
-    import threading
-
     daemon = ws.Daemon()
     # Ticked by hand, so git is read at once: behind the tick (#550) its
     # facts would wait for a tick that nothing here runs.
