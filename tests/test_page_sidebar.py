@@ -2304,6 +2304,10 @@ def test_all_unreads_is_one_scroll_through_the_last_answers(ws, pair_at):
         page.wait_for_selector('.row[data-id="s2"]:not(.unread)')
 
 
+#: A command longer than a row is wide (#650).
+LONG_COMMAND = "make -j8 release && ./bench --all --repeat 20 --out results/bench.json"
+
+
 def test_a_waiting_row_has_its_own_group_colour_and_lines(ws, page_at, tmp_path):
     """An agent that ended its turn with a build still running in the
     background was blue, "ready", while it waited (#617). It is "waiting":
@@ -2315,16 +2319,21 @@ def test_a_waiting_row_has_its_own_group_colour_and_lines(ws, page_at, tmp_path)
     ws.append_event(conftest.event("UserPromptSubmit", prompt="build it", ts=now - 60, **where))
     ws.append_event(conftest.event(
         "PostToolUse", tool_name="Bash", tool_use_id="t1", ts=now - 50,
-        tool_input={"command": "make -j8", "description": "build the release"},
+        tool_input={"command": LONG_COMMAND, "description": "build the release"},
         tool_response={"backgroundTaskId": "b1"}, **where))
     ws.append_event(conftest.event("Stop", ts=now - 40, background_tasks=[
         {"id": "b1", "type": "shell", "status": "running",
-         "description": "build the release", "command": "make -j8"}], **where))
+         "description": "build the release", "command": LONG_COMMAND}], **where))
     daemon.store.refresh()
     with opened(url) as page:
         row = '.row[data-id="s1"]'
         page.wait_for_selector(f"{row}.waiting .kid.shell")
         assert "make -j8" in page.locator(f"{row} .kid.shell").inner_text()
+        # One line, cut short (#650): a long command broke the line in three,
+        # the arrow alone over it and the age alone under it.
+        tops = page.evaluate("""(row) => [...document.querySelector(row + ' .kid.shell').children]
+          .map((one) => Math.round(one.getBoundingClientRect().top))""", row)
+        assert len(set(tops)) == 1, tops
         assert page.title() == "1 waiting \u00b7 wostuast"
         look = page.evaluate("""() => {
           const css = getComputedStyle(document.documentElement);
@@ -2348,6 +2357,10 @@ def test_a_waiting_row_has_its_own_group_colour_and_lines(ws, page_at, tmp_path)
         assert page.evaluate("iconWas.split(' ')[0]") == "waiting"
 
 
+#: What a subagent was asked, longer than a row is wide (#650).
+PARSER = "Find the parser and every place that calls it, in all the modules"
+
+
 def test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words(ws, page_at, tmp_path):
     """"4 subagents ran", unfolded, said "subagent" and a time (#618). A
     line says its kind, what it was asked, its calls, its tokens and how
@@ -2358,7 +2371,7 @@ def test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words(ws, pa
     sub = {"agent_id": "a1", "agent_type": "Explore", **agent}
     ws.append_event(conftest.event("UserPromptSubmit", prompt="go", ts=now - 200, **agent))
     ws.append_event(conftest.event("PreToolUse", tool_name="Agent", ts=now - 190,
-                                   tool_input={"description": "Find the parser"}, **agent))
+                                   tool_input={"description": PARSER}, **agent))
     ws.append_event(conftest.event("SubagentStart", ts=now - 189, **sub))
     for at in range(3):
         ws.append_event(conftest.event("PreToolUse", tool_name="Read", ts=now - 180 + at,
@@ -2376,7 +2389,7 @@ def test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words(ws, pa
         page.click(".row .kidsran")
         line = page.locator(".row .kid").first
         line.wait_for()
-        assert line.locator(".kidwhat").inner_text() == "Find the parser"
+        assert line.locator(".kidwhat").inner_text() == PARSER
         assert line.locator(".kidstats").inner_text() == (
             "Explore \u00b7 3 calls \u00b7 41k tokens \u00b7 2min")
         # On a line of its own, under what it was asked, from where it starts.
@@ -2385,9 +2398,14 @@ def test_a_subagent_that_ran_says_its_kind_what_it_did_and_its_last_words(ws, pa
           const what = line.querySelector('.kidwhat').getBoundingClientRect();
           const stats = line.querySelector('.kidstats').getBoundingClientRect();
           const inset = parseFloat(getComputedStyle(line.querySelector('.kidstats')).paddingLeft);
-          return [stats.top >= what.bottom - 1, Math.round(stats.left + inset - what.left)];
+          const tops = ['.kidmark', '.kidwhat', '.age']
+            .map((one) => Math.round(line.querySelector(one).getBoundingClientRect().top));
+          return [stats.top >= what.bottom - 1, Math.round(stats.left + inset - what.left),
+                  new Set(tops).size];
         }""")
         assert where[0] and abs(where[1]) <= 2, where
+        # What it was asked, however long, stays on the arrow's line (#650).
+        assert where[2] == 1, where
         # Its last words, then what a click does (#618).
         assert line.get_attribute("title") == (
             "Explore subagent of this session:\nIt is in src/parse.c.\n\nopen its transcript")

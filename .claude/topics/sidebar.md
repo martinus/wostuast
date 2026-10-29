@@ -37,6 +37,9 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
     time said nothing. Once over, a second line under what it was asked
     (`.kidstats`): its kind, calls, tokens and how long it ran (`lasted`).
     Beside it, "general-purpose" took the narrow line and cut the numbers.
+    **Only a line with `.kidstats` wraps, and its `.kidwhat` starts at no
+    width** (#650): a wrapping line breaks before it shrinks, so a long
+    command stood alone between an arrow and an age on lines of their own.
     Its last words are on the hover. Calls count its `PreToolUse`s only. Tokens come from the
     `<usage>` of the `<task-notification>` of its end (2.1.306), so a
     subagent in the foreground has none, and the line leaves them out.
