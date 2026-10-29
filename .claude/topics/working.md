@@ -38,8 +38,10 @@ throwaway home, and edit scripts for the one large file.
 - **Send the reader the picture, and wait for their yes, before the pull
   request**: a fix merged unseen came back still wrong. `SendUserFile` the
   PNG **from `pictures/` in the checkout** (in `.git/info/exclude`): one
-  sent from the scratchpad after a restart arrived as nothing. Put before
-  and after in one PNG, labelled. **While you wait, the stop hook asks for
+  sent from the scratchpad after a restart arrived as nothing. **The main
+  checkout's, not a worktree's**: the reader's app opens files under the
+  main one only. Put before and after in one PNG, labelled:
+  `tests/pair.py OUT before=OLD after=NEW --clip X,Y,W,H`. **While you wait, the stop hook asks for
   a commit and a push**: push the branch, which starts nothing, and open
   the pull request after the yes.
 - **Work in one file, with `WOSTUAST_WAIT=5000`**, so a wait for what
@@ -120,7 +122,7 @@ before every `replace`. Its scars:
 None is a test. Each is kept working by its own test file:
 `tests/test_where.py`, `test_shot.py`, `test_stage.py`, `test_tour.py`,
 `test_scale.py`, `test_claude_pane.py`, `test_page_coverage.py`,
-`test_perturb.py`.
+`test_perturb.py`, `test_pair.py`.
 
 - `tests/where.py`: with no name, the map of `wostuast`: each section's
   header, line and length. With names (`cmd_hook`, `Store.refresh`,
@@ -149,14 +151,20 @@ None is a test. Each is kept working by its own test file:
 - `tests/claude_pane.py`: a real Claude Code in a tmux pane, against a
   fake Messages API that keeps every request and can answer once with a
   tool call: `send`, `paste`, `ask`, `busy`, `turns`, `statuses`,
-  `hooks`, `settings`. What Claude Code does is measured with it, not
-  guessed (topics/payloads).
+  `hooks`, `settings`, and `restart` (`--resume <id>` brings the session
+  back). What Claude Code does is measured with it, not guessed
+  (topics/payloads).
 - `tests/page_coverage.py`: runs the browser tests (all, or those named)
   with `WOSTUAST_COVERAGE`, which `cover` in `tests/browser.py` reads,
   and prints the share of the page script's lines that ran and each
   named function that never did. `--lines` adds the lines, `--from DIR`
   reads a run again, and `--check` is the ratchet CI's `browser` job runs
   (topics/testing, "It is a ratchet in CI": `UNRUN_ALREADY`,
-  `UNRUN_LINES_ALREADY`).
+  `UNRUN_LINES_ALREADY`). **`--check --names A,B` over the changed test
+  files says whether CI's check passes for the functions a pull request
+  adds**: a line counts as run when any byte of it ran.
+- `tests/pair.py`: pictures side by side, each under its label, in one
+  PNG; `--clip` cuts each to one part. The before and after a look change
+  waits on.
 - `tests/perturb.py`: applies each break in a JSON list, runs only the
   tests it names, puts the file back, and prints red or GREEN a line.

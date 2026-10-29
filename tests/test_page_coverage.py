@@ -120,6 +120,13 @@ def test_the_check_counts_the_lines_a_function_that_ran_left_unrun(monkeypatch):
     assert page_coverage.check(merged) == [
         "some: 2 lines no browser test runs, and UNRUN_LINES_ALREADY allows 1:"
         " wostuast:4, wostuast:7"]
+    # `--names` (#653): only what a pull request adds is judged, so a run
+    # of its own test files says whether CI's check will pass for it; a
+    # name the script does not have is a typing slip, and said.
+    monkeypatch.setattr(page_coverage, "UNRUN_LINES_ALREADY", {})
+    assert page_coverage.check(merged, only=frozenset({"inner", "nowhere"})) == [
+        "nowhere: no function of that name in the page script",
+        "inner: 1 lines no browser test runs, and UNRUN_LINES_ALREADY allows 0: wostuast:10"]
 
 
 

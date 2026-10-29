@@ -1,7 +1,7 @@
 """Which parts of the page script no browser test runs (#439), and how much
 of it runs at all.
 
-    python3 tests/page_coverage.py [--from DIR] [--lines] [--check] [pytest args...]
+    python3 tests/page_coverage.py [--from DIR] [--lines] [--check] [--names A,B] [pytest args...]
 
 Not a test. It runs the browser tests -- all of them, or the ones named --
 with `WOSTUAST_COVERAGE` set, so that `tests/browser.py` records what
@@ -12,7 +12,11 @@ reads a folder a run wrote before, and runs nothing. `--lines` prints the
 lines that never ran too, as ranges. `--check` fails on a named function
 that never ran and is not in `UNRUN_ALREADY` (#579), and on one whose lines
 that never ran are more than `UNRUN_LINES_ALREADY` allows it (#600): CI's
-`browser` job runs it over what the four shards recorded.
+`browser` job runs it over what the four shards recorded. `--names` with
+`--check` judges only the functions named: run the changed test files
+alone, and it says whether CI's check will pass for a function the pull
+request adds (#653). Without it, such a run names every function the
+other files run.
 
 Not named `coverage.py`: pytest puts `tests/` on the path, and a file of
 that name would stand in for the coverage package for anything that
@@ -165,21 +169,29 @@ def never_ran(merged: dict, first: int) -> list[tuple[int, str, int]]:
                   for start, end, name, did in named_functions(merged) if not did)
 
 
-def check(merged: dict, program: str = "") -> list[str]:
+def check(merged: dict, program: str = "", only: frozenset[str] | None = None) -> list[str]:
     """What `--check` fails on, a line each; nothing when the ratchet holds.
     A run that recorded nothing fails too: a shard that uploaded no file
     would otherwise pass with every function unseen. A function that never
     ran is said once, as one, and not again for its lines. With `program`,
-    a line is named by its line in it, which is how CI's log says where."""
+    a line is named by its line in it, which is how CI's log says where.
+    With `only`, the functions it names are judged and no other (`--names`)."""
     if not merged["text"]:
         return ["no page was covered: did any browser test run?"]
-    unrun = {name for _line, name, _length in never_ran(merged, 0)}
+    judged = (lambda name: name in only) if only is not None else (lambda name: True)
+    unrun = {name for _line, name, _length in never_ran(merged, 0) if judged(name)}
     out = [f"{name}: no browser test runs it, and it is not in UNRUN_ALREADY"
            for name in sorted(unrun - UNRUN_ALREADY)]
-    out += [f"{name}: a test runs it now, so it comes off UNRUN_ALREADY"
-            for name in sorted(UNRUN_ALREADY - unrun)]
+    if only is None:
+        out += [f"{name}: a test runs it now, so it comes off UNRUN_ALREADY"
+                for name in sorted(UNRUN_ALREADY - unrun)]
+    if only is not None:
+        out += [f"{name}: no function of that name in the page script"
+                for name in sorted(only - {one[2] for one in named_functions(merged)})]
     first = first_line(merged, program) if program else 0
     for name, lines in sorted(unrun_by_function(merged).items()):
+        if not judged(name):
+            continue
         allowed = UNRUN_LINES_ALREADY.get(name, 0)
         if name not in unrun and len(lines) > allowed:
             where = ", ".join(f"wostuast:{first + line + 1}" for line in lines)
@@ -206,6 +218,8 @@ def main(argv: list[str]) -> int:
                         help="print the lines that never ran too")
     parser.add_argument("--check", action="store_true",
                         help="fail on a function no test runs that UNRUN_ALREADY does not hold")
+    parser.add_argument("--names", type=lambda text: frozenset(filter(None, text.split(","))),
+                        help="with --check, judge only these functions, by their names")
     known, pytest_args = parser.parse_known_args(argv)
     code = 0
     folder = known.source
@@ -215,7 +229,7 @@ def main(argv: list[str]) -> int:
         print(f"coverage kept in {folder} (--from reads it again)")
     merged = merge(folder)
     print("\n".join(report(merged, PROGRAM.read_text(), known.lines)))
-    if known.check and (failed := check(merged, PROGRAM.read_text())):
+    if known.check and (failed := check(merged, PROGRAM.read_text(), known.names)):
         print("\n".join(failed))
         return 1
     return code
