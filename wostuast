@@ -1424,6 +1424,19 @@ class Shell:
 
 
 @dataclass
+class SlowCall:
+    """One of a session's slowest tool calls, for the Statistics tab (#663)."""
+
+    tool: str = ""
+    #: What it worked on, as a call's line says it (`tool_target`).
+    what: str = ""
+    seconds: float = 0.0
+    #: When it began: its end less its time, which is where the transcript
+    #: holds it (`goToNear`).
+    began: float = 0.0
+
+
+@dataclass
 class Session:
     """One Claude Code session, built from its events."""
 
@@ -1550,6 +1563,14 @@ class Session:
     #: Where the last turn counted ended: the same events read again count
     #: nothing twice (`note_busy`).
     busy_upto: float = 0.0
+    #: How long its own tool calls ran, by tool, as [calls, seconds], and
+    #: the slowest of them (#663, `note_tool_time`). `tools_upto` and
+    #: `tools_at`, the calls counted at that moment, keep the same events
+    #: read again from counting twice.
+    tool_time: dict[str, list[float]] = field(default_factory=dict)
+    slow_calls: list[SlowCall] = field(default_factory=list)
+    tools_upto: float = 0.0
+    tools_at: set[str] = field(default_factory=set)
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -2177,6 +2198,7 @@ class Store:
         note_shells(session, event, name, ts)
         note_dirs(session, event, name, ts)
         note_busy(session, name, ts)
+        note_tool_time(session, event, name, ts)
         # Only a change. Every handler assigns a state whether or not it is a
         # new one -- `_on_pre_tool` writes "working" on every tool call -- and
         # moving this each time would put the list back to sorting by the last
@@ -3504,45 +3526,6 @@ def note_agent_ended(session: Session, prompt: str) -> None:
         one.said = clip(said.group(1), AGENT_SAID)
 
 
-def note_busy(session: Session, name: str, ts: float) -> None:
-    """Count the time its turns ran, prompt to end (#622). A turn the
-    reader interrupts sends no `Stop`: it ends at the last event it sent,
-    not at the next prompt, as nothing ran in between that a hook saw.
-
-    A sum, where every other handler assigns: so the same events read
-    again count nothing twice, as folding twice must be folding once. A
-    turn counts only past `busy_upto`, and the running turn's own prompt is
-    not a new turn. Only work moves a turn's end (`BUSY_WORK`): an idle
-    notification, a resume or a `SessionEnd` hours after an interrupt
-    counted the hours. An event older than the running turn is skipped."""
-    if ts <= session.busy_upto or (session.turn_began and ts < session.turn_began) or (
-            name == "UserPromptSubmit" and ts == session.turn_began):
-        return
-    if name == "UserPromptSubmit":
-        if session.turn_began:
-            count_turn(session, session.turn_last)
-        session.turn_began = session.turn_last = ts
-    elif session.turn_began:
-        if name in BUSY_WORK:
-            session.turn_last = ts
-        if name in ("Stop", "StopFailure"):
-            count_turn(session, ts)
-        elif name == "SessionEnd":
-            count_turn(session, session.turn_last)
-
-
-#: The events that are the agent at work, and move a turn's end (#622).
-BUSY_WORK = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure",
-                       "SubagentStart", "SubagentStop"})
-
-
-def count_turn(session: Session, end: float) -> None:
-    """The running turn ends at `end`, and its time counts (`note_busy`)."""
-    session.busy += max(0.0, end - session.turn_began)
-    session.busy_upto = end
-    session.turn_began = 0.0
-
-
 def note_dirs(session: Session, event: dict[str, Any], name: str, ts: float) -> None:
     """Keep the folders the agent stood in or touched a file in (#616).
 
@@ -3631,6 +3614,87 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "PreCompact": _on_pre_compact,
     "SessionEnd": _on_session_end,
 }
+
+
+# --- time: how long a session's turns and its tool calls ran (#622, #663) [topics/summary]
+
+
+def note_busy(session: Session, name: str, ts: float) -> None:
+    """Count the time its turns ran, prompt to end (#622). A turn the
+    reader interrupts sends no `Stop`: it ends at the last event it sent,
+    not at the next prompt, as nothing ran in between that a hook saw.
+
+    A sum, where every other handler assigns: so the same events read
+    again count nothing twice, as folding twice must be folding once. A
+    turn counts only past `busy_upto`, and the running turn's own prompt is
+    not a new turn. Only work moves a turn's end (`BUSY_WORK`): an idle
+    notification, a resume or a `SessionEnd` hours after an interrupt
+    counted the hours. An event older than the running turn is skipped."""
+    if ts <= session.busy_upto or (session.turn_began and ts < session.turn_began) or (
+            name == "UserPromptSubmit" and ts == session.turn_began):
+        return
+    if name == "UserPromptSubmit":
+        if session.turn_began:
+            count_turn(session, session.turn_last)
+        session.turn_began = session.turn_last = ts
+    elif session.turn_began:
+        if name in BUSY_WORK:
+            session.turn_last = ts
+        if name in ("Stop", "StopFailure"):
+            count_turn(session, ts)
+        elif name == "SessionEnd":
+            count_turn(session, session.turn_last)
+
+
+#: How many of a session's slowest calls it keeps, and the least time a
+#: slow one took (#663): eight reads of 0.1 s said nothing.
+SLOW_KEPT = 8
+SLOW_LEAST = 1.0
+
+
+def note_tool_time(session: Session, event: dict[str, Any], name: str, ts: float) -> None:
+    """Count how long a tool call ran, by its tool, and keep the slowest
+    (#663). `duration_ms` is the run alone: measured on 2.1.312, a call
+    whose dialog waited 6 s for its Yes said 2103 ms for its `sleep 2`. A
+    failed call took its time too. A subagent's calls are its own: they run
+    beside the agent's, and would count one second twice.
+
+    A sum, as `note_busy` is: a call at or before `tools_upto` that was
+    counted already counts nothing."""
+    if name not in ("PostToolUse", "PostToolUseFailure") or event.get("agent_id"):
+        return
+    took = opt_float(event.get("duration_ms"))
+    if took is None or took < 0:
+        return
+    call = str(event.get("tool_use_id") or "")
+    if ts < session.tools_upto or (ts == session.tools_upto and call in session.tools_at):
+        return
+    if ts > session.tools_upto:
+        session.tools_upto, session.tools_at = ts, set()
+    session.tools_at.add(call)
+    tool = str(event.get("tool_name") or "tool")
+    seconds = took / 1000
+    held = session.tool_time.setdefault(tool, [0, 0.0])
+    held[0] += 1
+    held[1] += seconds
+    if seconds < SLOW_LEAST:
+        return
+    one = SlowCall(tool=tool, seconds=seconds, began=ts - seconds,
+                   what=clip(tool_target(tool, event.get("tool_input"), session.cwd), 120))
+    session.slow_calls = sorted([*session.slow_calls, one],
+                                key=lambda kept: -kept.seconds)[:SLOW_KEPT]
+
+
+#: The events that are the agent at work, and move a turn's end (#622).
+BUSY_WORK = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure",
+                       "SubagentStart", "SubagentStop"})
+
+
+def count_turn(session: Session, end: float) -> None:
+    """The running turn ends at `end`, and its time counts (`note_busy`)."""
+    session.busy += max(0.0, end - session.turn_began)
+    session.busy_upto = end
+    session.turn_began = 0.0
 
 
 # --- processes: which Claude Code fired a hook, its pane, and whether it lives [topics/state]
@@ -9797,6 +9861,13 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
         # Subagents run before #618 counted no calls; `agents_ran` counts all.
         "agents_ran": session.agents_ran,
         "tools": sorted(costs.tools.items(), key=lambda one: (-one[1], one[0])),
+        # How long the session's own calls ran, by tool, and the slowest
+        # (#663), from the events: a transcript holds no call's time.
+        "tool_time": [{"tool": tool, "calls": int(calls), "seconds": round(seconds, 3)}
+                      for tool, (calls, seconds) in sorted(
+                          session.tool_time.items(), key=lambda one: (-one[1][1], one[0]))],
+        "slow": [{"tool": one.tool, "what": one.what, "seconds": round(one.seconds, 3),
+                  "began": round(one.began, 3)} for one in session.slow_calls],
     }
 
 
@@ -26880,6 +26951,7 @@ function drawSummary(box) {
   } else {
     putSumHead(pane, got);
     putCostly(pane, got);
+    putSumTime(pane, got);
     putSumAgents(pane, got);
     putSumTools(pane, got);
   }
@@ -27109,6 +27181,54 @@ function putCostly(pane, got) {
       showTab("transcript");
     });
   }
+}
+
+// Where the session's time went, by tool, and its slowest calls (#663):
+// how long each call ran, never the wait for the reader's Yes. A slow
+// call is a link to it in the transcript, by when it began.
+function putSumTime(pane, got) {
+  const times = got.tool_time || [];
+  if (!times.length) return;
+  put(pane, "h3", "sumtitle", "time by tool");
+  put(pane, "p", "sumnote", "How long its own calls ran, not the wait for your answer."
+      + " A subagent's calls are its own.");
+  const list = put(pane, "div", "sumlist");
+  const most = times[0].seconds || 1;
+  for (const one of times) {
+    const line = put(list, "div", "sumline");
+    put(line, "span", "sumnum", callTime(one.seconds));
+    const bar = put(put(line, "span", "sumsub"), "span", "sumbar");
+    bar.style.width = Math.max(2, Math.round(100 * one.seconds / most)) + "%";
+    put(line, "span", "sumsaid", one.tool + " \u00b7 " + counted(one.calls, "call", "calls"));
+  }
+  if (!(got.slow || []).length) return;
+  put(pane, "h3", "sumtitle", "slowest calls, a second or more");
+  const slow = put(pane, "div", "sumlist");
+  for (const one of got.slow) {
+    const line = put(slow, "button", "sumline turnlink");
+    put(line, "span", "sumnum", callTime(one.seconds));
+    put(line, "span", "sumsub", one.tool);
+    put(line, "span", "sumsaid", one.what);
+    line.title = "show this call in the transcript";
+    line.addEventListener("click", () => {
+      // `goTo` says a block is asked for at all; the moment says which, as
+      // a search result's does.
+      state.turns.goTo = 0;
+      state.turns.goToNear = one.began;
+      showTab("transcript");
+    });
+  }
+}
+
+// A call's time: tenths under ten seconds, where most calls are, then
+// seconds, then minutes and seconds. "0s" said nothing about a call of
+// 0.4 s, and `lasted`'s "1min" hid half a minute of a 96 s build.
+function callTime(seconds) {
+  if (seconds < 10) return seconds.toFixed(1) + "s";
+  if (seconds < 60) return Math.round(seconds) + "s";
+  if (seconds >= 3600) return lasted(seconds);
+  const whole = Math.round(seconds);
+  return Math.floor(whole / 60) + "min" + (whole % 60 ? " " + whole % 60 + "s" : "");
 }
 
 function putSumAgents(pane, got) {

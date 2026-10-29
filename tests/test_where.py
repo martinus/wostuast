@@ -102,7 +102,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # What an event does to a session. `processes` reads /proc, but folds
     # a death (`_bury`); `search` reads a prompt as the fold does
     # (`prompt_said`, principle 5).
-    ("fold", ("processes", "hook handlers", "search")),
+    ("fold", ("processes", "hook handlers", "time", "search")),
     # Every shape the page receives (principle 2).
     ("wire", ("wire",)),
     # `Store.refresh` drives the steps: it follows the log, folds, reads
