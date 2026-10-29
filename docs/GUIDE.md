@@ -76,7 +76,9 @@ Everything wostuast does, and how to use each part. The
 - **Each session is one card.** It shows the session's name and its age,
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or
-  over the worktree to see its path. The colour of the card shows the state.
+  over the worktree to see its path. When the agent opened a pull request,
+  or works on one, its number stands after the branch, such as `#12`. Click
+  it to open the pull request in a new tab. The colour of the card shows the state.
   In a command shown on one line, what looks like a password or a token is
   hidden as `***`: the user and password in a URL, `-u user:password`,
   `Authorization:` headers, `TOKEN=…`, and known token shapes. A secret in

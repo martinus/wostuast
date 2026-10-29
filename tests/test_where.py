@@ -94,7 +94,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("model", ("session model", "one-line summaries", "questions and plans")),
     # Where a file, git or tmux is read or written: the fold does none of
     # it (topics/principles, 1).
-    ("edges", ("the hook's Yes", "transcript", "git facts", "worktree files",
+    ("edges", ("the hook's Yes", "transcript", "git facts", "pull requests", "worktree files",
                "reading a file", "diffs", "bases", "commits and the build",
                "status line", "our settings.json", "the reader's marks",
                "Claude Code's settings.json", "tmux", "slash commands",

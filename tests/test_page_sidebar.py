@@ -26,6 +26,7 @@ from browser import (
     show_tab,
     two_rows,
     wait_for_watching,
+    write_records,
     wait_until,
     frames,
     stays,
@@ -2994,3 +2995,32 @@ def test_a_drag_whose_pointer_is_gone_still_drags_and_stops(page_at):
         page.evaluate("() => window.dispatchEvent(new PointerEvent('pointerup', {pointerId: 4242}))")
         assert not page.evaluate("document.body.classList.contains('dragging')")
         assert not blew_up, blew_up
+
+
+def test_a_row_links_to_its_pull_request_after_the_branch(ws, page_at, monkeypatch):
+    """The transcript's last `pr-link` (#661), in Claude Code's schema
+    (no real one measured, as the owner chose): "#12" after the branch, a
+    link that leaves the page in a new tab."""
+    daemon, path = page_at
+    # The start looked already: this one need not wait the 30 s.
+    monkeypatch.setattr(ws, "PR_EVERY", 0.0)
+    write_records(daemon, {"type": "pr-link", "sessionId": "s1", "prNumber": 12,
+                           "prUrl": "https://github.com/o/r/pull/12", "prRepository": "o/r",
+                           "timestamp": "2026-10-29T18:00:00.000Z"})
+    with opened(path) as page:
+        daemon.tick()
+        link = page.locator('.row[data-id="s1"] .line2 .prlink')
+        link.wait_for()
+        assert link.inner_text() == "#12"
+        assert link.get_attribute("href") == "https://github.com/o/r/pull/12"
+        assert link.get_attribute("target") == "_blank"
+        assert link.get_attribute("title") == "pull request o/r#12"
+        # After the branch, on its line.
+        assert page.evaluate("""() => {
+          const line = document.querySelector('.row[data-id="s1"] .line2:not(.where)');
+          return [...line.children].map((one) => one.className);
+        }""")[:2] == ["branch", "prlink"]
+        # The page checks the address too: a `javascript:` one is no link.
+        page.evaluate("""() => patchSession("s1", {pr: {number: 12, repo: "",
+                                                     url: "javascript:alert(1)"}}) && drawSessions()""")
+        page.wait_for_function("""() => !document.querySelector('.row[data-id="s1"] .prlink')""")

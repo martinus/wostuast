@@ -168,6 +168,21 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
   - **The git line is one line**: only the branch takes an ellipsis, or
     "✓ clean" broke over two lines. It sets `display: flex`, and the one
     `[hidden]` rule still hides it (topics/daemon-and-page).
+  - **A session's pull request is "#N" after its branch, a link that
+    leaves the page** (#661, `PrLink`, `pr_link_of`, `pr_link_in`,
+    `read_prs`, `putPrLink`): the reader chose the row, so it is seen
+    without a click. **Read behind the fold, as git is** (`Store.reload_prs`,
+    a step of `refresh`): the fold does no I/O, and a reader in the daemon
+    after `refresh` sent rows without it. Claude Code writes `pr-link`
+    again and again, the last standing, so only the transcript's last
+    `TAIL_READ` bytes are read (`tail_records`), a transcript only when it
+    changed, at most `PR_READS_A_TICK` a refresh: a month of sessions read
+    every tail at the start. **Only an `http(s)` address with no user in it** (`PR_URL`,
+    and `AWAY` on the page): a transcript is an agent's text
+    (topics/safety). `test_a_pr_link_is_taken_only_as_a_number_and_a_web_address`,
+    `test_a_session_is_given_its_pull_request_behind_the_fold`,
+    `test_a_refresh_reads_only_so_many_transcripts`,
+    `test_a_row_links_to_its_pull_request_after_the_branch`.
   - **A name is changed where it stands** (`renameRow`), by double-click
     or `e`. `fillRow` leaves a name with a box in it alone; `drawSessions`
     gives a moved row its focus and caret back. Enter on the unchanged name

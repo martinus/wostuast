@@ -1424,6 +1424,17 @@ class Shell:
 
 
 @dataclass
+class PrLink:
+    """The pull request a session opened or works on, as Claude Code names
+    it in the transcript (#661): a `pr-link` record."""
+
+    number: int = 0
+    url: str = ""
+    #: "owner/name", for the link's hover.
+    repo: str = ""
+
+
+@dataclass
 class SlowCall:
     """One of a session's slowest tool calls, for the Statistics tab (#663)."""
 
@@ -1474,6 +1485,10 @@ class Session:
     #: prompt pays it, and clears it.
     recache_usd: float = 0.0
     recache_tokens: int = 0
+    #: Its pull request, from the transcript's last `pr-link`, or None
+    #: (#661). The daemon reads it behind the fold (`Store.reload_prs`), as
+    #: it reads git: the fold does no I/O.
+    pr: PrLink | None = None
     #: The last prompt as an alert shows it, and the prompt it was made
     #: from: see `shown_prompt`.
     prompt_shown: tuple[str, str] = ("", "")
@@ -2156,6 +2171,9 @@ class Store:
         self.follower = follower if follower is not None else EventFollower()
         self.rows: list[dict[str, Any]] = []
         self.git_read: dict[str, float] = {}
+        #: When each session's transcript was last looked at for its pull
+        #: request, and its stamp then (#661, `reload_prs`).
+        self.pr_looked: dict[str, tuple[float, tuple[int, int]]] = {}
         self.git_wanted: set[str] = set()
         #: The directories whose git facts raised, logged once each.
         self.git_raised: set[str] = set()
@@ -2433,13 +2451,15 @@ class Store:
         Returns True when the rows changed, which is also the daemon's answer
         to "is there anything to tell the browsers about?".
         """
-        # Four steps, each named (#546): the log folded in, with no I/O but
+        # Five steps, each named (#546): the log folded in, with no I/O but
         # the reading of it; the edges -- processes, status files, a hook's
-        # wait -- probed; git read; the rows built for the page.
+        # wait -- probed; git read; each pull request read (#661); the rows
+        # built for the page.
         moment = now if now is not None else time.time()
         self.follow()
         sessions = self.settle(moment, alive)
         self.reload_git(sessions, moment)
+        self.reload_prs(sessions)
         rows = self.render(sessions)
         changed = rows != self.rows
         self.rows = rows
@@ -2469,6 +2489,10 @@ class Store:
             session.approvable = bool(shown and hook_waits(str(shown.get("ask") or "")))
             self.marks.onto(session)
         return sessions
+
+    def reload_prs(self, sessions: Sequence[Session]) -> None:
+        """Each shown session's pull request, a step of `refresh` (#661)."""
+        read_prs(self.pr_looked, sessions)
 
     def reload_git(self, sessions: Sequence[Session], moment: float) -> None:
         """Read git for the directories that asked, and for any we have never
@@ -4214,6 +4238,28 @@ def read_user_text(text: str) -> tuple[str, str]:
     return "prompt", text
 
 
+#: How much of a transcript's end `tail_records` reads. A tool's long
+#: output can stand after the record looked for, so not less; one report
+#: counted 380 `pr-link` records in 8 transcripts.
+TAIL_READ = 256 * 1024
+
+
+def tail_records(path: Path, needle: bytes) -> list[dict[str, Any]]:
+    """The records in the last `TAIL_READ` bytes of a transcript whose line
+    holds `needle`, oldest first, or none. For a record Claude Code writes
+    near the end (`pr-link`, #661; `away_summary`, #662): a transcript runs
+    to many megabytes. The line the cut began in is torn, and
+    `json_objects` skips it."""
+    try:
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            handle.seek(max(0, size - TAIL_READ))
+            tail = handle.read()
+    except OSError:
+        return []
+    return list(json_objects(line for line in tail.split(b"\n") if needle in line))
+
+
 def parse_timestamp(value: Any) -> float:
     """The transcript stamps lines in ISO 8601 with a Z. Turn it into seconds."""
     text = str(value or "")
@@ -5383,6 +5429,76 @@ def apply_git_facts(sessions: Sequence[Session],
         one = facts.get(session.cwd)
         if one is not None and not one.failed:
             session.git = one
+
+
+# --- pull requests: a session's, from its transcript's last pr-link record (#661) [topics/sidebar, topics/safety]
+
+
+#: How often a session's transcript is looked at again, in seconds, and how
+#: many are read in one tick: a start with a month of sessions read every
+#: tail at once, before the first push.
+PR_EVERY = 30.0
+PR_READS_A_TICK = 8
+
+#: The address a pull request may have: http(s), no user or password, no
+#: space. The page links only these (topics/safety).
+PR_URL = re.compile(r"https?://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[^\s@]*)?\Z")
+
+
+def pr_link_of(record: Any) -> PrLink | None:
+    """A `pr-link` record as a link, or None. Its shape is Claude Code's own
+    schema, 2.1.312: `{type: "pr-link", sessionId, prNumber, prUrl,
+    prRepository, timestamp}`; no real one was measured (the owner chose to
+    build on the schema). Anything else in it is None."""
+    if not isinstance(record, dict) or record.get("type") != "pr-link":
+        return None
+    number, url = record.get("prNumber"), record.get("prUrl")
+    repo = record.get("prRepository")
+    if (isinstance(number, bool) or not isinstance(number, int) or number <= 0
+            or not isinstance(url, str) or not PR_URL.match(url)):
+        return None
+    return PrLink(number=number, url=url,
+                  repo=clip(repo, 120) if isinstance(repo, str) else "")
+
+
+def pr_link_in(path: Path) -> PrLink | None:
+    """The last `pr-link` in the end of a transcript, or None. Claude Code
+    writes it again and again, the last one standing (its own code,
+    2.1.312: `"pr-link": "last-wins"`)."""
+    found = None
+    for record in tail_records(path, b'"pr-link"'):
+        found = pr_link_of(record) or found
+    return found
+
+
+def read_prs(looked_at: dict[str, tuple[float, tuple[int, int]]],
+             sessions: Sequence[Session]) -> None:
+    """Give each shown session the pull request its transcript names
+    last (#661), read here as git is, never in the fold. A transcript is
+    looked at again every `PR_EVERY` seconds, read only when it changed,
+    and at most `PR_READS_A_TICK` in one refresh: a start with a month
+    of sessions read every tail before the first push."""
+    now, reads = time.monotonic(), 0
+    for session in sessions:
+        looked = looked_at.get(session.session_id)
+        if looked and now - looked[0] < PR_EVERY:
+            continue
+        path = safe_transcript(session.transcript_path)
+        if path is None:
+            continue
+        try:
+            held = path.stat()
+        except OSError:
+            continue
+        stamp = (held.st_mtime_ns, held.st_size)
+        if looked and looked[1] == stamp:
+            looked_at[session.session_id] = (now, stamp)
+            continue
+        if reads >= PR_READS_A_TICK:
+            break
+        reads += 1
+        looked_at[session.session_id] = (now, stamp)
+        session.pr = pr_link_in(path)
 
 
 # --- worktree files: the listing, a file's text, a binary's hex [topics/files-tab, topics/safety]
@@ -9723,6 +9839,9 @@ def row(session: Session) -> dict[str, Any]:
         # resume the cache did not outlast (#664).
         "recache_usd": session.recache_usd,
         "recache_tokens": session.recache_tokens,
+        # Its pull request, a link after the branch (#661).
+        "pr": ({"number": session.pr.number, "url": session.pr.url, "repo": session.pr.repo}
+               if session.pr else None),
         **mark_fields(session),
         **status_fields(session),
         # The session a `/clear` turned this one into. The page follows it
@@ -15066,6 +15185,14 @@ body.dragging.rowdrag { cursor: row-resize; }
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
   min-width: 0; white-space: nowrap;
 }
+/* The session's pull request after its branch (issue 661): the branch's
+   own size and colour, and a link's line on hover. It never gives way: the
+   branch does. */
+.row .line2 .prlink, .freshfacts .prlink {
+  flex-shrink: 0; color: var(--ink-soft); text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.row .line2 .prlink:hover, .freshfacts .prlink:hover { color: var(--ink); text-decoration: underline; }
 /* A session outside a repository has no branch, and its line goes. */
 .row .line2 .gitstate, .freshfacts .gitstate { display: flex; gap: 10px; margin-left: auto; }
 /* What the agent is doing or asks, cut short with an ellipsis. The age is on
@@ -19160,9 +19287,10 @@ function fillRowGit(two, s, links) {
   two.hidden = !s.branch;
   if (fresh(two, "text", JSON.stringify([s.branch, s.ahead, s.behind, s.dirty,
                                          s.touched_files, s.doing, s.conflicts,
-                                         links]))) {
+                                         links, s.pr]))) {
     two.replaceChildren();
     if (s.branch) putFact(two, "branch", "branch", s.branch, s.branch);
+    putPrLink(two, s.pr);
     // What git counts, at the right edge, so the counts of every row stand
     // in one column however long each branch is.
     const counts = put(two, "span", "gitstate");
@@ -19181,6 +19309,16 @@ function fillRowGit(two, s, links) {
     if (s.dirty) put(counts, "span", "dirty", "● " + s.touched_files + " files");
     else if (s.branch) put(counts, "span", "clean", "✓ clean");
   }
+}
+
+// The session's pull request, "#123" after its branch (#661), a link that
+// leaves the page. Only http(s): the daemon checks it, and so does this.
+function putPrLink(line, pr) {
+  if (!pr || !AWAY.test(pr.url)) return;
+  const link = put(line, "a", "prlink", "#" + pr.number);
+  link.href = pr.url;
+  link.title = "pull request " + (pr.repo ? pr.repo + "#" : "#") + pr.number;
+  opensAway(link);
 }
 
 // What the reader can do to a row, which shows on a hover: snooze it,

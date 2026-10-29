@@ -453,3 +453,13 @@ every resume's `SessionStart` carries `seconds_since_last_response`,
 `true` (a 5-minute cache). The estimate is what caching `context_tokens`
 again costs, at list price, without the reply; Claude Code's schema says it
 is paid with the first request, so `total_cost_usd` counts it once paid.
+
+## A session's pull request: the `pr-link` record (#661)
+
+Not recorded: no session here opened a pull request on 2.1.312. The shape
+is read off Claude Code's own schema in its 2.1.312 binary, as the owner
+chose: a transcript line
+`{type: "pr-link", sessionId, prNumber, prUrl, prRepository, timestamp}`,
+written again on each change, the last one standing (`"pr-link":
+"last-wins"`). `prRepository` is "owner/name". A real record, once one
+is seen, goes into a fixture here and into the tests.
