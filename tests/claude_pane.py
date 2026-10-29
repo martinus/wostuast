@@ -22,6 +22,7 @@ nothing each time, in a scratchpad that stays behind on the machine.
         cc.busy(25)                         # a turn that runs for 25 s
         cc.paste(b"\\x1b")                   # a key, as its bytes
         cc.screen()
+        cc.restart("--resume", cc.statuses()[-1]["session_id"])   # the same session again
 
     # A plugin, or anything else that must be there before it starts:
     claude_pane.ClaudePane(setup=lambda env: subprocess.run(
@@ -187,10 +188,25 @@ class ClaudePane:
         # here, with the environment Claude Code will have.
         if setup:
             setup(env)
-        given = " ".join(f"{k}='{v}'" for k, v in env.items())
+        #: What Claude Code runs with, kept for `restart`.
+        self.env = env
         self.tmux("-f", "/dev/null", "new-session", "-d", "-x", str(width),
-                  "-y", "50", "-c", str(self.work), f"env -i {given} claude")
+                  "-y", "50", "-c", str(self.work), self.command())
         self.pane = self.tmux("display-message", "-p", "#{pane_id}").strip()
+
+    def command(self, *args: str) -> str:
+        """The line the pane runs: Claude Code, with its arguments, in the
+        home and against the fake API made above, and nothing of yours."""
+        given = " ".join(f"{k}='{v}'" for k, v in self.env.items())
+        return " ".join([f"env -i {given} claude", *args])
+
+    def restart(self, *args: str) -> None:
+        """Claude Code started again in the same pane, home and API, with
+        these arguments: `--resume <id>` brings the same session back. What
+        a resume keeps was measured this way (#653: its cost runs on), and
+        the environment was written again by hand to do it."""
+        self.tmux("respawn-pane", "-k", "-t", self.pane, "-c", str(self.work),
+                  self.command(*args))
 
     def __enter__(self) -> "ClaudePane":
         return self

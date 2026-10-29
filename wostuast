@@ -12330,7 +12330,7 @@ def note_agent(record: dict[str, Any]) -> None:
     record["shell_pid"] = os.getppid()
 
 
-# --- the status command: cmd_status runs on every redraw of the status line [topics/payloads]
+# --- the status command: cmd_status runs on every redraw of the status line [topics/payloads, topics/safety-install]
 
 
 def cmd_status(args: argparse.Namespace) -> int:
