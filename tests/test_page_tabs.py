@@ -893,7 +893,7 @@ def test_a_running_subagent_s_transcript_follows_it(ws, page_at):
     own = Path(daemon.store.sessions["s1"].transcript_path)
     agent = own.with_suffix("") / "subagents" / "agent-ag2.jsonl"
     agent.parent.mkdir(parents=True)
-    agent.write_text(conftest.records(conftest.record("you", "read the tests")))
+    agent.write_text("")
     ws.append_event(conftest.event("SubagentStart", cwd=str(own.parent), pane="%7", pid=1,
                                    ts=time.time(), agent_id="ag2", agent_type="Plan"))
     daemon.store.refresh()
@@ -901,6 +901,12 @@ def test_a_running_subagent_s_transcript_follows_it(ws, page_at):
     with opened(path) as page:
         wait_for_map(page)
         page.click(".row[data-id='s1'] .kid.running.opens")
+        # Nothing yet is not the session's fresh start (#651): its facts
+        # are the session's, and a subagent waits for no prompt.
+        page.wait_for_selector(".agentview .turnbody > .empty")
+        assert page.locator(".freshstart").count() == 0
+        with agent.open("a") as handle:
+            handle.write(conftest.records(conftest.record("you", "read the tests")))
         page.wait_for_function(f"{in_view}('read the tests')")
         assert "running" in page.locator(".agenthead").inner_text()
         with agent.open("a") as handle:
