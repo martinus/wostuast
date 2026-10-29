@@ -12,7 +12,7 @@ Each event adds its own fields:
 
 | Event | Extra fields |
 | --- | --- |
-| `SessionStart` | `source` (startup, resume, clear, compact), `agent_type`, `model` |
+| `SessionStart` | `source` (startup, resume, clear, compact), `agent_type`, `model`; on a resume, `prompt_cache_likely_expired`, `context_tokens`, `estimated_cache_write_usd`, `seconds_since_last_response` |
 | `UserPromptSubmit` | `prompt` |
 | `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id` |
 | `PostToolUse` | `tool_name`, `tool_input`, `tool_response`, `tool_use_id`, `duration_ms` |
@@ -443,3 +443,13 @@ Measured on 2.1.312 with `tests/claude_pane.py`: `PostToolUse` and
 milliseconds. **Not the wait for a Yes**: a `sleep 2` whose dialog waited
 6 s said 2103; a `sleep 3` with no dialog said 3047. A subagent's call
 carries its own, with its `agent_id`.
+
+## A resume's cache: `prompt_cache_likely_expired` (#664)
+
+Measured on 2.1.312 with `tests/claude_pane.py` (`restart("--resume", id)`):
+every resume's `SessionStart` carries `seconds_since_last_response`,
+`context_tokens`, `prompt_cache_likely_expired` and
+`estimated_cache_write_usd`. After 4 s it said `false`; after 341 s,
+`true` (a 5-minute cache). The estimate is what caching `context_tokens`
+again costs, at list price, without the reply; Claude Code's schema says it
+is paid with the first request, so `total_cost_usd` counts it once paid.

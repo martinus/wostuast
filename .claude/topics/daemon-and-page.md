@@ -239,3 +239,13 @@ the loaders.
 - **Every tab has a loader, and a tab switch goes through it, not
   `draw`**: an empty loader left the old tab on screen. A tab that fetches
   nothing gives a loader that draws.
+- **A resume the cache did not outlast says its cost over the send box,
+  before the first prompt** (#664, `Session.recache_usd`, `drawRecache`,
+  `#recache`): Claude Code writes the whole context to the cache again with
+  that prompt, and the reader can still start fresh instead. Only when
+  `prompt_cache_likely_expired` is true, and from a cent; `_on_prompt`
+  clears it, as the prompt paid it. **A line inside the send bar, which
+  wraps for it** (`:has(> .recache:not([hidden]))`): a grid row of its own
+  would move every split tab's rows.
+  `test_a_resume_the_cache_did_not_outlast_says_what_its_next_prompt_costs`,
+  `test_a_resume_the_cache_did_not_outlast_says_its_cost_over_the_send_box`.

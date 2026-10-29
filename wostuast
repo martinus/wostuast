@@ -1468,6 +1468,12 @@ class Session:
     #: The model's full id as `SessionStart` names it, for a session with no
     #: status line: see `model_id`.
     started_model: str = ""
+    #: What its next prompt costs to cache its context again, in dollars and
+    #: tokens, when it was resumed after the cache expired; 0 otherwise
+    #: (#664). Claude Code's own estimate, from the `SessionStart`; the first
+    #: prompt pays it, and clears it.
+    recache_usd: float = 0.0
+    recache_tokens: int = 0
     #: The last prompt as an alert shows it, and the prompt it was made
     #: from: see `shown_prompt`.
     prompt_shown: tuple[str, str] = ("", "")
@@ -2816,6 +2822,13 @@ def _on_session_start(session: Session, event: dict[str, Any], ts: float) -> Non
         session.cleared_into = ""
     session.start_source = source
     session.started_model = str(event.get("model") or "")
+    # A resume after the cache expired writes the whole context to it again
+    # with its first prompt (#664). Measured on 2.1.312: every resume says
+    # `prompt_cache_likely_expired`, false after 4 s and true after 341.
+    expired = event.get("prompt_cache_likely_expired") is True
+    session.recache_usd = (opt_float(event.get("estimated_cache_write_usd")) or 0.0
+                           if expired else 0.0)
+    session.recache_tokens = to_int(event.get("context_tokens")) if expired else 0
     session.last_event = f"started ({source})" if source else "started"
 
 
@@ -2852,6 +2865,7 @@ def prompt_said(prompt: Any) -> tuple[str, str]:
 def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     become(session, "working")
     session.prompted = True
+    session.recache_usd, session.recache_tokens = 0.0, 0     # it paid it (#664)
     session.calls.clear()          # a new turn: see `_on_stop`
     by, prompt = prompt_said(event.get("prompt"))
     if by == "task":
@@ -9705,6 +9719,10 @@ def row(session: Session) -> dict[str, Any]:
         "since": round(session.since, 3),
         # For a session that is over, the line that brings it back.
         "resume": resume_command(session) if session.state in GONE_STATES else "",
+        # What its next prompt costs to cache its context again, after a
+        # resume the cache did not outlast (#664).
+        "recache_usd": session.recache_usd,
+        "recache_tokens": session.recache_tokens,
         **mark_fields(session),
         **status_fields(session),
         # The session a `/clear` turned this one into. The page follows it
@@ -15495,6 +15513,10 @@ body.sidechat .main > .chat {
    box stands for one that is not: the words, then the command whole, in the
    face it is typed in, so it can be read before it is copied. */
 .resumebar { align-items: center; }
+/* What a resume after the cache expired costs (issue 664): a line of its
+   own over the box, until the first prompt pays it. */
+.sendbar:has(> .recache:not([hidden])) { flex-wrap: wrap; }
+.sendbar > .recache { flex: 1 0 100%; font-size: 12.5px; color: var(--ink-mute); }
 .resumewords { flex: 1; min-width: 0; }
 .resumesays { color: var(--ink-mute); font-size: 12.5px; margin-bottom: 4px; }
 .resumeline {
@@ -16965,6 +16987,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
       <div class="asking" id="asking" hidden></div>
       <form class="sendbar" id="sendbar" hidden>
         <div class="hgrip" id="saygrip"></div>
+        <div class="recache" id="recache" hidden></div>
         <textarea class="say" id="say" rows="1" autocomplete="off"
                   spellcheck="false"
                   placeholder="type into the terminal  ·  s  ·  shift+enter for a new line"></textarea>
@@ -20069,11 +20092,27 @@ function drawHeader() {
   // dialog's bar says so where the box stood; the daemon refuses it anyway.
   $("sendbar").hidden = !transcriptShown() || !!whyNoText(s);
   drawResume(s);
+  drawRecache(s);
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
   // layout it has just made dirty. What is in the box cannot change without
   // the reader typing, and that has its own listener.
   if (was && !$("sendbar").hidden) fitSay();
+}
+
+// What the next prompt costs, over the box, for a session resumed after
+// its cache expired (#664): Claude Code writes the whole context to the
+// cache again with it. Said before the prompt, while the reader can still
+// start fresh instead; gone once one is sent. A cent is not worth a line.
+function drawRecache(s) {
+  const line = $("recache");
+  const usd = s && s.recache_usd || 0;
+  line.hidden = usd < 0.01;
+  if (line.hidden || !fresh(line, "said", JSON.stringify([usd, s.recache_tokens]))) return;
+  // The reader's own words for it.
+  line.textContent = "cache expired: " + money(usd) + " ("
+    + roughly(s.recache_tokens || 0) + " tokens) for next prompt";
+  line.title = "Claude Code's own estimate, at list price, without the reply";
 }
 
 // Where the send box stands for a session that can still be typed into: for
