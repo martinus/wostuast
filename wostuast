@@ -14739,13 +14739,14 @@ body.dragging.rowdrag { cursor: row-resize; }
   padding: 0 7px; border-radius: 9px; line-height: 18px; font-size: 12px;
   background: color-mix(in srgb, var(--needs) 22%, transparent); color: var(--needs-warm);
 }
-.row .line2 .repo, .row .line2 .worktree, .row .line2 .branch {
+.row .line2 .repo, .row .line2 .worktree, .row .line2 .branch,
+.freshfacts .repo, .freshfacts .worktree, .freshfacts .branch {
   display: inline-flex; align-items: center; gap: 4px; min-width: 0;
 }
 /* Repository and worktree share their line, and either gives way. */
-.row .line2.where { gap: 14px; color: var(--ink-mute); }
-.row .line2 .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.row .icon {
+.row .line2.where, .freshfacts .where { gap: 14px; color: var(--ink-mute); }
+.row .line2 .text, .freshfacts .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row .icon, .freshfacts .icon {
   width: 12px; height: 12px; flex-shrink: 0; color: var(--ink-faint);
   fill: none; stroke: currentColor; stroke-width: 1.2;
   stroke-linejoin: round; stroke-linecap: round;
@@ -14789,12 +14790,12 @@ body.dragging.rowdrag { cursor: row-resize; }
    branch is the one part that gives way, with an ellipsis, because only it
    has `min-width: 0` and a clip -- "✓ clean" used to shrink with it and
    break over two lines, under a branch cut short anyway. */
-.row .line2 {
+.row .line2, .freshfacts .line2 {
   display: flex; gap: 10px; font-size: 12px; color: var(--ink-soft);
   min-width: 0; white-space: nowrap;
 }
 /* A session outside a repository has no branch, and its line goes. */
-.row .line2 .gitstate { display: flex; gap: 10px; margin-left: auto; }
+.row .line2 .gitstate, .freshfacts .gitstate { display: flex; gap: 10px; margin-left: auto; }
 /* What the agent is doing or asks, cut short with an ellipsis. The age is on
    the name's line, where the name gives way to it and it never does. */
 .row .line3 {
@@ -14838,7 +14839,8 @@ body.dragging.rowdrag { cursor: row-resize; }
 .dirty { color: var(--needs); }
 /* What git has started and not finished, and its conflicts: the amber of
    waiting, in the narrow face's weight, so it is read before the counts. */
-.row .gitstate .doing, .row .gitstate .conflict { color: var(--needs); font-weight: 600; }
+.row .gitstate .doing, .row .gitstate .conflict,
+.freshfacts .gitstate .doing, .freshfacts .gitstate .conflict { color: var(--needs); font-weight: 600; }
 /* A snoozed row (issue 355) stands with the ready ones, in their colour: it waits,
    but the reader said not now. Its control is a moon on the hover of a row
    that needs you, and a sun on a snoozed one. */
@@ -15926,6 +15928,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .filelist button:hover .icon { color: inherit; }
 .filelist button.dir:hover .icon { color: var(--folder); }
 .filelist button.dir { color: var(--ink); }
+.filelist > .nohits { padding: 7px 14px; }
 .listnote {
   flex-shrink: 0; padding: 7px 14px; border-bottom: 1px solid var(--edge);
   font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
@@ -16030,6 +16033,18 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 .cmdsays { color: var(--ink-soft); margin: 0 0 14px; }
 .turnbody { padding: 20px 24px; }
 .turnbody > .empty { max-width: 52ch; }
+/* A fresh session's facts (issue 651): the row's lines, a size up, on a
+   card, and the path under them in the fixed face. */
+.freshfacts {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 16px;
+  padding: 12px 14px; border: 1px solid var(--edge); border-radius: 6px;
+  background: var(--raised);
+}
+.freshfacts .line2 { font-size: 13px; }
+.freshfacts .freshpath {
+  font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+  overflow-wrap: anywhere;
+}
 /* Over the transcript, at its foot, and only while it would do something.
    It is a `.verb`, which already gives it the height, the padding, the
    border, the raised background, the type and the hover -- so what is left
@@ -19758,6 +19773,7 @@ function drawHeader() {
   drawAsking();
   drawContext();
   drawPlaces();
+  paintFresh();
   const s = current();
   // Absent, not disabled, for a session with no pane: there is nothing to
   // jump to, and a button that cannot work is not offered.
@@ -21694,10 +21710,8 @@ function drawTurnList(list, note) {
   const was = list.scrollTop;
   list.dataset.session = state.chosen || "";
   list.replaceChildren();
-  if (!found.length) {
-    put(list, "div", "nohits",
-        state.find ? "Nothing here matches." : "Nothing said yet.");
-  }
+  // Only for a find: with nothing said, the transcript beside it says so.
+  if (!found.length && state.find) put(list, "div", "nohits", "Nothing here matches.");
   const days = mapDays(found);
   for (const one of found) {
     if (days.has(one.seq)) put(list, "div", "mapday", days.get(one.seq));
@@ -21858,11 +21872,13 @@ function fillTurns(pane, foot) {
   pane.nodes = [];
   pane.heads = new Map();
   pane.drawnFrom = state.turns;
-  if (!state.turns.blocks.length) {
+  if (!state.turns.blocks.length && (state.turns.failed || state.agent)) {
     const empty = put(pane, "div", "empty");
     put(empty, "p", null, state.turns.failed
       ? "The transcript could not be read. It is asked for again."
       : "Nothing in this transcript yet.");
+  } else if (!state.turns.blocks.length) {
+    putFreshStart(pane);
   } else {
     for (let index = 0; index < state.turns.blocks.length; index += 1) {
       const block = state.turns.blocks[index];
@@ -21879,6 +21895,35 @@ function fillTurns(pane, foot) {
     pane.toLand = { place };
   }
   showToFoot(foot, pane);
+}
+
+// A session nothing was said in yet (#651, #654): one grey line was all it
+// showed, in a pane of nothing. It says where the agent stands, in the
+// row's own lines, and what comes here. `paintFresh` fills the facts on
+// every push, as git's arrive after the session does.
+function putFreshStart(pane) {
+  const empty = put(pane, "div", "empty freshstart");
+  put(empty, "h2", null, "Nothing said yet");
+  put(empty, "p", null, "The agent waits for its first prompt. Its turns show here.");
+  const facts = put(empty, "div", "freshfacts");
+  put(facts, "div", "line2 where");
+  put(facts, "div", "line2");
+  put(facts, "div", "freshpath");
+  paintFresh();
+}
+
+// The facts of a fresh session, by the readers the row uses, so the two
+// cannot say different things.
+function paintFresh() {
+  const facts = document.querySelector(".turnbody > .freshstart > .freshfacts");
+  const s = current();
+  if (!facts || !s) return;
+  const [where, two, path] = facts.children;
+  fillRowPlace(where, s, state.linksKey);
+  fillRowGit(two, s, state.linksKey);
+  path.textContent = s.worktree_path || s.cwd || "";
+  path.hidden = !path.textContent;
+  facts.hidden = !where.children.length && two.hidden && path.hidden;
 }
 
 // After the transcript is built: the block a link asked for, or the "new"

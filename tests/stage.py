@@ -3,6 +3,7 @@
     python3 tests/stage.py OUT.png [--tab review|files|transcript]
                           [--commit N] [--open PATH] [--review]
                           [--settings JSON] [--commands] [--merge] [--elsewhere]
+                          [--summary] [--fresh]
                           [--click SELECTOR | --type SELECTOR=TEXT
                            | --keys SELECTOR=TEXT | --eval JS ...] [--light]
                           [--width 1366] [--height 768] [--part SELECTOR]
@@ -38,7 +39,8 @@ file in: the picker beside the tabs names it (#616). Beside it, `notes`, a
 folder git knows nothing of, for the reader to add (#624). `--summary` gives
 the session four turns that used something, their times, an Explore
 subagent and a status line that says what it cost, for the Summary tab
-(#622).
+(#622). `--fresh` is a session that has only started: no prompt yet, so
+no transcript (#651, #654).
 
 Then the steps, once the tab is drawn, in the order they are given:
 `--click SELECTOR` clicks, `--type SELECTOR=TEXT` fills a box and presses
@@ -242,7 +244,8 @@ def make_spending(ws, transcript: Path, repo: Path) -> None:
 
 
 def serve(home: Path, commands: bool = False, merge: bool = False,
-          elsewhere: bool = False, summary: bool = False) -> tuple[str, Path]:
+          elsewhere: bool = False, summary: bool = False,
+          fresh: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
     import shutil
 
@@ -257,10 +260,12 @@ def serve(home: Path, commands: bool = False, merge: bool = False,
     folder.mkdir(parents=True)
     transcript = folder / "s1.jsonl"
     used = [ran("clear"), ran("compact"), ran("clear")] if commands else []
-    transcript.write_text(records(
-        *used,
-        record("you", "Make the ring refuse a push when it is full."),
-        record("claude", "Done, in four commits on `feature`.")))
+    # Claude Code writes no transcript before the first prompt.
+    if not fresh:
+        transcript.write_text(records(
+            *used,
+            record("you", "Make the ring refuse a push when it is full."),
+            record("claude", "Done, in four commits on `feature`.")))
     if commands:
         shutil.copytree(FIXTURES / "commands" / "project" / ".claude",
                         repo / ".claude")
@@ -318,6 +323,7 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--merge", action="store_true")
     ask.add_argument("--elsewhere", action="store_true")
     ask.add_argument("--summary", action="store_true")
+    ask.add_argument("--fresh", action="store_true")
     # One list, so the steps run in the order they were written.
     for flag in ("click", "type", "keys", "eval"):
         ask.add_argument(f"--{flag}", dest="steps", action="append",
@@ -341,7 +347,8 @@ def main(argv: list[str]) -> int:
         (home / "config" / "settings.json").write_text(
             json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
-    url, _ = serve(home, said.commands, said.merge, said.elsewhere, said.summary)
+    url, _ = serve(home, said.commands, said.merge, said.elsewhere, said.summary,
+                   said.fresh)
 
     from browser import DRAWN, WAIT, opened, show_tab
     wait = WAIT or 15000

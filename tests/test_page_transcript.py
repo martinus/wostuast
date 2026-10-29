@@ -430,6 +430,10 @@ def test_a_search_that_matches_nothing_says_so(page_at):
         assert "Nothing here matches" in \
             page.locator(".filelist.transcript").inner_text()
         assert page.locator(".filelist.transcript button").count() == 0
+        # Where a row's text would start, not flush on the column's edge (#654).
+        inset = page.evaluate("""() => [document.querySelector('.filelist.transcript .nohits'),
+            document.querySelector('.listnote')].map((one) => getComputedStyle(one).paddingLeft)""")
+        assert inset[0] == inset[1] != "0px", inset
         assert page.locator(".turn").count() == turns
 
 
@@ -3625,3 +3629,32 @@ def test_a_find_that_is_no_pattern_is_said_where_it_was_typed(ws, page_at):
         assert "Invalid regular expression" not in said, said
         assert said.endswith("not saved"), said
         assert page.evaluate("state.settings.links.every((one) => one.match !== 'BUG-(\\\\d+')")
+
+
+def test_a_session_nothing_was_said_in_says_where_it_stands(ws, served, tmp_path, monkeypatch):
+    """A session at its first prompt said "Nothing in this transcript yet."
+    in grey, and the map beside it "Nothing said yet." against its edge
+    (#651, #654). It says so once, with where the agent stands in the row's
+    own lines, and what git says reaches it with the next push."""
+    daemon, base = served
+    ws.append_event(conftest.event("SessionStart", cwd=str(tmp_path), pane="%7", pid=1,
+                                   ts=time.time(),
+                                   transcript_path=str(tmp_path / "s1.jsonl")))
+    daemon.store.refresh()
+    with opened(base + "/") as page:
+        facts = ".turnbody > .freshstart > .freshfacts"
+        page.wait_for_selector(f"{facts} .branch")
+        assert page.inner_text(".freshstart h2") == "Nothing said yet"
+        assert page.inner_text(f"{facts} .branch") == "main"
+        assert page.inner_text(f"{facts} .repo") == "repo"
+        assert page.inner_text(f"{facts} .freshpath") == str(tmp_path)
+        # Said once, in the transcript: the map beside it says nothing.
+        assert page.locator(".filelist.transcript .nohits").count() == 0
+        monkeypatch.setattr(ws, "git_facts_many", lambda dirs: {
+            d: ws.GitFacts(repo="repo", branch="feature", dirty=True, touched_files=2)
+            for d in dirs})
+        daemon.store.git_read.clear()
+        daemon.tick()
+        page.wait_for_function(
+            f"document.querySelector('{facts} .branch').innerText === 'feature'")
+        assert page.inner_text(f"{facts} .gitstate") == "\u25cf 2 files"

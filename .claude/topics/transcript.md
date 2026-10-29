@@ -195,6 +195,17 @@ line, and a fetch against a push.
   (`test_failing_fetches_keep_one_retry_not_one_each`). **A push with
   nothing held is placed by `seq`**: assigned whole, it put block 3 at index
   0. `test_a_transcript_fetch_that_fails_keeps_what_is_held`.
+- **A session with nothing said yet says where it stands** (#651, #654,
+  `putFreshStart`, `paintFresh`): one grey line, and "Nothing said yet."
+  flush against the map's edge, was all a fresh session showed. A heading,
+  one sentence, and a card of the row's own lines (`fillRowPlace`,
+  `fillRowGit`, the one reader of those facts) with the path. **`paintFresh`
+  runs in `drawHeader`**, on every push: `drawTranscript` has no redraw key,
+  and git's facts come a tick after the session. The map says nothing then;
+  only a find gets its "Nothing here matches." **Not for a subagent's
+  view** (`state.agent`): the facts would be the session's.
+  `test_a_session_nothing_was_said_in_says_where_it_stands`,
+  `test_a_running_subagent_s_transcript_follows_it`.
 - **`drawTranscript` has no redraw key, on purpose.** The live path is
   `patchTranscript`, which appends; each full draw wants the blocks rebuilt.
   A key would also leave an arriving block's `fresh` class on for ever.
