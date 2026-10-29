@@ -140,6 +140,20 @@ def test_the_report_knows_its_own_events_and_records_with_no_version(ws):
     assert "(other)" not in versions
 
 
+def test_an_error_is_named_by_its_class_from_the_library_too(ws):
+    """The reader's own status line timing out is `subprocess`'s
+    `TimeoutExpired`, and it was 37 lines of "(other)". A folder named like
+    an exception is still no exception."""
+    assert ws.exception_named(
+        "the status line 'python3 x.py' failed: TimeoutExpired('python3 x.py', 5)") == \
+        "TimeoutExpired"
+    assert ws.exception_named("failed: JSONDecodeError('Expecting value', '', 0)") == \
+        "JSONDecodeError"
+    assert ws.exception_named("listing /home/m/AcmeError(1)/src failed") == "(other)"
+    assert ws.exception_named("status failed: TimeoutError('gave up after 5 s')") == \
+        "TimeoutError"
+
+
 def test_the_cost_is_measured_on_the_installed_files(ws, tmp_path, monkeypatch):
     """The hook and the status file, run as Claude Code runs them. Not
     installed, they did not run, and the report says so rather than 0 ms."""

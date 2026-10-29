@@ -45,8 +45,10 @@ Install and update, the hook and status files, Claude Code's
   when it is a name (`named`, `REPORT_NAME`) of a field `REPORT_KINDS`
   lists, plus `tool_name` without its MCP server (`tool_named`: the
   reader names that); other fields count by key. The error log counts by
-  the **builtin** exception a line names (`exception_named`), never its
-  message, which holds paths and commands. Transcript labels pass
+  the **real exception class** a line names, builtin or of `subprocess`
+  and `json` (`exception_named`), never its message, which holds paths
+  and commands: the reader's own status line timing out was 37 lines of
+  "(other)". Transcript labels pass
   `labelled`. **"Handled" is `_HANDLERS`, the fold's own table**: a list
   of the report's own called wostuast's `ModelAsked` new. A transcript
   record with no `version` is "(none)", never "(other)".

@@ -12775,13 +12775,19 @@ def tool_named(value: Any) -> str:
 
 
 def exception_named(line: str) -> str:
-    """The builtin exception a line of the log names, or "(other)". Only a
-    builtin: a capitalised word ending in "Error" was a folder's name in
-    "listing /home/m/AcmeError/src failed: OSError(5)"."""
+    """The exception a line of the log names, or "(other)". Only a real
+    class: a capitalised word ending in "Error" was a folder's name in
+    "listing /home/m/AcmeError/src failed: OSError(5)". A builtin, or one
+    of `subprocess` and `json`, whose errors wostuast logs too: the
+    reader's own status line timing out, `TimeoutExpired`, was 37 lines
+    of "(other)"."""
     import builtins
+    import json
+    import subprocess
 
     for word in reversed(re.findall(r"\b([A-Z][A-Za-z]+)\(", line)):
-        found = getattr(builtins, word, None)
+        found = next((getattr(where, word) for where in (builtins, subprocess, json)
+                      if hasattr(where, word)), None)
         if isinstance(found, type) and issubclass(found, BaseException):
             return word
     return "(other)"
