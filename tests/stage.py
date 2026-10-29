@@ -38,8 +38,9 @@ repository, `api`, with one commit and one change, that the agent edited a
 file in: the picker beside the tabs names it (#616). Beside it, `notes`, a
 folder git knows nothing of, for the reader to add (#624). `--summary` gives
 the session four turns that used something, their times, an Explore
-subagent and a status line that says what it cost, for the Summary tab
-(#622). `--fresh` is a session that has only started: no prompt yet, so
+subagent and a status line that says what it cost, for the Statistics tab
+(#622), and a month of what three more sessions spent, for all of them
+(#653). `--fresh` is a session that has only started: no prompt yet, so
 no transcript (#651, #654).
 
 Then the steps, once the tab is drawn, in the order they are given:
@@ -240,7 +241,19 @@ def make_spending(ws, transcript: Path, repo: Path) -> None:
     ws.append_event({**base, "hook_event_name": "Stop", "ts": began + 4_320})
     ws.write_status("s1", ws.Status(ts=time.time(), name="", model="Opus 5",
                                     cost_usd=4.12, wall_ms=7_800_000, api_ms=2_310_000,
-                                    lines_added=156, lines_removed=23))
+                                    lines_added=156, lines_removed=23,
+                                    days={ws.local_day(time.time()): 4.12}))
+    # The month of three made-up sessions besides, for what all of them
+    # spent (#653): a working day dearer than a weekend's, never real.
+    today = int(ws.local_day(time.time())[8:])
+    for n, rate in enumerate((3.1, 1.7, 0.9)):
+        total, days = 0.0, {}
+        for day in range(1, today + 1):
+            moment = time.time() - (today - day) * 86_400
+            weekend = time.localtime(moment).tm_wday >= 5
+            total += round(rate * (0.3 if weekend else 1 + (day * (n + 3)) % 7 / 5), 2)
+            days[ws.local_day(moment)] = round(total, 2)
+        ws.write_status(f"other{n}", ws.Status(ts=time.time(), cost_usd=total, days=days))
 
 
 def serve(home: Path, commands: bool = False, merge: bool = False,

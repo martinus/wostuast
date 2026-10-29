@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import time
 import os
 import shutil
 import subprocess
@@ -295,6 +296,33 @@ def test_the_status_file_keeps_the_session_and_prints_its_line(ws, tmp_path):
     assert kept["name"] == "warm" and kept["context_pct"] == 41.0
     done = run_status(path, tmp_path, payload, "--then", "cat")
     assert json.loads(done.stdout)["session_id"] == "s9"
+    # The day's total, kept as the day goes on (#653); a line that says
+    # no cost leaves it.
+    for spent in (1.0, 2.5, None):
+        run_status(path, tmp_path, {**payload, "cost": {"total_cost_usd": spent}})
+    kept = json.loads((tmp_path / "state" / "status" / "s9.json").read_text())
+    assert kept["days"] == {time.strftime("%Y-%m-%d"): 2.5}
+
+
+def test_the_status_file_keeps_the_days_it_cannot_read(ws, tmp_path):
+    """A file from before the days were kept gives its last total on its
+    day, or a session running at the upgrade booked its whole total today
+    (#653). A file there and unreadable is not written over: today's total
+    alone would take the month's days with it."""
+    path = written_status(ws, tmp_path)
+    kept = tmp_path / "state" / "status" / "s9.json"
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    before = time.time() - 3 * 86_400
+    kept.write_text(json.dumps({"ts": before, "cost_usd": 80.0}))
+    payload = {"session_id": "s9", "cwd": "/tmp", "cost": {"total_cost_usd": 82.0}}
+    assert run_status(path, tmp_path, payload).returncode == 0
+    assert json.loads(kept.read_text())["days"] == {
+        time.strftime("%Y-%m-%d", time.localtime(before)): 80.0,
+        time.strftime("%Y-%m-%d"): 82.0}
+    kept.write_text('{"days": {"2026-10-01": 1.0')
+    done = run_status(path, tmp_path, payload)
+    assert done.returncode == 0 and done.stdout.strip()
+    assert kept.read_text() == '{"days": {"2026-10-01": 1.0'
 
 
 def test_the_status_file_loads_little(ws, tmp_path):

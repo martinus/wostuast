@@ -322,7 +322,7 @@ def test_the_settings_stand_in_four_titled_groups(page_at):
             [...group.querySelectorAll('.setlabel')].map((one) => one.textContent),
             getComputedStyle(group.querySelector('.settitle')).fontWeight])""")
         assert groups == [
-            ["Page", ["colours", "alerts"], "600"],
+            ["Page", ["colours", "alerts", "allowance"], "600"],
             ["Code", ["tab", "lines", "width", "marks"], "600"],
             ["Review", ["diff", "spaces"], "600"],
             ["Links", [], "600"]]
@@ -352,7 +352,7 @@ def test_every_settings_label_stands_level_with_what_it_names(page_at):
             (label) => [label.textContent.trim(),
                         mid(label.nextElementSibling) - mid(label)]);
         }""")
-        assert len(gaps) == 8, gaps
+        assert len(gaps) == 9, gaps
         assert all(abs(gap) <= 1 for _, gap in gaps), gaps
 
 

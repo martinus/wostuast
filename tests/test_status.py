@@ -60,7 +60,8 @@ def test_the_status_file_keeps_every_field(ws):
     status = ws.Status(ts=5.0, name="a name", model="Opus 5", context_pct=41.0,
                        cost_usd=1.25, agent="code-architect",
                        model_id="claude-opus-5", effort="high", wall_ms=9000.0,
-                       api_ms=3000.0, lines_added=12.0, lines_removed=3.0)
+                       api_ms=3000.0, lines_added=12.0, lines_removed=3.0,
+                       days={"2026-10-29": 1.25})
     blank = ws.Status()
     assert all(getattr(status, one.name) != getattr(blank, one.name)
                for one in fields(ws.Status))
@@ -124,6 +125,93 @@ def test_old_status_files_are_dropped(ws):
     ws.drop_old_status(now=ws.SESSION_MAX_AGE * 2)
     assert not target.exists()
     assert (ws.status_dir() / "new.json").exists()
+
+
+def test_a_status_file_outlives_a_month(ws):
+    """Its totals by day are the month's spend (#653): a file last written
+    on the 1st is still read on the 31st."""
+    ws.write_status("first", ws.Status(ts=1.0))
+    import os
+
+    os.utime(ws.status_dir() / "first.json", (0, 0))
+    ws.drop_old_status(now=31 * 24 * 3600)
+    assert (ws.status_dir() / "first.json").exists()
+
+
+def at(day, hour=12):
+    """A moment on a day of October 2026, here."""
+    import time
+    return time.mktime((2026, 10, day, hour, 0, 0, 0, 0, -1))
+
+
+def test_a_day_keeps_the_last_total_it_saw(ws):
+    """The status file keeps each session's total at its last status line
+    of a day (#653); a line with no cost says nothing, and only the last
+    `SPEND_DAYS_KEPT` days stay."""
+    days = ws.note_day({}, 1.0, at(3, 9))
+    days = ws.note_day(days, 2.5, at(3, 18))
+    days = ws.note_day(days, None, at(4))
+    assert days == {"2026-10-03": 2.5}
+    days = ws.note_day(days, 4.0, at(4))
+    assert days == {"2026-10-03": 2.5, "2026-10-04": 4.0}
+    many = {f"2026-{month:02d}-{day:02d}": 1.0 for month in (7, 8, 9) for day in range(1, 29)}
+    kept = ws.note_day(many, 2.0, at(1))
+    assert len(kept) == ws.SPEND_DAYS_KEPT and list(kept)[-1] == "2026-10-01"
+    assert min(kept) == "2026-07-24"      # 3 x 28 days and one more, less 62
+
+
+def test_the_days_in_a_status_file_are_read_with_care(ws):
+    """The file is ours, but a hand or an older build may have written it:
+    only a day with an amount is a day."""
+    assert ws.read_days({"2026-10-03": 2, "2026-10-04": 1.5, "yesterday": 1.0,
+                         "2026-10-05": "3", "2026-10-06": True, "2026-10-07": -1,
+                         "2026-10-08": float("inf")}) == {
+        "2026-10-03": 2.0, "2026-10-04": 1.5}
+    assert ws.read_days(["2026-10-03"]) == {}
+
+
+def test_a_day_s_spend_is_how_much_each_total_grew(ws):
+    """Measured on 2.1.312: a session id has one total that only grows;
+    `/clear` is a new id from nought, `--resume` the same total carried on.
+    So a day is what each total grew over its last day before (#653)."""
+    spent = ws.spend_by_day([
+        {"2026-10-01": 1.0, "2026-10-03": 3.0},       # resumed two days on
+        {"2026-10-03": 0.5},                          # new, after a /clear
+        {"2026-10-01": 5.0, "2026-10-03": 2.0},       # a total that fell
+    ])
+    assert spent == {"2026-10-01": 6.0, "2026-10-03": 2.0 + 0.5 + 2.0}
+
+
+def test_the_month_s_spend_reads_every_status_file(ws):
+    """Every day of this calendar month up to today, nought where nothing
+    was spent, and the first day any file knows (#653)."""
+    ws.write_status("a", ws.Status(days={"2026-09-30": 4.0, "2026-10-02": 5.0}))
+    ws.write_status("b", ws.Status(days={"2026-10-03": 0.25}))
+    (ws.status_dir() / "junk.json").write_text("not json")
+    daemon = ws.Daemon()
+    spend = ws.spend_json(at(3), daemon.spend_totals())
+    assert spend == {"today": "2026-10-03", "length": 31,
+                     "days": [0.0, 1.0, 0.25], "since": "2026-09-30"}
+    ws.drop_old_status(now=at(3) + 10**9)
+    assert ws.spend_json(at(3), daemon.spend_totals())["since"] == ""
+
+
+def test_a_status_file_is_read_again_only_when_it_changed(ws, monkeypatch):
+    """Every open Statistics tab asks every ten seconds (#653), and nearly
+    every file is a quiet session's: one parse a change, not one a poll."""
+    import os
+    ws.write_status("quiet", ws.Status(days={"2026-10-01": 1.0}))
+    ws.write_status("busy", ws.Status(days={"2026-10-01": 2.0}))
+    daemon = ws.Daemon()
+    assert sorted(sum(one.values()) for one in daemon.spend_totals()) == [1.0, 2.0]
+    read = []
+    monkeypatch.setattr(ws, "read_status_file",
+                        lambda path, real=ws.read_status_file: read.append(path.name) or real(path))
+    ws.write_status("busy", ws.Status(days={"2026-10-01": 5.0}))
+    busy = ws.status_dir() / "busy.json"
+    os.utime(busy, ns=(busy.stat().st_mtime_ns + 10**9,) * 2)
+    assert sorted(sum(one.values()) for one in daemon.spend_totals()) == [1.0, 5.0]
+    assert read == ["busy.json"]
 
 
 def test_the_label_shows_the_name_and_the_worktree(ws):

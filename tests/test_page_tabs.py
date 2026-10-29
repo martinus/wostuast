@@ -4,6 +4,7 @@ See tests/browser.py for the shared browser and the helpers."""
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from browser import (
     show_tab,
     wait_for_map,
     stays,
+    wait_until,
     wait_for_watching,
     write_records,
     own_context,
@@ -371,7 +373,7 @@ def test_the_tab_names_stay_on_one_line_in_a_narrow_window(page_at):
         # The settings button is still on screen, at the row's right.
         assert narrow[0]["right"] <= 1024, narrow
         assert [one["title"] for one in narrow] == [
-            "Transcript  ·  1", "Files  ·  2", "Review  ·  3", "Summary  ·  4"]
+            "Transcript  ·  1", "Files  ·  2", "Review  ·  3", "Statistics  ·  4"]
         assert page.evaluate("[...document.querySelectorAll('.tab')].map("
                              "(tab) => getComputedStyle(tab).whiteSpace)") == ["nowrap"] * 4
         # Narrower still, the context bar and the spend step aside, and the
@@ -784,7 +786,7 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         page.keyboard.press("4")
         page.wait_for_selector(".summary > .sumhead")
         assert page.evaluate("state.tab") == "summary"
-        head = page.locator(".sumhead").inner_text()
+        head = page.locator(".sumhead").first.inner_text()
         assert "$1.83" in head and "spent" in head and "+12 \u22123" in head, head
         lines = page.locator(".sumline.turnlink").all_inner_texts()
         assert "Rename the parser." in lines[0] and "\u2248$" in lines[0], lines
@@ -806,6 +808,69 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         page.keyboard.press("Escape")
         page.keyboard.press("5")
         page.wait_for_function("state.feed === 'commands'")
+
+
+def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
+    """What all sessions spent this month (#653), under the session's own
+    numbers: the day's spend is how much each session's total grew, the
+    allowance comes from the menu, and a change made elsewhere redraws it."""
+    daemon, path = page_at
+    today = time.strftime("%Y-%m-%d")
+    yesterday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86_400))
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".summary > .sumnote >> nth=-1")
+        page.wait_for_function("!!state.spend")
+        assert "Nothing kept yet" in page.locator(".summary").inner_text()
+        assert [one.strip() for one in page.locator(".sumsection").all_inner_texts()] == [
+            "This session", "All sessions this month"]
+        # Two sessions: one new today, one that spent a dollar yesterday.
+        ws.write_status("s1", ws.Status(cost_usd=2.0, days={today: 2.0}))
+        ws.write_status("s2", ws.Status(cost_usd=4.0, days={yesterday: 1.0, today: 4.0}))
+        page.evaluate("loadSpend()")
+        page.wait_for_selector(".spendsvg")
+        tiles = page.locator(".sumhead").nth(1).inner_text()
+        # Yesterday's dollar is this month's too, unless today is the 1st.
+        month = 6 if yesterday[:7] == today[:7] else 5
+        assert f"${month}.00\nspent" in tiles and "$5.00\ntoday" in tiles, tiles
+        assert "allowance" not in tiles
+        assert "Set a monthly allowance" in page.locator(".summary").inner_text()
+        assert page.locator(".spendday").count() == 1 + (yesterday[:7] == today[:7])
+        assert page.locator(".spendhit title").last.text_content().endswith(": $5.00")
+        # From the menu: kept in the file, and drawn.
+        page.click("#settings")
+        page.fill("#allowance", "4")
+        page.press("#allowance", "Enter")
+        page.wait_for_selector(".spendlimit", state="attached")   # a flat line has no box
+        assert "allowance $4.00" in page.locator(".spendsvg").first.text_content()
+        # The word says where it is changed, on a hover, as the reader asked.
+        where = page.locator(".sumstat", has_text="allowance").get_attribute("title")
+        assert "settings" in where and "Page" in where, where
+        over = page.locator(".sumstat.over").inner_text()
+        assert over == f"${month - 4}.00\nover", over
+        wait_until(page, lambda: ws.config_path().exists()
+                            and json.loads(ws.config_path().read_text()).get("allowance") == 4)
+        # Text the box cannot read is no "none", and an amount the daemon
+        # refuses does not stay: the box and the tab keep the one kept.
+        page.locator("#allowance").fill("")
+        page.locator("#allowance").type("1e")
+        page.press("#allowance", "Enter")
+        assert page.input_value("#allowance") == "4"
+        page.fill("#allowance", "2000000")
+        page.press("#allowance", "Enter")
+        page.wait_for_function("document.getElementById('allowance').value === '4'")
+        assert "allowance $4.00" in page.locator(".spendsvg").first.text_content()
+        assert json.loads(ws.config_path().read_text())["allowance"] == 4
+        # Changed elsewhere: the push redraws the tab, and the box.
+        page.keyboard.press("Escape")
+        page.evaluate("post('/api/settings', { allowance: 10 })")
+        wait_until(page, lambda: json.loads(ws.config_path().read_text())["allowance"] == 10)
+        daemon.tick()
+        page.wait_for_function("[...document.querySelectorAll('.sumstat')].some("
+                               "(one) => one.innerText === `$${10 - " + str(month)
+                               + "}.00\\nleft`)")
+        assert page.input_value("#allowance") == "10"
 
 
 def test_a_subagent_s_line_opens_its_own_transcript_read_only(ws, page_at):

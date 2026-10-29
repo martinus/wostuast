@@ -1361,6 +1361,14 @@ class Status:
     #: "low", "medium", "high", "xhigh" or "max", measured on 2.1.287. ""
     #: when the payload has none, as for Haiku, which has no effort at all.
     effort: str = ""
+    #: The session's `cost_usd` at its last status line of each local day,
+    #: "2026-10-29": 4.12, for what all sessions spent a day (#653).
+    #: Measured on 2.1.312: a session id has one total, and it only grows;
+    #: `/clear` starts a new id at nought, `--resume` carries the old total
+    #: on. So a day's spend is how much each total grew that day
+    #: (`spend_by_day`). The file holds the latest line only, and this is
+    #: the one record of the days.
+    days: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -7521,15 +7529,33 @@ def write_status(session_id: str, status: Status) -> None:
         "agent": status.agent, "model_id": status.model_id,
         "effort": status.effort, "wall_ms": status.wall_ms, "api_ms": status.api_ms,
         "lines_added": status.lines_added, "lines_removed": status.lines_removed,
+        "days": status.days,
     }), private=True)
 
 
 def read_status(session_id: str) -> Status:
     """Read the status file of a session. A missing file gives an empty status."""
+    return read_status_file(status_path(session_id))
+
+
+def read_status_file(path: Path) -> Status:
+    """Read one status file, by its path: a session's, or each in turn for
+    the spend of all of them (`Daemon.spend_totals`). One that cannot be
+    read gives an empty status."""
+    held = kept_status(path)
+    return held if held is not None else Status()
+
+
+def kept_status(path: Path) -> Status | None:
+    """One status file, or None when it is there and cannot be read, which
+    a missing file is not: the status line must not write over days it
+    could not read (#653)."""
     try:
-        payload = json.loads(status_path(session_id).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return Status()
+    except (OSError, ValueError):
+        return None
     if not isinstance(payload, dict):
         return Status()
     return Status(
@@ -7545,7 +7571,50 @@ def read_status(session_id: str) -> Status:
         api_ms=opt_float(payload.get("api_ms")),
         lines_added=opt_float(payload.get("lines_added")),
         lines_removed=opt_float(payload.get("lines_removed")),
+        days=read_days(payload.get("days")),
     )
+
+
+#: How many days a status file keeps a session's totals for: the month the
+#: page draws, and the one before it (#653).
+SPEND_DAYS_KEPT = 62
+
+#: A day as the status file names it: local, year first.
+DAY_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+
+
+def local_day(moment: float) -> str:
+    """The day a moment falls on, here, as `days` names it."""
+    return time.strftime("%Y-%m-%d", time.localtime(moment))
+
+
+def note_day(days: dict[str, float], cost: float | None, moment: float) -> dict[str, float]:
+    """The totals by day with this status line's: the last of a day stands.
+    A line with no cost says nothing about the day."""
+    kept = dict(days)
+    if cost is not None:
+        kept[local_day(moment)] = cost
+    return dict(sorted(kept.items())[-SPEND_DAYS_KEPT:])
+
+
+def days_known(held: Status) -> dict[str, float]:
+    """The days a status file kept; for a file from before they were kept,
+    its last total on the day it was written (#653). Without that, every
+    session running at the upgrade booked its whole total on that day."""
+    if held.days or held.cost_usd is None or not held.ts:
+        return held.days
+    return {local_day(held.ts): held.cost_usd}
+
+
+def read_days(value: Any) -> dict[str, float]:
+    """The totals by day as the file holds them, and nothing else: a key
+    that is no day, or a total that is no amount, is left out."""
+    if not isinstance(value, dict):
+        return {}
+    return {key: float(one) for key, one in value.items()
+            if isinstance(key, str) and DAY_NAME.match(key)
+            and isinstance(one, (int, float)) and not isinstance(one, bool)
+            and 0 <= one < float("inf")}
 
 
 def money(dollars: float) -> str:
@@ -7573,12 +7642,18 @@ def status_line(status: Status, cwd: str) -> str:
     return " · ".join(parts)
 
 
+#: How long a quiet session's status file is kept. Longer than a session
+#: is (`SESSION_MAX_AGE`): its totals by day are the spend of the month,
+#: and a file last written on the 1st is read on the 31st (#653).
+STATUS_KEPT = 40 * 24 * 3600
+
+
 def drop_old_status(now: float | None = None) -> None:
     """Remove status files of sessions that are long gone."""
     moment = now if now is not None else time.time()
     try:
         for entry in status_dir().glob("*.json"):
-            if moment - entry.stat().st_mtime > SESSION_MAX_AGE:
+            if moment - entry.stat().st_mtime > STATUS_KEPT:
                 entry.unlink()
     except OSError:
         pass
@@ -7700,7 +7775,10 @@ LINKS_KEPT = 100
 
 #: Every key that is ours, judged by `config_trouble`. Any other key in the
 #: file is kept and left alone.
-SETTING_KEYS = {*SETTING_WORDS, "alerts", "links"}
+SETTING_KEYS = {*SETTING_WORDS, "alerts", "links", "allowance"}
+
+#: The most a month's allowance may be, in dollars: more is a typing slip.
+ALLOWANCE_MOST = 1_000_000
 
 
 def config_trouble(key: str, value: Any) -> str:
@@ -7718,6 +7796,14 @@ def config_trouble(key: str, value: Any) -> str:
         if (not isinstance(value, dict) or set(value) - {"needs", "done"}
                 or not all(isinstance(one, bool) for one in value.values())):
             return '`alerts` is {"needs": true or false, "done": true or false}'
+        return ""
+    if key == "allowance":
+        # What the reader may spend a month, in dollars, for the Statistics
+        # tab (#653); nought is none. Shown, never enforced: a spend limit
+        # is a non-goal.
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not 0 <= value <= ALLOWANCE_MOST):
+            return f"`allowance` is a number of dollars from 0 to {ALLOWANCE_MOST}"
         return ""
     if key == "links":
         if not isinstance(value, list):
@@ -9714,6 +9800,35 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
     }
 
 
+def spend_by_day(totals: Iterable[dict[str, float]]) -> dict[str, float]:
+    """What all sessions spent each day: how much each session's total grew
+    that day over its last day before, or over nought (#653). A total that
+    fell -- no build measured does -- counts from nought again."""
+    spent: dict[str, float] = {}
+    for days in totals:
+        before = 0.0
+        for day, total in sorted(days.items()):
+            spent[day] = spent.get(day, 0.0) + (total - before if total >= before else total)
+            before = total
+    return spent
+
+
+def spend_json(now: float, totals: Iterable[dict[str, float]]) -> dict[str, Any]:
+    """What all sessions spent each day of this calendar month, up to today,
+    for the Statistics tab (#653): Claude Code's own estimates, from every
+    status file's `totals` by day. `since` is the first day any file holds,
+    so the page can say since when it knows."""
+    import calendar
+
+    today = local_day(now)
+    spent = spend_by_day(totals)
+    year, month, day = (int(part) for part in today.split("-"))
+    return {"today": today, "length": calendar.monthrange(year, month)[1],
+            "days": [round(spent.get(f"{today[:8]}{n:02d}", 0.0), 4)
+                     for n in range(1, day + 1)],
+            "since": min(spent, default="")}
+
+
 def session_json(session: Session) -> dict[str, Any]:
     """One session as a script reads it: `ls --json` and `wait --json` (#353).
 
@@ -9969,6 +10084,11 @@ class Daemon:
         #: -- another browser, or a hand in an editor -- goes out on the next
         #: tick (`tell_config`).
         self.config_seen = config_stamp()
+        #: Each status file's totals by day, by its name, with the stamp it
+        #: was read at (#653, `spend_totals`). A lock: every Statistics tab
+        #: asks from a request thread of its own.
+        self.spend_read: dict[str, tuple[int, dict[str, float]]] = {}
+        self.spend_lock = threading.Lock()
         self.transcripts: dict[str, Transcript] = {}
         #: Subagents' own transcripts, by session and agent (#618).
         self.agent_readers: dict[tuple[str, str], Transcript] = {}
@@ -10102,6 +10222,23 @@ class Daemon:
                 del self.agent_readers[next(iter(self.agent_readers))]
             held.read_new()
             return list(held.blocks)
+
+    def spend_totals(self) -> list[dict[str, float]]:
+        """Each status file's totals by day (#653), read again only when the
+        file changed: every open Statistics tab asks every ten seconds, and
+        nearly every file is a quiet session's."""
+        with self.spend_lock:
+            held: dict[str, tuple[int, dict[str, float]]] = {}
+            for path in status_dir().glob("*.json"):
+                try:
+                    stamp = path.stat().st_mtime_ns
+                except OSError:
+                    continue
+                known = self.spend_read.get(path.name)
+                held[path.name] = (known if known and known[0] == stamp
+                                   else (stamp, read_status_file(path).days))
+            self.spend_read = held
+            return [days for _, days in held.values()]
 
     def summary(self, session: Session) -> dict[str, Any]:
         """Where a session's tokens and time went (#622), after reading
@@ -11002,6 +11139,11 @@ class Serving:
         """Every saved turn, of every session (#377): asked for when the
         list opens, not pushed."""
         self.reply_json({"saved": self.daemon.store.marks.saved})
+
+    def spend(self, query: dict[str, str]) -> None:
+        """What all sessions spent each day of the month (#653): asked for
+        while the Statistics tab is up, not pushed."""
+        self.reply_json(spend_json(time.time(), self.daemon.spend_totals()))
 
     def events(self, query: dict[str, str]) -> None:
         self.stream(query.get("watch", ""))
@@ -11994,6 +12136,7 @@ ROUTES: dict[tuple[str, str], tuple[Any, str]] = {
     ("GET", "/api/sessions"): (Serving.sessions, ""),
     ("GET", "/api/search"): (Serving.search, ""),
     ("GET", "/api/saved"): (Serving.saved_turns, ""),
+    ("GET", "/api/spend"): (Serving.spend, ""),
     ("GET", "/api/events"): (Serving.events, ""),
     ("POST", "/api/settings"): (Serving.settings, "change"),
 }
@@ -12201,7 +12344,15 @@ def cmd_status(args: argparse.Namespace) -> int:
             if not isinstance(payload, dict):
                 payload = {}
             status = status_from_payload(payload)
-            write_status(str(payload.get("session_id") or ""), status)
+            session_id = str(payload.get("session_id") or "")
+            held = kept_status(status_path(session_id)) if session_id else None
+            # Today's total joins the days the file kept (#653). A file that
+            # is there and cannot be read is not written over: today's total
+            # alone would take the month's days with it. The next redraw
+            # tries again.
+            if held is not None:
+                status.days = note_day(days_known(held), status.cost_usd, status.ts)
+                write_status(session_id, status)
             stand_down()
         except BaseException as error:
             # The same as the hook's: a fresh deadline over the logging, which
@@ -13492,6 +13643,8 @@ STATUS_PARTS = frozenset({
     "to_float", "opt_float", "status_from_payload", "write_status",
     "status_line", "give_up_after", "stand_down", "run_status_line",
     "then_in", "cmd_status", "money", "path_label", "safe_name", "status_dir",
+    "kept_status", "days_known", "read_days", "note_day", "local_day",
+    "DAY_NAME", "SPEND_DAYS_KEPT",
 })
 
 STATUS_HEAD = '''#!/usr/bin/env python3
@@ -13512,7 +13665,7 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 '''
@@ -14095,6 +14248,9 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
      first, and was hard to tell from both, the more so for a reader who
      does not see red and green apart. */
   --waiting: #a98cf5; --waiting-soft: rgba(169,140,245,.16);
+  /* What all sessions spent (issue 653): ready's blue, which each theme
+     sets for itself. */
+  --spend: var(--done);
   --needs-soft: rgba(224,166,66,.28); --working-soft: rgba(107,191,138,.18);
   /* The browser tab's icon. It stands in the browser's tab bar, not on this
      page, so it follows the browser's colours and never the page's theme:
@@ -14389,6 +14545,13 @@ body {
 }
 /* A line box too, for the baseline, as the buttons above. */
 .setpop .checks label { cursor: pointer; }
+.setpop .allowance { display: flex; align-items: baseline; gap: 6px; color: var(--ink-soft); }
+.setpop .allowance input {
+  width: 90px; font-family: var(--sans); font-size: 12.5px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--edge); border-radius: 4px; padding: 3px 6px;
+}
+.setpop .allowance input:focus { outline: none; border-color: var(--needs); }
+.setpop .allowsays { font-size: 11.5px; color: var(--ink-faint); }
 .setpop .checks label > :is(input, .icon) { vertical-align: middle; margin: -2px 7px 0 0; }
 .setpop .checks input { cursor: pointer; accent-color: var(--needs); }
 .setpop .checks .needs .icon { color: var(--needs); }
@@ -15108,8 +15271,31 @@ body.switching #content::after {
    session's transcript. */
 .content.agentview .turnacts { display: none; }
 .content.agentview .who .self { cursor: default; }
-/* The Summary tab (issue 622): the numbers, then the lists. */
+/* The Statistics tab (issue 622): the numbers, then the lists; this
+   session, then all of them (issue 653). */
 .summary { max-width: 980px; }
+.sumsection { margin: 30px 0 12px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
+.summary > .sumsection:first-child { margin-top: 0; }
+.sumstat.over .sumvalue { color: var(--needs); }
+/* The month's two charts (issue 653): one dollar scale each, thin marks,
+   the lines and words in the page's quiet greys. */
+.spendchart { margin-top: 16px; }
+.spendsvg { display: block; width: 100%; height: auto; overflow: visible; }
+.spendgrid { stroke: var(--edge); stroke-width: 1; }
+.spendtick { fill: var(--ink-faint); font-family: var(--sans); font-size: 11px;
+  font-variant-numeric: tabular-nums; }
+.spendtick.today { fill: var(--ink-soft); }
+.spendlabel { fill: var(--ink-soft); font-family: var(--sans); font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.spendline { fill: none; stroke: var(--spend); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round; }
+.spendarea { fill: var(--spend); opacity: .1; }
+.spendpace { stroke: var(--spend); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: .7; }
+.spendlimit { stroke: var(--ink-mute); stroke-width: 1; }
+.spenddot { fill: var(--spend); stroke: var(--bg); stroke-width: 2; }
+.spendday { fill: var(--spend); }
+.spendhit { fill: transparent; }
+.spendhit:hover { fill: color-mix(in srgb, var(--ink) 6%, transparent); }
 /* The tab has no list column, so no find box: its home stays empty. */
 body:has(.content[data-tab="summary"]) .findhome { display: none; }
 .sumhead { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -16655,7 +16841,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           class="badge" id="diffcount" hidden></span><span
           class="badge notes" id="reviewcount" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="summary"
-          title="Summary  ·  4"><span class="tabkey">4</span>Summary</button>
+          title="Statistics  ·  4"><span class="tabkey">4</span>Statistics</button>
         <button type="button" class="theme" id="chatbtn" aria-pressed="false"></button>
         <select class="pickplace" id="placepick" hidden
                 title="which folder the Files and Review tabs show"></select>
@@ -16758,6 +16944,8 @@ const state = {
   // Where the chosen session's tokens and time went (#622), as the daemon
   // last said, or null.
   summary: null,
+  // What all sessions spent each day of the month (#653), or null.
+  spend: null,
   // The subagent whose own transcript the Transcript tab shows (#618), or
   // null: its session, id, kind, what it was asked, whether it runs, and
   // the session's own turns, held aside while `state.turns` is its.
@@ -17033,6 +17221,9 @@ const ICONS = {
   // Settings: three rails, each with its knob somewhere else.
   sliders: "M1.6 3.5h10.8M1.6 7h10.8M1.6 10.5h10.8M4.5 2v3M9.5 5.5v3M6 9v3",
   // The rows of the settings menu, and two of their choices.
+  coin: "M1.8 7a5.2 5.2 0 1 0 10.4 0a5.2 5.2 0 1 0-10.4 0zM8.6 5.3c-.3-.6-.9-.9-1.6-.9"
+    + "-.9 0-1.6.5-1.6 1.2 0 1.6 3.2.9 3.2 2.5 0 .7-.7 1.2-1.6 1.2-.7 0-1.4-.3-1.7-.9"
+    + "M7 3.3v1.1M7 9.6v1.1",
   palette: "M7 1.8a5.2 5.2 0 1 0 0 10.4c.9 0 1.2-.7.9-1.4-.4-.8.1-1.6 1-1.6h1.2"
     + "a2.1 2.1 0 0 0 2.1-2.1A5.2 5.2 0 0 0 7 1.8zM4.4 6.2h.01M6.2 4.2h.01M8.8 4.4h.01",
   tabWidth: "M1.8 7h7.6M7 4.6L9.4 7 7 9.4M11.8 3.6v6.8",
@@ -17690,6 +17881,8 @@ function takeSettings(body, first) {
   takeLinks(!first);
   drawBell();
   paintSettings();
+  // The allowance (#653): the only setting a tab draws from.
+  if (!first && state.tab === "summary") draw();
 }
 
 // --- colours: the theme in force [topics/settings]
@@ -20324,6 +20517,8 @@ function putSettings() {
     put(one, "span", null, word);
   }
   put(checks, "span", "alertnote").id = "alertnote";
+  label("allowance", "coin");
+  putAllowance(into);
   group("Code");
   label("tab", "tabWidth");
   choice("tabwidth", TAB_WIDTHS.map((width) => [width, String(width)]),
@@ -20360,6 +20555,42 @@ function putSettings() {
   const button = $("settings");
   putIcon(button, "sliders");
   putIcon(put(button, "span", "offmark"), "bellOff");
+}
+
+// What all sessions may spend a month, in dollars (#653): the Statistics
+// tab draws the way to it. Kept when the box is left or Enter is pressed;
+// an empty box is none.
+function putAllowance(into) {
+  const line = put(into, "label", "allowance");
+  put(line, "span", null, "$");
+  const box = put(line, "input");
+  box.id = "allowance";
+  box.type = "number";
+  box.min = "0";
+  box.step = "any";
+  box.placeholder = "none";
+  box.setAttribute("aria-label", "allowance a month, in dollars");
+  put(line, "span", "allowsays", "a month, all sessions");
+  box.addEventListener("change", async () => {
+    // Text the box cannot read is "" too ("$200", "1,000"): never "none".
+    const dollars = Number(box.value);
+    // Put back by hand: `paintSettings` leaves the box under the reader's
+    // hands alone, and after Enter it still is.
+    if (box.validity.badInput || !Number.isFinite(dollars) || dollars < 0) {
+      box.value = setting("allowance") || "";
+      return;
+    }
+    const before = setting("allowance") || 0;
+    const answer = keepSetting({ allowance: dollars });
+    draw();
+    // Too much is the daemon's to say (`config_trouble`); what it refused
+    // must not stay on the page as if kept.
+    if ((await answer).error) {
+      state.settings = { ...state.settings, allowance: before };
+      box.value = before || "";
+      draw();
+    }
+  });
 }
 
 // How much room a scroller keeps for its bar: none where scrollbars lie
@@ -20417,6 +20648,9 @@ function paintSettings() {
     paintToggle(button, now[button.dataset.name] === String(on));
   }
   $("settingspath").textContent = setting("path") || "";
+  // Not under the reader's hands: a push mid-typing put the old one back.
+  const allowance = $("allowance");
+  if (document.activeElement !== allowance) allowance.value = setting("allowance") || "";
 }
 
 //
@@ -26190,8 +26424,8 @@ const TABS = {
            finds: "go to file  /", name: "Files" },
   diff: { draw: drawDiff, land: landDiff, load: loadDiff, poll: 5000,
           finds: "find a file  /", name: "Review" },
-  summary: { draw: drawSummary, land: () => {}, load: loadSummary, poll: 10000,
-             finds: "", name: "Summary" },
+  summary: { draw: drawSummary, land: () => {}, load: () => Promise.all([loadSummary(), loadSpend()]),
+             poll: 10000, finds: "", name: "Statistics" },
 };
 
 // A switch to another session or tab leaves the last one's drawing in the
@@ -26592,7 +26826,7 @@ function putAgentBar(pane) {
   pane.prepend(head);
 }
 
-// --- the Summary tab: where a session's tokens and time went (#622) [topics/summary]
+// --- the Statistics tab: where a session's tokens and time went (#622), and what all sessions spent this month (#653) [topics/summary]
 
 async function loadSummary() {
   const want = state.chosen;
@@ -26614,25 +26848,206 @@ function drawSummary(box) {
     box.dataset.tab = "summary";
     box.dataset.listKey = box.dataset.bodyKey = box.dataset.summaryKey = "";
   }
-  if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got]))) return;
+  const allowance = setting("allowance") || 0;
+  if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got, state.spend, allowance]))) return;
   box.replaceChildren();
   const pane = put(box, "div", "summary");
-  if (!got) { put(pane, "p", "sumnote", "Reading the transcript\u2026"); return; }
-  putSumHead(pane, got);
-  putCostly(pane, got);
-  putSumAgents(pane, got);
-  putSumTools(pane, got);
+  // Two sections, as the reader asked (#653): this session, then all of
+  // them. More about all of them is to come there.
+  put(pane, "h2", "sumsection", "This session");
+  if (!got) {
+    put(pane, "p", "sumnote", "Reading the transcript\u2026");
+  } else {
+    putSumHead(pane, got);
+    putCostly(pane, got);
+    putSumAgents(pane, got);
+    putSumTools(pane, got);
+  }
+  putSpend(pane, state.spend, allowance);
+}
+
+// What all sessions spent each day of the month, from every status file.
+async function loadSpend() {
+  const got = await getJson("/api/spend");
+  if (!got || !got.ok || !got.body || !Array.isArray(got.body.days)) return;
+  state.spend = got.body;
+  draw();
+}
+
+// One of the few numbers, over what it is.
+function putStat(head, value, what, title) {
+  const one = put(head, "div", "sumstat");
+  put(one, "div", "sumvalue", value);
+  put(one, "div", "sumwhat", what);
+  if (title) one.title = title;
+  return one;
+}
+
+// What all sessions spent this month (#653): Claude Code's own estimates,
+// as each status line says them, and the way to the allowance the reader
+// set. Shown, never enforced: a spend limit is a non-goal.
+function putSpend(pane, spend, allowance) {
+  put(pane, "h2", "sumsection", "All sessions this month");
+  if (!spend) { put(pane, "p", "sumnote", "Reading the status lines\u2026"); return; }
+  if (!spend.since) {
+    put(pane, "p", "sumnote", "Nothing kept yet. From now on, each status line keeps"
+        + " what its session has spent, a day at a time.");
+    return;
+  }
+  const spent = spend.days.reduce((sum, one) => sum + one, 0);
+  const pace = spent / spend.days.length * spend.length;
+  const head = put(pane, "div", "sumhead");
+  putStat(head, money(spent), "spent");
+  putStat(head, money(spend.days[spend.days.length - 1]), "today");
+  putStat(head, money(pace), "at this pace",
+          "the month, if each day to come costs what the days so far did on average");
+  if (allowance) {
+    putStat(head, money(allowance), "allowance", ALLOWANCE_WHERE);
+    const left = allowance - spent;
+    putStat(head, money(Math.abs(left)), left >= 0 ? "left" : "over").classList
+      .toggle("over", left < 0);
+  }
+  const note = put(pane, "p", "sumtokens", "Claude Code's own estimate, at list price, kept since "
+      + spendDay(spend.since) + "."
+      + (allowance ? "" : " Set a monthly allowance in the settings to see the way to it."));
+  if (!allowance) note.title = ALLOWANCE_WHERE;
+  put(pane, "h3", "sumtitle", "spent so far");
+  putSpendRun(pane, spend, allowance, pace);
+  put(pane, "h3", "sumtitle", "each day");
+  putSpendDays(pane, spend);
+}
+
+// Where the allowance is changed, on a hover over the word (#653).
+const ALLOWANCE_WHERE = "change it in the settings: the sliders at the end of the tab row,"
+  + " under Page";
+
+// "3 Oct", for a day as the daemon names it.
+function spendDay(day) {
+  const [, month, date] = day.split("-").map(Number);
+  return date + " " + MONTHS[month - 1];
+}
+
+// One SVG element, as `put` makes an HTML one.
+function putSvg(parent, tag, attrs) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  parent.appendChild(node);
+  return node;
+}
+
+// A chart's frame: drawn at this width and scaled to the pane's, with room
+// for the dollars on the left and the end labels on the right.
+const CHART = { width: 900, left: 52, right: 120, top: 12, bottom: 24 };
+
+// A chart of one month: its box, its scales, the dollar lines and the days
+// under it. `most` is the highest amount it must hold.
+function putMonthChart(pane, spend, height, most, ticks, label) {
+  const svg = putSvg(put(pane, "div", "spendchart"), "svg", {
+    viewBox: `0 0 ${CHART.width} ${height}`, class: "spendsvg", role: "img", "aria-label": label });
+  const wide = CHART.width - CHART.left - CHART.right;
+  const tall = height - CHART.top - CHART.bottom;
+  const step = niceStep(most / ticks);
+  const top = Math.max(step, Math.ceil(most / step) * step);
+  const chart = { svg, x: (day) => CHART.left + day / spend.length * wide,
+                  y: (usd) => CHART.top + tall - usd / top * tall, slot: wide / spend.length };
+  for (let usd = 0; usd <= top + step / 2; usd += step) {
+    putSvg(svg, "line", { class: "spendgrid", x1: CHART.left, x2: CHART.left + wide,
+                          y1: chart.y(usd), y2: chart.y(usd) });
+    putSvg(svg, "text", { class: "spendtick", x: CHART.left - 8, y: chart.y(usd) + 4,
+                          "text-anchor": "end" }).textContent = "$" + roundish(usd);
+  }
+  const today = spend.days.length;
+  for (let day = 1; day <= spend.length; day += 1) {
+    if (day !== 1 && day !== today && day % 7 !== 1) continue;
+    if (day !== today && Math.abs(day - today) < 3) continue;
+    putSvg(svg, "text", { class: "spendtick" + (day === today ? " today" : ""),
+                          x: chart.x(day - 0.5), y: height - 6, "text-anchor": "middle" })
+      .textContent = day === today ? "today" : String(day);
+  }
+  return chart;
+}
+
+// A round step for a chart's dollar lines: 1, 2 or 5 of a power of ten.
+function niceStep(rough) {
+  const power = 10 ** Math.floor(Math.log10(Math.max(rough, 0.01)));
+  return [1, 2, 5, 10].map((one) => one * power).find((one) => one >= rough);
+}
+
+// An amount on a chart's line: no cents unless it needs them.
+function roundish(usd) {
+  return Number.isInteger(Math.round(usd * 100) / 100) ? String(Math.round(usd))
+    : usd.toFixed(2);
+}
+
+// The running total of the month, the way it goes at this pace, and the
+// allowance across: one dollar scale, the reader's way to the limit.
+function putSpendRun(pane, spend, allowance, pace) {
+  const run = [];
+  for (const one of spend.days) run.push((run[run.length - 1] || 0) + one);
+  const spent = run[run.length - 1];
+  const today = run.length;
+  const chart = putMonthChart(pane, spend, 220, Math.max(allowance, pace, spent, 0.01), 4,
+                              "spent so far this month, and at this pace");
+  const { svg, x, y } = chart;
+  const points = [[x(0), y(0)], ...run.map((usd, at) => [x(at + 1), y(usd)])];
+  const line = points.map(([px, py], at) => (at ? "L" : "M") + px + " " + py).join(" ");
+  putSvg(svg, "path", { class: "spendarea", d: `${line} L${x(today)} ${y(0)} Z` });
+  putSvg(svg, "path", { class: "spendline", d: line });
+  putSvg(svg, "line", { class: "spendpace", x1: x(today), y1: y(spent),
+                        x2: x(spend.length), y2: y(pace) });
+  const ends = [[pace, "at this pace " + money(pace)]];
+  if (allowance) {
+    putSvg(svg, "line", { class: "spendlimit", x1: x(0), x2: x(spend.length),
+                          y1: y(allowance), y2: y(allowance) });
+    ends.push([allowance, "allowance " + money(allowance)]);
+  }
+  // Two labels at the right end a line apart, never on each other.
+  ends.sort((a, b) => b[0] - a[0]);
+  let below = -Infinity;
+  for (const [usd, words] of ends) {
+    const at = Math.max(y(usd) + 4, below + 15);
+    const label = putSvg(svg, "text", { class: "spendlabel", x: x(spend.length) + 8, y: at });
+    label.textContent = words;
+    if (usd === allowance) putSvg(label, "title", {}).textContent = ALLOWANCE_WHERE;
+    below = at;
+  }
+  putSvg(svg, "circle", { class: "spenddot", cx: x(today), cy: y(spent), r: 4 });
+  putSvg(svg, "text", { class: "spendlabel", x: x(today), y: y(spent) - 10,
+                        "text-anchor": "middle" }).textContent = money(spent);
+  run.forEach((usd, at) => putSpendHit(chart, at + 1, `${money(usd)} so far,`
+                                       + ` ${money(spend.days[at])} that day`, spend));
+}
+
+// What each day cost, a column a day.
+function putSpendDays(pane, spend) {
+  const chart = putMonthChart(pane, spend, 150, Math.max(...spend.days, 0.01), 2,
+                              "spent each day this month");
+  const { svg, x, y } = chart;
+  const wide = Math.min(24, chart.slot * 0.7);
+  spend.days.forEach((usd, at) => {
+    const left = x(at + 0.5) - wide / 2;
+    const tall = y(0) - y(usd);
+    if (tall < 0.5) return;
+    const round = Math.min(4, tall, wide / 2);
+    putSvg(svg, "path", { class: "spendday", d: `M${left} ${y(0)} V${y(usd) + round}`
+      + ` Q${left} ${y(usd)} ${left + round} ${y(usd)} H${left + wide - round}`
+      + ` Q${left + wide} ${y(usd)} ${left + wide} ${y(usd) + round} V${y(0)} Z` });
+  });
+  spend.days.forEach((usd, at) => putSpendHit(chart, at + 1, money(usd), spend));
+}
+
+// A day's whole height, which says on a hover what it holds.
+function putSpendHit(chart, day, words, spend) {
+  const hit = putSvg(chart.svg, "rect", { class: "spendhit", x: chart.x(day - 1), y: CHART.top,
+                                          width: chart.slot, height: chart.y(0) - CHART.top });
+  putSvg(hit, "title", {}).textContent = spendDay(spend.today.slice(0, 8)
+    + String(day).padStart(2, "0")) + ": " + words;
 }
 
 // The few numbers that say the most, each over what it is.
 function putSumHead(pane, got) {
   const head = put(pane, "div", "sumhead");
-  const stat = (value, what, title) => {
-    const one = put(head, "div", "sumstat");
-    put(one, "div", "sumvalue", value);
-    put(one, "div", "sumwhat", what);
-    if (title) one.title = title;
-  };
+  const stat = (value, what, title) => putStat(head, value, what, title);
   stat(got.cost_usd === null || got.cost_usd === undefined ? "\u2014" : money(got.cost_usd),
        "spent", "Claude Code's own estimate, at list price. It starts again at /clear.");
   if (got.wall_ms) stat(lasted(got.wall_ms / 1000), "since it started");
