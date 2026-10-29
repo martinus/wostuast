@@ -939,3 +939,76 @@ def test_a_compaction_carries_its_moment(ws, tmp_path):
                        "timestamp": "2026-09-18T14:22:00.000Z"})
     assert made[0].kind == "divider"
     assert made[0].ts == ws.parse_timestamp("2026-09-18T14:22:00.000Z")
+
+
+def pr_record(number=12, url="https://github.com/o/r/pull/12", repo="o/r"):
+    """A `pr-link` record in the shape Claude Code's schema gives (2.1.312):
+    no real one was measured, as the owner chose (#661)."""
+    return {"type": "pr-link", "sessionId": "s1", "prNumber": number, "prUrl": url,
+            "prRepository": repo, "timestamp": "2026-10-29T18:00:00.000Z"}
+
+
+def test_a_pr_link_is_taken_only_as_a_number_and_a_web_address(ws):
+    """The page makes a link of it, so only http(s), with no user or
+    password, and a number that is a number (topics/safety)."""
+    assert ws.pr_link_of(pr_record()) == ws.PrLink(12, "https://github.com/o/r/pull/12", "o/r")
+    for wrong in (pr_record(url="javascript:alert(1)"), pr_record(url="file:///etc/passwd"),
+                  pr_record(url="ftp://github.com/o/r/pull/1"),
+                  pr_record(url="https://me:token@github.com/o/r/pull/1"),
+                  pr_record(url="https://github.com/o/r/pull/1 x"),
+                  pr_record(number="12"), pr_record(number=True), pr_record(number=0),
+                  {**pr_record(), "type": "summary"}, "pr-link"):
+        assert ws.pr_link_of(wrong) is None, wrong
+
+
+def test_the_last_pr_link_in_a_transcript_s_end_stands(ws, tmp_path):
+    """Claude Code writes it again and again, and the last one stands. Only
+    the end is read: a line cut in two by it is skipped."""
+    path = tmp_path / "s1.jsonl"
+    path.write_text(conftest.records(
+        conftest.record("you", "open the pull request"),
+        pr_record(7, "https://github.com/o/r/pull/7"),
+        conftest.record("claude", "x" * (ws.TAIL_READ // 2)),
+        pr_record(9, "https://github.com/o/r/pull/9"),
+        conftest.record("claude", "done")))
+    assert ws.pr_link_in(path).number == 9
+    path.write_text(json.dumps(pr_record(3)) + "\n" + "y" * ws.TAIL_READ + "\n")
+    assert ws.pr_link_in(path) is None, "only the end is read"
+    assert ws.pr_link_in(tmp_path / "gone.jsonl") is None
+
+
+def test_a_session_is_given_its_pull_request_behind_the_fold(ws, transcript_file, monkeypatch):
+    """Read as git is, a step of `refresh` and never the fold: a few
+    transcripts a refresh, each again only when it changed."""
+    path = transcript_file("s1", [pr_record()])
+    ws.append_event(conftest.event("SessionStart", ts=time.time(), transcript_path=str(path)))
+    store = ws.Store()
+    assert store.refresh() is True
+    assert store.rows[0]["pr"] == {"number": 12, "url": "https://github.com/o/r/pull/12",
+                                   "repo": "o/r"}
+    read = []
+    monkeypatch.setattr(ws, "pr_link_in", lambda path: read.append(path) or None)
+    store.refresh()
+    assert read == [], "looked at again only after PR_EVERY"
+    monkeypatch.setattr(ws, "PR_EVERY", 0.0)
+    store.refresh()
+    assert read == [], "unchanged: not read again"
+    with path.open("a") as handle:
+        handle.write("\n")
+    assert store.refresh() is True and len(read) == 1
+    assert store.rows[0]["pr"] is None
+
+
+def test_a_refresh_reads_only_so_many_transcripts(ws, transcript_file, monkeypatch):
+    """A start with a month of sessions read every tail before the first
+    push: a few a refresh, the rest on the next."""
+    for n in range(5):
+        path = transcript_file(f"s{n}", [pr_record(n + 1)])
+        ws.append_event(conftest.event("SessionStart", sid=f"s{n}", ts=time.time(),
+                                       transcript_path=str(path)))
+    monkeypatch.setattr(ws, "PR_READS_A_TICK", 2)
+    store = ws.Store()
+    store.refresh()
+    assert sum(1 for one in store.rows if one["pr"]) == 2
+    store.refresh()
+    assert sum(1 for one in store.rows if one["pr"]) == 4
