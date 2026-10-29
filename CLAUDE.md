@@ -52,7 +52,7 @@ rest, read the file in `.claude/topics/` before you start:
 | `transcript.md` | touch what a `user` record is, how a transcript is read and followed, a link to a turn, the "new" line |
 | `transcript-look.md` | touch the transcript's shape and gaps, Markdown, runs of calls, folds, the map |
 | `send-and-keys.md` | touch the send box, a send that lands, completing a `/`, a rename, the keys |
-| `summary.md` | touch the Summary tab: what a turn cost, busy time, the tokens a reply used |
+| `summary.md` | touch the Statistics tab: what a turn cost, busy time, the tokens a reply used, what all sessions spent a day |
 | `.claude/skills/issues/pull-request-loop.md` | open, update or merge a pull request: the calls, in order |
 
 ## The program in five lines
@@ -61,8 +61,8 @@ Claude Code hooks append one JSON line per event to
 `~/.local/state/wostuast/events.jsonl`. A bare `wostuast` (`cmd_serve`)
 checks the setup, writes what is behind (`bring_up_to_date`), tails the log
 into a `Store`, and serves one page over HTTP + SSE: a session list, four
-tabs (Transcript, Files, Review, which is `data-tab="diff"`, and Summary), and four
-views over them (Unread, Saved, Search, Commands; #411). Four things go
+tabs (Transcript, Files, Review, `data-tab="diff"`, and Statistics, `summary`),
+and four views over them (Unread, Saved, Search, Commands; #411). Four things go
 back to the terminal, all through tmux: jump, send, the keys that answer a
 question, and a No (an Escape, then a send); a rename is a send of
 `/rename` (#351). A Yes is no key: the dialog's own hook waits for it and
@@ -84,7 +84,7 @@ fights one, ask whether the goal bends before you build. Keep the numbers.
 owning the agent process (a keystroke into a pane is allowed, a signal is
 not); a terminal emulator; a Yes the reader did not give, or one that keys
 carry; agent-to-agent messaging, teams, orchestration, accounting across
-sessions, or a spend limit; knowing a worktree layout; Electron, React, any build step,
+sessions beyond what they spent, or a spend limit; knowing a worktree layout; Electron, React, any build step,
 a dependency, or a vendored JavaScript library; a review that goes
 anywhere but the agent's pane.
 

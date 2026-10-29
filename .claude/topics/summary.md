@@ -1,4 +1,4 @@
-# The Summary tab
+# The Statistics tab
 
 Where a session's tokens and time went (#622), as the reader asked, "so I
 can optimize my future sessions to produce less churn".
@@ -43,3 +43,42 @@ can optimize my future sessions to produce less churn".
   to it in the transcript (`goTo`, `goToTs`, as a saved turn's). It has
   no list column, so no find box: `finds` is empty.
   `test_the_summary_tab_says_where_the_tokens_went`.
+- **The tab is "Statistics", in two sections: this session, then all
+  sessions this month** (#653, `drawSummary`, `putSpend`), as the reader
+  asked; more about all sessions is to come there. Its key in the code
+  stays `summary`.
+- **A day's spend is how much each session's total grew that day**
+  (`Status.days`, `note_day`, `spend_by_day`, `spend_json`, `GET
+  /api/spend`). Measured on 2.1.312 with `tests/claude_pane.py`: a session
+  id has one `total_cost_usd`, and it only grows; `/clear` starts a new id
+  at nought, `--resume` carries the old total on. So the status file keeps
+  the session's total at its last line of each local day, and the daemon
+  sums the growth over all files. **The status line is the one writer**: a
+  session seen first long after its start (its file dropped, then
+  resumed) counts its whole total on that day. A status file is kept
+  `STATUS_KEPT`, 40 days, so the 1st is still read on the 31st.
+  - **A file from before the days gives its last total on its day**
+    (`days_known`): without it, every session running at the upgrade
+    booked its whole total that day.
+  - **A file there and unreadable is not written over** (`kept_status`):
+    today's total alone would take the month's days with it.
+  - **Each file is parsed again only when its stamp moved**
+    (`Daemon.spend_totals`, under `spend_lock`): every open tab asks every
+    ten seconds.
+  `test_a_day_s_spend_is_how_much_each_total_grew`,
+  `test_the_month_s_spend_reads_every_status_file`,
+  `test_the_status_file_keeps_the_days_it_cannot_read`,
+  `test_a_status_file_is_read_again_only_when_it_changed`.
+- **The allowance is shown, never enforced** (`allowance`, a setting in
+  the menu's Page group, `putAllowance`): a spend limit is a non-goal
+  (topics/goals). Two charts, never one with two scales: the running
+  total with its pace to the month's end and the allowance across, then a
+  column a day; a day's amount on hover (`putSpendHit`). A settings push
+  redraws the tab (`takeSettings`), as the allowance is the one setting a
+  tab draws from. **Text the box cannot read is no "none"**
+  (`validity.badInput`: "$200" reads as ""), and an amount the daemon
+  refuses is put back, in the box by hand: `paintSettings` leaves a
+  focused box alone. **The word "allowance" says where it is changed**, on
+  a hover (`ALLOWANCE_WHERE`), as the reader asked: on the tile, the
+  chart's label, and the note when none is set.
+  `test_the_statistics_tab_draws_the_month_against_the_allowance`.

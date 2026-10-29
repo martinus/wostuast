@@ -2664,6 +2664,32 @@ def test_a_bad_setting_is_refused_and_says_why(ws, served):
     assert not ws.config_path().exists()
 
 
+def test_an_allowance_is_a_number_of_dollars(ws, served):
+    """What the reader may spend a month (#653): a number from nought, kept;
+    anything else refused, and the file not written."""
+    daemon, base = served
+    for wrong in (-1, True, "250", 10**7):
+        status, body = post(f"{base}/api/settings", {"allowance": wrong},
+                            token=daemon.token)
+        assert status == 400 and "allowance" in body["error"], (wrong, body)
+    assert not ws.config_path().exists()
+    status, body = post(f"{base}/api/settings", {"allowance": 250},
+                        token=daemon.token)
+    assert status == 200, body
+    assert json.loads(ws.config_path().read_text())["allowance"] == 250
+
+
+def test_the_month_s_spend_is_served(ws, served):
+    """`GET /api/spend` (#653): today's day, the month's length, and a
+    number a day up to today."""
+    _, base = served
+    ws.write_status("s1", ws.Status(days={time.strftime("%Y-%m-%d"): 3.5}))
+    body = get(f"{base}/api/spend")[1]
+    assert body["today"] == time.strftime("%Y-%m-%d")
+    assert len(body["days"]) == int(body["today"][8:]) and body["days"][-1] == 3.5
+    assert 28 <= body["length"] <= 31
+
+
 def test_a_refused_link_is_named_in_the_answer(ws, served):
     """So the menu can put the reason under the right row; the rest are
     kept."""

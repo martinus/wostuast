@@ -15,7 +15,7 @@ ticket links rows. topics/safety-install holds the file it writes.
   `#setpop`): colours, the two alerts, tab width, long lines, the diff's
   columns, ticket links, and the file's path at its foot (`#settingspath`,
   with a copy button), not a bell, a colours button and a Review-bar menu.
-  **Four groups** -- Page, Code,
+  **Four groups** -- Page (and the allowance, #653), Code,
   Review, Links -- each a soft card with a bold title (`.setgroup`,
   `.settitle`). A group is a subgrid, so every label stands in one column.
   `test_the_settings_stand_in_four_titled_groups`.

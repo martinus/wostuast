@@ -145,7 +145,9 @@ Install and update, the hook and status files, Claude Code's
     by `program_files` in the hook file's parse. The whole program cost
     127 ms a redraw against about 45. **Not in the hook file**: its
     `dataclasses` would cost every hook event 8 ms. It reads `--then` with
-    `then_in`, not argparse. `add_status_line` moves an old line of ours,
+    `then_in`, not argparse. **It reads its own file before it writes**
+    (`read_status`, `note_day`, #653): the days' totals are kept nowhere
+    else. `add_status_line` moves an old line of ours,
     `wostuast status [--then …]`, to it, keeping the user's line;
     `is_ours`, `then_of`, `remove_status_line`, `hook_files_missing`,
     `install_behind` and `uninstall` know both shapes. **A part is copied

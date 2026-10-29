@@ -95,7 +95,7 @@ feature out.
 | **Own the agent process** | tmux owns the terminal. wostuast never starts, wraps or kills an agent. Typing into a pane is allowed; a signal is not. |
 | **Be a terminal emulator** | The tmux window is always one keystroke away. A "Peek" tab once showed a copy of the pane. It was removed. |
 | **A Yes you did not give, or one carried by keys** | Keys land on whichever dialog is up, and a wrong Yes cannot be undone. Your **yes** goes to the dialog's own hook, which answers for that dialog only. |
-| **Orchestrate agents** | No agent-to-agent messages, no teams, no spend limits. wostuast watches; it does not steer. |
+| **Orchestrate agents** | No agent-to-agent messages, no teams, no spend limits. wostuast watches; it does not steer. It shows what all sessions spent, and an allowance, but enforces nothing. |
 | **Know your worktree layout** | A session is an agent standing in a directory. Nothing more. |
 | **Need a build step or a dependency** | No Electron, no React, no npm, no pip. |
 | **Send a review anywhere but the agent** | No GitHub API. A review goes into the agent's own terminal, and you read every byte first. |
@@ -729,7 +729,8 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | GET | `/api/saved` | Every saved turn, of every session. |
 | GET | `/api/session/ID/last` | What the agent said last, for "All unreads". |
 | GET | `/api/session/ID/places` | The folders the Files and Review tabs may show: the session's own first, then each other repository its agent stood in or touched a file in, then each folder the reader added to the worktree (`plain` when git knows nothing of it). |
-| GET | `/api/session/ID/summary` | Where the session's tokens and time went, for the Summary tab: the status line's spend and times, busy time, the costliest turns, subagents by kind, calls by tool. |
+| GET | `/api/spend` | What all sessions spent each day of this month, for the Statistics tab: the sum of how much each status file's total grew a day. |
+| GET | `/api/session/ID/summary` | Where the session's tokens and time went, for the Statistics tab: the status line's spend and times, busy time, the costliest turns, subagents by kind, calls by tool. |
 | GET | `/api/session/ID/files` | The file list of the worktree. With `place=…`, one of `places`; the same for `file`, `raw`, `diff` and `whole`. |
 | GET | `/api/session/ID/file?path=…` | One file's text. |
 | GET | `/api/session/ID/raw?path=…` | One file's bytes (for images). |

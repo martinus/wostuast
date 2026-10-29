@@ -50,10 +50,13 @@ If a feature needs one of these, leave the feature out.
 - **Agent-to-agent messaging, teams, orchestration, accounting across
   sessions.** Showing the spend the status line sends is in, and so is
   where one session's tokens went, read off its own transcript (#622, the
-  Summary tab, topics/summary): the reader asked for it to make the next
-  session churn less. A bill, a budget, a total across sessions is out.
-  **So is a spend limit**: one shipped, typed into a terminal with nobody
-  watching, and went with the Session tab that set it.
+  Statistics tab, topics/summary): the reader asked for it to make the next
+  session churn less. **What all sessions spent a day, and an allowance
+  the reader sets, are in since #653**: the reader asked to see the way to
+  a monthly allowance. Shown only, from the status lines' own numbers; a
+  bill or a price table is out. **A spend limit is out**: one shipped,
+  typed into a terminal with nobody watching, and went with the Session
+  tab that set it. The allowance stops nothing.
 - **Knowing a worktree layout.** A session is an agent standing in a
   directory, nothing more. No dependency on `gra`.
 - **Electron, Tauri, React, or any build step**, a Python dependency outside

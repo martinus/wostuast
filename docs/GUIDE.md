@@ -242,7 +242,7 @@ where you left it: the tab, the open file, and your place in it.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
-| **Summary** | Where the session's tokens and time went: what it spent, how long it was busy, its costliest turns, its subagents and its calls by tool. |
+| **Statistics** | Where the session's tokens and time went: what it spent, how long it was busy, its costliest turns, its subagents and its calls by tool. Under it, what all sessions spent each day this month, and the way to your allowance. |
 
 When a switch to another session or tab takes a moment, for example over a
 slow ssh tunnel, the old content dims and a label says what is loading. The
@@ -413,9 +413,9 @@ words marked.
 - **Untracked files** are listed on their own, because git has no diff for
   them.
 
-#### Summary
+#### Statistics
 
-What the session spent, as Claude Code estimates it, how long it has run,
+First, this session. What the session spent, as Claude Code estimates it, how long it has run,
 how long it was busy (from each prompt to the end of its turn), how long
 the model worked, its turns, and the lines its edits added and removed.
 Under them, the tokens it used: input, cache written, cache read and
@@ -426,6 +426,16 @@ Then its costliest turns. A turn's share of what was spent is marked
 the tokens its replies used, output weighing most and a cache read least.
 Click a turn to read it in the transcript. Then its subagents by kind, and
 its calls by tool.
+
+Then all sessions, this calendar month: what they spent, what they spent
+today, and what the month comes to at this pace. Two charts show the
+running total and what each day cost. Point at a day to read its amount.
+Set an **allowance** in the settings to see it as a line, and how much is
+left or over. The page only shows it: nothing stops an agent.
+
+Each status line keeps what its session spent, a day at a time, from the
+day you installed this version. A day's spend is how much each session's
+total grew that day. Without wostuast's status line, nothing is kept.
 
 #### Commands
 
@@ -515,6 +525,8 @@ setting.
 
 - **colours**: auto, light or dark. Each button shows the colours it gives.
 - **alerts**: see above.
+- **allowance**: what all sessions may spend a month, in dollars. The
+  Statistics tab shows the way to it. Empty is none. It is never enforced.
 - **tab**: the tab width, 2, 4 or 8, for the Files and the Review tabs.
 - **lines**: long lines scroll or wrap, for the Files tab and the one-column diff.
   A very long file is drawn a part at a time and cannot wrap; it says so.
@@ -547,7 +559,7 @@ Press <kbd>?</kbd> on the page to see this list.
 | <kbd>z</kbd> | Snooze the chosen session that needs you, or wake it |
 | <kbd>u</kbd> | Mark the chosen session unread, or read |
 | <kbd>/</kbd> | Find in the tab's list: a turn, a file, a comment |
-| <kbd>1</kbd> – <kbd>4</kbd> | Transcript, Files, Review, Summary |
+| <kbd>1</kbd> – <kbd>4</kbd> | Transcript, Files, Review, Statistics |
 | <kbd>5</kbd> | Commands, the view of every project's skills and commands |
 | <kbd>t</kbd> | The transcript beside Files or Review, with the send box under it; press again to put it away |
 | <kbd>Enter</kbd> | Jump to the agent's tmux pane |
