@@ -4260,6 +4260,27 @@ def tail_records(path: Path, needle: bytes) -> list[dict[str, Any]]:
     return list(json_objects(line for line in tail.split(b"\n") if needle in line))
 
 
+#: What Claude Code adds to its first few recaps, for its own terminal: no
+#: word of the summary, and no setting of this page (2.1.312).
+AWAY_SAID_TOO = " (disable recaps in /config)"
+
+
+def away_summary_in(path: Path, after: float) -> dict[str, Any] | None:
+    """Claude Code's own summary of what happened while the reader was away
+    (#662), the last in the transcript's end, when it was written at or
+    after `after`; else None. Its shape is Claude Code's schema, 2.1.312:
+    `{type: "system", subtype: "away_summary", content, timestamp}`,
+    written after the turn's last answer; no real one was measured (the
+    owner chose to build on the schema)."""
+    found = None
+    for record in tail_records(path, b'"away_summary"'):
+        text, at = record.get("content"), parse_timestamp(record.get("timestamp"))
+        if (record.get("type") == "system" and record.get("subtype") == "away_summary"
+                and isinstance(text, str) and text.strip() and at and at >= after):
+            found = {"text": text.removesuffix(AWAY_SAID_TOO).strip(), "at": at}
+    return found
+
+
 def parse_timestamp(value: Any) -> float:
     """The transcript stamps lines in ISO 8601 with a Z. Turn it into seconds."""
     text = str(value or "")
@@ -11736,8 +11757,14 @@ def verb_last(serving: Serving, session_id: str, session: Session,
     ssh tunnel for a glance."""
     text = session.last_answer
     cut = len(text) > LAST_MAX
+    # Claude Code's own summary of the time since that answer (#662), when
+    # it wrote one: the shortest way back into the session.
+    path = safe_transcript(session.transcript_path)
+    away = away_summary_in(path, session.ended_at) if path else None
+    if away:
+        away["text"] = away["text"][:LAST_MAX]
     return 200, {"text": text[:LAST_MAX] if cut else text,
-                     "cut": cut, "at": session.ended_at}
+                     "cut": cut, "at": session.ended_at, "away": away}
 
 
 def verb_commands(serving: Serving, session_id: str, session: Session,
@@ -15447,6 +15474,11 @@ body.switching #content::after {
 .feedwho.claude { color: var(--needs); }
 .feedwho.aside { color: var(--ink-faint); }
 .feedentry .bubble.mine, .feedentry .bubble.aside { margin: 4px 0 8px; }
+/* Claude Code's recap over the last answer (issue 662): its head as small
+   as the word for who said a saved turn, its words in the harness's dashed
+   box. */
+.feedaway { margin-top: 6px; }
+.feedawayhead { font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
 .searchtext { margin: 2px 0; color: var(--ink); line-height: 1.55; }
 /* A hit, softer than the find box's (issue 395): in its solid colour, a
    page of results was a page of blocks, and the word in one was hard to
@@ -18692,6 +18724,16 @@ async function askLast(id) {
   drawFeed($("content"));
 }
 
+// Claude Code's own summary of what happened while the reader was away
+// (#662), over the last answer: the shortest way back in. Its words, as
+// Markdown, in the box the transcript gives the harness's words.
+function putAway(entry, away) {
+  if (!away || !away.text) return;
+  const box = put(entry, "div", "feedaway");
+  put(box, "div", "feedawayhead", "while you were away \u00b7 " + clock(away.at));
+  markdown(put(box, "div", "bubble aside prosebox"), away.text);
+}
+
 // The view standing over the tabs, drawn by its entry in `VIEWS`.
 function drawFeed(box) {
   VIEWS[state.feed].draw(box);
@@ -18721,6 +18763,7 @@ function drawUnread(box) {
     const read = put(top, "button", "link", "mark read");
     read.addEventListener("click", () => setUnread(s.id, false));
     const found = state.feedText.get(s.id);
+    putAway(entry, found && found.away);
     if (!found) {
       put(entry, "p", "feedwait", found === null ? "reading…" : "");
     } else if (!found.text) {

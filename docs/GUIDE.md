@@ -50,6 +50,8 @@ Everything wostuast does, and how to use each part. The
   card in its session's colour: click it to open the session, or point at
   it for "mark read". To go back to the session, click **← back to** and
   its name at the top, or the **×** at the right, or press <kbd>Esc</kbd>.
+  When Claude Code wrote a recap of what happened while you were away, it
+  stands over the answer, under "while you were away".
 - **You can say "later".** Point at a card, click the clock and pick: in
   30 minutes, in an hour, in three hours, tomorrow at 08:00, Monday at
   08:00, or "Custom…" for a day and a time of your own. Until then

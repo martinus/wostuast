@@ -71,6 +71,15 @@ of them.
   (`state.feed`, `body.infeed`), newest first by `ended_at`;
   `drawFeedLink` redraws it every push. **While it is open nothing behind
   it is read** (`markSeen` returns).
+  **Claude Code's own recap stands over the answer** (#662,
+  `away_summary_in`, `putAway`, `.feedaway`), as the reader chose: the
+  shortest way back in. Only one written at or after `ended_at`, or a
+  recap of an older absence stood over a newer answer. It is read from the
+  transcript's end (`tail_records`), when the card asks, never on the
+  row; without the words Claude Code adds for its own terminal
+  (`AWAY_SAID_TOO`). `test_claude_code_s_recap_is_taken_only_after_the_last_answer`,
+  `test_the_last_answer_comes_with_the_recap_since`,
+  `test_an_unread_card_says_what_happened_while_you_were_away`.
   `test_all_unreads_is_one_scroll_through_the_last_answers`,
   `test_a_turn_keeps_what_the_agent_said_last`,
   `test_a_turn_an_error_ended_keeps_the_error_not_the_answer_before`.
