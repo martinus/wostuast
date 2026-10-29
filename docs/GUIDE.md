@@ -424,8 +424,10 @@ output.
 Then its costliest turns. A turn's share of what was spent is marked
 "≈": the status line says only the whole, so each turn gets its share by
 the tokens its replies used, output weighing most and a cache read least.
-Click a turn to read it in the transcript. Then its subagents by kind, and
-its calls by tool.
+Click a turn to read it in the transcript. Then the time by tool: how long
+each tool's calls ran, not the time a dialog waited for your answer. Then
+its slowest calls, of a second or more; click one to read it in the
+transcript. Then its subagents by kind, and its calls by tool.
 
 Then all sessions, this calendar month: what they spent, what they spent
 today, and what the month comes to at this pace. Two charts show the

@@ -15,8 +15,8 @@ Each event adds its own fields:
 | `SessionStart` | `source` (startup, resume, clear, compact), `agent_type`, `model` |
 | `UserPromptSubmit` | `prompt` |
 | `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id` |
-| `PostToolUse` | `tool_name`, `tool_input`, `tool_response`, `tool_use_id` |
-| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_use_id`, `error`, `error_type`, `is_interrupt`, `is_timeout` |
+| `PostToolUse` | `tool_name`, `tool_input`, `tool_response`, `tool_use_id`, `duration_ms` |
+| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_use_id`, `error`, `error_type`, `is_interrupt`, `is_timeout`, `duration_ms` |
 | `PermissionRequest` | `tool_name`, `tool_input`, `permission_suggestions` |
 | `Notification` | `message`, `title`, `notification_type` |
 | `Stop` | `stop_hook_active` |
@@ -435,3 +435,11 @@ and slash commands.
 
 Not recorded yet, and so not read: where plugin skills live on disk, and how
 a command file in a subdirectory of `commands` is named.
+
+## A call's own time: `duration_ms` (#663)
+
+Measured on 2.1.312 with `tests/claude_pane.py`: `PostToolUse` and
+`PostToolUseFailure` carry `duration_ms`, the time the call ran, in
+milliseconds. **Not the wait for a Yes**: a `sleep 2` whose dialog waited
+6 s said 2103; a `sleep 3` with no dialog said 3047. A subagent's call
+carries its own, with its `agent_id`.

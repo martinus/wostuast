@@ -134,3 +134,31 @@ def test_only_work_moves_a_turn_s_end(ws):
                       tool_input={"command": "ls"}, tool_use_id="u1"),
                 event("Stop", ts=1160.0)])
     assert store.sessions["s1"].busy == 50.0
+
+
+def test_a_session_s_time_goes_by_tool_and_its_slowest_calls_are_kept(ws):
+    """Each call's `duration_ms` (#663), the run alone and never the wait
+    for a Yes (measured on 2.1.312), adds to its tool's time; a failed call
+    took its time too. A subagent's calls are its own. A call under a
+    second is no slow call, and a slow one begins at its end less its time.
+    The same events read again count nothing twice."""
+    calls = [event("PostToolUse", ts=1100.0, tool_name="Bash", tool_use_id="u1",
+                   tool_input={"command": "make test"}, duration_ms=96_400),
+             event("PostToolUse", ts=1100.0, tool_name="Read", tool_use_id="u2",
+                   tool_input={"file_path": "/w/a.c"}, duration_ms=40),
+             event("PostToolUseFailure", ts=1150.0, tool_name="Bash", tool_use_id="u3",
+                   tool_input={"command": "make -j8"}, duration_ms=2_500, error="exit 2"),
+             event("PostToolUse", ts=1160.0, tool_name="Grep", tool_use_id="u4",
+                   agent_id="a1", agent_type="Explore", tool_input={"pattern": "x"},
+                   duration_ms=9_000),
+             event("PostToolUse", ts=1170.0, tool_name="Read", tool_use_id="u5",
+                   tool_input={"file_path": "/w/b.c"})]
+    store = ws.Store()
+    store.fold([event("SessionStart", ts=1000.0), *calls])
+    store.fold(calls)
+    got = ws.summary_json(store.sessions["s1"], ws.Costs())
+    assert got["tool_time"] == [{"tool": "Bash", "calls": 2, "seconds": 98.9},
+                                {"tool": "Read", "calls": 1, "seconds": 0.04}]
+    assert got["slow"] == [
+        {"tool": "Bash", "what": "make test", "seconds": 96.4, "began": 1003.6},
+        {"tool": "Bash", "what": "make -j8", "seconds": 2.5, "began": 1147.5}]

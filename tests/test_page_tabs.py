@@ -810,6 +810,46 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         page.wait_for_function("state.feed === 'commands'")
 
 
+def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
+    """Each call's own time (#663): the time by tool, the slowest calls of
+    a second or more, and a slow call is a link to it in the transcript,
+    by when it began."""
+    daemon, path = page_at
+    now = time.time()
+    # Each block at its moment: the call's at when it began, as Claude Code
+    # writes it, and the rest after, so only the link can show it.
+    at = lambda moment: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(moment))
+    write_records(daemon, conftest.record("you", "Rename the parser.", ts=at(now - 40)),
+                  conftest.record("tool", "grep -r parse", tool_id="g1", ts=at(now - 30)),
+                  conftest.record("result", "src/parse.py", tool_id="g1", ts=at(now)),
+                  *[conftest.record(*one, ts=at(now + 120 + step)) for step in range(30)
+                    for one in (("you", f"Next step {step}."), ("claude", "Done.\n\n" * 6))])
+    for one in (dict(tool_use_id="g1", tool_input={"command": "grep -r parse"},
+                     duration_ms=30_000),
+                dict(tool_use_id="g2", tool_input={"command": "ls"}, duration_ms=200)):
+        ws.append_event(conftest.event("PostToolUse", ts=now, pane="%7", pid=1,
+                                       tool_name="Bash", **one))
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".sumline.turnlink >> text=grep -r parse")
+        text = page.locator(".summary").inner_text()
+        assert "TIME BY TOOL" in text.upper(), text
+        times = page.locator(".sumline", has_text="Bash \u00b7 2 calls").inner_text()
+        assert times.startswith("30s"), times
+        slow = page.locator(".sumline.turnlink", has_text="grep -r parse")
+        assert slow.inner_text().startswith("30s")
+        assert page.locator(".sumline.turnlink", has_text="ls").count() == 0, "0.2 s is no slow call"
+        # Tenths where most calls are; the seconds of a long build kept.
+        assert page.evaluate("[0.4, 30.2, 96.4, 120].map(callTime)") == [
+            "0.4s", "30s", "1min 36s", "2min"]
+        slow.click()
+        page.wait_for_function("state.tab === 'transcript'")
+        page.wait_for_function("""() => [...document.querySelectorAll('#content .turn.linked')]
+          .some((one) => one.textContent.includes('grep -r parse'))""")
+
+
 def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
     """What all sessions spent this month (#653), under the session's own
     numbers: the day's spend is how much each session's total grew, the

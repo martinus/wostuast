@@ -197,6 +197,16 @@ SPENT = [
 ]
 
 
+#: What a call of each tool worked on, and how long it ran, in ms (#663).
+TOOK = {
+    "Bash": [({"command": "make test"}, 96_400), ({"command": "make -j8"}, 41_200),
+             ({"command": "git diff --stat"}, 180)],
+    "Read": [({"file_path": "src/ring.c"}, 40), ({"file_path": "src/parse.c"}, 60)],
+    "Edit": [({"file_path": "src/parse.c"}, 120), ({"file_path": "CHANGELOG.md"}, 90)],
+    "Grep": [({"pattern": "ring_"}, 1_300)],
+}
+
+
 def make_spending(ws, transcript: Path, repo: Path) -> None:
     """Four turns that used something, their times, an Explore subagent
     and a status line that says what it all cost (#622)."""
@@ -213,9 +223,18 @@ def make_spending(ws, transcript: Path, repo: Path) -> None:
     began = time.time() - 7_800
     base = {"session_id": "s1", "cwd": str(repo), "pane": "%7"}
     times = [(0, 300), (600, 1_900), (2_400, 3_500), (4_000, 4_200)]
-    for (start, end), (said, _, _) in zip(times, SPENT):
+    used = dict.fromkeys(TOOK, 0)
+    for turn, ((start, end), (said, tools, _)) in enumerate(zip(times, SPENT)):
         ws.append_event({**base, "hook_event_name": "UserPromptSubmit", "prompt": said,
                          "ts": began + start})
+        # Each call's own time, as its `PostToolUse` says it (#663); each
+        # tool takes its next example in turn.
+        for count, tool in enumerate(tools):
+            what, took = TOOK[tool][used[tool] % len(TOOK[tool])]
+            used[tool] += 1
+            ws.append_event({**base, "hook_event_name": "PostToolUse", "tool_name": tool,
+                             "tool_use_id": f"t{turn}{count}", "tool_input": what,
+                             "duration_ms": took, "ts": began + start + 20 * (count + 1)})
         ws.append_event({**base, "hook_event_name": "Stop", "ts": began + end})
     agent = {**base, "agent_id": "ag1", "agent_type": "Explore"}
     ws.append_event({**agent, "hook_event_name": "SubagentStart", "ts": began + 700})

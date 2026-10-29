@@ -82,3 +82,17 @@ can optimize my future sessions to produce less churn".
   a hover (`ALLOWANCE_WHERE`), as the reader asked: on the tile, the
   chart's label, and the note when none is set.
   `test_the_statistics_tab_draws_the_month_against_the_allowance`.
+- **A session's time goes by tool, and its slowest calls are kept**
+  (#663, `note_tool_time`, `Session.tool_time`, `SlowCall`, `putSumTime`):
+  from each call's `duration_ms`, the run alone, never the wait for a Yes
+  (`tests/fixtures/README.md`). A failed call took its time too. **A
+  subagent's calls are its own**: they run beside the agent's, and one
+  second counted twice. **A sum, as `busy` is**: `tools_upto` and
+  `tools_at` keep the same events read again from counting twice. **A
+  slow call is a second or more** (`SLOW_LEAST`): eight reads of 0.1 s
+  said nothing. One links to its block by when it began (`goToNear`, with
+  `goTo = 0`, as a search result: the landing does nothing while `goTo`
+  is null). `callTime` keeps tenths under 10 s and a build's seconds:
+  `lasted` wrote "0s" and "1min".
+  `test_a_session_s_time_goes_by_tool_and_its_slowest_calls_are_kept`,
+  `test_the_statistics_tab_says_where_the_time_went_by_tool`.
