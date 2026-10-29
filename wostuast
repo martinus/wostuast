@@ -12775,13 +12775,19 @@ def tool_named(value: Any) -> str:
 
 
 def exception_named(line: str) -> str:
-    """The builtin exception a line of the log names, or "(other)". Only a
-    builtin: a capitalised word ending in "Error" was a folder's name in
-    "listing /home/m/AcmeError/src failed: OSError(5)"."""
+    """The exception a line of the log names, or "(other)". Only a real
+    class: a capitalised word ending in "Error" was a folder's name in
+    "listing /home/m/AcmeError/src failed: OSError(5)". A builtin, or one
+    of `subprocess` and `json`, whose errors wostuast logs too: the
+    reader's own status line timing out, `TimeoutExpired`, was 37 lines
+    of "(other)"."""
     import builtins
+    import json
+    import subprocess
 
     for word in reversed(re.findall(r"\b([A-Z][A-Za-z]+)\(", line)):
-        found = getattr(builtins, word, None)
+        found = next((getattr(where, word) for where in (builtins, subprocess, json)
+                      if hasattr(where, word)), None)
         if isinstance(found, type) and issubclass(found, BaseException):
             return word
     return "(other)"
@@ -12903,7 +12909,10 @@ def report_events(days: float, now: float | None) -> list[str]:
             if field_name in event:
                 kinds.setdefault(f"{name}.{field_name}", Counter())[
                     named(event[field_name])] += 1
-    known = set(HOOK_EVENTS) | {"Declined", "Approved"}
+    # What the fold reads: every hook event, and the ones wostuast writes
+    # itself. A list of its own named `ModelAsked` "new" (#626), though the
+    # fold read it.
+    known = set(_HANDLERS)
     out += ["", f"## Hook events, last {days:g} days", ""]
     if not events:
         out.append("No events in that time.")
@@ -13046,8 +13055,11 @@ def build_report(days: float, now: float | None = None,
         ("Platform", f"{platform.system()} {platform.release()} ({platform.machine()})"),
         ("tmux", tmux),
         ("git", git),
+        # "(none)" is a record with no version, and says so: as a name it
+        # was "(other)", which read as versions not shown.
         ("Claude Code, in transcripts",
-         counts_of(Counter({named(v): n for v, n in shapes.versions.items()})) or "none seen"),
+         counts_of(Counter({(v if v == "(none)" else named(v)): n
+                            for v, n in shapes.versions.items()})) or "none seen"),
     ])
 
     out += ["", "## Setup", "", "What `wostuast doctor` checks.", ""]
