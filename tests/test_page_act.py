@@ -2119,3 +2119,23 @@ def test_an_answer_that_did_not_land_lets_the_reader_submit_again(ws, in_pane):
         page.wait_for_function(
             "() => { const it = document.querySelector('#asking .permsubmit');"
             " return it && !it.disabled && !it.dataset.busy; }")
+
+
+def test_a_resume_the_cache_did_not_outlast_says_its_cost_over_the_send_box(ws, page_at):
+    """Before the first prompt of a session resumed after its cache expired
+    (#664), a line over the send box says what that prompt costs, while the
+    reader can still start fresh instead. The prompt pays it, and the line
+    goes."""
+    daemon, path = page_at
+    ws.append_event(conftest.event("SessionStart", ts=time.time(), pane="%7", pid=1,
+                                   source="resume", prompt_cache_likely_expired=True,
+                                   context_tokens=182_000, estimated_cache_write_usd=0.6731))
+    daemon.store.refresh()
+    with opened(path) as page:
+        page.wait_for_selector("#recache:not([hidden])")
+        said = page.inner_text("#recache")
+        assert said == "cache expired: $0.67 (182k tokens) for next prompt", said
+        ws.append_event(conftest.event("UserPromptSubmit", ts=time.time(), pane="%7", pid=1,
+                                       prompt="go on"))
+        daemon.tick()
+        page.wait_for_selector("#recache", state="hidden")

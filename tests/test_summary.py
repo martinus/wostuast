@@ -162,3 +162,20 @@ def test_a_session_s_time_goes_by_tool_and_its_slowest_calls_are_kept(ws):
     assert got["slow"] == [
         {"tool": "Bash", "what": "make test", "seconds": 96.4, "began": 1003.6},
         {"tool": "Bash", "what": "make -j8", "seconds": 2.5, "began": 1147.5}]
+
+
+def test_a_resume_the_cache_did_not_outlast_says_what_its_next_prompt_costs(ws):
+    """Measured on 2.1.312: every resume's `SessionStart` says whether the
+    cache likely expired, how many tokens the context is, and what caching
+    them again costs (#664). Only an expired one is said, and the first
+    prompt pays it."""
+    store = ws.Store()
+    resume = dict(source="resume", context_tokens=182_000, estimated_cache_write_usd=0.6731)
+    store.fold([event("SessionStart", ts=1000.0, prompt_cache_likely_expired=False, **resume)])
+    row = ws.row(store.sessions["s1"])
+    assert (row["recache_usd"], row["recache_tokens"]) == (0.0, 0)
+    store.fold([event("SessionStart", ts=2000.0, prompt_cache_likely_expired=True, **resume)])
+    row = ws.row(store.sessions["s1"])
+    assert (row["recache_usd"], row["recache_tokens"]) == (0.6731, 182_000)
+    store.fold([event("UserPromptSubmit", ts=2010.0, prompt="go on")])
+    assert ws.row(store.sessions["s1"])["recache_usd"] == 0.0
