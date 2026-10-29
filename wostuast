@@ -14821,8 +14821,12 @@ body.dragging.rowdrag { cursor: row-resize; }
 .row .kid .kidwhat { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
 .row .kid .kiddoing { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
 /* What a subagent that ended did (issue 618), on a line of its own under
-   what it was asked, starting where those words start. */
-.row .kid { flex-wrap: wrap; }
+   what it was asked, starting where those words start. Only that line
+   wraps, and its words start at no width (issue 650): a line that wraps
+   breaks before its items shrink, so a long command stood on a line of its
+   own, the arrow alone over it and the age alone under it. */
+.row .kid:has(.kidstats) { flex-wrap: wrap; }
+.row .kid:has(.kidstats) .kidwhat { flex: 1 1 0; }
 .row .kid .kidstats {
   flex: 1 0 100%; padding-left: 18px; margin-top: -1px; font-size: 11px;
   color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis;

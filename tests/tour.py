@@ -154,16 +154,18 @@ def make_sessions(ws, home: Path) -> None:
                      "cwd": str(home / "w" / "s4"), "pane": "%4", "pid": 1, "ts": now - 30})
     # One that waits on a command in the background (#617): its call's
     # result names the task, and the turn's `Stop` lists it as running.
+    # Longer than a row is wide, so the picture shows how a line is cut (#650).
+    long_command = "./bench --all --repeat 20 --out results/bench.json && python3 tools/compare.py results/"
     bench = {"session_id": "s7", "cwd": str(home / "w" / "s7"), "pane": "%6", "pid": 1}
     ws.append_event({**bench, "hook_event_name": "PostToolUse", "tool_name": "Bash",
-                     "tool_input": {"command": "./bench --all", "description": "run every benchmark",
+                     "tool_input": {"command": long_command, "description": "run every benchmark",
                                     "run_in_background": True},
                      "tool_response": {"backgroundTaskId": "b7"}, "ts": now - 260})
     ws.append_event({**bench, "hook_event_name": "Stop", "ts": now - 250,
                      "last_assistant_message": "The benchmarks run; I go on when they end.",
                      "background_tasks": [{"id": "b7", "type": "shell", "status": "running",
                                            "description": "run every benchmark",
-                                           "command": "./bench --all"}]})
+                                           "command": long_command}]})
     # One that is over, for the history and its chosen row (#427).
     ws.append_event({"session_id": "s6", "hook_event_name": "SessionEnd", "reason": "logout",
                      "cwd": str(home / "w" / "s6"), "pane": "%5", "pid": 1, "ts": now - 900})
