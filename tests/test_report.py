@@ -119,6 +119,27 @@ def test_the_report_is_markdown_an_agent_can_read(ws):
             assert line.endswith("|"), line
 
 
+def test_the_report_knows_its_own_events_and_records_with_no_version(ws):
+    """The events wostuast writes itself are handled, not "new": the
+    report called `ModelAsked` new, though the fold read it. A transcript
+    record with no `version` is "(none)", not "(other)", which read as
+    versions the report would not show."""
+    events(ws, bare_event("Stop"), bare_event("ModelAsked", model="opus", ask_id="m1"),
+           bare_event("SomethingNewer"))
+    folder = ws.settings_path().parent / "projects" / "-p"
+    folder.mkdir(parents=True)
+    (folder / "s1.jsonl").write_text(
+        json.dumps({"type": "user", "version": "2.1.312", "message": {"content": "hi"}})
+        + "\n" + json.dumps({"type": "ai-title", "aiTitle": "a title"}) + "\n")
+    said = ws.build_report(7, measure=False)
+    assert "| ModelAsked | 1 | yes |" in said
+    assert "| SomethingNewer | 1 | **new** |" in said
+    versions = next(line for line in said.splitlines()
+                    if line.startswith("| Claude Code, in transcripts"))
+    assert "(none) (1)" in versions and "2.1.312 (1)" in versions, versions
+    assert "(other)" not in versions
+
+
 def test_the_cost_is_measured_on_the_installed_files(ws, tmp_path, monkeypatch):
     """The hook and the status file, run as Claude Code runs them. Not
     installed, they did not run, and the report says so rather than 0 ms."""
