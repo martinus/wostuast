@@ -43,6 +43,14 @@ buffer, scrubbed, counted; a No, an interrupt, what a refusal says.
     for a No, so a send is refused meanwhile.
     `test_two_sends_at_once_do_not_mix_in_the_pane`,
     `test_nothing_else_is_typed_while_an_answer_or_a_no_goes_in`.
+    **The answer goes out after the release** (#658): `press_send`,
+    `press_decline` and `give_yes` give their answer back to the verb,
+    which returns it once the `with` is over. Written inside, a client
+    that sent again on the answer found the session still held, and was
+    refused as "already being typed".
+    `test_a_send_is_answered_only_once_the_session_is_given_back`,
+    `test_a_no_is_answered_only_once_the_session_is_given_back`,
+    `test_a_yes_is_answered_only_once_the_session_is_given_back`.
     **The claims have their own lock, `typing_lock`, and the transcript
     readers another, `reading`** (#538): with one lock, a long
     `read_transcript` held back every send. No method takes both.
